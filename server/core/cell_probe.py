@@ -74,7 +74,7 @@ async def nonces() -> dict[str, str | None]:
             try:
                 values[store] = await read()
             except Exception as e:  # re-raised with the store named, answered as a 503
-                log.warning("probe: the %s nonce could not be read: %s", store, type(e).__name__)
+                log.warning("probe: the %s nonce could not be read: %s", store, e)
                 raise StoreUnreadable(store, e) from e
     return values
 

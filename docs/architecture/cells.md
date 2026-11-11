@@ -269,8 +269,8 @@ fingerprint gate:
   in memory, whatever the request's Host. It reads no store and is not rate-limited, so
   no flood on the main port stalls attach's host check.
 - In full, with the values under prepare's reserved nonce keys, it is served only on a
-  separate probe listener port (`LOOM_CELL_PROBE_PORT`, `0` for off, needing the
-  Postgres authority and authentication on, on every address of the process): the
+  separate probe listener port (`LOOM_CELL_PROBE_PORT`, `0` for off; it needs the
+  Postgres authority and authentication on, and binds every address of the host): the
   Postgres row `loom.cell_probe` and the KeeperMap key, each named `cell-probe`, and the
   object `<prefix>/_cell_probe`. None of these values is secret. It answers 429 past a
   fixed rate per process on that listener.
