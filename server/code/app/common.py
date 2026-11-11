@@ -743,6 +743,11 @@ def schedule_code_trace_validation_failure(
     The query is stored as its digest (the request was never authorized). Never raises."""
     if not str(op_name).startswith("code.") or not isinstance(raw_body, dict):
         return
+    from server.auth import tenancy
+
+    # Refused before the org was checked: on a cell, no row for an org it does not hold.
+    if not tenancy.attributable(str(raw_body.get("org") or "-")):
+        return
     try:
         from server.identity.app.restricted_access import digest_text
         from server.observability.event_args import validation_error_text

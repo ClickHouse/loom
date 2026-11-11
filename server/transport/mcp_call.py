@@ -20,7 +20,7 @@ from pydantic import BaseModel, ValidationError
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
 from server.core import llm_free
-from server.core.errors import LoomServerError, unverified_class
+from server.core.errors import LoomServerError, WrongCellError, unverified_class
 from server.core.naming import named, present
 from server.identity.app.caller_home import home_namespace
 from server.observability import genai
@@ -58,6 +58,7 @@ from server.transport.mcp_outcome import (
     _success_response,
 )
 from server.transport.mcp_primer import _render_primer_and_emit
+from server.transport.mcp_refusals import refusal_result
 from server.transport.mcp_tools import TOOLS_BY_NAME, _emit_mcp_event, assistant_connection
 
 if TYPE_CHECKING:
@@ -229,6 +230,9 @@ async def _call_tool(
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
 
+    refused = await _another_cells_org(req_id, op, arguments, auth)
+    if refused is not None:
+        return refused
     request_id, defaults = await _bind_caller_identity(op, arguments, auth, client_name)
 
     run_caller, stamped_run = _stamp_session_run(op, arguments, defaults, mcp_session_id)
@@ -492,6 +496,36 @@ async def _resolve_tool(
     return op
 
 
+async def _another_cells_org(
+    req_id: Any, op: Operation, arguments: dict[str, Any], auth: Any
+) -> dict[str, Any] | None:
+    """A call in the token's own org on a cell that does not hold it answers WRONG_CELL
+    as a tool error before the caller's defaults are read: they live in that org, so
+    reading them would only find none and refuse the call as a validation failure. A
+    call naming another org is the op gate's to check."""
+    from server.settings import settings
+
+    if auth is None or not settings.cell:
+        return None
+    from server.auth import tenancy
+
+    # The org the op gate would check (a plane's own org for code.* and tracker.*).
+    if gates.resolve_org(op, arguments.get("org"), auth) != auth.org:
+        return None
+    try:
+        await tenancy.ensure_held(auth.org, auth)
+    except WrongCellError as e:
+        # The identity is not bound yet: the row names the token's org, which the
+        # ledger then blanks with the rest of the tuple (`events.for_this_cell`).
+        emit_token_refusal(op.name, auth, error_code=e.code, org=auth.org)
+        return _ok(req_id, refusal_result(e))
+    except LoomServerError as e:
+        # The cell could not tell (a 503): counted against the server, then raised.
+        emit_token_refusal(op.name, auth, error_code=e.code, org=auth.org, server_fault=True)
+        raise
+    return None
+
+
 async def _bind_caller_identity(
     op: Operation, arguments: dict[str, Any], auth: Any, client_name: str | None
 ) -> tuple[str, dict[str, str] | None]:
@@ -712,8 +746,8 @@ async def _authorize_call(
     """Phase 5 of `_call_tool`: the shared authorization target and gate
     (server/transport/gates.py) — role / namespace check, restricted-access
     audit, first-write registration. Returns the target, or the refusal
-    response: AUTH_INSUFFICIENT (a code/tracker index says how to get in) or
-    IDENTITY_INCOMPLETE. Any other error propagates, a LoomServerError
+    response: AUTH_INSUFFICIENT (a code/tracker index says how to get in),
+    IDENTITY_INCOMPLETE or WRONG_CELL. Any other error propagates, a LoomServerError
     ledgered first."""
     from server.core.errors import IdentityIncompleteError
 
@@ -730,11 +764,11 @@ async def _authorize_call(
             op.name, arguments, error_code=gates.ROLE_REFUSAL_CODE, request_id=request_id, error=e
         )
         return _ok(req_id, _forbidden_result(op, e, auth, target.org, target.namespace))
-    except IdentityIncompleteError as e:
-        # HTTP's 400 IDENTITY_INCOMPLETE, as a tool result: escaping, it
-        # would become a bare HTTP 400 with no JSON-RPC frame and lose the batch.
+    except (IdentityIncompleteError, WrongCellError) as e:
+        # HTTP's 400 IDENTITY_INCOMPLETE or 409 WRONG_CELL, as a tool result: escaping,
+        # it would become a bare HTTP error with no JSON-RPC frame and lose the batch.
         _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id)
-        return _ok(req_id, _refusal_result(e))
+        return _ok(req_id, refusal_result(e))
     except LoomServerError as e:
         # A read the gate could not make past its cache (a 503): counted
         # against the server, then answered as raised.
@@ -774,18 +808,6 @@ def _emit_refused(
             error=error,
         )
     return first
-
-
-def _refusal_result(e: BaseException) -> dict[str, Any]:
-    """A 4xx LoomServerError as the `isError` result `_handler_failed` answers."""
-    from server.transport.mcp_refusals import refusal_body, refusal_text
-
-    body = refusal_body(e) or {"code": "BAD_REQUEST", "message": str(e)}
-    return {
-        "content": [{"type": "text", "text": refusal_text(body)}],
-        "isError": True,
-        "structuredContent": body,
-    }
 
 
 @dataclass(slots=True)
@@ -830,7 +852,7 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
         call.input_obj = gates.read_scope(op, auth, input_obj)
     except (AuthInsufficientError, IdentityIncompleteError) as e:
         _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id)
-        return _ok(req_id, _refusal_result(e))
+        return _ok(req_id, refusal_result(e))
 
     # History policy, at parity with HTTP: after authz, before the handler.
     # Off → no-op; shadow → records; enforce → structured denial.

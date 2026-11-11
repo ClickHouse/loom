@@ -93,8 +93,14 @@ def _bounded(f: FieldInfo, value: float) -> bool:
     return True
 
 
+# Strings of one fixed form (a field pattern), given a valid value of that form.
+_VALID = {"cell_router_token": "lcr_" + "0" * 128}
+
+
 def _other(name: str, f: FieldInfo) -> Any:
     """A valid value for `f` that differs from its default, or None."""
+    if name in _VALID:
+        return _VALID[name]
     if name in _CROSS_CHECKED:
         return None
     ann, default = f.annotation, _default(f)

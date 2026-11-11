@@ -12,6 +12,7 @@ attribution at this scale.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,6 +27,30 @@ log = logging.getLogger(__name__)
 FLUSH_INTERVAL_S = 0.1
 FLUSH_BATCH = 500
 SHUTDOWN_DRAIN_S = 5.0
+
+
+def for_this_cell(event: AgentEvent) -> AgentEvent:
+    """A request event for an org a cell does not hold keeps its op, timing and
+    outcome but names no tenant: its org, identity and arguments belong to another
+    cell, whose erasure never reaches this one (docs/architecture/cells.md)."""
+    from server.auth import tenancy
+
+    if event.kind != "request" or tenancy.attributable(event.org):
+        return event
+    return dataclasses.replace(
+        event,
+        org="-",
+        namespace="-",
+        agent="-",
+        user_id="-",
+        session_id="-",
+        memory_key="",
+        impersonated_by="",
+        run_id="",
+        subject="",
+        consumer="",
+        args={},
+    )
 
 
 @dataclass
@@ -188,6 +213,7 @@ class EventEmitter:
 
     def emit(self, event: AgentEvent) -> None:
         """Fire-and-forget. Never raises; never blocks the request."""
+        event = for_this_cell(event)
         try:
             self.queue.put_nowait(event)
         except asyncio.QueueFull:

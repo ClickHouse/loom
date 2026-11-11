@@ -137,3 +137,13 @@ def classify_tool_errors(resp: dict[str, Any]) -> dict[str, Any]:
 def _status_of(body: dict[str, Any], default: int) -> int:
     status = body.get("status")
     return status if isinstance(status, int) else default
+
+
+def refusal_result(e: BaseException) -> dict[str, Any]:
+    """A 4xx LoomServerError as an MCP `isError` tool result."""
+    body = refusal_body(e) or {"code": "BAD_REQUEST", "message": str(e)}
+    return {
+        "content": [{"type": "text", "text": refusal_text(body)}],
+        "isError": True,
+        "structuredContent": body,
+    }

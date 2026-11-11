@@ -95,6 +95,12 @@ def _error_response(e: ScimError) -> JSONResponse:
     return _answer(body, e.status, **headers)
 
 
+def scim_error(status: int, detail: str) -> JSONResponse:
+    """An RFC 7644 error for a refusal made outside these routes (the cell's tenancy
+    middleware), in the shape an identity provider parses."""
+    return _error_response(ScimError(status, detail))
+
+
 class ScimRoute(APIRoute):
     """Every error these routes and their bearer check raise answers as an
     RFC 7644 error, a server-side one as a retryable 503."""

@@ -94,6 +94,28 @@ class CollectionNameTakenError(LoomServerError):
         super().__init__(message, deleted=deleted, suggestion=suggestion)
 
 
+class WrongCellError(LoomServerError):
+    """409 — the org a verified call acts in is placed in another cell of this
+    deployment, or in none and the caller may not place it (docs/architecture/cells.md).
+    Nothing was written; the client calls the org's own cell."""
+
+    code = "WRONG_CELL"
+    status_code = 409
+
+    def __init__(self, org: str, *, cell: str = "") -> None:
+        if cell:
+            message = (
+                f"org {org!r} is not held by this cell: it is placed in cell {cell!r}. "
+                "Call that cell."
+            )
+        else:
+            message = (
+                f"org {org!r} is not held by this cell. An org reaches a cell through a "
+                "request with a token of that org."
+            )
+        super().__init__(message)
+
+
 class SourceReplacedError(LoomServerError):
     """409 — the document source was removed and added again as another source
     during the call (a rotate's probe, a sync request); act on the current one."""
@@ -221,8 +243,10 @@ class ModelCallDeferred(ModelCallRefused):
 
 
 class BackendUnavailableError(LoomServerError):
-    """503 — ClickHouse could not be reached after the bounded reconnect, or
-    the document bucket failed a read, write or delete.
+    """503 — ClickHouse could not be reached after the bounded reconnect, the
+    document bucket failed a read, write or delete, or a cell could not read its
+    tenancy or place a new org through the router. `retry_after_s` is the wait: 1 s,
+    unless the router named one (at most 60 s).
 
     The public message deliberately excludes the driver URL and credentials;
     operators get the concrete connection error from health and server logs.
@@ -232,13 +256,18 @@ class BackendUnavailableError(LoomServerError):
     status_code = 503
 
     def __init__(
-        self, message: str = "", *, operation: str = "", outcome_unknown: bool = False
+        self,
+        message: str = "",
+        *,
+        operation: str = "",
+        outcome_unknown: bool = False,
+        retry_after_s: int = 1,
     ) -> None:
         super().__init__(
             message,
             operation=operation,
             outcome_unknown=outcome_unknown,
-            retry_after_s=1,
+            retry_after_s=retry_after_s,
         )
 
 

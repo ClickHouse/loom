@@ -702,9 +702,17 @@ settings:
   # (docs/architecture/cells.md). [restart]
   # cell: ""
 
-  # Seconds (at least 1) between re-reads of a cell's three rows (LOOM_CELL); with
-  # LOOM_CELL set, LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times
-  # this. [restart]
+  # The router's base URL a cell calls to place a new org; "" = none: in `enforced`, a
+  # new org answers 503. [restart]
+  # cell_router_url: ""
+
+  # Seconds a whole placement call to the router may take before the request answers
+  # 503. [restart]
+  # cell_router_timeout_s: 5.0
+
+  # Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not
+  # held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
+  # [restart]
   # tenancy_mode_cache_s: 5.0
 
   # The `iss` Loom stamps on every token it mints; a verified token carries it or one of

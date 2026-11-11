@@ -203,6 +203,12 @@ async def check_authorized(
     if not isinstance(auth, AuthInfo):  # defensive
         raise PermissionError("invalid auth principal")
 
+    # A cell serves only the orgs it holds: the routes outside the op registry
+    # authorize here (the op gate checked before it got this far).
+    from server.auth import tenancy
+
+    await tenancy.ensure_held(org, auth)
+
     if auth.creator:
         await _check_creator(auth, required_role, org, namespace)
 

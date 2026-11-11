@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from server.auth.context import delegated_reach, named_claims, readable_named_claims
 from server.auth.personal_namespace import derive_personal_slug
 from server.auth.sharing import is_collection
-from server.core.errors import BackendUnavailableError
+from server.core.errors import BackendUnavailableError, WrongCellError
 from server.identity.app import caller_defaults
 from server.operations.base import Role
 
@@ -143,6 +143,10 @@ async def default_and_readable(auth: Any, org: str) -> tuple[str, list[str]]:
         return default, [] if default else await readable_named_claims(auth, org, gate)
     except BackendUnavailableError:
         raise
+    except WrongCellError:
+        # The token's org is placed in another cell: it has no default here, and a call
+        # in it answers WRONG_CELL before reaching this (`mcp_call._another_cells_org`).
+        return "", []
     except Exception:  # a bug, logged: no default, so the call names its namespace
         log.warning("no default namespace for %s in %s", home, org, exc_info=True)
         return "", []
