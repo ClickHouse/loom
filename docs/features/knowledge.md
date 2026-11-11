@@ -1078,6 +1078,33 @@ status = await agent.knowledge.ingest_file("specs/q3.pdf", tags=["rfc"], allow_p
 print(status["state"], status["revision"], status["coverage"])
 ```
 
+### Many files from the dashboard
+
+The Library's **Add document** takes several files at once, picked together or dropped
+on it, and names the place they go to. Each file is its own upload and ingest, as above,
+under its file name as the source; there is no batch op. Before sending, the dialog
+leaves out and lists hidden files, files an operating system or an editor leaves
+(`Thumbs.db`, `desktop.ini`, `~$` lock files) and files whose name and type match no
+format `knowledge.formats` lists. One upload sends at most 200 files and 1 GB, counted
+over the files it sends; the rest wait in the dialog, and **Upload the next files** sends
+them.
+
+At most three of a batch's jobs are open at a time, each followed to its end: the ingest
+worker takes one job per namespace in turn, so a batch that queued everything at once
+would hold up every agent writing there. The dialog stays open while files are sent. A
+step the server answers with `retryable: true` (a rate limit among them) is sent again
+after the wait it asks for, for at most a minute; a file that fails otherwise fails
+alone, and **Retry failed** sends the failed ones again. **Stop** sends no more, not
+even a file waiting out a rate limit, and asks the open jobs to stop
+(`knowledge.ingest_cancel`); one already publishing may still be added.
+
+A file whose source is new is ingested with `expected_revision: 0`, so a second job for
+it publishes nothing. For files whose source is already there, the person picks: replace
+them, each becoming its document's next revision and keeping its title, description and
+tags, or skip them (picked first when most of the files to send are already there). The
+check reads the place's first 10,000 documents; past them, a file whose source exists is
+skipped.
+
 ## Datasets
 
 An ingested CSV, XLSX or Parquet file's tables are also typed **datasets**: each sheet (a

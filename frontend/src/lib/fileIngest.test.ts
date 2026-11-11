@@ -33,9 +33,18 @@ const file = (name: string, type = "", size = 10) => ({ name, type, size });
 
 describe("fileVerdict", () => {
   it("names the format by extension, then media type, then the default", () => {
-    expect(fileVerdict(file("Spec.PDF"), FORMATS)).toEqual({ format: "pdf", available: true, refusal: "" });
-    expect(fileVerdict(file("notes", "text/markdown; charset=utf-8"), FORMATS).format).toBe("markdown");
-    expect(fileVerdict(file("README", ""), FORMATS).format).toBe("text");
+    expect(fileVerdict(file("Spec.PDF"), FORMATS)).toEqual({
+      format: "pdf",
+      available: true,
+      refusal: "",
+      listed: true,
+    });
+    expect(fileVerdict(file("notes", "text/markdown; charset=utf-8"), FORMATS)).toMatchObject({
+      format: "markdown",
+      listed: true,
+    });
+    // Neither its name nor its type names a format: the default, not a listed one.
+    expect(fileVerdict(file("README", ""), FORMATS)).toMatchObject({ format: "text", listed: false });
   });
 
   it("refuses a legacy Office name, a file over the limit and a format no extractor reads", () => {
@@ -48,11 +57,16 @@ describe("fileVerdict", () => {
   });
 
   it("refuses nothing whose extractor the server could not ask just now", () => {
-    expect(fileVerdict(file("orders.xlsx"), FORMATS)).toEqual({ format: "xlsx", available: null, refusal: "" });
+    expect(fileVerdict(file("orders.xlsx"), FORMATS)).toEqual({
+      format: "xlsx",
+      available: null,
+      refusal: "",
+      listed: true,
+    });
   });
 
   it("says nothing it does not know when the server did not list its formats", () => {
-    expect(fileVerdict(file("deck.pptx"), null)).toEqual({ format: "", available: null, refusal: "" });
+    expect(fileVerdict(file("deck.pptx"), null)).toEqual({ format: "", available: null, refusal: "", listed: false });
   });
 });
 

@@ -1668,6 +1668,16 @@ textarea[aria-invalid="true"]:focus-visible {
   }
 }
 
+/* The document dialogs' drop zones: most touch screens have no file drag, so there the hint
+   goes and the picker stays. */
+@layer components {
+  @media (pointer: coarse) {
+    .drop-hint {
+      display: none;
+    }
+  }
+}
+
 /* The Library's collection tree: a child is indented in the open list; the closed select,
    which shows the picked item's own content, keeps its text in line. */
 @layer components {

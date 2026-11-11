@@ -14,17 +14,32 @@ import type { FileVerdict } from "../lib/fileIngest";
 /** The deployment's formats, read when `open` turns true; null until read, or from a
  *  server that predates `knowledge.formats`. */
 export function useKnowledgeFormats(id: Pick<Identity, "org" | "namespace">, open: boolean): KnowledgeFormats | null {
-  const [formats, setFormats] = useState<KnowledgeFormats | null>(null);
+  return useKnowledgeFormatsRead(id, open).formats;
+}
+
+/** The deployment's formats and whether the read has answered: `settled` false while it
+ *  is on its way, true once it answered, with `formats` null when it could not be read. */
+export function useKnowledgeFormatsRead(
+  id: Pick<Identity, "org" | "namespace">,
+  open: boolean,
+): { formats: KnowledgeFormats | null; settled: boolean } {
+  const [read, setRead] = useState<{ formats: KnowledgeFormats | null; settled: boolean }>({
+    formats: null,
+    settled: false,
+  });
   const { org, namespace } = id;
   useEffect(() => {
     if (!open) return;
     const ctrl = new AbortController();
     knowledgeFormats({ org, namespace }, { signal: ctrl.signal })
-      .then(setFormats)
-      .catch(() => setFormats(null)); // unread: the dialog still sends the file and reports the job
+      .then((formats) => setRead({ formats, settled: true }))
+      // Unread: the one-file dialog still sends the file and reports the job.
+      .catch(() => {
+        if (!ctrl.signal.aborted) setRead({ formats: null, settled: true });
+      });
     return () => ctrl.abort();
   }, [open, org, namespace]);
-  return formats;
+  return read;
 }
 
 /** The formats a person can pick, in words: "markdown, pdf, …" (the available ones). */

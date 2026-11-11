@@ -16,6 +16,7 @@ vi.mock("../api", async (importOriginal) => ({
   knowledgeIngestStatus: vi.fn(),
   addKnowledge: vi.fn(),
   cancelIngestion: vi.fn(),
+  listKnowledge: vi.fn(),
 }));
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
@@ -31,6 +32,7 @@ import {
   type KnowledgeIngestStatus,
   knowledgeFormats,
   knowledgeIngestStatus,
+  listKnowledge,
   uploadKnowledgeFile,
 } from "../api";
 import { ingestClock } from "../lib/fileIngest";
@@ -379,5 +381,191 @@ describe("AddDocumentDialog", () => {
       tags: [],
     });
     expect(uploadKnowledgeFile).not.toHaveBeenCalled();
+  });
+
+  describe("many files", () => {
+    async function pickMany(names: string[]) {
+      const user = userEvent.setup({ applyAccept: false });
+      await user.upload(
+        screen.getByLabelText("Choose a file to upload"),
+        names.map((n) => new File(["%PDF-1.7"], n)),
+      );
+      return user;
+    }
+
+    it("sends each file as its own document, saying where each is, and skips what is already there", async () => {
+      vi.mocked(listKnowledge).mockResolvedValue({ rows: [{ source_uri: "b.pdf" }], next_cursor: null } as never);
+      vi.mocked(ingestKnowledge).mockImplementation(async (_id, o) => ({
+        ingestion_id: o.source_uri,
+        state: "pending",
+        source_uri: o.source_uri,
+      }));
+      vi.mocked(knowledgeIngestStatus).mockResolvedValue(status("ready"));
+      const { dialog, onAdded } = mount();
+      await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+      const user = await pickMany(["a.pdf", "b.pdf", "photo.png"]);
+      expect(within(dialog).getByRole("heading", { name: "Add documents to n" })).toBeInTheDocument();
+      const files = within(dialog).getByRole("list", { name: "Files" });
+      expect(within(files).getByText("Not a format this deployment reads")).toBeInTheDocument();
+      expect(await within(files).findByText("Already in n: replaced")).toBeInTheDocument();
+      await user.click(within(dialog).getByRole("radio", { name: "Skip them" }));
+      await user.click(within(dialog).getByRole("button", { name: "Upload 1 file to n" }));
+      await waitFor(() => expect(onAdded).toHaveBeenCalled());
+      expect(within(files).getByText("Revision 1")).toBeInTheDocument();
+      expect(within(files).getByText("Already here")).toBeInTheDocument();
+      expect(vi.mocked(ingestKnowledge).mock.calls.map(([, o]) => [o.source_uri, o.expected_revision])).toEqual([
+        ["a.pdf", 0],
+      ]);
+      expect(toast).toHaveBeenCalledWith("1 added, 2 skipped", "ok");
+    });
+
+    it("sends again only the files that failed", async () => {
+      vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+      vi.mocked(ingestKnowledge).mockImplementation(async (_id, o) => ({
+        ingestion_id: o.source_uri,
+        state: "pending",
+        source_uri: o.source_uri,
+      }));
+      vi.mocked(knowledgeIngestStatus)
+        .mockImplementationOnce(async () => status("failed", { error_code: "no_text", error_message: "no text" }))
+        .mockResolvedValue(status("ready"));
+      const { dialog } = mount();
+      await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+      const user = await pickMany(["a.pdf", "b.pdf"]);
+      await user.click(await within(dialog).findByRole("button", { name: "Upload 2 files to n" }));
+      const retry = await within(dialog).findByRole("button", { name: "Retry 1 failed" });
+      await waitFor(() => expect(retry).toHaveFocus());
+      // The modal's own close asks first while a file failed (a test has no confirm
+      // viewport, so the browser's confirm is asked).
+      const asked = vi.spyOn(window, "confirm").mockReturnValue(false);
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(asked).toHaveBeenCalledWith(
+          expect.stringMatching(/^Close with files not added\?\n\n1 file failed\. Close anyway\?/),
+        ),
+      );
+      asked.mockRestore();
+      await user.click(retry);
+      await waitFor(() => expect(within(dialog).getAllByText("Revision 1")).toHaveLength(2));
+      expect(ingestKnowledge).toHaveBeenCalledTimes(3);
+    });
+
+    it("takes dropped files, reading them while the drop lasts, and says a folder is not taken", async () => {
+      const { dialog } = mount();
+      await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+      vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+      let dropping = true;
+      const item = (f: File | null) => ({
+        kind: "file",
+        webkitGetAsEntry: () => {
+          if (!dropping) throw new Error("read after the drop");
+          return { isDirectory: f === null };
+        },
+        getAsFile: () => {
+          if (!dropping) throw new Error("read after the drop");
+          return f;
+        },
+      });
+      const zone = within(dialog).getByTestId("add-doc-drop");
+      fireEvent.drop(zone, { dataTransfer: { types: ["Files"], items: [item(null)], files: [] } });
+      dropping = false;
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent("Folders are not taken here");
+      dropping = true;
+      fireEvent.drop(zone, {
+        dataTransfer: {
+          types: ["Files"],
+          items: [item(new File(["x"], "a.pdf")), item(new File(["y"], "b.pdf"))],
+          files: [],
+        },
+      });
+      dropping = false;
+      // Once the check of what is already there answers, Upload is offered.
+      await waitFor(
+        () => expect(screen.getByRole("button", { name: "Upload 2 files to n" })).not.toHaveAttribute("aria-disabled"),
+        { timeout: 5000 },
+      );
+    });
+  });
+
+  it("hands the focus to Upload when the list replaces the form", async () => {
+    vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+    render(<AddDocumentDialog open onOpenChange={() => {}} onAdded={() => {}} identity={identity} place="Team" />);
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = userEvent.setup({ applyAccept: false });
+    await user.upload(screen.getByLabelText("Choose a file to upload"), [
+      new File(["a"], "a.pdf"),
+      new File(["b"], "b.pdf"),
+    ]);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Upload 2 files/ })));
+  });
+
+  it("keeps naming where a batch's files go when the page shows another place", async () => {
+    vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+    const props = { open: true, onOpenChange: () => {}, onAdded: () => {} };
+    const { rerender } = render(<AddDocumentDialog {...props} identity={identity} place="Team" />);
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = userEvent.setup({ applyAccept: false });
+    await user.upload(screen.getByLabelText("Choose a file to upload"), [
+      new File(["a"], "a.pdf"),
+      new File(["b"], "b.pdf"),
+    ]);
+    expect(await screen.findByRole("heading", { name: "Add documents to Team" })).toBeInTheDocument();
+    rerender(<AddDocumentDialog {...props} identity={{ org: "o", namespace: "other" }} place="Other" />);
+    expect(screen.getByRole("heading", { name: "Add documents to Team" })).toBeInTheDocument();
+  });
+
+  it("keeps a file dropped beside the drop zone from opening in the tab, and leaves text drops alone", () => {
+    // jsdom has no DataTransfer: the drag's types are all the guard reads.
+    const drag = (types: string[], type = "drop") => {
+      const e = new Event(type, { cancelable: true, bubbles: true });
+      Object.defineProperty(e, "dataTransfer", { value: { types } });
+      document.body.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    const { unmount } = render(
+      <AddDocumentDialog open onOpenChange={() => {}} onAdded={() => {}} identity={identity} />,
+    );
+    // The dragover cancel is what stops the browser handling the drop itself.
+    for (const type of ["dragover", "drop"]) {
+      expect(drag(["Files"], type)).toBe(true);
+      expect(drag(["text/plain"], type)).toBe(false);
+    }
+    unmount();
+    expect(drag(["Files"], "dragover")).toBe(false);
+    expect(drag(["Files"])).toBe(false);
+  });
+
+  it("says no drop beside the zone, and leaves a drag the zone took as it set it", () => {
+    render(<AddDocumentDialog open onOpenChange={() => {}} onAdded={() => {}} identity={identity} />);
+    const over = (taken: boolean) => {
+      const e = new Event("dragover", { cancelable: true, bubbles: true });
+      const dataTransfer = { types: ["Files"], dropEffect: "copy" };
+      Object.defineProperty(e, "dataTransfer", { value: dataTransfer });
+      // A zone cancels the drag over it before it bubbles to the window.
+      const zone = document.createElement("div");
+      if (taken) zone.addEventListener("dragover", (ev) => ev.preventDefault());
+      document.body.append(zone);
+      zone.dispatchEvent(e);
+      zone.remove();
+      return dataTransfer.dropEffect;
+    };
+    expect(over(false)).toBe("none");
+    expect(over(true)).toBe("copy");
+  });
+
+  it("starts a batch with the tags and the partial choice the one-file form held", async () => {
+    vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+    render(<AddDocumentDialog open onOpenChange={() => {}} onAdded={() => {}} identity={identity} />);
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const user = userEvent.setup({ applyAccept: false });
+    await user.upload(screen.getByLabelText("Choose a file to upload"), new File(["a"], "a.pdf"));
+    await user.type(screen.getByLabelText("Tags (comma-separated, optional)"), "q3, plans");
+    await user.click(screen.getByLabelText(/Publish what could be read/));
+    await user.upload(screen.getByLabelText("Choose a file to upload"), [
+      new File(["a"], "a.pdf"),
+      new File(["b"], "b.pdf"),
+    ]);
+    expect(await screen.findByLabelText("Tags for every file (comma-separated, optional)")).toHaveValue("q3, plans");
+    expect(screen.getByLabelText(/Publish what could be read/)).toBeChecked();
   });
 });
