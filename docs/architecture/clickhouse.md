@@ -61,10 +61,11 @@ applied, so nothing recreates it. The cost is one more database: the setup SQL g
 migrating user `CURRENT GRANTS ON loom_telemetry.*`, and preflight names that grant when
 it is missing.
 
-**State outside ClickHouse.** Uploaded document originals are rows of `document_blobs`,
-addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`); with
-`LOOM_DOCUMENT_OBJECT_STORE=s3` each row is the catalog entry of an object in an
-S3-compatible bucket, which holds the bytes
+**State outside ClickHouse.** Under the Postgres memory authority, Postgres holds the
+state [storage authority](storage-authority.md#the-tables) lists. Uploaded document
+originals are rows of `document_blobs`, addressed per namespace by SHA-256
+(`server/knowledge/store/blobs.py`); with `LOOM_DOCUMENT_OBJECT_STORE=s3` each row is
+the catalog entry of an object in an S3-compatible bucket, which holds the bytes
 ([knowledge](../features/knowledge.md#where-originals-are-stored)). The token signing
 keys (`signing_keys`), admin runtime overrides of rate limits, latency budgets and live
 settings (`runtime_overrides`), sign-in attempt counts (`auth_attempts`), graph-walk
