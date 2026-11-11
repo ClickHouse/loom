@@ -900,6 +900,7 @@ def test_the_inspect_path_installs_from_the_checked_bundle(tmp_path: Path) -> No
     checks = script.rsplit("\n", 1)[0]
     result = _run_install(checks, home, _WORKING_CURL, serves)
     assert result.returncode == 0, (page, checks, result)
+    assert "loom-stack.tar.gz: OK" in result.stdout, (page, checks, result)
     result = _run_install(script, home, _WORKING_CURL, serves)
     assert result.returncode == 0, (page, script, result)
     passed = (home / ".loom" / "env").read_text().splitlines()
