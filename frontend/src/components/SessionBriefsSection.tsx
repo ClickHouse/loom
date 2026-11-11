@@ -12,7 +12,7 @@ import { SessionBriefPanel } from "./SessionBriefPanel";
 
 /**
  * The briefs this namespace holds, in one bucket above its conversations: the way to
- * find a brief whose conversation was never recorded (a session run while Recording was
+ * find a brief whose conversation was never recorded (a session run while recording was
  * off, or on a client that does not record). Folded to its title until opened, so the
  * threads stay at the top of the page; the briefs are read only once it opens. Hidden
  * when the namespace holds none.

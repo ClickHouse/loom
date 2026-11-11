@@ -77,6 +77,6 @@ export function recordingPrimerLine(on, namespace) {
   }
   return (
     `# Loom: the Stop hook records this conversation when recording is on for ${namespace} ` +
-    `(the owner's switch in the dashboard). ${dont}.`
+    `(the owner's Record conversations switch on the dashboard's Conversations page). ${dont}.`
   );
 }
