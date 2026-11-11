@@ -6,6 +6,7 @@ import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { invalidateShared } from "../lib/sharedReads";
 import { Setup } from "./Setup";
+import { QuickConnect } from "./Tokens";
 
 // One token form: what it reads (everything you belong to, or only the ticked
 // namespaces), where it saves, a name and an expiry; one result dialog for every tool.
@@ -1088,5 +1089,16 @@ describe("the token form", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
     expect(screen.queryByTestId("token-read-scope-collections")).toBeNull();
+  });
+
+  it("in a checklist step, takes focus into its form and is closed by its Cancel", async () => {
+    const onClose = vi.fn();
+    render(<QuickConnect onMinted={() => {}} onClose={onClose} />);
+    const form = await screen.findByRole("region", { name: "New token" }, WAIT);
+    await waitFor(() => expect(form.contains(document.activeElement)).toBe(true), WAIT);
+    // Inside the step's h3, its title is an h4.
+    expect(within(form).getByRole("heading", { name: "New token", level: 4 })).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

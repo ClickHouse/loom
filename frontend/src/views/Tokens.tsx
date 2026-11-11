@@ -407,7 +407,14 @@ function SearchOrder({
 
 /** The token form and the dialog that shows each client's setup once a token is made, on
  *  their own: the first-run checklist on Memories makes a token in place with them. */
-export function QuickConnect({ onMinted }: { onMinted: (r: TokenCreated) => void }) {
+export function QuickConnect({
+  onMinted,
+  onClose,
+}: {
+  onMinted: (r: TokenCreated) => void;
+  /** Cancelled, or the token's setup dialog closed: the form is done here. */
+  onClose: () => void;
+}) {
   const formRef = useRef<HTMLElement>(null);
   const [created, setCreated] = useState<TokenCreated | null>(null);
   // It opens in place of the button that asked for it: focus moves into the form.
@@ -419,12 +426,19 @@ export function QuickConnect({ onMinted }: { onMinted: (r: TokenCreated) => void
       <TokenForm
         formRef={formRef}
         titleAs="h4"
+        onCancel={onClose}
         onCreated={(r) => {
           setCreated(r);
           onMinted(r);
         }}
       />
-      <CreatedDialog created={created} onClose={() => setCreated(null)} />
+      <CreatedDialog
+        created={created}
+        onClose={() => {
+          setCreated(null);
+          onClose();
+        }}
+      />
     </>
   );
 }

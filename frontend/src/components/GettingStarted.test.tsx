@@ -254,7 +254,15 @@ describe("GettingStarted on Memories", () => {
     expect(await screen.findByText("No memories yet", undefined, WAIT)).toBeInTheDocument();
     expect(checklist()).toBeNull();
     expect(JSON.parse(localStorage.getItem(onboardingKey(SUBJECT, NS)) ?? "{}")).toMatchObject({ dismissed: true });
-    expect(localStorage.getItem(onboardingKey(SUBJECT, "other"))).toBeNull();
+    // Another new namespace still shows its own.
+    const other = { ...personal, namespace: "personal-other" };
+    act(() =>
+      useStore.setState({
+        myNamespaces: [other],
+        identity: { org: "dev", namespace: other.namespace, agent: "loom-ui" },
+      }),
+    );
+    await waitFor(() => expect(checklist()).not.toBeNull(), WAIT);
   });
 
   it("does not come back on a visit after every step was done", async () => {

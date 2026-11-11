@@ -76,7 +76,7 @@ function reachesHere(t: TokenEntry, namespace: string): boolean {
   );
 }
 
-export function connectState(args: {
+function connectState(args: {
   agentSeen: boolean;
   tokens: TokenEntry[] | null;
   namespace: string;
@@ -142,6 +142,8 @@ export function GettingStarted({
     onboarding.dismiss();
     onHidden?.();
   };
+  const createRef = useRef<HTMLButtonElement | null>(null);
+  const focusCreate = useRef(false);
   // Continue replaces the bar with the checklist: focus goes to its heading.
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const focusHeading = useRef(false);
@@ -154,6 +156,11 @@ export function GettingStarted({
   const navigate = useStore((s) => s.navigate);
   const [addOpen, setAddOpen] = useState(false);
   const [minting, setMinting] = useState(false);
+  useEffect(() => {
+    if (minting || !focusCreate.current) return;
+    focusCreate.current = false;
+    createRef.current?.focus();
+  }, [minting]);
 
   const [tokens, setTokens] = useState<TokenEntry[] | null>(null);
   const [mintedAt, setMintedAt] = useState<number | null>(null);
@@ -294,11 +301,17 @@ export function GettingStarted({
                       setMintedAt(Date.now());
                       reloadTokens();
                     }}
+                    onClose={() => {
+                      // The form leaves: focus goes back to the button that opened it.
+                      focusCreate.current = true;
+                      setMinting(false);
+                    }}
                   />
                 </Suspense>
               ) : (
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
+                    ref={createRef}
                     type={connect === "none" ? "primary" : "secondary"}
                     htmlType="button"
                     onClick={() => setMinting(true)}
@@ -366,10 +379,8 @@ export function GettingStarted({
         open={addOpen}
         onOpenChange={setAddOpen}
         identity={identity}
-        onAdded={() => {
-          mark("write");
-          onMemoryAdded();
-        }}
+        // The step ticks from the count the list reads again, not from this dialog.
+        onAdded={onMemoryAdded}
       />
     </Panel>
   );
