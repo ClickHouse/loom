@@ -14,9 +14,8 @@ interface Label {
   tone: string;
 }
 
-// What a check compares each cited source with.
-const COMPARED =
-  "Loom compared each source this answer cites with what it holds and what the answer's own reads returned";
+// Where a check looks for each cited source.
+const IN_LOOM = "in what Loom holds or in what the answer's own reads returned";
 
 /**
  * The label of an answer with this support and these citations; null when it has none.
@@ -42,8 +41,8 @@ export function supportLabel(support: Support, citations: Citation[], unknownNam
     return {
       text: all ? "Checked against what Loom holds" : `Partly confirmed: ${count}`,
       why: all
-        ? `${COMPARED}, and found each one.`
-        : `${COMPARED}, and found ${found} of ${citations.length}; each source it did not find says why.`,
+        ? `Loom found each source this answer cites ${IN_LOOM}.`
+        : `Loom found ${found} of the ${citations.length} sources this answer cites ${IN_LOOM}; each other source says why.`,
       icon: "check-in-circle",
       tone: "text-text-muted",
     };
@@ -52,7 +51,7 @@ export function supportLabel(support: Support, citations: Citation[], unknownNam
     return citations.length > 0
       ? {
           text: `Couldn't confirm: ${count}`,
-          why: `${COMPARED}, and found none of them; each source below says why.`,
+          why: `Loom found none of the sources this answer cites ${IN_LOOM}; each source below says why.`,
           icon: "warning",
           tone: "text-warn",
         }
@@ -83,8 +82,8 @@ export function supportLabel(support: Support, citations: Citation[], unknownNam
  * One finished answer's label and citations, as the server checked them against Loom with
  * the answer's token. The label follows the answer's `support` (server/assistant/domain/
  * support.py): an answer that makes no claim, such as a greeting or an abstention, has none.
- * A memory, document or help page found in Loom opens where the dashboard shows it; any other citation
- * says why.
+ * A memory, document or help page found in Loom opens where the dashboard shows it; any
+ * other citation says why.
  */
 export function Sources({
   citations,
