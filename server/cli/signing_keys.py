@@ -29,7 +29,7 @@ def _cmd_signing_key(args: argparse.Namespace) -> int:
             print(f"✗ {e}", file=sys.stderr)
             return 1
 
-    return run_connected(_go)
+    return run_connected(_go, org_free="the cell's signing keys")
 
 
 async def _servers_refresh_s(keyring: Any, ch: Any) -> float | None:

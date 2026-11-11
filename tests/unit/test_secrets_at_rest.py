@@ -275,7 +275,7 @@ def test_reseal_check_fails_while_values_need_the_previous_root(
 
     monkeypatch.setattr(cli, "reseal_all", fake)
     monkeypatch.setattr(cli, "in_flight", none_in_flight)
-    monkeypatch.setattr(cli, "run_connected", lambda go: asyncio.run(go(object())))
+    monkeypatch.setattr(cli, "run_connected", lambda go, **_declared: asyncio.run(go(object())))
     assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 1
     assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 0
 
@@ -314,7 +314,7 @@ def test_reseal_check_waits_for_sign_ins_in_flight_under_the_previous_root(
         async def query_all(self, sql: str, params: dict | None = None) -> list[dict]:
             return list(keeper) if "oauth_signin_state" in sql else []
 
-    monkeypatch.setattr(cli, "run_connected", lambda go: asyncio.run(go(Ch())))
+    monkeypatch.setattr(cli, "run_connected", lambda go, **_declared: asyncio.run(go(Ch())))
     assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 1
     out = capsys.readouterr().out
     assert "1 sign-in in flight" in out and "2030-03-17T17:46:40Z" in out

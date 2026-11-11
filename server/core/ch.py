@@ -804,6 +804,10 @@ class CHClient:
         if "_reconnect_lock" not in d:
             d["_reconnect_lock"] = asyncio.Lock()
 
+    @property
+    def connected(self) -> bool:
+        return self._client is not None
+
     async def connect(self) -> None:
         limit = int(settings.ch_pool_maxsize)
         # Streaming reads have connections of their own beside the pool; 0 is unbounded.

@@ -171,7 +171,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
             print(f"  CI:   LOOM_CLIENT_ID={args.name} LOOM_WORKLOAD_AUDIENCE={args.audience}")
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=(args.org,))
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
@@ -190,7 +190,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
             print(f"  {r['name']:<24} {state:<8} {r['org']:<16} {roles:<40} {shown}")
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, org_free="lists this cell's bots")
 
 
 def _cmd_disable(args: argparse.Namespace) -> int:
@@ -202,4 +202,4 @@ def _cmd_disable(args: argparse.Namespace) -> int:
         print(f"bot {args.name} disabled; its tokens are revoked")
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, org_free="a bot of this cell, by name")

@@ -9,7 +9,7 @@ import sys
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import run_connected
+from server.cli._ch import dry_run_orgs, run_connected
 
 _ADOPT_HELP = (
     "Let SSO sign-ins reach the password accounts whose email is at --domain: "
@@ -116,7 +116,7 @@ def _cmd_adopt(args: argparse.Namespace) -> int:
         print(f"linked {linked} account(s)")
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=dry_run_orgs(args))
 
 
 def _carried_line(was: str, owner: str, names: list[str], elsewhere: bool, *, dry_run: bool) -> str:
@@ -158,7 +158,7 @@ def _cmd_link(args: argparse.Namespace) -> int:
         print("linked: their next SSO sign-in lands on this account")
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=dry_run_orgs(args))
 
 
 def _cmd_unlink(args: argparse.Namespace) -> int:
@@ -180,7 +180,7 @@ def _cmd_unlink(args: argparse.Namespace) -> int:
         )
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, org_free="unlinks an email's accounts in this cell")
 
 
 def _cmd_password_link(args: argparse.Namespace) -> int:
@@ -207,4 +207,4 @@ def _cmd_password_link(args: argparse.Namespace) -> int:
         )
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=(args.org,))

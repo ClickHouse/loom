@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import run_connected
+from server.cli._ch import dry_run_orgs, run_connected
 
 
 def _cmd_recalibrate(args: argparse.Namespace) -> int:
@@ -43,7 +43,7 @@ def _cmd_recalibrate(args: argparse.Namespace) -> int:
                 print(f"    - {w}")
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, org_free="the embedder's calibration, deployment-wide")
 
 
 # ----------------------------------------------------------------------
@@ -164,7 +164,7 @@ def _cmd_rechunk(args: argparse.Namespace) -> int:
             print(f"  failed: {f}")
         return 1 if out["failed"] else 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=dry_run_orgs(args))
 
 
 # ----------------------------------------------------------------------
@@ -189,7 +189,7 @@ def _cmd_lexical_stats_rebuild(args: argparse.Namespace) -> int:
             print(f"{plane}: replaced {n} aggregate row(s) for {args.org}/{args.namespace}")
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=(args.org,))
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +206,10 @@ def _cmd_sensitivity_sweep(args: argparse.Namespace) -> int:
     vectors, tags a `medium` row's embedding rows. The closing line is the
     high-sensitivity invariant: live `high` rows that still have a live embedding row.
     """
-    return run_connected(lambda ch: _sensitivity_sweep_run(ch, args))
+    return run_connected(
+        lambda ch: _sensitivity_sweep_run(ch, args),
+        org_free="sweeps the cell's own rows: every org it touches is held",
+    )
 
 
 async def _sensitivity_sweep_run(ch: Any, args: argparse.Namespace) -> int:
@@ -265,7 +268,10 @@ def _cmd_integrity_repair(args: argparse.Namespace) -> int:
     """Read the three row-level invariants and, with
     `--apply`, re-emit the dim-0-with-vector rows with their true dimension.
     The drift and valid_to counts are listed, not repaired."""
-    return run_connected(lambda ch: _integrity_repair_run(ch, args))
+    return run_connected(
+        lambda ch: _integrity_repair_run(ch, args),
+        org_free="repairs the cell's own rows: every org it touches is held",
+    )
 
 
 async def _integrity_repair_run(ch: Any, args: argparse.Namespace) -> int:

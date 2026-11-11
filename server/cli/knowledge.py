@@ -11,7 +11,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from server.cli._ch import run_connected
+from server.cli._ch import dry_run_orgs, run_connected
 
 if TYPE_CHECKING:
     from server.knowledge.app.originals import Migrated
@@ -87,7 +87,7 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         await _record(args.namespace, started, result)
         return 1 if result.failed else 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=(args.org,))
 
 
 def _cmd_migrate_originals(args: argparse.Namespace) -> int:
@@ -128,7 +128,7 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
             _report_migrated(result)
         return 1 if result.errors or result.refused or result.unconfirmed else 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=dry_run_orgs(args))
 
 
 def _report_migrated(result: Migrated) -> None:

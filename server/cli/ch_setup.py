@@ -427,7 +427,7 @@ def _analyst_sql() -> list[str]:
         await analysis.load_for_print()
         return analysis.printed_statements(await analysis.own_grant_revokes())
 
-    return run_connected(_go)
+    return run_connected(_go, org_free="ClickHouse users and grants, no tenant rows")
 
 
 def _write_analyst() -> None:
@@ -438,7 +438,7 @@ def _write_analyst() -> None:
     from server.insights.app.analysis import SetupRefused, rewrite, shown_cause
 
     try:
-        run_connected(lambda _ch: rewrite())
+        run_connected(lambda _ch: rewrite(), org_free="ClickHouse users and grants, no tenant rows")
     except Exception as e:  # noqa: BLE001 — insights.query is optional; the rest of setup stands
         line = error_line(e)
         if isinstance(e, SetupRefused):

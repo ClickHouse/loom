@@ -9,6 +9,7 @@ import sys
 from datetime import date, timedelta
 from typing import Any
 
+from server.cli._ch import connect_declared, disconnect
 from server.core.datetimes import utc_now as _now
 
 # The first botocore whose put_object takes IfNoneMatch (the `aws` extra's floor).
@@ -95,11 +96,11 @@ def _cmd_export(args: argparse.Namespace) -> int:
     async def _go() -> list[Exported]:
         with statement_timeout(STATEMENT_TIMEOUT_S):
             ch = get_client()
-            await ch.connect()
+            await connect_declared(ch, org_free="reads; writes only the export bucket")
             try:
                 return await export_day(day, prefix=args.prefix, put=put, name_key=name_key, ch=ch)
             finally:
-                await ch.disconnect()
+                await disconnect(ch)
 
     for e in asyncio.run(_go()):
         # A kept object's size is the earlier run's, which this run never read.

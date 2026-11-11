@@ -271,7 +271,7 @@ def test_the_cli_records_the_stored_value_before_its_change(
     import server.cli._ch as cli_ch
     from server.cli import settings_cmd
 
-    def run_connected(run: Any) -> Any:
+    def run_connected(run: Any, **_declared: object) -> Any:
         import asyncio
 
         return asyncio.run(run(None))
@@ -375,7 +375,9 @@ def test_the_cli_history_says_when_an_undo_is_a_reset(
         return _HISTORY
 
     monkeypatch.setattr(admin_repo, "setting_changes", setting_changes)
-    monkeypatch.setattr(settings_cmd, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(
+        settings_cmd, "run_connected", lambda run, **_declared: asyncio.run(run(None))
+    )
     args = argparse.Namespace(name="", limit=5, json=False)
     assert settings_cmd._cmd_history(args) == 0
     newer, older = capsys.readouterr().out.splitlines()

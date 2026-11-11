@@ -23,7 +23,9 @@ def test_it_refuses_while_new_originals_go_to_clickhouse(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(settings, "document_object_store", "clickhouse")
-    monkeypatch.setattr(knowledge, "run_connected", lambda _run: pytest.fail("connected"))
+    monkeypatch.setattr(
+        knowledge, "run_connected", lambda _run, **_declared: pytest.fail("connected")
+    )
     assert knowledge._cmd_migrate_originals(_args()) == 2
     assert "LOOM_DOCUMENT_OBJECT_STORE=s3" in capsys.readouterr().err
 
@@ -32,12 +34,14 @@ def test_a_namespace_needs_its_org(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(settings, "document_object_store", "s3")
-    monkeypatch.setattr(knowledge, "run_connected", lambda _run: pytest.fail("connected"))
+    monkeypatch.setattr(
+        knowledge, "run_connected", lambda _run, **_declared: pytest.fail("connected")
+    )
     assert knowledge._cmd_migrate_originals(_args(namespace="docs")) == 2
     assert "--namespace needs --org" in capsys.readouterr().err
 
 
-def _connected(run: Any) -> Any:
+def _connected(run: Any, **_declared: object) -> Any:
     return asyncio.run(run(None))
 
 

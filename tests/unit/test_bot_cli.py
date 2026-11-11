@@ -38,7 +38,7 @@ def _args(key: Path) -> argparse.Namespace:
 
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch) -> None:
-    monkeypatch.setattr(bots, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(bots, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
 
 
 @pytest.mark.parametrize(

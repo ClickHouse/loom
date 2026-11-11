@@ -698,6 +698,8 @@ def test_answers_purge_tombstones_keep_the_memory(monkeypatch: pytest.MonkeyPatc
     written: list[dict[str, Any]] = []
 
     class _CH:
+        connected = False
+
         async def connect(self) -> None: ...
 
         async def query_all(self, sql: str, params: object = None) -> list[dict[str, Any]]:

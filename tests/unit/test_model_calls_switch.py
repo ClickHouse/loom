@@ -1140,7 +1140,7 @@ def test_the_dupcheck_refit_command_sends_nothing_for_a_switched_off_org(monkeyp
         await customer.require()  # what the replay's vector embed checks first
         sent.append(org)
 
-    monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(cli, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     monkeypatch.setattr("server.tracker.app.source.tracker_source", lambda org, ns: object())
     monkeypatch.setattr(df, "state_repo", lambda: object())
     monkeypatch.setattr(df, "refit_namespace", refit)

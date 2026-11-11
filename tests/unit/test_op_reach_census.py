@@ -337,7 +337,7 @@ def test_call_counts_only_with_the_flag(monkeypatch, capsys):
             seen.append((sql, params))
             return [{"operation": "memory.set", "calls": 7, "last_ts": "2000-01-01", "agents": 2}]
 
-    def fake_run_connected(run):
+    def fake_run_connected(run, **_declared):
         import asyncio
 
         return asyncio.run(run(FakeCH()))

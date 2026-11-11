@@ -106,11 +106,13 @@ class _FakeCH:
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
-        self.connected = 0
+        self.connects = 0
         self.disconnected = 0
 
+    connected = False
+
     async def connect(self) -> None:
-        self.connected += 1
+        self.connects += 1
 
     async def disconnect(self) -> None:
         self.disconnected += 1
@@ -175,7 +177,7 @@ def test_cli_issued_before_needs_subject(
 ) -> None:
     rc = cli.main(["revoke-token", "--jti", "abc", "--issued-before", "2026-09-17T16:30:00Z"])
     assert rc == 2 and "--subject" in capsys.readouterr().err
-    assert fake_ch.inserts == [] and fake_ch.connected == 0
+    assert fake_ch.inserts == [] and fake_ch.connects == 0
 
 
 def test_cli_issued_before_rejects_a_bad_instant(
@@ -183,7 +185,7 @@ def test_cli_issued_before_rejects_a_bad_instant(
 ) -> None:
     rc = cli.main(["revoke-token", "--subject", "sa:x", "--issued-before", "yesterday"])
     assert rc == 2 and "ISO-8601" in capsys.readouterr().err
-    assert fake_ch.connected == 0
+    assert fake_ch.connects == 0
 
 
 @pytest.mark.parametrize(
@@ -266,7 +268,7 @@ def test_cli_mint_reports_the_jti_but_never_beside_a_saved_token(
     from server.cli import access
 
     # An empty keyring: the mint signs with the root secret, reading no ClickHouse.
-    monkeypatch.setattr(access, "run_connected", lambda run: None)
+    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: None)
     rc = cli.main(
         ["mint-token", "--subject", "sa:x", "--org", "acme", "--namespaces", "shop", "--json"]
     )

@@ -146,7 +146,7 @@ def test_the_admin_api_registers_and_lists_the_flag(registry, monkeypatch) -> No
 def test_loom_bot_create_takes_the_flag(registry, monkeypatch, capsys) -> None:
     from server.cli import bots as bots_cli
 
-    monkeypatch.setattr(bots_cli, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(bots_cli, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     rc = cli.main(
         [
             "bot",
@@ -182,7 +182,7 @@ def minting(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     monkeypatch.setenv("LOOM_JWT_SECRET", _SECRET)
     monkeypatch.setattr(settings, "jwt_secret", _SECRET, raising=False)
     # An empty keyring: the mint signs with the root secret, reading no ClickHouse.
-    monkeypatch.setattr(access, "run_connected", lambda run: None)
+    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: None)
     # These mint tests run after every replica has the human-admin guards.
     monkeypatch.setattr(access, "_platform_admin_rollout_ready", lambda: True)
     recorded: list[dict[str, Any]] = []
@@ -255,7 +255,7 @@ def test_the_mint_is_recorded_as_its_own_audit_event(monkeypatch) -> None:
         return "row-hash"
 
     monkeypatch.setattr(audit, "emit", emit)
-    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     args = SimpleNamespace(subject="sa:cp", org="acme", ttl_days=7)
     assert access._audit_platform_admin_mint(args, {"jti": "j1", "namespaces": ["*"]})
     [(event, kw)] = rows

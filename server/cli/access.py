@@ -39,7 +39,7 @@ def _cmd_claim_release(args: argparse.Namespace) -> int:
             return None
         return str(row.get("owner_email") or "") or "(unknown)"
 
-    owner = run_connected(_lookup_owner)
+    owner = run_connected(_lookup_owner, org_free="reads")
     if owner is None:
         print(
             f"no claim found for {args.org}/{args.namespace}",
@@ -80,7 +80,7 @@ def _cmd_claim_release(args: argparse.Namespace) -> int:
         )
         return 0
 
-    return run_connected(_go)
+    return run_connected(_go, orgs=(args.org,))
 
 
 def _normalize_namespace_args(values: list[str] | None) -> list[str]:
@@ -129,7 +129,9 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
         )
         return 1
     try:
-        keyring.load_for_offline_mint(run=run_connected)
+        keyring.load_for_offline_mint(
+            run=lambda work: run_connected(work, org_free="reads the signing keyring")
+        )
     except ValueError as e:  # another root: no server would accept the token
         print(f"  ✗ {e}", file=sys.stderr)
         return 1
@@ -274,7 +276,9 @@ def _platform_admin_rollout_ready() -> bool:
     from server.auth import machines
 
     try:
-        return bool(run_connected(machines.platform_admin_tokens_ready))
+        return bool(
+            run_connected(machines.platform_admin_tokens_ready, org_free="reads the live instances")
+        )
     except AuthorityMismatch:
         raise  # a shell configured for another deployment: its own one-line refusal
     except Exception as e:  # noqa: BLE001 — an unread fleet refuses an admin token
@@ -304,7 +308,7 @@ def _audit_platform_admin_mint(args: argparse.Namespace, summary: dict[str, Any]
         )
 
     try:
-        return bool(run_connected(_emit))
+        return bool(run_connected(_emit, orgs=(args.org,)))
     except Exception as e:  # noqa: BLE001 — an unrecorded mint is refused, never handed out
         print(f"  ✗ audit log not reached: {type(e).__name__}: {e}", file=sys.stderr)
         return False
@@ -531,7 +535,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        return run_connected(_run)
+        return run_connected(_run, org_free="revokes a token or subject by id: no org's rows")
     except AuthorityMismatch:
         raise  # a shell configured for another deployment: its own one-line refusal
     except Exception as e:  # noqa: BLE001 — a revocation that did not land must say so

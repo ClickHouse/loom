@@ -40,6 +40,8 @@ class _FakeCH:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
         self.executed: list[str] = []
 
+    connected = False
+
     async def connect(self) -> None:
         return None
 

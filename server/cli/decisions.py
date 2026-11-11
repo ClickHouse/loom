@@ -9,7 +9,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import run_connected
+from server.cli._ch import dry_run_orgs, run_connected
 
 if TYPE_CHECKING:
     from server.memory.app.decision_extract import Action, ExtractReport
@@ -132,7 +132,7 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         print_report(report)
         return exit_code(report)
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=dry_run_orgs(args))
 
 
 def exit_code(report: ExtractReport) -> int:

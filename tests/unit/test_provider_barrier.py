@@ -278,7 +278,7 @@ def test_loom_participant_retire_refuses_a_live_one(setup, monkeypatch, capsys):
     monkeypatch.setattr(
         barrier, "participants", AsyncMock(return_value=[_row(identity), _row(other)])
     )
-    monkeypatch.setattr(_ch, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(_ch, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     args = argparse.Namespace(participant=str(other), yes=True)
     assert participant._cmd_retire(args) == 1
     assert "still running" in capsys.readouterr().err

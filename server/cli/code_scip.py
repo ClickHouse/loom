@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from server.cli._ch import connect_code_plane, connect_declared
 from server.cli.code_backfill import _record_manual_pass
 from server.cli.code_run import _identity, _note, _repo_cfg
 
@@ -66,9 +67,9 @@ async def _scip_full(args: argparse.Namespace) -> int:
     )
     from server.core.ch import get_client
 
-    await get_client().connect()
+    cfg = _repo_cfg(args)  # before declaring the org: an unconfigured entry records nothing
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
-    cfg = _repo_cfg(args)
     # scip-full runs scip-clang; an entry another compiler tier owns (Go,
     # Python, TypeScript) is that worker's to re-index, and its checkout is
     # the worker's to fetch. Same ownership test the delta pass applies.
@@ -230,11 +231,14 @@ async def _entry_locked(args: argparse.Namespace) -> int:
         current_holder,
         entry_lock,
     )
+    from server.core.ch import get_client
 
     command = args.command[1:] if args.command[:1] == ["--"] else list(args.command)
     if not command:
         print("entry-lock: no command after --", file=sys.stderr)
         return 2
+    # The lease and a recorded tier are rows of the entry's org.
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     tier = args.tier
     tail = bytearray() if tier else None
@@ -390,7 +394,7 @@ async def _scip_delta(args: argparse.Namespace) -> int:
     from server.core.ch import get_client
     from server.workers import pass_context
 
-    await get_client().connect()
+    await connect_declared(get_client(), org_free="the cell's configured repositories")
     started = time.monotonic()
     # Bound so the pass's set_namespace() lands on the row.
     ctx = pass_context.begin("code_scip_delta")
@@ -429,13 +433,15 @@ async def _scip_retry(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await get_client().connect()
     org, ns = _identity(args)
+    # The batch is read before the org is declared (on the client `code_run` connected):
+    # a mistyped --org has none, and a `recording` cell records nothing for it.
     repo = CodeRepo()
     batch = await repo.get_scip_batch(org, ns, args.batch_id)
     if batch is None:
         print(f"batch not found: {args.batch_id}", file=sys.stderr)
         return 2
+    await connect_code_plane(get_client(), args)  # declares the org it now writes
     await repo.upsert_scip_batch(
         org,
         ns,

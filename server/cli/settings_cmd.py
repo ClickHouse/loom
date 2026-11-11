@@ -33,7 +33,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         _print_rows(rows, args.json)
         return 0
 
-    return run_connected(_go)
+    return run_connected(_go, org_free="the cell's settings")
 
 
 def _cmd_change(args: argparse.Namespace) -> int:
@@ -67,7 +67,7 @@ def _cmd_change(args: argparse.Namespace) -> int:
             print(f"✓ {verb}: {args.name} = {json.dumps(row['value'])} ({row['source']})")
         return 0
 
-    return run_connected(_go)
+    return run_connected(_go, org_free="the cell's settings")
 
 
 def _cmd_history(args: argparse.Namespace) -> int:
@@ -90,7 +90,7 @@ def _cmd_history(args: argparse.Namespace) -> int:
             )
         return 0
 
-    return run_connected(_go)
+    return run_connected(_go, org_free="the cell's settings")
 
 
 def register_settings_cli(sub: Any) -> None:

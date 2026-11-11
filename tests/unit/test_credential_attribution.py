@@ -339,7 +339,9 @@ def test_cli_mint_token_takes_a_consumer(monkeypatch, capsys, settings_override)
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             return []
 
-    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(_NoKeys())))
+    monkeypatch.setattr(
+        access, "run_connected", lambda run, **_declared: asyncio.run(run(_NoKeys()))
+    )
     secret = settings.jwt_secret  # an empty keyring signs with the root secret
     rc = cli.main(
         [
