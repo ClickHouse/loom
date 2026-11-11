@@ -320,6 +320,9 @@ export function CollectionsInside({
   const inside = useMemo(() => collectionsInside(rows, current), [rows, current]);
   const top = !current || current.personal;
   const shared = useMemo(() => (top ? sharedWithMe(rows) : []), [rows, top]);
+  // Over every collection listed, as the select and the path count them.
+  const repeated = useMemo(() => repeatedTitles(rows), [rows]);
+  const byName = useMemo(() => new Map(rows.map((c) => [c.namespace, c])), [rows]);
   if (inside.length === 0 && shared.length === 0) return null;
   return (
     <div className={`space-y-6 ${className}`}>
@@ -328,7 +331,8 @@ export function CollectionsInside({
         id={HEADING_ID}
         label="Collections"
         items={inside}
-        rows={rows}
+        repeated={repeated}
+        byName={byName}
         onPick={onPick}
         withPath={top}
         truncated={truncated}
@@ -337,9 +341,10 @@ export function CollectionsInside({
         id={SHARED_HEADING_ID}
         label="Shared with you"
         items={shared}
-        rows={rows}
+        repeated={repeated}
+        byName={byName}
         onPick={onPick}
-        withPath={true}
+        withPath
         truncated={truncated}
       />
     </div>
@@ -351,7 +356,8 @@ function PlaceList({
   id,
   label,
   items,
-  rows,
+  repeated,
+  byName,
   onPick,
   withPath,
   truncated,
@@ -359,16 +365,15 @@ function PlaceList({
   id: string;
   label: string;
   items: CollectionEntry[];
-  rows: CollectionEntry[];
+  /** Titles shown twice, and every collection by name, over the whole list. */
+  repeated: Set<string>;
+  byName: Map<string, CollectionEntry>;
   onPick: (collection: string) => void;
   withPath: boolean;
   truncated: boolean;
 }) {
   const [count, setCount] = useState(FIRST_INSIDE);
   const list = useRef<HTMLUListElement | null>(null);
-  // Over every collection listed, as the select and the path count them.
-  const repeated = useMemo(() => repeatedTitles(rows), [rows]);
-  const byName = useMemo(() => new Map(rows.map((c) => [c.namespace, c])), [rows]);
   const left = items.length - count;
   // The last Show more removes its button: the focus goes to the first collection it added.
   const markShown = useLastPageFocus({
