@@ -85,3 +85,43 @@ describe("Modal", () => {
     ).not.toBeNull();
   });
 });
+
+describe("Modal opened from the assistant panel", () => {
+  it("sends the focus to the page's h1 when the panel that opened it has closed", async () => {
+    function Page() {
+      const [open, setOpen] = useState(false);
+      const [panelOpen, setPanelOpen] = useState(true);
+      return (
+        <>
+          <main id="main">
+            <h1>Library</h1>
+          </main>
+          <section data-assistant-panel="" data-open={panelOpen ? "" : undefined}>
+            <button type="button" onClick={() => setOpen(true)}>
+              spec.pdf
+            </button>
+          </section>
+          <button type="button" onClick={() => setPanelOpen(false)}>
+            close panel
+          </button>
+          <Modal
+            open={open}
+            onOpenChange={(v) => {
+              setOpen(v);
+              if (!v) setPanelOpen(false);
+            }}
+            title="Preview"
+          />
+        </>
+      );
+    }
+    render(<Page />);
+    const opener = screen.getByRole("button", { name: "spec.pdf" });
+    opener.focus();
+    fireEvent.click(opener);
+    await screen.findByRole("dialog");
+    fireEvent.keyDown(screen.getByRole("button", { name: "Close" }), { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Library" })).toHaveFocus());
+  });
+});

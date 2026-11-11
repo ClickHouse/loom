@@ -150,7 +150,8 @@ function MemoryList() {
   // `/` focuses the inline search anywhere on Memories.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/" || shortcutOff(e)) return;
+      // Ctrl+/ and ⌘/ are the assistant's: only a bare "/" is the search's.
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || shortcutOff(e)) return;
       const t = e.target;
       if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable))
         return;

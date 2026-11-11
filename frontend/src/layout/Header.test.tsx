@@ -63,6 +63,46 @@ describe("Header", () => {
     expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
   });
 
+  it("names the icon-only New in a tooltip below lg", async () => {
+    listMine.mockResolvedValue(jwtOnly);
+    useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+    render(<Header />);
+    await waitFor(() => expect(listMine).toHaveBeenCalled());
+    await userEvent.setup().hover(screen.getByRole("button", { name: "New" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("New");
+  });
+
+  it("keeps New's focus when the window crosses lg and its tooltip comes or goes", async () => {
+    let width = 1400;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      get matches() {
+        const min = /min-width: (\d+)px/.exec(query);
+        return min ? width >= Number(min[1]) : false;
+      },
+      addEventListener: (_: string, f: () => void) => listeners.add(f),
+      removeEventListener: (_: string, f: () => void) => listeners.delete(f),
+    }));
+    try {
+      listMine.mockResolvedValue(jwtOnly);
+      useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+      render(<Header />);
+      await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toBeEnabled());
+      const button = screen.getByRole("button", { name: "New" });
+      act(() => button.focus());
+      for (const w of [900, 1400]) {
+        width = w;
+        act(() => {
+          for (const f of listeners) f();
+        });
+        expect(screen.getByRole("button", { name: "New" })).toBe(button);
+        expect(button).toHaveFocus();
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("reads the 8540 store slice first and skips the list_mine read", async () => {
     useStore.setState({
       whoami: { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"] },
@@ -159,6 +199,24 @@ it("names the account menu after the signed-in subject and org", async () => {
   const menu = await screen.findByRole("menu", { name: "Signed in as w@example.com, org dev" });
   expect(screen.getByText("Signed in as").closest("[aria-hidden='true']")).not.toBeNull();
   expect(menu).toContainElement(screen.getByRole("menuitem", { name: "Settings" }));
+});
+
+// A header menu's trigger keeps the menu's open state, which its open style reads, also
+// under a tooltip (New's, below lg): the tooltip's own state never takes its place.
+it("keeps each header menu's trigger in the menu's open state while it is open", async () => {
+  listMine.mockResolvedValue(jwtOnly);
+  useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+  render(<Header />);
+  await waitFor(() => expect(listMine).toHaveBeenCalled());
+  for (const name of ["Account: w@example.com", "New"]) {
+    const trigger = screen.getByRole("button", { name });
+    await userEvent.click(trigger);
+    await screen.findByRole("menu");
+    expect(trigger).toHaveAttribute("data-state", "open");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveAttribute("data-state", "closed"));
+  }
 });
 
 // The search field's hint is written the way the keyboard prints it: Ctrl K off Apple

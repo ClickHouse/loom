@@ -51,6 +51,7 @@ import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { shortcutOff } from "./lib/shortcuts";
+import { assistantPopstate, bootDock, onAssistantShortcut, useDock } from "./lib/assistantDock";
 
 import { reloadPage } from "./lib/navigation";
 import { endSession, lostReason, sessionEndedNote, whoamiWhenReady } from "./lib/session";
@@ -130,6 +131,9 @@ const ProblemsBanner = lazy<() => ReactElement | null>(() =>
   ),
 );
 
+// The assistant panel and its behaviour load the first time it opens (lib/assistantDock.ts).
+const AssistantPanel = lazy(() => import("./layout/AssistantPanel").then((m) => ({ default: m.AssistantPanel })));
+
 const NamespaceNoAccess = lazy(() =>
   import("./components/NamespaceNoAccess").then((m) => ({ default: m.NamespaceNoAccess })),
 );
@@ -157,7 +161,8 @@ export default function App() {
   useEffect(() => {
     if (navSeq === 0) return;
     mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
-    arriveAt(useStore.getState().navNote);
+    const s = useStore.getState();
+    arriveAt(s.navNote, s.arriveFocus);
   }, [navSeq]);
   // The dashboard reports its own paint — one ui.vitals row per view, posted when the
   // view ends (a navigation, the page hiding), never inside the view's own measured
@@ -257,6 +262,9 @@ export default function App() {
   useEffect(() => {
     if (!authed) return;
     const sync = (e: PopStateEvent) => {
+      // The assistant's phone sheet has an entry of its own: leaving it restores nothing
+      // (the sheet put the focus back on its launcher), and an overlay closes on Back.
+      if (assistantPopstate(e.state)) return;
       const v = pathnameView();
       if (!v) return;
       const changed = v !== useStore.getState().view;
@@ -268,6 +276,18 @@ export default function App() {
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, [authed, arriveFromHistory]);
+
+  // The assistant panel: its modes follow the window and the sidebar, a navigation closes
+  // it at overlay and phone widths, and Ctrl+/ (⌘/) opens and closes it. Wired once the
+  // shell has drawn (the elements a modal panel makes inert exist from then on).
+  const shellDrawn = !!identity && !!whoami_;
+  useEffect(() => {
+    if (!shellDrawn) return;
+    bootDock();
+    document.addEventListener("keydown", onAssistantShortcut);
+    return () => document.removeEventListener("keydown", onAssistantShortcut);
+  }, [shellDrawn]);
+  const dockMounted = useDock((s) => s.mounted);
 
   // Goto-prefix: `g` then a letter within 1.2s jumps view (vim/Gmail convention).
   useEffect(() => {
@@ -633,46 +653,72 @@ export default function App() {
     <div className="h-screen flex flex-col bg-bg text-text">
       <a
         href="#main"
+        data-dock-inert=""
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:px-3 focus:py-1.5 focus:bg-accent focus:text-on-accent focus:rounded-sm focus:shadow-lg text-xs font-medium"
       >
         Skip to main content
       </a>
+      {/* `data-dock-inert`: what a modal assistant panel makes inert (lib/assistantDock.ts);
+          the wrappers are `display: contents`, so the layout is the children's. */}
       <div className="flex flex-1 min-h-0">
-        <Sidebar />
+        <div className="contents" data-dock-inert="">
+          <Sidebar />
+        </div>
         <div className="flex-1 flex flex-col min-w-0">
-          <ReloadBar />
-          <Header />
-          {/* `relative`: a visually hidden (absolute) label inside a scrolled row is placed
-              against main, so it can never stretch the page past the viewport. */}
-          <main id="main" tabIndex={-1} className="relative flex-1 overflow-y-auto" ref={mainRef}>
-            <Suspense fallback={null}>
-              <ProblemsBanner />
-            </Suspense>
-            <PendingRequestBanner />
-            {/* Keyed by view so each navigation replays the fade-in, and the no-access
+          <div className="contents" data-dock-inert="">
+            <ReloadBar />
+            <Header />
+          </div>
+          <div className="flex flex-1 min-h-0">
+            {/* `relative`: a visually hidden (absolute) label inside a scrolled row is placed
+              against main, so it can never stretch the page past the viewport. `isolate`
+              keeps the page's own z-indexes under the assistant panel's layer. */}
+            <main
+              id="main"
+              tabIndex={-1}
+              data-dock-inert=""
+              className="relative isolate flex-1 min-w-0 overflow-y-auto"
+              ref={mainRef}
+            >
+              <Suspense fallback={null}>
+                <ProblemsBanner />
+              </Suspense>
+              <PendingRequestBanner />
+              {/* Keyed by view so each navigation replays the fade-in, and the no-access
                 page is a page of its own: leaving it mounts the view afresh, never under
                 the hidden old page. `h-full`
                 gives a view that wants the page's height (the Explorer's
                 three panes) something to resolve against;
                 taller views overflow it and scroll <main> as before. */}
-            <div key={denied ? "no-access" : view} className="animate-view-in h-full">
-              {/* Delayed, so a chunk that arrives quickly never flashes a loader. */}
-              <Suspense
-                fallback={
-                  <LoadingSkeleton label="Loading page" className="p-6">
-                    <SkeletonCard />
-                  </LoadingSkeleton>
-                }
-              >
-                <ViewSwitch view={view} />
+              <div key={denied ? "no-access" : view} className="animate-view-in h-full">
+                {/* Delayed, so a chunk that arrives quickly never flashes a loader. */}
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton label="Loading page" className="p-6">
+                      <SkeletonCard />
+                    </LoadingSkeleton>
+                  }
+                >
+                  <ViewSwitch view={view} />
+                </Suspense>
+              </div>
+            </main>
+            {dockMounted && (
+              <Suspense fallback={null}>
+                <AssistantPanel />
               </Suspense>
-            </div>
-          </main>
-          <MobileNav />
+            )}
+          </div>
+          <div className="contents" data-dock-inert="">
+            <MobileNav />
+          </div>
         </div>
       </div>
       {/* Where a navigation went, said once (lib/place.ts `announce`). */}
       <p id="loom-nav-status" role="status" className="sr-only" />
+      {/* The assistant's own announcements: an answer started, ended, is ready. Outside the
+          panel and its chunk, so it is live from the first paint and never inert. */}
+      <p id="loom-assistant-status" role="status" aria-live="polite" aria-atomic="true" className="sr-only" />
 
       {inspectedKey && inspectorIdentity && !denied && (
         <Suspense fallback={null}>

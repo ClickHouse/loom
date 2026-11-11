@@ -3,7 +3,7 @@ import { Modal } from "./ui/Modal";
 import { Fragment, useId, useState } from "react";
 import { Switch } from "@clickhouse/click-ui/Switch";
 import { setSingleKeyShortcuts, singleKeyShortcutsOn } from "../lib/shortcuts";
-import { isApplePlatform, paletteShortcut } from "../lib/platform";
+import { assistantShortcut, isApplePlatform, paletteShortcut } from "../lib/platform";
 
 /** One shortcut: its keys ("g m" is a sequence, "Ctrl+Enter" a chord, "j / ↓" two
  *  alternatives) and what it does. `syntax`: typed into the search, not pressed. `cap`: one
@@ -28,6 +28,7 @@ function groups(): Group[] {
       title: "Global",
       rows: [
         { keys: paletteShortcut(), label: "Focus the universal search bar", cap: true },
+        { keys: assistantShortcut(), label: "Open or close the assistant", cap: true },
         { keys: "↑ / ↓", label: "Move through search results" },
         { keys: "Enter", label: "Open the search result" },
         { keys: "tag:work", label: "Search memories tagged work (partial OK)", syntax: true },

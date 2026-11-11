@@ -153,6 +153,38 @@ describe("an entity on a memory opens in place", () => {
     expect(link).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("after a navigation from the drawer, closing it leaves the focus on the new page's h1, not the opener", async () => {
+    vi.mocked(getMemory).mockResolvedValue({ ...DETAIL, tags: ["ops"] });
+    const inspector = (
+      <MemoryInspector identity={identity} memoryKey="api/rate-limit" onClose={() => {}} onChanged={() => {}} />
+    );
+    const page = (drawer: boolean) => (
+      <>
+        <main id="main">
+          <h1 tabIndex={-1}>Memories</h1>
+          <button type="button">Opener</button>
+        </main>
+        {drawer && inspector}
+      </>
+    );
+    const { rerender } = render(page(false));
+    screen.getByRole("button", { name: "Opener" }).focus();
+    rerender(page(true));
+    await screen.findByText("the public API allows 100 requests a minute");
+    const seq = useStore.getState().navSeq;
+    // A tag searches Memories by it: a navigation, whose arrival focuses the page's h1.
+    await userEvent.setup().click(screen.getByRole("button", { name: "ops" }));
+    expect(useStore.getState().navSeq).toBeGreaterThan(seq);
+    // The navigation closes the drawer, and its arrival focuses the new page's h1 at once;
+    // the drawer's own focus return comes after, and must leave it there.
+    rerender(page(false));
+    const h1 = screen.getByRole("heading", { level: 1, name: "Memories" });
+    h1.focus();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h1).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Opener" })).not.toHaveFocus();
+  });
+
   it("shows a tag by its name, with no '#' glyph", async () => {
     vi.mocked(getMemory).mockResolvedValue({ ...DETAIL, tags: ["ops"] });
     await open();

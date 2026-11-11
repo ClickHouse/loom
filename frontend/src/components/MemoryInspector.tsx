@@ -52,6 +52,7 @@ import {
 } from "../api";
 import { LockMemoryDialog, RedactVersionDialog, RejectMemoryDialog } from "../flows/MemoryReasonDialogs";
 import { navigationHref, useStore } from "../lib/state";
+import { openerUsable } from "../lib/place";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
@@ -226,6 +227,7 @@ export function MemoryInspector({
     const el = document.activeElement;
     return el instanceof HTMLElement ? el : null;
   });
+  const [openedAt] = useState(() => useStore.getState().navSeq);
   const inspect = useStore((s) => s.inspect);
   const openMemory = onInspectMemory ?? inspect;
   // A rename's destination is this row moved: it opens under the writer identity this one
@@ -893,7 +895,9 @@ export function MemoryInspector({
           }}
           onCloseAutoFocus={(e) => {
             e.preventDefault();
-            opener?.focus();
+            // A navigation since the drawer opened (a tag, a graph link) moved the focus to
+            // its page; an opener in an assistant panel that closed is hidden.
+            if (useStore.getState().navSeq === openedAt && openerUsable(opener)) opener?.focus();
           }}
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}

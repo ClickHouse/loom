@@ -4,6 +4,7 @@ import { Dialog } from "@clickhouse/click-ui/Dialog";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { keepOpenOnToasts } from "../Toast";
 import { lastPressed } from "../../lib/clickUiFixes";
+import { focusViewHeading, openerUsable } from "../../lib/place";
 
 /**
  * Modal — the one dialog: Click UI's Dialog (title, description, padding, focus trap,
@@ -92,6 +93,8 @@ export function Modal({
     onCloseAutoFocus?.(e);
     if (e.defaultPrevented || !opener.current?.isConnected) return;
     e.preventDefault();
+    // An opener in the assistant panel that a navigation closed is hidden: the page's h1.
+    if (!openerUsable(opener.current)) return focusViewHeading();
     opener.current.focus();
   };
   return (
