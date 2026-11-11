@@ -331,10 +331,11 @@ Claims, roles and grants are in [Tokens and grants](../guides/tokens-and-grants.
 ## 4. First memory over HTTP
 
 Every operation is a `POST /v1/<op>` with a JSON body that names the identity
-`(org, namespace, agent)`. A fresh install with the stock `.env`, from the released
-image or a checkout, is single-user: org `dev`, namespace `local`, and no token, so the
-calls below work as written. If a call without a token answers 401 `AUTH_INVALID`, auth
-is on; the paragraph after the calls says what to change.
+`(org, namespace, agent)`. A fresh install with the stock `.env`, from the installer
+or a checkout, is single-user: org `dev`, namespace `local`, and no token, so the calls
+below work as written. If a call without a token answers 401 `AUTH_INVALID`, auth is on:
+add `-H "Authorization: Bearer $LOOM_API_KEY"` and use your account's org and namespace;
+a header with an empty token is refused.
 
 ```bash
 curl -sX POST http://localhost:7777/v1/memory.set -H 'Content-Type: application/json' \
@@ -350,14 +351,12 @@ curl -sX POST http://localhost:7777/v1/memory.search -H 'Content-Type: applicati
   | jq '.results[0].content_excerpt'
 ```
 
-With auth on, add `-H "Authorization: Bearer $LOOM_API_KEY"` and use your account's org
-and namespace; a header with an empty token is refused. The `memory.set` response
-carries `memory_id`, `content_sha256` and `status`. `memory.get` reads one key back:
-`found` says whether the key holds a live value, and `value` is the value as written.
-The search response carries `results` and `abstain`, which says whether the best hit is
-strong enough to answer from.
-Search reads every agent's memories in the namespace, including those added in the
-dashboard; name an `agent` to read only that agent's.
+The `memory.set` response carries `memory_id`, `content_sha256` and `status`.
+`memory.get` reads one key back: `found` says whether the key holds a live value, and
+`value` is the value as written. The search response carries `results` and `abstain`,
+which says whether the best hit is strong enough to answer from. Search reads every
+agent's memories in the namespace, including those added in the dashboard; name an
+`agent` to read only that agent's.
 `GET /v1/operations` lists every operation, and <http://localhost:7777/docs> lets you try
 each one from the browser. Shapes are in the [HTTP API reference](../reference/http-api.md).
 
