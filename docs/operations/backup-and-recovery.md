@@ -373,13 +373,12 @@ when that colour has no workers container does the rolled-forward one keep runni
 
 A new Loom process pointed at the same ClickHouse (and Postgres, under
 `LOOM_STORAGE_AUTHORITY=postgres`), or at a moved or restored one, gets back every
-feature. Carry these:
+feature. Under the Postgres authority, copy both stores with the source stopped; a copy
+of one store alone is a [one-store restore](#restoring-one-store). Carry these:
 
 - ClickHouse: the same service, a copy with its Keeper state, or a `dev/backup_loom.py`
   dump restored into a ClickHouse that `loom migrate` prepared;
-- Postgres, under `LOOM_STORAGE_AUTHORITY=postgres`: the same service, or a copy taken
-  with the source deployment stopped, together with its ClickHouse copy (to restore only
-  one store, see [restoring one store](#restoring-one-store));
+- Postgres, under `LOOM_STORAGE_AUTHORITY=postgres`: the same service, or a copy;
 - the env config (`.env` or the container environment);
 - `LOOM_JWT_SECRET`. Without it no token verifies, and the stored credentials and
   signing keys do not open;

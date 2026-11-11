@@ -14,13 +14,13 @@ The storage layout is in [ClickHouse](clickhouse.md).
 
 ## Goals and non-goals
 
-| Goals                                                                                                  | Non-goals                                                                                         |
-| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| One engine (ClickHouse authority): vectors, full text, graph edges, time series and ledgers.           | File formats in the server: `knowledge.add` takes `content: str`; parsing is the CLI's job.       |
-| One wire surface, declared once, served the same over HTTP and MCP.                                    | Cross-table transactions. Derived rows catch up after the primary write.                          |
-| Server processes hold no durable state: add web capacity by running more of them.                      | Bi-temporal history. Validity is valid-time only; transaction-time history is the version mirror. |
-| Every row attributable to a tenant (identity tuple), a writer (`actor`) and a request (`log_comment`). | A GDPR-compliance guarantee. Erasure and audit hashing are engineering primitives.                |
-| A keyless install that boots and answers, with fake providers reported.                                |                                                                                                   |
+| Goals                                                                                                                | Non-goals                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| One engine for every kind of state (ClickHouse authority): vectors, full text, graph edges, time series and ledgers. | File formats in the server: `knowledge.add` takes `content: str`; parsing is the CLI's job.       |
+| One wire surface, declared once, served the same over HTTP and MCP.                                                  | Cross-table transactions. Derived rows catch up after the primary write.                          |
+| Server processes hold no durable state: add web capacity by running more of them.                                    | Bi-temporal history. Validity is valid-time only; transaction-time history is the version mirror. |
+| Every row attributable to a tenant (identity tuple), a writer (`actor`) and a request (`log_comment`).               | A GDPR-compliance guarantee. Erasure and audit hashing are engineering primitives.                |
+| A keyless install that boots and answers, with fake providers reported.                                              |                                                                                                   |
 
 ## Components
 
