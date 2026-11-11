@@ -1329,3 +1329,14 @@ def test_markdown_bold_is_no_settings_family():
 def test_every_help_case_with_a_claim_forbids_its_denial(case):
     # The question the docs leave open has no claim to deny; every other help case does.
     assert case["kind"] == "help_abstain" or case.get("forbid"), case["id"]
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in _help_cases() if c.get("forbid")], ids=lambda c: c["id"]
+)
+def test_no_help_forbid_matches_the_pages_the_case_cites(case):
+    # An answer that quotes its own page must never trip the case's forbid.
+    for page in case["cite_help"]:
+        text = (ROOT / "docs" / page).read_text(encoding="utf-8")
+        for pattern in case["forbid"]:
+            assert not re.search(pattern, text, re.IGNORECASE | re.MULTILINE), (page, pattern)
