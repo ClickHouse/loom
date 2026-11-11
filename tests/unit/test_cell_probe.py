@@ -111,17 +111,10 @@ def test_the_listener_answers_429_past_its_rate_and_again_a_minute_on(
     assert client.get(cell_probe.PATH).status_code == 200
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
 def test_every_web_process_of_a_host_can_listen_on_the_port() -> None:
-    port = _free_port()
-    first = cell_probe.bind(port)
+    first = cell_probe.bind(0)  # port 0: the system picks one no other test holds
     first.listen()
-    second = cell_probe.bind(port)  # a second process, while the first listens
+    second = cell_probe.bind(first.getsockname()[1])  # a second process, while it listens
     second.listen()
     first.close()
     second.close()
@@ -138,7 +131,7 @@ def test_a_host_without_ipv6_binds_ipv4(monkeypatch: pytest.MonkeyPatch) -> None
             super().bind(address)
 
     monkeypatch.setattr(cell_probe.socket, "socket", _NoIPv6)
-    sock = cell_probe.bind(_free_port())
+    sock = cell_probe.bind(0)
     try:
         assert sock.family == socket.AF_INET and sock.getsockname()[0] == "0.0.0.0"
     finally:
@@ -163,15 +156,14 @@ def test_the_listener_serves_on_its_port_and_leaves_the_signal_handlers(
         return {"postgres": None, "clickhouse": None, "bucket": None}
 
     monkeypatch.setattr(cell_probe, "nonces", _none)
-    port = _free_port()
-    monkeypatch.setattr(settings, "cell_probe_port", port)
 
     async def _run() -> dict[str, Any]:
         # Read inside the loop: asyncio.run installs its own SIGINT handler.
         handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
         uvicorn_level = logging.getLogger("uvicorn.error").level
-        listener = cell_probe.start_listener()
-        assert listener is not None
+        sock = cell_probe.bind(0)  # port 0: the system picks one no other test holds
+        port = sock.getsockname()[1]
+        listener = cell_probe.Listener(sock)
         assert logging.getLogger("uvicorn.error").level == uvicorn_level
         try:
             async with httpx.AsyncClient() as client:
