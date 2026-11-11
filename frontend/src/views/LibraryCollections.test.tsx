@@ -766,6 +766,22 @@ describe("the Library on a collection", () => {
     expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-a");
   });
 
+  it("with no namespace, leaves a linked collection it cannot read for the one it opens, and says so", async () => {
+    api.listCollections.mockResolvedValue({
+      collections: [entry("col-me-1a2b", { personal: true })],
+      next_cursor: null,
+    });
+    useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
+    history.replaceState(null, "", "/library?collection=col-secret");
+    render(<Documents />);
+    await settle();
+    expect(toast).toHaveBeenCalledWith(
+      "col-secret is not among the collections you can read now; showing My files.",
+      "info",
+    );
+    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-me-1a2b");
+  });
+
   it("says nothing of collections or namespaces while the list is read", async () => {
     api.listCollections.mockReturnValue(new Promise(() => {}));
     useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });

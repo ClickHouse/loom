@@ -74,7 +74,7 @@ export function collectionPath(
 /** A collection someone shared with the caller: one they read or write but do not
  *  administer. `collection.list` names no owner, so the role is the signal: one shared as
  *  admin is the caller's to manage, and sits with their own. */
-export function isSharedWithMe(c: CollectionEntry): boolean {
+function isSharedWithMe(c: CollectionEntry): boolean {
   return !c.personal && c.role !== "admin";
 }
 
@@ -85,7 +85,7 @@ export function collectionsInside(rows: CollectionEntry[], current: CollectionEn
   const under =
     current && !current.personal
       ? rows.filter((c) => c.parent === current.namespace)
-      : rows.filter((c) => !c.personal && !isSharedWithMe(c) && (!c.parent || !names.has(c.parent)));
+      : rows.filter((c) => !c.personal && c.role === "admin" && (!c.parent || !names.has(c.parent)));
   return under.sort(collectionOrder);
 }
 
@@ -93,12 +93,12 @@ export function collectionsInside(rows: CollectionEntry[], current: CollectionEn
  *  is not itself shared with them (a shared one's children are inside it), wherever it sits. */
 export function sharedWithMe(rows: CollectionEntry[]): CollectionEntry[] {
   const shared = new Set(rows.filter(isSharedWithMe).map((c) => c.namespace));
-  return rows.filter((c) => shared.has(c.namespace) && !shared.has(c.parent ?? "")).sort(collectionOrder);
+  return rows.filter((c) => shared.has(c.namespace) && !shared.has(c.parent)).sort(collectionOrder);
 }
 
 /** Where a collection sits, as one line of titles from the top ("Team › Research"); a parent
  *  the caller cannot read is "…". Empty for a top-level one. */
-export function pathText(c: CollectionEntry, byName: Map<string, CollectionEntry>, repeated: Set<string>): string {
+function pathText(c: CollectionEntry, byName: Map<string, CollectionEntry>, repeated: Set<string>): string {
   const path = collectionPath(c, byName);
   if (path.length < 2) return "";
   return path.map((p) => ("hidden" in p ? "…" : distinctTitle(p, repeated))).join(" › ");
