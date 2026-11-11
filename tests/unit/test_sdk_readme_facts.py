@@ -19,6 +19,7 @@ SDK_ROOT = ROOT / "sdk" / "python"
 TRACKED = {str(p) for f in tracked() for p in [Path(f), *Path(f).parents] if str(p) != "."}
 README = (SDK_ROOT / "README.md").read_text()
 PROJECT = tomllib.loads((SDK_ROOT / "pyproject.toml").read_text())["project"]
+PACKAGE = json.loads((ROOT / "sdk" / "typescript" / "package.json").read_text())
 
 
 def test_readme_states_the_python_floor_and_runtime_deps() -> None:
@@ -41,11 +42,7 @@ def test_readme_lists_every_agent_client() -> None:
     ("sdk", "install", "name"),
     [
         ("python", "pip install", PROJECT["name"]),
-        (
-            "typescript",
-            "npm install",
-            json.loads((ROOT / "sdk" / "typescript" / "package.json").read_text())["name"],
-        ),
+        ("typescript", "npm install", PACKAGE["name"]),
     ],
 )
 def test_the_readme_installs_the_published_package(sdk: str, install: str, name: str) -> None:
@@ -80,7 +77,7 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
 
 
 def _what_loom_is(text: str) -> str:
-    """The clause after "Loom, " up to the end of its sentence, with the link to Loom unwrapped."""
+    """The clause after "Loom, ", or after a link on Loom, up to the end of its sentence."""
     m = re.search(r"Loom(?:\]\([^)]*\))?, (.+?\.)(?:\s|$)", text)
     assert m, f"no 'Loom, <what it is>.' clause in {text!r}"
     return m.group(1)
@@ -90,10 +87,7 @@ def _what_loom_is(text: str) -> str:
     ("sdk", "description"),
     [
         ("python", PROJECT["description"]),
-        (
-            "typescript",
-            json.loads((ROOT / "sdk" / "typescript" / "package.json").read_text())["description"],
-        ),
+        ("typescript", PACKAGE["description"]),
     ],
 )
 def test_the_readme_lead_says_what_the_package_description_says(sdk: str, description: str) -> None:
