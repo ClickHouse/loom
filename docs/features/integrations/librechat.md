@@ -217,23 +217,25 @@ only on the two unanswerable questions.
 The case set holds at least one question per use case of Loom: what a namespace holds and
 how it is used (the data tools), and how Loom works and how to do something in it (the
 help tools, which read the documentation the server ships). Each help case labels the
-values its answer must state and the pages that hold them. Its answer is scored correct
-when it states them, names no op or setting the server neither serves nor documents
-(`unknown_names` on the answer's `loom.citations` event), and, for a case with no answer
-in the docs, says so. A help citation is valid when its page is in the server's
+values its answer must state and the pages that hold them, with a right and a wrong sample
+answer the label is tested against. Its answer is scored correct when it states them and
+names no op or setting the server neither serves nor documents (`unknown_names` on the
+answer's `loom.citations` event). For the case with no answer in the docs, the answer is
+correct when it says so and tells the person to set no setting; it may name one to deny
+it. A help citation is valid when its page is in the server's
 documentation (`help.get`) and its section is one of the page's own, by the rule the
 server's own check uses. The cases go through Loom's assistant route
 (`qualify.py setup-bridge`), so each answer also carries the question's asker line and
 the bridge's own citation check.
 
 **Before** is the same help questions on the build before the documentation reached the
-assistant: an agent with no help tools. It answered 9 of 26 by its own knowledge and
+assistant: an agent with no help tools. It answered 8 of 26 by its own knowledge and
 cited none. **After** is the current agent definition.
 
 | Use case                          | Cases | Before: answered with a citation | After: correct | After: no invalid citation |
 | --------------------------------- | ----- | -------------------------------- | -------------- | -------------------------- |
 | U1 Look up a stored fact          | 7     | 0 of 1                           | 7 of 7         | 7 of 7                     |
-| U2 What a document says           | 10    | 0 of 1                           | 9 of 10        | 9 of 10                    |
+| U2 What a document says           | 10    | 0 of 1                           | 9 of 10        | 10 of 10                   |
 | U3 What the namespace holds       | 3     | -                                | 3 of 3         | 3 of 3                     |
 | U4 Usage counts and trends        | 3     | -                                | 3 of 3         | 3 of 3                     |
 | U5 Cost and spend                 | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
@@ -260,27 +262,29 @@ cited none. **After** is the current agent definition.
 | U26 Getting started               | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
 | U27 Operating a deployment        | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
 | U28 Refusals and abstentions      | 5     | 0 of 1                           | 5 of 5         | 5 of 5                     |
-| All                               | 56    | 0 of 26                          | 55 of 56       | 52 of 56                   |
+| All                               | 56    | 0 of 26                          | 55 of 56       | 53 of 56                   |
 
 Measured on v0.8.8 with `claude-haiku-4-5`, on a server running fake embeddings and a fake
 LLM for Loom's own model jobs. A full run of the 56 cases costs about $3 at list price
-counting every prompt token, a mean of $0.053 per answer. The after columns are from a
-full run, with the 14 cases the last instruction change touches (three memory cases, the
-seven document cases, the two unanswerable document cases and two help cases) from a run
-after that change. Twelve answers cite nothing: two refusals, three abstentions and seven
+counting every prompt token, a mean of $0.053 per answer. The after columns take 14 cases
+(three memory, nine document and two help cases) from a run on the agent definition in
+`integrations/librechat/agent.yaml`, and the other 42 from a full run on a definition that
+differs from it in the wording of the first step's searches and of one sentence on the
+asker's role. Twelve answers cite nothing: two refusals, three abstentions and seven
 counts, which come from tallies with no row to cite; every other answer cites one. The
 misses:
 
-- `doc-cache-entries` answers a question the namespace's documents leave open from Loom's
-  own settings instead of abstaining: the question and a Loom setting share their words.
+- `doc-cache-entries` asks for a value one of the namespace's documents holds
+  (`config/cache.toml`); the answer searches Loom's own documentation instead and does not
+  find it: the question and Loom's settings share their words.
 - Two recommendation answers cite `mentor.guide`, Loom's writing guide, as a docs page,
   which the check marks unverified: the guide has no citation form.
 - One answer names a section the page does not have.
 
-Answers vary from run to run at this model. Across the runs that led here, a question
-about the person's own rate limit or webhook retries was answered from Loom's docs in some
-runs and from the namespace in others; asking for the memory, document and help searches
-together in the first step reduced it.
+Answers vary from run to run at this model. A question about the person's own data that
+shares words with Loom's docs (a rate limit, webhook retries) is sometimes answered from
+the docs; the agent's instructions ask for the memory, document and help searches together
+in its first step for that reason.
 
 ## The deployed assistant
 

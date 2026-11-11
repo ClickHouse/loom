@@ -659,7 +659,7 @@ def scorer_read(st: dict[str, Any], token: str, op: str, body: dict[str, Any]) -
             break
         time.sleep(retry_after(out))
     if code != 200:
-        sys.exit(f"scorer {op} {body.get('source_uri')}: {code} {out}")
+        sys.exit(f"scorer {op} {json.dumps(body)}: {code} {out}")
     return out
 
 
@@ -927,7 +927,9 @@ def answer_citations(
     cited, invalid = check_citations(st, person, text)
     expected = case.get("cite") in cited if case.get("cite") else None
     if is_document_case(case):
-        doc_cited, doc_invalid, doc_expected = check_doc_citations(st, person, case, text)
+        # A help citation (`[help:<page> § …]`) is checked as one below, not as a document.
+        doc_text = HELP_CITE_RE.sub("", text)
+        doc_cited, doc_invalid, doc_expected = check_doc_citations(st, person, case, doc_text)
         cited, invalid = cited + doc_cited, invalid + doc_invalid
         expected = doc_expected if case.get("cite_doc") else None
     if HELP_CITE_RE.search(text):

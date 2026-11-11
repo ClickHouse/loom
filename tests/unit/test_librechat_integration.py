@@ -1016,24 +1016,6 @@ def test_a_question_the_docs_leave_open(answer, correct):
     assert got["correct"] is correct
 
 
-@pytest.mark.parametrize(
-    "case_id, answer, correct",
-    [
-        (
-            "help-setting",
-            "The agent's model: Loom writes it into the agent definition at boot.",
-            True,
-        ),
-        ("help-setting", "I could not find what LOOM_ASSISTANT_MODEL sets.", False),
-        ("help-quickstart", "No: the quickstart needs no API key and no account.", True),
-        ("help-quickstart", "Yes, you need an API key; no account is needed.", False),
-    ],
-)
-def test_help_labels_need_what_the_page_says(case_id, answer, correct):
-    q = _qualify()
-    assert q.score(_case(case_id), answer)["correct"] is correct
-
-
 def test_the_history_direct_path_counts_the_keys_versions():
     q = _qualify()
     case = _case("data-history")
@@ -1041,3 +1023,41 @@ def test_the_history_direct_path_counts_the_keys_versions():
     two = {"rows": [{"version": 2}, {"version": 1}]}
     assert q.native_score(case, 200, two)["correct"] is True
     assert q.native_score(case, 200, {"rows": [{"version": 1}]})["correct"] is False
+
+
+def _help_cases():
+    return [
+        c
+        for c in json.loads((QUAL / "cases.json").read_text())
+        if c["baseline"]["op"] == "help.search"
+    ]
+
+
+@pytest.mark.parametrize("case", _help_cases(), ids=lambda c: c["id"])
+def test_each_help_label_passes_its_right_samples_and_fails_its_wrong_ones(case):
+    q = _qualify()
+    samples = case["samples"]
+    assert samples["right"] and samples["wrong"]
+    for answer in samples["right"]:
+        assert q.score_answer(case, {"answer": answer, "error": ""})["correct"], answer
+    for answer in samples["wrong"]:
+        assert not q.score_answer(case, {"answer": answer, "error": ""})["correct"], answer
+
+
+def test_a_document_answer_that_cites_a_help_page_checks_it_as_help(monkeypatch):
+    q = _qualify()
+    docs_read = []
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text: ([], []))
+
+    def fake_docs(st, person, case, text):
+        docs_read.append(text)
+        return [], [], False
+
+    monkeypatch.setattr(q, "check_doc_citations", fake_docs)
+    monkeypatch.setattr(
+        q, "check_help_citations", lambda st, person, case, text: (["help:a.md"], [], False)
+    )
+    case = _case("doc-cache-entries")
+    got = q.answer_citations({}, case, {"namespace": "acme-library"}, "See [help:a.md § A].")
+    assert docs_read == ["See ."]
+    assert got["cited"] == ["help:a.md"] and got["invalid_citations"] == []
