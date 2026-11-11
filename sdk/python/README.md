@@ -1,6 +1,6 @@
 # clickhouse-loom
 
-Python SDK for [Loom](https://github.com/ClickHouse/loom) — the shared-production memory, knowledge, conflict, and observability data plane for AI agents, built on ClickHouse.
+Python SDK for [Loom](https://github.com/ClickHouse/loom), a self-hosted server, built on ClickHouse, that gives AI agents shared long-term memory, document search and a code index.
 
 This package contains the **client SDK only**. The server runs as the Docker image `ghcr.io/clickhouse/loom` against ClickHouse: on your own machine as a single-user install, or as a team deployment an operator runs.
 
