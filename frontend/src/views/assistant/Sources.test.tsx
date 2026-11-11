@@ -51,6 +51,15 @@ describe("supportLabel", () => {
   });
 });
 
+describe("supportLabel without citations", () => {
+  it("names each cause of an uncited unchecked answer, a failed read among them", () => {
+    expect(supportLabel("unchecked", [])).toMatchObject({
+      text: "Not checked: it cites nothing Loom holds",
+      why: "This answer cites nothing: what it read has no rows an answer can cite, a read failed or was refused, or its reads could not be checked.",
+    });
+  });
+});
+
 describe("Sources", () => {
   it("shows a found SQL citation as found, as text, with no reason", () => {
     const sql: Citation = { kind: "sql", text: "sql:SELECT 1", verified: true, reason: "", ref: "" };

@@ -72,7 +72,7 @@ export function supportLabel(support: Support, citations: Citation[], unknownNam
       }
     : {
         text: "Not checked: it cites nothing Loom holds",
-        why: "Its facts come from Loom's own reads, which have no rows an answer can cite, or its reads could not be checked.",
+        why: "This answer cites nothing: what it read has no rows an answer can cite, a read failed or was refused, or its reads could not be checked.",
         icon: "info-in-circle",
         tone: "text-text-muted",
       };
