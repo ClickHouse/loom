@@ -804,7 +804,7 @@
     "use_case": "U16 Health problems",
     "person": "alice",
     "question": "What does the health problem assistant_service_failing mean?",
-    "expect": ["LibreChat", "set ?up|setup|sign-?in|configur|retr"],
+    "expect": ["LibreChat", "set ?up|setup|sign-?in|configur|retr|regist|creat"],
     "cite_help": ["features/integrations/librechat.md", "architecture/assistant.md"],
     "baseline": {
       "op": "help.search",
@@ -814,7 +814,10 @@
       }
     },
     "samples": {
-      "right": ["Loom's setup of the LibreChat assistant failed; it retries, and `/v1/health` names what to fix."],
+      "right": [
+        "Loom's setup of the LibreChat assistant failed; it retries, and `/v1/health` names what to fix.",
+        "Loom's boot-time registration of its service user and agent in LibreChat failed; it clears once a try succeeds."
+      ],
       "wrong": ["It means the LibreChat chat history is full."]
     }
   },
@@ -1075,7 +1078,7 @@
     "person": "alice",
     "question": "How do I upgrade a Loom deployment to a new release?",
     "expect": [
-      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|(appl|run)\\w* (the |pending |its )?migrat\\w*[^.]{0,40}\\b(at|on|when|before) (boot|start|it reports ready)|migrations? (run|are applied|apply)[^.]{0,30}\\b(at|on|when) (boot|start)"
+      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|(appl|run)\\w* (the |pending |its )?migrat\\w*[^.]{0,40}\\b(at|on|when|before) (boot|start|it reports ready)|migrations? (run|are applied|apply)[^.]{0,30}\\b(at|on|when) (boot|start)|replac\\w* the image[^.]{0,80}appl\\w* (the |its )?migrat"
     ],
     "cite_help": ["operations/upgrades.md"],
     "baseline": {
@@ -1090,7 +1093,8 @@
         "Deploy the new image; the first container to boot applies the migrations.",
         "Deploy the new image; the server applies pending migrations at boot.",
         "Deploy the new image; migrations run automatically at boot.",
-        "Migrations apply automatically on startup once the new image is deployed."
+        "Migrations apply automatically on startup once the new image is deployed.",
+        "Replace the image; the upgrade applies the migrations the new build carries."
       ],
       "wrong": [
         "Export every memory, reinstall the new release and import them back.",

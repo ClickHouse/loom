@@ -1143,3 +1143,18 @@ def test_the_use_case_report_lists_each_use_cases_unknown_names():
     lines = q.use_case_report(rows)
     assert "| U1 Look up a stored fact | 1/1 | 1/1 | - |" in lines
     assert "| U14 Tokens | 1/2 | 2/2 | token.revoke_all |" in lines
+
+
+def test_native_only_takes_the_cases_current_use_case_labels(monkeypatch, tmp_path):
+    import argparse
+
+    q = _qualify()
+    side = _saved_side("ok")
+    monkeypatch.setattr(q, "baseline", lambda st, case, person: side)
+    out = tmp_path / "results.json"
+    row = {"id": "help-revoke-token", "kind": "help", "librechat": side, "native": side}
+    out.write_text(json.dumps({"model": "m", "bridge": True, "rows": [row]}))
+    people = {p["name"]: p for p in q.load("fixture.json")["people"]}
+    q.run_native_only({}, people, argparse.Namespace(out=str(out), only=[]))
+    saved = json.loads(out.read_text())["rows"][0]
+    assert saved["use_case"] == _case("help-revoke-token")["use_case"]

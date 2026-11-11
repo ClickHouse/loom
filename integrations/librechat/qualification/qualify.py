@@ -998,6 +998,7 @@ def run_native_only(st: dict[str, Any], people: dict[str, Any], args: argparse.N
     rows = {r["id"]: r for r in saved["rows"]}
     for case in load("cases.json"):
         if case["id"] in rows and (not args.only or case["id"] in args.only):
+            rows[case["id"]]["use_case"] = case.get("use_case", "")
             rows[case["id"]]["native"] = baseline(st, case, people[case["person"]])
             native = rows[case["id"]]["native"]
             print(

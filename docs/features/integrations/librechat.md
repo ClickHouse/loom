@@ -366,8 +366,9 @@ The qualification runs the same cases through Loom's assistant route
 (`POST /v1/assistant/chat/completions`), each with the person's own token, so Loom
 delegates each answer's token and runs the agent it seeded. `setup-bridge` grants each
 person `viewer` on their namespace, since an answer's token is delegated from a live
-grant. A run spends about a dollar from each namespace's daily model cost cap, and the
-assistant may spend half of it, so raise the cap for the run
+grant. A full run spends about $3, most of it from `acme-handbook`'s daily model cost cap
+(45 of the 56 cases ask there), and the assistant may spend half of a cap, so raise the cap
+for the run
 (`LOOM_DEFAULT_DAILY_COST_CAP_USD=20` on the server, or the namespace's
 `daily_cost_cap_usd`); otherwise the last cases are refused with `RATE_LIMITED`:
 
@@ -379,26 +380,26 @@ python $Q revoke
 python $Q run --cancel-probe
 ```
 
-Beside every earlier case it runs three analysis cases (`insights.query` over the
+Among its cases are three analysis cases (`insights.query` over the
 namespace, one asking for every org's counts, whose answer must name no other tenant's
 rows) and two recommendation cases over `acme-notes`, a namespace written badly on
 purpose (hash-named keys, a JSON value encoded twice, a 6.5 KB runbook stored as a
 memory).
 
-| Measured on v0.8.8, 28 cases, `claude-haiku-4-5`, fake embedder   | The deployed agent, asked directly                              |
-| ----------------------------------------------------------------- | --------------------------------------------------------------- |
-| Correct answers                                                   | 28 of 28, in one run                                            |
-| Analysis cases / recommendation cases                             | 3 of 3 / 2 of 2                                                 |
-| Cross-tenant, revoked and other-org SQL cases, no leak            | 3 of 3                                                          |
-| Should-abstain cases that abstain                                 | 4 of 4, no false abstention                                     |
-| Memory citations valid                                            | 13 of 16                                                        |
-| Document citations valid                                          | 8 of 9                                                          |
-| End-to-end latency p50 / p95                                      | 3.4 s / 10.7 s; the recommendation cases 10.7 s and 14.5 s      |
-| Tool calls per question                                           | at most 6 (a recommendation reads the audit, mentor and guides) |
-| Model cost per answer, every prompt token at list price           | mean $0.033, max $0.048                                         |
-| Loom calls after a client disconnects mid-answer                  | 0                                                               |
-| Answer tokens or service password in LibreChat's logs or database | none                                                            |
-| What LibreChat stored                                             | `transactions` only: no messages, conversations or tool calls   |
+| Measured on v0.8.8, 28 data cases, `claude-haiku-4-5`, fake embedder | The deployed agent, asked directly                              |
+| -------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Correct answers                                                      | 28 of 28, in one run                                            |
+| Analysis cases / recommendation cases                                | 3 of 3 / 2 of 2                                                 |
+| Cross-tenant, revoked and other-org SQL cases, no leak               | 3 of 3                                                          |
+| Should-abstain cases that abstain                                    | 4 of 4, no false abstention                                     |
+| Memory citations valid                                               | 13 of 16                                                        |
+| Document citations valid                                             | 8 of 9                                                          |
+| End-to-end latency p50 / p95                                         | 3.4 s / 10.7 s; the recommendation cases 10.7 s and 14.5 s      |
+| Tool calls per question                                              | at most 6 (a recommendation reads the audit, mentor and guides) |
+| Model cost per answer, every prompt token at list price              | mean $0.033, max $0.048                                         |
+| Loom calls after a client disconnects mid-answer                     | 0                                                               |
+| Answer tokens or service password in LibreChat's logs or database    | none                                                            |
+| What LibreChat stored                                                | `transactions` only: no messages, conversations or tool calls   |
 
 The same cases asked through Loom's chat route, each with the person's own token: 25 of
 28 correct and the other 3 refused with `RATE_LIMITED` once the namespace had spent the
