@@ -139,7 +139,14 @@ export function toastErrorLine(msg: string, err: unknown, opts: { key?: string }
   toastWithId(msg, "error", err, { key: opts.key });
 }
 
-function toastWithId(msg: string, kind: ToastKind, err: unknown, opts: Pick<ToastOpts, "key" | "action"> = {}): void {
+/** A toast for a line a page builds about a failed or committed call: the call's request id
+ *  under it and an error's reading time. */
+export function toastWithId(
+  msg: string,
+  kind: ToastKind,
+  err: unknown,
+  opts: Pick<ToastOpts, "key" | "action"> = {},
+): void {
   const rid = errorRequestId(err);
   // An id the line already says (an internal error's) is not printed a second time.
   const detail = rid && !msg.includes(rid) ? { detail: `request id ${rid}` } : {};

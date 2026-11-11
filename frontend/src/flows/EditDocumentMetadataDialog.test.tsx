@@ -9,19 +9,10 @@ vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   updateKnowledgeMetadata: vi.fn(),
 }));
-vi.mock("../components/Toast", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../components/Toast")>()),
-  toast: vi.fn(),
-  toastError: vi.fn(),
-  // As the real one decides, so the test sees the failure it toasts.
-  committedAnyway: vi.fn((context: string, e: unknown) => {
-    toastError(context, e);
-    return isPublicationPending(e);
-  }),
-}));
+
 import { updateKnowledgeMetadata, type KnowledgeEntry } from "../api";
-import { toastError } from "../components/Toast";
-import { ApiError, isPublicationPending } from "../lib/errors";
+import { ToastViewport } from "../components/Toast";
+import { ApiError } from "../lib/errors";
 import { EditDocumentMetadataDialog } from "./EditDocumentMetadataDialog";
 
 const ENTRY = {
@@ -35,13 +26,16 @@ function mount() {
   const onSaved = vi.fn();
   const onOpenChange = vi.fn();
   render(
-    <EditDocumentMetadataDialog
-      open
-      onOpenChange={onOpenChange}
-      identity={{ org: "acme", namespace: "team" }}
-      entry={ENTRY}
-      onSaved={onSaved}
-    />,
+    <>
+      <ToastViewport />
+      <EditDocumentMetadataDialog
+        open
+        onOpenChange={onOpenChange}
+        identity={{ org: "acme", namespace: "team" }}
+        entry={ENTRY}
+        onSaved={onSaved}
+      />
+    </>,
   );
   fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Refund escalation" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -61,13 +55,14 @@ describe("EditDocumentMetadataDialog", () => {
     const { onSaved, onOpenChange } = mount();
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/^Done, but lists and search have not caught up yet/)).toBeInTheDocument();
   });
 
   it("stays open on a failure", async () => {
     vi.mocked(updateKnowledgeMetadata).mockRejectedValue(new ApiError({ status: 500, message: "boom" }));
     const { onSaved, onOpenChange } = mount();
     // The failure is said: only then is it known that nothing closed.
-    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Save failed", expect.any(ApiError)));
+    expect(await screen.findByText(/^Save failed: /)).toBeInTheDocument();
     expect(onSaved).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });

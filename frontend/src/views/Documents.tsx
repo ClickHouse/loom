@@ -37,7 +37,7 @@ import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { collectionTitle } from "../lib/collections";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
-import { committedAnyway, toast, toastCommitted, toastError } from "../components/Toast";
+import { committedAnyway, toast, toastCommitted, toastError, toastWithId } from "../components/Toast";
 import { isPublicationPending } from "../lib/errors";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
@@ -482,7 +482,13 @@ export function Documents() {
       // Not yet (the delete is still being recorded, or the server is busy): the notice comes
       // back with its Undo, which left when it was pressed.
       if (e instanceof ApiError && e.code === "BACKEND_UNAVAILABLE") {
-        toast(`${source_uri} is not restored yet; try Undo again in a moment`, "info", undoNotice(place, source_uri));
+        // The wait can be short (another write holds it) or an operator's (a parked delivery).
+        toastWithId(
+          `${source_uri} is not restored yet; try Undo again later`,
+          "info",
+          e,
+          undoNotice(place, source_uri),
+        );
         return;
       }
       toastError("Restore failed", e);

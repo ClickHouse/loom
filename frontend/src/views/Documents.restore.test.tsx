@@ -92,12 +92,15 @@ describe("Library delete Undo", () => {
     // Undo while the delete is still being recorded: refused for now, and the notice comes back
     // with its Undo, which works once the server has caught up.
     api.restoreKnowledge.mockRejectedValueOnce(
-      new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", detail: { category: "dependency", retryable: true } }),
+      new ApiError({
+        status: 503,
+        code: "BACKEND_UNAVAILABLE",
+        requestId: "req-r",
+        detail: { category: "dependency", retryable: true },
+      }),
     );
     await userEvent.click(undo);
-    expect(
-      await screen.findByText("docs/refunds.md is not restored yet; try Undo again in a moment"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("docs/refunds.md is not restored yet; try Undo again later")).toBeInTheDocument();
     api.restoreKnowledge.mockResolvedValueOnce({
       restored: true,
       reason: "",
