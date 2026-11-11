@@ -691,6 +691,11 @@ def check_help_citations(
             invalid.append(f"{name}: no such page")
             continue
         page = scorer_read(st, scorer, "help.get", {"path": m["path"]})
+        if not page.get("available", True):
+            # A server with no docs cannot check the citation; that says nothing about it.
+            sys.exit(
+                "help.get: this server has no documentation, so help citations cannot be checked"
+            )
         if not page.get("found"):
             invalid.append(f"{name}: no such page")
             continue
@@ -861,6 +866,8 @@ def baseline(st: dict[str, Any], case: dict[str, Any], person: dict[str, Any]) -
         **ASSISTANT_FORCED_ARGS.get(spec["op"], {}),
     }
     code, out, elapsed = loom_call(st["loom_url"], st["tokens"][person["name"]], spec["op"], body)
+    if spec["op"] == "help.search" and code == 200 and not out.get("available", True):
+        sys.exit("help.search: this server has no documentation, so the help cases cannot run")
     return {**native_score(case, code, out), "latency_s": elapsed, "ttft_s": elapsed}
 
 

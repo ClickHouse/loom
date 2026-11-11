@@ -1347,3 +1347,16 @@ def test_no_help_label_is_met_by_repeating_the_question(case):
     # An answer that only echoes the question (a setting or problem name in it) states nothing.
     for pattern in case["expect"]:
         assert not re.search(pattern, case["question"], re.IGNORECASE), pattern
+
+
+def test_a_server_without_docs_stops_the_help_checks(monkeypatch):
+    q = _qualify()
+    monkeypatch.setattr(q, "scorer_read", lambda *a: {"available": False, "found": False})
+    st = {"tokens": {"scorer:acme-handbook": "t"}}
+    with pytest.raises(SystemExit, match="no documentation"):
+        q.check_help_citations(st, {"namespace": "acme-handbook"}, {}, "[help:a.md]")
+    monkeypatch.setattr(q, "loom_call", lambda *a: (200, {"available": False, "hits": []}, 0.0))
+    st = {"loom_url": "u", "tokens": {"alice": "t"}}
+    person = {"name": "alice", "org": "acme", "namespace": "acme-handbook"}
+    with pytest.raises(SystemExit, match="no documentation"):
+        q.baseline(st, _case("help-revoke-token"), person)

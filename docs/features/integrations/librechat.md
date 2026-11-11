@@ -158,11 +158,12 @@ orgs, mints a token per person, revokes one, and scores each answer:
 | Tool calls per question                                 | at most 3     | at most 3, 16 in all                                                      |
 | Model cost per answer, every prompt token at list price | at most $0.05 | mean $0.029; max $0.064 (`abstain-cfo`, three searches) misses the target |
 
-The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune, refusal
-and abstention data cases other than `data-history` and `data-connected-agents`, scored
-against the current `cases.json` with `qualify.py rescore`; the direct-path numbers are
-from a later run of that path alone (`qualify.py run --native-only`) on a fresh seed. The
-document cases below were run separately.
+The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune and
+refusal cases and memory abstentions (`abstain-wifi`, `abstain-cfo`), other than
+`data-history` and `data-connected-agents`, scored against the current `cases.json` with
+`qualify.py rescore`; the direct-path numbers are from a later run of that path alone
+(`qualify.py run --native-only`) on a fresh seed. The document cases below were run
+separately.
 
 The direct path answered the same 14 cases correctly at p50 0.08 s and p95 0.24 s with one
 read each. The model adds natural-language questions and a written answer; it costs seconds
