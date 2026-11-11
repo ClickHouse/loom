@@ -1091,6 +1091,21 @@ describe("the token form", () => {
     expect(screen.queryByTestId("token-read-scope-collections")).toBeNull();
   });
 
+  it("in a checklist step, says a token was made and is done once its setup dialog closes", async () => {
+    vi.mocked(createToken).mockResolvedValueOnce(created());
+    const minted = vi.fn();
+    const closed = vi.fn();
+    render(<QuickConnect onMinted={minted} onClose={closed} />);
+    await screen.findByRole("region", { name: "New token" }, WAIT);
+    await create();
+    expect(minted).toHaveBeenCalledTimes(1);
+    const dialog = await screen.findByRole("dialog", { name: "Token created" }, WAIT);
+    expect(closed).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(dialog).not.toBeInTheDocument(), WAIT);
+    expect(closed).toHaveBeenCalledTimes(1);
+  });
+
   it("in a checklist step, takes focus into its form and is closed by its Cancel", async () => {
     const onClose = vi.fn();
     render(<QuickConnect onMinted={() => {}} onClose={onClose} />);
