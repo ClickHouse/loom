@@ -61,7 +61,7 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 ```
 
 Each release's `install.sh` installs that release, so the copy `latest` serves installs the
-latest release, and a saved copy installs the same version every time it runs. Over a newer
+latest release, and a copy you keep installs the same version every time it runs. Over a newer
 install, an older release's copy refuses to install, rather than start an older Loom and
 ClickHouse on newer data; to downgrade on purpose, follow
 [downgrading an installer install](../operations/upgrades.md#downgrading-an-installer-install).
