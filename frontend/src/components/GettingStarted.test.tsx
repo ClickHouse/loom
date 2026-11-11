@@ -304,6 +304,28 @@ describe("GettingStarted on Memories", () => {
     expect(checklist()).toBeNull();
   });
 
+  it("stays the bar when a filter that matched nothing is cleared on a namespace with memories", async () => {
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
+    rows.entries = [memory("loom-ui")];
+    seed([personal]);
+    render(<Recent />);
+    await screen.findByTestId("getting-started-bar", {}, WAIT);
+    rows.entries = [];
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:nomatch");
+    expect(
+      await screen.findByText((_, el) => el?.textContent === "No memories match tag:nomatch", undefined, WAIT),
+    ).toBeInTheDocument();
+    rows.entries = [memory("loom-ui")];
+    await userEvent.click(screen.getAllByRole("button", { name: "Clear filters" })[0]);
+    expect(await screen.findByText("uses vim", undefined, WAIT)).toBeInTheDocument();
+    // The filter's empty page was not this namespace's: the checklist did not open in full.
+    await waitFor(() => expect(screen.queryByTestId("getting-started-bar")).not.toBeNull(), WAIT);
+    expect(checklist()).toBeNull();
+  });
+
   it("does not come back on a visit after every step was done", async () => {
     localStorage.setItem(
       onboardingKey(SUBJECT, `dev/${NS}`),

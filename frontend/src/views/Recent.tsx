@@ -287,10 +287,20 @@ function MemoryList() {
   const mine = useStore((s) => s.myNamespaces);
   const authOff = isAuthDisabled();
   const onboarding = useOnboarding(whoamiNow?.subject ?? (authOff ? "local" : ""), namespaceKey);
-  // Only rows read in this namespace: right after a switch the list still holds the last one's.
+  // Every checklist signal comes from one read: the unfiltered, live first page, read in this
+  // namespace for the filter in force. Right after a namespace switch or a filter change the
+  // rows on screen are still the last read's, and count for nothing.
   const plainRead =
-    entries !== null && listedIn === namespaceKey && !loadError && page === 0 && !listFiltered && !showDeleted;
+    entries !== null &&
+    listedIn === namespaceKey &&
+    filterRead &&
+    !filterPending &&
+    !loadError &&
+    page === 0 &&
+    !listFiltered &&
+    !showDeleted;
   const memoryTotal = plainRead ? (browsedTotal ?? entries.length) : null;
+  const readEmpty = memoryTotal === 0;
   const agentSeen =
     plainRead && entries.some((e) => !!e.agent && e.agent !== DASHBOARD_AGENT && !SENTINEL_AGENTS.has(e.agent));
   const isNew = shouldShowGettingStarted({ mine, memoryTotal, authOff });
@@ -551,18 +561,11 @@ function MemoryList() {
   // The namespace is empty only when the read worked and no filter narrowed it; a filter
   // that matches nothing keeps the toolbar and says so below.
   const failed = entries !== null && entries.length === 0 && !!loadError;
-  // Empty as read in this namespace: right after a switch the rows are the last one's.
   const emptyNamespace =
-    entries !== null &&
-    listedIn === namespaceKey &&
-    entries.length === 0 &&
-    !loadError &&
-    !listFiltered &&
-    !filterPending &&
-    !showDeleted;
+    entries !== null && entries.length === 0 && !loadError && !listFiltered && !filterPending && !showDeleted;
   useEffect(() => {
-    if (emptyNamespace && checklist) setChecklistOpenFor(namespaceKey);
-  }, [emptyNamespace, checklist, namespaceKey]);
+    if (readEmpty && checklist) setChecklistOpenFor(namespaceKey);
+  }, [readEmpty, checklist, namespaceKey]);
 
   // Group entries by day label, but not while searching — day buckets would hide the
   // relevance ranking.
@@ -803,7 +806,7 @@ function MemoryList() {
           // The live, unfiltered count: a deleted memory is not a first memory.
           hasMemory={(memoryTotal ?? 0) > 0}
           authOff={authOff}
-          collapsed={!emptyNamespace && !checklistOpen}
+          collapsed={!readEmpty && !checklistOpen}
           onExpand={() => setChecklistOpenFor(namespaceKey)}
           onMemoryAdded={() => bumpMemoriesVersion()}
           onHidden={() => searchInputRef.current?.focus()}

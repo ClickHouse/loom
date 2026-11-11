@@ -129,8 +129,8 @@ const STEP_META: Record<OnboardingStep, { title: string; why: string; icon: Icon
  * GettingStarted — the first-run checklist, at the top of Memories (the bare root's
  * landing): connect an agent, see the first memory, and for whoever can set them, the
  * models. Each step ticks from what Loom holds — a memory an agent wrote, a token's first
- * call, the memory count — never from pressing its button; ticks persist per subject and
- * namespace (lib/onboarding.ts) so a later filter or a revoked token never un-ticks one.
+ * call, the memory count — never from pressing its button; ticks persist per subject, org
+ * and namespace (lib/onboarding.ts) so a later filter or a revoked token never un-ticks one.
  */
 export function GettingStarted({
   onboarding,
