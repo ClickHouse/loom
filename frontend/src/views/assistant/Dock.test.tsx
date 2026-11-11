@@ -1541,6 +1541,26 @@ describe("Ask about this, the edge cases", () => {
     expect(field).toHaveAttribute("aria-invalid", "true");
   });
 
+  it("with other text in the field, Try again over the length keeps it and says why nothing was sent", async () => {
+    signIn("viewer");
+    show();
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+    act(() => useDock.setState({ draft: "x".repeat(19_970) }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    await unavailable();
+    act(() => askAbout(item()));
+    act(() => useDock.setState({ draft: "a newer question" }));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    // "Context: Memories page, memory "user/pref/lang"" is 47 characters, and two line breaks.
+    const line = "Not sent: with this page's line the question is longer than 19,951 characters.";
+    expect(await screen.findByText(line)).toBeInTheDocument();
+    await waitFor(() => expect(document.getElementById("loom-assistant-status")).toHaveTextContent(line));
+    expect(sent).toHaveLength(1);
+    expect(screen.getByLabelText("Question")).toHaveValue("a newer question");
+  });
+
   it("mid-answer after a namespace switch starts no conversation: the prompt shows and the item stays", async () => {
     signIn("viewer");
     show();

@@ -133,23 +133,23 @@ page**, sends nothing about the page for that question; the next question, or an
 carries the chip again. "Your question names this page. Remove it here." shows under the
 field until the chip is removed once or a first question is asked. **Ask about this** adds
 the item to the chip for one question ("Includes: Memories · key user/pref/lang"; the line
-names the memory's key and writer agent, the document's source URI and title, or the
-result's rank, key and the query its rows came from, each quoted). It is in the memory
-drawer's footer after Edit, in the document preview's actions before Download, and on each
-Recall lab result row as **Ask**. It closes the drawer or the preview without handing the
-focus back to what opened it, opens the panel in the mode the window gives with the focus in
-its field, keeps the question being typed and sends nothing. The item leaves with the chip,
-after the question is answered (one the route refuses comes back to the field with its
-chip), and when the page, the namespace, the org or the signed-in person changes. On a
-conversation about another namespace it starts a new one in the header's namespace, the
-question being typed and the chip moving to it, and says "New conversation in <namespace>;
-the one about <old> is in History." While an answer is still coming in there, it starts
-none: the panel asks how to go on with that conversation, as after any switch of namespace,
-and the chip keeps the item. The button is there for anyone the assistant's route admits on
-the namespace. It is unavailable, with the reason, while the assistant cannot answer, on a
-header namespace that holds no memories, on a document of a collection linked in the Library
-(the answer reads only the header's namespace), and in the drawer while an edit or a rename
-is open ("Save or cancel the edit first.").
+names the memory's key, writer agent and the user and session it is filed under, the
+document's source URI and title, or the result's rank, key and the query its rows came from,
+each quoted). It is in the memory drawer's footer after Edit, in the document preview's
+actions before Download, and on each Recall lab result row as **Ask**. It closes the drawer
+or the preview without handing the focus back to what opened it, opens the panel in the mode
+the window gives with the focus in its field, keeps the question being typed and sends
+nothing. The item leaves with the chip, after the question is answered (one the route
+refuses comes back to the field with its chip), and when the page, the namespace, the org or
+the signed-in person changes. On a conversation about another namespace it starts a new one
+in the header's namespace, the question being typed and the chip moving to it, and says "New
+conversation in <namespace>; the one about <old> is in History." While an answer is still
+coming in there, it starts none: the panel asks how to go on with that conversation, as
+after any switch of namespace, and the chip keeps the item. The button is there for anyone
+the assistant's route admits on the namespace. It is unavailable, with the reason, while the
+assistant cannot answer, on a header namespace that holds no memories, on a document of a
+collection linked in the Library (the answer reads only the header's namespace), and in the
+drawer while an edit or a rename is open ("Save or cancel the edit first.").
 
 One panel serves every window width:
 
@@ -172,7 +172,10 @@ refusal then decides), and the chat route's refusals by their `detail.reason`: a
 org-wide or narrowed token (also read from the token's own claims), a token that expires
 before an answer could finish, and model calls switched off for the org (see
 [the bridge](../architecture/assistant.md#the-bridge-each-callers-own-identity)). **Try again**
-reads readiness again and asks a refused question again once nothing refuses it. **Health**
+reads readiness again and asks a refused question again once nothing refuses it, with what the
+chip shows then; when the chip's line would make it longer than the route accepts it sends
+nothing, leaving the question in an empty field or, with other text there, saying why in the
+panel. **Health**
 shows the same check as its Assistant row, once readiness can be read: to platform admins
 always, and to anyone else who opens Health while the assistant sets up or fails.
 

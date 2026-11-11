@@ -407,14 +407,18 @@ page's outline.
 
 **The page's context.** The dashboard's panel starts a question with one line about the page
 it is asked from, `Context: <page> page`, and with the item "Ask about this" named,
-`Context: Memories page, memory "<key>" (agent "<agent>")`, `Context: Library page, document
-"<source URI>" (title "<title>")` or `Context: Recall page, result <rank>, memory "<key>",
-for the query "<query>"`: a key or source URI the agent reads with `memory.get` or
-`knowledge.get`. The line quotes names that others wrote and the person's own query, each
-as a JSON string literal, so a quote or a line break in one cannot end it: a key or a source
-URI exactly as stored, never cut, and an agent, a title or the query on one line, cut at 200
-characters. The person sees it as a chip and can remove it before it is sent; it grants
-nothing, and no server or wire field carries it
+`Context: Memories page, memory "<key>" (agent "<agent>", user "<user>", session "<session>")`,
+`Context: Library page, document "<source URI>" (title "<title>")` or `Context: Recall page,
+result <rank>, memory "<key>", for the query "<query>"`: a key or source URI the agent reads
+with `memory.get` or `knowledge.get`. A memory's user and session are named when the drawer
+read the row under them (a row filed under a user or a session), since `memory.get` takes
+`user_id` and `session_id` and misses such a row without them; an answer's token reads the
+whole namespace, so naming another user's row is a filter, not a widening. The line quotes
+names that others wrote and the person's own query, each as a JSON string literal, so a quote
+or a line break in one cannot end it: a key, a source URI, a user or a session exactly as
+stored, never cut, and an agent, a title or the query on one line, cut at 200 characters. The
+person sees it as a chip and can remove it before it is sent; it grants nothing, and no
+server or wire field carries it
 ([the assistant panel](../features/dashboard.md#the-assistant-panel)).
 
 **The asker's context.** An answer's token is `viewer` on one namespace, so the agent

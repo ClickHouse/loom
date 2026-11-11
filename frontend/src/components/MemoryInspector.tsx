@@ -122,6 +122,19 @@ function Disclosure({
   );
 }
 
+/** "Ask about this"'s words for a memory: its key, and the writer agent, user and session
+ *  it was read under, so the assistant's memory.get (which takes user_id and session_id,
+ *  '-' when absent) reads the same row. */
+function memoryLine(key: string, agent: string | undefined, identity: Identity): string {
+  const named = (v: string | undefined) => !!v && !SENTINEL_AGENTS.has(v);
+  const under = [
+    named(agent) ? `agent ${quoted(agent ?? "")}` : "",
+    named(identity.user_id) ? `user ${exact(identity.user_id ?? "")}` : "",
+    named(identity.session_id) ? `session ${exact(identity.session_id ?? "")}` : "",
+  ].filter(Boolean);
+  return `memory ${exact(key)}${under.length ? ` (${under.join(", ")})` : ""}`;
+}
+
 function SectionEmpty({ children }: { children: React.ReactNode }) {
   return <div className="text-xs text-text-muted">{children}</div>;
 }
@@ -1394,9 +1407,7 @@ export function MemoryInspector({
                 what="memory"
                 item={{
                   chip: `key ${memoryKey}`,
-                  line: `memory ${exact(memoryKey)}${
-                    detail.agent && !SENTINEL_AGENTS.has(detail.agent) ? ` (agent ${quoted(detail.agent)})` : ""
-                  }`,
+                  line: memoryLine(memoryKey, detail.agent, identity),
                 }}
                 reason={formOpen ? "Save or cancel the edit first." : null}
                 leave={() => {

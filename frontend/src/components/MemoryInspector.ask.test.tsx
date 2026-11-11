@@ -182,6 +182,18 @@ describe("Ask about this in the memory drawer", () => {
     expect(ask).toHaveAccessibleDescription("The assistant can't answer now: not set up.");
   });
 
+  it("names the user and session a row is filed under, so the assistant's memory.get reads that row", async () => {
+    const owned = { ...identity, user_id: "u-42", session_id: "s-7" };
+    const user = userEvent.setup();
+    render(<MemoryInspector identity={owned} memoryKey="api/rate-limit" onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("the public API allows 100 requests a minute");
+    await user.click(footer().getByRole("button", { name: "Ask the assistant about this memory" }));
+    await waitFor(() => expect(useDock.getState().item).not.toBeNull());
+    expect(useDock.getState().item?.line).toBe(
+      'memory "api/rate-limit" (agent "claude-desktop", user "u-42", session "s-7")',
+    );
+  });
+
   it("is unavailable on a header namespace that holds no memories (the Graph opens the drawer there)", async () => {
     const tracker = { ...identity, namespace: "tracker-x" };
     useStore.setState({

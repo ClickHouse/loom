@@ -217,11 +217,18 @@ export function DockBody() {
     });
     // It goes with what the chip shows now: a chip removed since sends nothing about the page.
     // A line longer now than when it was asked (an item added since) can push the message
-    // past the route's length: the question then waits in the field, which says why.
+    // past the route's length: nothing is sent. The question waits in an empty field, which
+    // says why; a field holding other text keeps it, and a line in the panel says why.
     if (!refused || stillBlocked) return;
     const asked = currentAsk();
     if (withContext(refused, asked.context).length > MAX_MESSAGE_CHARS) {
       if (!useDock.getState().draft) useDock.setState({ draft: refused });
+      else {
+        const limit = MAX_MESSAGE_CHARS - (asked.context ? asked.context.line.length + 2 : 0);
+        const line = `Not sent: with this page's line the question is longer than ${limit.toLocaleString("en-US")} characters.`;
+        useChat.setState({ notice: line });
+        announceAssistant(line);
+      }
       return;
     }
     ask(refused, c.namespace ?? header, asked);
