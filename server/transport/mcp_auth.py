@@ -15,6 +15,7 @@ from server.code.domain.scope import set_code_scope
 from server.core.errors import (
     IdentityIncompleteError,
     LoomServerError,
+    WrongCellError,
     classified,
     unverified_class,
 )
@@ -428,6 +429,13 @@ async def _screen_tool_call(
 
     try:
         return await _screen_namespace(req, tool_name, args, auth, target_org, req_ns, consumer)
+    except WrongCellError as e:
+        # Another cell's org, as a tool result: escaping, it would answer a bare HTTP
+        # 409 with no JSON-RPC frame and lose the batch's other answers.
+        from server.transport.mcp_refusals import refusal_result
+
+        _ledger_refusal(tool_name, auth, error_code=e.code, org=target_org, consumer=consumer)
+        return _ok(req.get("id"), refusal_result(e))
     except LoomServerError as e:
         # A read the check could not make past its cache (a 503): counted
         # against the server, then raised.

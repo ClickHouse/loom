@@ -469,41 +469,51 @@ read it, and keeps serving the orgs it holds, for at most
 process that has never read the mode does not become ready. These rules hold with
 `LOOM_CELL` unset too: there absent mode and `first` rows with no tenancy or own row are
 a deployment never prepared, and a failed read is never taken for an absent row. In
-`enforced`, a cell serves exactly the orgs it holds a row for. A `recording` row is
-written by one statement that inserts it only while the mode is `recording`, reading the
-mode row `FOR SHARE`; it runs at `READ COMMITTED` in its own transaction and commits
-before the request goes on. Attach's write of `enforced` and these inserts never cross:
-an insert already running when attach writes the mode is placed by step 4, one that
-starts after reads `enforced`, a stream of inserts cannot hold the write off, a new-org
-request waits on attach for a few seconds at most, and an attach that stalls holding the
-write's lock releases it within seconds. Attach takes
-`LOCK TABLE loom.tenancy_mode IN EXCLUSIVE MODE` (which waits for running inserts and
-queues later ones behind it) in short tries, in one transaction with server-side
-timeouts, then writes the mode and commits; after any error in that transaction it ends
-that session's backend (`pg_terminate_backend`, the backend named by the pid and
-`backend_start` attach captured when it connected) and waits until it has left
-`pg_stat_activity`, then reads the mode back before it retries or reports; a mode read
-back as `enforced` is written again in a fresh transaction, whose commit waits for the
-standby, before attach goes on, since a commit ended while it waited is on the primary
-alone. The attach command fixes those timeouts, and its tests cover each of these cases.
-The mode cache reads the mode with a plain `SELECT`, which takes no row lock and never
-waits on attach. An insert that finds `enforced` (a process whose cache still reads
-`recording`) writes nothing: the request goes on to the placement call as in `enforced`,
-and a CLI command refuses as in `enforced`, naming `loom cell place`. A process whose
-cache still reads `enforced` after step 3 or step 4 returns the cell to `recording`
-places through the router's gate until its cache expires. `loom doctor` lists any
-tenancy row the directory does not place.
+`enforced`, a cell serves exactly the orgs it holds a row for; an org a process read as
+not held, for a caller acting in another org, is read again after
+`LOOM_TENANCY_MODE_CACHE_S`. A `recording` row is written by one statement that inserts
+it only while the mode is `recording`, reading the mode row `FOR SHARE`; it runs at
+`READ COMMITTED` in its own transaction and commits before the request goes on. Attach's
+write of `enforced` and these inserts never cross: an insert already running when attach
+writes the mode is placed by step 4, one that starts after reads `enforced`, a stream of
+inserts cannot hold the write off, a new-org request waits on attach for a few seconds
+at most, and an attach that stalls holding the write's lock releases it within seconds.
+Attach takes `LOCK TABLE loom.tenancy_mode IN EXCLUSIVE MODE` (which waits for running
+inserts and queues later ones behind it) in short tries, in one transaction with
+server-side timeouts, then writes the mode and commits; after any error in that
+transaction it ends that session's backend (`pg_terminate_backend`, the backend named by
+the pid and `backend_start` attach captured when it connected) and waits until it has
+left `pg_stat_activity`, then reads the mode back before it retries or reports; a mode
+read back as `enforced` is written again in a fresh transaction, whose commit waits for
+the standby, before attach goes on, since a commit ended while it waited is on the
+primary alone. The attach command fixes those timeouts, and its tests cover each of
+these cases. The mode cache reads the mode with a plain `SELECT`, which takes no row
+lock and never waits on attach. An insert that finds `enforced` (a process whose cache
+still reads `recording`) writes nothing: the request goes on to the placement call as in
+`enforced`, and a CLI command refuses as in `enforced`, naming `loom cell place`. A
+process whose cache still reads `enforced` after step 3 or step 4 returns the cell to
+`recording` places through the router's gate until its cache expires. `loom doctor`
+lists any tenancy row the directory does not place.
 
-- **It runs in the transports, after verification, before anything is written.** The
-  check uses the org the transport already resolves (`gates.resolve_org`, with its
-  caller defaults and plane orgs; an op whose org field is named otherwise, such as
-  `from_org`, declares it, and a census test lists every op's org-like fields): in the
-  HTTP op endpoint right after the body is read, in the MCP dispatch per call (a batch
-  entry for another cell's org answers `isError`), and in each route outside the op
-  registry, before `gates.authorize`, personal-namespace provisioning or any handler. A
-  refusal's ledger row written before the check (malformed JSON, a named-argument
-  refusal) is not written for an org the cell does not hold. A unit test lists every
-  route of the app and fails unless it is marked tenancy-checked or org-free.
+- **It runs after verification, before anything is written for the org.** The op gate
+  (`gates.authorize`) checks the org the transport resolves (`gates.resolve_org`, with
+  its caller defaults and plane orgs) first, before `check_acted_for` and
+  personal-namespace provisioning, for HTTP and MCP alike (over MCP a call for another
+  cell's org answers `isError`, so a batch keeps its other answers, and a call in the
+  token's own org, as `gates.resolve_org` resolves it, is checked before the caller's
+  defaults are read, since they live in that org). The routes outside the registry check
+  through `check_authorized`, `admit_org` or the check itself, and a middleware checks
+  the verified bearer's own org on those that act in it (the routes the census marks
+  `token`; for an org-wide or org-less token on the caller's routes that fall back to
+  it, the sign-up org, checked with no principal, so it is recorded or refused, never
+  placed). A principal that may not act in the org (a token of another org) is refused
+  first, with the gate's 403, so it records, places and learns nothing: not whether the
+  cell holds the org, nor where it is placed. An op whose org field is named otherwise
+  (`from_org`) reaches the same check through `check_authorized`, and a census test
+  lists every such field. A refusal written before the check (malformed JSON, an unknown
+  argument, a validation failure) names no org the cell does not hold in its telemetry
+  or code trace. A unit test lists every route of the app and fails unless it is marked
+  tenancy-checked or org-free.
 - **The CLI declares its orgs.** `run_connected` and `connect_checked`
   (`server/cli/_ch.py`) take the orgs a command writes, required unless the command is
   declared org-free, and refuse an org the cell does not hold, except that a first cell
@@ -571,35 +581,37 @@ tenancy row the directory does not place.
   ClickHouse table with no tenancy row, from the same schema list as attach step 2.
 - **An org the cell does not hold is placed there or refused.** For a verified principal
   scoped to the org (a token of that org, or an issuer's or bot's principal whose org it
-  is), the cell calls the router's placement API with its own credential, and the cell
-  the call names must be the one whose recorded hash the credential matches (a hash
-  names one cell): the router places one org at a time (a transaction-scoped lock on the
-  org, which every path that places takes), answers an org placed already with its cell,
-  and otherwise judges the asking cell on its locked row, inserts the placement and
-  reads the winner back, which the cell compares by its name and recorded deployment id.
-  If the winner is this cell, the cell writes the tenancy row and serves the request;
-  this cell's name under another deployment id than the process verified answers 503 and
-  writes nothing; if another cell's name, the request answers 409 `WRONG_CELL` and
-  nothing is written. This is the one path by which a request brings an org to a cell,
-  whatever created it: a mint, a gateway's or a federated issuer's token, an end-user
-  issuer's `prefix*` org, a bot. A `*`-org or platform principal acts only in orgs the
-  cell already holds and never places one. For an org the directory does not place yet,
-  the router accepts a placement call only from a `serving` cell (or from the first cell
-  while `attaching` once the directory records `enforced`, which attach step 3 writes
-  before it sets the cell's mode), and only with the calling process's configuration
-  fingerprint, whose fields must match a value of the cell's directory row; a prepared
-  cell's row holds no issuers or org patterns until attach writes them. A failed call,
-  one unanswered within `LOOM_CELL_ROUTER_TIMEOUT_S`, a cell not yet attached or closed
-  to new orgs, or a fingerprint that matches neither value answers 503 and writes
-  nothing; a retry is safe, since the read-back makes it idempotent. For an org the
-  directory already places, a cell's call is checked only for its credential (against
-  the cells' hashes the router caches for `LOOM_ROUTER_DIRECTORY_CACHE_S`, default 5 s)
-  and the cell's rate, and a `loom cell place` only for the operator credential; both
-  answer the winner whatever the cell's state, quota or fingerprint, adding no placement
-  (the winner is public through the lookup anyway); a request refused past its cell's
-  rate answers 503 with `Retry-After` (at most a minute), and its retry is admitted by
-  the replica that answers it once the cell's calls there are under the rate. An org the
-  cell already holds needs no call, so serving it never depends on the router.
+  is), the cell calls the router's placement API (`POST /cells/v1/placements` at
+  `LOOM_CELL_ROUTER_URL`, answered with the winning cell and its deployment id) with its
+  own credential (`LOOM_CELL_ROUTER_TOKEN`), and the cell the call names must be the one
+  whose recorded hash the credential matches (a hash names one cell): the router places
+  one org at a time (a transaction-scoped lock on the org, which every path that places
+  takes), answers an org placed already with its cell, and otherwise judges the asking
+  cell on its locked row, inserts the placement and reads the winner back, which the
+  cell compares by its name and recorded deployment id. If the winner is this cell, the
+  cell writes the tenancy row and serves the request; this cell's name under another
+  deployment id than the process verified answers 503 and writes nothing; if another
+  cell's name, the request answers 409 `WRONG_CELL` and nothing is written. This is the
+  one path by which a request brings an org to a cell, whatever created it: a mint, a
+  gateway's or a federated issuer's token, an end-user issuer's `prefix*` org, a bot. A
+  `*`-org or platform principal acts only in orgs the cell already holds and never
+  places one. For an org the directory does not place yet, the router accepts a
+  placement call only from a `serving` cell (or from the first cell while `attaching`
+  once the directory records `enforced`, which attach step 3 writes before it sets the
+  cell's mode), and only with the calling process's configuration fingerprint, whose
+  fields must match a value of the cell's directory row; a prepared cell's row holds no
+  issuers or org patterns until attach writes them. A failed call, one unanswered within
+  `LOOM_CELL_ROUTER_TIMEOUT_S`, a cell not yet attached or closed to new orgs, or a
+  fingerprint that matches neither value answers 503 and writes nothing; a retry is
+  safe, since the read-back makes it idempotent. For an org the directory already
+  places, a cell's call is checked only for its credential (against the cells' hashes
+  the router caches for `LOOM_ROUTER_DIRECTORY_CACHE_S`, default 5 s) and the cell's
+  rate, and a `loom cell place` only for the operator credential; both answer the winner
+  whatever the cell's state, quota or fingerprint, adding no placement (the winner is
+  public through the lookup anyway); a request refused past its cell's rate answers 503
+  with `Retry-After` (at most a minute), and its retry is admitted by the replica that
+  answers it once the cell's calls there are under the rate. An org the cell already
+  holds needs no call, so serving it never depends on the router.
 - **Placements are bounded per cell.** Each router replica rate-limits each cell's
   placement calls per minute (`LOOM_ROUTER_PLACEMENTS_PER_MINUTE`), which bounds their
   pace to that rate times the replicas, and a cell's directory row can carry a placement
@@ -960,7 +972,12 @@ wait on the router's.
   (`server/transport/model_maintenance.py`), `verify_token`, readiness, the workers'
   lease and the heartbeat read;
 - `schemas/pg_migrations/008_cells.sql` and
-  `schemas/migrations/094_cell_heartbeats.sql`: the cell's tables.
+  `schemas/migrations/094_cell_heartbeats.sql`: the cell's tables;
+- `server/auth/tenancy.py` (`ensure_held`): the tenancy check and the placement call,
+  run by the op gate (`server/transport/gates.py`), `check_authorized`, `admit_org` and
+  the routes that name an org; `server/transport/tenancy_gate.py` checks the token's own
+  org on the routes outside the registry that act in it, and
+  `tests/unit/test_cell_tenancy.py` holds the census of every route.
 
 The rest of the cell code is added by the pull requests that implement this page. It
 builds on:

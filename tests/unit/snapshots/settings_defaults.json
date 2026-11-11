@@ -38,6 +38,8 @@
  "bulk_conflict_check_max_entries": 200,
  "calibration_refresh_seconds": 60.0,
  "cell": "",
+ "cell_router_timeout_s": 5.0,
+ "cell_router_url": "",
  "ch_analysis_max_concurrent": 8,
  "ch_analysis_max_concurrent_per_org": 2,
  "ch_analysis_max_execution_s": 10.0,

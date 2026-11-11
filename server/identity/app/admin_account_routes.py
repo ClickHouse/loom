@@ -11,7 +11,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
-from server.auth import agents, machines, oauth, revocation, subject_revocation
+from server.auth import agents, machines, oauth, revocation, subject_revocation, tenancy
 from server.auth.grant_claims import NotClaimed
 from server.auth.jwt import AuthInfo
 from server.core.ch import set_query_tag
@@ -69,6 +69,8 @@ class AdoptInput(_Input):
 async def sso_adopt(input: AdoptInput, info: Admin) -> dict[str, Any]:
     """The password accounts at a domain and why any is skipped; with `apply`,
     links the rest (see `loom sso adopt`)."""
+    # A cell acts only in the orgs it holds (the body names this one).
+    await tenancy.ensure_held(input.org, info)
     if input.apply:
         _only_a_person(info, "accounts are adopted", "loom sso adopt")
     try:
@@ -103,6 +105,8 @@ class LinkInput(_Input):
 @router.post("/v1/admin/sso.link")
 async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
     """Point one password account at the address its owner signs in with (see `loom sso link`)."""
+    # A cell acts only in the orgs it holds (the body names this one).
+    await tenancy.ensure_held(input.org, info)
     _only_a_person(info, "an account is linked to an SSO address", "loom sso link")
     try:
         was, carried, elsewhere = await account_admin.link_account(
@@ -123,6 +127,8 @@ async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
 @router.post("/v1/admin/sso.unlink")
 async def sso_unlink(input: EmailInput, info: Admin) -> dict[str, Any]:
     """Detach the email's accounts from their SSO sign-in (see `loom sso unlink`)."""
+    # A cell acts only in the orgs it holds (the body names this one).
+    await tenancy.ensure_held(input.org, info)
     _only_a_person(info, "an SSO link is undone", "loom sso unlink")
     accounts = await account_admin.unlink(input.email, input.org, by=_by(info))
     return {"unlinked": [{"org": org, "namespace": ns} for org, ns in accounts]}
@@ -132,6 +138,8 @@ async def sso_unlink(input: EmailInput, info: Admin) -> dict[str, Any]:
 async def sso_password_link(input: EmailInput, info: Admin, request: Request) -> dict[str, Any]:
     """A one-time link (valid for `password_link_ttl_seconds`) that gives the email's SSO
     accounts a password."""
+    # A cell acts only in the orgs it holds (the body names this one).
+    await tenancy.ensure_held(input.org, info)
     _only_a_person(info, "an SSO account is given a password", "loom sso password-link")
     try:
         code, namespaces = await account_admin.password_link(input.email, input.org, by=_by(info))
@@ -164,6 +172,8 @@ class BotInput(_Input):
 async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
     """Register a bot. With `generate_key` the answer carries its private key,
     once: Loom keeps only the public half."""
+    # A cell acts only in the orgs it holds (the body names this one).
+    await tenancy.ensure_held(input.org, info)
     if input.platform_admin:
         # A token that carries platform_admin must not mint itself a lasting
         # successor: a leaked token would become a permanent one.
@@ -296,6 +306,8 @@ async def revoke_subject(input: RevokeSubjectInput, info: Admin) -> dict[str, An
     org, subject = input.org, input.subject.strip()
     if not org.strip() or "*" in org or org != org.strip():
         raise _invalid(ValueError(f"org must name one org, got {org!r}"))
+    # A cell acts only in the orgs it holds (the body names this one).
+    await tenancy.ensure_held(org, info)
     problem = subject_revocation.refusal(subject)
     if input.issued_before is not None and input.issued_before.tzinfo is None:
         problem = "issued_before needs its UTC offset (RFC 3339), e.g. 2026-01-31T12:00:00Z"

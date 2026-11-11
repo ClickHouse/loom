@@ -238,6 +238,17 @@
           "type": "string",
           "description": "This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, \"\" = not a cell; set, the process serves only while its cell's rows accept it (docs/architecture/cells.md)."
         },
+        "cell_router_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a whole placement call to the router may take before the request answers 503."
+        },
+        "cell_router_url": {
+          "default": "",
+          "type": "string",
+          "description": "The router's base URL a cell calls to place a new org; \"\" = none: in `enforced`, a new org answers 503."
+        },
         "ch_analysis_max_concurrent": {
           "default": 8,
           "maximum": 256,
@@ -6101,7 +6112,7 @@
           "default": 5.0,
           "minimum": 1.0,
           "type": "number",
-          "description": "Seconds (at least 1) between re-reads of a cell's three rows (LOOM_CELL); with LOOM_CELL set, LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this."
+          "description": "Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this."
         },
         "tenant_max_concurrent_requests": {
           "default": 256,

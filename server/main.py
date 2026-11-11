@@ -350,6 +350,12 @@ app.add_middleware(
     _BodyLimit, max_bytes=settings.max_request_bytes, own_limit=("/v1/knowledge.upload",)
 )
 
+# Added before the maintenance middleware, so it runs inside it: a gated cell answers
+# 503 before any tenancy lookup.
+from server.transport.tenancy_gate import TenancyMiddleware  # noqa: E402
+
+app.add_middleware(TenancyMiddleware)
+
 from server.transport.model_maintenance import ModelMaintenanceMiddleware  # noqa: E402
 
 app.add_middleware(ModelMaintenanceMiddleware)

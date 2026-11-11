@@ -144,6 +144,7 @@ async def _resolve_key(
     """(wake-up key, inbox filter, from_subject filter) for the side asked for,
     after the handlers' authorization rule; an admitted inbox watch leaves the
     restricted-access row for the inbox's owner namespace."""
+    from server.auth import tenancy
     from server.auth.authz import may_act_in_org
     from server.identity.app.restricted_access import note_restricted_access
     from server.tasks.app.common import _caller_subject, _in_scope
@@ -151,6 +152,7 @@ async def _resolve_key(
 
     if auth is not None and not may_act_in_org(auth, org):
         raise _err(403, "AUTH_INSUFFICIENT", "token is for another org")
+    await tenancy.ensure_held(org, auth)
     if inbox:
         row = await repo.fetch_inbox_row(org, inbox)
         # Someone who cannot even read the owner namespace gets the unknown-

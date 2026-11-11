@@ -17,7 +17,8 @@ here, once:
   authorized one, so the handler reads and writes where the call was
   authorized. A refused default (a member's namespace, or the registry unread)
   sets none and is kept for the request, so the handler refuses too.
-- `authorize`: the refusal of a revoked subject a trusted caller acts for
+- `authorize`: the cell's tenancy check (`tenancy.ensure_held`) first, then the
+  refusal of a revoked subject a trusted caller acts for
   (`authz.check_acted_for`), first-contact provisioning, the role + namespace gate
   (`authorize_op`, raising PermissionError / IdentityIncompleteError; a scoped
   token in its own org gets a refused default's own refusal instead), then
@@ -40,6 +41,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
+from server.auth import tenancy
 from server.code.app.common import (
     gate_default_refused,
     note_gate_default_refused,
@@ -185,13 +187,17 @@ async def authorize(
 ) -> None:
     """The role + namespace gate for an authenticated call, fail closed, then
     what an admitted call leaves (restricted-access audit, first-write
-    registration). No-op without a principal (auth off), but for `@me`."""
+    registration). No-op without a principal (auth off), but for `@me` and, on a cell,
+    the tenancy check."""
     from server.auth.sharing import PERSONAL_ALIAS
 
     # HTTP maps `@me` to the end user's personal collection before this gate;
     # anywhere else it names nothing, and is never a namespace of its own.
     if target.named_namespace == PERSONAL_ALIAS:
         raise PermissionError(f"{PERSONAL_ALIAS!r} names an end user's personal collection")
+    # A cell serves only the orgs it holds: checked before anything below provisions
+    # or writes for the call (docs/architecture/cells.md).
+    await tenancy.ensure_held(target.org, auth)
     if auth is None:
         _note_admitted(target)
         return
@@ -215,9 +221,12 @@ async def authorize(
         # subject naming no active bot) is refused before anything is provisioned for it
         # (`check_acted_for` admits every other call).
         await check_acted_for(auth, target.org)
-        await ensure_personal_namespace_cached(
-            org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
-        )
+        # The personal namespace is the token's own org's: on a cell, written only
+        # where that org is held (a platform admin of another org acting here is not).
+        if auth.org == target.org or await tenancy.is_held(auth.org):
+            await ensure_personal_namespace_cached(
+                org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
+            )
     try:
         await authorize_op(auth, op, org=target.org, namespace=target.namespace, **scope_flags(op))
     except IdentityIncompleteError:

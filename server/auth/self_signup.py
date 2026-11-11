@@ -32,6 +32,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from server.auth import tenancy
 from server.auth.attempts import Attempts, client_address
 from server.auth.claim_codes import hash_claim_code_off_loop
 from server.auth.directory import directory
@@ -175,6 +176,9 @@ async def self_signup(input: SelfSignupInput, request: Request) -> SelfSignupOut
     namespace = _claimable_namespace(input.namespace)
     if not await _human_signups.allow(client_address(request)):
         raise _rate_limited(f"at most {HUMAN_SIGNUPS_PER_HOUR} sign-ups per address per hour")
+    # A cell signs up only into an org it holds (no principal yet: nothing places one),
+    # checked after the per-address limit so a refused sign-up costs a counted attempt.
+    await tenancy.ensure_held(org, None)
     # The name's claim, then the email's: each check-then-insert runs under its
     # deployment-wide claim, so a second sign-up on any replica is refused.
     # The account claim too, which namespace.register holds (order: `grant_claims`).
@@ -554,6 +558,8 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
             },
         )
     org = signup_org(input.org)
+    # A cell signs up only into an org it holds (no principal yet: nothing places one).
+    await tenancy.ensure_held(org, None)
     async with _claimed(name_claim(org, namespace)), _account_claimed(org, namespace):
         with sequential_reads():
             return await _provision_agent(input, request, org, namespace)

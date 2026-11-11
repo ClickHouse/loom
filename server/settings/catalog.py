@@ -323,8 +323,16 @@ class AuthSettings(BaseModel):
     # This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set,
     # the process serves only while its cell's rows accept it (docs/architecture/cells.md).
     cell: str = ""
-    # Seconds (at least 1) between re-reads of a cell's three rows (LOOM_CELL); with
-    # LOOM_CELL set, LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
+    # The router's base URL a cell calls to place a new org; "" = none: in `enforced`,
+    # a new org answers 503.
+    cell_router_url: str = ""
+    # The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64`
+    # (never the length of a SHA-256); any other form is refused at boot. "" = none.
+    cell_router_token: Annotated[str, Field(pattern=r"^(?:lcr_[0-9a-f]{128})?$")] = ""
+    # Seconds a whole placement call to the router may take before the request answers 503.
+    cell_router_timeout_s: float = Field(default=5.0, gt=0)
+    # Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not
+    # held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
     tenancy_mode_cache_s: float = Field(default=5.0, ge=1.0)
 
     def jwt_secret_is_dev_default(self) -> bool:

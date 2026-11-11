@@ -887,6 +887,7 @@ jobs:
           tests/integration/test_erasure.py
           tests/integration/test_sql_surface_live_ch.py
           tests/integration/test_pg_clickhouse_live_ch.py
+          tests/integration/test_cell_tenancy_pg.py
       # The tenant-isolation gates again, against a second server that enforces auth:
       # the Postgres read paths (heads by key and by id, narrowed scopes) see real tokens.
       # They run whether or not the memory suites passed (`!cancelled()`).

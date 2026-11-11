@@ -57,10 +57,10 @@ async def claim_release(
 ) -> ClaimReleaseOutput:
     """Release a self-signup claim: revoke its grants, clear the owner, deactivate it;
     the name stays reserved."""
-    from server.insights.app.admin_routes import refuse_foreign_org, require_org_admin
+    from server.insights.app.admin_routes import admit_org, require_org_admin
 
     info = await require_org_admin(request)
-    refuse_foreign_org(info, input.org, "release a claim in")
+    await admit_org(info, input.org, "release a claim in")
     actor_subject = info.subject if info is not None else "local"
     not_found = HTTPException(
         status_code=404,

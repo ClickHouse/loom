@@ -263,6 +263,10 @@ def emit_agent_event(
         status_class=sli.row_status(success, error_code, error, server_fault=server_fault),
         budget_ms=budget_ms,
     )
+    # The same row on both paths: the policy witness writes the one it holds itself.
+    from server.observability.events import for_this_cell
+
+    event = for_this_cell(event)
     if _event_hold is None or not _event_hold(event):
         get_emitter().emit(event)
     # Same numbers as OTel counters, so spend trends live beside latency and

@@ -525,6 +525,11 @@ async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
                 "message": "exactly one of `namespace` or `org` required",
             },
         )
+    if org:
+        # A cell sets limits only for an org it holds (a platform admin places none).
+        from server.auth import tenancy
+
+        await tenancy.ensure_held(org, None)
     limiter = get_limiter()
     if input.clear:
         if ns:
@@ -841,14 +846,14 @@ async def admin_token_mint(
     # Redundant with the router-level dependency; kept so the gate holds even
     # if this handler is ever mounted on another router.
     info = await require_org_admin(request)
-    refuse_foreign_org(info, input.org, "mint a token for")
+    await admit_org(info, input.org, "mint a token for")
     body = await request.json()
     if info is not None:
         creator = info.subject
     else:
         # Auth off: a valid bearer names the owner, in its own org; else the single user.
         bearer = tokens.dev_bearer(request)
-        refuse_foreign_org(bearer, input.org, "mint a token for")
+        await admit_org(bearer, input.org, "mint a token for")
         creator = bearer.subject if bearer is not None else auth_off_subject()
     if input.name is None and "subject" in body:
         raise HTTPException(
@@ -965,6 +970,16 @@ def refuse_browser_reach(request: Request, what: str) -> None:
         raise HTTPException(403, f"Cross-origin {what} is not allowed")
 
 
+async def admit_org(info: AuthInfo | None, org: str, action: str) -> None:
+    """An admin acts inside its own org, a platform admin in any, and on a cell only in
+    an org the cell holds (`server.auth.tenancy`): every route whose body names the
+    org it acts in admits it here before anything else."""
+    from server.auth import tenancy
+
+    refuse_foreign_org(info, org, action)
+    await tenancy.ensure_held(org, info)
+
+
 def refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:
     """An admin token acts inside its own org; only a platform admin crosses orgs."""
     if info is not None and org != info.org and not info.has_role(Role.PLATFORM_ADMIN):
@@ -1013,7 +1028,7 @@ async def admin_namespace_adopt(
     # Redundant with the router-level dependency; kept because this handler
     # also needs the verified subject as the audit actor.
     info = await require_org_admin(request)
-    refuse_foreign_org(info, input.org, "adopt a namespace in")
+    await admit_org(info, input.org, "adopt a namespace in")
     actor = info.subject if info is not None else "dev-admin"
 
     from server.auth.sharing import is_collection
