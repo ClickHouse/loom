@@ -697,7 +697,7 @@ def test_the_memo_is_emptied_past_its_bound(monkeypatch: pytest.MonkeyPatch) -> 
 def test_a_bot_disabled_on_this_process_is_refused_at_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The disabling process drops its memo of the bot, and `machines.active` reads the
+    """The disabling process drops its memo of the bot, and `machines.get` reads the
     real table."""
     from server.auth import authz, machines
     from server.core import grant_cache
