@@ -860,7 +860,8 @@ def test_a_documented_install_stops_on_a_failed_download(
     inspect block installs nothing itself, so for it this checks only that `install.sh`
     is not piped."""
     result = _run_install(example, tmp_path, _FAILING_CURL)
-    assert result.returncode != 0, (page, example, result)
+    if _INSPECT not in example:  # the inspect block's last line is a check of its own
+        assert result.returncode != 0, (page, example, result)
     assert "404" in result.stderr, (page, example, result.stderr)
     assert not (tmp_path / ".loom").exists(), (page, example)
 
