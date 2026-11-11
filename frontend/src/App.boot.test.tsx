@@ -286,7 +286,7 @@ describe("boot order", () => {
     expect(useStore.getState().identity?.namespace).toBe("joined");
   });
 
-  it("opens a code-only account's Library on no namespace, and there the collection listed", async () => {
+  it("opens the Library on a code namespace, reading only the collections it lists", async () => {
     const CODE = "code-repo";
     localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [CODE], roles: ["ADMIN"] }));
     localStorage.setItem("loom_kinds_v1", JSON.stringify({ [CODE]: "code" }));
@@ -315,11 +315,8 @@ describe("boot order", () => {
     );
     render(<App />);
     await until(() => order.includes("collection.list"));
-    // No memory namespace to show: the Library opens the collection listed instead.
-    await until(() => new URLSearchParams(window.location.search).get("collection") === "col-q3");
-    await until(() => order.includes("knowledge.list"));
-    const reads = vi.mocked(fetch).mock.calls.filter(([u]) => String(u).includes("knowledge.list"));
-    for (const [, init] of reads) expect(JSON.parse(String(init?.body)).namespace).toBe("col-q3");
+    expect(await screen.findByText("Pick a collection")).toBeInTheDocument();
+    expect(order).not.toContain("knowledge.list");
   });
 });
 
@@ -533,10 +530,10 @@ describe("a link's namespace", () => {
     await until(() => useStore.getState().view === "knowledge");
     expect(useStore.getState().identity?.namespace).toBe("");
     expect(screen.queryByText(/can reach no namespace yet/)).toBeNull();
-    // The Library opens the collection by itself; the namespace menu holds nothing to send to.
-    await until(
-      () => new URLSearchParams(window.location.search).get("collection") === "col-research-0123456789abcdef",
-    );
+    // The namespace menu holds nothing for this account: the page sends no one there.
+    expect(
+      await screen.findByText(/^Collections are shared document libraries\. Pick a collection above\.$/),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open the namespace menu" })).toBeNull();
   });
 

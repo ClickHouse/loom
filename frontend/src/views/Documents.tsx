@@ -52,7 +52,7 @@ import { distinctTitle, repeatedTitles } from "../lib/collections";
 import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
-import { LibraryCollections, treeOrder, useReadableCollections } from "./LibraryCollections";
+import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
 import { CollectionsInside } from "./LibraryHierarchy";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
@@ -166,14 +166,9 @@ export function Documents() {
   const mine = useStore((s) => s.myNamespaces);
   const ownShelf = isMemoryNamespace(picked.namespace, mine);
   const noPlace = !shown && !resolving && !ownShelf;
-  // With no namespace in the header, the Library opens a collection by itself: the person's
-  // own files, else the first one listed.
-  const opensFirst = useMemo(() => {
-    const rows = collections.rows;
-    if (picked.namespace || !rows?.length) return null;
-    // Tree order puts the person's own first.
-    return treeOrder(rows)[0].c;
-  }, [picked.namespace, collections.rows]);
+  // With no namespace in the header, the Library opens the person's own files. With none (a
+  // token that is not a person's), it stays on the top level, which lists every collection.
+  const opensFirst = picked.namespace ? null : (collections.rows?.find((c) => c.personal) ?? null);
   const fallback = ownShelf
     ? `showing ${picked.namespace}`
     : opensFirst
@@ -874,19 +869,25 @@ export function Documents() {
     const go = useStore.getState();
     // The list's answer decides: none while it is read, and a failure is not "none".
     const listed = collections.rows;
-    // Nothing said while the list is read, or while a collection opens by itself.
+    // Nothing said while the list is read, or while one's own files open by themselves.
     const unknown = !picked.namespace && ((listed === null && !collections.error) || !!opensFirst);
-    const action = !picked.namespace
-      ? { label: "Browse and join spaces", onClick: () => go.setView("browse") }
-      : kind === "qa" || kind === "tracker"
-        ? { label: "Open in Patterns", onClick: () => go.navigate("graph", { query: { mode: "patterns" } }) }
-        : kind === "code"
-          ? { label: "Open repositories", onClick: () => go.setView("code") }
-          : undefined;
+    // No namespace, but collections to pick: the page asks only for the pick.
+    const picking = !picked.namespace && !!listed?.length;
+    const action = picking
+      ? undefined
+      : !picked.namespace
+        ? { label: "Browse and join spaces", onClick: () => go.setView("browse") }
+        : kind === "qa" || kind === "tracker"
+          ? { label: "Open in Patterns", onClick: () => go.navigate("graph", { query: { mode: "patterns" } }) }
+          : kind === "code"
+            ? { label: "Open repositories", onClick: () => go.setView("code") }
+            : undefined;
     const pick = listed !== null && listed.length === 0 ? "Create a collection above" : "Pick a collection above";
     const where = picked.namespace
       ? `${picked.namespace} holds no documents. `
-      : "Your token reaches no namespace yet. ";
+      : picking
+        ? "Collections are shared document libraries. "
+        : "Your token reaches no namespace yet. ";
     const page = (
       <PageContainer>
         <PageHeader title="Library">

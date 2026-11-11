@@ -741,7 +741,7 @@ describe("the Library on a collection", () => {
     useStore.setState({ myNamespaces: null });
   });
 
-  it("with no namespace, opens one's own files in place of the page, else the first collection", async () => {
+  it("with no namespace, opens one's own files in place of the page; with none, lists every collection", async () => {
     api.listCollections.mockResolvedValue({
       collections: [entry("col-a", { title: "Alpha" }), entry("col-me-1a2b", { personal: true })],
       next_cursor: null,
@@ -758,12 +758,21 @@ describe("the Library on a collection", () => {
     cleanup();
     window.history.replaceState(null, "", "/library");
     api.listCollections.mockResolvedValue({
-      collections: [entry("col-z", { title: "Zeta" }), entry("col-a", { title: "Alpha" })],
+      collections: [entry("col-z", { title: "Zeta" }), entry("col-a", { title: "Alpha", role: "viewer" })],
       next_cursor: null,
     });
     render(<Documents />);
     await settle();
-    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-a");
+    // No files of its own (a token that is not a person's): the top level, where both lists show.
+    expect(new URLSearchParams(window.location.search).get("collection")).toBeNull();
+    expect(screen.getByText("Collections are shared document libraries. Pick a collection above.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Browse and join spaces" })).toBeNull();
+    expect(
+      within(screen.getByRole("region", { name: /^Collections/ })).getByRole("link", { name: "Zeta" }),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: /Shared with you/ })).getByRole("link", { name: "Alpha" }),
+    ).toBeInTheDocument();
   });
 
   it("with no namespace, leaves a linked collection it cannot read for the one it opens, and says so", async () => {

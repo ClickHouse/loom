@@ -53,7 +53,7 @@ interface Props {
   /** The parent the form starts on; "" for top level. */
   initialParent?: string;
   /** The header's namespace, named so a top-level collection is not taken to sit in it. */
-  namespace?: string | null;
+  headerNamespace?: string | null;
   /** Fires with the collection's name: the new one, or the one the title already names there. */
   onCreated: (namespace: string) => void;
 }
@@ -72,7 +72,7 @@ export function CreateCollectionDialog({
   org,
   parents,
   initialParent = "",
-  namespace = null,
+  headerNamespace = null,
   onCreated,
 }: Props) {
   const [title, setTitle] = useState("");
@@ -208,7 +208,7 @@ export function CreateCollectionDialog({
           </Select>
           <p id="create-collection-parent-hint" className="mt-1 text-xs text-text-muted">
             {parent === TOP_LEVEL
-              ? `A top-level collection belongs to the org${namespace ? `, not to ${namespace}` : ""}: only the members you add read it.`
+              ? `A top-level collection belongs to the org${headerNamespace ? `, not to ${headerNamespace}` : ""}: only the members you add read it.`
               : "A collection inside another inherits its grants."}{" "}
             Only collections you can write are listed.
           </p>

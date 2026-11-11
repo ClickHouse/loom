@@ -78,12 +78,18 @@ describe("CreateCollectionDialog", () => {
         onOpenChange={() => {}}
         org="acme"
         parents={[parent("col-team", "Team")]}
-        namespace="research"
+        headerNamespace="research"
         onCreated={vi.fn()}
       />,
     );
     const hint = document.getElementById("create-collection-parent-hint");
     expect(hint?.textContent).toContain("A top-level collection belongs to the org, not to research");
+    cleanup();
+    // No namespace in the header: the org alone.
+    mount(vi.fn(), [parent("col-team", "Team")]);
+    expect(document.getElementById("create-collection-parent-hint")?.textContent).toContain(
+      "A top-level collection belongs to the org: only the members you add read it.",
+    );
     cleanup();
     mount(vi.fn(), [parent("col-team", "Team")], "col-team");
     expect(document.getElementById("create-collection-parent-hint")?.textContent).toContain(
