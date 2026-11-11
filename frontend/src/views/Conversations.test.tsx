@@ -317,6 +317,31 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(await screen.findByRole("heading", { name: "No conversations yet in this namespace" })).toBeInTheDocument();
   };
 
+  it("draws no empty state while the recording read is out", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockReturnValue(new Promise(() => {}));
+    listMemories.mockResolvedValue(noMemories);
+    render(<Conversations />);
+    await waitFor(() => expect(listConversationThreads).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(screen.queryByRole("heading", { name: "No conversations yet in this namespace" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+  });
+
+  it("with the recording read failed, says what fills the page and offers no connect", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockRejectedValue(new Error("unreachable"));
+    listMemories.mockResolvedValue(noMemories);
+    render(<Conversations />);
+    expect(await screen.findByRole("heading", { name: "No conversations yet in this namespace" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/saves its chat turns, one thread per chat, while Record conversations is on\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+  });
+
   it("with recording on and no thread, says what fills the page and offers Connect an agent", async () => {
     await emptyWith(true);
     expect(

@@ -145,8 +145,8 @@ export function LibraryCollections({
   place = "",
   onPick,
   onLeave,
-  creating: creatingAsked,
-  onCreatingChange,
+  creating,
+  onCreatingChange: setCreating,
 }: {
   org: string;
   /** The header's namespace, or null when it holds no documents (a code or tracker
@@ -163,13 +163,10 @@ export function LibraryCollections({
   onPick: (collection: string | null) => void;
   /** Leave the place shown without a new history entry (it was deleted). */
   onLeave?: (collection: string | null) => void;
-  /** The New collection dialog's open state, when the page opens it too (its empty state). */
-  creating?: boolean;
-  onCreatingChange?: (open: boolean) => void;
+  /** The New collection dialog's open state: the page's, whose empty state opens it too. */
+  creating: boolean;
+  onCreatingChange: (open: boolean) => void;
 }) {
-  const [ownCreating, setOwnCreating] = useState(false);
-  const creating = creatingAsked ?? ownCreating;
-  const setCreating = onCreatingChange ?? setOwnCreating;
   const [moving, setMoving] = useState<CollectionEntry | null>(null);
   // The collection Members was opened for: the dialog shows only while that one is shown, so
   // Back to another never lands a grant on it.

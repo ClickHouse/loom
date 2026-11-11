@@ -87,6 +87,8 @@ export function Conversations() {
   const [agentFilter, setAgentFilter] = useState("*");
   // The namespace's Record conversations switch (null = not yet loaded).
   const [loggingEnabled, setLoggingEnabled] = useState<boolean | null>(null);
+  // That read failed: the switch stays unknown, and the empty state offers no connect.
+  const [loggingUnread, setLoggingUnread] = useState(false);
   // Recent threads landing — populated on mount so a user with no
   // query sees what's there instead of a dead-end empty state. Also
   // shown beneath a "no matches" search result so users have a
@@ -158,6 +160,7 @@ export function Conversations() {
     setThreadsTotal(undefined);
     setAgentFilter("*");
     setLoggingEnabled(null);
+    setLoggingUnread(false);
   }
   // Answers already in flight for the namespace left are dropped by their sequence numbers.
   useEffect(() => {
@@ -226,10 +229,14 @@ export function Conversations() {
     (signal, live) => {
       getNamespace(identity, { signal })
         .then((n) => {
-          if (live()) setLoggingEnabled(n?.conversation_logging_enabled ?? true);
+          if (!live()) return;
+          setLoggingEnabled(n?.conversation_logging_enabled ?? true);
+          setLoggingUnread(false);
         })
         .catch(() => {
-          if (live()) setLoggingEnabled(null);
+          if (!live()) return;
+          setLoggingEnabled(null);
+          setLoggingUnread(true);
         });
     },
     [identity.org, identity.namespace],
@@ -585,32 +592,46 @@ export function Conversations() {
         />
       )}
 
-      {!busy && hits === null && searchError === null && threads !== null && threads.length === 0 && !threadsError && (
-        <ListState
-          kind="empty"
-          icon="chat"
-          title="No conversations yet in this namespace"
-          // Recording off: no agent can fill the page until it is on, so the next step is the
-          // switch (in the header, for whoever may set it), not a connect.
-          {...(loggingEnabled === false
-            ? {
-                description: canSetLogging
-                  ? "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here: turn on Record conversations above, then connect an agent."
-                  : "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here; an admin of this namespace can turn it on.",
-              }
-            : canWrite(roleHere)
+      {/* Not yet known whether recording is on: nothing, rather than a state its answer takes
+          back. */}
+      {!busy &&
+        hits === null &&
+        searchError === null &&
+        threads !== null &&
+        threads.length === 0 &&
+        !threadsError &&
+        (loggingEnabled !== null || loggingUnread) && (
+          <ListState
+            kind="empty"
+            icon="chat"
+            title="No conversations yet in this namespace"
+            // Recording off: no agent can fill the page until it is on, so the next step is the
+            // switch (in the header, for whoever may set it), not a connect.
+            {...(loggingEnabled === false
               ? {
-                  description:
-                    "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on.",
-                  connect: "primary" as const,
+                  description: canSetLogging
+                    ? "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here: turn on Record conversations above, then connect an agent."
+                    : "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here; an admin of this namespace can turn it on.",
                 }
-              : {
-                  // A viewer's agent saves nothing here.
-                  description:
-                    "Conversations appear here when someone with writer access connects an agent that saves its chat turns, one thread per chat, while Record conversations is on.",
-                })}
-        />
-      )}
+              : loggingEnabled === null
+                ? {
+                    // The read failed: whether recording is on is not known, so no connect.
+                    description:
+                      "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on.",
+                  }
+                : canWrite(roleHere)
+                  ? {
+                      description:
+                        "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on.",
+                      connect: "primary" as const,
+                    }
+                  : {
+                      // A viewer's agent saves nothing here.
+                      description:
+                        "Conversations appear here when someone with writer access connects an agent that saves its chat turns, one thread per chat, while Record conversations is on.",
+                    })}
+          />
+        )}
 
       {!busy &&
         hits === null &&
