@@ -170,12 +170,16 @@ async def read_registry(ch: Any | None = None) -> bool:
         return False
 
 
+# What a command says when it needs the registry and its read failed.
+REGISTRY_UNREAD = "the self-service repository registry could not be read; retry"
+
+
 async def read_registry_or_exit(who: str) -> None:
     """For a process outside the server and the `loom code` CLI (a harness, a bench):
     read the registry once, or exit naming `who`, since `configured_repos` and
     `repo_for_namespace` refuse until it is read."""
     if not await read_registry():
-        raise SystemExit(f"{who}: the self-service repository registry could not be read; retry")
+        raise SystemExit(f"{who}: {REGISTRY_UNREAD}")
 
 
 def registry_read() -> bool:
