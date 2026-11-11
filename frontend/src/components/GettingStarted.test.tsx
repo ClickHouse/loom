@@ -160,7 +160,23 @@ describe("GettingStarted on Memories", () => {
     first.unmount();
     tokens.list = [token({ last_used_at: "2026-09-18T09:05:00" })];
     render(<Recent />);
-    expect(await screen.findByText("An agent is saving memories here.", undefined, WAIT)).toBeInTheDocument();
+    // A token's first call says the agent connected; only its memory here says it saves.
+    expect(await screen.findByText("Your agent has connected.", undefined, WAIT)).toBeInTheDocument();
+  });
+
+  it("keeps a connect step ticked on an earlier visit done, with no token to make", async () => {
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: { connect: true }, started: true, dismissed: false }),
+    );
+    // The token that made its first call is gone (revoked): the tick holds.
+    tokens.list = [];
+    seed([personal]);
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(within(panel).getByText("Your agent has connected.")).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: /Create (a|another) token/ })).toBeNull();
+    expect(within(panel).getByText("1 of 2 done")).toBeInTheDocument();
   });
 
   it("ticks both steps when an agent's first memory arrives, in place", async () => {

@@ -208,6 +208,7 @@ export function GettingStarted({
     ...(connect === "connected" ? { connect: true } : {}),
     ...(hasMemory ? { write: true } : {}),
   };
+  const connected = !!done.connect;
   const n = countDone(done);
   const total = ONBOARDING_STEPS.length;
   const allDone = n === total;
@@ -287,18 +288,22 @@ export function GettingStarted({
 
       <ol className="space-y-2">
         <Step step="connect" index={0} done={!!done.connect}>
-          {connect === "connected" ? (
-            <p className="text-xs text-text-muted mt-1">An agent is saving memories here.</p>
+          {/* A tick, once there, holds: a later visit (tokens not read yet) or a revoked token
+              does not bring the step's actions back. */}
+          {connected ? (
+            <p className="text-xs text-text-muted mt-1">
+              {agentSeen ? "An agent is saving memories here." : "Your agent has connected."}
+            </p>
           ) : authOff ? (
             <AuthOffConnect />
           ) : connect === "waiting" ? (
             <p className="text-xs text-text-muted mt-1">
               {following
                 ? "Waiting for the first call from your agent. This updates on its own."
-                : "Waiting for your agent's first memory. Start a session in your agent, then reload this page."}
+                : "Waiting for your agent's first memory. Start a session in your agent; this updates when it saves one."}
             </p>
           ) : null}
-          {!authOff && connect !== "connected" && (
+          {!authOff && !connected && (
             <div className="mt-2">
               {minting ? (
                 <Suspense fallback={<Loading layout="inline" label="Loading the token form" />}>
@@ -374,7 +379,9 @@ export function GettingStarted({
 
       {allDone && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-          <span className="text-success font-medium">All set: your agent is saving memories here.</span>
+          <span className="text-success font-medium">
+            {agentSeen ? "All set: your agent is saving memories here." : "All set: your agent is connected."}
+          </span>
           <Button type="secondary" htmlType="button" onClick={hide}>
             Hide this checklist
           </Button>
