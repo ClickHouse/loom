@@ -102,6 +102,8 @@ describe("loom.assistant.stream", () => {
         promptTokens: 9,
         completionTokens: 4,
         unknownNames: ["memory.frobnicate"],
+        steps: [],
+        stepsCut: false,
       },
     });
     expect(out).toHaveLength(3);
@@ -114,6 +116,25 @@ describe("loom.assistant.stream", () => {
       stream: true,
       messages: [...history, { role: "user", content: "q" }],
     });
+  });
+
+  it("carries the steps on the answer and yields nothing for a step event", async () => {
+    const step = { op: "namespace.audit", text: "Read the audit", ok: true };
+    const failed = { op: "memory.search", text: "Couldn't search memories", ok: false };
+    const stream = sse({ object: "loom.step", id: "", choices: [], steps: [step] }, chunk("Seven."), {
+      object: "loom.citations",
+      id: "chatcmpl-1",
+      citations: [],
+      steps: [step, failed],
+      steps_cut: true,
+    });
+    const { loom } = client(() => new Response(body(stream, [])));
+    const out = await collect(loom);
+    expect(out).toHaveLength(2);
+    const last = out.at(-1);
+    expect(last?.type === "answer" && last.answer.steps).toEqual([step, failed]);
+    expect(last?.type === "answer" && last.answer.stepsCut).toBe(true);
+    expect(last?.type === "answer" && last.answer.runId).toBe("chatcmpl-1");
   });
 
   it("reads an unknown or missing support, as an older or newer server sends, as unchecked", async () => {

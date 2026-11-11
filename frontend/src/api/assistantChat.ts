@@ -25,6 +25,28 @@ export interface Citation {
   anchor?: string;
 }
 
+/** One tool call the answer made, as its ledger row shows it (server/assistant/domain/steps.py):
+ *  its op, the words for it ("Read the audit", "Couldn't search memories") and whether it
+ *  succeeded. */
+export interface Step {
+  op: string;
+  text: string;
+  ok: boolean;
+}
+
+/** The steps of an event, whether the run held more than it lists, and whether the event
+ *  carries a list at all (`listed`: an answer's last event leaves it out when its run could
+ *  not be read, and a server that sends no steps never sends one). */
+export function stepsOf(chunk: Record<string, unknown>): { steps: Step[]; cut: boolean; listed: boolean } {
+  const raw = Array.isArray(chunk.steps) ? chunk.steps : [];
+  const steps = raw.flatMap((s) =>
+    isRecord(s) && typeof s.text === "string"
+      ? [{ op: typeof s.op === "string" ? s.op : "", text: s.text, ok: s.ok === true }]
+      : [],
+  );
+  return { steps, cut: chunk.steps_cut === true, listed: Array.isArray(chunk.steps) };
+}
+
 /** How far an answer rests on what Loom holds (server/assistant/domain/support.py). */
 export type Support = "supported" | "unsupported" | "unchecked" | "none";
 
@@ -39,9 +61,16 @@ export function supportOf(raw: unknown): Support {
 export interface ChatHandlers {
   /** Each piece of the answer's text, in order. */
   onText: (text: string) => void;
-  /** The answer's citations, checked, its support, and the op and setting names it wrote
-   *  that the server neither serves nor documents, once its text is complete. */
-  onCitations?: (citations: Citation[], support: Support, unknownNames: string[]) => void;
+  /** The answer's citations, checked, its support, the op and setting names it wrote that
+   *  the server neither serves nor documents, and what it read, once its text is complete. */
+  onCitations?: (
+    citations: Citation[],
+    support: Support,
+    unknownNames: string[],
+    read: { steps: Step[]; cut: boolean; listed: boolean },
+  ) => void;
+  /** What the answer has read so far, while it streams: the whole list each time. */
+  onSteps?: (read: { steps: Step[]; cut: boolean; listed: boolean }) => void;
 }
 
 function citationOf(raw: unknown): Citation | null {
@@ -86,7 +115,12 @@ function readEvent(data: string, on: ChatHandlers, requestId: string): boolean {
       all.map(citationOf).filter((c): c is Citation => c !== null),
       supportOf(chunk.support),
       Array.isArray(chunk.unknown_names) ? chunk.unknown_names.filter((n) => typeof n === "string") : [],
+      stepsOf(chunk),
     );
+    return false;
+  }
+  if (chunk.object === "loom.step") {
+    on.onSteps?.(stepsOf(chunk));
     return false;
   }
   const choices = Array.isArray(chunk.choices) ? chunk.choices : [];

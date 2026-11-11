@@ -59,6 +59,27 @@ afterEach(() => {
 });
 
 describe("stored conversations", () => {
+  it("drops the oldest cards' snapshots before any question or answer when it is over its size", () => {
+    // Ten card turns of about 30 KB each: over the stored size with every snapshot kept.
+    const big = "x".repeat(30 * 1024);
+    const cards: Turn[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `c${i}`,
+      question: `card ${i}`,
+      answer: "",
+      state: "card",
+      card: { op: "memory.inspect", args: {}, data: big, readAt: i },
+      at: i,
+    }));
+    saveConversation(conv("big", [turn(0), ...cards]));
+    const back = readConversation("big", alice, { answering: "kept" });
+    // Every turn is kept, the first question included; the oldest snapshots went, the newest stayed.
+    expect(back?.turns.map((t) => t.id)).toEqual(["t0", ...cards.map((c) => c.id)]);
+    expect(back?.trimmed).toBe(false);
+    expect(back?.turns[1].card?.data).toBeUndefined();
+    expect(back?.turns[1].card?.readAt).toBe(0);
+    expect(back?.turns.at(-1)?.card?.data).toBe(big);
+  });
+
   it("makes ids from getRandomValues, which works without randomUUID", () => {
     vi.stubGlobal("crypto", { getRandomValues: crypto.getRandomValues.bind(crypto), randomUUID: undefined });
     const a = randomId();

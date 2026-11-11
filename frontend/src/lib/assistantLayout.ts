@@ -15,7 +15,8 @@ export const PHONE_MIN = 640;
 /** One splitter arrow step. */
 export const SPLIT_STEP = 16;
 
-export type DockMode = "push" | "overlay" | "sheet";
+/** `expanded`: the /assistant page, where the panel takes <main>'s place at any width. */
+export type DockMode = "push" | "overlay" | "sheet" | "expanded";
 
 /** Why the assistant cannot answer, as the panel and the launcher word it. */
 export type AssistantReason =
@@ -77,14 +78,16 @@ export function claimReason(token: string | null = storedToken()): AssistantReas
   return null;
 }
 
-export function layoutOf(s: Pick<DockState, "viewport" | "collapsed" | "prefWidth">) {
+export function layoutOf(s: Pick<DockState, "viewport" | "collapsed" | "prefWidth" | "expanded">) {
+  if (s.expanded) return { mode: "expanded" as DockMode, width: s.viewport, max: s.viewport };
   return dockLayout(s.viewport, s.collapsed, s.prefWidth);
 }
 
 /** The one flag every modal behaviour follows: role="dialog", aria-modal, the trap, the
  *  Tab wrap and the page's inert. */
 export function isModal(s: DockState): boolean {
-  return s.open && !s.expired && layoutOf(s).mode !== "push";
+  const mode = layoutOf(s).mode;
+  return s.open && !s.expired && mode !== "push" && mode !== "expanded";
 }
 
 export function useDockMode(): DockMode {

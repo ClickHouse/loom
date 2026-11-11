@@ -7306,6 +7306,7 @@ export interface MentorHint {
   text: string;
   ops?: string[];
   evidence?: Record<string, unknown>;
+  plane?: string | null;
 }
 
 export interface MentorAdoption {

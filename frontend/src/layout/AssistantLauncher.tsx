@@ -18,7 +18,8 @@ const reducedMotion = () =>
  * tooltip naming it with its shortcut; from xl the icon and the word.
  */
 export function AssistantLauncher() {
-  const open = useDock((s) => s.open);
+  // On /assistant the panel is the page: the launcher shows it open (and collapses it).
+  const open = useDock((s) => s.open || !!s.expanded);
   const working = useDock((s) => s.working);
   const unread = useDock((s) => s.unread);
   const reason = useDock((s) => s.reason);

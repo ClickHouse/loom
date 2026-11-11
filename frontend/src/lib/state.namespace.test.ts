@@ -109,10 +109,10 @@ describe("writing the address", () => {
   });
 
   it("a switch names the new namespace in place and drops what belonged to the old one", () => {
-    at("/memories?namespace=team&memory=k&section=insights");
+    at("/memories?namespace=team&memory=k");
     const before = history.length;
     useStore.getState().setIdentity({ ...team, namespace: "other" });
-    expect(address()).toBe("/memories?namespace=other&section=insights");
+    expect(address()).toBe("/memories?namespace=other");
     expect(history.length).toBe(before);
   });
 

@@ -10,11 +10,12 @@
 //   push     beside <main> while <main> keeps PAGE_MIN px; non-modal.
 //   overlay  over the page at the right, full height, a scrim and the page inert; modal.
 //   sheet    below PHONE_MIN px wide, full screen with a history entry of its own; modal.
+//   expanded on /assistant, in <main>'s place at any width; non-modal.
 import { create } from "zustand";
 import { isAuthDisabled } from "../api";
 import { INDEX_KEY, PANEL_KEY } from "./assistantStorage";
 import { patchEntry } from "./place";
-import { sheetEntry, useStore, type View } from "./state";
+import { pathnameView, sheetEntry, urlParam, useStore, type View } from "./state";
 import type { AssistantReason } from "./assistantLayout";
 
 /** The thing "Ask about this" names for the next question: a memory, a document or a
@@ -59,6 +60,14 @@ export interface DockState {
   pageOff: boolean;
   /** Bumped by each "Ask about this", so the panel's body can act on it once. */
   askSeq: number;
+  // Set only once the panel's behaviour loads (absent reads as false or 0), so the shell
+  // carries no default for them.
+  /** The /assistant page shows: the panel is the page (its open state is kept for after). */
+  expanded?: boolean;
+  /** Bumped by the Memories page's Insights button: the panel opens on the starters. */
+  startersSeq?: number;
+  /** The audit's card is read too (an old link to the Memories Insights tab), nothing asked. */
+  startersAudit?: boolean;
 }
 
 // Auth off is known from the first paint; the token's claims are read when the panel's
@@ -84,6 +93,10 @@ export const useDock = create<DockState>(() => ({
   askSeq: 0,
 }));
 
+// An old link to the Memories page's Insights tab (`?section=insights`): the boot's address
+// leaves the key out, and the panel opens on the audit card once the shell has drawn.
+let insightsLink = pathnameView() === "memories" && urlParam("section") === "insights";
+
 type Runtime = typeof import("./assistantDockRuntime");
 let runtime: Runtime | null = null;
 let loading: Promise<Runtime> | null = null;
@@ -96,6 +109,11 @@ export function loadDockRuntime(): Promise<Runtime> {
     return m;
   });
   return loading;
+}
+
+/** The view is /assistant (`on`) or another page: the panel is the page there. */
+export function showExpanded(on: boolean): void {
+  if (on || useDock.getState().expanded) void loadDockRuntime().then((m) => m.showExpanded(on));
 }
 
 /** The launcher's click and Ctrl+/ (⌘/): open the panel, or close it. */
@@ -137,5 +155,8 @@ export function bootDock(): void {
   } catch {
     /* storage refused: nothing stored */
   }
-  if (wanted) void loadDockRuntime().then((m) => m.restorePanel());
+  if (insightsLink) {
+    insightsLink = false;
+    void loadDockRuntime().then((m) => m.openStarters(true));
+  } else if (wanted) void loadDockRuntime().then((m) => m.restorePanel());
 }

@@ -3770,6 +3770,7 @@
     "AgentTools",
     "AssistantAnswer",
     "AssistantCitation",
+    "AssistantStep",
     "AssistantText",
     "AuthInsufficient",
     "AuthInvalid",

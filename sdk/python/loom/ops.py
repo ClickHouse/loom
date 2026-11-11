@@ -16029,6 +16029,7 @@ class MentorHint(TypedDict, total=False):
     text: Required[str]
     ops: NotRequired[list[str]]
     evidence: NotRequired[dict[str, Any]]
+    plane: NotRequired[Optional[str]]
 
 
 class MentorAdoption(TypedDict, total=False):

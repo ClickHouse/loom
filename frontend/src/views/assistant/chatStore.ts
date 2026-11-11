@@ -12,6 +12,7 @@ import { SHORT_REASON, type AssistantReason } from "../../lib/assistantLayout";
 import { announceAssistant } from "../../lib/assistantDockRuntime";
 import { supportLabel } from "./Sources";
 import { withContext, type AskContext, type Asked } from "./pageContext";
+import type { TurnCard } from "./cards/types";
 import {
   ConversationDeleted,
   StorageRefused,
@@ -59,11 +60,12 @@ export const MAX_MESSAGE_CHARS = 20_000;
 /** The messages a new question goes with: the turns shown, but a question refused before
  *  any answer (it was never answered, and the person asks again) and no empty answer; the
  *  newest `MAX_HISTORY`, each cut to `MAX_MESSAGE_CHARS`. Each question is sent as it was
- *  asked: with the context line it carried. */
+ *  asked: with the context line it carried. A starter chosen without asking the assistant
+ *  (its card alone) was never asked. */
 export function conversation(turns: Turn[], question: string, context: AskContext | null = null): ChatMessage[] {
   const history: ChatMessage[] = [];
   for (const t of turns) {
-    if (t.state === "refused") continue;
+    if (t.state === "refused" || t.state === "card") continue;
     history.push({ role: "user", content: withContext(t.question, t.context).slice(0, MAX_MESSAGE_CHARS) });
     if (t.answer.trim()) history.push({ role: "assistant", content: t.answer.slice(0, MAX_MESSAGE_CHARS) });
   }
@@ -229,11 +231,24 @@ export function resetChat(owner: Owner | null): void {
   useDock.setState({ working: false });
 }
 
+/** What a starter adds to the turn it asks: its card, what to do once the turn shows (read
+ *  the card), and how to add the card alone when no turn is asked (`alone`, with why). */
+export interface WithCard {
+  card: TurnCard;
+  shown: (turnId: string) => void;
+  alone: (why: string) => void;
+}
+
 /** Ask `question`, with what the panel's chip says about the page (`asked`): in the
  *  conversation's namespace, or in `namespace` when a new one starts. The conversation's
  *  lock is taken first, only if no other tab holds it; when one does, nothing is sent and
- *  the question stays in the field. */
-export function ask(question: string, namespace: string, asked: Asked = { context: null, item: null }): void {
+ *  the question stays in the field. A starter's turn carries its card (`withCard`). */
+export function ask(
+  question: string,
+  namespace: string,
+  asked: Asked = { context: null, item: null },
+  withCard: WithCard | null = null,
+): void {
   const s = useChat.getState();
   if (s.answering) return;
   const id = s.id ?? randomId();
@@ -243,7 +258,7 @@ export function ask(question: string, namespace: string, asked: Asked = { contex
   // Answering from here on, so a second Ask waits; the turn shows once the lock is held.
   useChat.setState({ answering: true, notice: null });
   useDock.setState({ working: true });
-  const run = (held: boolean) => answer(id, ns, question, asked, mine, held);
+  const run = (held: boolean) => answer(id, ns, question, asked, mine, held, withCard);
   const locks = webLocks();
   if (!locks?.request) {
     void run(false);
@@ -252,7 +267,11 @@ export function ask(question: string, namespace: string, asked: Asked = { contex
   let granted = false;
   locks
     .request(lockName(id), { ifAvailable: true }, (lock) => {
-      if (!lock) return otherTab(mine);
+      if (!lock) {
+        // A starter's card still reads: it is the person's own read, not the answer.
+        if (otherTab(mine)) withCard?.alone("another tab is answering in this conversation");
+        return;
+      }
       granted = true;
       // The lock is held until the answer ends.
       return run(true);
@@ -272,15 +291,17 @@ function settle(mine: AbortController): boolean {
   return true;
 }
 
-/** Another tab holds the conversation's lock: nothing is asked. */
-function otherTab(mine: AbortController): void {
-  if (!settle(mine)) return;
+/** Another tab holds the conversation's lock: nothing is asked. Answers whether this was
+ *  still this tab's ask (a reset since, a sign-out say, leaves nothing to do). */
+function otherTab(mine: AbortController): boolean {
+  if (!settle(mine)) return false;
   useChat.setState({ notice: OTHER_TAB });
   announceAssistant(OTHER_TAB);
   // That tab's final save may have landed while the lock was asked for, its storage event
   // heard while this tab was answering: merge it now. The note stays until the next Ask,
   // an edit of the question or a storage event, so the refusal is said on screen.
   mergeStored();
+  return true;
 }
 
 /** The question was edited: a note about the last Ask refused no longer applies. */
@@ -297,6 +318,7 @@ async function answer(
   asked: Asked,
   mine: AbortController,
   held: boolean,
+  withCard: WithCard | null,
 ): Promise<void> {
   const context = asked.context;
   // Stopped, or the chat reset, before the lock came: nothing is asked.
@@ -313,11 +335,21 @@ async function answer(
   useChat.setState({
     turns: [
       ...before,
-      { id: turnId, question, ...(context ? { context } : {}), answer: "", state: "answering", at: Date.now() },
+      {
+        id: turnId,
+        question,
+        ...(context ? { context } : {}),
+        ...(withCard ? { card: withCard.card } : {}),
+        answer: "",
+        state: "answering",
+        at: Date.now(),
+      },
     ],
   });
-  // The next question starts again from the page alone, its chip on.
-  useDock.setState({ draft: "", item: null, pageOff: false });
+  withCard?.shown(turnId);
+  // The next question starts again from the page alone, its chip on. A starter's question
+  // never came from the field: what is typed there, and its chip, stay.
+  if (!withCard) useDock.setState({ draft: "", item: null, pageOff: false });
   announceAssistant("The assistant is answering.");
   // Saved at its start: a reload mid-answer shows it as stopped. Other tabs leave a turn
   // still answering out until it ends.
@@ -350,10 +382,20 @@ async function answer(
           streamed = true;
           update((t) => ({ answer: t.answer + text }));
         },
-        onCitations: (citations, support, unknownNames) => {
+        onCitations: (citations, support, unknownNames, read) => {
           labelled = supportLabel(support, citations, unknownNames)?.text ?? "";
-          update(() => ({ citations, support, unknownNames }));
+          // The server's one read of the run replaces the live list (an empty one when the
+          // run made no call); when that read failed or ran past its bound the event lists
+          // none, and the steps already shown stay.
+          update(() => ({
+            citations,
+            support,
+            unknownNames,
+            ...(read.listed ? { steps: read.steps, stepsCut: read.cut } : {}),
+          }));
         },
+        // Display only: the steps are not said (the live region keeps card lines and the end).
+        onSteps: (read) => update(() => ({ steps: read.steps, stepsCut: read.cut })),
       },
       mine.signal,
     );
@@ -366,6 +408,8 @@ async function answer(
     // stream is an error event (status 0) after part of the answer.
     const refusedBefore = e instanceof ApiError && e.status !== 0 && !streamed;
     const reason = refusedBefore ? refusalReason(e) : null;
+    // A starter's card works while the assistant cannot answer: it stays, as the card alone.
+    if (refusedBefore && withCard) return cardAlone(turnId, reason, e, mine, held);
     if (reason) return takeBack(id, turnId, question, asked, reason, mine, held);
     // A refused question was never answered: it waits in the field to be asked again, with
     // the chip it was asked with.
@@ -400,6 +444,33 @@ function takeBack(
   } else save({ held, drop: turnId });
   settle(mine);
   announceAssistant(`The assistant can't answer: ${SHORT_REASON[reason.kind]}.`);
+}
+
+/** The route refused a starter's question before the answer: the turn becomes the card
+ *  alone, in place (its read, already started, lands in it), saying why; the question is not
+ *  put in the field (the starter asks it again). A reason the panel shows is shown there too. */
+function cardAlone(
+  turnId: string,
+  reason: AssistantReason | null,
+  e: unknown,
+  mine: AbortController,
+  held: boolean,
+): void {
+  if (controller !== mine) return;
+  // A reason the panel shows in its short words; anything else (busy, over the cost cap, a
+  // failure) in the route's own words, so a wait and try again is said.
+  const why = reason ? SHORT_REASON[reason.kind] : humanizeError(e, { read: true, bare: true }).replace(/\.$/, "");
+  useChat.setState((st) => ({
+    turns: st.turns.map((t) =>
+      t.id === turnId && t.card
+        ? { ...t, state: "card" as const, answer: "", card: { ...t.card, unanswered: why }, at: Date.now() }
+        : t,
+    ),
+    ...(reason ? { hint: reason } : {}),
+  }));
+  settle(mine);
+  save({ held });
+  announceAssistant(`The assistant can't answer: ${why}.`);
 }
 
 /** A question that was never answered goes back to the field with the chip it was asked

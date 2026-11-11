@@ -44,6 +44,15 @@ export interface AssistantCitation {
  *  not know, or none from an older server, reads as `unchecked`. */
 export type AssistantSupport = "supported" | "unsupported" | "unchecked" | "none";
 
+/** One tool call the answer made, as its ledger row shows it: the op, a line saying what it
+ *  did (such as "Couldn't search memories" when the call failed or was refused), and whether
+ *  it succeeded. */
+export interface AssistantStep {
+  op: string;
+  text: string;
+  ok: boolean;
+}
+
 /** The whole answer; `runId` is the `run_id` of its ledger rows. */
 export interface AssistantAnswer {
   text: string;
@@ -55,6 +64,11 @@ export interface AssistantAnswer {
   completionTokens: number;
   /** Op and LOOM_* names the answer wrote that the server neither serves nor documents. */
   unknownNames: string[];
+  /** What it read, oldest first: sent on a streamed answer by a server that has them; [] too
+   *  when the server could not read the run (a run that made no call has none either). */
+  steps: AssistantStep[];
+  /** The run held more ledger rows than one read takes (200), so `steps` is a part of it. */
+  stepsCut: boolean;
 }
 
 export type AssistantEvent = { type: "text"; text: string } | { type: "answer"; answer: AssistantAnswer };
@@ -134,6 +148,8 @@ export function assistantChat(transport: Transport): AssistantChat {
         promptTokens: 0,
         completionTokens: 0,
         unknownNames: [],
+        steps: [],
+        stepsCut: false,
       };
       try {
         for await (const data of events(res, transport.baseUrl, requestId, cut.signal, touch)) {
@@ -257,8 +273,16 @@ function fold(event: Record<string, unknown>, answer: AssistantAnswer): string {
     }));
     answer.support = supportOf(event.support);
     answer.unknownNames = (Array.isArray(event.unknown_names) ? event.unknown_names : []).map(String);
+    answer.steps = (Array.isArray(event.steps) ? event.steps : []).filter(isObject).map((s) => ({
+      op: String(s.op ?? ""),
+      text: String(s.text ?? ""),
+      ok: s.ok === true,
+    }));
+    answer.stepsCut = event.steps_cut === true;
     return "";
   }
+  // The steps so far, while the answer streams: the answer carries them once it ends.
+  if (event.object === "loom.step") return "";
   answer.runId ||= String(event.id ?? "");
   answer.model ||= String(event.model ?? "");
   if (isObject(event.usage)) {

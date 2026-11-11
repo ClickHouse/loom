@@ -1722,6 +1722,18 @@ textarea[aria-invalid="true"]:focus-visible {
     z-index: 15;
     border-left: 0;
   }
+  /* /assistant: the panel is the page, in <main>'s place, its column at reading width. */
+  .assistant-panel[data-mode="expanded"] {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    border-left: 0;
+  }
+  .assistant-panel[data-mode="expanded"] > * {
+    width: 100%;
+    max-width: 880px;
+    margin-inline: auto;
+  }
   .assistant-panel[data-mode="overlay"][data-open],
   .assistant-panel[data-mode="sheet"][data-open] {
     animation: slideIn 150ms cubic-bezier(0.16, 1, 0.3, 1);

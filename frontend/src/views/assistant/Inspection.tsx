@@ -1,7 +1,8 @@
 import { fmtInt } from "../../lib/format";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import type { InspectCount, InspectView, MemoryInspection } from "../../api";
-import { KeyButton } from "../../components/ui/KeyButton";
+import { CardKey } from "./cards/linked";
+import { useCardSection } from "./cards/section";
 import { CodeBlock } from "./CodeBlock";
 import { ExactNames } from "./ExactNames";
 import { ListTime } from "../../components/ui/ListTime";
@@ -22,12 +23,14 @@ const TOP_TAGS = 20;
 /** What one user, agent or session remembers: the subject's own rows as the server defines
  *  them, apart from every other live row, and what creates them. */
 export function Inspection({ result }: { result: MemoryInspection }) {
+  const { prefix, level } = useCardSection();
   // A section the server could not read is named in `skipped` as `<section>: <error>`;
   // its fields then hold defaults, not answers.
   const unread = (section: string) => result.skipped.some((s) => s.startsWith(`${section}:`));
   return (
     <div className="space-y-5" data-testid="assistant-inspection">
-      <p className="text-sm text-text">
+      {/* Part of the card's name (cards/Card.tsx), so two subjects' cards read apart. */}
+      <p id={`${prefix}-subject`} className="text-sm text-text">
         {SUBJECT_COPY[result.subject].label}{" "}
         <span className="font-mono break-all">{shownName(result.subject, result.id)}</span>
       </p>
@@ -45,8 +48,9 @@ export function Inspection({ result }: { result: MemoryInspection }) {
         view={result.others}
         unread={(part) => unread(`others.${part}`)}
       />
-      <section aria-labelledby="inspect-settings" className="space-y-1 text-sm">
-        <SectionHeading id="inspect-settings" level={3} label="What creates these memories" />
+      {/* Named with the subject, so two subjects' cards keep their sections apart. */}
+      <section aria-labelledby={`${prefix}-subject ${prefix}-inspect-settings`} className="space-y-1 text-sm">
+        <SectionHeading id={`${prefix}-inspect-settings`} level={level} label="What creates these memories" />
         <p className="text-text">
           {unread("settings.guide") ? (
             <span className="text-text-muted">The guide could not be read.</span>
@@ -80,8 +84,8 @@ export function Inspection({ result }: { result: MemoryInspection }) {
         <p className="text-text-muted">{result.settings.extraction_instructions}</p>
         <ExactNames refs={result.settings.extraction_instructions_refs} />
       </section>
-      <section aria-labelledby="inspect-activity" className="space-y-1 text-sm">
-        <SectionHeading id="inspect-activity" level={3} label="Activity" />
+      <section aria-labelledby={`${prefix}-subject ${prefix}-inspect-activity`} className="space-y-1 text-sm">
+        <SectionHeading id={`${prefix}-inspect-activity`} level={level} label="Activity" />
         {unread("activity") ? (
           <p className="text-text-muted">The calls could not be read.</p>
         ) : result.activity.calls.length === 0 ? (
@@ -132,6 +136,7 @@ function InspectViewBlock({
   view: InspectView;
   unread: (part: "counts" | "newest" | "tags" | "categories") => boolean;
 }) {
+  const { prefix, level } = useCardSection();
   const counted = !unread("counts");
   const listed = !unread("newest");
   const inspect = useStore((s) => s.inspect);
@@ -147,8 +152,8 @@ function InspectViewBlock({
     unread("categories") ? "Categories: could not be read" : counts("Categories", view.categories),
   ].filter((l): l is string => Boolean(l));
   return (
-    <section aria-labelledby={id} className="space-y-2" data-view={id}>
-      <SectionHeading id={id} level={3} label={title} count={counted ? view.live_rows : undefined} />
+    <section aria-labelledby={`${prefix}-subject ${prefix}-${id}`} className="space-y-2" data-view={id}>
+      <SectionHeading id={`${prefix}-${id}`} level={level} label={title} count={counted ? view.live_rows : undefined} />
       <p className="text-xs text-text-muted">{view.definition}</p>
       {!counted && <p className="text-sm text-text-muted">The memories could not be counted.</p>}
       {counted && view.live_rows === 0 ? (
@@ -172,7 +177,7 @@ function InspectViewBlock({
                 <li key={r.memory_id} className="text-sm">
                   <div className="flex flex-wrap items-center gap-x-2">
                     {/* Opened under its whole writer identity: memory.get reads a row by it. */}
-                    <KeyButton
+                    <CardKey
                       memoryKey={r.memory_key}
                       onInspect={(k) => inspect(k, { agent: r.agent, userId: r.user_id, sessionId: r.session_id })}
                     />

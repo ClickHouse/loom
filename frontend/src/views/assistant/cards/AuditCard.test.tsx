@@ -1,29 +1,16 @@
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { cleanup, render, screen, waitFor, within } from "../../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MemoryListEntry, MyNamespaceEntry, NamespaceAuditResult, WhoAmI } from "../api";
-import { useStore } from "../lib/state";
-import { resetNamespaceRoleCache } from "../lib/namespaceRole";
-import { setFoldOpen } from "../lib/folds";
-import { Recent } from "./Recent";
+import type { MyNamespaceEntry, NamespaceAuditResult, WhoAmI } from "../../../api";
+import { useStore } from "../../../lib/state";
+import { resetNamespaceRoleCache } from "../../../lib/namespaceRole";
+import { InsightsHarness, resetInsights } from "../../../test/insights";
 
-// The Memories view carries a "Usage audit" panel. One click runs `namespace.audit` for
-// the current org/namespace over the chosen window; the findings render critical →
-// warning → info with the code humanised, a severity badge, count, share and the first
-// sample (a key sample opens that memory in the inspector). Nothing runs on mount.
-
-const entry = (memory_key: string): MemoryListEntry => ({
-  memory_key,
-  memory_type: "semantic",
-  confidence: 1,
-  version: 1,
-  created_at: "2026-09-18T09:00:00Z",
-  expires_at: null,
-  pinned: false,
-  tags: [],
-  agent: "claude-desktop",
-  value: `value of ${memory_key}`,
-});
+// The audit starter's card. Choosing "How is this namespace being used?" runs
+// `namespace.audit` for the current org/namespace over the last 7 days (the window select
+// reads again); the findings render critical → warning → info with the code humanised, a
+// severity badge, count, share and the first sample (a key sample opens that memory in the
+// drawer). Nothing runs until the starter is chosen.
 
 const AUDIT: NamespaceAuditResult = {
   org: "dev",
@@ -118,20 +105,16 @@ const AUDIT: NamespaceAuditResult = {
   infos: 1,
 };
 
-vi.mock("../api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api")>();
+vi.mock("../../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api")>();
   return {
     ...actual,
-    listMemories: vi.fn(async () => ({ entries: [entry("coffee_pref"), entry("tea_pref")], total: 2, today: 2 })),
-    bulkGetMemories: vi.fn(async () => ({ results: {}, missing: [] })),
-    listConflicts: vi.fn(async () => ({ rows: [] })),
-    conflictKeys: vi.fn(async (): Promise<string[]> => []),
     listMine: vi.fn(async () => []),
     isAuthDisabled: () => false,
     auditNamespace: vi.fn(async () => AUDIT),
   };
 });
-import { auditNamespace, listMemories } from "../api";
+import { auditNamespace } from "../../../api";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,
@@ -151,21 +134,19 @@ const owner: WhoAmI = {
   namespaces: ["team-alerts"],
 };
 
-// The panel lives on the Memories page's Insights tab (`?section=insights`), not above
-// the list.
-async function openMemories() {
-  window.history.replaceState(null, "", "/memories?section=insights");
-  render(<Recent />);
-  await screen.findByTestId("usage-audit");
-  expect(screen.getByRole("tab", { name: "Insights" })).toHaveAttribute("aria-selected", "true");
-  // Insights reads no rows.
-  expect(listMemories).not.toHaveBeenCalled();
+const STARTER = "How is this namespace being used?";
+
+/** Choose the audit starter; the card, once its read landed. */
+async function openAudit() {
+  render(<InsightsHarness />);
+  await userEvent.click(await screen.findByRole("button", { name: STARTER }));
+  await screen.findByTestId("audit-summary");
+  return screen.getByTestId("assistant-card");
 }
 
-describe("Memories: usage audit panel", () => {
+describe("Assistant: the audit card", () => {
   beforeEach(() => {
-    // The panel starts folded; these tests are about what it shows once opened.
-    setFoldOpen("usage-audit", true);
+    resetInsights();
     vi.clearAllMocks();
     resetNamespaceRoleCache();
     useStore.setState({
@@ -179,24 +160,28 @@ describe("Memories: usage audit panel", () => {
   });
   afterEach(() => {
     cleanup();
-    window.history.replaceState(null, "", "/");
+    resetInsights();
     useStore.setState({ whoami: null, myNamespaces: null, identity: null, inspectedMemoryKey: null });
   });
 
-  it("runs on a click, not on mount, with the window and five samples; findings sort critical → warning → info", async () => {
-    await openMemories();
-    const panel = screen.getByTestId("usage-audit");
-    expect(within(panel).getByRole("heading", { name: "Usage audit" })).toBeInTheDocument();
+  it("runs when chosen, not on mount, over 7 days and five samples, the window select reading again; findings sort critical → warning → info", async () => {
+    render(<InsightsHarness />);
+    await screen.findByRole("button", { name: STARTER });
     expect(auditNamespace).not.toHaveBeenCalled();
-
-    await userEvent.click(within(panel).getByLabelText("Audit window"));
-    await userEvent.click(await screen.findByText("30 days"));
-    await userEvent.click(within(panel).getByRole("button", { name: /Run audit/ }));
-
+    await userEvent.click(screen.getByRole("button", { name: STARTER }));
     await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(1));
     const [scope, opts] = vi.mocked(auditNamespace).mock.calls[0];
     expect(scope).toEqual({ org: "dev", namespace: "team-alerts" });
-    expect(opts).toMatchObject({ windowSeconds: 30 * 86_400, sampleLimit: 5 });
+    expect(opts).toMatchObject({ windowSeconds: 7 * 86_400, sampleLimit: 5 });
+    const panel = await screen.findByTestId("assistant-card");
+    expect(within(panel).getByRole("heading", { name: "Audit" })).toBeInTheDocument();
+    // The card's own provenance: Loom's read, not the model's.
+    expect(await within(panel).findByTestId("assistant-card-provenance")).toHaveTextContent("Loom's own read");
+
+    await userEvent.click(within(panel).getByLabelText("Audit window"));
+    await userEvent.click(await screen.findByText("30 days"));
+    await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(auditNamespace).mock.calls[1][1]).toMatchObject({ windowSeconds: 30 * 86_400 });
 
     // Summary line.
     const summary = await screen.findByTestId("audit-summary");
@@ -226,13 +211,13 @@ describe("Memories: usage audit panel", () => {
     );
     expect(panel).toHaveTextContent("run loom-optimize with your agent");
     expect(panel).toHaveTextContent("docs/guides/optimize-namespace.md");
-    // Never an "optimize now" control (the agent applies).
+    // Never an "optimize now" control (the agent applies), and the page that owns it.
     expect(within(panel).queryByRole("button", { name: /optimi[sz]e/i })).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Open in Memories" })).toBeInTheDocument();
   });
 
   it("a key sample opens that memory; the expandable row shows detail, remedy and every sample", async () => {
-    await openMemories();
-    await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
+    await openAudit();
     const rows = await screen.findAllByTestId("audit-finding");
 
     await userEvent.click(within(rows[0]).getByRole("button", { name: "Open memory sre/lease/main" }));
@@ -275,20 +260,20 @@ describe("Memories: usage audit panel", () => {
       warnings: 0,
       infos: 0,
     });
-    await openMemories();
-    await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
+    await openAudit();
     expect(await screen.findByText("Nothing to flag in this window.")).toBeInTheDocument();
     expect(screen.getByTestId("audit-summary")).toHaveTextContent("Healthy");
     expect(screen.queryAllByTestId("audit-finding")).toHaveLength(0);
     expect(screen.queryByTestId("audit-skipped")).toBeNull();
   });
 
-  it("a failed audit is an inline error, and the button offers another run", async () => {
+  it("a failed audit says so in the card, which offers another read", async () => {
     vi.mocked(auditNamespace).mockRejectedValueOnce(new Error("upstream timed out"));
-    await openMemories();
-    await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Audit failed");
-    expect(screen.getByRole("button", { name: /Run audit/ })).toBeEnabled();
+    render(<InsightsHarness />);
+    await userEvent.click(await screen.findByRole("button", { name: STARTER }));
+    expect(await screen.findByTestId("assistant-card-refused")).toHaveTextContent("Couldn't read the audit");
+    await userEvent.click(screen.getByRole("button", { name: "Read again" }));
+    expect(await screen.findByTestId("audit-summary")).toBeInTheDocument();
   });
 
   it("joins the kind line with separators, and an older server's finding shows none of it", async () => {
@@ -311,8 +296,7 @@ describe("Memories: usage audit panel", () => {
         churn,
       ],
     });
-    await openMemories();
-    await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
+    await openAudit();
     const rows = await screen.findAllByTestId("audit-finding");
 
     await userEvent.click(within(rows[0]).getByRole("button", { name: "Show details for Exact-key store" }));
@@ -343,8 +327,7 @@ describe("Memories: usage audit panel", () => {
         },
       ],
     });
-    await openMemories();
-    await userEvent.click(screen.getByRole("button", { name: /Run audit/ }));
+    await openAudit();
     const [backlog] = await screen.findAllByTestId("audit-finding");
     expect(screen.getByText(/250 procedure reads left out of the ratio/)).toBeInTheDocument();
     await userEvent.click(within(backlog).getByRole("button", { name: "Show details for Indexing backlog" }));
@@ -353,12 +336,22 @@ describe("Memories: usage audit panel", () => {
     );
   });
 
-  it("an unknown role on the namespace shows no panel and sends nothing", async () => {
+  it("an unknown role on the namespace offers no read and sends nothing", async () => {
     useStore.setState({ myNamespaces: [] });
-    window.history.replaceState(null, "", "/memories?section=insights");
-    render(<Recent />);
-    await screen.findByRole("tab", { name: "Insights" });
-    expect(screen.queryByTestId("usage-audit")).toBeNull();
+    render(<InsightsHarness />);
+    const starter = await screen.findByRole("button", { name: STARTER });
+    expect(starter).toHaveAttribute("aria-disabled", "true");
+    expect(starter).toHaveAccessibleDescription("Your role on this namespace is not known.");
+    await userEvent.click(starter);
+    expect(screen.queryByTestId("assistant-card")).toBeNull();
     expect(auditNamespace).not.toHaveBeenCalled();
+  });
+
+  it("asks the assistant beside the card: the card is still read, and refused shows in its place", async () => {
+    useStore.setState({ myNamespaces: [] });
+    // The assistant can answer, but this person's role does not allow the audit read.
+    render(<InsightsHarness cannotAnswer={null} />);
+    expect(screen.getByRole("checkbox", { name: "Also ask the assistant" })).toBeChecked();
+    expect(await screen.findByRole("button", { name: STARTER })).not.toHaveAttribute("aria-disabled");
   });
 });

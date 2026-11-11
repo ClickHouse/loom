@@ -14,6 +14,7 @@ import { SectionHeading } from "../../components/ui";
 import { ListTime } from "../../components/ui/ListTime";
 import { fmtInt } from "../../lib/format";
 import { ExactNames } from "./ExactNames";
+import { useCardSection } from "./cards/section";
 
 // server/knowledge/app/tune.py _CAPABILITY_WORDS: a lost capability in words; another code an
 // extractor declares is said with spaces for its underscores.
@@ -24,9 +25,9 @@ const CAPABILITY_WORDS: Record<string, string> = {
 };
 const capability = (code: string) => CAPABILITY_WORDS[code] ?? code.replaceAll("_", " ");
 
-// The audit's two checks on memories shaped like documents, as its panel labels them
-// (components/NamespaceAuditPanel.tsx CODE_LABELS; kept here so this page does not load the
-// panel). A code the page does not know is shown by its code.
+// The audit's two checks on memories shaped like documents, as the audit card labels them
+// (cards/AuditBody.tsx CODE_LABELS; kept here so this card does not load the audit's). A
+// code the card does not know is shown by its code.
 const MEMORY_CHECK_LABEL: Record<string, string> = {
   oversized_values: "Oversized values",
   episodic_blobs: "Episodic blobs",
@@ -75,6 +76,7 @@ function plural(count: number, one: string, many = `${one}s`): string {
  *  section it read was cut ("documents: more than ... the counts cover the first"), so that
  *  line is shown beside the section's data as a note. */
 export function DocumentInspection({ result }: { result: KnowledgeInspection }) {
+  const { prefix, level } = useCardSection();
   const notes = (section: string) =>
     result.skipped.filter((s) => s.startsWith(`${section}: `)).map((s) => s.slice(section.length + 2));
   const docs = result.documents;
@@ -86,8 +88,8 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
   const empty = docs.live === 0 && result.ingestions.sources === 0;
   return (
     <div className="space-y-5" data-testid="assistant-documents">
-      <section aria-labelledby="docs-totals" className="space-y-2 text-sm">
-        <SectionHeading id="docs-totals" level={3} label="What the namespace holds" />
+      <section aria-labelledby={`${prefix}-docs-totals`} className="space-y-2 text-sm">
+        <SectionHeading id={`${prefix}-docs-totals`} level={level} label="What the namespace holds" />
         {empty ? (
           <p className="text-text-muted" role="status">
             This namespace holds no live document.
@@ -121,8 +123,8 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
       <IngestionSection result={result} notes={notes} />
 
       {!empty && (
-        <section aria-labelledby="docs-decisions" className="space-y-1 text-sm">
-          <SectionHeading id="docs-decisions" level={3} label="Decisions recorded from documents" />
+        <section aria-labelledby={`${prefix}-docs-decisions`} className="space-y-1 text-sm">
+          <SectionHeading id={`${prefix}-docs-decisions`} level={level} label="Decisions recorded from documents" />
           <p className="text-xs text-text-muted">{result.decisions.definition}</p>
           <ExactNames refs={result.decisions.refs} />
           {result.decisions.all_documents ? (
@@ -141,8 +143,8 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
 
       {!empty && <ListedSection result={result} />}
 
-      <section aria-labelledby="docs-memories" className="space-y-1 text-sm">
-        <SectionHeading id="docs-memories" level={3} label="Memories shaped like documents" />
+      <section aria-labelledby={`${prefix}-docs-memories`} className="space-y-1 text-sm">
+        <SectionHeading id={`${prefix}-docs-memories`} level={level} label="Memories shaped like documents" />
         {/* The server sends each of the audit's two checks, a clean one at count 0, or names it
             in `skipped` ("memory_findings.<code>: <reason>"): none sent means none was read. */}
         {result.memory_findings.length === 0 ? (
@@ -230,10 +232,11 @@ const JOB_CHECKS = [
 ];
 
 function ChunkSection({ result }: { result: KnowledgeInspection }) {
+  const { prefix, level } = useCardSection();
   const c = result.chunks;
   return (
-    <section aria-labelledby="docs-chunks" className="space-y-2 text-sm">
-      <SectionHeading id="docs-chunks" level={3} label="Live chunks" />
+    <section aria-labelledby={`${prefix}-docs-chunks`} className="space-y-2 text-sm">
+      <SectionHeading id={`${prefix}-docs-chunks`} level={level} label="Live chunks" />
       {c.embedder_model === "" ? (
         <p className="text-text-muted">
           The server's embedder could not be built, so nothing says which chunks search reads.
@@ -264,11 +267,12 @@ function ChunkSection({ result }: { result: KnowledgeInspection }) {
 }
 
 function IngestionSection({ result, notes }: { result: KnowledgeInspection; notes: (section: string) => string[] }) {
+  const { prefix, level } = useCardSection();
   const i = result.ingestions;
   const x = result.extraction;
   return (
-    <section aria-labelledby="docs-ingestion" className="space-y-2 text-sm">
-      <SectionHeading id="docs-ingestion" level={3} label="Ingestion and extraction" />
+    <section aria-labelledby={`${prefix}-docs-ingestion`} className="space-y-2 text-sm">
+      <SectionHeading id={`${prefix}-docs-ingestion`} level={level} label="Ingestion and extraction" />
       <p className="text-xs text-text-muted">
         This server: ingest worker {i.worker_enabled ? "on" : "off"} · extractor{" "}
         {i.extractor_configured === null
@@ -401,7 +405,10 @@ function percent(count: number, share: number): string {
 }
 
 function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFinding; noun: string }) {
-  const head = `finding-${f.code}`;
+  const { prefix, level } = useCardSection();
+  const head = `${prefix}-finding-${f.code}`;
+  // One level under the section the finding is listed in.
+  const Heading = level === 3 ? "h4" : "h5";
   const ids = "ingestion_ids" in f ? f.ingestion_ids : [];
   const ingested = new Set("ingested_samples" in f ? f.ingested_samples : []);
   // The server samples the ingested documents apart, so some may not be in `samples`.
@@ -410,9 +417,9 @@ function FindingCard({ finding: f, noun }: { finding: DocumentFinding | IngestFi
   return (
     <li className="pane-card space-y-1.5" aria-labelledby={head} data-code={f.code} data-kind={f.kind}>
       <div className="flex flex-wrap items-center gap-2">
-        <h4 id={head} className="font-semibold text-text">
+        <Heading id={head} className="font-semibold text-text">
           {FINDING_LABEL[f.code] ?? f.code}
-        </h4>
+        </Heading>
         {f.severity === "warning" && <Badge text="Warning" state="warning" size="sm" />}
         <span className="text-xs text-text-muted font-mono">{f.code}</span>
       </div>
@@ -492,11 +499,17 @@ function jobsMayBeOlder(result: KnowledgeInspection): boolean {
 }
 
 function ListedSection({ result }: { result: KnowledgeInspection }) {
+  const { prefix, level } = useCardSection();
   const live = result.documents.live;
   const short = !result.listed_complete && documentsMayBeShort(result);
   return (
-    <section aria-labelledby="docs-listed" className="space-y-2 text-sm">
-      <SectionHeading id="docs-listed" level={3} label="Newest documents" count={result.listed.length || undefined} />
+    <section aria-labelledby={`${prefix}-docs-listed`} className="space-y-2 text-sm">
+      <SectionHeading
+        id={`${prefix}-docs-listed`}
+        level={level}
+        label="Newest documents"
+        count={result.listed.length || undefined}
+      />
       {readFailed(result, "listed") ? (
         <p className="text-text-muted">The documents could not be listed.</p>
       ) : (

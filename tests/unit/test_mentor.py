@@ -943,6 +943,9 @@ def test_mentor_brief_returns_the_profile_planes_and_adoption(
     )
     assert out.agent == "a" and out.healthy is False
     assert [h.code for h in out.hints] == ["code_index_unused"]
+    # The hint names the plane of its ops (here memory.search's), so the dashboard can link
+    # it to its page.
+    assert [(h.ops, h.plane) for h in out.hints] == [(["memory.search"], "claims")]
     planes = {p.plane: p for p in out.planes}
     assert planes["claims"].calls == 12 and planes["code index"].available is True
     assert planes["documents"].available is False and planes["tracker"].available is None

@@ -8,8 +8,8 @@ LibreChat is an optional chat client for investigating a namespace: what it hold
 is used, and cited answers over its memories, documents and code. The model calls Loom's
 assistant tools over MCP with the signed-in person's own token. Loom stays the authority
 for memory, documents, retrieval and the diagnostic rules; LibreChat keeps the chat. The
-dashboard's [Assistant page](../dashboard.md) answers the same inspect and tune questions
-with no model and no second store.
+dashboard's [assistant panel](../dashboard.md#the-assistant-panel) answers the same inspect
+and tune questions with no model and no second store, as the cards its starters read.
 
 The configuration, a local compose file and the qualification harness are in
 [`integrations/librechat/`](../../../integrations/librechat/README.md). Other LibreChat
@@ -127,7 +127,7 @@ memory, so this configuration keeps its memory feature off and its search index 
 LibreChat's agents API with a model, and through the same reads over HTTP with no model,
 with the arguments the assistant toolset forces (`memory.search` with `auto_touch: false`
 and `explain: false`). The inventory, inspect and tune cases are the reads the dashboard's
-Assistant page makes; the memory cases' `memory.search` is not on that page. It seeds two
+starter cards make; the memory cases' `memory.search` is not among them. It seeds two
 orgs, mints a token per person, revokes one, and scores each answer:
 
 - **correct:** the answer contains no forbidden text and, by kind: a memory, inventory,

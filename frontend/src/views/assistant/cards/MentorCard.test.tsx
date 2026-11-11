@@ -1,30 +1,16 @@
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { cleanup, render, screen, waitFor, within } from "../../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MemoryListEntry, MentorBriefResult, MyNamespaceEntry, WhoAmI } from "../api";
-import { useStore } from "../lib/state";
-import { resetNamespaceRoleCache } from "../lib/namespaceRole";
-import { setFoldOpen } from "../lib/folds";
-import { Recent } from "./Recent";
-import { humanizeHintCode, planeState, sortHints } from "../components/MentorPanel";
+import type { MentorBriefResult, MyNamespaceEntry, WhoAmI } from "../../../api";
+import { useStore } from "../../../lib/state";
+import { resetNamespaceRoleCache } from "../../../lib/namespaceRole";
+import { InsightsHarness, resetInsights } from "../../../test/insights";
+import { humanizeHintCode, planeState, sortHints } from "./MentorBody";
 
-// The Memories view carries a "Mentor" panel. One click runs `mentor.brief` for the
-// current org/namespace and an agent name; the panel renders the planes in use / never
-// called, the hints critical → warning → info with their evidence, and the adoption
-// table. Nothing runs on mount; nothing here writes.
-
-const entry = (memory_key: string): MemoryListEntry => ({
-  memory_key,
-  memory_type: "semantic",
-  confidence: 1,
-  version: 1,
-  created_at: "2026-09-18T09:00:00Z",
-  expires_at: null,
-  pinned: false,
-  tags: [],
-  agent: "claude-desktop",
-  value: `value of ${memory_key}`,
-});
+// The mentor starter's card: `mentor.brief` for the current org/namespace, the namespace's
+// most active writer by default over 7 days (the agent and window selects read again); the
+// planes in use / never called, the hints critical → warning → info with their evidence and
+// a link to the page that owns each hint's plane, and the adoption table. Nothing writes.
 
 const BRIEF: MentorBriefResult = {
   org: "dev",
@@ -49,6 +35,7 @@ const BRIEF: MentorBriefResult = {
       text: "12 sessions and no run ledger: run.begin before the work.",
       ops: ["run.begin", "run.complete"],
       evidence: { sessions: 12 },
+      plane: "runs",
     },
     {
       code: "code_index_unused",
@@ -56,6 +43,7 @@ const BRIEF: MentorBriefResult = {
       text: "3 indexed repos and 0 code.* calls: code.search answers a concept.",
       ops: ["code.search", "code.symbol"],
       evidence: { repos: 3 },
+      plane: "code index",
     },
   ],
   adoption: [{ code: "get_miss", shown_sessions: 4, followed_sessions: 3 }],
@@ -65,23 +53,16 @@ const BRIEF: MentorBriefResult = {
   healthy: false,
 };
 
-vi.mock("../api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api")>();
+vi.mock("../../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api")>();
   return {
     ...actual,
-    listMemories: vi.fn(async () => ({ entries: [entry("coffee_pref")], total: 1, today: 1 })),
-    bulkGetMemories: vi.fn(async () => ({ results: {}, missing: [] })),
-    listConflicts: vi.fn(async () => ({ rows: [] })),
-    conflictKeys: vi.fn(async (): Promise<string[]> => []),
     listMine: vi.fn(async () => []),
     isAuthDisabled: () => false,
-    auditNamespace: vi.fn(async () => {
-      throw new Error("not in this test");
-    }),
     mentorBrief: vi.fn(async () => BRIEF),
   };
 });
-import { listMemories, mentorBrief } from "../api";
+import { mentorBrief } from "../../../api";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,
@@ -101,21 +82,11 @@ const owner: WhoAmI = {
   namespaces: ["team-alerts"],
 };
 
-// The panel lives on the Memories page's Insights tab (`?section=insights`), not above
-// the list.
-async function openMemories() {
-  window.history.replaceState(null, "", "/memories?section=insights");
-  render(<Recent />);
-  await screen.findByTestId("mentor-panel");
-  expect(screen.getByRole("tab", { name: "Insights" })).toHaveAttribute("aria-selected", "true");
-  // Insights reads no rows.
-  expect(listMemories).not.toHaveBeenCalled();
-}
+const STARTER = "What would Loom advise an agent writing here?";
 
-describe("Memories: mentor panel", () => {
+describe("Assistant: the mentor card", () => {
   beforeEach(() => {
-    // The panel starts folded; these tests are about what it shows once opened.
-    setFoldOpen("mentor", true);
+    resetInsights();
     vi.clearAllMocks();
     resetNamespaceRoleCache();
     useStore.setState({
@@ -129,27 +100,23 @@ describe("Memories: mentor panel", () => {
   });
   afterEach(() => {
     cleanup();
-    window.history.replaceState(null, "", "/");
+    resetInsights();
     useStore.setState({ whoami: null, myNamespaces: null, identity: null, inspectedMemoryKey: null });
   });
 
-  it("runs on a click with the agent and window; planes, hints and adoption render", async () => {
-    await openMemories();
-    const panel = screen.getByTestId("mentor-panel");
-    expect(within(panel).getByRole("heading", { name: "Mentor" })).toBeInTheDocument();
+  it("reads when chosen with no agent over 7 days; the agent and window read again; planes, hints and adoption render", async () => {
+    render(<InsightsHarness />);
+    await screen.findByRole("button", { name: STARTER });
     expect(mentorBrief).not.toHaveBeenCalled();
-
-    // First ask: no agent typed — the server picks the most active writer.
-    await userEvent.click(within(panel).getByLabelText("Mentor window"));
-    await userEvent.click(await screen.findByText("30 days"));
-    await userEvent.click(within(panel).getByRole("button", { name: /Ask the mentor/ }));
-
+    await userEvent.click(screen.getByRole("button", { name: STARTER }));
     await waitFor(() => expect(mentorBrief).toHaveBeenCalledTimes(1));
     const [scope, opts] = vi.mocked(mentorBrief).mock.calls[0];
     expect(scope).toEqual({ org: "dev", namespace: "team-alerts" });
-    expect(opts).toMatchObject({ windowSeconds: 30 * 86_400 });
+    expect(opts).toMatchObject({ windowSeconds: 7 * 86_400 });
     expect(opts?.agent).toBeUndefined();
 
+    const panel = await screen.findByTestId("assistant-card");
+    expect(within(panel).getByRole("heading", { name: "Mentor" })).toBeInTheDocument();
     const summary = await screen.findByTestId("mentor-summary");
     expect(summary).toHaveTextContent("Has planes it never uses");
     expect(summary).toHaveTextContent("12 sessions over 7d");
@@ -161,18 +128,18 @@ describe("Memories: mentor panel", () => {
     expect(summary).not.toHaveTextContent("documents");
     expect(summary).not.toHaveTextContent("test signal");
     expect(summary).not.toHaveTextContent("erasure");
-    // After the first brief the agent control is a picker over the namespace's writers.
+
+    // The agent select lists the namespace's writers and reads again with no model call.
     const picker = within(panel).getByLabelText("Agent");
     expect(picker).toHaveTextContent("sre-agent");
     await userEvent.click(picker);
     const options = Array.from(document.querySelectorAll("[cui-select-item]"));
     expect(options.map((o) => o.getAttribute("data-value"))).toEqual(["sre-agent", "claude-code"]);
     await userEvent.click(await screen.findByText("claude-code"));
-    await userEvent.click(within(panel).getByRole("button", { name: /Ask again/ }));
     await waitFor(() => expect(mentorBrief).toHaveBeenCalledTimes(2));
     expect(vi.mocked(mentorBrief).mock.calls[1][1]).toMatchObject({ agent: "claude-code" });
 
-    const hints = screen.getAllByTestId("mentor-hint");
+    const hints = await screen.findAllByTestId("mentor-hint");
     expect(hints.map((h) => h.getAttribute("data-severity"))).toEqual(["warning", "info"]);
     expect(hints.map((h) => h.getAttribute("data-code"))).toEqual(["code_index_unused", "runs_unused"]);
     expect(within(hints[0]).getByText("Code index unused")).toBeInTheDocument();
@@ -181,23 +148,41 @@ describe("Memories: mentor panel", () => {
 
     const adoption = screen.getByTestId("mentor-adoption");
     expect(adoption).toHaveTextContent("Get miss");
-    expect(adoption).toHaveTextContent("4");
-    expect(adoption).toHaveTextContent("3");
     expect(screen.getByTestId("mentor-skipped")).toHaveTextContent("row_shapes/oversized_values: TimeoutError");
     // Never a rewrite control.
     expect(within(panel).queryByRole("button", { name: /optimi[sz]e|apply|rewrite/i })).toBeNull();
   });
 
-  it("a viewer of the namespace sees the panel; a stranger does not", async () => {
-    useStore.setState({ myNamespaces: [row("team-alerts", "viewer")] });
-    await openMemories();
-    expect(screen.getByTestId("mentor-panel")).toBeInTheDocument();
-    cleanup();
-    resetNamespaceRoleCache();
+  it("links each hint to the page that owns its plane", async () => {
+    const navigate = vi.fn();
+    useStore.setState({ navigate });
+    render(<InsightsHarness />);
+    await userEvent.click(await screen.findByRole("button", { name: STARTER }));
+    const hints = await screen.findAllByTestId("mentor-hint");
+    await userEvent.click(within(hints[0]).getByRole("button", { name: "Open in Repositories" }));
+    expect(navigate).toHaveBeenCalledWith("code", {});
+    await userEvent.click(within(hints[1]).getByRole("button", { name: "Open in Runs" }));
+    expect(navigate).toHaveBeenLastCalledWith("runs", {});
+  });
+
+  it("a hint from a server that names no plane, or one with no page, has no link", async () => {
+    vi.mocked(mentorBrief).mockResolvedValueOnce({
+      ...BRIEF,
+      hints: BRIEF.hints.map(({ plane: _plane, ...h }, i) => (i === 0 ? h : { ...h, plane: "scratchpad" })),
+    });
+    render(<InsightsHarness />);
+    await userEvent.click(await screen.findByRole("button", { name: STARTER }));
+    const hints = await screen.findAllByTestId("mentor-hint");
+    for (const h of hints) expect(within(h).queryByRole("button", { name: /^Open in/ })).toBeNull();
+  });
+
+  it("a stranger to the namespace is offered no read", async () => {
     useStore.setState({ myNamespaces: [], whoami: { ...owner, namespaces: [] } });
-    render(<Recent />);
-    await screen.findByRole("tab", { name: "Insights" });
-    expect(screen.queryByTestId("mentor-panel")).toBeNull();
+    render(<InsightsHarness />);
+    const starter = await screen.findByRole("button", { name: STARTER });
+    expect(starter).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(starter);
+    expect(mentorBrief).not.toHaveBeenCalled();
   });
 
   it("helpers: humanised codes, severity order, plane states", () => {

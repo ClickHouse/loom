@@ -27,6 +27,14 @@ interface Props {
   /** Open on the editor when the guide's read finds none and the caller can edit (the
    *  Memories header); otherwise on the read view. */
   startEditing?: boolean;
+  /** A draft to edit (the assistant's tune card): the dialog opens on the editor with it,
+   *  saved on top of the guide it reads. */
+  initialContent?: string;
+  /** The guide's revision the draft was written against: when the guide read now is another,
+   *  the editor opens on the conflict view, the current guide shown beside the draft. */
+  baseRevision?: number;
+  /** The draft's "What changed" line, which the editor starts with. */
+  initialNote?: string;
   onSaved: () => void;
 }
 
@@ -49,7 +57,18 @@ const STARTER = `## What this namespace holds
  * when someone saved in between, their text is shown beside the draft to merge before
  * saving again on top of it.
  */
-export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, startEditing, onSaved }: Props) {
+export function GuideDialog({
+  open,
+  onOpenChange,
+  org,
+  namespace,
+  canEdit,
+  startEditing,
+  initialContent,
+  baseRevision,
+  initialNote,
+  onSaved,
+}: Props) {
   const [guide, setGuide] = useState<NamespaceGuide | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -67,6 +86,13 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
         const g = await getNamespaceGuide(org, namespace, { signal });
         if (!live()) return;
         setGuide(g);
+        // A draft opens on the editor, on top of the guide read now; one written against an
+        // older revision shows that guide beside it to merge first.
+        if (initialContent !== undefined && canEdit) {
+          startEdit(g, initialContent);
+          if (baseRevision !== undefined && g.revision !== baseRevision) setConflict(true);
+          return;
+        }
         // Someone may have written one since the caller looked: then it is read first.
         if (startEditing && canEdit && !g.found) startEdit(g);
       } catch (e) {
@@ -76,10 +102,10 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
     [org, namespace],
   );
 
-  function startEdit(g: NamespaceGuide) {
-    setContent(g.found ? g.content : STARTER);
+  function startEdit(g: NamespaceGuide, draft?: string) {
+    setContent(draft ?? (g.found ? g.content : STARTER));
     setSummary(g.summary);
-    setNote("");
+    setNote(draft === undefined ? "" : (initialNote ?? ""));
     setBase(g);
     setConflict(false);
     setEditing(true);

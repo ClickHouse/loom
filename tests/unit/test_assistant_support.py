@@ -1,7 +1,9 @@
 """An assistant answer's support: the rule over its citation codes and its own tool calls
 (server/assistant/domain/support.py), the op sets and found fields it reads
-(server/operations/toolsets.py), the run read (ledger.run_calls, on clickhouse-local against
-the production table) and the one re-read (server/assistant/app/support.py)."""
+(server/operations/toolsets.py), the run read (ledger.run_rows, on clickhouse-local against
+the production table, derived by domain/support.derive) and the two read patterns of
+server/assistant/app/support.py: a whole answer's read and re-read, a streamed answer's one
+read after the wait."""
 
 from __future__ import annotations
 
@@ -360,22 +362,31 @@ def _checked(code: str) -> Checked:
     return Checked(citation, code)
 
 
+def _rows_of(calls: rule.RunCalls) -> list[rule.CallRow]:
+    """Rows that derive to `calls` (every op that found data ran)."""
+    rows = [
+        rule.CallRow(op, True, out_hits="" if op in calls.returned else "0")
+        for op in sorted(calls.ran)
+    ]
+    return [*rows, rule.CallRow("memory.search", False)] if calls.failed else rows
+
+
 def _calls(monkeypatch: pytest.MonkeyPatch, *reads: rule.RunCalls | Exception) -> list[str]:
     """The run read answers `reads` in turn; returns the run ids it was asked for."""
     asked: list[str] = []
     answers = list(reads)
 
-    async def run_calls(org: str, run_id: str, subject: str) -> rule.RunCalls:
+    async def run_rows(org: str, run_id: str, subject: str) -> list[rule.CallRow]:
         asked.append(run_id)
         answer = answers.pop(0)
         if isinstance(answer, Exception):
             raise answer
-        return answer
+        return _rows_of(answer)
 
     async def no_wait(_s: float) -> None:
         return None
 
-    monkeypatch.setattr(app_support.ledger, "run_calls", run_calls)
+    monkeypatch.setattr(app_support.ledger, "run_rows", run_rows)
     monkeypatch.setattr(app_support, "_wait", no_wait)
     return asked
 
@@ -461,11 +472,11 @@ def test_calls_that_cannot_be_read_leave_an_uncited_answer_unchecked(
 def test_a_run_read_that_hangs_leaves_an_uncited_answer_unchecked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def hang(*_: Any) -> rule.RunCalls:
+    async def hang(*_: Any) -> list[rule.CallRow]:
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
-    monkeypatch.setattr(app_support.ledger, "run_calls", hang)
+    monkeypatch.setattr(app_support.ledger, "run_rows", hang)
     monkeypatch.setattr(app_support, "_CALLS_S", 0.05)
     assert _answer([], "Deploys freeze on Fridays.") == "unchecked"
 
@@ -475,19 +486,17 @@ def test_a_second_read_that_hangs_after_uncitable_data_leaves_the_answer_uncheck
 ) -> None:
     reads: list[int] = []
 
-    async def first_then_hang(*_: Any) -> rule.RunCalls:
+    async def first_then_hang(*_: Any) -> list[rule.CallRow]:
         reads.append(1)
         if len(reads) == 1:
-            return rule.RunCalls(
-                frozenset({"namespace.summary"}), False, frozenset({"namespace.summary"})
-            )
+            return [rule.CallRow("namespace.summary", True)]
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
 
     async def no_wait(_s: float) -> None:
         return None
 
-    monkeypatch.setattr(app_support.ledger, "run_calls", first_then_hang)
+    monkeypatch.setattr(app_support.ledger, "run_rows", first_then_hang)
     monkeypatch.setattr(app_support, "_wait", no_wait)
     monkeypatch.setattr(app_support, "_CALLS_S", 0.05)
     assert _answer([], "This namespace holds 1,204 memories.") == "unchecked"
@@ -514,9 +523,13 @@ def _event(operation: str, args: dict[str, str], **kw: Any) -> str:
     )
 
 
-def _run_calls(*rows: str) -> rule.RunCalls:
+def _run_rows(*rows: str) -> list[rule.CallRow]:
     ch = LocalCH(ddl("agent_events"), *rows)
-    return asyncio.run(ledger.run_calls("acme", "r1", "alice", ch=ch))  # type: ignore[arg-type]
+    return asyncio.run(ledger.run_rows("acme", "r1", "alice", ch=ch))  # type: ignore[arg-type]
+
+
+def _run_calls(*rows: str) -> rule.RunCalls:
+    return rule.derive(_run_rows(*rows))
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
@@ -557,3 +570,131 @@ def test_the_run_read_reads_only_the_answers_own_calls() -> None:
         _event("memory.search", found, org="other"),
     )
     assert calls == rule.RunCalls(frozenset(), False, frozenset())
+
+
+def _rows(n: int) -> str:
+    """`n` successful calls of the answer's run, each its own request."""
+    return (
+        "INSERT INTO loom.agent_events (org, namespace, run_id, subject, consumer, operation, "
+        "success, request_id) SELECT 'acme', 'ns', 'r1', 'alice', "
+        f"'{ASSISTANT_CONSUMER}', 'namespace.summary', 1, toString(number) FROM numbers({n})"
+    )
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
+@pytest.mark.parametrize(("n", "cut"), [(200, False), (201, True)])
+def test_a_run_past_one_reads_rows_is_cut(n: int, cut: bool) -> None:
+    rows = _run_rows(_rows(n))
+    assert len(rows) == n
+    assert rule.derive(rows).cut is cut
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        # A citable op found data: decided whatever the rest of the run held.
+        ([rule.CallRow("memory.search", True, out_hits="2")], "unsupported"),
+        # Nothing citable found in the part read: the rest is not known.
+        ([rule.CallRow("memory.search", True, out_hits="0")], "unchecked"),
+        ([rule.CallRow("mentor.guide", True)], "unchecked"),
+    ],
+)
+def test_a_cut_run_keeps_only_a_decided_outcome(rows: list[rule.CallRow], expected: str) -> None:
+    padding = [rule.CallRow("help.get", True)] * rule.RUN_ROWS
+    calls = rule.derive([*rows, *padding])
+    assert calls.cut
+    got = rule.support_of(
+        [], text="Deploys freeze on Fridays.", calls=calls, citable=CITABLE, no_data=NO_DATA
+    )
+    assert got == expected
+
+
+def test_derive_reads_a_row_as_found_unless_it_says_it_found_nothing() -> None:
+    calls = rule.derive(
+        [
+            rule.CallRow("memory.search", True, out_hits="3"),
+            rule.CallRow("memory.get", True, out_found="false"),
+            rule.CallRow("knowledge.search", True, out_hits="0"),
+            rule.CallRow("code.search", False),
+        ]
+    )
+    assert calls == rule.RunCalls(
+        frozenset({"memory.search"}),
+        True,
+        frozenset({"memory.search", "memory.get", "knowledge.search"}),
+    )
+
+
+def _streamed(monkeypatch: pytest.MonkeyPatch, *reads: list[rule.CallRow] | Exception) -> list[str]:
+    """The streamed pattern's seams: the wait and the run read record themselves, the read
+    answering `reads` in turn; returns what happened, in order."""
+    happened: list[str] = []
+    answers = list(reads)
+
+    async def wait(seconds: float) -> None:
+        happened.append("wait")
+
+    async def run_rows(org: str, run_id: str, subject: str) -> list[rule.CallRow]:
+        happened.append(f"read {run_id}")
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(app_support, "_wait", wait)
+    monkeypatch.setattr(app_support.ledger, "run_rows", run_rows)
+    return happened
+
+
+def test_a_streamed_answer_reads_its_run_once_after_the_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    found = [rule.CallRow("memory.search", True, out_hits="2")]
+    happened = _streamed(monkeypatch, found)
+    rows = asyncio.run(app_support.streamed_calls("acme", "r1", "alice"))
+    assert (rows, happened) == (found, ["wait", "read r1"])
+    # A cited answer is decided by its citation; an uncited one by the same read.
+    assert app_support.streamed_support([_checked(rule.VERIFIED)], "See it.", rows) == "supported"
+    assert app_support.streamed_support([], "Deploys freeze on Fridays.", rows) == "unsupported"
+
+
+def test_a_streamed_run_that_cannot_be_read_is_unchecked(monkeypatch: pytest.MonkeyPatch) -> None:
+    happened = _streamed(monkeypatch, RuntimeError("ClickHouse is down"))
+    assert asyncio.run(app_support.streamed_calls("acme", "r1", "alice")) is None
+    assert asyncio.run(app_support.streamed_calls("acme", "", "alice")) is None
+    assert happened == ["wait", "read r1"]
+    assert app_support.streamed_support([], "Deploys freeze on Fridays.", None) == "unchecked"
+
+
+def test_a_streamed_run_read_that_hangs_is_cut_at_the_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def hang(*_: Any) -> list[rule.CallRow]:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    _streamed(monkeypatch)
+    monkeypatch.setattr(app_support.ledger, "run_rows", hang)
+    monkeypatch.setattr(app_support, "_CALLS_S", 0.05)
+    assert asyncio.run(app_support.streamed_calls("acme", "r1", "alice")) is None
+
+
+# The calls a starter's answer makes as the agent's instructions have it make them: the
+# audit starter reads the audit, the mentor brief, the drafts, the guide and Loom's guide.
+_AUDIT_STARTER_RUN = [
+    rule.CallRow("namespace.audit", True, out_hits="3"),
+    rule.CallRow("mentor.brief", True),
+    rule.CallRow("namespace.tune", True, out_hits="2"),
+    rule.CallRow("namespace.guide_get", True, out_found="true"),
+    rule.CallRow("mentor.guide", True),
+]
+
+
+def test_a_recorded_starter_run_is_labelled_as_any_answer() -> None:
+    text = "The audit found three exact-key reads; see the card above."
+    # Uncited, over Loom's own reads with no citation form.
+    assert app_support.streamed_support([], text, _AUDIT_STARTER_RUN) == "unchecked"
+    # The model also read a finding's row, and cited it or did not.
+    read_row = [*_AUDIT_STARTER_RUN, rule.CallRow("memory.get", True, out_found="true")]
+    assert app_support.streamed_support([], text, read_row) == "unsupported"
+    assert app_support.streamed_support([_checked(rule.VERIFIED)], text, read_row) == "supported"

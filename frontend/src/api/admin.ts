@@ -164,6 +164,9 @@ export interface MentorHint {
   ops: string[];
   // The counts the rule fired on — checkable, never a value.
   evidence: Record<string, unknown>;
+  // The plane of the first of the hint's ops that has one (a `planes` name); null or absent
+  // (a server a release behind) when none does.
+  plane?: string | null;
 }
 
 export interface MentorPlane {

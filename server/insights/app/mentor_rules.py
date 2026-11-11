@@ -185,10 +185,22 @@ PLANES: tuple[tuple[str, str, str, bool], ...] = (
 
 
 def plane_of(op: str) -> str:
+    return known_plane(op) or op.split(".", 1)[0]
+
+
+def known_plane(op: str) -> str | None:
+    """The plane of `op` in the table above, or None for an op outside it (no fallback):
+    what a hint names as the place its advice applies."""
     for prefix, plane, _, _ in PLANES:
         if op == prefix or op.startswith(prefix + "."):
             return plane
-    return op.split(".", 1)[0]
+    return None
+
+
+def hint_plane(ops: list[str] | tuple[str, ...]) -> str | None:
+    """The plane a hint names: that of the first of its ops that has one, or None (a hint
+    may lead with a coding-agent tool of no plane, `loom_search`, before the ops it is about)."""
+    return next((p for op in ops if (p := known_plane(op))), None)
 
 
 def plane_mentored(plane: str) -> bool:
@@ -1009,7 +1021,9 @@ __all__ = [
     "MentorProfile",
     "clip",
     "evaluate_rules",
+    "hint_plane",
     "issue_references",
+    "known_plane",
     "looks_like_identifier_query",
     "looks_like_stack_trace",
     "plane_mentored",

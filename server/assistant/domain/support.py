@@ -48,11 +48,53 @@ def is_abstention(text: str) -> bool:
 @dataclass(frozen=True)
 class RunCalls:
     """What an answer's tool calls left: the ops whose calls found data, the ops whose calls
-    ran (found or not), and whether any call failed or was refused."""
+    ran (found or not), whether any call failed or was refused, and whether the run held
+    more rows than one read takes (`cut`: what was read is a part of it)."""
 
     returned: frozenset[str]
     failed: bool
     ran: frozenset[str]
+    cut: bool = False
+
+
+# The rows one read of a run takes; a read asks for one more, so a run past it is known cut.
+RUN_ROWS = 200  # not a setting: a bound on one read of a run, not a behaviour to tune
+
+
+@dataclass(frozen=True)
+class CallRow:
+    """One ledger row of an answer's tool call (`ledger.run_rows`, `ledger.live_rows`): its
+    op, whether it succeeded, and what its output said it found (`out_found`, `out_hits`,
+    "" when the row has none)."""
+
+    operation: str
+    success: bool
+    out_found: str = ""
+    out_hits: str = ""
+
+    @property
+    def found(self) -> bool:
+        """The call found data unless its row says it found nothing (a miss, an empty list,
+        an abstention)."""
+        return self.success and self.out_found != "false" and self.out_hits != "0"
+
+
+def kept_rows(rows: list[CallRow]) -> tuple[list[CallRow], bool]:
+    """The rows a run is judged on, and whether it was cut: a read takes RUN_ROWS + 1, and
+    more than RUN_ROWS is a cut run, judged on its first RUN_ROWS (its label and its steps
+    alike)."""
+    return rows[:RUN_ROWS], len(rows) > RUN_ROWS
+
+
+def derive(rows: list[CallRow]) -> RunCalls:
+    """The run's calls from its rows (kept_rows)."""
+    kept, cut = kept_rows(rows)
+    return RunCalls(
+        frozenset(r.operation for r in kept if r.found),
+        any(not r.success for r in kept),
+        frozenset(r.operation for r in kept if r.success),
+        cut=cut,
+    )
 
 
 def support_of(
@@ -65,10 +107,11 @@ def support_of(
     unknown_names: list[str] | None = None,
 ) -> str:
     """The answer's support. `codes` are its citations' codes; `calls` what its tool calls
-    left (None when they could not be read; never read for a cited, empty or abstaining
-    answer, or one naming an unknown name); `citable` the ops whose rows an answer can
-    cite; `no_data` the ops that return no namespace data; `unknown_names` the op and
-    setting names it writes that the build neither serves nor documents.
+    left (None when they could not be read; on the non-streamed path never read for a
+    cited, empty or abstaining answer, or one naming an unknown name); `citable` the ops
+    whose rows an answer can cite; `no_data` the ops that return no namespace data;
+    `unknown_names` the op and setting names it writes that the build neither serves nor
+    documents.
 
     - none: no text; or it cites nothing and is an abstention, or its calls were read and
       none was citable, found data or failed;
@@ -77,8 +120,8 @@ def support_of(
       it may have invented), whatever it cites; a citation failed for a reason of its
       own; or it cites nothing although a citable op's call found data, or ran and found
       nothing while no other call found data or failed (a claim nothing backs);
-    - unchecked: otherwise (its checks could not say, what it read has no citation form, or
-      a call failed).
+    - unchecked: otherwise (its checks could not say, what it read has no citation form, a
+      call failed, or its run was cut, unless a citable op's call found data).
     """
     if not text.strip():
         return NONE
@@ -97,7 +140,8 @@ def support_of(
     found = calls.returned - no_data
     if found & citable:
         return UNSUPPORTED
-    if found or calls.failed:
+    # A cut run is a part of the run: only a decided outcome holds.
+    if found or calls.failed or calls.cut:
         return UNCHECKED
     if (calls.ran - no_data) & citable:
         return UNSUPPORTED

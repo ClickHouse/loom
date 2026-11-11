@@ -51,7 +51,7 @@ import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { shortcutOff } from "./lib/shortcuts";
-import { assistantPopstate, bootDock, onAssistantShortcut, useDock } from "./lib/assistantDock";
+import { assistantPopstate, bootDock, onAssistantShortcut, showExpanded, useDock } from "./lib/assistantDock";
 
 import { reloadPage } from "./lib/navigation";
 import { endSession, lostReason, sessionEndedNote, whoamiWhenReady } from "./lib/session";
@@ -79,7 +79,6 @@ const Documents = lazy(() => import("./views/Documents").then((m) => ({ default:
 const Conversations = lazy(() => import("./views/Conversations").then((m) => ({ default: m.Conversations })));
 const Runs = lazy(() => import("./views/Runs").then((m) => ({ default: m.Runs })));
 const GraphExplorer = lazy(() => import("./views/Graph").then((m) => ({ default: m.GraphExplorer })));
-const Assistant = lazy(() => import("./views/Assistant").then((m) => ({ default: m.Assistant })));
 const Help = lazy(() => import("./views/Help").then((m) => ({ default: m.Help })));
 const Sharing = lazy(() => import("./views/Sharing").then((m) => ({ default: m.Sharing })));
 const Browse = lazy(() => import("./views/Browse").then((m) => ({ default: m.Browse })));
@@ -288,6 +287,11 @@ export default function App() {
     return () => document.removeEventListener("keydown", onAssistantShortcut);
   }, [shellDrawn]);
   const dockMounted = useDock((s) => s.mounted);
+  // /assistant is the panel itself, in <main>'s place (lib/assistantDock.ts).
+  useEffect(() => {
+    if (shellDrawn) showExpanded(view === "assistant");
+  }, [shellDrawn, view]);
+  const expanded = useDock((s) => s.expanded) && view === "assistant";
 
   // Goto-prefix: `g` then a letter within 1.2s jumps view (vim/Gmail convention).
   useEffect(() => {
@@ -665,7 +669,7 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col bg-bg text-text">
       <a
-        href="#main"
+        href={expanded ? "#assistant-panel" : "#main"}
         data-dock-inert=""
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:px-3 focus:py-1.5 focus:bg-accent focus:text-on-accent focus:rounded-sm focus:shadow-lg text-xs font-medium"
       >
@@ -692,6 +696,7 @@ export default function App() {
               data-dock-inert=""
               className="relative isolate flex-1 min-w-0 overflow-y-auto"
               ref={mainRef}
+              hidden={expanded}
             >
               <Suspense fallback={null}>
                 <ProblemsBanner />
@@ -826,7 +831,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
     case "admin:agents":
       return <Agents />;
     case "assistant":
-      return <Assistant />;
+      // The assistant panel is this page (layout/AssistantPanel.tsx, expanded).
+      return null;
     case "help":
       return <Help />;
     case "admin:users":
