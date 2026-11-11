@@ -515,7 +515,7 @@
     "use_case": "U5 Cost and spend",
     "person": "alice",
     "question": "What is the default daily spend cap of a namespace, and what does Loom skip once it is spent?",
-    "expect": ["(\\$\\s?1(\\.0+)?\\b|\\b1(\\.0)? ?(USD|dollar)|\\b1\\.0\\b)", "(synthes|extract)"],
+    "expect": ["(\\$\\s?1(\\.0+)?(?![\\d.])|\\b1(\\.0)? ?(USD|dollar)|\\b1\\.0(?![\\d.]))", "(synthes|extract)"],
     "cite_help": ["features/observability/cost-and-usage.md"],
     "baseline": {
       "op": "help.search",
@@ -528,7 +528,8 @@
       "right": ["$1.0 a day; once it is spent Loom skips synthesis and entity extraction."],
       "wrong": [
         "$1.0, and nothing is skipped: the cap only warns.",
-        "There is no default cap; extraction keeps running."
+        "There is no default cap; extraction keeps running.",
+        "$1.50 a day; once it is spent Loom skips synthesis and extraction."
       ]
     }
   },
@@ -1024,13 +1025,18 @@
         "limit": 5
       }
     },
-    "forbid": ["\\b(set|use|change)\\s+`?LOOM_[A-Z_]+", "LOOM_[A-Z_]+`?\\s*="],
+    "forbid": ["\\b(set|setting|use|using|try|change|export|enable)\\s+`?LOOM_[A-Z_]+", "LOOM_[A-Z_]+`?\\s*="],
     "samples": {
       "right": [
         "Loom's documentation does not describe a dashboard colour theme.",
         "There is no `LOOM_THEME` setting; the docs don't cover a colour theme."
       ],
-      "wrong": ["The docs don't cover it, but set `LOOM_DASHBOARD_COLOUR=dark`.", "Use LOOM_UI_THEME to change it."]
+      "wrong": [
+        "The docs don't cover it, but set `LOOM_DASHBOARD_COLOUR=dark`.",
+        "Use LOOM_UI_THEME to change it.",
+        "I couldn't find a theme setting in the docs; try `LOOM_UI_THEME`.",
+        "Not documented, but export LOOM_UI_THEME=dark."
+      ]
     }
   },
   {

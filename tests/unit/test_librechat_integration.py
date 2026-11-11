@@ -814,13 +814,15 @@ def test_check_help_citations_reads_the_page_and_its_sections(monkeypatch):
     text = (
         "[help:docs/features/cost.md § Daily spend caps] "
         "[help:features/cost.md § daily spend caps] "
-        "[help:features/other.md]"
+        "[help:features/other.md] "
+        "[help:features/cost.md § >]"  # only separators: the page itself, as the server reads it
     )
     cited, invalid, expected = q.check_help_citations(st, person, case, text)
     assert cited == [
         "help:docs/features/cost.md § Daily spend caps",
         "help:features/cost.md § daily spend caps",
         "help:features/other.md",
+        "help:features/cost.md § >",
     ]
     assert invalid == [
         "help:features/cost.md § daily spend caps: no such section",

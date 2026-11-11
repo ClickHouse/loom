@@ -606,8 +606,9 @@ def check_help_citations(
         if not page.get("found"):
             invalid.append(f"{name}: no such page")
             continue
+        # A section that is only separators (`§ >`) cites the page, as the server reads it.
         section = m["section"] or ""
-        if section and not names_section(
+        if help_breadcrumb(section) and not names_section(
             help_breadcrumb(section),
             [help_breadcrumb(e["section"]) for e in page.get("sections", [])],
         ):
@@ -922,8 +923,9 @@ def cmd_run(args: argparse.Namespace) -> None:
 def answer_citations(
     st: dict[str, Any], case: dict[str, Any], person: dict[str, Any], text: str
 ) -> dict[str, Any]:
-    """The memory keys and document passages an answer cites, the invalid ones, and whether
-    the labeled key or section is among them (None when the case labels neither)."""
+    """The memory keys, document passages and help pages an answer cites, the invalid ones,
+    and whether the labeled key, section or page is among them: False for a case that labels
+    a help page when the answer cites none, None when the case labels nothing."""
     cited, invalid = check_citations(st, person, text)
     expected = case.get("cite") in cited if case.get("cite") else None
     if is_document_case(case):

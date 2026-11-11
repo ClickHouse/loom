@@ -90,19 +90,19 @@ Loom's erasure saga does not reach LibreChat's database: erasing a user or a mem
 Loom leaves every copy LibreChat holds. LibreChat must not become a second store of
 memory, so this configuration keeps its memory feature off and its search index out.
 
-| Data                                    | Where (MongoDB collection or volume)              | Holds tenant content                                                                              | Retention in this configuration                                                                                                                                          | How it is deleted                                                                                                             |
-| --------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| Conversations                           | `conversations`                                   | titles (title generation is off)                                                                  | `expiredAt` after `generalChatRetention` (720 h), TTL index                                                                                                              | the person deletes the chat; account deletion; TTL                                                                            |
-| Messages, with every tool call's output | `messages` (`content[].tool_call.output`)         | yes: the questions, the answers and the full Loom results each tool returned                      | `expiredAt` after 720 h, TTL index                                                                                                                                       | as above                                                                                                                      |
-| Tool call records                       | `toolcalls`                                       | tool outputs                                                                                      | `expiredAt`, TTL index                                                                                                                                                   | account deletion; TTL                                                                                                         |
-| Token usage                             | `transactions`                                    | no: token counts per message                                                                      | kept                                                                                                                                                                     | account deletion                                                                                                              |
-| Each person's Loom token                | `pluginauths`, encrypted with `CREDS_KEY`         | a credential                                                                                      | until the person removes it                                                                                                                                              | removing it in MCP settings; account deletion; revoke it in Loom with `loom revoke-token`                                     |
-| Uploaded files                          | `files` and the `uploads` volume                  | yes, if people upload                                                                             | `expiredAt` under `retentionMode: all`; a sweep deletes the stored file, then the record (`packages/data-schemas/src/schema/file.ts`, `packages/api/src/files/sweep.ts`) | the person deletes the file; account deletion; the sweep                                                                      |
-| Agents                                  | `agents`                                          | the agent's instructions, which may name an org and a namespace                                   | until deleted                                                                                                                                                            | the person deletes the agent (`DELETE /api/agents/:id`); account deletion                                                     |
-| Agents API keys                         | `agentapikeys`, stored as a hash                  | a bearer credential: it runs the person's agents, and so Loom reads under their stored Loom token | until deleted                                                                                                                                                            | the person deletes the key (`DELETE /api/api-keys/:id`); account deletion; turn `interface.remoteAgents` off to stop new keys |
-| LibreChat memories                      | `memoryentries`                                   | none: `memory.disabled: true`, writes refused                                                     | not written                                                                                                                                                              | -                                                                                                                             |
-| Message search index                    | none: Meilisearch is not deployed, `SEARCH=false` | -                                                                                                 | -                                                                                                                                                                        | -                                                                                                                             |
-| Server logs                             | the `logs` volume and container output            | errors with request ids, user ids and token `jti`s; no token, no message text                     | one file per day, kept 14 days (`packages/data-schemas/src/config/winston.ts`)                                                                                           | delete the files                                                                                                              |
+| Data | Where (MongoDB collection or volume) | Holds tenant content | Retention in this configuration | How it is deleted |
+| --------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Conversations | `conversations` | titles (title generation is off) | `expiredAt` after `generalChatRetention` (720 h), TTL index | the person deletes the chat; account deletion; TTL |
+| Messages, with every tool call's output | `messages` (`content[].tool_call.output`) | yes: the questions, the answers and the full Loom results each tool returned | `expiredAt` after 720 h, TTL index | as above |
+| Tool call records | `toolcalls` | tool outputs | `expiredAt`, TTL index | account deletion; TTL |
+| Token usage | `transactions` | no: token counts per message | kept | account deletion |
+| Each person's Loom token | `pluginauths`, encrypted with `CREDS_KEY` | a credential | until the person removes it | removing it in MCP settings; account deletion; revoke it in Loom with `loom revoke-token` |
+| Uploaded files | `files` and the `uploads` volume | `expiredAt` under `retentionMode: all`; a sweep deletes the stored file, then the record (`packages/data-schemas/src/schema/file.ts`, `packages/api/src/files/sweep.ts`) | the person deletes the file; account deletion; the sweep |
+| Agents | `agents` | the agent's instructions, which may name an org and a namespace | until deleted | the person deletes the agent (`DELETE /api/agents/:id`); account deletion |
+| Agents API keys | `agentapikeys`, stored as a hash | a bearer credential: it runs the person's agents, and so Loom reads under their stored Loom token | until deleted | the person deletes the key (`DELETE /api/api-keys/:id`); account deletion; turn `interface.remoteAgents` off to stop new keys |
+| LibreChat memories | `memoryentries` | none: `memory.disabled: true`, writes refused | not written | - |
+| Message search index | none: Meilisearch is not deployed, `SEARCH=false` | - | - | - |
+| Server logs | the `logs` volume and container output | errors with request ids, user ids and token `jti`s; no token, no message text | one file per day, kept 14 days (`packages/data-schemas/src/config/winston.ts`) | delete the files |
 
 - `retentionMode: all` gives every chat an expiry, not only temporary ones. It applies to
   chats created after it is set; existing rows keep their `expiredAt` (see the comment in
@@ -228,49 +228,45 @@ server's own check uses. The cases go through Loom's assistant route
 (`qualify.py setup-bridge`), so each answer also carries the question's asker line and
 the bridge's own citation check.
 
-**Before** is the same help questions on the build before the documentation reached the
-assistant: an agent with no help tools. It answered 8 of 26 by its own knowledge and
-cited none. **After** is the current agent definition.
-
-| Use case                          | Cases | Before: answered with a citation | After: correct | After: no invalid citation |
-| --------------------------------- | ----- | -------------------------------- | -------------- | -------------------------- |
-| U1 Look up a stored fact          | 7     | 0 of 1                           | 7 of 7         | 7 of 7                     |
-| U2 What a document says           | 10    | 0 of 1                           | 9 of 10        | 10 of 10                   |
-| U3 What the namespace holds       | 3     | -                                | 3 of 3         | 3 of 3                     |
-| U4 Usage counts and trends        | 3     | -                                | 3 of 3         | 3 of 3                     |
-| U5 Cost and spend                 | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U6 Write memory better            | 4     | 0 of 1                           | 4 of 4         | 2 of 4                     |
-| U7 History of a fact              | 2     | 0 of 1                           | 2 of 2         | 2 of 2                     |
-| U8 Entity graph                   | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U9 Code index                     | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U10 Conflicts and refusal         | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U11 Sharing and collections       | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U12 My role and who can change it | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U13 Connect a coding agent        | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U14 Tokens                        | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U15 Models and keys               | 1     | 0 of 1                           | 1 of 1         | 0 of 1                     |
-| U16 Health problems               | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U17 Why search returned this      | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U18 Runs                          | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U19 Tasks between agents          | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U20 Tracker                       | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U21 Retention and erasure         | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U22 Extraction from transcripts   | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U23 Working memory                | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U24 Integrations                  | 2     | 0 of 1                           | 2 of 2         | 2 of 2                     |
-| U25 What a setting does           | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U26 Getting started               | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U27 Operating a deployment        | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
-| U28 Refusals and abstentions      | 5     | 0 of 1                           | 5 of 5         | 5 of 5                     |
-| All                               | 56    | 0 of 26                          | 55 of 56       | 53 of 56                   |
+| Use case                          | Cases | Correct  | No invalid citation |
+| --------------------------------- | ----- | -------- | ------------------- |
+| U1 Look up a stored fact          | 7     | 7 of 7   | 7 of 7              |
+| U2 What a document says           | 10    | 9 of 10  | 10 of 10            |
+| U3 What the namespace holds       | 3     | 3 of 3   | 3 of 3              |
+| U4 Usage counts and trends        | 3     | 3 of 3   | 3 of 3              |
+| U5 Cost and spend                 | 1     | 1 of 1   | 1 of 1              |
+| U6 Write memory better            | 4     | 4 of 4   | 2 of 4              |
+| U7 History of a fact              | 2     | 2 of 2   | 2 of 2              |
+| U8 Entity graph                   | 1     | 1 of 1   | 1 of 1              |
+| U9 Code index                     | 1     | 1 of 1   | 1 of 1              |
+| U10 Conflicts and refusal         | 1     | 1 of 1   | 1 of 1              |
+| U11 Sharing and collections       | 1     | 1 of 1   | 1 of 1              |
+| U12 My role and who can change it | 1     | 1 of 1   | 1 of 1              |
+| U13 Connect a coding agent        | 1     | 1 of 1   | 1 of 1              |
+| U14 Tokens                        | 1     | 1 of 1   | 1 of 1              |
+| U15 Models and keys               | 1     | 1 of 1   | 0 of 1              |
+| U16 Health problems               | 1     | 1 of 1   | 1 of 1              |
+| U17 Why search returned this      | 1     | 1 of 1   | 1 of 1              |
+| U18 Runs                          | 1     | 1 of 1   | 1 of 1              |
+| U19 Tasks between agents          | 1     | 1 of 1   | 1 of 1              |
+| U20 Tracker                       | 1     | 1 of 1   | 1 of 1              |
+| U21 Retention and erasure         | 1     | 1 of 1   | 1 of 1              |
+| U22 Extraction from transcripts   | 1     | 1 of 1   | 1 of 1              |
+| U23 Working memory                | 1     | 1 of 1   | 1 of 1              |
+| U24 Integrations                  | 2     | 2 of 2   | 2 of 2              |
+| U25 What a setting does           | 1     | 1 of 1   | 1 of 1              |
+| U26 Getting started               | 1     | 1 of 1   | 1 of 1              |
+| U27 Operating a deployment        | 1     | 1 of 1   | 1 of 1              |
+| U28 Refusals and abstentions      | 5     | 5 of 5   | 5 of 5              |
+| All                               | 56    | 55 of 56 | 53 of 56            |
 
 Measured on v0.8.8 with `claude-haiku-4-5`, on a server running fake embeddings and a fake
 LLM for Loom's own model jobs. A full run of the 56 cases costs about $3 at list price
-counting every prompt token, a mean of $0.053 per answer. The after columns take 14 cases
-(three memory, nine document and two help cases) from a run on the agent definition in
-`integrations/librechat/agent.yaml`, and the other 42 from a full run on a definition that
-differs from it in the wording of the first step's searches and of one sentence on the
-asker's role. Twelve answers cite nothing: two refusals, three abstentions and seven
+counting every prompt token, a mean of $0.053 per answer. The figures take 14 cases (three
+memory, nine document and two help cases) from one run and the other 42 from a full run,
+on agent definitions that differ from `integrations/librechat/agent.yaml` in one sentence
+on the asker's role, and for the full run also in the wording of the first step's
+searches. Twelve answers cite nothing: two refusals, three abstentions and seven
 counts, which come from tallies with no row to cite; every other answer cites one. The
 misses:
 
