@@ -8,6 +8,7 @@ import { onboardingKey } from "../lib/onboarding";
 import { axeViolations } from "../test/axe";
 import { Recent } from "../views/Recent";
 import { listTokens } from "../api";
+import { getModelStatus } from "../api/models";
 
 // The first-run checklist sits on Memories, the bare root's landing. It shows for an
 // account with only its personal namespace and no memories, in place of the empty state;
@@ -282,6 +283,22 @@ describe("GettingStarted on Memories", () => {
     expect(await screen.findByRole("region", { name: "Getting started" }, WAIT)).toBeInTheDocument();
     // The bar it was pressed in is gone: focus is on the checklist's heading.
     expect(screen.getByRole("heading", { name: "Getting started" })).toHaveFocus();
+  });
+
+  it("reads the models status only once the full list shows, not for the one-line bar", async () => {
+    vi.mocked(getModelStatus).mockClear();
+    auth.off = true;
+    localStorage.setItem(
+      onboardingKey("local", `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
+    rows.entries = [memory("loom-ui")];
+    seed(null, { ...writer, subject: "local", roles: ["PLATFORM_ADMIN"] });
+    render(<Recent />);
+    const bar = await screen.findByTestId("getting-started-bar", {}, WAIT);
+    expect(getModelStatus).not.toHaveBeenCalled();
+    await userEvent.click(within(bar).getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(getModelStatus).toHaveBeenCalledTimes(1), WAIT);
   });
 
   it("names the bar's Hide for what it hides, and Hide hands focus to the search", async () => {

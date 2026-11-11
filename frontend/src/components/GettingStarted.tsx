@@ -182,17 +182,18 @@ export function GettingStarted({
   const following = connect === "waiting" && mintedAt !== null && Date.now() - mintedAt < FIRST_CALL_WAIT_MS;
   useVisiblePoll(reloadTokens, FIRST_CALL_POLL_MS, following && !authOff);
 
-  // The models row: only for whoever can set them, while they are not set.
+  // The models row: only for whoever can set them, while they are not set, and read only
+  // when the full list shows (the one-line bar has no models row).
   const canSetModels = authOff || hasPlatformAdminClaim(whoami);
   const [modelsUnset, setModelsUnset] = useState(false);
   useEffect(() => {
-    if (!canSetModels) return;
+    if (!canSetModels || collapsed) return;
     const ctl = new AbortController();
     getModelStatus(ctl.signal)
       .then((s) => setModelsUnset(s.requires_setup))
       .catch(() => setModelsUnset(false));
     return () => ctl.abort();
-  }, [canSetModels]);
+  }, [canSetModels, collapsed]);
 
   useEffect(() => {
     if (connect === "connected") mark("connect");

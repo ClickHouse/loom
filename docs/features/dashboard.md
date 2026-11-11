@@ -256,7 +256,7 @@ shows the same namespace.
 - **A URL without `?namespace=`** opens the default namespace: the saved pick while the
   account can still reach it, else a namespace it administers (its personal namespace
   first, then its oldest admin grant), else its first claimed memory namespace; a
-  collection is never one of them. A token that reaches only repositories and tracker
+  benchmark namespace only when nothing else is reachable, and a collection never. A token that reaches only repositories and tracker
   records opens the first of those on the pages that need no memory namespace; a memory
   page then opens on none and says so. An account that reaches no namespace but reads a
   shared collection (as `collection.list` says, or by a grant of its own when that cannot
@@ -269,8 +269,10 @@ shows the same namespace.
 - **Back and Forward** never switch namespace: an entry made in another namespace opens
   nothing it names, and the address names the page's namespace. The one exception is Back
   from a tracker's Patterns board, which returns to the namespace its Open left.
-- **On the bare root**, a default memory namespace opens on Memories (the landing rules above give the rest), and `?view=` names another page by view id or path (`/?view=memories`,
-  `/?view=admin/health`) and `?memory=<key>` opens that memory on Memories.
+- **On the bare root**, a default memory namespace opens on Memories (the landing rules
+  above give the rest), and `?view=` names another page by view id or path
+  (`/?view=memories`, `/?view=admin/health`) and `?memory=<key>` opens that memory on
+  Memories.
 - **A single sign-on** started on a page returns to it, within ten minutes.
 - **The namespace picker** lists namespaces only, each with its description, and folds
   repositories, tracker records and every three or more memory namespaces whose names
