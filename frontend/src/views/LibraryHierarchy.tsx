@@ -108,9 +108,8 @@ function pathText(
 ): string {
   const parents = collectionPath(c, byName).slice(0, -1);
   if (parents.length === 0) return "";
-  const text = parents.map((p) => ("hidden" in p ? "…" : distinctTitle(p, repeated))).join(" › ");
-  if (text !== "…") return `in ${text}`;
-  return truncated ? "inside a collection not listed here" : "inside a collection you can't open";
+  if (parents.length === 1 && "hidden" in parents[0]) return `inside ${hiddenWhat(truncated)}`;
+  return `in ${parents.map((p) => ("hidden" in p ? "…" : distinctTitle(p, repeated))).join(" › ")}`;
 }
 
 /** The place above the top: its label, the collection it is (null for the header's
@@ -164,6 +163,11 @@ function CutLink({ collection, onOpen, text }: { collection: string | null; onOp
   );
 }
 
+/** A parent missing from the list, in words: past the list's end, or one the caller cannot read. */
+function hiddenWhat(truncated: boolean): string {
+  return truncated ? "a collection not listed here" : "a collection you can't open";
+}
+
 /** What a parent missing from the list is, by its address. */
 function hiddenText(part: HiddenPart, truncated: boolean): string {
   return truncated
@@ -174,7 +178,7 @@ function hiddenText(part: HiddenPart, truncated: boolean): string {
 /** An ancestor the caller cannot open: a dots button whose popover gives its address. A
  *  popover, not a tooltip: a tap on a phone opens it. `lead` starts the button's name. */
 function HiddenParent({ part, truncated, lead = "" }: { part: HiddenPart; truncated: boolean; lead?: string }) {
-  const what = truncated ? "a collection not listed here" : "a collection you can't open";
+  const what = hiddenWhat(truncated);
   const label = lead ? `${lead}${what}` : what[0].toUpperCase() + what.slice(1);
   return (
     <Popover>

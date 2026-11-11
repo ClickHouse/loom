@@ -187,6 +187,9 @@ describe("CollectionsInside", () => {
       entry("col-claimed", { parent: "col-lib", title: "Claimed", role: "viewer" }),
       entry("col-r-notes", { parent: "col-r", title: "Notes", role: "viewer" }),
       entry("col-far", { parent: "col-hidden", title: "Far", role: "writer" }),
+      // Under a readable parent that sits under one the caller cannot read.
+      entry("col-mid", { parent: "col-hidden", title: "Mid" }),
+      entry("col-deep", { parent: "col-mid", title: "Deep", role: "viewer" }),
       // Shared as admin: the caller's to manage, so with their own, here or under a parent the
       // caller cannot read.
       entry("col-ops", { title: "Ops" }),
@@ -194,14 +197,15 @@ describe("CollectionsInside", () => {
       entry("col-me-1a2b", { personal: true, role: "admin" }),
     ];
     // A shared one's children are inside it, not listed again.
-    expect(sharedWithMe(rows).map((c) => c.namespace)).toEqual(["col-claimed", "col-far", "col-r"]);
-    expect(collectionsInside(rows, null).map((c) => c.namespace)).toEqual(["col-lib", "col-ops", "col-run"]);
+    expect(sharedWithMe(rows).map((c) => c.namespace)).toEqual(["col-claimed", "col-deep", "col-far", "col-r"]);
+    expect(collectionsInside(rows, null).map((c) => c.namespace)).toEqual(["col-lib", "col-mid", "col-ops", "col-run"]);
     render(<CollectionsInside rows={rows} current={null} onPick={() => {}} />);
     const shared = screen.getByRole("region", { name: /Shared with you/ });
     expect(within(shared).getByRole("link", { name: "Research" })).toBeInTheDocument();
     expect(within(shared).getByRole("link", { name: "Research" }).parentElement?.textContent).toBe("ResearchViewer");
     expect(within(shared).getByText("in Library")).toBeInTheDocument();
     expect(within(shared).getByText("inside a collection you can't open")).toBeInTheDocument();
+    expect(within(shared).getByText("in … › Mid")).toBeInTheDocument();
     expect(within(shared).queryByRole("link", { name: "Ops" })).toBeNull();
     const own = screen.getByRole("region", { name: /^Collections/ });
     // Shared as admin under a parent the caller cannot read: its place is said too.
