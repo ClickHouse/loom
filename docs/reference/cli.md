@@ -43,7 +43,8 @@ Commands fall into two kinds:
 **Session commands** (`login`, `logout`, `whoami`, `call`, `token`) are the Python SDK's
 own (`loom.cli`; `python -m loom …` with only the SDK installed), so `loom`
 needs `pip install clickhouse-loom` for them. `loom login [--server URL]
-[--profile NAME] [--no-browser]` signs in with a one-time code;
+[--profile NAME] [--no-browser] [--org ORG [--wait S]]` signs in with a one-time code,
+with `--org` at that org's [cell](../architecture/cells.md), as the router's lookup names it;
 `loom call <op|/path> [key=text|key:=json …] [--data JSON] [--org] [--namespace]` reaches
 any operation or route with that session, and `loom token create|list|revoke`
 makes, lists and revokes your own tokens for CI and agents. See

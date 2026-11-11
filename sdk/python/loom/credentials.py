@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import errno
 import json
+import math
 import os
 import secrets
 import shutil
@@ -41,7 +42,14 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from loom.errors import AuthInvalid, BackendUnavailable, LoomError, _busy
+from loom.errors import (
+    INVALID_RESPONSE_CODE,
+    AuthInvalid,
+    BackendUnavailable,
+    LoomError,
+    RateLimited,
+    _busy,
+)
 
 CREDENTIALS_FILE = Path("~/.loom/credentials")
 DEFAULT_SERVER = "http://localhost:7777"
@@ -512,17 +520,118 @@ def _say(line: str) -> None:
     print(line, flush=True)
 
 
+# Seconds `loom login --org` waits out the router's 429s before it refuses.
+ORG_LOOKUP_WAIT_S = 120.0
+# The lookup's clock, a seam for tests (the sleep is `time.sleep`).
+_monotonic = time.monotonic
+
+
+def org_server(server: str, org: str, *, wait_s: float = ORG_LOOKUP_WAIT_S) -> str:
+    """The server to sign in at for `org`: `https://` and the cell host the router's
+    `GET /cells/lookup` names (docs/architecture/cells.md). `server` itself on a
+    404 (a deployment with no router) or on `NO_CELL` (no cell registered yet); a 429
+    is waited out for at most `wait_s`, then refused as a rate refusal; any other
+    answer refuses, naming the router, so no sign-in starts at a cell that may not
+    hold the org."""
+    _check_wait(wait_s)
+    deadline = _monotonic() + wait_s
+    with _server(server) as client:
+        while True:
+            r = client.get("/cells/lookup", params={"org": org})
+            if r.status_code == 200:
+                return _cell_url(server, org, _lookup_body(r).get("host"))
+            if r.status_code == 404 or (
+                r.status_code == 503 and _lookup_body(r).get("code") == "NO_CELL"
+            ):
+                return server
+            if r.status_code == 429:
+                wait = _retry_after(r)
+                left = deadline - _monotonic()
+                if wait > left:
+                    limited = RateLimited(
+                        f"the router at {server} rate-limits the lookup of org {org!r}: it "
+                        f"asks for {wait:g}s and {max(left, 0):g}s of the wait is left",
+                        retry_after_s=wait,
+                    )
+                    limited.status = 429
+                    raise limited
+                time.sleep(wait)
+                continue
+            refused = (
+                f"the router at {server} could not look up org {org!r} "
+                f"(HTTP {r.status_code}); no sign-in was started"
+            )
+            err = _busy(refused, r.status_code) if r.status_code >= 500 else LoomError(refused)
+            err.status = r.status_code
+            raise err
+
+
+def _check_wait(wait_s: float) -> None:
+    if not math.isfinite(wait_s) or wait_s < 0:
+        raise LoomError(f"wait_s is a number of seconds, 0 or more, not {wait_s!r}")
+
+
+def _lookup_body(r: httpx.Response) -> dict[str, Any]:
+    try:
+        body = r.json()
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _cell_url(server: str, org: str, host: Any) -> str:
+    """`https://<host>` for a host the lookup named; a host that is not a bare
+    `name[:port]` the sign-in can reach refuses, naming the router, as the router's
+    fault (`INVALID_RESPONSE`). Always https: the router's own URL may be a local
+    port-forward, and the cell is reached in the open."""
+    refused = LoomError(f"the router at {server} named no usable host for org {org!r}: {host!r}")
+    refused.code = INVALID_RESPONSE_CODE
+    refused.status = 200  # the router answered; its answer is what is wrong
+    if not isinstance(host, str) or not host or any(c.isspace() for c in host):
+        raise refused
+    try:
+        parts = urlsplit(f"//{host}")
+        _ = parts.port  # a port that is not a number raises here
+        url = httpx.URL(f"https://{host}")  # the parser the sign-in itself uses
+    except (ValueError, httpx.InvalidURL):
+        raise refused from None
+    bare = parts.hostname and not (parts.username or parts.password or parts.path)
+    # The whole of `host` is its netloc: no path, query or fragment, not even an empty `?`.
+    if not bare or parts.netloc != host or url.host != parts.hostname:
+        raise refused
+    return f"https://{host}"
+
+
+def _retry_after(r: httpx.Response) -> float:
+    """The router's Retry-After in seconds, 1 to 60 (its window), as the transport
+    reads it (a number or an HTTP-date; 1 when absent or unreadable)."""
+    from loom.transport import parse_retry_after  # the transport imports this module
+
+    return min(max(parse_retry_after(r.headers.get("retry-after")) or 1.0, 1.0), 60.0)
+
+
 def login(
     server: str | None = None,
     *,
     profile: str | None = None,
     open_browser: bool = True,
     echo: Callable[[str], None] = _say,
+    org: str | None = None,
+    wait_s: float = ORG_LOOKUP_WAIT_S,
 ) -> dict[str, Any]:
     """Sign in to `server` (default `LOOM_BASE_URL`, else localhost) and store
-    the tokens under `profile`. Blocks until the sign-in is approved, denied
-    or expires (ten minutes). Returns what `whoami()` returns."""
+    the tokens under `profile`. With `org`, sign in at that org's cell instead, as
+    the router's lookup names it (`org_server`). Blocks until the sign-in is
+    approved, denied or expires (ten minutes). Returns what `whoami()` returns."""
     server = (server or os.environ.get("LOOM_BASE_URL") or DEFAULT_SERVER).rstrip("/")
+    _check_wait(wait_s)
+    if org is not None:
+        if not org:
+            raise LoomError("org= names no org: pass the org to sign in at, or leave it out")
+        cell = org_server(server, org, wait_s=wait_s)
+        if not same_server(cell, server):
+            echo(f"Org {org} is at {cell}.")
+        server = cell
     profile = profile or default_profile()
     with _server(server) as client:
         meta = _endpoints(client)

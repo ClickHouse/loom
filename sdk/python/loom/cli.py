@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import sys
 from typing import Any
@@ -223,7 +224,13 @@ def run(args: argparse.Namespace) -> int:
     """Run one parsed command: prints the answer, returns the exit code."""
     try:
         if args.cmd == "login":
-            credentials.login(args.server, profile=args.profile, open_browser=not args.no_browser)
+            credentials.login(
+                args.server,
+                profile=args.profile,
+                open_browser=not args.no_browser,
+                org=args.org,
+                wait_s=credentials.ORG_LOOKUP_WAIT_S if args.wait is None else args.wait,
+            )
         elif args.cmd == "logout":
             confirmed = credentials.logout(args.profile)
             print("Signed out." if confirmed else "Signed out here; the server did not confirm.")
@@ -272,6 +279,13 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             p.add_argument("--server", help="server URL (default: LOOM_BASE_URL or localhost)")
         if name == "login":
             p.add_argument("--no-browser", action="store_true", help="only print the URL")
+            p.add_argument("--org", help="sign in at this org's cell, as the router names it")
+            p.add_argument(
+                "--wait",
+                type=float,
+                help=f"seconds to wait out the router's rate limit for --org "
+                f"(default {credentials.ORG_LOOKUP_WAIT_S:g})",
+            )
         if name == "call":
             p.add_argument("target", nargs="?", help="an op name (memory.search) or a /path")
             p.add_argument(
@@ -293,6 +307,13 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             args.fields = [*args.fields, *map(_field, extra)]
         except argparse.ArgumentTypeError as e:
             parser.error(str(e))
+    if args.cmd == "login" and args.org == "":
+        parser.error("--org needs an org")
+    if args.cmd == "login" and args.wait is not None:
+        if not args.org:
+            parser.error("--wait applies only with --org")
+        if not math.isfinite(args.wait) or args.wait < 0:
+            parser.error("--wait is a number of seconds, 0 or more")
     if args.cmd == "call":
         try:
             args.body = _body(args)
