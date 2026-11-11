@@ -156,7 +156,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(screen.getByText("body of thread-b")).toBeInTheDocument();
   });
 
-  it("clears namespace A's hits and Record conversations switch on a switch to B", async () => {
+  it("clears namespace A's hits and Record conversations switch on a change to B", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     const nsB = deferred<{ conversation_logging_enabled: boolean }>();
     getNamespace.mockResolvedValueOnce({ conversation_logging_enabled: true }).mockReturnValueOnce(nsB.promise);
