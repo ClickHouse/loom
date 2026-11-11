@@ -122,6 +122,21 @@ async def test_the_directory_places_once_and_holds_the_quota(dsn: str) -> None:
         with pytest.raises(directory.PlacementRefused, match="closed"):
             await directory.place(f"new-{a}", a, lambda _r: "closed")
         assert await directory.lookup(f"new-{a}") is None
+        # The state read answers only the first cell: none of these, until one is marked.
+        assert await directory.first_cell_named(a) is None
+        earlier = await conn.fetchval("SELECT cell FROM loom_router.cells WHERE is_first")
+        await conn.execute("UPDATE loom_router.cells SET is_first = false WHERE is_first")
+        try:
+            await conn.execute("UPDATE loom_router.cells SET is_first = true WHERE cell = $1", a)
+            row = await directory.first_cell_named(a)
+            assert row is not None and row.is_first and row.cell == a
+            assert await directory.first_cell_named(b) is None
+        finally:
+            await conn.execute("UPDATE loom_router.cells SET is_first = false WHERE cell = $1", a)
+            if earlier is not None:
+                await conn.execute(
+                    "UPDATE loom_router.cells SET is_first = true WHERE cell = $1", earlier
+                )
         # A credential's hash names one cell: a second cell cannot record it.
         with pytest.raises(asyncpg.UniqueViolationError):
             await conn.execute(

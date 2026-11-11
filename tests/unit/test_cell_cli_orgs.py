@@ -141,6 +141,13 @@ def test_outside_a_cell_nothing_is_checked(monkeypatch: pytest.MonkeyPatch) -> N
     asyncio.run(_ch.check_orgs(["acme"]))
 
 
+@pytest.fixture(autouse=True)
+def _directory_attaching(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The directory answers that the first cell is `attaching`, as during the rollout
+    (the state read's own tests are in test_cell_tenancy.py)."""
+    monkeypatch.setattr(tenancy, "directory_says_attaching", AsyncMock(return_value=True))
+
+
 def _serving_cell(monkeypatch: pytest.MonkeyPatch) -> None:
     """A cell whose rows read and let this process serve."""
     monkeypatch.setattr(settings, "cell", "eu-1")
@@ -643,3 +650,49 @@ def test_the_embed_phase_declares_its_org_only_once_it_has_chunks_to_embed(
         assert asyncio.run(code_backfill._backfill_embed(_Repo(), "acmee", "code-x", args)) == 0
         (row,) = recorded
         assert declared == [] and row["args"][1:] == ("acmee", "code-x")
+
+
+def _cli_cell(monkeypatch: pytest.MonkeyPatch, mode: str, statements: list[str]) -> None:
+    """A CLI process on cell eu-1 whose rows read `mode`; `statements` records its reads."""
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr(tenancy, "_held", set())
+    monkeypatch.setattr(tenancy, "_elsewhere", {})
+
+    async def _fetchval(sql: str, org: str) -> bool:
+        statements.append(sql)
+        return sql != tenancy._HOLDS  # held only once recorded
+
+    row = {"first": None, "mode": mode, "own": None}
+    monkeypatch.setattr(pg, "fetchrow", AsyncMock(return_value=row))
+    monkeypatch.setattr(pg, "fetchval", _fetchval)
+    monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
+    monkeypatch.setattr(cell, "gate_reason", lambda: "")
+
+
+def test_a_restored_first_cell_the_directory_marks_serving_records_nothing_for_the_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statements: list[str] = []
+    _cli_cell(monkeypatch, "recording", statements)
+    monkeypatch.setattr(tenancy, "directory_says_attaching", AsyncMock(return_value=False))
+    with pytest.raises(_ch.OrgNotHeld, match="attaching"):
+        asyncio.run(_ch.check_orgs(["acme"]))
+    assert statements == [tenancy._HOLDS]
+
+
+@pytest.mark.parametrize("mode,refused", [("enforced", True), ("recording", False)])
+def test_a_cli_holds_the_router_credential_only_on_a_recording_first_cell(
+    monkeypatch: pytest.MonkeyPatch, mode: str, refused: bool
+) -> None:
+    """The credential can place orgs in the shared directory: an org-declaring command
+    refuses to run with it set, naming it, unless the cell reads `recording`."""
+    statements: list[str] = []
+    _cli_cell(monkeypatch, mode, statements)
+    monkeypatch.setattr(settings, "cell_router_token", "lcr_" + "0" * 128)
+    if refused:
+        with pytest.raises(_ch.OrgNotHeld, match="LOOM_CELL_ROUTER_TOKEN"):
+            asyncio.run(_ch.check_orgs(["acme"]))
+        assert statements == []
+    else:
+        asyncio.run(_ch.check_orgs(["acme"]))
+        assert statements == [tenancy._HOLDS, tenancy._RECORD]

@@ -3,10 +3,12 @@
 Every command that connects declares what it writes for: `orgs=`, the orgs a command
 writes rows for, or `org_free=`, why it writes for none (the cell's settings, a sweep of
 its own rows, a read). On a cell (`LOOM_CELL`), each declared org must be one the cell
-holds before the command runs (`server.auth.tenancy`), judged by the cell's rows read for
-the command: recorded while the cell is `recording`, refused once it is `enforced`, never
-placed (`loom cell place` places one). `tests/unit/test_cell_cli_orgs.py` fails on a
-connect that declares neither, and on a connect under `server/cli/` outside this module.
+holds before the command runs (`server.auth.tenancy`), judged by the cell's rows read
+for the command: recorded while the cell is `recording` and the directory answers that
+it is `attaching`, refused once it is `enforced` (or the directory does not say
+`attaching`), never placed (`loom cell place` places one).
+`tests/unit/test_cell_cli_orgs.py` fails on a connect that declares neither, and on a
+connect under `server/cli/` outside this module.
 """
 
 from __future__ import annotations
@@ -65,6 +67,13 @@ async def check_orgs(orgs: Iterable[str]) -> None:
     await cell.refresh()
     if reason := cell.gate_reason():
         raise OrgNotHeld(f"refusing: this cell serves nothing now: {reason}")
+    # The router credential can place orgs in the shared directory: a CLI holds it only
+    # for the state read a first cell in `recording` makes (a later cell reads `enforced`).
+    if settings.cell_router_token and cell.mode() != "recording":
+        raise OrgNotHeld(
+            "refusing: LOOM_CELL_ROUTER_TOKEN is set in this CLI's configuration, which needs "
+            "it only on the first cell while its mode is `recording`; remove it"
+        )
     for org in orgs:
         try:
             await tenancy.ensure_held(org, None)
