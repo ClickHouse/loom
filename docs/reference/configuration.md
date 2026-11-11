@@ -94,6 +94,10 @@ Authentication, tokens and identity providers.
 | `LOOM_CELL_ROUTER_TOKEN` | `str` | *(unset)* |  | The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64` (never the length of a SHA-256); any other form is refused at boot. "" = none. |
 | `LOOM_CELL_ROUTER_TIMEOUT_S` | `float` | `5.0` |  | Seconds a whole placement call to the router may take before the request answers 503. |
 | `LOOM_TENANCY_MODE_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. |
+| `LOOM_ROUTER_PG_DSN` | `str` | *(unset)* |  | The router's directory, its own Postgres database (`loom router serve` and `loom router migrate`); "" = none. Never a cell's memory authority database. |
+| `LOOM_ROUTER_PLACEMENTS_PER_MINUTE` | `int` | `60` |  | Placement calls one cell may make in a minute, counted by each router replica. |
+| `LOOM_ROUTER_DIRECTORY_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) a router replica keeps the cells' credential hashes before reading them from the directory again; a cell's new credential works within this. |
+| `LOOM_ROUTER_LOOKUPS_PER_MINUTE` | `int` | `60` |  | Org lookups one client address may make in a minute, counted by each router replica (`GET /cells/lookup`). |
 | `LOOM_JWT_ISSUER` | `str` | `'loom'` |  | The `iss` Loom stamps on every token it mints; a verified token carries it or one of `jwt_trusted_issuers`. |
 | `LOOM_JWT_AUDIENCE` | `str` | `'loom-platform'` |  | The `aud` claim stamped on minted tokens and required on every verified token. |
 | `LOOM_JWT_TRUSTED_ISSUERS` | `str` | `''` |  | Extra accepted `iss` values, for a gateway minting Loom-shaped JWTs with a key in `jwt_public_keys_json`. Loom's own tokens (iss = jwt_issuer) pass. |

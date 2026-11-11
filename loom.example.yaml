@@ -715,6 +715,19 @@ settings:
   # [restart]
   # tenancy_mode_cache_s: 5.0
 
+  # Placement calls one cell may make in a minute, counted by each router replica.
+  # [restart]
+  # router_placements_per_minute: 60
+
+  # Seconds (at least 1) a router replica keeps the cells' credential hashes before
+  # reading them from the directory again; a cell's new credential works within this.
+  # [restart]
+  # router_directory_cache_s: 5.0
+
+  # Org lookups one client address may make in a minute, counted by each router replica
+  # (`GET /cells/lookup`). [restart]
+  # router_lookups_per_minute: 60
+
   # The `iss` Loom stamps on every token it mints; a verified token carries it or one of
   # `jwt_trusted_issuers`. [restart]
   # jwt_issuer: "loom"

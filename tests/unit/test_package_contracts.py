@@ -54,6 +54,7 @@ PLATFORM = frozenset(
         "cli",
         "operations",
         "workers",
+        "router",
     }
 )
 # core modules that do I/O: domain code must not import them.

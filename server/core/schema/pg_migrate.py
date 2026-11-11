@@ -1,6 +1,8 @@
 """Postgres migrations: numbered SQL files in `schemas/pg_migrations/`, applied in
 order at boot under a session advisory lock, each file in one transaction with
-its ledger row (`loom.pg_migrations`, the file's SHA-256).
+its ledger row (`loom.pg_migrations`, the file's SHA-256). The router's directory
+(`schemas/router_migrations/`, `server/router/directory.py`) migrates the same way,
+on its own database, ledger schema and lock.
 
 The rules are the ClickHouse journal's (docs/development/migrations.md): additive
 only, never edit a merged file. A ledger row whose checksum no longer matches its
@@ -14,6 +16,8 @@ from __future__ import annotations
 import hashlib
 import logging
 from asyncio import sleep
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any
 
@@ -26,9 +30,12 @@ log = logging.getLogger(__name__)
 # A fixed key for pg_advisory_lock: every Loom process migrates under it.
 _LOCK_KEY = 0x6C6F6F6D_6D696772  # "loommigr"
 
-_LEDGER = """
-CREATE SCHEMA IF NOT EXISTS loom;
-CREATE TABLE IF NOT EXISTS loom.pg_migrations (
+
+def _ledger(schema: str) -> str:
+    # `schema` is one of this build's constants (`loom`, `loom_router`), never input.
+    return f"""
+CREATE SCHEMA IF NOT EXISTS {schema};
+CREATE TABLE IF NOT EXISTS {schema}.pg_migrations (
     filename text PRIMARY KEY,
     checksum text NOT NULL,
     applied_at timestamptz NOT NULL DEFAULT now()
@@ -78,9 +85,17 @@ async def pending(mig_dir: Path = PG_MIGRATIONS_DIR) -> list[str]:
     return [f.name for f in plan(applied, migration_files(mig_dir))]
 
 
-async def migrate(mig_dir: Path = PG_MIGRATIONS_DIR) -> list[str]:
+async def migrate(
+    mig_dir: Path = PG_MIGRATIONS_DIR,
+    *,
+    connect: Callable[[], AbstractAsyncContextManager[Any]] | None = None,
+    schema: str = "loom",
+    lock_key: int = _LOCK_KEY,
+) -> list[str]:
     """Apply every pending file; returns their names. Concurrent boots serialize on
-    the advisory lock and the later ones find nothing pending.
+    the advisory lock and the later ones find nothing pending. `connect`, `schema`
+    and `lock_key` name another database's connection, ledger and lock (the router's
+    directory); the defaults are the memory authority's.
 
     On a connection of its own, with no client command timeout and no statement
     timeout: DDL on a large table runs as long as it takes. A lock it waits for is
@@ -89,14 +104,14 @@ async def migrate(mig_dir: Path = PG_MIGRATIONS_DIR) -> list[str]:
     files = migration_files(mig_dir)
     done: list[str] = []
     # Closing the connection ends the session, and with it the advisory lock.
-    async with pg.dedicated() as conn:
+    async with (connect or pg.dedicated)() as conn:
         # Another boot migrating holds the lock for as long as its files take.
-        await conn.execute("SELECT pg_advisory_lock($1)", _LOCK_KEY)
+        await conn.execute("SELECT pg_advisory_lock($1)", lock_key)
         await conn.execute("SET lock_timeout = '5s'")
-        await conn.execute(_LEDGER)
-        rows = await conn.fetch("SELECT filename, checksum FROM loom.pg_migrations")
+        await conn.execute(_ledger(schema))
+        rows = await conn.fetch(f"SELECT filename, checksum FROM {schema}.pg_migrations")
         for name, sql, digest in _read(plan({r["filename"]: r["checksum"] for r in rows}, files)):
-            await _apply(conn, name, sql, digest)
+            await _apply(conn, name, sql, digest, schema=schema)
             log.info("applied Postgres migration %s", name)
             done.append(name)
     return done
@@ -106,10 +121,10 @@ def _read(files: list[Path]) -> list[tuple[str, str, str]]:
     return [(f.name, f.read_text(), checksum(f)) for f in files]
 
 
-async def _apply(conn: Any, name: str, sql: str, digest: str) -> None:
+async def _apply(conn: Any, name: str, sql: str, digest: str, *, schema: str = "loom") -> None:
     import asyncpg
 
-    record = "INSERT INTO loom.pg_migrations (filename, checksum) VALUES ($1, $2)"
+    record = f"INSERT INTO {schema}.pg_migrations (filename, checksum) VALUES ($1, $2)"
     attempts = 5  # tries before the boot fails on a table lock held past `lock_timeout`
     for attempt in range(1, attempts + 1):
         try:
