@@ -221,8 +221,8 @@ values its answer must state and the pages that hold them, with a right and a wr
 answer the label is tested against. Its answer is scored correct when it states them and
 names no op or setting the server neither serves nor documents (`unknown_names` on the
 answer's `loom.citations` event). For the case with no answer in the docs, the answer is
-correct when it says so and tells the person to set no setting; it may name one to deny
-it. A help citation is valid when its page is in the server's
+correct when it says so and writes no `LOOM_` name that no docs page writes; an answer
+that names an invented setting only to deny it is scored wrong. A help citation is valid when its page is in the server's
 documentation (`help.get`) and its section is one of the page's own, by the rule the
 server's own check uses. The cases go through Loom's assistant route
 (`qualify.py setup-bridge`), so each answer also carries the question's asker line and

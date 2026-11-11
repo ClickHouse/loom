@@ -717,7 +717,9 @@ def test_rescore_checks_a_saved_document_rows_citations_again(monkeypatch, tmp_p
     row = {"id": "doc-revised-ack", "kind": "document", "documents": True}
     out = tmp_path / "results.json"
     out.write_text(
-        json.dumps({"model": "m", "rows": [{**row, "librechat": side, "native": native}]})
+        json.dumps(
+            {"model": "m", "bridge": False, "rows": [{**row, "librechat": side, "native": native}]}
+        )
     )
     q.cmd_rescore(argparse.Namespace(out=str(out), citations=True))
     got = json.loads(out.read_text())["rows"][0]["librechat"]
@@ -1002,20 +1004,15 @@ def test_a_help_answer_that_cites_no_page_misses_the_labeled_one(monkeypatch):
     assert got["cited_expected"] is False
 
 
-@pytest.mark.parametrize(
-    "answer, correct",
-    [
-        ("Loom's documentation does not describe a dashboard colour theme.", True),
-        # Naming a setting to say there is none is still an abstention.
-        ("There is no `LOOM_THEME` setting; the docs don't cover a colour theme.", True),
-        ("The docs don't cover it, but set `LOOM_DASHBOARD_THEME=dark`.", False),
-        ("Use LOOM_UI_THEME to change it.", False),
-    ],
-)
-def test_a_question_the_docs_leave_open(answer, correct):
+def test_a_question_the_docs_leave_open_is_held_to_the_documented_settings():
     q = _qualify()
-    got = q.score_answer(_case("help-undocumented"), _saved_side(answer, unknown_names=["X"]))
-    assert got["correct"] is correct
+    case = _case("help-undocumented")
+    # A real variable named beside the abstention is fine; an invented one is not, and the
+    # bridge's unknown names count too.
+    real = _saved_side("The docs don't cover a theme; `LOOM_COLOUR` picks a deployment.")
+    assert q.score_answer(case, real)["correct"] is True
+    assert q.score_answer(case, {**real, "unknown_names": ["LOOM_X"]})["correct"] is False
+    assert q.undocumented_settings("set LOOM_UI_THEME, not LOOM_COLOUR") == ["LOOM_UI_THEME"]
 
 
 def test_the_history_direct_path_counts_the_keys_versions():
@@ -1084,3 +1081,49 @@ def test_rescore_reads_memory_citations_by_the_saved_runs_path(monkeypatch, tmp_
     out.write_text(json.dumps({"model": "m", "bridge": False, "rows": [row]}))
     q.cmd_rescore(argparse.Namespace(out=str(out), citations=True))
     assert seen == [False]
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in _help_cases() if c.get("forbid")], ids=lambda c: c["id"]
+)
+def test_each_help_forbid_is_what_fails_one_wrong_sample(case):
+    q = _qualify()
+    # A wrong sample that states what the label expects, and fails only on the forbid.
+    reached = [
+        a
+        for a in case["samples"]["wrong"]
+        if q.score({**case, "forbid": []}, a)["correct"] and not q.score(case, a)["correct"]
+    ]
+    assert reached, case["id"]
+
+
+def test_a_memory_citation_in_a_document_answer_is_no_document(monkeypatch):
+    q = _qualify()
+    read = []
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text: ([], []))
+    monkeypatch.setattr(
+        q,
+        "check_doc_citations",
+        lambda st, person, case, text: read.append(text) or ([], [], False),
+    )
+    q.answer_citations({}, _case("doc-cache-entries"), {}, "A [memory:a/b/c@v1793745407448901606].")
+    assert read == ["A ."]
+
+
+def test_through_the_bridge_a_memory_citation_is_read_whole():
+    q = _qualify()
+    text = "`user/pref/example` [memory:user/pref/john_doe@v1793745407448901606]"
+    assert q.memory_mentions({"bridge": True}, text) == [
+        ("user/pref/john_doe", 1793745407448901606)
+    ]
+    assert q.memory_mentions({}, text)[0] == ("user/pref/example", 1793745407448901606)
+
+
+def test_rescore_asks_for_a_new_run_when_the_saved_path_is_unknown(tmp_path):
+    import argparse
+
+    q = _qualify()
+    out = tmp_path / "results.json"
+    out.write_text(json.dumps({"model": "m", "rows": []}))
+    with pytest.raises(SystemExit, match="which path"):
+        q.cmd_rescore(argparse.Namespace(out=str(out), citations=True))

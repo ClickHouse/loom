@@ -593,7 +593,10 @@
       "right": [
         "Pass them in `entities` on `memory.set`; otherwise the extractor worker extracts them from the memory's text."
       ],
-      "wrong": ["Entities are not extracted from memories; an admin adds them by hand only."]
+      "wrong": [
+        "Entities are not extracted from memories; an admin adds them by hand only.",
+        "Entities come from `memory.set`; they are not extracted from text."
+      ]
     }
   },
   {
@@ -695,7 +698,8 @@
       "wrong": [
         "Yes, you can write here.",
         "You are an admin, so you can write.",
-        "You can already write here as a viewer."
+        "You can already write here as a viewer.",
+        "You are a viewer, but you can already write here; an admin can grant more."
       ]
     }
   },
@@ -885,7 +889,11 @@
         "An org admin, with `erasure.request` and the `user_id` scope.",
         "`memory.clear` erases nothing; it only tombstones. An org admin uses `erasure.request` with the `user_id` scope."
       ],
-      "wrong": ["An org admin runs `memory.clear` with `agent=\"*\"`.", "Any writer may, with `memory.delete`."]
+      "wrong": [
+        "An org admin runs `memory.clear` with `agent=\"*\"`.",
+        "Any writer may, with `memory.delete`.",
+        "An org admin can use `erasure.request`, or run `memory.clear` across the org."
+      ]
     }
   },
   {
@@ -994,7 +1002,10 @@
     "forbid": ["\\byou (do |will )?need an? (\\w+ )?(API )?key"],
     "samples": {
       "right": ["No: the quickstart needs no API key and no account."],
-      "wrong": ["Yes, you need an API key; no account is needed."]
+      "wrong": [
+        "Yes, you need an API key; no account is needed.",
+        "The quickstart needs no API key for its fake models, but you need an API key to start it."
+      ]
     }
   },
   {
@@ -1003,7 +1014,9 @@
     "use_case": "U27 Operating a deployment",
     "person": "alice",
     "question": "How do I upgrade a Loom deployment to a new release?",
-    "expect": ["migrat", "boot|start"],
+    "expect": [
+      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|migrations? (run|are applied|apply) (at|on|when) (boot|start)"
+    ],
     "cite_help": ["operations/upgrades.md"],
     "baseline": {
       "op": "help.search",
@@ -1016,7 +1029,9 @@
       "right": ["Deploy the new image; the first container to boot applies the migrations."],
       "wrong": [
         "Export every memory, reinstall the new release and import them back.",
-        "Loom cannot be upgraded in place; migrate the data by hand."
+        "Loom cannot be upgraded in place; migrate the data by hand.",
+        "Loom cannot be upgraded in place; migrate the data by hand, then start the new build.",
+        "Stop every server, run the migrations by hand, then start the new release."
       ]
     }
   },
@@ -1035,20 +1050,17 @@
         "limit": 5
       }
     },
-    "forbid": ["\\b(set|use|using|try|change|export|enable)\\s+`?LOOM_[A-Z_]+", "LOOM_[A-Z_]+`?\\s*="],
     "samples": {
       "right": [
         "Loom's documentation does not describe a dashboard colour theme.",
-        "There is no `LOOM_THEME` setting; the docs don't cover a colour theme.",
-        "There is no setting `LOOM_THEME`; the docs don't cover a colour theme.",
         "Loom has no setting for the dashboard's colour theme.",
-        "The docs don't list a theme setting."
+        "The docs don't list a theme setting; `LOOM_COLOUR` picks a blue/green deployment, not a theme."
       ],
       "wrong": [
         "The docs don't cover it, but set `LOOM_DASHBOARD_COLOUR=dark`.",
         "Use LOOM_UI_THEME to change it.",
-        "I couldn't find a theme setting in the docs; try `LOOM_UI_THEME`.",
-        "Not documented, but export LOOM_UI_THEME=dark."
+        "The docs don't cover it; try setting `LOOM_UI_THEME`.",
+        "There is no setting `LOOM_THEME`; the docs don't cover a colour theme."
       ]
     }
   },

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import json
 import os
 import re
@@ -508,15 +509,7 @@ def check_citations(
             versions[key] = {int(r["version"]) for r in rows if r.get("version")}
         return versions[key]
 
-    # A help citation's page path (`features/memory/writing.md`) is no memory key. An
-    # answer through Loom's assistant cites a memory as `[memory:<key>@v<version>]`, so a
-    # key-shaped example it quotes from the docs (`scope/kind/id`) is no citation either.
-    keyed = HELP_CITE_RE.sub("", text)
-    if st.get("bridge"):
-        keyed = " ".join(m[0] for m in re.finditer(r"\[memory:[^\]]+\]", keyed))
-    found = list(KEY_RE.finditer(keyed))
-    for i, m in enumerate(found):
-        key = m.group(0)
+    for key, version in memory_mentions(st, text):
         if key not in current:
             cited.append(key)
             body = {
@@ -530,21 +523,38 @@ def check_citations(
             current[key] = int(out["version"]) if ok else None
             if current[key] is None:
                 invalid.append(key)
-        if current[key] is None:
+        if current[key] is None or version is None or version == current[key]:
             continue
-        # Every mention is checked: a version belongs to the key before it, up to the next key.
-        end = min(m.end() + 80, found[i + 1].start() if i + 1 < len(found) else len(keyed))
-        # A bare version, or the deployed agent's `[memory:<key>@v<version>]`.
-        near = re.search(r"(?:\b|@v)(\d{16,20})\b", keyed[m.end() : end])
-        if near and int(near.group(1)) != current[key]:
-            # An earlier version is a valid citation of what the key once held (an answer
-            # about its history); a version the key never had is not.
-            if int(near.group(1)) in history(key):
-                continue
-            stale = f"{key}@{near.group(1)}"
-            if stale not in invalid:
-                invalid.append(stale)
+        # An earlier version is a valid citation of what the key once held (an answer about
+        # its history); a version the key never had is not.
+        if version in history(key):
+            continue
+        stale = f"{key}@{version}"
+        if stale not in invalid:
+            invalid.append(stale)
     return cited, invalid
+
+
+# A memory citation as Loom's assistant writes it (`server.assistant.domain.citations`).
+MEMORY_CITE_RE = re.compile(r"\[memory:(?P<key>[^\]\s]+)@v(?P<version>\d+)\]")
+
+
+def memory_mentions(st: dict[str, Any], text: str) -> list[tuple[str, int | None]]:
+    """Each memory key an answer cites, with the version it names (None for none). Through
+    Loom's assistant a citation is `[memory:<key>@v<version>]`, so a key-shaped example it
+    quotes from the docs (`scope/kind/id`) is none. Otherwise a key is any key-shaped text
+    outside a help citation (whose page path is no key), with the version written after it,
+    up to the next key."""
+    if st.get("bridge"):
+        return [(m["key"], int(m["version"])) for m in MEMORY_CITE_RE.finditer(text)]
+    keyed = HELP_CITE_RE.sub("", text)
+    found = list(KEY_RE.finditer(keyed))
+    mentions: list[tuple[str, int | None]] = []
+    for i, m in enumerate(found):
+        end = min(m.end() + 80, found[i + 1].start() if i + 1 < len(found) else len(keyed))
+        near = re.search(r"(?:\b|@v)(\d{16,20})\b", keyed[m.end() : end])
+        mentions.append((m.group(0), int(near.group(1)) if near else None))
+    return mentions
 
 
 def parse_doc_citations(text: str) -> list[dict[str, Any]]:
@@ -575,8 +585,25 @@ HELP_ABSTAIN_PATTERNS = (
 )
 
 
+DOCS = HERE.parents[2] / "docs"
+SETTING_RE = re.compile(r"\bLOOM_[A-Z0-9_]*[A-Z0-9]")
 # The kinds whose right answer is an abstention: from the namespace, or from the docs.
 ABSTAIN_KINDS = ("abstain", "help_abstain")
+
+
+@functools.cache
+def documented_settings() -> frozenset[str]:
+    """Every `LOOM_*` name a docs page writes: the documentation half of the server's
+    unknown-name check (`server.assistant.domain.names`)."""
+    return frozenset(
+        name for page in DOCS.rglob("*.md") for name in SETTING_RE.findall(page.read_text())
+    )
+
+
+def undocumented_settings(text: str) -> list[str]:
+    """The `LOOM_*` names an answer writes that no docs page does: a setting the answer made
+    up, even one it names to deny."""
+    return sorted(set(SETTING_RE.findall(text)) - documented_settings())
 
 
 def is_help_case(case: dict[str, Any]) -> bool:
@@ -731,7 +758,10 @@ def score(case: dict[str, Any], text: str) -> dict[str, Any]:
         abstained = matches(ABSTAIN_PATTERNS, text) or (
             is_document_case(case) and matches(DOC_ABSTAIN_PATTERNS, text)
         )
-    if kind in ABSTAIN_KINDS:
+    if kind == "help_abstain":
+        # It says the docs leave it open, and invents no setting for it.
+        correct = abstained and not undocumented_settings(text)
+    elif kind == "abstain":
         correct = abstained
     elif kind == "refusal":
         correct = matches(REFUSAL_PATTERNS, text)
@@ -743,12 +773,9 @@ def score(case: dict[str, Any], text: str) -> dict[str, Any]:
 
 def score_answer(case: dict[str, Any], got: dict[str, Any]) -> dict[str, Any]:
     """Score an answer through LibreChat: its text, and wrong when it names an op or setting
-    the build neither serves nor documents (the bridge's `unknown_names`). A question the
-    docs leave open is the exception: its answer may name a setting to say there is none,
-    and its case forbids an answer that tells the person to set one."""
+    the build neither serves nor documents (the bridge's `unknown_names`)."""
     result = score(case, got["answer"] or got["error"])
-    if case["kind"] != "help_abstain":
-        result["correct"] = result["correct"] and not got.get("unknown_names")
+    result["correct"] = result["correct"] and not got.get("unknown_names")
     return result
 
 
@@ -930,8 +957,9 @@ def answer_citations(
     cited, invalid = check_citations(st, person, text)
     expected = case.get("cite") in cited if case.get("cite") else None
     if is_document_case(case):
-        # A help citation (`[help:<page> § …]`) is checked as one below, not as a document.
-        doc_text = HELP_CITE_RE.sub("", text)
+        # Help and memory citations (`[help:…]`, `[memory:…]`) are checked as such, not as
+        # documents.
+        doc_text = MEMORY_CITE_RE.sub("", HELP_CITE_RE.sub("", text))
         doc_cited, doc_invalid, doc_expected = check_doc_citations(st, person, case, doc_text)
         cited, invalid = cited + doc_cited, invalid + doc_invalid
         expected = doc_expected if case.get("cite_doc") else None
@@ -977,7 +1005,9 @@ def cmd_rescore(args: argparse.Namespace) -> None:
     cases = {c["id"]: c for c in load("cases.json")}
     people = {p["name"]: p for p in load("fixture.json")["people"]}
     # The answers' own path decides how their memory citations read, not the current state.
-    st = {**state(), "bridge": saved.get("bridge", False)} if args.citations else {}
+    if args.citations and "bridge" not in saved:
+        sys.exit(f"{args.out} does not say which path its answers took: run it again")
+    st = {**state(), "bridge": saved["bridge"]} if args.citations else {}
     for row in saved["rows"]:
         if row["kind"] != "cancel":
             lc = row["librechat"]
