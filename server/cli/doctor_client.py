@@ -371,9 +371,10 @@ def recording_check(
     auth_ok: bool,
 ) -> Check:
     """Whether the namespace the hooks write to keeps the conversation turns
-    they send. The owner's Record conversations switch in the dashboard
-    (`conversation_logging_enabled`) decides; with it off the hooks soon stop
-    sending turns, and every append is accepted and dropped."""
+    they send. The owner's Record conversations switch on the dashboard's
+    Conversations page (`conversation_logging_enabled`) decides; with it off
+    the hooks soon stop sending turns, and every append is accepted and
+    dropped."""
     name = "client:recording"
     if not token or not auth_ok:
         return (name, WARN, "skipped: check auth first")
@@ -392,8 +393,8 @@ def recording_check(
             name,
             WARN,
             f"conversation recording is off for {namespace!r} (the owner's Record conversations "
-            "switch in the dashboard): the hooks stop sending turns and none are kept. Turn it on "
-            "there if you want transcripts.",
+            "switch on the dashboard's Conversations page): the hooks stop sending turns and none "
+            "are kept. Turn it on there if you want transcripts.",
         )
     return (name, PASS, f"conversation recording is on for {namespace!r}")
 

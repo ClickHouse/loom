@@ -134,17 +134,17 @@ async function main() {
       rendered: result && typeof result.rendered === "string" ? result.rendered : "",
       codeBlock,
       lines: [taskLine, briefsLine, collectionsText],
-      // The model must not log turns itself: the Stop hook does, when the
-      // owner's Recording switch is on. Always said, even with no primer.
+      // The model must not log turns itself: the Stop hook does when the owner's
+      // Record conversations switch is on. Always said, even with no primer.
       recordingLine: recordingPrimerLine(recording, scope.namespace),
     }),
   );
   scheduleExit(0);
 }
 
-/** The Recording switch for this scope: the flusher's
- *  cached verdict when fresh, else one bounded `namespace.get` (cached the
- *  same way); null when neither answers. */
+/** The Record conversations switch for this scope: the flusher's cached
+ *  verdict when fresh, else one bounded `namespace.get` (cached the same
+ *  way); null when neither answers. */
 async function recordingState(scope, token) {
   if (!scope || !scope.org || !scope.namespace) return null;
   const serverUrl = resolveServerUrl();

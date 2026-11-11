@@ -7,9 +7,9 @@ import { Conversations } from "./Conversations";
 import { must } from "../test/must";
 
 // Conversations stays mounted while threads open and close and while the namespace
-// switches, so every async answer must land only on the thread or namespace it was
+// changes, so every async answer must land only on the thread or namespace it was
 // asked for: thread A's detail and memories never render under thread B, and
-// namespace A's hits and recording switch never survive into namespace B.
+// namespace A's hits and Record conversations switch never survive into namespace B.
 
 const listConversationThreads = vi.fn();
 const getConversationThread = vi.fn<typeof import("../api").getConversationThread>();
@@ -156,7 +156,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(screen.getByText("body of thread-b")).toBeInTheDocument();
   });
 
-  it("clears namespace A's hits and recording switch on a switch to B", async () => {
+  it("clears namespace A's hits and Record conversations switch on a change to B", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     const nsB = deferred<{ conversation_logging_enabled: boolean }>();
     getNamespace.mockResolvedValueOnce({ conversation_logging_enabled: true }).mockReturnValueOnce(nsB.promise);

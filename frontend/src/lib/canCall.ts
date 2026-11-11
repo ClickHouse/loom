@@ -99,7 +99,7 @@ export const OP_MIN_ROLE = {
   "memory.demote": ADMIN,
   "memory.redact": ADMIN,
   "memory.outcome": WRITER,
-  // Conversations' recording toggle: a namespace setting, ADMIN on the namespace.
+  // The Record conversations switch: a namespace setting, ADMIN on the namespace.
   "conversation.set_logging": ADMIN,
   // Settings → Memory's Webhooks section, ADMIN on the namespace.
   "webhook.list": ADMIN,

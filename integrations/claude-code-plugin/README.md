@@ -225,8 +225,8 @@ Capture is on the moment Claude Code reloads its hooks.
 > target namespace has `conversation_logging_enabled`, which is **off** for
 > new namespaces. The call still succeeds, so a closed
 > gate looks exactly like a working one — if the dashboard's Conversations page stays empty, turn
-> recording on there (or via `conversation.set_logging`) before debugging the
-> hooks. Tool/episodic capture (`observe.record`) is unaffected.
+> on its **Record conversations** switch (or call `conversation.set_logging`) before debugging
+> the hooks. Tool/episodic capture (`observe.record`) is unaffected.
 
 ## loom-code-shunt: the bulk-read reflex goes to the index
 

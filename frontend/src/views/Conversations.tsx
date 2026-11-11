@@ -85,7 +85,7 @@ export function Conversations() {
   // claude-desktop, …). Threads are scoped to the namespace; an agent filter
   // keeps you from staring at every tool's sessions at once.
   const [agentFilter, setAgentFilter] = useState("*");
-  // Per-namespace "record my conversations" switch (null = not yet loaded).
+  // The namespace's Record conversations switch (null = not yet loaded).
   const [loggingEnabled, setLoggingEnabled] = useState<boolean | null>(null);
   // Recent threads landing — populated on mount so a user with no
   // query sees what's there instead of a dead-end empty state. Also
@@ -119,10 +119,10 @@ export function Conversations() {
   // card OR a search-hit thread header → the dialog reads the full messages and shows them.
   const [openThread, setOpenThread] = useState<ReplayThread | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  // Bumped per search and per namespace switch: only the latest search writes hits.
+  // Bumped per search and per namespace change: only the latest search writes hits.
   const searchSeq = useRef(0);
-  // Bumped per namespace switch: a logging write that fails after the switch must not
-  // revert the new namespace's switch.
+  // Bumped per namespace change: a logging write that fails after the change must not
+  // revert the new namespace's Record conversations switch.
   const scopeGen = useRef(0);
 
   // `/` focuses search anywhere on Conversations (not while typing or inside the
@@ -139,9 +139,10 @@ export function Conversations() {
   );
   useKeyboard(keys);
 
-  // Hits, threads, the agent filter and the recording switch belong to the namespace
-  // they were read for; a switch clears them during render, so B's first read asks for its
-  // own first page under every agent, and B never shows A's rows or toggles A's value.
+  // Hits, threads, the agent filter and the Record conversations switch belong to the
+  // namespace they were read for; a namespace change clears them during render, so B's
+  // first read asks for its own first page under every agent, and B never shows A's rows
+  // or toggles A's value.
   const namespaceKey = `${identity.org}/${identity.namespace}`;
   const [stateFor, setStateFor] = useState(namespaceKey);
   if (stateFor !== namespaceKey) {
@@ -219,7 +220,8 @@ export function Conversations() {
     },
     [identity.org, identity.namespace, threadsRetry, threadPage, agentFilter],
   );
-  // The recording switch is the namespace's, read once per namespace, not per page.
+  // The Record conversations switch is the namespace's, read once per namespace, not
+  // per page.
   useAbortableEffect(
     (signal, live) => {
       getNamespace(identity, { signal })
@@ -496,7 +498,8 @@ export function Conversations() {
 
   return (
     <PageContainer>
-      {/* Recording is the namespace's setting, not a filter: it sits with the title. */}
+      {/* The Record conversations switch is the namespace's setting, not a filter: it sits
+          with the title. */}
       <PageHeader title="Conversations" actions={recording || undefined}>
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
         <span className="hidden sm:contents">
