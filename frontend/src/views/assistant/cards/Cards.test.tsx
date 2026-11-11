@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -15,13 +15,13 @@ import type {
   NamespaceTune,
   TuneProposal,
   WhoAmI,
-} from "../api";
-import { listMine } from "../api";
-import { ApiError } from "../lib/errors";
-import { useStore } from "../lib/state";
-import { resetNamespaceRoleCache } from "../lib/namespaceRole";
-import { axeViolations } from "../test/axe";
-import { Assistant } from "./Assistant";
+} from "../../../api";
+import { listMine } from "../../../api";
+import { ApiError } from "../../../lib/errors";
+import { useStore } from "../../../lib/state";
+import { resetNamespaceRoleCache } from "../../../lib/namespaceRole";
+import { axeViolations } from "../../../test/axe";
+import { InsightsHarness, resetInsights } from "../../../test/insights";
 
 // A row version is a nanosecond stamp (server/memory/store/rows.py), past what a JavaScript
 // number holds exactly: the page never prints it.
@@ -821,8 +821,8 @@ const inspectMemories = vi.fn(async (_s: unknown, subject: MemoryInspection["sub
   inspection(subject, id),
 );
 const tuneNamespace = vi.fn(async () => TUNE);
-vi.mock("../api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api")>();
+vi.mock("../../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api")>();
   return {
     ...actual,
     listMine: vi.fn(async () => []),
@@ -853,6 +853,7 @@ const viewer: WhoAmI = {
 };
 
 beforeEach(() => {
+  resetInsights();
   vi.clearAllMocks();
   resetNamespaceRoleCache();
   useStore.setState({
@@ -864,6 +865,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  resetInsights();
+  vi.unstubAllGlobals();
   useStore.setState({
     identity: null,
     whoami: null,
@@ -889,27 +892,54 @@ const PINNED_INVENTORY: NamespaceInventory = {
   scope: { ...INVENTORY.scope, read_scope: "own_user", user_id: "ada", session_id: null },
 };
 
+const INVENTORY_STARTER = "What does this namespace hold, and who appears in it?";
+const SUBJECT_STARTER = "What does a user, agent or session remember?";
+
+/** The starters and their cards, as the old page opened: the inventory card read first
+ *  (when the role allows it) and the subject starter's form open. */
+async function renderCards() {
+  const r = render(<InsightsHarness />);
+  const inventory = await screen.findByRole("button", { name: INVENTORY_STARTER });
+  await userEvent.click(inventory);
+  await userEvent.click(screen.getByRole("button", { name: SUBJECT_STARTER }));
+  return r;
+}
+
+/** The card a read landed in, by its op. */
+const cardOf = (op: string) => document.querySelector(`[data-card="${op}"]`) as HTMLElement;
+
 describe("Assistant: overview", () => {
-  it("explains itself and shows the overview with no click; inspects and drafts nothing on load", async () => {
-    const { container } = render(<Assistant />);
-    expect(screen.getByRole("heading", { level: 1, name: "Assistant" })).toBeInTheDocument();
-    expect(screen.getByText(/Nothing on this page changes your data/)).toBeInTheDocument();
-    // The chat is the panel's: the page says where it went and holds no chat of its own.
-    expect(screen.getByText(/The chat with the assistant is in its own panel/)).toHaveTextContent(
-      "the Assistant button in the header opens it",
-    );
-    expect(screen.queryByRole("heading", { name: "Ask the assistant" })).toBeNull();
-    expect(screen.queryByLabelText("Question")).toBeNull();
+  it("lists a starter per read, reads nothing until one is chosen, then shows the inventory card", async () => {
+    const { container } = render(<InsightsHarness />);
+    const starters = await screen.findByRole("list", { name: "Starters" });
+    expect(
+      within(starters)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual([
+      "What does this namespace hold, and who appears in it?",
+      "How is this namespace being used?",
+      "What does a user, agent or session remember?",
+      "What documents does it hold?",
+      "What would Loom advise an agent writing here?",
+      "How are an entity and its neighbours related?",
+      "What could be improved here?",
+    ]);
+    // The assistant cannot answer here: the box is off, said why, and nothing costs a model call.
+    const box = screen.getByRole("checkbox", { name: "Also ask the assistant" });
+    expect(box).not.toBeChecked();
+    expect(box).toBeDisabled();
+    expect(box).toHaveAccessibleDescription(/The assistant can't answer: model calls are off/);
+    expect(namespaceInventory).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: INVENTORY_STARTER }));
     await screen.findByTestId("assistant-inventory");
     expect(namespaceInventory).toHaveBeenCalledTimes(1);
     expect(namespaceInventory).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, expect.anything());
-    for (const name of ["Inspect memories", "Inspect documents", "Open the graph", "Draft improvements"])
-      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    const card = cardOf("namespace.inventory");
+    expect(within(card).getByRole("heading", { level: 3, name: "Inventory" })).toBeInTheDocument();
+    expect(within(card).getByTestId("assistant-card-provenance")).toHaveTextContent("Loom's own read");
+    expect(within(card).getByRole("button", { name: "Open in Memories" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "About Who appears here" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Inspect documents" })).toHaveAccessibleDescription(
-      "Every document here: formats, live chunks, and ingest health.",
-    );
-    expect(screen.queryByRole("heading", { name: /Review changes/ })).toBeNull();
     expect(inspectMemories).not.toHaveBeenCalled();
     expect(inspectKnowledge).not.toHaveBeenCalled();
     expect(tuneNamespace).not.toHaveBeenCalled();
@@ -918,40 +948,33 @@ describe("Assistant: overview", () => {
 
   it("offers no read to a caller whose role on the namespace is unknown", async () => {
     useStore.setState({ myNamespaces: [] });
-    render(<Assistant />);
-    const draft = screen.getByRole("button", { name: "Draft improvements" });
-    expect(draft).toHaveAttribute("aria-disabled", "true");
-    expect(draft).toHaveAccessibleDescription("Your role on this namespace is not known.");
-    await userEvent.click(draft);
+    await renderCards();
+    for (const name of [INVENTORY_STARTER, "What could be improved here?", "What documents does it hold?"]) {
+      const starter = screen.getByRole("button", { name });
+      expect(starter).toHaveAttribute("aria-disabled", "true");
+      expect(starter).toHaveAccessibleDescription("Your role on this namespace is not known.");
+    }
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     expect(tuneNamespace).not.toHaveBeenCalled();
     expect(namespaceInventory).not.toHaveBeenCalled();
-    const overview = screen.getByRole("region", { name: "Overview" });
-    expect(
-      within(overview).getByText("Your role on this namespace is not known.", { selector: "p" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByTestId("assistant-card")).toBeNull();
   });
 
-  it("reads the overview once the role is known, showing a loader rather than a refusal while it loads", async () => {
+  it("waits for the role, saying so, and reads once it is known", async () => {
     useStore.setState({ myNamespaces: null });
     let answer: (rows: MyNamespaceEntry[]) => void = () => {};
     vi.mocked(listMine).mockImplementationOnce(() => new Promise((r) => (answer = r)));
-    render(<Assistant />);
-    expect(await screen.findByText("Loading the overview")).toBeInTheDocument();
-    const overview = screen.getByRole("region", { name: "Overview" });
-    expect(within(overview).queryByText("Your role on this namespace is not known.", { selector: "p" })).toBeNull();
-    for (const name of ["Refresh", "Inspect memories", "Inspect documents", "Draft improvements"])
-      expect(screen.getByRole("button", { name })).toHaveAccessibleDescription(
-        "Your role on this namespace is still loading.",
-      );
-    expect(namespaceInventory).not.toHaveBeenCalled();
-    // A button focused while it waits keeps the focus once its read is allowed.
-    const draft = screen.getByRole("button", { name: "Draft improvements" });
-    draft.focus();
+    render(<InsightsHarness />);
+    const starter = await screen.findByRole("button", { name: INVENTORY_STARTER });
+    expect(starter).toHaveAccessibleDescription("Your role on this namespace is still loading.");
+    // A starter focused while it waits keeps the focus once its read is allowed.
+    starter.focus();
     await act(async () => answer([row("team", "viewer")]));
+    expect(starter).toHaveFocus();
+    expect(starter).not.toHaveAttribute("aria-disabled");
+    await userEvent.click(starter);
     await screen.findByTestId("assistant-inventory");
     expect(namespaceInventory).toHaveBeenCalledTimes(1);
-    expect(draft).toHaveFocus();
-    expect(draft).not.toHaveAttribute("aria-disabled");
   });
 
   it("says to type an id when the overview lists nobody", async () => {
@@ -959,7 +982,7 @@ describe("Assistant: overview", () => {
       ...INVENTORY,
       populations: INVENTORY.populations.map((p) => ({ ...p, total: 0, top: [] })),
     });
-    render(<Assistant />);
+    await renderCards();
     await screen.findByTestId("assistant-populations");
     expect(screen.getByRole("button", { name: "Inspect memories" })).toHaveAccessibleDescription("Type a user id.");
     // Nobody to pick: the heading does not ask for a pick.
@@ -967,16 +990,16 @@ describe("Assistant: overview", () => {
   });
 
   it("shows what the namespace holds, with a section it could not count said so", async () => {
-    render(<Assistant />);
+    await renderCards();
     await screen.findByTestId("assistant-inventory");
-    const held = screen.getByRole("region", { name: "What this namespace holds" });
+    const held = screen.getByTestId("assistant-inventory");
     expect(held.querySelector('[data-plane="memories"]')).toHaveTextContent("Memories42");
     expect(within(held).getByTestId("inventory-incomplete")).toHaveTextContent("Could not be read (TimeoutError)");
     expect(screen.getByText(/Model: not enabled/)).toBeInTheDocument();
   });
 
   it("lists members apart from the users observed on rows, and says when members are incomplete", async () => {
-    render(<Assistant />);
+    await renderCards();
     const list = await screen.findByTestId("assistant-populations");
     const items = within(list).getAllByRole("listitem");
     const members = items.find((li) => li.getAttribute("data-population") === "members");
@@ -986,14 +1009,13 @@ describe("Assistant: overview", () => {
     expect(items[0]).toHaveAttribute("data-population", "subjects");
   });
 
-  it("inspects a user picked in the overview, with no typing, and moves the focus to the answer", async () => {
-    render(<Assistant />);
+  it("inspects a user picked in the inventory card, with no typing, and leaves the focus where it is", async () => {
+    await renderCards();
     await screen.findByTestId("assistant-populations");
     await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
     expect(inspectMemories).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "user", "ada", expect.anything());
     await screen.findByTestId("assistant-inspection");
-    expect(screen.getByRole("heading", { level: 2, name: "Memories" })).toHaveFocus();
-    expect(screen.getByLabelText("User id")).toHaveValue("ada");
+    expect(cardOf("memory.inspect")).not.toContainElement(document.activeElement as HTMLElement);
     // The definitions say it in words; the exact names both views mean are listed once.
     const names = within(screen.getByTestId("assistant-inspection"))
       .getAllByTestId("exact-names")
@@ -1001,42 +1023,22 @@ describe("Assistant: overview", () => {
     expect(names.filter((t) => t === "Exact names: user_id, read_scope own_user, memory.promote")).toHaveLength(1);
   });
 
-  it("clears the id on a namespace switch and a change of subject, and the entity on a switch", async () => {
-    render(<Assistant />);
-    await screen.findByTestId("assistant-populations");
-    await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
-    expect(screen.getByLabelText("User id")).toHaveValue("ada");
-    // The subject already selected changes nothing.
-    await userEvent.click(screen.getByRole("button", { name: "User" }));
-    expect(screen.getByLabelText("User id")).toHaveValue("ada");
-    await userEvent.click(screen.getByRole("button", { name: "Session" }));
-    expect(screen.getByLabelText("Session id")).toHaveValue("");
-    await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
-    await userEvent.type(screen.getByLabelText("Start from (optional)"), "invoices");
-    switchNamespace();
-    expect(screen.getByLabelText("User id")).toHaveValue("");
-    expect(screen.getByLabelText("Start from (optional)")).toHaveValue("");
-  });
-
   it("moves the focus to the answer for a pick made while an earlier one is still read", async () => {
     inspectMemories.mockImplementationOnce(() => new Promise<MemoryInspection>(() => {}));
-    render(<Assistant />);
+    await renderCards();
     await screen.findByTestId("assistant-populations");
     await userEvent.click(screen.getByRole("button", { name: "ada 12 memories" }));
     await userEvent.click(screen.getByRole("button", { name: "claude-code 40 memories" }));
     expect(inspectMemories).toHaveBeenLastCalledWith(expect.anything(), "agent", "claude-code", expect.anything());
     await screen.findByTestId("assistant-inspection");
-    expect(screen.getByRole("heading", { level: 2, name: "Memories" })).toHaveFocus();
   });
 
   it("inspects an agent picked in the overview", async () => {
-    render(<Assistant />);
+    await renderCards();
     await screen.findByTestId("assistant-populations");
     await userEvent.click(screen.getByRole("button", { name: "claude-code 40 memories" }));
     expect(inspectMemories).toHaveBeenCalledWith(expect.anything(), "agent", "claude-code", expect.anything());
     await screen.findByTestId("assistant-inspection");
-    expect(screen.getByRole("heading", { level: 2, name: "Memories" })).toHaveFocus();
-    expect(screen.getByLabelText("Agent name")).toHaveValue("claude-code");
   });
 
   it("labels an agent suggestion and pick as the dashboard names that agent", async () => {
@@ -1046,7 +1048,7 @@ describe("Assistant: overview", () => {
         p.population === "agents" ? { ...p, top: [{ name: "-", rows: 5 }] } : p,
       ),
     });
-    render(<Assistant />);
+    await renderCards();
     await screen.findByTestId("assistant-populations");
     expect(screen.getByRole("button", { name: "No agent (admin / me) 5 memories" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Agent" }));
@@ -1064,12 +1066,12 @@ describe("Assistant: overview", () => {
         p.population === "subjects" ? { ...p, top: [{ name: "ada", rows: 1 }] } : p,
       ),
     });
-    render(<Assistant />);
+    await renderCards();
     expect(await screen.findByRole("button", { name: "ada 1 memory" })).toBeInTheDocument();
   });
 
   it("lists authors without offering to inspect them", async () => {
-    render(<Assistant />);
+    await renderCards();
     const list = await screen.findByTestId("assistant-populations");
     const authors = within(list)
       .getAllByRole("listitem")
@@ -1079,7 +1081,7 @@ describe("Assistant: overview", () => {
   });
 
   it("suggests the users and agents the overview found in the id field", async () => {
-    render(<Assistant />);
+    await renderCards();
     await screen.findByTestId("assistant-populations");
     const field = screen.getByLabelText("User id");
     expect(field).toHaveAttribute("list", "assistant-subject-suggestions");
@@ -1101,7 +1103,7 @@ describe("Assistant: overview", () => {
           : p,
       ),
     });
-    render(<Assistant />);
+    await renderCards();
     const list = await screen.findByTestId("assistant-populations");
     const subjects = within(list)
       .getAllByRole("listitem")
@@ -1111,37 +1113,68 @@ describe("Assistant: overview", () => {
 
   it("says the counts are bound to the user the token is pinned to", async () => {
     namespaceInventory.mockResolvedValueOnce(PINNED_INVENTORY);
-    render(<Assistant />);
+    await renderCards();
     expect(await screen.findByTestId("inventory-scope")).toHaveTextContent(
       "Memories, runs and the users, agents and authors are counted for user ada only, as your token reads; documents and members are the whole namespace's.",
     );
   });
 
-  it("offers no inspection or drafts once the overview shows a token pinned to one user", async () => {
+  it("offers no inspection or drafts once the inventory shows a token pinned to one user", async () => {
     namespaceInventory.mockResolvedValueOnce(PINNED_INVENTORY);
-    render(<Assistant />);
+    await renderCards();
     await screen.findByTestId("inventory-scope");
-    const draft = screen.getByRole("button", { name: "Draft improvements" });
+    const draft = screen.getByRole("button", { name: "What could be improved here?" });
     expect(draft).toHaveAccessibleDescription(/limited to one user or session/);
     await userEvent.click(draft);
     const pick = screen.getByRole("button", { name: "ada 12 memories" });
     expect(pick).toHaveAccessibleDescription(/limited to one user or session/);
     expect(screen.queryByRole("button", { name: "About Who appears here" })).toBeNull();
     await userEvent.click(pick);
-    await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
+    // The subject starter is off too: its form does not open.
+    expect(screen.getByRole("button", { name: SUBJECT_STARTER })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByLabelText("User id")).toBeNull();
     expect(tuneNamespace).not.toHaveBeenCalled();
     expect(inspectMemories).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Refresh" })).not.toHaveAttribute("aria-disabled");
+    expect(within(cardOf("namespace.inventory")).getByRole("button", { name: "Read again" })).not.toHaveAttribute(
+      "aria-disabled",
+    );
+  });
+
+  it("keeps a pick open on a pinned token while the assistant can answer: the card says the refusal", async () => {
+    // The assistant answers at once: each ask ends, so nothing is still coming in.
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        asked.push(String(url));
+        return new Response("data: [DONE]\n\n", { status: 200, headers: { "Content-Type": "text/event-stream" } });
+      }),
+    );
+    namespaceInventory.mockResolvedValueOnce(PINNED_INVENTORY);
+    render(<InsightsHarness cannotAnswer={null} />);
+    await userEvent.click(await screen.findByRole("button", { name: INVENTORY_STARTER }));
+    await screen.findByTestId("inventory-scope");
+    // As the subject starter: it would ask, so it is on.
+    const pick = await screen.findByRole("button", { name: "ada 12 memories" });
+    await waitFor(() => expect(pick).not.toHaveAttribute("aria-disabled"));
+    await userEvent.click(pick);
+    // It asked, and its card shows the refusal rather than reading.
+    await waitFor(() => expect(asked.filter((u) => u.includes("/v1/assistant/chat/completions"))).toHaveLength(2));
+    const card = cardOf("memory.inspect");
+    expect(await within(card).findByTestId("assistant-card-refused")).toHaveTextContent(
+      /limited to one user or session/,
+    );
+    expect(inspectMemories).not.toHaveBeenCalled();
   });
 
   it("offers no inspection or drafts to a token whose own claim pins it, before any read", async () => {
     pinned({ read_user_id: "ada" });
     try {
-      render(<Assistant />);
-      const draft = screen.getByRole("button", { name: "Draft improvements" });
+      await renderCards();
+      const draft = screen.getByRole("button", { name: "What could be improved here?" });
       expect(draft).toHaveAccessibleDescription(/limited to one user or session/);
       await userEvent.click(draft);
-      await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
+      expect(screen.queryByLabelText("User id")).toBeNull();
       expect(tuneNamespace).not.toHaveBeenCalled();
       expect(inspectMemories).not.toHaveBeenCalled();
     } finally {
@@ -1152,51 +1185,55 @@ describe("Assistant: overview", () => {
   it.each([
     ["own_session", { read_scope: "own_session", read_user_id: "ada" }],
     ["own_user without a pinned user", { read_scope: "own_user" }],
-  ])("reads no overview for a token scoped %s, which this page cannot complete", async (_label, claims) => {
+  ])("reads no inventory for a token scoped %s, which a card cannot complete", async (_label, claims) => {
     pinned(claims);
     try {
-      render(<Assistant />);
-      const refresh = screen.getByRole("button", { name: "Refresh" });
-      expect(refresh).toHaveAccessibleDescription(
-        "Your token needs each request to name its user or session, which this page does not send.",
+      render(<InsightsHarness />);
+      const starter = await screen.findByRole("button", { name: INVENTORY_STARTER });
+      expect(starter).toHaveAccessibleDescription(
+        "Your token needs each request to name its user or session, which a card does not send.",
       );
-      await userEvent.click(refresh);
+      await userEvent.click(starter);
       expect(namespaceInventory).not.toHaveBeenCalled();
     } finally {
       localStorage.removeItem("loom_token_v1");
     }
   });
 
-  it("reads the overview again for a token signed in again with the namespace's scope", async () => {
+  it("allows drafts again once the token is signed in again with the namespace's scope", async () => {
     pinned({ read_user_id: "ada" });
     namespaceInventory.mockResolvedValueOnce(PINNED_INVENTORY);
     try {
-      render(<Assistant />);
+      await renderCards();
       await screen.findByTestId("inventory-scope");
+      expect(screen.getByRole("button", { name: "What could be improved here?" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
       localStorage.setItem("loom_token_v1", token({}));
       act(() => {
         useStore.setState({ whoami: { ...viewer } });
       });
+      await userEvent.click(within(cardOf("namespace.inventory")).getByRole("button", { name: "Read again" }));
       await waitFor(() => expect(screen.queryByTestId("inventory-scope")).toBeNull());
-      await screen.findByTestId("assistant-inventory");
       expect(namespaceInventory).toHaveBeenCalledTimes(2);
-      expect(screen.getByRole("button", { name: "Draft improvements" })).not.toHaveAttribute("aria-disabled");
+      expect(screen.getByRole("button", { name: "What could be improved here?" })).not.toHaveAttribute("aria-disabled");
     } finally {
       localStorage.removeItem("loom_token_v1");
     }
   });
 
   it("adds no scope note when the counts cover the namespace", async () => {
-    render(<Assistant />);
+    await renderCards();
     await screen.findByTestId("assistant-inventory");
     expect(screen.queryByTestId("inventory-scope")).toBeNull();
   });
 
   it("reads again on Refresh, keeping the last answer on screen, marked busy", async () => {
-    render(<Assistant />);
+    await renderCards();
     await screen.findByTestId("assistant-inventory");
     namespaceInventory.mockImplementationOnce(() => new Promise<NamespaceInventory>(() => {}));
-    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await userEvent.click(within(cardOf("namespace.inventory")).getByRole("button", { name: "Read again" }));
     expect(namespaceInventory).toHaveBeenCalledTimes(2);
     const overview = screen.getByTestId("assistant-inventory");
     expect(overview.closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
@@ -1204,40 +1241,25 @@ describe("Assistant: overview", () => {
 
   it("says when the overview cannot be read", async () => {
     namespaceInventory.mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", message: "boom" }));
-    render(<Assistant />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the overview");
-  });
-
-  it("shows nothing of the old namespace's overview on the first render after a switch", async () => {
-    namespaceInventory.mockImplementation(async () => INVENTORY);
-    const { rerender } = render(<Assistant />);
-    await screen.findByTestId("assistant-inventory");
-    namespaceInventory.mockImplementationOnce(() => new Promise<NamespaceInventory>(() => {}));
-    useStore.setState({ identity: { org: "dev", namespace: "other", agent: "loom-ui" } });
-    rerender(<Assistant />);
-    expect(screen.queryByTestId("assistant-inventory")).toBeNull();
-  });
-
-  it("reads the new namespace's overview when the namespace changes", async () => {
-    render(<Assistant />);
-    await screen.findByTestId("assistant-inventory");
-    switchNamespace();
-    await waitFor(() =>
-      expect(namespaceInventory).toHaveBeenLastCalledWith({ org: "dev", namespace: "other" }, expect.anything()),
-    );
+    await renderCards();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't read the inventory");
   });
 });
 
 describe("Assistant: relationships", () => {
-  it("opens the graph with no entity, on its own starting points", async () => {
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Open the graph" }));
+  it("opens the graph with no entity, on its own starting points, from a card that reads nothing", async () => {
+    render(<InsightsHarness />);
+    await userEvent.click(await screen.findByRole("button", { name: "How are an entity and its neighbours related?" }));
+    await userEvent.click(screen.getByRole("button", { name: "Show relationships" }));
+    await userEvent.click(within(cardOf("graph")).getByRole("button", { name: "Open the graph" }));
     expect(useStore.getState().view).toBe("graph");
   });
 
   it("opens the graph from an entity typed in", async () => {
-    render(<Assistant />);
+    render(<InsightsHarness />);
+    await userEvent.click(await screen.findByRole("button", { name: "How are an entity and its neighbours related?" }));
     await userEvent.type(screen.getByLabelText("Start from (optional)"), "Invoices{Enter}");
+    await userEvent.click(within(cardOf("graph")).getByRole("button", { name: "Open the graph at Invoices" }));
     expect(useStore.getState().view).toBe("graph");
     expect(window.location.search).toContain("seed=invoices");
   });
@@ -1245,7 +1267,7 @@ describe("Assistant: relationships", () => {
 
 describe("Assistant: inspection", () => {
   it("inspects a user: the rows filed under the user, apart from the rest", async () => {
-    render(<Assistant />);
+    await renderCards();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const result = await screen.findByTestId("assistant-inspection");
     expect(inspectMemories).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "user", "ada", expect.anything());
@@ -1276,7 +1298,7 @@ describe("Assistant: inspection", () => {
     ["Agent", "Agent name", "agent", "claude-code", "Written by this agent"],
     ["Session", "Session id", "session", "s-1", "Written in this session"],
   ] as const)("inspects a %s with its own heading", async (label, field, subject, id, heading) => {
-    render(<Assistant />);
+    await renderCards();
     await userEvent.click(screen.getByRole("button", { name: label }));
     await userEvent.type(screen.getByLabelText(field), id);
     await userEvent.click(screen.getByRole("button", { name: "Inspect memories" }));
@@ -1292,7 +1314,7 @@ describe("Assistant: inspection", () => {
       others: view(OTHERS_USER, []),
       skipped: ["others.counts: TimeoutError"],
     });
-    render(<Assistant />);
+    await renderCards();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const result = await screen.findByTestId("assistant-inspection");
     expect(within(result).getByText("Newest 1 of 40 listed.")).toBeInTheDocument();
@@ -1311,7 +1333,7 @@ describe("Assistant: inspection", () => {
         gap: "Calls are kept for 7 days, so older ones are not counted.",
       },
     });
-    render(<Assistant />);
+    await renderCards();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const result = await screen.findByTestId("assistant-inspection");
     expect(within(result).getByText(/Last 30 days, succeeded of called: memory.search 8\/9/)).toBeInTheDocument();
@@ -1335,7 +1357,7 @@ describe("Assistant: inspection", () => {
         "activity: TimeoutError",
       ],
     });
-    render(<Assistant />);
+    await renderCards();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const result = await screen.findByTestId("assistant-inspection");
     expect(within(result).getByText("The memories could not be listed.")).toBeInTheDocument();
@@ -1352,7 +1374,7 @@ describe("Assistant: inspection", () => {
       ...inspection("user", "ada"),
       skipped: ["own.tags: TimeoutError", "own.categories: TimeoutError", "activity.retention: TimeoutError"],
     });
-    render(<Assistant />);
+    await renderCards();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const result = await screen.findByTestId("assistant-inspection");
     expect(within(result).getByText("Tags: could not be read")).toBeInTheDocument();
@@ -1369,11 +1391,25 @@ describe("Assistant: inspection", () => {
       ...base,
       settings: { ...base.settings, extraction_policy: policy, extraction_policy_unavailable: "" },
     });
-    render(<Assistant />);
+    await renderCards();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const line = await screen.findByTestId("inspect-policy");
     if (policy) expect(within(line).getByTestId("inspect-policy-text").textContent).toBe(shown);
     else expect(line).toHaveTextContent(`Operator extraction policy: ${shown}`);
+  });
+
+  it("keeps each card's section ids its own when two subjects are picked in one conversation", async () => {
+    inspectMemories
+      .mockResolvedValueOnce(inspection("user", "ada"))
+      .mockResolvedValueOnce(inspection("agent", "claude-code"));
+    const { container } = await renderCards();
+    await userEvent.click(await screen.findByTestId("pick-user"));
+    await waitFor(() => expect(screen.getAllByTestId("assistant-inspection")).toHaveLength(1));
+    await userEvent.click(screen.getByTestId("pick-agent"));
+    await waitFor(() => expect(screen.getAllByTestId("assistant-inspection")).toHaveLength(2));
+    const ids = [...container.querySelectorAll("[id]")].map((e) => e.id);
+    expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([]);
+    expect(await axeViolations(container)).toEqual([]);
   });
 
   it("keeps the rows, tags and categories it read when the count read failed", async () => {
@@ -1382,7 +1418,7 @@ describe("Assistant: inspection", () => {
       own: { ...view(OWN_USER, [ROW], 0), top_tags: [{ name: "billing", rows: 1 }] },
       skipped: ["own.counts: TimeoutError"],
     });
-    render(<Assistant />);
+    await renderCards();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const own = (await screen.findByTestId("assistant-inspection")).querySelector(
       '[data-view="inspect-own"]',
@@ -1399,7 +1435,7 @@ describe("Assistant: inspection", () => {
       ...inspection("user", "ada"),
       own: { ...view(OWN_USER, [ROW]), top_tags: tags },
     });
-    render(<Assistant />);
+    await renderCards();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     const result = await screen.findByTestId("assistant-inspection");
     expect(within(result).getByText(/^Top 20 tags: t0 1/)).toBeInTheDocument();
@@ -1411,13 +1447,13 @@ describe("Assistant: inspection", () => {
       ...base,
       settings: { ...base.settings, guide_revision: 0, guide_summary: "" },
     });
-    render(<Assistant />);
+    await renderCards();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
     expect(await screen.findByText("No guide written")).toBeInTheDocument();
   });
 
   it("does not inspect without an id", async () => {
-    render(<Assistant />);
+    await renderCards();
     const inspect = screen.getByRole("button", { name: "Inspect memories" });
     expect(inspect).toHaveAttribute("aria-disabled", "true");
     await userEvent.click(inspect);
@@ -1427,24 +1463,16 @@ describe("Assistant: inspection", () => {
 
   it("says when the inspection cannot be read", async () => {
     inspectMemories.mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", message: "boom" }));
-    render(<Assistant />);
+    await renderCards();
     await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the memories");
-  });
-
-  it("drops the inspection when the namespace changes", async () => {
-    render(<Assistant />);
-    await userEvent.type(screen.getByLabelText("User id"), "ada{Enter}");
-    await screen.findByTestId("assistant-inspection");
-    switchNamespace();
-    await waitFor(() => expect(screen.queryByTestId("assistant-inspection")).toBeNull());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't read the memories");
   });
 });
 
 describe("Assistant: review changes", () => {
   it("renders each draft with its diff, evidence and the call that would apply it, and never applies", async () => {
-    const { container } = render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    const { container } = await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     const card = within(review).getByRole("listitem", { name: /Register a category for the tag/ });
     expect(within(card).getByText("Draft, not approved")).toBeInTheDocument();
@@ -1487,8 +1515,8 @@ describe("Assistant: review changes", () => {
     };
     const { chunking: _chunking, ...old } = TUNE;
     tuneNamespace.mockResolvedValueOnce({ ...old, proposals: TUNE.proposals.map(legacy) });
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     const card = within(review).getByRole("listitem", { name: /Register a category for the tag/ });
     expect(within(card).getByText("namespace.register_category")).toBeInTheDocument();
@@ -1498,8 +1526,8 @@ describe("Assistant: review changes", () => {
   });
 
   it("shows a guide draft's revision and arguments, and says when the writers could not be read", async () => {
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     const card = within(review).getByRole("listitem", { name: /Name the key prefixes the guide leaves out/ });
     expect(within(card).getByText(/Current \(revision 2\)/)).toBeInTheDocument();
@@ -1510,16 +1538,16 @@ describe("Assistant: review changes", () => {
 
   it("captions a guide with no revision yet without a revision", async () => {
     tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [{ ...GUIDE, current: "", current_revision: 0 }] });
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByText("Current")).toBeInTheDocument();
     expect(within(review).queryByText(/revision 0/)).toBeNull();
   });
 
   it("says that each writer sends the extraction instructions itself", async () => {
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     const card = within(review).getByRole("listitem", {
       name: /Send extraction instructions for the shapes the audit found/,
@@ -1538,8 +1566,8 @@ describe("Assistant: review changes", () => {
 
   it("does not claim the evidence supports no change when a read failed", async () => {
     tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [], skipped: ["audit: TimeoutError"] });
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByRole("status")).toHaveTextContent(
       "No drafts. What was skipped, and why, is listed below.",
@@ -1551,8 +1579,8 @@ describe("Assistant: review changes", () => {
     const reason =
       "extraction: no live memory here records extraction from messages as its source, so no rule is drafted for episodic blobs (episodic_blobs)";
     tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [], skipped: [reason] });
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByRole("status")).toHaveTextContent(
       "No drafts. What was skipped, and why, is listed below.",
@@ -1562,8 +1590,8 @@ describe("Assistant: review changes", () => {
 
   it("says the evidence supports no change when nothing was left out", async () => {
     tuneNamespace.mockResolvedValueOnce({ ...TUNE, proposals: [], skipped: [] });
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByRole("status")).toHaveTextContent("The evidence supports no change.");
   });
@@ -1574,8 +1602,8 @@ describe("Assistant: review changes", () => {
       proposals: [{ ...CATEGORY, evidence: { ...CATEGORY.evidence, supporting: [] } }],
       skipped: ["category.billing.cited: TimeoutError"],
     });
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByRole("listitem", { name: /Register a category for the tag/ })).toBeInTheDocument();
     expect(within(review).getByTestId("tune-skipped")).toHaveTextContent(
@@ -1585,61 +1613,50 @@ describe("Assistant: review changes", () => {
   });
 
   it("keeps the drafts on screen, marked busy, while they are drafted again", async () => {
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     await screen.findByTestId("assistant-review");
     tuneNamespace.mockImplementationOnce(() => new Promise<NamespaceTune>(() => {}));
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await userEvent.click(within(cardOf("namespace.tune")).getByRole("button", { name: "Read again" }));
     const review = screen.getByTestId("assistant-review");
-    expect(review.parentElement).toHaveAttribute("aria-busy", "true");
+    expect(cardOf("namespace.tune")).toHaveAttribute("aria-busy", "true");
     expect(within(review).getByText("Register a category for the tag `billing`")).toBeInTheDocument();
   });
 
   it("says when the drafts cannot be read", async () => {
     tuneNamespace.mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", message: "boom" }));
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the drafts");
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't read the improvements");
     expect(screen.queryByRole("heading", { name: /Review changes/ })).toBeNull();
     expect(screen.queryByTestId("assistant-review")).toBeNull();
   });
 
   it("is not left loading when the page comes back to a namespace it left mid-read", async () => {
     tuneNamespace.mockImplementationOnce(() => new Promise<NamespaceTune>(() => {}));
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     switchNamespace();
     act(() => {
       useStore.setState({ identity: { org: "dev", namespace: "team", agent: "loom-ui" } });
     });
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Draft improvements" })).not.toHaveAttribute("aria-busy"),
+      expect(screen.getByRole("button", { name: "What could be improved here?" })).not.toHaveAttribute("aria-busy"),
     );
     expect(screen.queryByText("Loading the drafts")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     expect(await screen.findByTestId("assistant-review")).toBeInTheDocument();
-  });
-
-  it("drops a draft that answers after the namespace changed", async () => {
-    let answer: (t: NamespaceTune) => void = () => {};
-    tuneNamespace.mockImplementationOnce(() => new Promise<NamespaceTune>((r) => (answer = r)));
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
-    switchNamespace();
-    await act(async () => answer(TUNE));
-    await waitFor(() => expect(screen.queryByText("Loading the drafts")).toBeNull());
-    expect(screen.queryByTestId("assistant-review")).toBeNull();
   });
 });
 
 const pickDocuments = async () => {
-  await userEvent.click(screen.getByRole("button", { name: "Inspect documents" }));
+  await userEvent.click(screen.getByRole("button", { name: "What documents does it hold?" }));
   return screen.findByTestId("assistant-documents");
 };
 
 describe("Assistant: documents", () => {
   it("inspects the namespace's documents with no id: formats, live chunks, decisions and the newest", async () => {
-    const { container } = render(<Assistant />);
+    const { container } = await renderCards();
     const result = await pickDocuments();
     expect(inspectKnowledge).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, expect.anything());
     expect(inspectMemories).not.toHaveBeenCalled();
@@ -1680,7 +1697,7 @@ describe("Assistant: documents", () => {
 
   it("says an empty namespace holds no document, and lists no document sections", async () => {
     inspectKnowledge.mockResolvedValueOnce(emptyNamespace());
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).getByRole("status")).toHaveTextContent("This namespace holds no live document");
     expect(within(result).queryByRole("heading", { name: /Newest documents/ })).toBeNull();
@@ -1704,7 +1721,7 @@ describe("Assistant: documents", () => {
         "ingestions.extractor_configured: ValueError",
       ],
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).getByTestId("docs-totals-line")).toHaveTextContent(
       "Live documents: not read · deleted: not read · earlier revisions: not read",
@@ -1723,7 +1740,7 @@ describe("Assistant: documents", () => {
     "shows the %s finding in its own %s group, apart from the others",
     async (code, kind, label) => {
       inspectKnowledge.mockResolvedValueOnce(oneIngestHit(code));
-      render(<Assistant />);
+      await renderCards();
       const result = await pickDocuments();
       const card = within(result).getByRole("listitem", { name: label });
       expect(card).toHaveAttribute("data-code", code);
@@ -1768,7 +1785,7 @@ describe("Assistant: documents", () => {
             : []),
         ],
       });
-      render(<Assistant />);
+      await renderCards();
       const result = await pickDocuments();
       expect(within(result).queryByText("The documents could not be listed.")).toBeNull();
       expect(
@@ -1789,7 +1806,7 @@ describe("Assistant: documents", () => {
       listed_complete: false,
       skipped: [line],
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).getByText("Newest 1 of 2 listed.")).toBeInTheDocument();
     expect(within(result).queryByText(/Some documents may be missing/)).toBeNull();
@@ -1812,7 +1829,7 @@ describe("Assistant: documents", () => {
     "says job states may be older for a count of jobs behind or a comparison that did not run (%s)",
     async (line, older) => {
       inspectKnowledge.mockResolvedValueOnce({ ...KNOWLEDGE, skipped: [line] });
-      render(<Assistant />);
+      await renderCards();
       const result = await pickDocuments();
       const note = within(result).queryByText(
         "Some jobs may be missing or show an older state: their latest saves may not be shown here yet.",
@@ -1843,7 +1860,7 @@ describe("Assistant: documents", () => {
           : []),
       ],
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).queryByText(/^Some jobs may be missing or show an older state/) !== null).toBe(before);
     expect(within(result).queryByText("Some listed jobs may be missing or show an older state.") !== null).toBe(before);
@@ -1859,7 +1876,7 @@ describe("Assistant: documents", () => {
         "ingestions.projection: 2 ingestion job(s) whose latest state ClickHouse does not hold yet; the ingestion sections and the listed jobs may miss them or show an older state",
       ],
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).getByText("The ingestion jobs could not be read.")).toBeInTheDocument();
     expect(within(result).queryByText(/Some jobs may be missing or show an older state/)).toBeNull();
@@ -1873,7 +1890,7 @@ describe("Assistant: documents", () => {
       listed_complete: false,
       skipped: ["listed.heads: ValueError"],
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).getByText("The listing could not be checked against the latest writes.")).toBeInTheDocument();
     expect(within(result).queryByText(/^Newest \d+ of \d+ listed\.$/)).toBeNull();
@@ -1881,7 +1898,7 @@ describe("Assistant: documents", () => {
 
   it("does not call a namespace empty when its job count could not be read", async () => {
     inspectKnowledge.mockResolvedValueOnce(jobsUnread(emptyNamespace()));
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).queryByRole("status")).toBeNull();
     expect(within(result).getByText("The ingestion jobs could not be read.")).toBeInTheDocument();
@@ -1903,7 +1920,7 @@ describe("Assistant: documents", () => {
       },
       skipped: ["extraction: TimeoutError"],
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).getByText("The extraction coverage check did not run.")).toBeInTheDocument();
     expect(within(result).queryByText("The job checks did not run.")).toBeNull();
@@ -1923,7 +1940,7 @@ describe("Assistant: documents", () => {
       ingestions: { ...queued.ingestions, without_document_listed: [] },
       skipped: ["ingestions.without_document: TimeoutError"],
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).getByTestId("docs-without-document-unlisted")).toHaveTextContent(
       "Sources with a job and no live document (1): not listed.",
@@ -1956,7 +1973,7 @@ describe("Assistant: documents", () => {
           : f,
       ),
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     const card = within(result).getByRole("listitem", { name: "Chunks with no vector" });
     expect(card).toHaveTextContent("2 documents of 2 (100%) · 1 ingested from a file");
@@ -2024,7 +2041,7 @@ describe("Assistant: documents", () => {
           : { ...f, population: 22, share: f.count / 22 },
       ),
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     const card = within(result).getByRole("listitem", { name: "Chunks with no vector" });
     expect(card).toHaveTextContent(`Also ingested from a file: ${SPEC}`);
@@ -2049,7 +2066,7 @@ describe("Assistant: documents", () => {
         f.code === "extraction_incomplete" ? f : { ...f, population: 250, share: f.count / 250 },
       ),
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     const card = within(result).getByRole("listitem", { name: "Backlog" });
     expect(card).toHaveTextContent("1 source of 250 (<1%)");
@@ -2099,7 +2116,7 @@ describe("Assistant: documents", () => {
             : { ...f, population: 200 },
       ),
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     const card = within(result).getByRole("listitem", { name: "Backlog" });
     expect(card).toHaveTextContent("199 sources of 200 (>99%)");
@@ -2107,7 +2124,7 @@ describe("Assistant: documents", () => {
 
   it("says there is no live document to list while a first ingest is queued", async () => {
     inspectKnowledge.mockResolvedValueOnce(firstIngestQueued());
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).queryByRole("status")).toBeNull();
     expect(within(result).getByText("No live document to list.")).toBeInTheDocument();
@@ -2116,7 +2133,7 @@ describe("Assistant: documents", () => {
 
   it("says a listing may be partial when the documents total was not read", async () => {
     inspectKnowledge.mockResolvedValueOnce(documentsUnread(KNOWLEDGE));
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).getByText(/listed; the total was not counted\./)).toBeInTheDocument();
   });
@@ -2124,7 +2141,7 @@ describe("Assistant: documents", () => {
   it("shows the documents a cut read counted, with the server's note, not as unread", async () => {
     const note = `more than ${MAX_GROUPS} format and scheme pairs; the counts cover the first`;
     inspectKnowledge.mockResolvedValueOnce(documentsCut());
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(
       within(within(result).getByRole("table", { name: "Documents by format" })).getByText("pdf"),
@@ -2139,7 +2156,7 @@ describe("Assistant: documents", () => {
   it("shows the extraction coverage a cut read counted, with the server's note", async () => {
     const note = `more than ${MAX_GROUPS} lost capabilities; the counts cover the first`;
     inspectKnowledge.mockResolvedValueOnce(extractionCut());
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).getByTestId("docs-extraction")).toHaveTextContent("lost: cap0 1, cap1 1, cap10 1");
     expect(within(result).getByTestId("docs-extraction-note")).toHaveTextContent(`Note: ${note}`);
@@ -2157,7 +2174,7 @@ describe("Assistant: documents", () => {
       coverage: { rules_run: [], rules_skipped: ALL_CHECKS, complete: false },
       skipped: ["findings: TimeoutError", ...jobs.skipped, "extraction: TimeoutError"],
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(within(result).getByText("The chunk checks did not run.")).toBeInTheDocument();
     expect(within(result).getByText("The job checks did not run.")).toBeInTheDocument();
@@ -2173,7 +2190,7 @@ describe("Assistant: documents", () => {
       memory_findings: KNOWLEDGE.memory_findings.filter((f) => f.code === "oversized_values"),
       skipped: [reason],
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     const list = within(result).getByRole("list", { name: "Memory check findings" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(1);
@@ -2189,7 +2206,7 @@ describe("Assistant: documents", () => {
         "memory_findings: the namespace audit reads every user's memories, so it does not run for a token limited to one user or session",
       ],
     });
-    render(<Assistant />);
+    await renderCards();
     const result = await pickDocuments();
     expect(
       within(result).getByText("The memory checks were not read; the reason is listed below."),
@@ -2200,7 +2217,7 @@ describe("Assistant: documents", () => {
   it("offers documents to a token pinned to one user, which the server answers in scope", async () => {
     pinned({ read_user_id: "ada" });
     try {
-      render(<Assistant />);
+      await renderCards();
       await pickDocuments();
       expect(inspectKnowledge).toHaveBeenCalledTimes(1);
     } finally {
@@ -2211,10 +2228,10 @@ describe("Assistant: documents", () => {
   it("offers no documents to a token scoped own_session, which this page cannot complete", async () => {
     pinned({ read_scope: "own_session", read_user_id: "ada" });
     try {
-      render(<Assistant />);
-      const inspect = screen.getByRole("button", { name: "Inspect documents" });
+      await renderCards();
+      const inspect = screen.getByRole("button", { name: "What documents does it hold?" });
       expect(inspect).toHaveAccessibleDescription(
-        "Your token needs each request to name its user or session, which this page does not send.",
+        "Your token needs each request to name its user or session, which a card does not send.",
       );
       await userEvent.click(inspect);
       expect(inspectKnowledge).not.toHaveBeenCalled();
@@ -2225,16 +2242,9 @@ describe("Assistant: documents", () => {
 
   it("says when the documents cannot be read", async () => {
     inspectKnowledge.mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", message: "boom" }));
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Inspect documents" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load the documents");
-  });
-
-  it("drops the documents when the namespace changes", async () => {
-    render(<Assistant />);
-    await pickDocuments();
-    switchNamespace();
-    await waitFor(() => expect(screen.queryByTestId("assistant-documents")).toBeNull());
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What documents does it hold?" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't read the documents");
   });
 });
 
@@ -2389,8 +2399,8 @@ describe("Assistant: document drafts", () => {
       chunking: SAMPLE,
       skipped: [...TUNE.skipped, DECISIONS_SKIPPED],
     });
-    const { container } = render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    const { container } = await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).getByTestId("tune-sample")).toHaveTextContent(
       "Document sample: 30 of 30 live documents re-chunked at the current values (cap 50",
@@ -2426,8 +2436,8 @@ describe("Assistant: document drafts", () => {
       chunking: { ...SAMPLE, current: STATS(1000, 800, 120, 6, 300) },
       skipped: [...TUNE.skipped, DECISIONS_SKIPPED],
     });
-    const { container } = render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    const { container } = await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     const stats = within(review).getByRole("table", { name: "The document sample at the current values" });
     expect(within(stats).getByText("Sections cut by size").closest("tr")).toHaveTextContent("6 of 40");
@@ -2442,8 +2452,8 @@ describe("Assistant: document drafts", () => {
       chunking: null,
       skipped: [...TUNE.skipped, "chunking: TimeoutError", DECISIONS_SKIPPED],
     });
-    render(<Assistant />);
-    await userEvent.click(screen.getByRole("button", { name: "Draft improvements" }));
+    await renderCards();
+    await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     const review = await screen.findByTestId("assistant-review");
     expect(within(review).queryByTestId("tune-sample")).toBeNull();
     const card = within(review).getByRole("listitem", { name: /Route pdf to an extractor/ });

@@ -333,7 +333,10 @@ async function open(page: Page, path: string, mine?: { namespace: string }[]) {
     ...(mine ? { mine, claims: mine.map((r) => r.namespace) } : {}),
   });
   await page.goto(path);
-  await expect(page.locator("main h1").first()).toBeVisible();
+  // On /assistant the page is the expanded assistant panel, in <main>'s place.
+  await expect(
+    page.locator("main:not([hidden]) h1, [data-assistant-panel][data-mode='expanded'] h1").first(),
+  ).toBeVisible();
   await page.waitForLoadState("networkidle");
   await page.waitForFunction(() => document.getAnimations().length === 0);
 }

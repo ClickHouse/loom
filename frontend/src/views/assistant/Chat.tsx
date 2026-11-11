@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Suspense, lazy, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { Alert, Chip, Unavailable } from "../../components/ui";
@@ -6,9 +6,49 @@ import { fieldError } from "../../components/ui/fieldError";
 import { useDock } from "../../lib/assistantDock";
 import { useStore } from "../../lib/state";
 import { AnswerText } from "./AnswerText";
-import { MAX_MESSAGE_CHARS, ask, draftEdited, stop, useChat } from "./chatStore";
+import { MAX_MESSAGE_CHARS, ask, draftEdited, stop, useChat, type Turn } from "./chatStore";
 import { Sources } from "./Sources";
 import { contextLength, markPageHintSeen, pageContext, pageHintSeen } from "./pageContext";
+
+// A starter's card and its reads: a chunk of their own, loaded when a conversation shows one.
+const Card = lazy(() => import("./cards/Card").then((m) => ({ default: m.Card })));
+
+/** The words of the answer's latest step while it streams, or null before the first. */
+function latestStep(t: Turn): string | null {
+  const steps = t.steps ?? [];
+  return steps.length > 0 ? steps[steps.length - 1].text : null;
+}
+
+/** "What it read (n)": the answer's tool calls, collapsed under it once it ends. A call that
+ *  failed or was refused is muted, not an error: the answer may still stand. */
+function StepsList({ turn }: { turn: Turn }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const steps = turn.steps ?? [];
+  if (steps.length === 0) return null;
+  return (
+    <div className="mt-1">
+      <Button
+        type="secondary"
+        htmlType="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {`What it read (${steps.length}${turn.stepsCut ? "+" : ""})`}
+      </Button>
+      <ol id={id} hidden={!open} className="mt-1 space-y-0.5 text-xs" data-testid="assistant-steps">
+        {steps.map((step, i) => (
+          // A step's words repeat when the answer made one call twice: keyed by place.
+          <li key={i} className={step.ok ? "text-text" : "text-text-muted"} data-ok={step.ok ? "" : undefined}>
+            {step.text}
+          </li>
+        ))}
+        {turn.stepsCut && <li className="text-text-muted">and more</li>}
+      </ol>
+    </div>
+  );
+}
 
 /**
  * The assistant's chat: the conversation the panel shows and the question field. The
@@ -16,7 +56,16 @@ import { contextLength, markPageHintSeen, pageContext, pageHintSeen } from "./pa
  * panel, a change of its mode or a navigation never stops an answer; the question being
  * typed is the panel's (lib/assistantDock.ts). `blocked` says why nothing can be asked now.
  */
-export function AssistantChat({ namespace, blocked }: { namespace: string; blocked: string | null }) {
+export function AssistantChat({
+  namespace,
+  blocked,
+  cardLevel = 3,
+}: {
+  namespace: string;
+  blocked: string | null;
+  /** The level of a card's heading: one under the panel's title. */
+  cardLevel?: 2 | 3;
+}) {
   const turns = useChat((s) => s.turns);
   const trimmed = useChat((s) => s.trimmed);
   const answering = useChat((s) => s.answering);
@@ -87,25 +136,38 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
                     </div>
                   )}
                 </div>
-                <div className="px-3" aria-busy={t.state === "answering" || undefined}>
-                  <p className="section-label">Assistant</p>
-                  {t.answer && <AnswerText text={t.answer} />}
-                  {t.state === "answering" && !t.answer && <p className="text-sm text-text-muted">Answering…</p>}
-                  {t.state === "done" && t.support && (
-                    <Sources
-                      citations={t.citations ?? []}
-                      support={t.support}
-                      unknownNames={t.unknownNames ?? []}
-                      answer={i + 1}
-                    />
-                  )}
-                  {t.state === "stopped" && <p className="text-xs text-text-muted mt-1">Stopped.</p>}
-                  {t.error && (
-                    <div className="mt-2">
-                      <Alert role="alert" state="danger" size="small" text={t.error} />
-                    </div>
-                  )}
-                </div>
+                {t.card && (
+                  <Suspense fallback={null}>
+                    <Card turn={t} level={cardLevel} />
+                  </Suspense>
+                )}
+                {t.state !== "card" && (
+                  <div className="px-3" aria-busy={t.state === "answering" || undefined}>
+                    <p className="section-label">Assistant</p>
+                    {t.answer && <AnswerText text={t.answer} />}
+                    {/* The working line: the latest step while the answer reads, never blank. */}
+                    {t.state === "answering" && (!t.answer || latestStep(t)) && (
+                      <p className={t.answer ? "text-xs text-text-muted" : "text-sm text-text-muted"}>
+                        {latestStep(t) ?? "Answering…"}
+                      </p>
+                    )}
+                    {t.state === "done" && t.support && (
+                      <Sources
+                        citations={t.citations ?? []}
+                        support={t.support}
+                        unknownNames={t.unknownNames ?? []}
+                        answer={i + 1}
+                      />
+                    )}
+                    {t.state === "done" && <StepsList turn={t} />}
+                    {t.state === "stopped" && <p className="text-xs text-text-muted mt-1">Stopped.</p>}
+                    {t.error && (
+                      <div className="mt-2">
+                        <Alert role="alert" state="danger" size="small" text={t.error} />
+                      </div>
+                    )}
+                  </div>
+                )}
               </li>
             ))}
           </ol>

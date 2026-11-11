@@ -103,7 +103,6 @@ const MEMORY_VIEWS: ReadonlySet<View> = new Set<View>([
   "sharing",
   "sessions",
   "runs",
-  "assistant",
   // An inbox is owned by a memory namespace.
   "tasks",
 ]);

@@ -242,21 +242,14 @@ describe("deepLinkNamespace: an explicit path keeps its view and takes the names
   });
 
   it("a memory view with a code/QA-only token gets no namespace — it renders its own empty state", () => {
-    for (const v of [
-      "memories",
-      "recall",
-      "profile",
-      "knowledge",
-      "sharing",
-      "sessions",
-      "runs",
-      "assistant",
-    ] as const) {
+    for (const v of ["memories", "recall", "profile", "knowledge", "sharing", "sessions", "runs"] as const) {
       expect(needsMemoryNamespace(v)).toBe(true);
       expect(deepLinkNamespace(v, null, claims, codeTrackerOnly)).toBeNull();
     }
     expect(needsMemoryNamespace("code")).toBe(false);
     expect(needsMemoryNamespace("graph")).toBe(false);
+    // The assistant's page is its panel, which says itself when the namespace holds no memories.
+    expect(needsMemoryNamespace("assistant")).toBe(false);
   });
 
   it("the 7600 chain still answers first: a memory-only token opens Repositories on its memory namespace", () => {

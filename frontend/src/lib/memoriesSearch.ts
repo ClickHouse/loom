@@ -39,3 +39,20 @@ export function toggleQueryToken(query: string, token: string): string {
   const kept = tokens.filter((t) => t.toLowerCase() !== token.toLowerCase());
   return (kept.length < tokens.length ? kept : [...tokens, token]).join(" ");
 }
+
+// A search another surface opens Memories with (an assistant card's `agent:<name>`), taken
+// by the list once it draws.
+let pendingSearch: string | null = null;
+
+/** Open Memories searching for `query`, in place of what its search held. */
+export function openMemoriesSearching(query: string, navigate: () => void): void {
+  pendingSearch = query;
+  navigate();
+}
+
+/** The search Memories was opened with, once. */
+export function takePendingSearch(): string | null {
+  const q = pendingSearch;
+  pendingSearch = null;
+  return q;
+}

@@ -297,6 +297,7 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
             text=h.text,
             ops=list(h.ops),
             evidence=dict(h.evidence),
+            plane=mentor_rules.hint_plane(h.ops),
         )
         for h in profile.hints
     ]

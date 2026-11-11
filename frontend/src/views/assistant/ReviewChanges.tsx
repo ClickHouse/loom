@@ -1,12 +1,14 @@
+import type { ReactNode } from "react";
 import { fmtInt } from "../../lib/format";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Table } from "@clickhouse/click-ui/Table";
 import type { ChunkStats, ChunkingSample, NamespaceTune, TuneApply, TuneProposal, TuneTarget } from "../../api";
 import { AgentBadge } from "../../components/AgentBadge";
-import { KeyButton } from "../../components/ui/KeyButton";
 import { CodeBlock } from "./CodeBlock";
 import { ExactNames } from "./ExactNames";
 import { useStore } from "../../lib/state";
+import { CardKey } from "./cards/linked";
+import { useCardSection } from "./cards/section";
 
 const TARGET_LABEL: Record<TuneTarget, string> = {
   "extraction_instructions.request": "Extraction instructions (per request)",
@@ -20,9 +22,10 @@ const TARGET_LABEL: Record<TuneTarget, string> = {
 // change, not memories, and their evidence cites source URIs.
 const DOCUMENT_TARGETS = new Set<TuneTarget>(["settings.knowledge_chunking", "settings.document_extractors_json"]);
 
-/** The drafts namespace.tune returned. Each is a proposal only: the page applies none, so
- *  each card names the write and guard a person would make, and changes nothing. */
-export function ReviewChanges({ tune }: { tune: NamespaceTune }) {
+/** The drafts namespace.tune returned. Each is a proposal only: each names the write and guard
+ *  a person would make, and nothing here applies one; `actions` are the person's own controls
+ *  for a draft (the tune card's: views/assistant/cards/TuneBody.tsx). */
+export function ReviewChanges({ tune, actions }: { tune: NamespaceTune; actions?: (p: TuneProposal) => ReactNode }) {
   return (
     <div className="space-y-4" data-testid="assistant-review">
       {tune.proposals.length === 0 ? (
@@ -34,7 +37,7 @@ export function ReviewChanges({ tune }: { tune: NamespaceTune }) {
       ) : (
         <ul className="space-y-4" aria-label="Pending proposals">
           {tune.proposals.map((p) => (
-            <ProposalCard key={p.id} proposal={p} />
+            <ProposalCard key={p.id} proposal={p} actions={actions?.(p)} />
           ))}
         </ul>
       )}
@@ -82,7 +85,7 @@ function writeName(a: TuneApply): string {
 /** A required role as a reader says it: `platform_admin` is "platform admin". */
 const roleName = (role: string) => role.replaceAll("_", " ");
 
-/** Who makes the change and how, since this page applies no draft. */
+/** Who makes the change and how. */
 function howToApply(p: TuneProposal): string {
   const a = p.apply;
   const who = `A ${roleName(a.required_role)}`;
@@ -179,18 +182,23 @@ function ChunkPreview({ title, before, after }: { title: string; before: ChunkSt
   );
 }
 
-function ProposalCard({ proposal: p }: { proposal: TuneProposal }) {
+function ProposalCard({ proposal: p, actions }: { proposal: TuneProposal; actions?: ReactNode }) {
+  // One level under the card's own heading.
+  const { prefix, level } = useCardSection();
+  const Heading = level === 3 ? "h3" : "h4";
   const inspect = useStore((s) => s.inspect);
-  const head = `proposal-${p.id}`;
+  // A draft's id is the server's hash of what it proposes: two reads of one namespace give
+  // the same, so the card's own prefix keeps it unique in the conversation.
+  const head = `${prefix}-proposal-${p.id}`;
   const more = p.affected_agents_total === null ? 0 : Math.max(0, p.affected_agents_total - p.affected_agents.length);
   return (
     <li className="pane-card space-y-2 text-sm" aria-labelledby={head} data-proposal={p.id} data-target={p.target}>
       <div className="flex flex-wrap items-center gap-2">
         {/* A plain heading, not SectionHeading: a title carries a tag or prefix of any
             length and must wrap, and SectionHeading's label does not. */}
-        <h3 id={head} className="font-semibold text-text break-words">
+        <Heading id={head} className="font-semibold text-text break-words">
           {p.title}
-        </h3>
+        </Heading>
         <Badge text="Draft, not approved" state="neutral" size="sm" />
       </div>
       <p className="text-xs text-text-muted">
@@ -228,7 +236,7 @@ function ProposalCard({ proposal: p }: { proposal: TuneProposal }) {
         <ul className="flex flex-wrap gap-x-3" aria-label={`Memories cited for ${p.title}`}>
           {p.evidence.supporting.map((r) => (
             <li key={r.memory_id}>
-              <KeyButton
+              <CardKey
                 memoryKey={r.memory_key}
                 onInspect={(k) => inspect(k, { agent: r.agent, userId: r.user_id, sessionId: r.session_id })}
               />
@@ -269,6 +277,7 @@ function ProposalCard({ proposal: p }: { proposal: TuneProposal }) {
             ))}
           </div>
         )}
+        {actions}
       </div>
     </li>
   );

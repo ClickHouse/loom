@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 import pytest
-from loom import AssistantAnswer, AssistantCitation, AssistantText
+from loom import AssistantAnswer, AssistantCitation, AssistantStep, AssistantText
 from loom.agent import Agent
 from loom.errors import AuthInsufficient, BackendUnavailable, LoomError, RateLimited
 from loom.sync import SyncAgent
@@ -238,3 +238,45 @@ def test_sync_agent_iterates_the_stream() -> None:
         events = list(sa.assistant.stream("q"))
         assert isinstance(events[-1], AssistantAnswer) and len(events) == 3
         assert sa.assistant.ask("q").run_id == "chatcmpl-1"
+
+
+def test_steps_ride_the_answer_and_a_step_event_yields_nothing() -> None:
+    step = {"op": "namespace.audit", "text": "Read the audit", "ok": True}
+    failed = {"op": "memory.search", "text": "Couldn't search memories", "ok": False}
+    stream = _sse(
+        {"object": "loom.step", "id": "", "choices": [], "steps": [step]},
+        _chunk("Seven."),
+        {
+            "object": "loom.citations",
+            "id": "chatcmpl-1",
+            "citations": [],
+            "support": "unchecked",
+            "steps": [step, failed],
+            "steps_cut": True,
+        },
+    )
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=stream, headers={"content-type": "text/event-stream"})
+
+    events = _collect(_agent(handler))
+    assert events[0] == AssistantText("Seven.") and len(events) == 2
+    answer = events[-1]
+    assert isinstance(answer, AssistantAnswer) and answer.run_id == "chatcmpl-1"
+    assert answer.steps == (
+        AssistantStep("namespace.audit", "Read the audit", True),
+        AssistantStep("memory.search", "Couldn't search memories", False),
+    )
+    assert answer.steps_cut is True
+
+
+def test_an_answer_from_a_server_that_sends_no_steps_has_none() -> None:
+    answer = _collect(
+        _agent(
+            lambda r: httpx.Response(
+                200, content=ANSWER, headers={"content-type": "text/event-stream"}
+            )
+        )
+    )[-1]
+    assert isinstance(answer, AssistantAnswer)
+    assert (answer.steps, answer.steps_cut) == ((), False)

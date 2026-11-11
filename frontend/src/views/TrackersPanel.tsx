@@ -64,8 +64,9 @@ export function TrackersPanel({
   return (
     <section aria-labelledby="trackers-heading" className="mt-8">
       <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <SectionHeading level={2} id="trackers-heading" label="Trackers" />
+        {/* A mentor hint about trackers lands here (data-focus-key, views/assistant/cards/planes.ts). */}
+        <div className="min-w-0" data-focus-key="trackers-heading">
+          <SectionHeading level={2} id="trackers-heading" label="Trackers" focusable />
           <p className="text-xs text-text-muted max-w-2xl">
             ClickHouse databases of issues, PRs and incidents that Loom reads live. A repository links to one, and
             agents in its checkout see its issues.

@@ -97,8 +97,7 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   setup: ["tab"],
   // The object open on a page rides its URL, so a deep link, a reload and Back reopen it:
   // the memory in the drawer, the document in the preview, the thread in the replay.
-  // Memories also carries its tab: `?section=insights` is the Insights tab (MemoryTabs).
-  memories: ["memory", "section"],
+  memories: ["memory"],
   // The Library also carries the collection it shows (`?collection=`).
   knowledge: ["doc", "collection"],
   sessions: ["thread"],
@@ -211,7 +210,9 @@ function pushView(v: View, opts: NavOptions = {}, remember = true): void {
     rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent, owner: s.inspectedOwner }, opts.focusKey);
   // A navigation's entry is made in the current namespace.
   const namespace = s.identity?.namespace ?? null;
+  // `loomFromApp`: Back from this entry stays in the app (the assistant's Collapse).
   const state = {
+    loomFromApp: true,
     ...(opts.back ? { loomBack: opts.back } : {}),
     ...(namespace !== null ? { loomNamespace: namespace } : {}),
   };
@@ -225,7 +226,7 @@ export function sheetEntry(): boolean {
   return !!st && typeof st === "object" && (st as Record<string, unknown>).loomSheet === true;
 }
 
-function urlParam(key: string): string | null {
+export function urlParam(key: string): string | null {
   if (typeof window === "undefined") return null;
   return new URLSearchParams(window.location.search).get(key);
 }
@@ -526,8 +527,6 @@ export const useStore = create<AppState>((set, get) => ({
     // A navigation closes the memory the drawer had open; on Memories itself the URL is the
     // same page, so its `?memory=` goes too, or a reload would reopen what was closed.
     if (!opts.query && urlParam("memory") !== null) setViewParam("memory", null, { loomInspect: null });
-    // Its tab too: a link to Memories means the list (the tabs set `section` themselves).
-    if (!opts.query && view === "memories" && urlParam("section") !== null) setViewParam("section", null);
     set((s) => ({
       view,
       inspectedMemoryKey: null,

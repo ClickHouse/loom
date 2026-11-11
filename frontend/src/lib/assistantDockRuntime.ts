@@ -18,7 +18,7 @@ import {
   setDockReason,
 } from "./assistantLayout";
 import { patchEntry, rememberPlace } from "./place";
-import { sheetEntry, useStore } from "./state";
+import { navigationHref, sheetEntry, useStore } from "./state";
 import { forgetOtherPeople } from "../views/assistant/storedIndex";
 
 function writePanel(open: boolean, width: number): void {
@@ -111,10 +111,49 @@ export function askAbout(item: AskItem): void {
 }
 
 /** The launcher and Ctrl+/ (⌘/): open the panel, or close it (a close from outside the
- *  panel leaves the focus where it is). */
+ *  panel leaves the focus where it is); on /assistant, collapse it. */
 export function toggleAssistant(): void {
-  if (useDock.getState().open) closeAssistant("person");
+  if (useDock.getState().expanded) collapseAssistant();
+  else if (useDock.getState().open) closeAssistant("person");
   else openAssistant();
+}
+
+/** The Memories page's Insights button, and an old link to its Insights tab (`audit`). */
+export function openStarters(audit: boolean): void {
+  useDock.setState((s) => ({ startersSeq: (s.startersSeq ?? 0) + 1, startersAudit: audit }));
+  openAssistant();
+}
+
+/** The view is /assistant (`on`) or another page (lib/assistantDock.ts showExpanded). */
+export function showExpanded(on: boolean): void {
+  useDock.setState(on ? { expanded: true, mounted: true, focusField: true } : { expanded: false });
+}
+
+// Set while Collapse's own history.back() is on its way: its arrival restores nothing, the
+// panel focusing its field.
+let collapsing = false;
+
+/** Expand: the panel becomes the /assistant page (the conversation and the draft stay). */
+export function expandAssistant(): void {
+  useStore.getState().navigate("assistant");
+}
+
+/** Collapse: back to the page /assistant was opened from (Back, when the app made the entry),
+ *  else Memories in its place, then the panel opens there as the launcher opens it, in the
+ *  mode the width gives with its field focused (on the phone, the sheet with its own history
+ *  entry, so Back closes only the sheet). */
+export function collapseAssistant(): void {
+  // Out of the expanded mode at once, so the open below goes by the width.
+  useDock.setState({ expanded: false, open: false, mounted: true });
+  const st: unknown = history.state;
+  if (st && typeof st === "object" && (st as Record<string, unknown>).loomFromApp === true) {
+    collapsing = true;
+    history.back();
+    return;
+  }
+  history.replaceState({ loomFromApp: true }, "", navigationHref("memories", {}));
+  useStore.getState().arriveFromHistory("memories", null);
+  openAssistant();
 }
 
 // Whether the current entry is the sheet's, as the shell last saw it (Back has already
@@ -130,6 +169,12 @@ let leavingSheet = false;
  *  the entry left was the sheet's, whose arrival restores nothing: the panel placed the
  *  focus itself (the launcher, after the sheet closes). */
 export function assistantPopstate(state: unknown): { leftSheet: boolean } {
+  if (collapsing) {
+    // Collapse's Back has arrived on the page /assistant was opened from: the panel opens there.
+    collapsing = false;
+    openAssistant();
+    return { leftSheet: true };
+  }
   const ownBack = leavingSheet;
   leavingSheet = false;
   const left = currentSheet;

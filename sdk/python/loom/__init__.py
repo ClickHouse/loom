@@ -18,7 +18,7 @@ and `.assistant` asks the Loom assistant (`stream` / `ask`).
 
 from loom._version import __version__
 from loom.agent import Agent
-from loom.assistant import AssistantAnswer, AssistantCitation, AssistantText
+from loom.assistant import AssistantAnswer, AssistantCitation, AssistantStep, AssistantText
 from loom.capabilities import Capabilities
 from loom.client import OpsClient
 from loom.credentials import login, logout, whoami
@@ -53,6 +53,7 @@ __all__ = [
     "AgentTools",
     "AssistantAnswer",
     "AssistantCitation",
+    "AssistantStep",
     "AssistantText",
     "AuthInsufficient",
     "AuthInvalid",

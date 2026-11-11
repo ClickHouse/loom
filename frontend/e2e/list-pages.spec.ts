@@ -418,19 +418,16 @@ test.describe("a touch pointer at 375 px", () => {
   });
 });
 
-test("Insights holds the usage audit and the mentor, and the list is a tab away", async ({ page }) => {
+test("an old Insights link shows the list, with the audit's card in the assistant panel", async ({ page }) => {
   await installApi(page, { memoryRows: 12 });
   await page.goto("/memories?section=insights");
-  await expect(page.getByRole("tab", { name: "Insights" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("button", { name: "Usage audit", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Mentor", exact: true })).toBeVisible();
-  await expect(page.locator("main .list-row")).toHaveCount(0);
-  expect(await violations(page)).toEqual([]);
-  await page.getByRole("tab", { name: "Memories" }).click();
   await expect(page).toHaveURL(new RegExp(`/memories\\?namespace=${NAMESPACE}$`));
+  await expect(page.getByRole("tab", { name: "Insights" })).toHaveCount(0);
   await expect(page.locator("main .list-row").first()).toBeVisible();
-  await page.goBack();
-  await expect(page.getByRole("button", { name: "Usage audit", exact: true })).toBeVisible();
+  await expect(page.locator("[data-card='namespace.audit']")).toBeVisible();
+  expect(await violations(page)).toEqual([]);
+  // The header's Insights button opens the starters again.
+  await expect(page.getByRole("button", { name: "Insights" })).toBeVisible();
 });
 
 test("the Profile's sections are a list with a selection toolbar", async ({ page }) => {

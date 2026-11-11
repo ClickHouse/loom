@@ -18,10 +18,12 @@ import {
   type StoredIndex,
 } from "../../lib/assistantStorage";
 import { readIndex } from "./storedIndex";
-import type { Citation, Support } from "../../api/assistantChat";
+import type { Citation, Step, Support } from "../../api/assistantChat";
 import type { AskContext } from "./pageContext";
+import { storedCard, type TurnCard } from "./cards/types";
 
-export type TurnState = "answering" | "done" | "stopped" | "failed" | "refused";
+/** `card`: a starter chosen with the assistant not asked, so the turn is its card alone. */
+export type TurnState = "answering" | "done" | "stopped" | "failed" | "refused" | "card";
 
 export interface Turn {
   id: string;
@@ -38,6 +40,13 @@ export interface Turn {
   support?: Support;
   /** Op and setting names the answer wrote that the server neither serves nor documents. */
   unknownNames?: string[];
+  /** What the answer read: the latest list while it streams, then the server's once it ends;
+   *  absent from a server that sends none. */
+  steps?: Step[];
+  /** The run held more calls than `steps` lists. */
+  stepsCut?: boolean;
+  /** The card of a starter: Loom's own read, shown above the answer. */
+  card?: TurnCard;
   /** When the turn last changed (ms): two tabs' copies of one turn merge to the newer. */
   at: number;
 }
@@ -157,14 +166,24 @@ export function readConversation(
   }
 }
 
-/** The stored copy: the newest KEPT_TURNS turns, then older ones dropped until it fits. */
+/** The stored copy: the newest KEPT_TURNS turns; until it fits, the oldest card's snapshot
+ *  goes first (the card says to read it again), then the oldest turns. */
 function storedCopy(c: Conversation): { text: string; copy: Conversation } {
-  let turns = c.turns.slice(-KEPT_TURNS);
+  let turns = c.turns.slice(-KEPT_TURNS).map((t) => (t.card ? { ...t, card: storedCard(t.card) } : t));
   let trimmed = c.trimmed || turns.length < c.turns.length;
   for (;;) {
     const copy = { ...c, turns, trimmed };
     const text = JSON.stringify(copy);
     if (text.length <= MAX_CONVERSATION || turns.length <= 1) return { text, copy };
+    const snapshot = turns.findIndex((t) => t.card?.data !== undefined);
+    if (snapshot >= 0) {
+      turns = turns.map((t, i) => {
+        if (i !== snapshot || !t.card) return t;
+        const { data: _data, ...card } = t.card;
+        return { ...t, card };
+      });
+      continue;
+    }
     turns = turns.slice(1);
     trimmed = true;
   }

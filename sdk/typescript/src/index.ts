@@ -16,6 +16,7 @@ export type {
   AssistantChat,
   AssistantCitation,
   AssistantEvent,
+  AssistantStep,
   AssistantSupport,
   AssistantTurn,
 } from "./assistant.js";

@@ -67,6 +67,18 @@ describe("Settings → Structure", () => {
     useStore.setState({ whoami: null, myNamespaces: null, identity: null });
   });
 
+  it("moves to the tab a link names while Settings already shows", async () => {
+    vi.mocked(listRecordSchemas).mockResolvedValue({ schemas: [invoice] });
+    seed("team-a");
+    render(<Setup />);
+    expect(await screen.findByRole("tab", { name: "Tokens" })).toHaveAttribute("aria-selected", "true");
+    // An assistant card's "Open in Settings": the same view, its tab in the address.
+    act(() => useStore.getState().navigate("setup", { query: { tab: "structure" } }));
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Structure" })).toHaveAttribute("aria-selected", "true"),
+    );
+  });
+
   it("is not offered on a code namespace", async () => {
     seed("code-x");
     render(<Setup />);

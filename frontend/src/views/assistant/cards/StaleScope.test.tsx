@@ -1,21 +1,20 @@
-import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen } from "../../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MentorBriefResult, MyNamespaceEntry, NamespaceAuditResult, WhoAmI } from "../api";
-import { useStore } from "../lib/state";
-import { resetNamespaceRoleCache } from "../lib/namespaceRole";
-import { setFoldOpen } from "../lib/folds";
-import { MentorPanel } from "./MentorPanel";
-import { NamespaceAuditPanel } from "./NamespaceAuditPanel";
+import type { MentorBriefResult, MyNamespaceEntry, NamespaceAuditResult, WhoAmI } from "../../../api";
+import { useStore } from "../../../lib/state";
+import { resetNamespaceRoleCache } from "../../../lib/namespaceRole";
+import { InsightsHarness, resetInsights } from "../../../test/insights";
+import { newConversation } from "../chatStore";
 
-// The mentor and audit panels answer for the namespace on screen. A run started in one
-// namespace that resolves after the switch to another is dropped, never shown as the
-// new namespace's brief or report.
+// A card answers for its own conversation, which is about one namespace. A read started in
+// one conversation that resolves after the person left it (a new conversation in another
+// namespace) is dropped, never shown as the new one's.
 
-vi.mock("../api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, mentorBrief: vi.fn(), auditNamespace: vi.fn() };
+vi.mock("../../../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../api")>();
+  return { ...actual, mentorBrief: vi.fn(), auditNamespace: vi.fn(), listMine: vi.fn(async () => []) };
 });
-import { auditNamespace, mentorBrief } from "../api";
+import { auditNamespace, mentorBrief } from "../../../api";
 
 const viewer: WhoAmI = {
   authenticated: true,
@@ -88,55 +87,67 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-describe("panels drop a run for the namespace they moved off", () => {
+const MENTOR = "What would Loom advise an agent writing here?";
+const AUDIT = "How is this namespace being used?";
+
+/** The person leaves the conversation about a for a new one in b. */
+const toB = () =>
+  act(() => {
+    newConversation();
+    useStore.setState({ identity: inB });
+  });
+
+describe("cards drop a read for the conversation they left", () => {
   beforeEach(() => {
-    // The panel starts folded; these tests are about what it shows once opened.
-    setFoldOpen("usage-audit", true);
-    setFoldOpen("mentor", true);
+    resetInsights();
     // Reset, not clear: a queued Once a failed test left unused must not answer the next.
     vi.resetAllMocks();
     resetNamespaceRoleCache();
     useStore.setState({ authed: true, whoami: viewer, myNamespaces: [row("a"), row("b")], identity: inA });
   });
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    resetInsights();
+  });
 
-  it("mentor: a's brief resolving after the switch to b is not shown as b's", async () => {
+  it("mentor: a's brief resolving after the move to b is not shown as b's", async () => {
     const late = deferred<MentorBriefResult>();
     vi.mocked(mentorBrief)
       .mockImplementationOnce(() => late.promise)
       .mockImplementationOnce(async () => brief("b"));
-    const panel = render(<MentorPanel identity={inA} />);
-    fireEvent.click(screen.getByRole("button", { name: /Ask the mentor/ }));
-    panel.rerender(<MentorPanel identity={inB} />);
+    render(<InsightsHarness />);
+    fireEvent.click(await screen.findByRole("button", { name: MENTOR }));
+    toB();
     await act(async () => late.resolve(brief("a")));
     expect(screen.queryByTestId("mentor-summary")).not.toBeInTheDocument();
     expect(screen.queryByText("writer-in-a")).not.toBeInTheDocument();
-    // The button is free again, and b's own run lands.
-    fireEvent.click(screen.getByRole("button", { name: /Ask the mentor/ }));
+    // The starter is free again, and b's own read lands.
+    fireEvent.click(screen.getByRole("button", { name: MENTOR }));
     expect(await screen.findByTestId("mentor-summary")).toHaveTextContent("writer-in-b");
+    expect(vi.mocked(mentorBrief).mock.calls[1][0]).toEqual({ org: "dev", namespace: "b" });
   });
 
-  it("audit: a's report resolving after the switch to b is not shown as b's", async () => {
+  it("audit: a's report resolving after the move to b is not shown as b's", async () => {
     const late = deferred<NamespaceAuditResult>();
     vi.mocked(auditNamespace)
       .mockImplementationOnce(() => late.promise)
       .mockImplementationOnce(async () => report("b", 0));
-    const panel = render(<NamespaceAuditPanel identity={inA} />);
-    fireEvent.click(screen.getByRole("button", { name: /Run audit/ }));
-    panel.rerender(<NamespaceAuditPanel identity={inB} />);
+    render(<InsightsHarness />);
+    fireEvent.click(await screen.findByRole("button", { name: AUDIT }));
+    toB();
     await act(async () => late.resolve(report("a", 3)));
     expect(screen.queryByTestId("audit-summary")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Run audit/ }));
+    fireEvent.click(screen.getByRole("button", { name: AUDIT }));
     expect(await screen.findByTestId("audit-summary")).toHaveTextContent("Healthy");
   });
 
-  it("audit: a's failure after the switch to b raises no error under b", async () => {
+  it("audit: a's failure after the move to b says nothing under b", async () => {
     const late = deferred<NamespaceAuditResult>();
     vi.mocked(auditNamespace).mockImplementationOnce(() => late.promise);
-    const panel = render(<NamespaceAuditPanel identity={inA} />);
-    fireEvent.click(screen.getByRole("button", { name: /Run audit/ }));
-    panel.rerender(<NamespaceAuditPanel identity={inB} />);
+    render(<InsightsHarness />);
+    fireEvent.click(await screen.findByRole("button", { name: AUDIT }));
+    toB();
     await act(async () => late.reject(new Error("boom")));
-    expect(screen.queryByText(/Audit failed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't read the audit/)).not.toBeInTheDocument();
   });
 });

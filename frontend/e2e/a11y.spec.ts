@@ -9,7 +9,10 @@ import { boxOf, installApi, MIN_TARGET_PX, ROUTES } from "./fixtures";
 async function open(page: Page, path: string) {
   await installApi(page, { memoryRows: 8, knowledgeRows: 4, runRows: 6 });
   await page.goto(path);
-  await expect(page.locator("main h1").first()).toBeVisible();
+  // On /assistant the page is the expanded assistant panel, in <main>'s place.
+  await expect(
+    page.locator("main:not([hidden]) h1, [data-assistant-panel][data-mode='expanded'] h1").first(),
+  ).toBeVisible();
   await page.waitForLoadState("networkidle"); // late rows, counts and badges
   await page.waitForTimeout(300); // their entry animation
 }
@@ -210,15 +213,14 @@ test.describe("open overlays", () => {
   });
 
   test("a button that loads in place keeps focus through its loading state", async ({ page }) => {
-    // The usage audit is on the Memories page's Insights tab.
+    // The usage audit is the assistant's audit card (an old Insights link opens it).
     await open(page, "/memories?section=insights");
-    // Click UI disables a loading button, which drops its focus; it takes it back after.
+    const run = page.locator("[data-card='namespace.audit']").getByRole("button", { name: "Read again" });
+    await expect(page.getByTestId("audit-summary")).toBeVisible();
     await page.route("**/v1/namespace.audit", async (route) => {
       await new Promise((r) => setTimeout(r, 300));
       await route.fulfill({ status: 503, json: { detail: "audit unavailable", code: "UNAVAILABLE" } });
     });
-    await page.getByRole("button", { name: "Usage audit", exact: true }).click();
-    const run = page.getByRole("button", { name: "Run audit" });
     await run.focus();
     await page.keyboard.press("Enter");
     await expect(run).toBeEnabled();

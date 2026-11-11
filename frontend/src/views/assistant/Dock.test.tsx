@@ -638,6 +638,107 @@ describe("the conversation", () => {
     );
   });
 
+  it("a card's pick in a conversation about another namespace reads its card and asks nothing", async () => {
+    signIn("viewer");
+    show();
+    chat.push(() => answer("Ada."));
+    await askIt("Who owns billing?");
+    await screen.findByText("Ada.");
+    const inventory = {
+      scope: { org: "acme", namespace: "team", read_scope: "namespace", user_id: null, session_id: null },
+      sections: [],
+      populations: [
+        { population: "agents", total: 1, top: [{ name: "claude-code", rows: 40 }], complete: true, reason: "" },
+      ],
+      capabilities: [],
+      computed_at: "2026-11-01T10:00:00",
+    };
+    const card = {
+      id: "inv",
+      question: "What does this namespace hold, and who appears in it?",
+      answer: "",
+      state: "card",
+      card: { op: "namespace.inventory", args: {}, data: inventory, readAt: Date.now() },
+      at: Date.now(),
+    };
+    act(() => useChat.setState((c) => ({ turns: [...c.turns, card as never] })));
+    act(() =>
+      useStore.setState({
+        identity: { org: "acme", namespace: "ops", agent: "loom-ui" },
+        myNamespaces: [
+          { namespace: "team", role: "viewer", status: "active", kind: "memory" } as never,
+          { namespace: "ops", role: "viewer", status: "active", kind: "memory" } as never,
+        ],
+      }),
+    );
+    expect(screen.getByText("This conversation is about team.")).toBeInTheDocument();
+    const pick = await screen.findByTestId("pick-agent");
+    // The pick itself is open: the person's own read of the card's namespace.
+    expect(pick).not.toHaveAttribute("aria-disabled");
+    const before = asked.length;
+    await userEvent.setup().click(pick);
+    await waitFor(() => expect(paths).toContain("/v1/memory.inspect"));
+    expect(asked).toHaveLength(before);
+    // With "Also ask" on, the pick's card says why nothing was asked, as a starter's does.
+    expect(
+      await screen.findByText(
+        "The assistant can't answer: pick how to go on with this conversation first. This is Loom's own read.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("the Insights button pressed while an answer comes in says on screen that the starters wait", async () => {
+    signIn("viewer");
+    show();
+    chat.push(() => answer("Ada."));
+    await askIt("Who owns billing?");
+    await screen.findByText("Ada.");
+    act(() => useChat.setState({ answering: true }));
+    act(() => useDock.setState((d) => ({ startersSeq: (d.startersSeq ?? 0) + 1, startersAudit: true })));
+    expect(await screen.findByText("Starters show once this answer ends: choose New conversation.")).toBeVisible();
+    expect(useDock.getState().startersAudit).toBe(false);
+    act(() => useChat.setState({ answering: false }));
+  });
+
+  it("a card's pick waits while an answer is coming in, and says so", async () => {
+    signIn("viewer");
+    // A viewer of the namespace may inspect it: the pick is open once nothing comes in.
+    useStore.setState({
+      myNamespaces: [{ namespace: "team", role: "viewer", status: "active", kind: "memory" } as never],
+    });
+    show();
+    chat.push(() => answer("Ada."));
+    await askIt("Who owns billing?");
+    await screen.findByText("Ada.");
+    const card = {
+      id: "inv",
+      question: "What does this namespace hold, and who appears in it?",
+      answer: "",
+      state: "card",
+      card: {
+        op: "namespace.inventory",
+        args: {},
+        data: {
+          scope: { org: "acme", namespace: "team", read_scope: "namespace", user_id: null, session_id: null },
+          sections: [],
+          populations: [
+            { population: "agents", total: 1, top: [{ name: "claude-code", rows: 40 }], complete: true, reason: "" },
+          ],
+          capabilities: [],
+          computed_at: "2026-11-01T10:00:00",
+        },
+        readAt: Date.now(),
+      },
+      at: Date.now(),
+    };
+    act(() => useChat.setState((c) => ({ turns: [...c.turns, card as never], answering: true })));
+    const pick = await screen.findByTestId("pick-agent");
+    expect(pick).toHaveAttribute("aria-disabled", "true");
+    expect(pick).toHaveAccessibleDescription("An answer is still coming in.");
+    act(() => useChat.setState({ answering: false }));
+    await waitFor(() => expect(screen.getByTestId("pick-agent")).not.toHaveAttribute("aria-disabled"));
+  });
+
   it("on a namespace that holds no memories, says to pick one and keeps Ask off", async () => {
     signIn("viewer");
     useStore.setState({
@@ -1650,6 +1751,46 @@ describe("Ask about this, the edge cases", () => {
     expect(screen.queryByText(/^New conversation in ops/)).not.toBeInTheDocument();
     expect(useDock.getState().item).toMatchObject({ namespace: "ops", chip: "key user/pref/lang" });
     expect(useChat.getState().namespace).toBe("team");
+    act(() => resetChat(null));
+  });
+});
+
+describe("the starters", () => {
+  it("list in an empty conversation, and in the body that says why the assistant can't answer", async () => {
+    signIn("viewer");
+    show();
+    expect(await screen.findByRole("list", { name: "Starters" })).toBeInTheDocument();
+    cleanup();
+    check = { ok: false, reason: "failing", required: false };
+    show();
+    await unavailable();
+    expect(await screen.findByRole("list", { name: "Starters" })).toBeInTheDocument();
+    // The assistant can't answer: the box is off and says why.
+    expect(screen.getByRole("checkbox", { name: "Also ask the assistant" })).toBeDisabled();
+  });
+
+  it("the Insights button starts a new conversation over a finished one, so the starters show", async () => {
+    signIn("viewer");
+    saved([done(0)]);
+    show();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Invoices" }));
+    await screen.findByText("Answer 0");
+    expect(screen.queryByRole("list", { name: "Starters" })).toBeNull();
+    act(() => useDock.setState((s) => ({ startersSeq: (s.startersSeq ?? 0) + 1 })));
+    expect(await screen.findByRole("list", { name: "Starters" })).toBeInTheDocument();
+    expect(useChat.getState().turns).toEqual([]);
+  });
+
+  it("an old Insights link reads the audit card, nothing asked", async () => {
+    signIn("nsAdmin");
+    act(() => useDock.setState((s) => ({ startersSeq: (s.startersSeq ?? 0) + 1, startersAudit: true })));
+    show();
+    await waitFor(() => expect(paths).toContain("/v1/namespace.audit"));
+    expect(paths).not.toContain("/v1/assistant/chat/completions");
+    expect(useDock.getState().startersAudit).toBe(false);
+    await waitFor(() => expect(useChat.getState().turns[0]?.state).toBe("card"));
     act(() => resetChat(null));
   });
 });

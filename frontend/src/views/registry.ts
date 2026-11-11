@@ -14,7 +14,8 @@ export const VIEW_LOADERS: Record<View, () => Promise<unknown>> = {
   sessions: () => import("./Conversations"),
   runs: () => import("./Runs"),
   graph: () => import("./Graph"),
-  assistant: () => import("./Assistant"),
+  // The page is the assistant panel, expanded.
+  assistant: () => import("../layout/AssistantPanel"),
   help: () => import("./Help"),
   browse: () => import("./Browse"),
   code: () => import("./Code"),

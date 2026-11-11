@@ -291,12 +291,22 @@ sets in `server/operations/toolsets.py`, with the output list each op's ledger r
 counts as `out_hits` (or its `found` flag) to say whether it found anything. A test
 requires every op of the assistant toolset to be in exactly one set and to say how its
 row shows it found nothing. The answer's calls are read by its run, its caller's subject
-and the consumer `loom-assistant`, with no namespace filter: a code call is ledgered
-under the code namespace and a refused call under the sentinel. The rows land in the
-background, so an uncited answer's calls are read once more after the ledger's flush
-interval and the batched-insert wait, unless the first read already found a citable op's
-data; both reads together are bounded at three seconds, past which the answer is
-`unchecked`. A presence answer of `code.symbol` finds only where the symbol is present.
+and the consumer `loom-assistant`, with no namespace filter (`ledger.run_rows`): a code
+call is ledgered under the code namespace and a refused call under the sentinel. The rows
+land in the background, so two patterns read them:
+
+- A whole answer (`assistant.ask`, the chat route asked without `stream`) reads its calls
+  only when it cites nothing: once, and once more after the ledger's flush interval and
+  the batched-insert wait unless the first read already found a citable op's data.
+- A streamed answer shows what it read under it ([steps](#steps)), so it reads its calls
+  on every answer, cited or not: once, after the same wait, beside its citation checks.
+  That one read gives both its support and its steps.
+
+The reads and the waits are bounded at three seconds together, past which the answer is
+`unchecked`. One read takes 200 rows; a run with more is cut, and a cut run keeps only an
+outcome its first 200 rows decide (`unsupported` when a citable op found data there),
+else it is `unchecked`. A presence answer of `code.symbol` finds only where the symbol is
+present.
 
 The rule reads no wording beyond the abstention sentence, and accepts these residuals:
 
@@ -306,8 +316,10 @@ The rule reads no wording beyond the abstention sentence, and accepts these resi
   each match with its citation.
 - An uncited fact with no call at all (a later turn restating an earlier one, or a
   first answer from the model's own knowledge, which the instructions forbid), or after
-  calls whose rows land past the re-read or are dropped (the ledger keeps them at most
-  once), is `none`.
+  calls whose rows land past the wait or the re-read, or are dropped (the ledger keeps
+  them at most once), is `none`.
+- A run of more than 200 ledger rows is judged on its first 200, so a citable op's data
+  past them is not seen: such an answer is `unchecked`, never `none`.
 - A "not found" answer from a lookup that misses (`memory_get`, `code_symbol`) is
   `none` when it ends with the abstention sentence, as the instructions ask for every
   read that finds nothing; worded otherwise, it is `unsupported`.
@@ -335,6 +347,54 @@ Loom", "Couldn't confirm: 0 of m sources found in Loom", "Couldn't confirm: it n
 "Sources not checked" or "Not checked: it cites nothing Loom holds". Each label's "Why
 this label" note says why it reads as it does; an answer whose support is `none` has no
 label. A value the dashboard does not know reads as `unchecked`.
+
+### Steps
+
+While a streamed answer runs, the bridge reads the answer's own calls from
+`loom.agent_events` as their rows land and sends them as `loom.step` events, each carrying
+the whole list so far (`steps`: `{op, text, ok}` per call, oldest first), so the dashboard
+shows the latest as its working line. The read (`server/assistant/store/ledger.py`
+`live_rows`) runs at once and then after 1 s, 2 s and every 4 s to the answer's end.
+Before the first chunk gives the answer's run id it filters the org, the namespace, the
+caller's subject, the consumer `loom-assistant` and the second before the answer started
+(a second that takes the streaming replica's, the serving replica's and ClickHouse's
+clocks to agree; under more skew a call shows only once the run id is known), so the calls
+of the caller's other answers in the namespace that land before the run id is known
+(another tab's, say) mix in, which progress text accepts. Once the run id is known it
+filters by the run with no namespace (code and refused calls included), so another run's
+calls are not read. Each step's words come from a fixed line per op of the toolset
+(`server/assistant/domain/steps.py`, "Read the audit", "Couldn't search memories" for a
+failed or refused call); a row of any other op is no step. A step shows once its call has
+finished and its row has landed, up to four seconds later. A read that fails ends the
+steps; the answer goes on. The steps are display only and never decide the label.
+
+The `loom.citations` event then carries `steps` from the one read of the run after the
+answer ends (above), which replace the live list: an empty list when the run made no call,
+and no `steps` when that read failed or ran past its bound, when the dashboard keeps what
+it showed live; and `steps_cut: true` when the run held more than 200 ledger rows. Both
+events have `choices: []`, the run id (or none yet) as `id`, and no model or usage, so a
+client that guards for no choices skips them; both SDKs skip `loom.step` and expose the
+final list as the answer's `steps`. A whole answer and `assistant.ask` carry no steps.
+
+### Starters and cards
+
+The dashboard's panel lists starters, one per read that answers a question about the
+namespace exactly: `namespace.inventory`, `namespace.audit`, `memory.inspect`,
+`knowledge.inspect`, `mentor.brief`, `namespace.tune`, and a link to the Graph. A
+starter's card is that read, made by the dashboard with the person's own session, not by
+the answer: it is gated on the read's own role and scope, works while the assistant cannot
+answer, and costs no model call (`frontend/src/views/assistant/cards/`). The starter also
+asks the assistant its question when the person keeps "Also ask the assistant" on; the
+question names the arguments the card was first read with (the audit's window, the
+mentor's agent; the card's selects read it again with others, which the question then no
+longer names), and its answer gets the same [support](#support) label as any other, the
+card's own line ("Loom's own read") saying the card is exact. The cards live in the
+conversation the browser keeps, a snapshot of up to 32 KB each; a card restored from
+History is read again before any action. A draft's action is the person's own click on the
+existing op under their own role (registering a category, the guide editor on top of the
+guide read now) or a copy of the change; the answer's token stays `viewer` and the
+assistant writes nothing. Cards come only from starters: a free-form question's tool calls
+carry no arguments the dashboard could read again.
 
 ## The agent definition
 
@@ -1167,6 +1227,14 @@ that answer goes without the docs. The analyst user, its grants and policies,
 ClickHouse and are shared by every replica; the agent definition is written as
 [the agent definition](#the-agent-definition) says, never by an older build.
 
+A streamed answer from an older replica sends no `loom.step` events and no `steps`, and
+its mentor hints no `plane`: the dashboard then shows "Answering…" until the text comes,
+no "What it read" list, and a hint without a page link. An older dashboard or SDK skips
+`loom.step` as an event it does not know and ignores the fields. A dashboard tab of the
+older build that shares the browser's stored conversations reads a starter's card-only
+turn as a question with no answer: it shows an empty answer and sends that question as
+history, until the tab is reloaded on the new build.
+
 ## Build order
 
 1. `insights.query`, `insights.catalog` and the analyst user, written at boot and by
@@ -1214,8 +1282,10 @@ built.
 - `server/observability/budget.py`: the namespace cost cap the assistant's spend counts
   toward.
 - `server/assistant/app/citations.py` (`verify`) and `server/assistant/app/support.py`
-  (`answer_support`), with the rule in `server/assistant/domain/support.py`: an answer's
-  checked citations and its support.
+  (`answer_support`, `streamed_calls`), with the rule in
+  `server/assistant/domain/support.py`: an answer's checked citations and its support.
+- `server/assistant/app/bridge.py` (`stream`) and `server/assistant/domain/steps.py`: a
+  streamed answer's steps.
 - `server/assistant/app/service.py`: the service user and agent set up at boot;
   `server/assistant/store/service.py`: `loom.assistant_service`.
 - `integrations/librechat/`: the agent definition (`agent.yaml`) and the qualification

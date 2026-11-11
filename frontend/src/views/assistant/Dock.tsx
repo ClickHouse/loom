@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
 import { isAuthDisabled, isProxyMode, storedToken } from "../../api";
@@ -7,8 +7,11 @@ import { confirmAction } from "../../components/ConfirmDialog";
 import { toast } from "../../components/Toast";
 import { ListTime } from "../../components/ui/ListTime";
 import { SectionHeading } from "../../components/ui/SectionHeading";
+import { useStarterPrefs } from "./cards/prefs";
 import { useDock } from "../../lib/assistantDock";
+import { STARTERS_WAIT } from "./startersWait";
 import {
+  SHORT_REASON,
   claimReason,
   setDockReason,
   useDockMode,
@@ -35,6 +38,9 @@ import { adoptEpoch, deleteAllConversations, deleteConversation, listConversatio
 import { contextLength, currentAsk, withContext } from "./pageContext";
 import { readReadiness } from "./readiness";
 import { tokenReadScope } from "./tokenScope";
+
+// The starters and their cards: a chunk of their own, loaded when the panel shows them.
+const Starters = lazy(() => import("./cards/Starters").then((m) => ({ default: m.Starters })));
 
 /** How often the panel reads readiness again while the assistant is setting up or failing. */
 export const READINESS_POLL_MS = 10_000;
@@ -115,12 +121,32 @@ export function DockBody() {
     useChat.setState({ notice: line });
     announceAssistant(line);
   }, [askSeq]);
+  // The Memories page's Insights button (lib/assistantDockRuntime.ts openStarters): the chat shows,
+  // and a finished conversation gives way to a new one, whose empty state lists the starters.
+  // While an answer streams, its conversation stays (the button says so).
+  const startersSeq = useDock((s) => s.startersSeq);
+  const handledStarters = useRef(startersSeq);
+  useEffect(() => {
+    if (startersSeq === handledStarters.current) return;
+    handledStarters.current = startersSeq;
+    setShowHistory(false);
+    const c = useChat.getState();
+    if (c.answering) {
+      // Said on screen and to a screen reader: the starters wait for the answer.
+      useDock.setState({ startersAudit: false });
+      useChat.setState({ notice: STARTERS_WAIT });
+      announceAssistant(STARTERS_WAIT);
+    } else if (c.turns.length > 0) newConversation();
+  }, [startersSeq]);
   const [checking, setChecking] = useState(true);
   // Bumped to draw History again: a write to the index here or in another tab.
   const [, setIndexTick] = useState(0);
 
-  // The person (or their token's scope) changed: what was shown is not theirs.
+  // The person (or their token's scope) changed: what was shown is not theirs. The starters
+  // show once this has run, so nothing a starter adds is reset by it.
+  const [ownerSettled, setOwnerSettled] = useState(false);
   useEffect(() => {
+    setOwnerSettled(true);
     const s = useChat.getState();
     if (s.owner && owner && sameOwner(s.owner, owner)) return;
     resetChat(owner);
@@ -235,6 +261,28 @@ export function DockBody() {
     ask(refused, c.namespace ?? header, asked);
   };
 
+  const memory = isMemoryNamespace(namespace, mine);
+  const mismatch = turns.length > 0 && convNamespace !== null && convNamespace !== namespace;
+  const blocked = blockedBy({ reason, checking, memory, mismatch });
+  // A conversation kept in a collection is not reopened: the header never holds one.
+  const readable = (ns: string) =>
+    !isCollectionName(ns) && (ns === namespace || canReadNamespace(ns, whoami?.namespaces ?? [], mine));
+  // Why a starter cannot ask the assistant now: its card still reads.
+  const cannotAnswer = reason
+    ? SHORT_REASON[reason.kind]
+    : checking
+      ? "it is getting ready"
+      : !memory
+        ? "it answers about a memory namespace"
+        : null;
+  // What a card's pick goes by (an inventory row asks as a starter does): kept current on
+  // every render, not only while the starters show, so a pick never asks while the field is
+  // blocked, the conversation's namespace differing from the header's included.
+  const pickCannotAnswer = cannotAnswer ?? (mismatch ? "pick how to go on with this conversation first" : null);
+  useEffect(() => {
+    useStarterPrefs.setState({ cannotAnswer: pickCannotAnswer });
+  }, [pickCannotAnswer]);
+
   if (expired)
     return (
       <p className="px-4 py-3 text-sm text-text-muted" role="status">
@@ -242,12 +290,13 @@ export function DockBody() {
       </p>
     );
 
-  const memory = isMemoryNamespace(namespace, mine);
-  const mismatch = turns.length > 0 && convNamespace !== null && convNamespace !== namespace;
-  const blocked = blockedBy({ reason, checking, memory, mismatch });
-  // A conversation kept in a collection is not reopened: the header never holds one.
-  const readable = (ns: string) =>
-    !isCollectionName(ns) && (ns === namespace || canReadNamespace(ns, whoami?.namespaces ?? [], mine));
+  // The starters show on an empty conversation, whatever the assistant can do.
+  const starters =
+    ownerSettled && turns.length === 0 ? (
+      <Suspense fallback={null}>
+        <Starters namespace={namespace} phone={mode === "sheet"} cannotAnswer={cannotAnswer} />
+      </Suspense>
+    ) : null;
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -275,7 +324,8 @@ export function DockBody() {
         />
       ) : (
         <>
-          <div className="px-4 pt-3 space-y-2 shrink-0">
+          {/* It scrolls when the starters fill it; the padding keeps their focus rings whole. */}
+          <div className="px-4 pt-3 pb-2 space-y-2 min-h-0 overflow-y-auto">
             {reason ? (
               <ReasonBody reason={reason} onTryAgain={() => void tryAgain()} />
             ) : checking ? (
@@ -291,6 +341,7 @@ export function DockBody() {
             ) : turns.length === 0 ? (
               <EmptyState />
             ) : null}
+            {starters}
             {storageOff && (
               <p className="text-xs text-text-muted">
                 This browser refused to save conversations: this one lasts until the tab closes.
@@ -298,7 +349,11 @@ export function DockBody() {
             )}
             {notice && <p className="text-sm text-text-muted">{notice}</p>}
           </div>
-          <AssistantChat namespace={convNamespace ?? namespace} blocked={blocked} />
+          <AssistantChat
+            namespace={convNamespace ?? namespace}
+            blocked={blocked}
+            cardLevel={mode === "expanded" ? 2 : 3}
+          />
         </>
       )}
     </div>
@@ -320,7 +375,7 @@ function Toolbar({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border shrink-0">
-      {mode === "push" ? (
+      {mode === "push" || mode === "expanded" ? (
         <span className="text-xs text-text-muted truncate">ns {namespace}</span>
       ) : (
         // The header's picker is covered at these widths: this one closes the panel and
@@ -360,8 +415,7 @@ function Toolbar({
 function EmptyState() {
   return (
     <div className="text-sm text-text-muted space-y-1">
-      <p>Ask about what this namespace holds.</p>
-      <p className="text-xs">Each answer calls a model, which counts against this namespace's model budget.</p>
+      <p>Ask about what this namespace holds, or start from one of Loom's own reads.</p>
       <p className="text-xs">{savedHere()}</p>
     </div>
   );

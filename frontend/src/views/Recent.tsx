@@ -13,6 +13,8 @@ import {
   type MemoryListEntry,
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
+import { loadDockRuntime, useDock } from "../lib/assistantDock";
+import { STARTERS_WAIT } from "./assistant/startersWait";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchScores, SearchWhy } from "../components/SearchWhy";
 import { IconButton } from "../components/IconButton";
@@ -27,15 +29,13 @@ import { confirmAction } from "../components/ConfirmDialog";
 import { dayLabel, restoreText, displayAgent, SENTINEL_AGENTS } from "../lib/format";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
 import { PageContainer } from "../layout/PageContainer";
-import { MemoryTabs, useMemoriesSection } from "../components/MemoryTabs";
+import { MemoryTabs } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { NamespaceAuditPanel } from "../components/NamespaceAuditPanel";
 import { NamespaceGuideButton } from "../components/NamespaceGuideButton";
-import { MentorPanel } from "../components/MentorPanel";
 import { Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
-import { parseSearchQuery, type SearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
+import { parseSearchQuery, type SearchQuery, takePendingSearch, toggleQueryToken } from "../lib/memoriesSearch";
 import { oneOf } from "../lib/oneOf";
 import { shortcutOff } from "../lib/shortcuts";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
@@ -66,32 +66,33 @@ function filterOf({ tags, agent }: SearchQuery): TagAgentFilter {
   return { tags, agent: agent ?? "" };
 }
 
-/** Memories: the list, or the Insights tab (the usage audit and the mentor). */
+/** Memories: the list. What the namespace's usage says, read as a whole (the audit, the
+ *  mentor, the inventory), is the assistant's starters: the header's Insights button. */
 export function Recent() {
-  return useMemoriesSection() === "insights" ? <MemoryInsights /> : <MemoryList />;
+  return <MemoryList />;
 }
 
-/** The Insights tab: what the namespace's usage says, read as a whole. Each panel runs on a
- *  click, never on mount. */
-function MemoryInsights() {
-  const identity = useIdentity();
+/** Opens the assistant on its starters, nothing asked; while an answer streams the panel
+ *  opens on it, and the button says when the starters show. */
+function InsightsButton() {
+  const working = useDock((s) => s.working);
   return (
-    <PageContainer>
-      <PageHeader title="Memories" tab="Insights">
-        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
-        <span className="hidden sm:contents">
-          <ScopeBadge kind="namespace" value={identity.namespace} />
+    <>
+      <Button
+        type="secondary"
+        htmlType="button"
+        iconLeft="light-bulb"
+        aria-describedby={working ? "memories-insights-wait" : undefined}
+        onClick={() => void loadDockRuntime().then((m) => m.openStarters(false))}
+      >
+        Insights
+      </Button>
+      {working && (
+        <span id="memories-insights-wait" className="sr-only">
+          {STARTERS_WAIT}
         </span>
-      </PageHeader>
-      <MemoryTabs active="insights" />
-      <div className="space-y-4">
-        {/* How the namespace is being used. A click, never on mount — the op is ~14 reads. */}
-        <NamespaceAuditPanel identity={identity} />
-        {/* What the store would tell an agent working here — the planes it never touched
-            and whether past hints were followed. */}
-        <MentorPanel identity={identity} />
-      </div>
-    </PageContainer>
+      )}
+    </>
   );
 }
 
@@ -206,6 +207,12 @@ function MemoryList() {
     if (typedNow.tags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())) return;
     applyQuery(`${query} tag:${memoryTagFilter}`.trim());
   }, [memoryTagFilter, setMemoryTagFilter, query, typedNow, applyQuery]);
+  // A search another surface opened the page with (an assistant card's agent).
+  const navSeq = useStore((s) => s.navSeq);
+  useEffect(() => {
+    const pending = takePendingSearch();
+    if (pending !== null) applyQuery(pending);
+  }, [navSeq, applyQuery]);
   // Typing waits for a pause.
   useEffect(() => {
     const t = setTimeout(() => setTyped((prev) => (sameFilter(prev, typedNow) ? prev : typedNow)), 250);
@@ -609,6 +616,10 @@ function MemoryList() {
         title="Memories"
         actions={
           <>
+            {/* Not on a phone, where the title row keeps the first memory inside the first
+                screen: there the header's Assistant button opens the panel, which shows the
+                starters on an empty conversation (New conversation starts one). */}
+            {!phone && <InsightsButton />}
             <NamespaceGuideButton identity={identity} compact={phone} />
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyNamespace && (

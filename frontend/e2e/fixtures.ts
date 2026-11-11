@@ -1295,6 +1295,33 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
       case "/v1/tracker.item":
         calls.qa.push({ op: "item", ...body });
         return json(trackerItemsFor(body));
+      // The assistant's audit card (an old Insights link opens it): a clean namespace.
+      case "/v1/namespace.audit":
+        return json({
+          org: "dev",
+          namespace: String(body.namespace ?? ""),
+          computed_at: "2026-11-01T10:00:00",
+          window_seconds: Number(body.window_seconds ?? 7 * 86_400),
+          summary: {
+            live_rows: 12,
+            live_bytes: 4096,
+            excerpt_bytes: 0,
+            version_rows: 12,
+            version_bytes: 4096,
+            unembedded_rows: 0,
+            gets: 3,
+            searches: 9,
+            sets: 12,
+            get_search_ratio: 0.3,
+            inspector_calls: 0,
+          },
+          findings: [],
+          skipped: [],
+          healthy: true,
+          criticals: 0,
+          warnings: 0,
+          infos: 0,
+        });
       default:
         break;
     }

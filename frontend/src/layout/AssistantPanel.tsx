@@ -2,11 +2,11 @@ import { Suspense, lazy, useEffect, useRef, type KeyboardEvent, type PointerEven
 import { FocusScope } from "@radix-ui/react-focus-scope";
 import { IconButton } from "../components/IconButton";
 import { SkeletonCard } from "../components/Skeleton";
-import { LoadingSkeleton } from "../components/ui";
+import { LoadingSkeleton, PageHeader } from "../components/ui";
 import { SectionHeading } from "../components/ui/SectionHeading";
 import { useDock } from "../lib/assistantDock";
 import { PANEL_MIN, SPLIT_STEP, isModal, layoutOf } from "../lib/assistantLayout";
-import { closeAssistant, setPanelWidth } from "../lib/assistantDockRuntime";
+import { closeAssistant, collapseAssistant, expandAssistant, setPanelWidth } from "../lib/assistantDockRuntime";
 
 // The chat, its stored conversations and the readiness read: a chunk of their own, loaded
 // the first time the panel opens.
@@ -37,7 +37,8 @@ export function AssistantPanel() {
     const el = element.current;
     if (!el) return;
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // On /assistant the panel is the page: Esc closes nothing.
+      if (e.key !== "Escape" || e.defaultPrevented || useDock.getState().expanded) return;
       if (e.target instanceof Element && e.target.closest("[data-radix-popper-content-wrapper]")) return;
       e.preventDefault();
       closeAssistant("person");
@@ -46,6 +47,8 @@ export function AssistantPanel() {
     return () => el.removeEventListener("keydown", onKeyDown);
   }, [mounted]);
   if (!mounted) return null;
+  const expanded = mode === "expanded";
+  const shown = open || expanded;
 
   // The panel is at the right edge: left makes it wider.
   const resizeBy = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -84,16 +87,18 @@ export function AssistantPanel() {
           id="assistant-panel"
           data-assistant-panel=""
           data-mode={mode}
-          data-open={open ? "" : undefined}
-          hidden={!open}
+          data-open={shown ? "" : undefined}
+          hidden={!shown}
           {...(modal
             ? { role: "dialog", "aria-modal": "true", "aria-labelledby": "assistant-panel-title" }
-            : { role: "region", "aria-labelledby": "assistant-panel-title" })}
+            : expanded
+              ? { role: "region", "aria-label": "Assistant" }
+              : { role: "region", "aria-labelledby": "assistant-panel-title" })}
           tabIndex={-1}
           className="assistant-panel"
-          style={mode === "sheet" ? undefined : { width }}
+          style={mode === "sheet" || expanded ? undefined : { width }}
         >
-          {mode !== "sheet" && (
+          {mode !== "sheet" && !expanded && (
             // The WAI-ARIA window splitter: a focusable separator with its value range.
             // biome-ignore lint/a11y/useSemanticElements: an <hr> takes no focus, keys or value range
             <div
@@ -115,12 +120,29 @@ export function AssistantPanel() {
           )}
           {/* SectionHeading keeps 6 px under itself: the bottom padding makes up the rest. */}
           <div className="px-4 pt-2 pb-0.5 border-b border-border shrink-0">
-            <SectionHeading
-              label="Assistant"
-              level={2}
-              id="assistant-panel-title"
-              actions={<IconButton icon="cross" label="Close the assistant" onClick={() => closeAssistant("person")} />}
-            />
+            {expanded ? (
+              // The page's title row, as every page's: it also titles the document.
+              <div className="pt-1">
+                <PageHeader
+                  title="Assistant"
+                  actions={<IconButton icon="popin" label="Collapse the assistant" onClick={collapseAssistant} />}
+                />
+              </div>
+            ) : (
+              <SectionHeading
+                label="Assistant"
+                level={2}
+                id="assistant-panel-title"
+                actions={
+                  <>
+                    {mode !== "sheet" && (
+                      <IconButton icon="popout" label="Expand the assistant" onClick={expandAssistant} />
+                    )}
+                    <IconButton icon="cross" label="Close the assistant" onClick={() => closeAssistant("person")} />
+                  </>
+                }
+              />
+            )}
           </div>
           <Suspense
             fallback={

@@ -44,6 +44,17 @@ class AssistantCitation:
 
 
 @dataclass(frozen=True)
+class AssistantStep:
+    """One tool call the answer made, as its ledger row shows it: the op, a line saying what
+    it did (such as "Couldn't search memories" when the call failed or was refused), and
+    whether it succeeded."""
+
+    op: str
+    text: str
+    ok: bool
+
+
+@dataclass(frozen=True)
 class AssistantText:
     """The next piece of the answer's text."""
 
@@ -57,7 +68,11 @@ class AssistantAnswer:
     holds (`support`): `supported`, `unsupported`, `unchecked` or `none`, as
     docs/architecture/assistant.md#support defines them; a value this SDK does not know,
     or none from an older server, reads as `unchecked`; and the op and LOOM_* names it
-    wrote that the server neither serves nor documents (`unknown_names`)."""
+    wrote that the server neither serves nor documents (`unknown_names`).
+
+    `steps`: what it read, oldest first, on a streamed answer; empty when the run made no
+    call, when the server could not read the run, or from an older server. `steps_cut`: the
+    run held more than 200 ledger rows, so `steps` lists its first ones."""
 
     text: str
     run_id: str
@@ -67,6 +82,8 @@ class AssistantAnswer:
     completion_tokens: int = 0
     support: str = "unchecked"
     unknown_names: tuple[str, ...] = ()
+    steps: tuple[AssistantStep, ...] = ()
+    steps_cut: bool = False
 
     @property
     def verified(self) -> tuple[AssistantCitation, ...]:
@@ -84,6 +101,8 @@ class _Reading:
     completion_tokens: int = 0
     support: str = "unchecked"
     unknown_names: tuple[str, ...] = ()
+    steps: tuple[AssistantStep, ...] = ()
+    steps_cut: bool = False
 
     def answer(self) -> AssistantAnswer:
         return AssistantAnswer(
@@ -95,6 +114,8 @@ class _Reading:
             self.completion_tokens,
             self.support,
             self.unknown_names,
+            self.steps,
+            self.steps_cut,
         )
 
 
@@ -110,6 +131,14 @@ def _citations(raw: Any) -> tuple[AssistantCitation, ...]:
         )
         for c in raw or []
         if isinstance(c, dict)
+    )
+
+
+def _steps(raw: Any) -> tuple[AssistantStep, ...]:
+    return tuple(
+        AssistantStep(str(s.get("op", "")), str(s.get("text", "")), s.get("ok") is True)
+        for s in (raw if isinstance(raw, list) else [])
+        if isinstance(s, dict)
     )
 
 
@@ -193,7 +222,11 @@ def _read(event: dict[str, Any], reading: _Reading) -> str:
         reading.support = _support(event.get("support"))
         names = event.get("unknown_names")
         reading.unknown_names = tuple(str(n) for n in names) if isinstance(names, list) else ()
+        reading.steps = _steps(event.get("steps"))
+        reading.steps_cut = event.get("steps_cut") is True
         return ""
+    if event.get("object") == "loom.step":
+        return ""  # the steps so far, while the answer streams: the answer carries them
     reading.run_id = reading.run_id or str(event.get("id") or "")
     reading.model = reading.model or str(event.get("model") or "")
     usage = event.get("usage")
@@ -226,4 +259,10 @@ def _int(value: Any) -> int:
         return 0
 
 
-__all__ = ["AssistantAnswer", "AssistantCitation", "AssistantClient", "AssistantText"]
+__all__ = [
+    "AssistantAnswer",
+    "AssistantCitation",
+    "AssistantClient",
+    "AssistantStep",
+    "AssistantText",
+]

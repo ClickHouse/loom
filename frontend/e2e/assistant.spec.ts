@@ -2,10 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi } from "./fixtures";
 
-// The Assistant page reads only its overview on load, so the route-wide axe and layout
-// runs see no inspection, documents or drafts. This spec draws every panel it has, with the
-// server's full-length text and a long subject id, and checks it at desktop and phone
-// width: no horizontal scroll, no axe violation.
+// /assistant is the assistant panel, expanded in the page's place. Its starters read the
+// cards the old Assistant page's panels showed, each with the person's own token and no
+// model call (the "Also ask the assistant" box off). This spec draws every card, with the
+// server's full-length text and a long subject id, and checks it at desktop and phone width:
+// no horizontal scroll, no axe violation.
 
 const LONG_ID = `user-${"x".repeat(200)}`;
 const OWN_USER =
@@ -618,7 +619,15 @@ const TUNE = {
   model_used: false,
 };
 
-async function installAssistant(page: Page) {
+const STARTERS = {
+  inventory: "What does this namespace hold, and who appears in it?",
+  documents: "What documents does it hold?",
+  graph: "How are an entity and its neighbours related?",
+  tune: "What could be improved here?",
+  subject: "What does a user, agent or session remember?",
+};
+
+async function installAssistant(page: Page, path = "/assistant") {
   await installApi(page);
   // Routes added after installApi answer first.
   for (const [op, body] of [
@@ -628,81 +637,96 @@ async function installAssistant(page: Page) {
     ["knowledge.inspect", KNOWLEDGE],
   ] as const)
     await page.route(`**/v1/${op}`, (r) => r.fulfill({ json: body }));
-  await page.goto("/assistant");
-  await expect(page.getByTestId("assistant-populations")).toBeVisible();
+  // The cards alone: no model is asked here.
+  await page.addInitScript(() => localStorage.setItem("loom_assistant_also_ask", "false"));
+  await page.goto(path);
+  await expect(page.getByRole("list", { name: "Starters" })).toBeVisible();
 }
 
-async function openWithEveryPanel(page: Page) {
-  await installAssistant(page);
-  await page.getByRole("button", { name: "Inspect documents" }).click();
-  await expect(page.getByTestId("assistant-documents")).toBeVisible();
-  // The longest user id, picked from the overview.
-  await page.getByTestId("pick-user").first().click();
-  await expect(page.getByTestId("assistant-inspection")).toBeVisible();
-  await page.getByRole("button", { name: "Draft improvements" }).click();
-  await expect(page.getByTestId("assistant-review")).toBeVisible();
-  // Exact names on every tab are part of what must fit and pass the checks.
-  await expect(page.getByTestId("assistant-review").getByTestId("exact-names").first()).toBeVisible();
-  await expect(page.getByTestId("assistant-documents").getByTestId("exact-names").first()).toBeVisible();
-  await expect(page.getByTestId("assistant-inspection").getByTestId("exact-names").first()).toBeVisible();
-  await page.waitForTimeout(300); // entry animations
+/** Choose a starter, as the empty conversation lists it; on a phone, past More starters. */
+async function choose(page: Page, label: string) {
+  const more = page.getByRole("button", { name: "More starters" });
+  if (await more.isVisible()) await more.click();
+  await page.getByRole("button", { name: label }).click();
+}
+
+/** A new conversation, whose empty state lists the starters again. */
+async function fresh(page: Page) {
+  await page.getByRole("button", { name: "New conversation" }).click();
+  await expect(page.getByRole("list", { name: "Starters" })).toBeVisible();
 }
 
 async function clipped(page: Page): Promise<string[]> {
-  // Nothing runs past the box that clips or scrolls it: text cut off inside a panel
-  // does not widen the page, so the page width alone would miss it.
+  // Nothing runs past the box that clips or scrolls it: text cut off inside a card does not
+  // widen the page, so the page width alone would miss it.
   return page.evaluate(() => {
-    const main = document.querySelector("main");
-    if (!main) return ["no main"];
+    const root = document.querySelector("[data-assistant-panel]");
+    if (!root) return ["no panel"];
     const clipOf = (el: Element): Element => {
-      for (let a = el.parentElement; a && a !== main; a = a.parentElement) {
+      for (let a = el.parentElement; a && a !== root; a = a.parentElement) {
         if (getComputedStyle(a).overflowX !== "visible") return a;
       }
-      return main;
+      return root;
     };
-    return [...main.querySelectorAll("*")]
+    return [...root.querySelectorAll("*")]
       .filter((el) => el.getBoundingClientRect().width > 0)
       .filter((el) => el.getBoundingClientRect().right > clipOf(el).getBoundingClientRect().right + 1)
       .map((el) => `${el.tagName}.${el.className} ${(el.textContent ?? "").slice(0, 50)}`);
   });
 }
 
+async function fits(page: Page) {
+  await page.waitForTimeout(300); // entry animations
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  expect(await clipped(page)).toEqual([]);
+  expect(await violations(page)).toEqual([]);
+}
+
 for (const width of [1400, 375]) {
   test.describe(`${width} px`, () => {
     test.use({ viewport: { width, height: 900 } });
 
-    test("every panel fits the page width", async ({ page }) => {
-      await openWithEveryPanel(page);
-      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-      expect(overflow).toBeLessThanOrEqual(0);
-      expect(await clipped(page)).toEqual([]);
-    });
-
-    test("every panel has no WCAG A/AA violations", async ({ page }) => {
-      await openWithEveryPanel(page);
-      expect(await violations(page)).toEqual([]);
+    test("every card fits the page width and has no WCAG A/AA violations", async ({ page }) => {
+      await installAssistant(page);
+      await choose(page, STARTERS.inventory);
+      await expect(page.getByTestId("assistant-populations")).toBeVisible();
+      // The longest user id, picked from the inventory card: its memories' card follows.
+      await page.getByTestId("pick-user").first().click();
+      await expect(page.getByTestId("assistant-inspection")).toBeVisible();
+      await expect(page.getByTestId("assistant-inspection").getByTestId("exact-names").first()).toBeVisible();
+      await fits(page);
+      await fresh(page);
+      await choose(page, STARTERS.documents);
+      await expect(page.getByTestId("assistant-documents").getByTestId("exact-names").first()).toBeVisible();
+      await fits(page);
+      await fresh(page);
+      await choose(page, STARTERS.tune);
+      await expect(page.getByTestId("assistant-review").getByTestId("exact-names").first()).toBeVisible();
+      await fits(page);
     });
   });
 }
 
-test("a pick is named by its aria-label, shows a cut id whole in its tip, and focuses the answer", async ({ page }) => {
+test("a pick is named by its aria-label, shows a cut id whole in its tip, and leaves the focus", async ({ page }) => {
   await installAssistant(page);
+  await choose(page, STARTERS.inventory);
   await expect(page.getByRole("button", { name: "ada 3 memories", exact: true })).toBeVisible();
   const longest = page.getByTestId("pick-user").first();
   await longest.hover();
   await expect(page.getByRole("tooltip")).toContainText(LONG_ID);
   await longest.click();
   await expect(page.getByTestId("assistant-inspection")).toBeVisible();
-  await expect(page.getByRole("heading", { level: 2, name: "Memories", exact: true })).toBeFocused();
+  await expect(longest).toBeFocused();
 });
 
 test("blocked picks with a long id fit the phone width", async ({ page }) => {
-  // A token pinned to one user: the overview lists its user, and every pick is blocked.
+  // A token pinned to one user: the inventory lists its user, and every pick is blocked.
   await page.setViewportSize({ width: 375, height: 900 });
-  await installApi(page);
+  await installAssistant(page);
   const pinned = { ...INVENTORY, scope: { ...INVENTORY.scope, read_scope: "own_user", user_id: LONG_ID } };
   await page.route("**/v1/namespace.inventory", (r) => r.fulfill({ json: pinned }));
-  await page.goto("/assistant");
+  await choose(page, STARTERS.inventory);
   const pick = page.getByTestId("pick-user").first();
   await expect(pick).toHaveAttribute("aria-disabled", "true");
   // The reason describes it; the tip adds the whole id under the reason.
@@ -714,37 +738,23 @@ test("blocked picks with a long id fit the phone width", async ({ page }) => {
   expect(await clipped(page)).toEqual([]);
 });
 
-test("Back from the graph lands on the button that opened it", async ({ page }) => {
-  await installApi(page);
-  await page.goto("/assistant");
+test("the relationships card opens the graph at the entity typed, or on its own starting points", async ({ page }) => {
+  await installAssistant(page);
+  await choose(page, STARTERS.graph);
   await page.getByLabel("Start from (optional)").fill("invoices");
-  await page.getByRole("button", { name: "Open the graph" }).click();
+  await page.getByRole("button", { name: "Show relationships" }).click();
+  await page.getByRole("button", { name: "Open the graph at invoices" }).click();
   await expect(page).toHaveURL(/\/graph\?.*seed=invoices/);
-  await page.goBack();
-  await expect(page.getByRole("button", { name: "Open the graph" })).toBeFocused();
-});
-
-test("the graph opens with no entity typed", async ({ page }) => {
-  await installApi(page);
-  await page.goto("/assistant");
-  await page.getByRole("button", { name: "Open the graph" }).click();
-  await expect(page).toHaveURL(/\/graph/);
-  expect(page.url()).not.toContain("seed=");
 });
 
 test("a listed or cited row opens in the inspector under its whole writer identity", async ({ page }) => {
   const gets: Record<string, unknown>[] = [];
-  await installApi(page);
-  for (const [op, body] of [
-    ["memory.inspect", INSPECTION],
-    ["namespace.tune", TUNE],
-  ] as const)
-    await page.route(`**/v1/${op}`, (r) => r.fulfill({ json: body }));
+  await installAssistant(page);
   await page.route("**/v1/memory.get", (r) => {
     gets.push(r.request().postDataJSON() as Record<string, unknown>);
     return r.fallback();
   });
-  await page.goto("/assistant");
+  await choose(page, STARTERS.subject);
   await page.getByLabel("User id").fill(LONG_ID);
   await page.getByLabel("User id").press("Enter");
   const key = "billing/invoices/a-rather-long-key-name-that-a-writer-chose";
@@ -755,7 +765,8 @@ test("a listed or cited row opens in the inspector under its whole writer identi
   await expect.poll(() => gets.length).toBeGreaterThan(0);
   expect(gets.at(-1)).toMatchObject({ memory_key: key, agent: "claude-code", user_id: LONG_ID, session_id: "-" });
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Draft improvements" }).click();
+  await fresh(page);
+  await choose(page, STARTERS.tune);
   const before = gets.length;
   await page
     .getByTestId("assistant-review")
@@ -763,4 +774,30 @@ test("a listed or cited row opens in the inspector under its whole writer identi
     .click();
   await expect.poll(() => gets.length).toBeGreaterThan(before);
   expect(gets.at(-1)).toMatchObject({ memory_key: key, agent: "claude-code", user_id: "ada", session_id: "-" });
+});
+
+test("Collapse leaves /assistant for Memories with the panel open, and Expand comes back", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await installAssistant(page);
+  await expect(page.getByRole("heading", { level: 1, name: "Assistant" })).toBeVisible();
+  await expect(page.locator("main")).toBeHidden();
+  await page.getByRole("button", { name: "Collapse the assistant" }).click();
+  await expect(page).toHaveURL(/\/memories/);
+  await expect(page.getByRole("textbox", { name: "Question" })).toBeFocused();
+  await page.getByRole("button", { name: "Expand the assistant" }).click();
+  await expect(page).toHaveURL(/\/assistant/);
+  await expect(page.getByRole("heading", { level: 1, name: "Assistant" })).toBeVisible();
+});
+
+test("an old link to the Memories Insights tab opens the audit card, nothing asked", async ({ page }) => {
+  const audit: unknown[] = [];
+  await installApi(page);
+  await page.route("**/v1/namespace.audit", (r) => {
+    audit.push(r.request().postDataJSON());
+    return r.fallback();
+  });
+  await page.goto("/memories?section=insights");
+  await expect.poll(() => audit.length).toBeGreaterThan(0);
+  await expect(page).not.toHaveURL(/section=/);
+  await expect(page.locator("[data-card='namespace.audit']")).toBeVisible();
 });

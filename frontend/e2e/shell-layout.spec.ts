@@ -3,7 +3,9 @@ import { installApi, ROUTES } from "./fixtures";
 
 // The shell scrolls only its content: the header, sidebar and phone nav stay put, so the
 // document itself never scrolls, on any route, at either width. Each route's title and
-// tab rows are checked here too, on the same render, and the heading type below.
+// tab rows are checked here too, on the same render, and the heading type below. On
+// /assistant the page is the assistant panel, in <main>'s place.
+const PAGE = "main:not([hidden]), [data-assistant-panel][data-mode='expanded']";
 for (const width of [1400, 375]) {
   test.describe(`${width} px`, () => {
     test.use({ viewport: { width, height: 900 } });
@@ -11,7 +13,7 @@ for (const width of [1400, 375]) {
       test(`${path} scrolls only its content`, async ({ page }) => {
         await installApi(page, { memoryRows: 8, knowledgeRows: 4, runRows: 6 });
         await page.goto(path);
-        await expect(page.locator("main h1").first()).toBeVisible();
+        await expect(page.locator(PAGE).locator("h1").first()).toBeVisible();
         await page.waitForLoadState("networkidle");
         const doc = await page.evaluate(() => ({
           height: document.documentElement.scrollHeight - window.innerHeight,
@@ -20,7 +22,7 @@ for (const width of [1400, 375]) {
         expect(doc).toEqual({ height: 0, width: 0 });
         // Each page titles the document after itself (WCAG 2.4.2), naming its tab when a
         // page has several, so no two routes share a title.
-        const h1 = (await page.locator("main h1").first().textContent())?.trim();
+        const h1 = (await page.locator(PAGE).locator("h1").first().textContent())?.trim();
         // A page's tab is a link (aria-current) or a Click UI tab (aria-selected).
         const current = page.locator("main [aria-current='page'], main [role='tab'][aria-selected='true']");
         const tab = (await current.count()) > 0 ? (await current.first().textContent())?.trim() : undefined;
@@ -51,7 +53,8 @@ for (const width of [1400, 375]) {
         for (const t of tabs) expect(t).toEqual({ inside: true, wrapped: [] });
         // Every page is titled by PageHeader: a 20 px h1 with no icon.
         const title = await page
-          .locator("main h1")
+          .locator(PAGE)
+          .locator("h1")
           .first()
           .evaluate((h) => ({
             header: !!h.closest("[data-page-header]"),

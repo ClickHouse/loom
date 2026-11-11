@@ -97,9 +97,6 @@ export const RAIL_GROUPS: NavGroup[] = [
       // view it renders — Conversations (threads), not the run-session that
       // groups runs in the Runs view.
       { id: "sessions", label: "Conversations", icon: "chat", scope: "namespace" },
-      // Assistant: inspect what a user, agent or session remembers and draft changes to
-      // what creates those memories. Read-only.
-      { id: "assistant", label: "Assistant", icon: "sparkle", scope: "namespace" },
     ],
   },
   {

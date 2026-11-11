@@ -827,7 +827,7 @@ def test_the_drafts_say_each_finding_as_the_audit_panel_does() -> None:
     import re
     from pathlib import Path
 
-    panel = Path(__file__).parents[2] / "frontend/src/components/NamespaceAuditPanel.tsx"
+    panel = Path(__file__).parents[2] / "frontend/src/views/assistant/cards/AuditBody.tsx"
     body = panel.read_text(encoding="utf-8").split("const CODE_LABELS", 1)[1].split("};", 1)[0]
     labels = dict(re.findall(r'(\w+): "([^"]+)"', body))
     # Every drafted rule has its words: the rationale reads them for each finding.
@@ -845,7 +845,7 @@ def test_the_documents_tab_labels_the_memory_checks_as_the_audit_panel_does() ->
         text = (Path(__file__).parents[2] / path).read_text(encoding="utf-8")
         return dict(re.findall(r'(\w+): "([^"]+)"', text.split(name, 1)[1].split("};", 1)[0]))
 
-    panel = labels("frontend/src/components/NamespaceAuditPanel.tsx", "const CODE_LABELS")
+    panel = labels("frontend/src/views/assistant/cards/AuditBody.tsx", "const CODE_LABELS")
     tab = labels("frontend/src/views/assistant/DocumentInspection.tsx", "const MEMORY_CHECK_LABEL")
     assert tab and all(panel[code] == label for code, label in tab.items())
 

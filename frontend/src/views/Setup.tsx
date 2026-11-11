@@ -126,6 +126,13 @@ export function Setup() {
   const showChecklist = !!memoryNamespace && !onboarding.state.dismissed && (isNew || onboarding.state.started);
 
   const [tab, setTab] = useState<SettingsTab>(() => readTabParam() ?? "tokens");
+  // A link that opens Settings on a tab while it already shows (an assistant card's) moves
+  // to that tab: the page is not drawn again.
+  const navSeq = useStore((s) => s.navSeq);
+  useEffect(() => {
+    const asked = readTabParam();
+    if (asked) setTab(asked);
+  }, [navSeq]);
   const selectTab = (t: SettingsTab) => {
     setTab(t);
     writeTabParam(t);
