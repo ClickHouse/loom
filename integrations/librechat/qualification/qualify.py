@@ -615,8 +615,9 @@ def shipped_docs() -> tuple[str, ...]:
 
 @functools.cache
 def documented_settings() -> frozenset[str]:
-    """Every `LOOM_*` name a shipped docs page writes: the documentation half of the
-    server's unknown-name check (`server.assistant.domain.names`)."""
+    """Every `LOOM_*` name a shipped docs page writes. Close to the documentation half of
+    the server's unknown-name check (`server.assistant.domain.names`), not the same rule:
+    that one reads the help index's identifiers, and has no placeholder families."""
     return frozenset(name for text in shipped_docs() for name in SETTING_RE.findall(text))
 
 

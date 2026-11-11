@@ -485,9 +485,11 @@
       ],
       "wrong": [
         "They are the same op and return the same answer.",
-        "`memory.ask` returns ranked hits; `memory.search` writes a synthesised answer."
+        "`memory.ask` returns ranked hits; `memory.search` writes a synthesised answer.",
+        "`memory.search` returns ranked hits; `memory.ask` does not write an answer, it returns the same hits."
       ]
-    }
+    },
+    "forbid": ["memory\\.ask`?[^.]{0,40}(does ?n[o']t|do not|never) (synthesi|write|return)"]
   },
   {
     "id": "help-upload-file",
@@ -541,9 +543,11 @@
       "wrong": [
         "$1.0, and nothing is skipped: the cap only warns.",
         "There is no default cap; extraction keeps running.",
-        "$1.50 a day; once it is spent Loom skips synthesis and extraction."
+        "$1.50 a day; once it is spent Loom skips synthesis and extraction.",
+        "The default cap is $1.0; Loom does not skip synthesis or extraction once it is spent, it only logs."
       ]
-    }
+    },
+    "forbid": ["\\b(does ?n[o']t|do not|never|won'?t) skip"]
   },
   {
     "id": "help-key-shape",
@@ -562,8 +566,15 @@
     },
     "samples": {
       "right": ["`<scope>/<kind>/<id>`, readable, like `billing/decision/refund-window`."],
-      "wrong": ["Any string works; a UUID is best.", "Scope and kind are tags, not part of the key."]
-    }
+      "wrong": [
+        "Any string works; a UUID is best.",
+        "Scope and kind are tags, not part of the key.",
+        "Keys need not follow `<scope>/<kind>/<id>`; any string works."
+      ]
+    },
+    "forbid": [
+      "\\b(is ?n[o']t|not|need not be|need ?n[o']t be) (required|needed|followed)|\\bany (string|key) (works|is fine)"
+    ]
   },
   {
     "id": "help-history",
@@ -671,8 +682,13 @@
       "right": [
         "The new row is stored and flagged as a conflict; the namespace owner decides in the Review queue or with `conflicts.resolve`."
       ],
-      "wrong": ["The new write overwrites the old one.", "Loom refuses the write and asks you to resolve the conflict."]
-    }
+      "wrong": [
+        "The new write overwrites the old one.",
+        "Loom refuses the write and asks you to resolve the conflict.",
+        "Loom does not flag it; the new write wins with no Review queue entry or `conflicts.resolve`."
+      ]
+    },
+    "forbid": ["\\b(does ?n[o']t|do not|never|is not|isn't) (flag|mark)\\w*"]
   },
   {
     "id": "help-collection",
@@ -704,9 +720,11 @@
       ],
       "wrong": [
         "A collection is a folder of documents; share it with a link.",
-        "A `col-` namespace is shared by putting it in the token's claims; no grant is needed."
+        "A `col-` namespace is shared by putting it in the token's claims; no grant is needed.",
+        "A `col-` namespace is shared through its token claims; no grant on it is needed."
       ]
-    }
+    },
+    "forbid": ["\\bno grants?( on it)? (is |are )?(needed|required)"]
   },
   {
     "id": "help-my-role",
@@ -759,8 +777,12 @@
     },
     "samples": {
       "right": ["Run `claude plugin marketplace add ClickHouse/loom`, then install the plugin."],
-      "wrong": ["Install a Loom editor extension and paste your token."]
-    }
+      "wrong": [
+        "Install a Loom editor extension and paste your token.",
+        "`claude plugin install loom` doesn't work; there is no Loom plugin, so paste the token into an editor extension."
+      ]
+    },
+    "forbid": ["\\b(does ?n[o']t|do not|cannot|can't) (work|connect)\\b|\\bthere is no (Loom )?plugin"]
   },
   {
     "id": "help-revoke-token",
@@ -841,9 +863,11 @@
       "wrong": [
         "It means the LibreChat chat history is full.",
         "It means LibreChat's chat history is full; create a new chat.",
-        "It means LibreChat's chat history is full; retry in a new chat."
+        "It means LibreChat's chat history is full; retry in a new chat.",
+        "It does not mean LibreChat's setup failed; the chat history is full."
       ]
-    }
+    },
+    "forbid": ["\\b(does ?n[o']t|do not|not) mean\\b"]
   },
   {
     "id": "help-why-ranked",
@@ -851,7 +875,7 @@
     "use_case": "U17 Why search returned this",
     "person": "alice",
     "question": "How can I see why a search ranked a memory where it did?",
-    "expect": ["explain\\s*=\\s*true|score_components|search_trace"],
+    "expect": ["explain\\s*=\\s*true|score_components"],
     "cite_help": ["concepts/retrieval-and-ranking.md", "guides/debugging.md", "features/memory/search-and-ask.md"],
     "baseline": {
       "op": "help.search",
@@ -862,8 +886,16 @@
     },
     "samples": {
       "right": ["Search with `explain=true`: each hit carries its `score_components`."],
-      "wrong": ["Loom does not explain rankings.", "I can't explain why it ranked there; recall varies."]
-    }
+      "wrong": [
+        "Loom does not explain rankings.",
+        "I can't explain why it ranked there; recall varies.",
+        "Run `memory.search_trace` with the same request; its `rank_score` shows why the memory ranked there.",
+        "`explain=true` does not show why a memory ranked; Loom cannot tell you."
+      ]
+    },
+    "forbid": [
+      "(explain\\s*=\\s*true|score_components)`?[^.]{0,30}(does ?n[o']t|do not|cannot|can't|won'?t) (show|explain|tell)"
+    ]
   },
   {
     "id": "help-runs",
@@ -941,7 +973,8 @@
       "right": [
         "No: Loom never copies it; it reads the tracker live.",
         "No. Loom doesn't store your tracker's data; it queries it live with a read-only credential.",
-        "No. Loom reads your tracker live with a read-only credential."
+        "No. Loom reads your tracker live with a read-only credential.",
+        "No. Loom does not copy your issue tracker's data into its own database; it reads it live."
       ],
       "wrong": [
         "Yes, it copies every issue into its database each night.",
@@ -949,11 +982,12 @@
         "Yes: Loom copies every issue into its database each night; it doesn't store the attachments.",
         "Yes, Loom imports every issue into ClickHouse each night; it doesn't store the attachments.",
         "Yes. Loom copies the issues into its own tables.",
-        "Yes: Loom syncs every issue each night, and it doesn't store the tracker credentials."
+        "Yes: Loom syncs every issue each night, and it doesn't store the tracker credentials.",
+        "Loom copies your tracker's issues into its own tables and reads them live from there."
       ]
     },
     "forbid": [
-      "(^|[.!?:]\\s*)yes\\b[^.]{0,40}\\b(cop(y|ies)|imports?|syncs?|mirrors?)\\b|\\bcopies (every|each|all)\\b|\\b(imports?|syncs?|mirrors?) (every|each|all|the) (issue|tracker)"
+      "(^|[.!?:]\\s*)yes\\b[^.]{0,40}\\b(cop(y|ies)|imports?|syncs?|mirrors?)\\b|(?<!not )(?<!n't )(?<!never )\\bcop(y|ies) (every|each|all|the|your|its)\\b|\\b(imports?|syncs?|mirrors?) (every|each|all|the) (issue|tracker)"
     ]
   },
   {
@@ -1072,8 +1106,12 @@
         "Set `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`.",
         "Set `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; no other setting is needed."
       ],
-      "wrong": ["Set `LOOM_TRACE_URL`."]
-    }
+      "wrong": [
+        "Set `LOOM_TRACE_URL`.",
+        "`LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN` are not used; traces cannot go to Langfuse."
+      ]
+    },
+    "forbid": ["\\b(are|is) (not|no longer) (used|read)\\b|\\bignored\\b"]
   },
   {
     "id": "help-setting",
@@ -1099,10 +1137,14 @@
       ],
       "wrong": [
         "I could not find what LOOM_ASSISTANT_MODEL sets.",
-        "There is no `LOOM_ASSISTANT_MODEL`; the agent definition and its model come from agent.yaml at boot."
+        "There is no `LOOM_ASSISTANT_MODEL`; the agent definition and its model come from agent.yaml at boot.",
+        "`LOOM_ASSISTANT_MODEL` does not change the model; the assistant always runs agent.yaml's."
       ]
     },
-    "forbid": ["\\b(no|there is no) `?LOOM_ASSISTANT_MODEL"]
+    "forbid": [
+      "\\b(no|there is no) `?LOOM_ASSISTANT_MODEL",
+      "LOOM_ASSISTANT_MODEL`?\\s+(does ?n[o']t|do not|never) (set|change|replace)"
+    ]
   },
   {
     "id": "help-quickstart",
@@ -1173,9 +1215,11 @@
         "Loom cannot be upgraded in place; migrate the data by hand.",
         "Loom cannot be upgraded in place; migrate the data by hand, then start the new build.",
         "Stop every server, run the migrations by hand, then start the new release.",
-        "Stop every server, run the migrations by hand before starting the new release."
+        "Stop every server, run the migrations by hand before starting the new release.",
+        "Loom does not apply migrations at boot; run `loom migrate` by hand before deploying the new image."
       ]
-    }
+    },
+    "forbid": ["\\b(does ?n[o']t|do not|never|won'?t) (appl|run)\\w* (the |pending |its )?migrat"]
   },
   {
     "id": "help-undocumented",
