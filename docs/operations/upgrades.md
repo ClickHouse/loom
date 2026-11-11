@@ -224,7 +224,8 @@ newer install refuses otherwise:
 curl -fsSL https://github.com/ClickHouse/loom/releases/download/vX.Y.Z/install.sh -o loom-install.sh && LOOM_VERSION=X.Y.Z sh loom-install.sh && rm loom-install.sh
 ```
 
-Run it from your home directory, or another directory only you can write to.
+Run it from your home directory, or another
+[directory only you can write to](../getting-started/quickstart.md#fast-path-released-image-no-clone).
 
 The installer keeps `.env`, so the pin holds ClickHouse through later upgrades too:
 delete the `LOOM_CLICKHOUSE_IMAGE` line before installing a newer Loom version, and do not

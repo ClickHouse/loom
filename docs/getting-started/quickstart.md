@@ -34,10 +34,12 @@ Prerequisite: Docker Desktop or Docker Engine with Compose 2.20 or later.
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
 ```
 
-Run it from your home directory, or another directory only you can write to. A failed
-download stops with curl's error and a non-zero exit; after a failed install, fix what it
-reports and run the whole command again. The installer downloads `loom-stack.tar.gz` from
-the latest GitHub Release, verifies its SHA-256, installs the Compose and ClickHouse
+The command saves the installer where it runs and then runs that file, so run it from your
+home directory, or another directory only you can write to: in a shared one, a
+`loom-install.sh` someone else put there could be the file that runs. A failed download
+stops with curl's error and a non-zero exit; after a failed install, fix what it reports
+and run the whole command again. The installer downloads `loom-stack.tar.gz` from the
+latest GitHub Release, verifies its SHA-256, installs the Compose and ClickHouse
 configuration under `~/.loom`, pulls the matching `ghcr.io/clickhouse/loom:X.Y.Z` and
 `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the document extractor service) images, and
 waits for `http://localhost:7777/v1/health`. The server image contains the API, workers,
