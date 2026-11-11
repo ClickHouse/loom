@@ -2085,7 +2085,8 @@ class KnowledgeSettings(BaseModel):
     conversation_search_excerpt_chars: Annotated[int, LIVE] = Field(default=240, ge=1, le=2048)
 
     # LLM-title untitled threads in namespaces with conversation_logging_enabled
-    # (the Conversations page's Record conversations switch is the off-switch).
+    # (the Record conversations switch on the dashboard's Conversations page is the
+    # off-switch).
     # Skipped with the fake LLM.
     conversation_titler_enabled: bool = True
     # Seconds between titler passes.
