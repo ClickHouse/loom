@@ -69,11 +69,8 @@ async def m():
     from server.code.store.index import CodeRepo
     from server.code.app.index.producer_inference import worker_owns
     from server.code.domain.index.repos import configured_repos
-    from server.code.app.index import repo_registry
-    # A fresh process has not read the self-service registry, and configured_repos
-    # refuses until it has.
-    if not await repo_registry.read_registry():
-        raise SystemExit("run_python_delta: the self-service repository registry could not be read; retry")
+    from server.code.app.index.repo_registry import read_registry_or_exit
+    await read_registry_or_exit("run_python_delta")
     repo = CodeRepo()
     org = os.environ.get("ORG_ARG") or settings.code_org
     ns = os.environ.get("NS_ARG") or settings.code_namespace

@@ -644,6 +644,7 @@ async def _index_step(
     the live paths to `paths_out`."""
     from server.code.app.index.pass_budget import CodeIngestResult
     from server.code.app.index.pass_stream import CommitStream
+    from server.code.app.index.repo_registry import read_registry_or_exit
     from server.code.domain.index.repos import repo_for_namespace
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
@@ -658,14 +659,7 @@ async def _index_step(
 
     cost_accumulator.report_embed = counting  # type: ignore[assignment]
     await get_client().connect()
-    from server.code.app.index import repo_registry
-
-    # A fresh process has not read the self-service registry, and repo_for_namespace
-    # refuses until it has.
-    if not await repo_registry.read_registry():
-        raise SystemExit(
-            "index-step: the self-service repository registry could not be read; retry"
-        )
+    await read_registry_or_exit("index-step")
     repo = CodeRepo()
     cfg = repo_for_namespace(org, ns)
     if cfg is None:

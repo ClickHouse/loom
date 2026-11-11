@@ -157,3 +157,28 @@ def test_path_class_tells_docs_tests_and_source_apart() -> None:
     rows = [{"f": ["a.py", "docs/x.rst"]}, {"f": ["tests/t.py"]}]
     mix = S.result_mix(rows, lambda r: r["f"], 5)
     assert mix == {"source": 0.333, "test": 0.333, "doc": 0.333}
+
+
+def test_the_index_step_reads_the_registry_before_it_looks_up_the_entry(
+    monkeypatch, tmp_path
+) -> None:
+    """The index step runs in a fresh process: it reads the self-service registry before
+    `repo_for_namespace`, which refuses until it is read, and stops naming why when the
+    read fails."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    from server.code.app.index import repo_registry
+    from server.code.domain.index import repos
+    from server.core import ch
+
+    monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
+    monkeypatch.setattr(repo_registry, "read_registry", AsyncMock(return_value=False))
+    looked_up = []
+    monkeypatch.setattr(repos, "repo_for_namespace", lambda org, ns: looked_up.append(ns))
+
+    with pytest.raises(SystemExit, match="index-step: .*registry could not be read; retry"):
+        asyncio.run(S._index_step("org", "code-x", "abc", 1, str(tmp_path / "paths")))
+    assert looked_up == []

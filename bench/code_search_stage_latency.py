@@ -197,6 +197,9 @@ async def _live(args: argparse.Namespace) -> int:
     _instrument(stmts, embeds)
     ch = get_client()
     await ch.connect()
+    from server.code.app.index.repo_registry import read_registry_or_exit
+
+    await read_registry_or_exit("code_search_stage_latency")
     queries = [
         str(r["query"])
         for r in await ch.query_all(
