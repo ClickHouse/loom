@@ -139,6 +139,7 @@ client sees one the server no longer reads.
 [Storage layout](architecture/storage-layout.md) ·
 [Code-index architecture](architecture/code-index-architecture.md) ·
 [Document extraction](architecture/document-extraction.md) ·
+[Document sources](architecture/document-sources.md) ·
 [LLM and embeddings](architecture/llm-architecture.md) ·
 [Security](architecture/security.md) ·
 [Assistant design](architecture/assistant.md) ·
