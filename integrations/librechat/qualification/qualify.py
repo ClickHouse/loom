@@ -674,9 +674,10 @@ def check_help_citations(
         if name in cited:
             continue
         cited.append(name)
+        # A path help.get refuses outright (empty, or past its 300 characters as written)
+        # names no page.
         path = m["path"].removeprefix("docs/")
-        # A path help.get refuses outright (empty, or past its 300 characters) names no page.
-        if not path or len(path) > 300:
+        if not path or len(m["path"]) > 300:
             invalid.append(f"{name}: no such page")
             continue
         page = scorer_read(st, scorer, "help.get", {"path": path})
@@ -859,7 +860,7 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
     spec = case["baseline"]
     cited: list[str] = []
     abstained = False
-    expected = case.get("cite") in cited if case.get("cite") else None
+    expected: bool | None = None  # set below where the direct path can cite the labeled source
     if code != 200:
         text = f"{code} {out.get('detail', out)}"
         # The direct path of a question the docs leave open is not scored, whatever answered.
@@ -872,9 +873,9 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         else:
             text = f"{hits[0].get('content_excerpt', '')} [{hits[0]['memory_key']}]"
             cited = [hits[0]["memory_key"]]
-            expected = case.get("cite") in cited if case.get("cite") else None
         correct = abstained if case["kind"] == "abstain" else score(case, text)["correct"]
         correct = correct and case["kind"] != "refusal"
+        expected = case.get("cite") in cited if case.get("cite") else None
     elif spec["op"] == "knowledge.search":
         return native_document_score(case, out)
     elif spec["op"] == "help.search":

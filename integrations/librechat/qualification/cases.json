@@ -823,7 +823,7 @@
     "question": "What does the health problem assistant_service_failing mean?",
     "expect": [
       "LibreChat",
-      "(set ?up|setup|regist\\w*|sign-?in|creat\\w*)[^.]{0,80}(fail|could ?n[o']t|did ?n[o']t)|fail\\w*[^.]{0,80}(set ?up|setup|regist|sign-?in)|retr(y|ies)"
+      "(set ?up|setup|regist\\w*|sign-?in|creat\\w*)[^.]{0,80}(fail|could ?n[o']t|did ?n[o']t)|fail\\w*[^.]{0,80}(set ?up|setup|regist|sign-?in)|fail\\w*[^.]{0,80}retr(y|ies)|retr(y|ies)[^.]{0,40}(set ?up|regist)"
     ],
     "cite_help": ["features/integrations/librechat.md", "architecture/assistant.md"],
     "baseline": {
@@ -840,7 +840,8 @@
       ],
       "wrong": [
         "It means the LibreChat chat history is full.",
-        "It means LibreChat's chat history is full; create a new chat."
+        "It means LibreChat's chat history is full; create a new chat.",
+        "It means LibreChat's chat history is full; retry in a new chat."
       ]
     }
   },
@@ -944,9 +945,11 @@
       ],
       "wrong": [
         "Yes, it copies every issue into its database each night.",
-        "Yes: Loom copies every issue into its database each night; it doesn't store attachments."
+        "Yes: Loom copies every issue into its database each night; it doesn't store attachments.",
+        "Yes: Loom copies every issue into its database each night; it doesn't store the attachments."
       ]
-    }
+    },
+    "forbid": ["\\byes\\b[^.]{0,20}\\bcop(y|ies)\\b|\\bcopies (every|each|all)\\b"]
   },
   {
     "id": "help-erase-user",
@@ -972,8 +975,15 @@
         "An admin can run `memory.clear`, but it only tombstones; an org admin erases with `erasure.request` and the `user_id` scope.",
         "Only an organization admin, with `erasure.request` and the `user_id` scope."
       ],
-      "wrong": ["An org admin runs `memory.clear` with `agent=\"*\"`.", "Any writer may, with `memory.delete`."]
-    }
+      "wrong": [
+        "An org admin runs `memory.clear` with `agent=\"*\"`.",
+        "Any writer may, with `memory.delete`.",
+        "No org admin can: `erasure.request` does not take the `user_id` scope; run `memory.clear` in each namespace."
+      ]
+    },
+    "forbid": [
+      "`?erasure\\.request`? (does ?n[o']t|cannot|can ?not|won'?t) (take|accept|erase)|\\bno (org(ani[sz]ation)? )?admin (can|may)\\b"
+    ]
   },
   {
     "id": "help-extraction",
@@ -1096,7 +1106,7 @@
     "person": "alice",
     "question": "Does Loom's quickstart need an API key?",
     "expect": [
-      "\\b(needs?|requires?) no (API )?keys?\\b|\\bno API key\\b|\\b(does ?n[o']t|do ?n[o']t|do not|does not) (need|require) an? (API )?key"
+      "\\b(needs?|requires?) no (API )?keys?\\b|\\bno API key (is )?(needed|required)\\b|\\b(does ?n[o']t|do ?n[o']t|do not|does not) (need|require) an? (API )?key"
     ],
     "cite_help": ["getting-started/quickstart.md"],
     "baseline": {
@@ -1121,7 +1131,8 @@
         "Yes, the quickstart does not run without an OpenAI API key.",
         "Yes. Without an API key the quickstart cannot start.",
         "Yes. It won't run without your OpenAI key.",
-        "Yes: you cannot use the quickstart without an API key."
+        "Yes: you cannot use the quickstart without an API key.",
+        "Yes. With no API key, the quickstart won't start."
       ]
     }
   },
@@ -1132,7 +1143,7 @@
     "person": "alice",
     "question": "How do I upgrade a Loom deployment to a new release?",
     "expect": [
-      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|(appl|run)\\w* (the |pending |its )?(migrat\\w*|files)[^.]{0,40}\\b(at|on|when|before) (boot|start|it reports ready)|migrations? (run|are applied|apply)[^.]{0,30}\\b(at|on|when) (boot|start)|replac\\w* the image[^.]{0,80}appl\\w* (the |its )?migrat"
+      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|(appl|run)\\w* (the |pending |its )?(migrat\\w*|files)[^.]{0,40}(\\b(at|on|when) (boot|start)|\\bbefore it reports ready)|migrations? (run|are applied|apply)[^.]{0,30}\\b(at|on|when) (boot|start)|replac\\w* the image[^.]{0,80}appl\\w* (the |its )?migrat"
     ],
     "cite_help": ["operations/upgrades.md"],
     "baseline": {
@@ -1155,7 +1166,8 @@
         "Export every memory, reinstall the new release and import them back.",
         "Loom cannot be upgraded in place; migrate the data by hand.",
         "Loom cannot be upgraded in place; migrate the data by hand, then start the new build.",
-        "Stop every server, run the migrations by hand, then start the new release."
+        "Stop every server, run the migrations by hand, then start the new release.",
+        "Stop every server, run the migrations by hand before starting the new release."
       ]
     }
   },
