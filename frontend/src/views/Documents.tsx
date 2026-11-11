@@ -167,7 +167,7 @@ export function Documents() {
   const ownShelf = isMemoryNamespace(picked.namespace, mine);
   const noPlace = !shown && !resolving && !ownShelf;
   // With no namespace in the header, the Library opens the person's own files. With none (a
-  // token that is not a person's), it stays on the top level, which lists every collection.
+  // token that is not a person's), it stays on the top level, which lists the collections.
   const opensFirst = picked.namespace ? null : (collections.rows?.find((c) => c.personal) ?? null);
   const fallback = ownShelf
     ? `showing ${picked.namespace}`
@@ -821,6 +821,7 @@ export function Documents() {
     <CollectionsInside
       key={shown?.namespace ?? ""}
       rows={collections.rows}
+      truncated={collections.truncated}
       current={shown}
       onPick={goTo}
       className="mt-6"

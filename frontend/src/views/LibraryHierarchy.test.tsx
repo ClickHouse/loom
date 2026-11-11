@@ -210,6 +210,12 @@ describe("CollectionsInside", () => {
     );
     expect(within(own).queryByRole("link", { name: "Research" })).toBeNull();
     cleanup();
+    // A list that stopped early: the missing parent may be one the caller can open.
+    render(<CollectionsInside rows={rows} truncated current={null} onPick={() => {}} />);
+    expect(
+      within(screen.getByRole("region", { name: /Shared with you/ })).getByText("inside a collection not listed here"),
+    ).toBeInTheDocument();
+    cleanup();
     // Inside a collection, only its children: no "Shared with you".
     render(<CollectionsInside rows={rows} current={rows[0]} onPick={() => {}} />);
     expect(screen.queryByRole("region", { name: /Shared with you/ })).toBeNull();

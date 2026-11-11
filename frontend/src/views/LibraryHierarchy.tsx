@@ -98,12 +98,19 @@ export function sharedWithMe(rows: CollectionEntry[]): CollectionEntry[] {
 }
 
 /** Where a collection sits, by its parents from the top ("in Team › Research"); a parent the
- *  caller cannot read is "…", and alone is said in words. Empty for a top-level one. */
-function pathText(c: CollectionEntry, byName: Map<string, CollectionEntry>, repeated: Set<string>): string {
+ *  caller cannot read is "…", and alone is said in words, as the path's dots button says it.
+ *  Empty for a top-level one. */
+function pathText(
+  c: CollectionEntry,
+  byName: Map<string, CollectionEntry>,
+  repeated: Set<string>,
+  truncated: boolean,
+): string {
   const parents = collectionPath(c, byName).slice(0, -1);
   if (parents.length === 0) return "";
   const text = parents.map((p) => ("hidden" in p ? "…" : distinctTitle(p, repeated))).join(" › ");
-  return text === "…" ? "inside a collection you can't open" : `in ${text}`;
+  if (text !== "…") return `in ${text}`;
+  return truncated ? "inside a collection not listed here" : "inside a collection you can't open";
 }
 
 /** The place above the top: its label, the collection it is (null for the header's
@@ -294,11 +301,14 @@ export function CollectionPath({
 
 export function CollectionsInside({
   rows,
+  truncated = false,
   current,
   onPick,
   className = "",
 }: {
   rows: CollectionEntry[];
+  /** The list stopped early: a parent missing from it may be one the caller can open. */
+  truncated?: boolean;
   current: CollectionEntry | null;
   onPick: (collection: string) => void;
   className?: string;
@@ -310,8 +320,24 @@ export function CollectionsInside({
   return (
     <div className={`space-y-6 ${className}`}>
       {/* At the top, each says where it sits: one may be inside a collection not listed. */}
-      <PlaceList id={HEADING_ID} label="Collections" items={inside} rows={rows} onPick={onPick} withPath={top} />
-      <PlaceList id={SHARED_HEADING_ID} label="Shared with you" items={shared} rows={rows} onPick={onPick} withPath />
+      <PlaceList
+        id={HEADING_ID}
+        label="Collections"
+        items={inside}
+        rows={rows}
+        onPick={onPick}
+        withPath={top}
+        truncated={truncated}
+      />
+      <PlaceList
+        id={SHARED_HEADING_ID}
+        label="Shared with you"
+        items={shared}
+        rows={rows}
+        onPick={onPick}
+        withPath
+        truncated={truncated}
+      />
     </div>
   );
 }
@@ -324,6 +350,7 @@ function PlaceList({
   rows,
   onPick,
   withPath = false,
+  truncated,
 }: {
   id: string;
   label: string;
@@ -331,6 +358,7 @@ function PlaceList({
   rows: CollectionEntry[];
   onPick: (collection: string) => void;
   withPath?: boolean;
+  truncated: boolean;
 }) {
   const [count, setCount] = useState(FIRST_INSIDE);
   const list = useRef<HTMLUListElement | null>(null);
@@ -357,7 +385,7 @@ function PlaceList({
       <SectionHeading id={id} level={2} label={label} count={items.length} focusable />
       <ul ref={list} className="space-y-1">
         {items.slice(0, count).map((c) => {
-          const path = withPath ? pathText(c, byName, repeated) : "";
+          const path = withPath ? pathText(c, byName, repeated, truncated) : "";
           return (
             <li key={c.namespace} data-collection={c.namespace}>
               <div className="flex flex-wrap items-baseline gap-x-2">
