@@ -159,7 +159,7 @@ orgs, mints a token per person, revokes one, and scores each answer:
 | Model cost per answer, every prompt token at list price | at most $0.05 | mean $0.029; max $0.064 (`abstain-cfo`, three searches) misses the target |
 
 The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune, refusal
-and abstention cases, scored against the current `cases.json` with `qualify.py rescore`;
+and abstention cases other than `data-history` and `data-connected-agents`, scored against the current `cases.json` with `qualify.py rescore`;
 the direct-path numbers are from a later run of that path alone
 (`qualify.py run --native-only`) on a fresh seed. The document cases below were run
 separately.
@@ -225,7 +225,8 @@ help tools, which read the documentation the server ships). Each help case label
 values its answer must state and the pages that hold them, with a right and a wrong sample
 answer the label is tested against. Its answer is scored correct when it states them,
 under the unknown-name rule above. For the case with no answer in the docs, the answer is
-correct when it says so and writes no `LOOM_` name that no docs page writes; an answer
+correct when it says so and writes no `LOOM_` name that no docs page writes, as a name or as a member of a family a
+page writes with placeholders; an answer
 that names an invented setting only to deny it is scored wrong. The labels are patterns
 over the answer's text, so they err both ways: an answer that states the labeled values
 beside a wrong claim about them can pass, and a right answer worded otherwise can fail. A

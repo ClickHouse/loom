@@ -1200,7 +1200,8 @@ def test_a_history_case_takes_an_earlier_version_through_the_bridge(monkeypatch)
 def test_every_case_names_its_use_case_and_cites_pages_that_exist(case):
     assert re.fullmatch(r"U\d+ \S.*", case.get("use_case", "")), case["id"]
     for page in case.get("cite_help") or []:
-        assert (ROOT / "docs" / page).is_file(), page
+        # The help index skips development/, so a page there can never be cited.
+        assert (ROOT / "docs" / page).is_file() and not page.startswith("development/"), page
 
 
 def test_a_help_citation_help_get_would_refuse_is_no_page(monkeypatch):
@@ -1211,3 +1212,9 @@ def test_a_help_citation_help_get_would_refuse_is_no_page(monkeypatch):
         st, {"namespace": "acme-handbook"}, {}, "[help:docs/]"
     )
     assert invalid == ["help:docs/: no such page"]
+
+
+def test_a_failed_direct_read_of_the_no_docs_question_is_not_scored():
+    q = _qualify()
+    case = _case("help-undocumented")
+    assert q.native_score(case, 503, {"detail": "unavailable"})["correct"] is None

@@ -675,7 +675,7 @@
     "question": "What is a collection in Loom, and how is one shared?",
     "expect": [
       "col-|only grants open|grant-only|opens? only (through|by|via) grants?",
-      "grants?\\b[^.]{0,40}\\bon it|(by|via|with|through) (a |its )?`?grants?|grant(s|ing)? (a |an )?(user|group|agent|principal|`?everyone)"
+      "grants?\\b[^.]{0,40}\\bon it|(by|via|with|through) (a |its )?`?grants?|grant(s|ing)? (a |an )?(user|group|agent|principal|`?everyone)|grants? on (one|it|a collection)"
     ],
     "cite_help": [
       "concepts/identities-and-namespaces.md",
@@ -692,7 +692,8 @@
     "samples": {
       "right": [
         "A collection is a `col-…` namespace that opens only through grants; you share it by creating grants on it.",
-        "A collection is a namespace that only grants open; no token claim or org admin role reaches it. Share it by granting a user, group, agent or `everyone` a role on it."
+        "A collection is a namespace that only grants open; no token claim or org admin role reaches it. Share it by granting a user, group, agent or `everyone` a role on it.",
+        "A collection is a namespace named `col-…` that only grants open; a grant on one can name a `user:`, `group:` or `agent:` principal, or `everyone`."
       ],
       "wrong": [
         "A collection is a folder of documents; share it with a link.",
@@ -1108,7 +1109,7 @@
     "person": "alice",
     "question": "How do I upgrade a Loom deployment to a new release?",
     "expect": [
-      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|(appl|run)\\w* (the |pending |its )?migrat\\w*[^.]{0,40}\\b(at|on|when|before) (boot|start|it reports ready)|migrations? (run|are applied|apply)[^.]{0,30}\\b(at|on|when) (boot|start)|replac\\w* the image[^.]{0,80}appl\\w* (the |its )?migrat"
+      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|(appl|run)\\w* (the |pending |its )?(migrat\\w*|files)[^.]{0,40}\\b(at|on|when|before) (boot|start|it reports ready)|migrations? (run|are applied|apply)[^.]{0,30}\\b(at|on|when) (boot|start)|replac\\w* the image[^.]{0,80}appl\\w* (the |its )?migrat"
     ],
     "cite_help": ["operations/upgrades.md"],
     "baseline": {
@@ -1124,7 +1125,8 @@
         "Deploy the new image; the server applies pending migrations at boot.",
         "Deploy the new image; migrations run automatically at boot.",
         "Migrations apply automatically on startup once the new image is deployed.",
-        "Replace the image; the upgrade applies the migrations the new build carries."
+        "Replace the image; the upgrade applies the migrations the new build carries.",
+        "At boot, the server applies pending files before it reports ready."
       ],
       "wrong": [
         "Export every memory, reinstall the new release and import them back.",

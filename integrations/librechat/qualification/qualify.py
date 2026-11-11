@@ -242,6 +242,8 @@ document passage as [source_uri § section], with the section breadcrumb a searc
 (leave it out when the hit has none), for example [guides/setup.md § Setup > Install]. Add
 the revision, as in [guides/setup.md § Setup > Install, revision 3], only when a tool
 returned that document's revision number; never write a revision no tool returned.
+For a question about how Loom itself works, search Loom's documentation with the help
+tools and cite each passage as [help:<page> § <section>], the section as the hit gives it.
 When the tools return nothing relevant, say it is not stored in Loom. When a tool call
 fails, say that it failed and quote the error. Never answer from your own knowledge."""
 
@@ -857,7 +859,8 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
     abstained = False
     if code != 200:
         text = f"{code} {out.get('detail', out)}"
-        correct = case["kind"] == "refusal"
+        # The direct path of a question the docs leave open is not scored, whatever answered.
+        correct = None if case["kind"] == "help_abstain" else case["kind"] == "refusal"
     elif spec["op"] == "memory.search":
         hits = out.get("results") or []
         abstained = bool(out.get("abstain")) or not hits
