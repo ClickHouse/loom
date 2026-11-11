@@ -75,25 +75,31 @@ def repos(tmp_path: Path) -> dict[str, object]:
     }
 
 
-def _run(
-    r: dict[str, object], *, wm: str, head: str, bare: str, owner: str = "manual"
-) -> tuple[str, str]:
+def _script(r: dict[str, object], **extra: str) -> subprocess.CompletedProcess[str]:
+    """The script in upload mode against the stub `python`, with `extra` in its env."""
     env = {
         **os.environ,
-        "FAKE_IDENT": f"org code-x {wm} {head} {bare} {owner}",
         "CALLS": str(r["calls"]),
         "PYTHON": str(Path(str(r["bin"])) / "python"),
         "SCIP_PYTHON": str(Path(str(r["bin"])) / "scip-python"),
         "LOOM_API_KEY": "k",
+        **extra,
     }
     env.pop("DELTA_OUT", None)
-    out = subprocess.run(
+    return subprocess.run(
         ["bash", str(_SCRIPT), str(r["checkout"]), "http://loom", "org", "code-x"],
         env=env,
-        check=True,
         capture_output=True,
         text=True,
-    ).stdout
+    )
+
+
+def _run(
+    r: dict[str, object], *, wm: str, head: str, bare: str, owner: str = "manual"
+) -> tuple[str, str]:
+    done = _script(r, FAKE_IDENT=f"org code-x {wm} {head} {bare} {owner}")
+    done.check_returncode()
+    out = done.stdout
     calls = Path(str(r["calls"]))
     return out, calls.read_text() if calls.exists() else ""
 
@@ -264,21 +270,7 @@ def test_the_identity_read_loads_the_repository_registry_before_listing_entries(
 def test_a_failed_identity_read_stops_the_script_before_indexing(repos) -> None:
     """When the identity step exits non-zero (an unreadable registry, an unreachable
     ClickHouse), the script stops: no converter runs on an empty identity line."""
-    env = {
-        **os.environ,
-        "FAKE_IDENT_EXIT": "1",
-        "CALLS": str(repos["calls"]),
-        "PYTHON": str(Path(str(repos["bin"])) / "python"),
-        "SCIP_PYTHON": str(Path(str(repos["bin"])) / "scip-python"),
-        "LOOM_API_KEY": "k",
-    }
-    env.pop("DELTA_OUT", None)
-    done = subprocess.run(
-        ["bash", str(_SCRIPT), str(repos["checkout"]), "http://loom", "org", "code-x"],
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    done = _script(repos, FAKE_IDENT_EXIT="1")
     calls = Path(str(repos["calls"]))
     assert done.returncode != 0
     assert "identity failed" in done.stderr
@@ -296,5 +288,5 @@ def test_an_unreadable_registry_stops_the_identity_read(monkeypatch) -> None:
     monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
     monkeypatch.setattr(repo_registry, "read_registry", AsyncMock(return_value=False))
 
-    with pytest.raises(SystemExit, match="registry could not be read; retry"):
+    with pytest.raises(SystemExit, match=r"^run_python_delta: .*could not be read; retry$"):
         exec(_ident_snippet(), {})
