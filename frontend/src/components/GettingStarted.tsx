@@ -287,7 +287,7 @@ export function GettingStarted({
       </div>
 
       <ol className="space-y-2">
-        <Step step="connect" index={0} done={!!done.connect}>
+        <Step step="connect" index={0} done={connected}>
           {/* A tick, once there, holds: a later visit (tokens not read yet) or a revoked token
               does not bring the step's actions back. */}
           {connected ? (
@@ -340,11 +340,7 @@ export function GettingStarted({
         <Step step="write" index={1} done={!!done.write}>
           {!done.write && (
             <div className="mt-2">
-              <Button
-                type={connect === "connected" ? "primary" : "secondary"}
-                htmlType="button"
-                onClick={() => setAddOpen(true)}
-              >
+              <Button type={connected ? "primary" : "secondary"} htmlType="button" onClick={() => setAddOpen(true)}>
                 Add a memory yourself
               </Button>
             </div>

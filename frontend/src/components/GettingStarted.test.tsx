@@ -177,6 +177,8 @@ describe("GettingStarted on Memories", () => {
     expect(within(panel).getByText("Your agent has connected.")).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: /Create (a|another) token/ })).toBeNull();
     expect(within(panel).getByText("1 of 2 done")).toBeInTheDocument();
+    // The next step's action is the page's primary one.
+    expect(within(panel).getByRole("button", { name: "Add a memory yourself" }).className).toMatch(/primary/i);
   });
 
   it("ticks both steps when an agent's first memory arrives, in place", async () => {
