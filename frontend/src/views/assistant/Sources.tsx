@@ -82,8 +82,8 @@ export function supportLabel(support: Support, citations: Citation[], unknownNam
  * One finished answer's label and citations, as the server checked them against Loom with
  * the answer's token. The label follows the answer's `support` (server/assistant/domain/
  * support.py): an answer that makes no claim, such as a greeting or an abstention, has none.
- * A memory, document or help page found in Loom opens where the dashboard shows it; any
- * other citation says why.
+ * A memory, document or help page found in Loom opens where the dashboard shows it; a
+ * citation not found says why.
  */
 export function Sources({
   citations,

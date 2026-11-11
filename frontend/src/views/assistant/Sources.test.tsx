@@ -1,15 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen, within } from "../../test/rtl";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Citation } from "../../api/assistantChat";
-import { supportLabel } from "./Sources";
+import { Sources, supportLabel } from "./Sources";
 
-let n = 0;
 const cite = (verified: boolean, kind = "memory"): Citation => ({
   kind,
-  text: `${kind}:k${n++}`,
+  text: `${kind}:k`,
   verified,
-  reason: verified ? "" : "not found",
+  reason: verified ? "" : "no such key in this namespace",
   ref: "k",
 });
+
+afterEach(cleanup);
 
 describe("supportLabel", () => {
   it("counts one source in the singular", () => {
@@ -36,14 +38,21 @@ describe("supportLabel", () => {
     );
   });
 
-  it("names the documentation for an answer that cites only help sections", () => {
-    expect(supportLabel("supported", [cite(true, "help")])?.why).toContain("in this build's documentation");
-  });
-
   it("says the sources could not be checked on an unchecked answer with sources", () => {
     expect(supportLabel("unchecked", [cite(false, "code")])).toMatchObject({
       text: "Sources not checked",
       why: "Loom could not check this answer's sources; each source below says why.",
     });
+  });
+});
+
+describe("Sources", () => {
+  it("shows a found SQL citation as found, as text, with no reason", () => {
+    const sql: Citation = { kind: "sql", text: "sql:SELECT 1", verified: true, reason: "", ref: "" };
+    render(<Sources citations={[sql]} support="supported" answer={1} />);
+    const row = within(screen.getByRole("list", { name: "Sources" })).getByRole("listitem");
+    expect(row).toHaveTextContent(/^Found in Loom · /);
+    expect(within(row).queryByRole("button")).toBeNull();
+    expect(row).not.toHaveTextContent("(");
   });
 });

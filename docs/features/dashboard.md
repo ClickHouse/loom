@@ -120,10 +120,11 @@ says why. The chat asks about the header's namespace
 under the person's own access: the answer streams in as text with Markdown emphasis, lists,
 tables and code (no HTML, images or links), then its Sources, each citation as the server
 checked it, a memory, document or help citation found in Loom opening where the dashboard
-shows it (a help citation on the Help page at its section) and any other saying why, and a label for the answer's
-[support](../architecture/assistant.md#support), none on an answer that makes no claim, such
-as a greeting or an abstention. **Stop** ends an answer; closing the panel or leaving the
-page does not. Each question goes with the conversation's newest 50 messages.
+shows it (a help citation on the Help page at its section) and any citation not found saying
+why, and a label for the answer's [support](../architecture/assistant.md#support), none on
+an answer that makes no claim, such as a greeting or an abstention. **Stop** ends an
+answer; closing the panel or leaving the page does not. Each question goes with the
+conversation's newest 50 messages.
 
 One panel serves every window width:
 
