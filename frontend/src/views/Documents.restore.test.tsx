@@ -101,6 +101,7 @@ describe("Library delete Undo", () => {
     );
     await userEvent.click(undo);
     expect(await screen.findByText("docs/refunds.md is not restored yet; try Undo again later")).toBeInTheDocument();
+    expect(screen.getByText("request id req-r")).toBeInTheDocument();
     api.restoreKnowledge.mockResolvedValueOnce({
       restored: true,
       reason: "",

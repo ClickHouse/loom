@@ -6,6 +6,7 @@ import { ApiError } from "../lib/errors";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { Recent } from "./Recent";
+import { ToastViewport } from "../components/Toast";
 
 // The Memories list against the list rules: one count, in the toolbar; the toolbar in
 // every state, with the one state pattern under it; an Agent and a Status select in
@@ -481,5 +482,47 @@ describe("Memories list chrome", () => {
       "d/plain",
       detail,
     ]);
+  });
+
+  it("counts a pin that committed with lists behind as pinned, and says a failure apart", async () => {
+    vi.mocked(getMemory).mockResolvedValue({ found: true, value: "v", version: 1, pinned: false } as MemoryDetail);
+    vi.mocked(listMemories).mockResolvedValue({
+      entries: [entry("d/one"), entry("d/two")],
+      total: 2,
+      today: 0,
+      truncated: false,
+    });
+    const pending = new ApiError({ status: 503, code: "PUBLICATION_PENDING", requestId: "req-p", detail: {} });
+    vi.mocked(pinMemory).mockRejectedValueOnce(pending);
+    render(
+      <>
+        <ToastViewport />
+        <Recent />
+      </>,
+    );
+    await screen.findByText("d/one");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("checkbox", { name: "Select d/one" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select d/two" }));
+    await user.click(within(toolbar()).getByRole("button", { name: "Pin" }));
+    expect(await screen.findByText("Pinned 2 · lists may show the old state for a moment")).toBeInTheDocument();
+    expect(screen.getByText("request id req-p")).toBeInTheDocument();
+    cleanup();
+    vi.mocked(pinMemory).mockRejectedValueOnce(pending);
+    vi.mocked(pinMemory).mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", detail: {} }));
+    render(
+      <>
+        <ToastViewport />
+        <Recent />
+      </>,
+    );
+    await screen.findByText("d/one");
+    await user.click(screen.getByRole("checkbox", { name: "Select d/one" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select d/two" }));
+    await user.click(within(toolbar()).getByRole("button", { name: "Pin" }));
+    expect(
+      await screen.findByText("Pinned 1 · 1 failed · lists may show the old state for a moment"),
+    ).toBeInTheDocument();
+    expect(document.querySelector("[data-toast-kind]")).toHaveAttribute("data-toast-kind", "error");
   });
 });
