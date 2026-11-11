@@ -69,17 +69,19 @@ grant new accounts access to the existing namespaces.
 For the default personal installation, with Docker installed:
 
 ```bash
-curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
 ```
 
+Run it from your home directory, or another
+[directory only you can write to](./docs/getting-started/quickstart.md#fast-path-released-image-no-clone).
 The installer starts Loom and ClickHouse, applies migrations and prints the dashboard URL:
 **http://localhost:7777/**. The image includes the server, workers, dashboard and
 Python, TypeScript and Go compiler indexers; TypeScript dependencies are prepared
 automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
 
 The installation lives in `~/.loom` (`LOOM_INSTALL_DIR` chooses another directory): the
-Compose file and the startup settings in `~/.loom/.env`. Re-running the installer upgrades
-in place and keeps your `.env` settings.
+Compose file and the startup settings in `~/.loom/.env`. Running the install command again
+upgrades in place and keeps your `.env` settings.
 
 Keep single-user mode localhost-only. For shared access, follow the
 [team deployment guide](./docs/operations/deployment.md#identity-modes), including TLS.

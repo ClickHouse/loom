@@ -31,18 +31,23 @@ configuration in either mode.
 Prerequisite: Docker Desktop or Docker Engine with Compose 2.20 or later.
 
 ```bash
-curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
 ```
 
-This downloads `loom-stack.tar.gz` from the latest GitHub Release, verifies its SHA-256,
-installs the Compose and ClickHouse configuration under `~/.loom`, pulls the matching
+The command saves the installer in the current directory and then runs that file, so run
+it from your home directory, or another directory only you can write to: in a shared one,
+someone else can replace `loom-install.sh`, or point it at another file, before it runs. A
+failed download stops with curl's error and a non-zero exit; after a failed install, fix
+what it reports and run the whole command again. The installer downloads
+`loom-stack.tar.gz` from the latest GitHub Release, verifies its SHA-256, installs the
+Compose and ClickHouse configuration under `~/.loom`, pulls the matching
 `ghcr.io/clickhouse/loom:X.Y.Z` and `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the
 document extractor service) images, and waits for `http://localhost:7777/v1/health`. The
 server image contains the API, workers, migrations and the built React dashboard at the
-server root; no Python or Node installation is needed. Python, TypeScript and Go
-compiler indexers are included and enabled. A repository indexed with the TypeScript
-indexer gets its dependencies installed automatically. Both images support Linux `amd64`
-and `arm64`, including Docker Desktop on Apple Silicon.
+server root; no Python or Node installation is needed. Python, TypeScript and Go compiler
+indexers are included and enabled. A repository indexed with the TypeScript indexer gets
+its dependencies installed automatically. Both images support Linux `amd64` and `arm64`,
+including Docker Desktop on Apple Silicon.
 
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
 self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its
@@ -51,43 +56,53 @@ database and a read-only reader user, or prints the SQL an admin has to run
 ([choosing the ClickHouse](../operations/deployment.md#choosing-the-clickhouse)):
 
 ```bash
-curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh \
-  | sh -s -- --clickhouse https://loom@abc123.us-east-1.aws.clickhouse.cloud:8443
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh \
+  && sh loom-install.sh --clickhouse https://loom@abc123.us-east-1.aws.clickhouse.cloud:8443 && rm loom-install.sh
 ```
 
 Each release's `install.sh` installs that release, so the copy `latest` serves installs the
-latest release, and a saved copy installs the same version every time it runs. Over a newer
+latest release, and a release's own URL, below, installs that release every time. Over a newer
 install, an older release's copy refuses to install, rather than start an older Loom and
 ClickHouse on newer data; to downgrade on purpose, follow
 [downgrading an installer install](../operations/upgrades.md#downgrading-an-installer-install).
-Pin a release, or inspect everything before starting:
+To pin a release, use its own URL:
 
 ```bash
-curl -fsSL https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.sh | sh
-
-curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz
-curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz.sha256
-curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/install.sh
-sha256sum -c loom-stack.tar.gz.sha256
-tar -tzf loom-stack.tar.gz
-LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
-  LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh install.sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/download/v1.2.3/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
 ```
 
-`LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY`,
-`LOOM_EXTRACTOR_IMAGE_REPOSITORY` and `LOOM_CLICKHOUSE_IMAGE` given to the installer are
-written to the install directory's `.env`, so later `docker compose` commands there and
-later installer runs use the same port and images. A `LOOM_BIND_HOST` other than
-loopback publishes Loom beyond this host, and the server refuses to start that way
-without `LOOM_PUBLIC_BASE_URL` and sign-in: install with `LOOM_SKIP_START=1`, set them
-in `.env` (below), then run the installer again.
+To inspect everything before starting, download the files and check them:
 
-Each release runs the ClickHouse release that was latest when it was built, so rerunning
-the same Loom version keeps its ClickHouse; installing a newer Loom version moves it,
-unless `.env` pins `LOOM_CLICKHOUSE_IMAGE` (delete that line to follow the releases
-again). Rerunning the installer updates the managed Compose/configuration files and
-reconciles the containers. It preserves `~/.loom/.env`, adding the extractor's URL and a
-token to one without, and the named Docker volumes. To stop without deleting data:
+```bash
+curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz
+curl -fLO https://github.com/ClickHouse/loom/releases/latest/download/loom-stack.tar.gz.sha256
+curl -fL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh
+sha256sum -c loom-stack.tar.gz.sha256
+tar -tzf loom-stack.tar.gz
+```
+
+Then, once what they print looks right, install from the checked bundle:
+
+```bash
+LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
+  LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh loom-install.sh && rm loom-install.sh
+```
+
+`LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY`, `LOOM_EXTRACTOR_IMAGE_REPOSITORY`
+and `LOOM_CLICKHOUSE_IMAGE` given to the installer are written to the install directory's
+`.env`, so later `docker compose` commands there and later installer runs use the same
+port and images. A `LOOM_BIND_HOST` other than loopback publishes Loom beyond this host,
+and the server refuses to start that way without `LOOM_PUBLIC_BASE_URL` and sign-in:
+install with `LOOM_SKIP_START=1`, set them in `.env` (below), then run the install command
+again without `LOOM_SKIP_START=1`.
+
+Each release runs the ClickHouse release that was latest when it was built, so running the
+install command again for the same Loom version keeps its ClickHouse; installing a newer
+Loom version moves it, unless `.env` pins `LOOM_CLICKHOUSE_IMAGE` (delete that line to
+follow the releases again). Running the install command again updates the managed
+Compose/configuration files and reconciles the containers. It preserves `~/.loom/.env`,
+adding the extractor's URL and a token to one without, and the named Docker volumes. To
+stop without deleting data:
 
 ```bash
 docker compose --project-directory "$HOME/.loom" down
@@ -101,8 +116,8 @@ For a fresh released-image installation with accounts and sign-in from the first
 prepare the stack files without starting containers:
 
 ```bash
-curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh \
-  | LOOM_SKIP_START=1 sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh \
+  && LOOM_SKIP_START=1 sh loom-install.sh && rm loom-install.sh
 ```
 
 Edit `~/.loom/.env` before starting Docker. Replace the existing identity and auth entries,

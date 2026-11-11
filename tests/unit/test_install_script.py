@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -15,6 +16,7 @@ import pytest
 
 from scripts.release import build_stack_bundle
 from tests.unit.install_versions import GUARD_CASES
+from tests.unit.tracked_files import tracked
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -745,3 +747,162 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert "cannot reach the Docker daemon" in result.stderr
     assert Path(f"{docker}.log").read_text().splitlines() == ["info"]  # no pull
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
+
+
+# Fake curls: the working one serves a file from $SERVES when it holds one by that name,
+# else writes an installer creating ~/.loom, to its -o/-O file or to stdout. The failing
+# one does the same, then answers a 404 for install.sh: the file written anyway stands for a
+# copy an earlier attempt left, the text on stdout for what a piped download printed.
+_WORKING_CURL = """#!/bin/sh
+out=
+url=
+save=
+while [ $# -gt 0 ]; do
+  case $1 in -o) out=$2 ;; -*O) save=1 ;; http*|…*) url=$1 ;; esac
+  shift
+done
+[ -n "$save" ] && [ -z "$out" ] && out=${url##*/}
+if [ -n "$SERVES" ] && [ -f "$SERVES/${url##*/}" ]; then
+  cp "$SERVES/${url##*/}" "${out:-/dev/stdout}"
+  exit 0
+fi
+installer='mkdir -p "$HOME/.loom"; echo "$@" >"$HOME/.loom/args"; env | grep ^LOOM_ >"$HOME/.loom/env" || :'
+if [ -z "$out" ] || [ "$out" = - ]; then echo "$installer"; else echo "$installer" >"$out"; fi
+"""
+_FAILING_CURL = (
+    _WORKING_CURL
+    + """case $url in *install.sh) ;; *) exit 0 ;; esac
+echo 'curl: (22) The requested URL returned error: 404' >&2
+exit 22
+"""
+)
+_CODE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```|`([^`\n]+)`", re.MULTILINE | re.DOTALL)
+
+
+def _joined(text: str) -> str:
+    """`text` with each `\\` line continuation joined."""
+    return re.sub(r"\\\n\s*", " ", text)
+
+
+def _documented_installs() -> list[tuple[str, str]]:
+    """(page, example) for every code block or inline command a tracked page shows
+    that downloads `install.sh`, as a copy button pastes it: each `\\` continuation
+    joined and a `<placeholder>` filled."""
+    found = []
+    for name in tracked():
+        if not name.endswith(".md"):
+            continue
+        for block, span in _CODE.findall((ROOT / name).read_text(encoding="utf-8")):
+            lines = [
+                re.sub(r"<[^>]*>", "x", line.strip().replace("\\|", "|"))
+                for line in _joined(block or span).splitlines()
+            ]
+            if any("curl" in line and "install.sh" in line for line in lines):
+                found.append((name, "\n".join(lines)))
+    return found
+
+
+def _run_install(
+    script: str, tmp_path: Path, curl_script: str, serves: Path | None = None
+) -> subprocess.CompletedProcess[str]:
+    """`script` as a terminal runs pasted lines, each after the last whatever it
+    returned, in an empty home with `curl_script` as curl."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    curl = bin_dir / "curl"
+    curl.write_text(curl_script)
+    curl.chmod(0o755)
+    return subprocess.run(
+        ["sh", "-c", script],
+        cwd=tmp_path,
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "HOME": str(tmp_path),
+            "SERVES": str(serves or ""),
+        },
+        capture_output=True,
+        text=True,
+    )
+
+
+# `[LOOM_VAR=value …] sh FILE [ARG …]` up to the next `&&`: the step that runs the installer.
+_RUN_STEP = re.compile(
+    r"&&\s*(?P<env>(?:LOOM_\w+=\S*\s+)*)sh\s+\S*loom-install\.sh(?P<args>(?:\s+(?!&&)\S+)*)"
+)
+_INSTALLS = _documented_installs()
+# The inspect path's downloads and checks, which the reader runs before installing.
+_INSPECT = "sha256sum -c"
+
+
+def _inspect_then_install() -> tuple[str, str, str]:
+    """The inspect path's checks followed by its install step, the next code block on the
+    same page, as a reader runs them once the checks look right."""
+    ((page, checks),) = [(p, e) for p, e in _INSTALLS if _INSPECT in e]
+    text = (ROOT / page).read_text(encoding="utf-8")
+    blocks = [m[1] for m in re.finditer(r"^```[^\n]*\n(.*?)^```", text, re.M | re.S)]
+    at = next(i for i, block in enumerate(blocks) if _INSPECT in block)
+    assert at + 1 < len(blocks), page
+    return page, checks, _joined(blocks[at + 1]).strip()
+
+
+def test_the_pages_show_install_commands() -> None:
+    pages = {page for page, _ in _INSTALLS}
+    assert {"README.md", "docs/getting-started/quickstart.md"} <= pages
+    assert any(_INSPECT in example for _, example in _INSTALLS)
+
+
+@pytest.mark.parametrize(("page", "example"), _INSTALLS)
+def test_a_documented_install_stops_on_a_failed_download(
+    page: str, example: str, tmp_path: Path
+) -> None:
+    """Piped into a shell, a download that fails runs what curl wrote and exits 0;
+    every install example a page shows exits with curl's error and runs nothing. The
+    inspect block installs nothing itself, so for it this checks only that `install.sh`
+    is not piped."""
+    result = _run_install(example, tmp_path, _FAILING_CURL)
+    if _INSPECT not in example:  # the inspect block's last line is a check of its own
+        assert result.returncode != 0, (page, example, result)
+    assert "404" in result.stderr, (page, example, result.stderr)
+    assert not (tmp_path / ".loom").exists(), (page, example)
+
+
+@pytest.mark.parametrize(
+    ("page", "example"), [case for case in _INSTALLS if _INSPECT not in case[1]]
+)
+def test_a_documented_install_runs_the_installer_and_cleans_up(
+    page: str, example: str, tmp_path: Path
+) -> None:
+    """With a download that works, every install example runs the installer and leaves
+    no saved copy behind."""
+    result = _run_install(example, tmp_path, _WORKING_CURL)
+    assert result.returncode == 0, (page, example, result)
+    assert (tmp_path / ".loom").exists(), (page, example)
+    assert list(tmp_path.rglob("loom-install.sh")) == [], (page, example)
+    # What the command gives the installer reaches it: the words after the saved file,
+    # and the LOOM_* assignments before `sh`.
+    run = _RUN_STEP.search(example.splitlines()[-1])
+    assert run, (page, example)
+    assert (tmp_path / ".loom" / "args").read_text().split() == run["args"].split(), example
+    passed = (tmp_path / ".loom" / "env").read_text().splitlines()
+    assert all(v in passed for v in run["env"].split()), (example, passed)
+
+
+def test_the_inspect_path_installs_from_the_checked_bundle(tmp_path: Path) -> None:
+    """With a real bundle and checksum served, the inspect checks pass, and the install
+    step runs the saved installer with that bundle and its checksum."""
+    archive, checksum = _build(tmp_path / "release")
+    serves = tmp_path / "serves"
+    serves.mkdir()
+    shutil.copy(archive, serves / "loom-stack.tar.gz")
+    shutil.copy(checksum, serves / "loom-stack.tar.gz.sha256")
+    home = tmp_path / "home"
+    home.mkdir()
+    page, checks, install = _inspect_then_install()
+    script = checks + "\n" + install
+    result = _run_install(script, home, _WORKING_CURL, serves)
+    assert result.returncode == 0, (page, script, result)
+    assert "loom-stack.tar.gz: OK" in result.stdout, (page, script, result)
+    passed = (home / ".loom" / "env").read_text().splitlines()
+    assert f"LOOM_INSTALL_BUNDLE={home}/loom-stack.tar.gz" in passed, passed
+    assert f"LOOM_INSTALL_CHECKSUM={home}/loom-stack.tar.gz.sha256" in passed, passed
+    assert not (home / "loom-install.sh").exists(), (page, install)

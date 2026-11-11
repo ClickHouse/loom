@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Run the one-line installer, `curl -fsSL …/releases/latest/download/install.sh | sh`,
+"""Run the one-line installer,
+`curl -fsSL …/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh
+&& rm loom-install.sh`,
 in clean Linux containers: install, a memory round trip, a re-run, a refused
 downgrade, and an upgrade from the previous release.
 
@@ -98,6 +100,16 @@ def run(*args: str, **kwargs) -> subprocess.CompletedProcess[str]:
         raise
 
 
+def install_command(url: str) -> str:
+    """The documented install command, which saves the script before it runs."""
+    return f'curl -fsSL "{url}" -o loom-install.sh && sh loom-install.sh && rm loom-install.sh'
+
+
+def captured_command(url: str) -> str:
+    """`install_command` with every step's stderr on stdout, then its exit code."""
+    return f'{{ {install_command(url)}; }} 2>&1; echo "exit $?"'
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -120,10 +132,15 @@ def request(port: int, op: str, body: dict) -> dict:
 
 
 def installed_version(home: Path, distro: str) -> str:
-    """The version the installer wrote; a curl that failed into `sh` wrote nothing."""
+    """The version the installer wrote."""
     version_file = home / ".loom" / "VERSION"
     check(version_file.is_file(), f"{distro}: the installer wrote no {version_file}")
     return version_file.read_text().strip()
+
+
+def saved_copy_removed(home: Path, distro: str) -> None:
+    """A good install removes the installer the command saved."""
+    check(not (home / "loom-install.sh").exists(), f"{distro}: the install left loom-install.sh")
 
 
 def read_env(home: Path) -> dict[str, str]:
@@ -460,6 +477,8 @@ class Rehearsal:
             # The installer's Compose files are bind-mounted by the host's daemon,
             # so the home directory has the same path on both sides.
             "-v", f"{home}:{home}",
+            # The command saves the installer where it runs, as a user does at home.
+            "-w", str(home),
         ]  # fmt: skip
         if self.release.ca:
             cmd += ["-v", f"{self.release.ca}:/rehearsal-ca.pem:ro"]
@@ -481,7 +500,7 @@ class Rehearsal:
     def one_liner(
         self, image: str, home: Path, port: int, url: str, extra_env: dict[str, str] | None = None
     ) -> str:
-        return self.container(image, home, port, f'curl -fsSL "{url}" | sh', extra_env=extra_env)
+        return self.container(image, home, port, install_command(url), extra_env=extra_env)
 
     def install_previous(self, image: str, home: Path, port: int) -> None:
         """The previous release by its own install.sh: published, with LOOM_VERSION
@@ -521,6 +540,7 @@ class Rehearsal:
             remove_stack_on_exit(home, stacks)
         installed = installed_version(home, distro)
         check(installed == version, f"{distro}: installed {installed}, not {version}")
+        saved_copy_removed(home, distro)
         status = health(port)
         check(status["status"] == "ok", f"{distro}: health answered {status}")
         key = f"rehearsal/{distro}"
@@ -534,6 +554,7 @@ class Rehearsal:
         check(
             "Preserved existing" in output, f"{distro}: the re-run printed no 'Preserved existing'"
         )
+        saved_copy_removed(home, distro)
         check(
             read_env(home)["LOOM_JWT_SECRET"] == secret, f"{distro}: a re-run replaced the secret"
         )
@@ -545,9 +566,7 @@ class Rehearsal:
         newer = next_release(version)
         version_file = home / ".loom" / "VERSION"
         version_file.write_text(f"{newer}\n")
-        output = self.container(
-            image, home, port, f'curl -fsSL "{installer}" | sh 2>&1; echo "exit $?"'
-        )
+        output = self.container(image, home, port, captured_command(installer))
         check(
             "installs the older" in output and output.rstrip().endswith("exit 1"),
             f"{distro}: the one-liner did not refuse to replace {newer}",
@@ -584,6 +603,7 @@ class Rehearsal:
         check(
             "Preserved existing" in output, f"{distro}: the upgrade printed no 'Preserved existing'"
         )
+        saved_copy_removed(home, distro)
         installed = installed_version(home, distro)
         check(installed == version, f"{distro}: the upgrade left {installed}, not {version}")
         pinned = read_env(home)["LOOM_VERSION"]

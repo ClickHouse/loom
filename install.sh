@@ -2,9 +2,11 @@
 # Install or update the source-free Loom stack. Published as an asset on each
 # GitHub Release.
 #
-#   curl -fsSL …/install.sh | sh                      # with its own ClickHouse
-#   curl -fsSL …/install.sh | sh -s -- --clickhouse https://loom@host:8443
-#   curl -fsSL …/install.sh | sh -s -- --bundled      # back to its own ClickHouse
+#   curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
+#   … && sh loom-install.sh --clickhouse https://loom@host:8443 && rm loom-install.sh
+#   … && sh loom-install.sh --bundled && rm loom-install.sh   # back to its own ClickHouse
+#
+# Saved first, so a failed download stops with curl's error and exit code.
 #
 # --clickhouse (or LOOM_CH_URL) points Loom at a self-managed server or a
 # ClickHouse Cloud service instead; --bundled switches an install back (and wins
@@ -392,8 +394,8 @@ main() {
       compose run --rm --no-deps loom loom ch-setup || status=$?
       case $status in
         0) ;;
-        3) fail "that ClickHouse has no Keeper, which Loom needs (above). Give it one and run the installer again, or run it with --bundled to use the bundled ClickHouse, which runs its own" ;;
-        *) fail "ClickHouse is not ready for Loom (above); fix it and run the installer again" ;;
+        3) fail "that ClickHouse has no Keeper, which Loom needs (above). Give it one and run the install command again, or run it again with --bundled to use the bundled ClickHouse, which runs its own" ;;
+        *) fail "ClickHouse is not ready for Loom (above); fix it and run the install command again" ;;
       esac
       ;;
   esac

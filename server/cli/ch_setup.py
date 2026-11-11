@@ -257,10 +257,10 @@ def _print_admin_sql(user: str, reader: str | None, *, existing: bool = False) -
     for stmt in admin_sql(user, reader):
         print(f"  {stmt}" if stmt.startswith("--") else f"  {stmt};", file=err)
     print(
-        "\nThen run the installer again, or `docker compose run --rm loom loom ch-setup` in the",
+        "\nThen run the install command again, or `docker compose run --rm loom loom ch-setup`",
         file=err,
     )
-    print("install directory (`loom ch-setup` from a checkout).", file=err)
+    print("in the install directory (`loom ch-setup` from a checkout).", file=err)
     if existing:
         print(
             f"If the reader's caps changed, recreate Loom after (`{RECREATE}`); the installer "

@@ -41,11 +41,16 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
 `compose.yaml` is the one shipped stack. Its `clickhouse` service runs under the
 `bundled` Compose profile, so `COMPOSE_PROFILES` in `.env` decides the target:
 
-| Target                      | Install                                                                         | `.env`                                           |
-| --------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------ |
-| Bundled container (default) | `curl -fsSL …/install.sh \| sh` (`sh -s -- --bundled` to switch back to it)     | `COMPOSE_PROFILES=bundled`, no `LOOM_CH_*`       |
-| Self-managed server         | `curl -fsSL …/install.sh \| sh -s -- --clickhouse http://loom@ch.internal:8123` | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
-| ClickHouse Cloud            | `curl -fsSL …/install.sh \| sh -s -- --clickhouse https://loom@<host>:8443`     | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
+| Target                      | Install                                                                                                                               | `.env`                                           |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Bundled container (default) | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh`                                              | `COMPOSE_PROFILES=bundled`, no `LOOM_CH_*`       |
+| Self-managed server         | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --clickhouse http://loom@ch.example.com:8123 && rm loom-install.sh` | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
+| ClickHouse Cloud            | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --clickhouse https://loom@<host>:8443 && rm loom-install.sh`        | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
+
+Run each of these from a directory only you can write to
+([quickstart](../getting-started/quickstart.md#fast-path-released-image-no-clone)).
+`curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --bundled && rm loom-install.sh`
+switches an install back to the bundled container.
 
 - **A Keeper.** The server needs one. Without it `loom ch-setup` stops and prints how
   to add one; `--bundled` switches the install to the bundled ClickHouse instead.
@@ -92,10 +97,11 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   a server Loom shares, a self-managed admin can keep both to Loom's own:
   `CREATE ROW POLICY loom_own ON system.query_log, system.processes USING user IN ('loom', 'loom_reader') TO loom`;
   ClickHouse Cloud does not allow row policies on system tables.
-- **Switching.** Re-run the installer with `--clickhouse` to move an install to your own
-  server; Loom starts on an empty `loom` database there. The bundled container keeps
-  running on its old volume until you stop it (the installer prints the command); copy
-  the data first with [backup and restore](./backup-and-recovery.md) if you need it.
+- **Switching.** Run the install command again with `--clickhouse` (the table above) to
+  move an install to your own server; Loom starts on an empty `loom` database there. The
+  bundled container keeps running on its old volume until you stop it (the installer
+  prints the command); copy the data first with
+  [backup and restore](./backup-and-recovery.md) if you need it.
 
 Every boot runs the same checks before it connects (the oldest replica's version, the
 database, the grants, a Keeper) and stops with one line naming the fix. Every Loom process
@@ -1045,11 +1051,12 @@ format unavailable.
 The matching GitHub Release carries `loom-stack.tar.gz`, its SHA-256 file, and
 `install.sh`. The bundle is the supported source-free laptop deployment: it contains
 Compose plus the ClickHouse configuration/dictionary the stack needs, while the UI and
-server stay in the image. Each release's `install.sh` installs that release; rerunning it
-preserves `.env` (apart from advancing the pinned `LOOM_VERSION` and giving an `.env` without
-an extractor token one, and the extractor URL unless it names its own) and volumes. An older
-release's `install.sh` run over a newer install refuses; a downgrade on purpose follows
-[downgrading an installer install](./upgrades.md#downgrading-an-installer-install).
+server stay in the image. Each release's `install.sh` installs that release; running the
+install command again preserves `.env` (apart from advancing the pinned `LOOM_VERSION` and
+giving an `.env` without an extractor token one, and the extractor URL unless it names its
+own) and volumes. An older release's `install.sh` run over a newer install refuses; a
+downgrade on purpose follows [downgrading an installer
+install](./upgrades.md#downgrading-an-installer-install).
 
 ## N identical replicas
 
