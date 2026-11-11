@@ -51,13 +51,7 @@ class _LocalCH:
         return run(
             # Each namespace's classification and the accounts that tie a
             # person's spellings.
-            [
-                ddl("namespace_grants"),
-                ddl("namespaces"),
-                ddl("sso_links"),
-                ddl("service_accounts"),
-                _ROWS,
-            ],
+            [ddl("namespace_grants"), ddl("namespaces"), ddl("sso_links"), _ROWS],
             sql,
             params,
         )
@@ -136,9 +130,7 @@ def test_a_service_account_inherits_only_its_creators_live_grants(
         async def query_all(
             self, sql: str, params: dict[str, Any] | None = None
         ) -> list[dict[str, Any]]:
-            if (
-                "loom.service_accounts" in sql and "namespace_grants" not in sql
-            ):  # not the grant read's dead-token set
+            if "loom.service_accounts" in sql:
                 return [{"created_by": "carol", "inherit_creator_grants": True}]
             return await real.query_all(sql, params)
 

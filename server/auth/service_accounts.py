@@ -20,7 +20,6 @@ from datetime import datetime
 from typing import Any
 
 from server.auth.fail_closed import note_unreadable
-from server.core import grant_cache
 from server.core.datetimes import as_aware_utc
 from server.settings import settings
 
@@ -29,7 +28,7 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class SACreator:
-    """The live service account's `created_by`, and whether the account
+    """The unrevoked service account's `created_by`, and whether the account
     reads through that creator's grants."""
 
     subject: str
@@ -65,7 +64,7 @@ async def agent_signup_tokens(org: str, namespace: str, *, ch: Any | None = None
 
 
 async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SACreator | None:
-    """The creator of the live (unrevoked, unexpired) service account `sa_subject` in `org`;
+    """The creator of the unrevoked service account `sa_subject` in `org`;
     None for a subject that is not one, a row with no creator, or a failed
     read (fail closed: no inheritance). A found row is cached for the
     revocation refresh interval; a miss or a failed read is not."""
@@ -85,7 +84,7 @@ async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SAC
             SELECT created_by, inherit_creator_grants
             FROM loom.service_accounts FINAL
             WHERE org = {org:String} AND sa_subject = {sub:String}
-              AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())
+              AND revoked_at IS NULL
             LIMIT 1
             """,
             params={"org": org, "sub": sa_subject},
@@ -141,11 +140,10 @@ def revoked_row(row: dict[str, Any], *, revoked_at: datetime, revoked_by: str) -
     }
 
 
-async def hand_down_lineage(org: str, name: str) -> str | None:
+async def hand_down_lineage(org: str, name: str) -> None:
     """Before a new token takes `name`, add to the lineage of the tokens its
     former holder made, directly or below a token gone already, every subject
-    above them, and return the former holder's `sa:` subject (None: the name
-    was never held). Once the new row replaces the former one under FINAL, no row
+    above them. Once the new row replaces the former one under FINAL, no row
     names the subject they were made by, and a token listed before `lineage`
     would be found by neither column. Called under the name's claim; each token
     rewritten under its own (parent before child, so claims never wait in a
@@ -163,7 +161,7 @@ async def hand_down_lineage(org: str, name: str) -> str | None:
             params=key,
         )
     if former is None:
-        return None
+        return
     made_by = str(former["sa_subject"])
     above = sorted({made_by, str(former["created_by"]), *former["lineage"]} - {""})
     # As the revoke pass walks them; an expired token it never reaches.
@@ -198,7 +196,6 @@ async def hand_down_lineage(org: str, name: str) -> str | None:
                 operation="grant_change",
             ) from None
         raise first from e
-    return made_by
 
 
 async def _add_lineage(
@@ -346,22 +343,13 @@ async def _revoke_all(
                 row, revoked_at=naive_utc_now_seconds(), revoked_by=revoked_by
             )
             await ch.insert("loom.service_accounts", [revoked_copy])
-            subject = str(row["sa_subject"])
-            _creators.pop((org, subject), None)
-            landed.setdefault(org, []).append(subject)
-            return subject
+            return str(row["sa_subject"])
 
-    landed: dict[str, list[str]] = {}
     try:
         async with asyncio.TaskGroup() as tasks:
             done = [tasks.create_task(revoke(r["org"], r["name"])) for r in found]
     except ExceptionGroup as e:  # the failure itself, which the caller maps to a 503
         raise e.exceptions[0] from e
-    finally:
-        # The revoked tokens' own grants stop admitting now (`DEAD_TOKEN_SUBJECTS`), not
-        # when a cached grant map ages: one watermark move per org, those that landed too.
-        for org, subjects in landed.items():
-            await grant_cache.changed(org, subjects)
     return {subject for task in done if (subject := task.result()) is not None}
 
 

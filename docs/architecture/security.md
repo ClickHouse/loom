@@ -448,10 +448,11 @@ HTTP to act as another principal. The header's subject becomes the effective sub
 outright or deprovisioned, in any case and under any spelling it holds in the target org
 or the caller's own org (itself, and the handle and email of each active account of it
 whose email is verified), is not acted for (403), nor is a bot that is revoked outright or
-disabled, nor any of its agents (a disable leaves their grants). A token's own `sa:` subject
-whose `loom.service_accounts` row is revoked or expired keeps no grant at the gate
-(`grant_sql.DEAD_TOKEN_SUBJECTS`): its rows still cap a claim and admit nothing, so a
-trusted caller acting for it reaches only what its own claim reaches. A request that names no
+disabled, nor any of its agents (a disable leaves their grants). Of the `sa:` subjects, only
+an active bot and its agents are acted for: any other is a token's own subject, whose direct
+grants belong to the token and must end with it, and a token ends in ways its grants do not
+record (an expiry, a revoke by `jti`, a cutoff on its maker or on itself), so a trusted
+caller acting for one would keep reaching what a dead token held. A request that names no
 org, from a caller whose token is for every org, has no org to read spellings in, so only
 the subject as sent is checked. An unverified email is not held: revoking a stranger's
 account that typed someone's email does not refuse acting for that email. Sign-up refuses

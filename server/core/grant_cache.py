@@ -37,12 +37,7 @@ from typing import Any
 
 from server.core import readiness
 from server.core.errors import BackendUnavailableError
-from server.core.grant_sql import (
-    DEAD_TOKEN_SUBJECTS,
-    GRANT_RANK_SQL,
-    LIVE_GRANT,
-    VERIFIED_EMAIL_SQL,
-)
+from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT, VERIFIED_EMAIL_SQL
 from server.core.principals import has_aliases
 from server.settings import settings
 
@@ -416,15 +411,13 @@ async def _read(org: str, subject: str) -> GrantMap:
                    held
             FROM (
                 SELECT namespace,
-                       max(if({live} AND has(held, lower(subject))
-                              AND lower(subject) NOT IN ({dead}), {rank}, 0)) AS rank
+                       max(if({live} AND has(held, lower(subject)), {rank}, 0)) AS rank
                 FROM loom.namespace_grants FINAL
                 WHERE org = {org:String}
                   AND (has(held, lower(subject)) OR has(capping, lower(subject)))
                 GROUP BY namespace
             )
             """.replace("{live}", LIVE_GRANT)
-            .replace("{dead}", DEAD_TOKEN_SUBJECTS)
             .replace("{rank}", GRANT_RANK_SQL)
             .replace("{verified}", VERIFIED_EMAIL_SQL),
             params={"org": org, "sub": subject, "human": human},

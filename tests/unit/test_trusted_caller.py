@@ -537,25 +537,34 @@ def test_the_acted_for_check_reads_the_held_spellings_not_every_tied_one(
         ("sa:CI:agent-1", {"ci"}, True),
         ("Sa:Ci", {"ci"}, True),
         ("sa:ci:agent-1", set(), False),  # its bot is active
-        ("sa:minted", set(), False),  # a minted service account: no bot row
+        ("sa:ci", set(), False),
+        # A token's own subject, which a revoke by jti or a cutoff ends without its row
+        # or its grants saying so: never acted for, live or dead.
+        ("sa:minted", set(), True),  # `loom mint-token --subject sa:minted`: no bot row
+        ("sa:token-2026-01-02-0a1b2c3d4e5f-9f8e7d", set(), True),  # a dashboard token
+        ("sa:helper-1a2b3c", set(), True),  # an agent sign-up token
+        ("sa:", set(), True),
+        ("sa:ghost:agent-1", set(), True),  # an agent of no bot
     ],
 )
-def test_a_disabled_bot_or_its_agent_is_not_acted_for(
+def test_a_trusted_caller_acts_only_for_an_active_bot_or_its_agents(
     monkeypatch: pytest.MonkeyPatch, subject: str, disabled: set[str], refused: bool
 ) -> None:
-    """A disable ends the bot's tokens with a cutoff, which does not refuse acting for
-    a subject, and leaves its agents' grants: the bot's own state refuses."""
+    """Of the `sa:` subjects, a trusted caller acts for an active bot and its agents only.
+    A disable ends the bot's tokens with a cutoff, which does not refuse acting for a
+    subject, and leaves its agents' grants: the bot's own state refuses. Any other `sa:`
+    subject is a token's own, whose grants must end with the token however it ends."""
     from server.auth import authz, machines
     from server.core import grant_cache
 
     async def grant_map(org: str, subject_: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks={"ci-agent-1": 3}, held=(subject_,))
 
-    async def is_disabled(name: str, **_: Any) -> bool:
-        return name in disabled
+    async def is_active(name: str, **_: Any) -> bool:
+        return name == "ci" and name not in disabled
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "disabled", is_disabled)
+    monkeypatch.setattr(machines, "active", is_active)
     acting = authz.check_acted_for(_acting(subject, "acme"), "acme")
     if refused:
         with pytest.raises(authz.ActedForRevoked):
@@ -585,7 +594,7 @@ def test_an_unreadable_bot_refuses(
         raise error
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "disabled", unreadable)
+    monkeypatch.setattr(machines, "active", unreadable)
     with pytest.raises(LoomServerError) as refused:
         asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))
     if kept:
@@ -595,11 +604,11 @@ def test_an_unreadable_bot_refuses(
 
 
 @pytest.mark.parametrize(
-    ("rows", "disabled"),
-    [([{"active": 0}], True), ([{"active": 1}], False), ([], False)],
+    ("rows", "active"),
+    [([{"active": 0}], False), ([{"active": 1}], True), ([], False)],
 )
-def test_a_bot_is_disabled_only_when_its_row_says_so(
-    rows: list[dict[str, Any]], disabled: bool
+def test_a_bot_is_active_only_when_its_row_says_so(
+    rows: list[dict[str, Any]], active: bool
 ) -> None:
     from server.auth import machines
 
@@ -608,7 +617,7 @@ def test_a_bot_is_disabled_only_when_its_row_says_so(
             assert params == {"name": "ci"}
             return rows[0] if rows else None
 
-    assert asyncio.run(machines.disabled("ci", ch=_CH())) is disabled
+    assert asyncio.run(machines.active("ci", ch=_CH())) is active
 
 
 def test_a_remembered_answer_is_reused_until_the_grant_cache_ttl_and_read_after(
@@ -626,12 +635,12 @@ def test_a_remembered_answer_is_reused_until_the_grant_cache_ttl_and_read_after(
     async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks={}, held=(subject,))
 
-    async def is_disabled(name: str, **_: Any) -> bool:
+    async def is_active(name: str, **_: Any) -> bool:
         reads.append(name)
-        return name in disabled
+        return name not in disabled
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "disabled", is_disabled)
+    monkeypatch.setattr(machines, "active", is_active)
     monkeypatch.setattr(time, "monotonic", clock.monotonic)  # the process clock
     monkeypatch.setattr(authz, "_ENDED", {})
     monkeypatch.setattr(settings, "grant_cache_ttl_seconds", 10.0)
@@ -663,7 +672,7 @@ def test_the_memo_is_emptied_past_its_bound(monkeypatch: pytest.MonkeyPatch) -> 
 def test_a_bot_disabled_on_this_process_is_refused_at_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The disabling process drops its memo of the bot, and `machines.disabled` reads the
+    """The disabling process drops its memo of the bot, and `machines.active` reads the
     real table."""
     from server.auth import authz, machines
     from server.core import grant_cache
@@ -772,7 +781,7 @@ def test_a_bot_save_that_raised_still_refuses_at_once(monkeypatch: pytest.Monkey
             raise BackendTimeoutError("machine identities timed out")
 
     async def landed(name: str, **_: Any) -> bool:
-        return True
+        return False  # the disable landed
 
     async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks={}, held=(subject.lower(),))
@@ -781,7 +790,7 @@ def test_a_bot_save_that_raised_still_refuses_at_once(monkeypatch: pytest.Monkey
     monkeypatch.setattr(authz, "_ENDED", {("bot", "ci"): (time.monotonic(), False)})
     with pytest.raises(BackendTimeoutError):
         asyncio.run(machines.save({"name": "ci"}, by="cli:root", active=False, ch=_Lost()))  # type: ignore[typeddict-item]
-    monkeypatch.setattr(machines, "disabled", landed)
+    monkeypatch.setattr(machines, "active", landed)
     with pytest.raises(authz.ActedForRevoked):
         asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))
 
@@ -798,11 +807,11 @@ def test_a_bot_revoked_outright_refuses_acting_for_its_agents(
     async def grant_map(org: str, subject_: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks={}, held=(subject_.lower(),))
 
-    async def not_disabled(name: str, **_: Any) -> bool:
-        return False
+    async def still_active(name: str, **_: Any) -> bool:
+        return True
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "disabled", not_disabled)
+    monkeypatch.setattr(machines, "active", still_active)
     monkeypatch.setattr(authz, "_ENDED", {})
     monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"sa:ci"}))
     with pytest.raises(authz.ActedForRevoked):

@@ -499,11 +499,7 @@ loom mint-token --subject sa:triage --org acme --namespaces team-shared,incident
 A person who holds a direct grant can also add the namespace to a token minted from the
 dashboard: the mint names it in the claim and writes a direct grant for the token's own
 `sa:` subject (`viewer` on a repository index, else the token's role capped at `writer`).
-That grant is revoked with the token, and when the person's own grant is revoked. Once the
-token's row is revoked or past its expiry, whichever way it died (its own revoke, its maker's
-revocation or deprovisioning), the grant admits nothing, and giving its name to a new token
-revokes it. A subject no token row lists, such as `sa:triage` minted by `loom mint-token`
-above, keeps its grants until the subject is revoked (`loom revoke-token --subject`).
+That grant is revoked with the token, and when the person's own grant is revoked.
 
 ## Add history policy
 
@@ -591,7 +587,9 @@ end users are signed in by their own issuer. A subject revoked outright
 (`loom revoke-token --subject`) or deprovisioned through SCIM is not acted for (403), nor
 is a bot that `loom bot disable` has disabled, or one of its agents (`sa:<bot>`,
 `sa:<bot>:<agent>`): a disable leaves the agents' grants and ends the bot's tokens with a
-cutoff. Revoking a bot outright refuses acting for its agents too. A cutoff
+cutoff. Revoking a bot outright refuses acting for its agents too. Any other `sa:` subject
+(a dashboard token's, an agent sign-up token's, or one `loom mint-token` minted) is never
+acted for: it is a token's own subject, and its grants must not outlive the token. A cutoff
 (`--issued-before`) ends that subject's own tokens but not a trusted caller's calls for
 it. Empty disables the header. With self-signup open, act for email subjects (a sign-up
 name cannot spell one) or grant each handle in `LOOM_SELF_SIGNUP_ORG` before acting for

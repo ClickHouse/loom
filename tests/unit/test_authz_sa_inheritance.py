@@ -33,9 +33,7 @@ class _FakeCH:
         self._role = role
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
-        if (
-            "service_accounts" in sql and "namespace_grants" not in sql
-        ):  # not the grant read's dead-token set
+        if "service_accounts" in sql:
             if not self._creator:
                 return None
             return {"created_by": self._creator, "inherit_creator_grants": self._inherits}

@@ -30,7 +30,7 @@ from server.auth.fail_closed import (
     note_unreadable,
     unreadable,
 )
-from server.core.grant_sql import DEAD_TOKEN_SUBJECTS, GRANT_RANK_SQL, LIVE_GRANT
+from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 from server.core.principals import USER, principal_id
 
 # Re-export from operations.base so there's one canonical Role definition.
@@ -73,6 +73,7 @@ def may_act_in_org(auth: AuthInfo, org: str) -> bool:
 
 
 _ACTED_FOR_REVOKED = "the subject this request acts for is revoked, deprovisioned or disabled"
+_ACTED_FOR_NO_BOT = "an sa: subject is acted for only while it names an active bot or its agent"
 
 
 class ActedForRevoked(PermissionError):
@@ -82,7 +83,10 @@ class ActedForRevoked(PermissionError):
 
 async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
     """Refuse a trusted caller acting for a revoked, SCIM-deactivated or disabled-bot
-    subject under any spelling it holds; docs/architecture/security.md, Impersonation."""
+    subject under any spelling it holds, or for an `sa:` subject that is not an active
+    bot or one of its agents: a token's own subject, whose grants are the token's and
+    end with it however it ends (an expiry, a revoke by jti, a cutoff on its maker), none
+    of which its grants record; docs/architecture/security.md, Impersonation."""
     from server.auth import machines, revocation
     from server.auth.gateway import is_end_user
     from server.core import grant_cache
@@ -95,7 +99,10 @@ async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
         if may_act_in_org(auth, scope_org):  # an org it cannot act in is refused after this
             spellings.update((await grant_cache.grant_map(scope_org, auth.subject)).held)
     folded = auth.subject.lower()  # bot names are lower-case; grants are read case-folded
-    bot = folded.removeprefix("sa:").partition(":")[0] if folded.startswith("sa:") else ""
+    service_account = folded.startswith("sa:")
+    bot = folded.removeprefix("sa:").partition(":")[0] if service_account else ""
+    if service_account and not bot:
+        raise ActedForRevoked(_ACTED_FOR_NO_BOT)
     if bot:
         spellings.add(machines.subject(bot))  # a revoked bot refuses its agents, as their mint does
     if any(revocation.revoked_outright_any_case(s) for s in spellings):
@@ -103,8 +110,8 @@ async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
     for email in {s.lower() for s in spellings if "@" in s}:
         if await _remembered(("scim", email), _scim_deactivated):
             raise ActedForRevoked(_ACTED_FOR_REVOKED)
-    if bot and await _remembered(("bot", bot), _bot_disabled):
-        raise ActedForRevoked(_ACTED_FOR_REVOKED)
+    if bot and await _remembered(("bot", bot), _bot_ended):
+        raise ActedForRevoked(_ACTED_FOR_NO_BOT)
 
 
 # (kind, key) -> (read at, ended), kept grant_cache_ttl_seconds: a SCIM deactivation or a
@@ -148,16 +155,17 @@ async def _scim_deactivated(email: str) -> bool:
         return await scim.deactivated(email)
     except login.SignInUnavailable as e:
         if isinstance(e.__cause__, LoomServerError):
-            raise e.__cause__ from None  # its own code and Retry-After, as _bot_disabled does
+            raise e.__cause__ from None  # its own code and Retry-After, as _bot_ended does
         raise BackendUnavailableError("cannot read whether SCIM deactivated the subject") from e
 
 
-async def _bot_disabled(name: str) -> bool:
+async def _bot_ended(name: str) -> bool:
+    """Whether no active bot holds `name`: it is disabled, or no bot ever held it."""
     from server.auth import machines
     from server.core.errors import BackendUnavailableError, LoomServerError
 
     try:
-        return await machines.disabled(name)
+        return not await machines.active(name)
     except LoomServerError:
         raise
     except Exception as e:  # an unread bot row refuses, as the grant read does
@@ -612,8 +620,7 @@ async def restricted_allows(
 async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
     """Granted role for (org, namespace, subject), or None. The subject matches
     whatever its case, as the cached grant maps match it (`grant_cache`).
-    Pending grants are excluded: an unapproved writer-request must not elevate, nor
-    does a dead token's own grant (`DEAD_TOKEN_SUBJECTS`)."""
+    Pending grants are excluded: an unapproved writer-request must not elevate."""
     from server.auth.aliases import lowered, subject_aliases
     from server.core.ch import get_client
 
@@ -626,12 +633,9 @@ async def grant_role_for(org: str, namespace: str, subject: str) -> Role | None:
             SELECT role FROM loom.namespace_grants FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
               AND lower(subject) IN {subs:Array(String)} AND {live}
-              AND lower(subject) NOT IN ({dead})
             ORDER BY {rank} DESC
             LIMIT 1
-            """.replace("{live}", LIVE_GRANT)
-            .replace("{dead}", DEAD_TOKEN_SUBJECTS)
-            .replace("{rank}", GRANT_RANK_SQL),
+            """.replace("{live}", LIVE_GRANT).replace("{rank}", GRANT_RANK_SQL),
             params={"org": org, "ns": namespace, "subs": subjects},
         )
     except Exception as e:  # noqa: BLE001 — CH glitch treated as no grant (closed)
