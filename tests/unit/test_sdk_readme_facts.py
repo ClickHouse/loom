@@ -77,3 +77,27 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
             assert ref == "main" and path.rstrip("/") in TRACKED, target
             if anchor and dest.suffix == ".md":
                 assert anchor.lower() in anchors(dest), target
+
+
+def _what_loom_is(text: str) -> str:
+    """The clause after "Loom, " up to the end of its sentence, with the link to Loom unwrapped."""
+    m = re.search(r"Loom(?:\]\([^)]*\))?, (.+?\.)(?:\s|$)", text)
+    assert m, f"no 'Loom, <what it is>.' clause in {text!r}"
+    return m.group(1)
+
+
+@pytest.mark.parametrize(
+    ("sdk", "description"),
+    [
+        ("python", PROJECT["description"]),
+        (
+            "typescript",
+            json.loads((ROOT / "sdk" / "typescript" / "package.json").read_text())["description"],
+        ),
+    ],
+)
+def test_the_readme_lead_says_what_the_package_description_says(sdk: str, description: str) -> None:
+    """The README's first paragraph leads the package's registry page, under the
+    description the registry shows as its summary: both say the same of Loom."""
+    lead = (ROOT / "sdk" / sdk / "README.md").read_text().split("\n\n")[1]
+    assert _what_loom_is(lead) == _what_loom_is(description)
