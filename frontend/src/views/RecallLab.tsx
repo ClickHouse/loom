@@ -19,7 +19,7 @@ import { displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, termText, whyTerms } from "../lib/whyNote";
-import { AskAboutThis, quoted } from "../components/AskAboutThis";
+import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 
@@ -381,7 +381,7 @@ function scoreRow(
                   short
                   item={{
                     chip: `result ${row.key}`,
-                    line: `result ${i + 1}, memory ${quoted(row.key)}, for the query ${quoted(query)}`,
+                    line: `result ${i + 1}, memory ${exact(row.key)}, for the query ${quoted(query)}`,
                   }}
                 />
               ),

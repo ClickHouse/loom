@@ -64,7 +64,7 @@ import { AnchoredPopover } from "./ui/AnchoredPopover";
 import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
-import { AskAboutThis, quoted } from "./AskAboutThis";
+import { AskAboutThis, exact, quoted } from "./AskAboutThis";
 import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
 import { absoluteTime, relativeTime, formatValue, parseChTime, SENTINEL_AGENTS } from "../lib/format";
 import { errorLine } from "../lib/errorWords";
@@ -141,8 +141,8 @@ interface InspectorProps {
 
 /**
  * Right-edge drawer showing one memory: value, metadata, tags, provenance,
- * related rows, history and lineage. The footer is one row: Edit, Ask about this, a More
- * menu with the rest of the row's actions, and Delete at the end.
+ * related rows, history and lineage. The footer holds Edit, Ask about this, a More menu with
+ * the rest of the row's actions, and Delete at the end: one row, two on a narrow drawer.
  *
  * The shell is a Radix `Dialog`: portal, overlay, focus trap, Escape, body scroll lock;
  * focus returns to the card that opened it on close (captured here — a triggerless Radix
@@ -1394,7 +1394,7 @@ export function MemoryInspector({
                 what="memory"
                 item={{
                   chip: `key ${memoryKey}`,
-                  line: `memory ${quoted(memoryKey)}${
+                  line: `memory ${exact(memoryKey)}${
                     detail.agent && !SENTINEL_AGENTS.has(detail.agent) ? ` (agent ${quoted(detail.agent, 80)})` : ""
                   }`,
                 }}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clip, quoted } from "./AskAboutThis";
+import { clip, exact, quoted } from "./AskAboutThis";
 
 // The names "Ask about this" puts in the assistant's context line: one line, cut, quoted.
 
@@ -30,5 +30,13 @@ describe("clip", () => {
 describe("quoted", () => {
   it("writes the value as a JSON string, its quotes escaped and its line breaks gone", () => {
     expect(quoted('Say "hi"\nthen stop')).toBe('"Say \\"hi\\" then stop"');
+  });
+});
+
+describe("exact", () => {
+  it("writes an identifier as a JSON string, never cut or respaced", () => {
+    const long = `k/${"x".repeat(300)}`;
+    expect(exact(long)).toBe(JSON.stringify(long));
+    expect(exact("a\tb  c")).toBe('"a\\tb  c"');
   });
 });

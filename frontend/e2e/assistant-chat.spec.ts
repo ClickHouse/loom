@@ -305,9 +305,11 @@ test("at 1440 px an unavailable launcher takes the muted text colour", async ({ 
 });
 
 // "Ask about this" in the memory drawer: the drawer closes, the panel opens in the mode the
-// width gives (beside the page at 1440 px, the phone sheet at 390 px) with its field focused
-// and the memory in its chip, and the question goes with the context line.
-for (const width of [1440, 390]) {
+// width gives (beside the page at 1440 px, over it at 1024 px, the phone sheet at 390 px)
+// with its field focused and the memory in its chip, and the question goes with the context
+// line.
+const MODE_AT: Record<number, string> = { 1440: "push", 1024: "overlay", 390: "sheet" };
+for (const width of [1440, 1024, 390]) {
   test(`at ${width} px, Ask about this in the drawer asks with the memory in the chip`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await installApi(page, { memoryRows: 3 });
@@ -328,7 +330,10 @@ for (const width of [1440, 390]) {
     await expect(drawer).toBeHidden();
     const field = page.getByRole("textbox", { name: "Question" });
     await expect(field).toBeFocused();
-    await expect(panel(page)).toHaveAttribute("data-mode", width >= 1024 ? "push" : "sheet");
+    await expect(panel(page)).toHaveAttribute("data-mode", MODE_AT[width]);
+    // Modal over the page and on the phone, beside it otherwise.
+    if (width === 1440) await expect(panel(page)).not.toHaveAttribute("aria-modal");
+    else await expect(panel(page)).toHaveAttribute("aria-modal", "true");
     await expect(panel(page).getByTestId("assistant-page-chip")).toHaveText(`Includes: Memories · key ${key}`);
     expect(await violations(page)).toEqual([]);
     await field.fill("Who wrote it?");
@@ -346,3 +351,34 @@ for (const width of [1440, 390]) {
     expect(overflow).toBeLessThanOrEqual(0);
   });
 }
+
+// "Ask about this" in the Library's document preview on a phone: the preview closes, the
+// sheet opens on its own history entry with the field focused and the document in its chip,
+// and Back closes the sheet onto the Library.
+test("at 390 px, Ask about this in the document preview opens the sheet, which Back closes", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await installApi(page, { knowledgeRows: 4 });
+  await page.route("**/v1/health/ready", (r) =>
+    r.fulfill({ status: 200, json: { ready: true, checks: { assistant: { ok: true, required: false } } } }),
+  );
+  const uri = "docs/runbooks/handbook-000.md";
+  await page.goto(`/library?doc=${encodeURIComponent(uri)}`, { waitUntil: "domcontentloaded" });
+  const preview = page.getByRole("dialog", { name: "Runbook 0: lane 0 recovery" });
+  const ask = preview.getByRole("button", { name: "Ask the assistant about this document" });
+  await expect(ask).toHaveText("Ask about this");
+  await ask.click();
+  await expect(preview).toBeHidden();
+  const field = page.getByRole("textbox", { name: "Question" });
+  await expect(field).toBeFocused();
+  await expect(panel(page)).toHaveAttribute("data-mode", "sheet");
+  await expect(panel(page).getByTestId("assistant-page-chip")).toHaveText(
+    "Includes: Library · document Runbook 0: lane 0 recovery",
+  );
+  expect(await page.evaluate(() => (history.state as { loomSheet?: boolean } | null)?.loomSheet)).toBe(true);
+  expect(await violations(page)).toEqual([]);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  await page.goBack();
+  await expect(panel(page)).toBeHidden();
+  await expect(page.locator("main h1").first()).toHaveText("Library");
+});

@@ -12,11 +12,17 @@ export function clip(text: string, max = 200): string {
   return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("");
 }
 
-/** A name for the context line, clipped and written as a JSON string literal: a key, an
- *  agent, a title or a query written by someone else stays one delimited value, its quotes
+/** Free text for the context line (an agent, a title, a query), clipped and written as a
+ *  JSON string literal: text written by someone else stays one delimited value, its quotes
  *  escaped, whatever it holds. */
 export function quoted(text: string, max = 200): string {
   return JSON.stringify(clip(text, max));
+}
+
+/** An identifier for the context line (a memory key, a source URI): written as a JSON string
+ *  literal and nothing else, never cut or respaced, so the agent reads exactly that row. */
+export function exact(id: string): string {
+  return JSON.stringify(id);
 }
 
 /**

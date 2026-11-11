@@ -122,6 +122,19 @@ describe("Ask about this in the document preview", () => {
     );
   });
 
+  it("names a source URI past 200 characters exactly, uncut", async () => {
+    const uri = `notes/${"long-".repeat(60)}end.md`;
+    api.listKnowledge.mockResolvedValue({ rows: [{ ...ROW, source_uri: uri }], total: 1, next_cursor: null });
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Preview Billing notes" }));
+    await settle();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Ask the assistant about this document" }));
+    await waitFor(() => expect(useDock.getState().item).not.toBeNull());
+    expect(uri.length).toBeGreaterThan(200);
+    expect(useDock.getState().item?.line).toBe(`document ${JSON.stringify(uri)} (title "Billing notes")`);
+  });
+
   it("offers no Ask about this to a role the assistant's route does not admit", async () => {
     useStore.setState({ myNamespaces: [] });
     render(<Documents />);

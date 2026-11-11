@@ -66,7 +66,7 @@ const mine: MyNamespaceEntry[] = [
 const identity = { org: "dev", namespace: "ns", agent: "loom-ui" };
 
 /** A card that opens the drawer, the drawer while it is open, and the assistant panel. */
-function Page() {
+function Page({ memoryKey = "api/rate-limit" }: { memoryKey?: string }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -76,7 +76,7 @@ function Page() {
       {open && (
         <MemoryInspector
           identity={identity}
-          memoryKey="api/rate-limit"
+          memoryKey={memoryKey}
           onClose={() => setOpen(false)}
           onChanged={() => {}}
         />
@@ -87,9 +87,9 @@ function Page() {
   );
 }
 
-async function openDrawer() {
+async function openDrawer(memoryKey?: string) {
   const user = userEvent.setup();
-  render(<Page />);
+  render(<Page memoryKey={memoryKey} />);
   await user.click(screen.getByRole("button", { name: "Open the memory" }));
   await screen.findByText("the public API allows 100 requests a minute");
   return user;
@@ -149,6 +149,13 @@ describe("Ask about this in the memory drawer", () => {
     expect(screen.getByTestId("assistant-page-chip")).toHaveTextContent("Includes: Memories · key api/rate-limit");
     // The card that opened the drawer did not take the focus back.
     expect(screen.getByRole("button", { name: "Open the memory" })).not.toHaveFocus();
+  });
+
+  it("names a key exactly as stored, its tab and double space kept", async () => {
+    const user = await openDrawer("notes/a\tb  c");
+    await user.click(footer().getByRole("button", { name: "Ask the assistant about this memory" }));
+    await waitFor(() => expect(useDock.getState().item).not.toBeNull());
+    expect(useDock.getState().item?.line).toBe('memory "notes/a\\tb  c" (agent "claude-desktop")');
   });
 
   it("stays in view while an edit is open, unavailable until it is saved or cancelled", async () => {

@@ -71,7 +71,8 @@ export function withContext(question: string, context: AskContext | null | undef
 }
 
 // The one-time hint under the field: shown until the person removes the chip once or asks
-// a first question. A per-viewer convenience: storage refused shows it again next time.
+// a first question. One key per browser, which sign-out leaves (it says only that the line
+// was seen); storage refused shows it again next time.
 export function pageHintSeen(): boolean {
   try {
     return localStorage.getItem(PAGE_HINT_KEY) === "1";

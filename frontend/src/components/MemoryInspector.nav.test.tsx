@@ -11,8 +11,8 @@ import { MemoryInspector } from "./MemoryInspector";
 // Reading something keeps you where you are. An entity opens a popover in the
 // drawer — the memories that also mention it swap the drawer in place, its neighbours are
 // listed, and "Open in Graph" is a new history entry with a way back. The source
-// conversation replays in a dialog over the drawer. The footer keeps Edit and Delete and
-// folds the rest into one More menu.
+// conversation replays in a dialog over the drawer. The footer keeps Edit, Ask about this
+// and Delete and folds the rest into one More menu; it wraps on a narrow drawer.
 
 const DETAIL: MemoryDetail = {
   found: true,
@@ -384,7 +384,7 @@ describe("the drawer's provenance and source conversation", () => {
   });
 });
 
-describe("the drawer footer is one row", () => {
+describe("the drawer footer: one row, two on a narrow drawer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetNamespaceRoleCache();

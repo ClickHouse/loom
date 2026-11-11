@@ -21,9 +21,18 @@ import { canReadNamespace, isMemoryNamespace } from "../../lib/namespace";
 import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../../lib/role";
 import { useStore } from "../../lib/state";
 import { AssistantChat } from "./Chat";
-import { useChat, newConversation, openConversation, resetChat, saveOnHide, ask, storedChanged } from "./chatStore";
+import {
+  MAX_MESSAGE_CHARS,
+  useChat,
+  newConversation,
+  openConversation,
+  resetChat,
+  saveOnHide,
+  ask,
+  storedChanged,
+} from "./chatStore";
 import { adoptEpoch, deleteAllConversations, deleteConversation, listConversations, sameOwner } from "./conversations";
-import { currentAsk } from "./pageContext";
+import { currentAsk, withContext } from "./pageContext";
 import { readReadiness } from "./readiness";
 import { tokenReadScope } from "./tokenScope";
 
@@ -207,7 +216,15 @@ export function DockBody() {
       mismatch: c.turns.length > 0 && c.namespace !== null && c.namespace !== header,
     });
     // It goes with what the chip shows now: a chip removed since sends nothing about the page.
-    if (refused && !stillBlocked) ask(refused, c.namespace ?? header, currentAsk());
+    // A line longer now than when it was asked (an item added since) can push the message
+    // past the route's length: the question then waits in the field, which says why.
+    if (!refused || stillBlocked) return;
+    const asked = currentAsk();
+    if (withContext(refused, asked.context).length > MAX_MESSAGE_CHARS) {
+      if (!useDock.getState().draft) useDock.setState({ draft: refused });
+      return;
+    }
+    ask(refused, c.namespace ?? header, asked);
   };
 
   if (expired)

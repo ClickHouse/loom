@@ -1507,3 +1507,68 @@ describe("the page chip on a question that is not answered", () => {
     expect(useDock.getState().item).toBeNull();
   });
 });
+
+describe("Ask about this, the edge cases", () => {
+  const item = (over: Partial<AskItem> = {}): AskItem => ({
+    view: "memories",
+    org: "acme",
+    namespace: "team",
+    chip: "key user/pref/lang",
+    line: 'memory "user/pref/lang"',
+    ...over,
+  });
+  beforeEach(() => useStore.setState({ view: "memories" }));
+
+  it("Try again sends nothing when the chip's line now pushes the question past the route's length", async () => {
+    signIn("viewer");
+    show();
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+    // Fits beside "Context: Memories page", not beside the item's longer line.
+    const question = "x".repeat(19_970);
+    act(() => useDock.setState({ draft: question }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Ask" }));
+    await unavailable();
+    expect(sent).toHaveLength(1);
+    act(() => askAbout(item()));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(sent).toHaveLength(1);
+    const field = screen.getByLabelText("Question");
+    expect(field).toHaveValue(question);
+    expect(field).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("mid-answer after a namespace switch starts no conversation: the prompt shows and the item stays", async () => {
+    signIn("viewer");
+    show();
+    // An answer that never ends while the test runs (the next test's reset stops it).
+    chat.push(
+      () =>
+        new Response(new ReadableStream<Uint8Array>({ start() {} }), {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+    );
+    await askIt("Who owns billing?");
+    await waitFor(() => expect(useChat.getState().answering).toBe(true));
+    act(() =>
+      useStore.setState({
+        identity: { org: "acme", namespace: "ops", agent: "loom-ui" },
+        myNamespaces: [
+          { namespace: "team", role: "reader", status: "active", kind: "memory" } as never,
+          { namespace: "ops", role: "reader", status: "active", kind: "memory" } as never,
+        ],
+      }),
+    );
+    act(() => askAbout(item({ namespace: "ops" })));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText("This conversation is about team.")).toBeInTheDocument();
+    expect(screen.queryByText(/^New conversation in ops/)).not.toBeInTheDocument();
+    expect(useDock.getState().item).toMatchObject({ namespace: "ops", chip: "key user/pref/lang" });
+    expect(useChat.getState().namespace).toBe("team");
+    act(() => resetChat(null));
+  });
+});
