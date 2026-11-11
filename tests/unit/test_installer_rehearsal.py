@@ -443,5 +443,7 @@ def test_the_rehearsal_runs_the_command_the_readme_shows() -> None:
     (line,) = [
         line for line in readme.splitlines() if line.startswith("curl ") and "install.sh" in line
     ]
-    url = re.search(r"https://\S+/install\.sh", line)[0]
+    found = re.search(r"https://\S+/install\.sh", line)
+    assert found, line
+    url = found[0]
     assert rehearsal.install_command(url) == line.replace(url, f'"{url}"')

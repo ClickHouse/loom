@@ -35,11 +35,11 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 ```
 
 The command saves the installer where it runs and then runs that file, so run it from your
-home directory, or another directory only you can write to: in a shared one, a
-`loom-install.sh` someone else put there could be the file that runs. A failed download
-stops with curl's error and a non-zero exit; after a failed install, fix what it reports
-and run the whole command again. The installer downloads `loom-stack.tar.gz` from the
-latest GitHub Release, verifies its SHA-256, installs the Compose and ClickHouse
+home directory, or another directory only you can write to: in a shared one, someone else
+can replace `loom-install.sh`, or point it at another file, before it runs. A failed
+download stops with curl's error and a non-zero exit; after a failed install, fix what it
+reports and run the whole command again. The installer downloads `loom-stack.tar.gz` from
+the latest GitHub Release, verifies its SHA-256, installs the Compose and ClickHouse
 configuration under `~/.loom`, pulls the matching `ghcr.io/clickhouse/loom:X.Y.Z` and
 `ghcr.io/clickhouse/loom-extractor:X.Y.Z` (the document extractor service) images, and
 waits for `http://localhost:7777/v1/health`. The server image contains the API, workers,
@@ -88,20 +88,21 @@ LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
   LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh loom-install.sh && rm loom-install.sh
 ```
 
-`LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY`,
-`LOOM_EXTRACTOR_IMAGE_REPOSITORY` and `LOOM_CLICKHOUSE_IMAGE` given to the installer are
-written to the install directory's `.env`, so later `docker compose` commands there and
-later installer runs use the same port and images. A `LOOM_BIND_HOST` other than
-loopback publishes Loom beyond this host, and the server refuses to start that way
-without `LOOM_PUBLIC_BASE_URL` and sign-in: install with `LOOM_SKIP_START=1`, set them
-in `.env` (below), then run the install command again.
+`LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY`, `LOOM_EXTRACTOR_IMAGE_REPOSITORY`
+and `LOOM_CLICKHOUSE_IMAGE` given to the installer are written to the install directory's
+`.env`, so later `docker compose` commands there and later installer runs use the same
+port and images. A `LOOM_BIND_HOST` other than loopback publishes Loom beyond this host,
+and the server refuses to start that way without `LOOM_PUBLIC_BASE_URL` and sign-in:
+install with `LOOM_SKIP_START=1`, set them in `.env` (below), then run the install command
+again without `LOOM_SKIP_START=1`.
 
-Each release runs the ClickHouse release that was latest when it was built, so rerunning
-the same Loom version keeps its ClickHouse; installing a newer Loom version moves it,
-unless `.env` pins `LOOM_CLICKHOUSE_IMAGE` (delete that line to follow the releases
-again). Running the install command again updates the managed Compose/configuration files and
-reconciles the containers. It preserves `~/.loom/.env`, adding the extractor's URL and a
-token to one without, and the named Docker volumes. To stop without deleting data:
+Each release runs the ClickHouse release that was latest when it was built, so running the
+install command again for the same Loom version keeps its ClickHouse; installing a newer
+Loom version moves it, unless `.env` pins `LOOM_CLICKHOUSE_IMAGE` (delete that line to
+follow the releases again). Running the install command again updates the managed
+Compose/configuration files and reconciles the containers. It preserves `~/.loom/.env`,
+adding the extractor's URL and a token to one without, and the named Docker volumes. To
+stop without deleting data:
 
 ```bash
 docker compose --project-directory "$HOME/.loom" down

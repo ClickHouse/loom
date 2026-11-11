@@ -88,15 +88,16 @@ switches an install back to the bundled container.
   account has that name; `ch-setup` running the SQL itself refuses one it cannot prove is
   Loom's.
 - **Other users' queries.** Loom reads `system.query_log` for each request's cost and
-  `system.processes` to see whether its own statements are still running, so the Loom
-  user sees every user's past and running queries on that server, literals included. On
-  a server Loom shares, a self-managed admin can keep both to Loom's own:
-  `CREATE ROW POLICY loom_own ON system.query_log, system.processes USING user IN ('loom', 'loom_reader') TO loom`;
-  ClickHouse Cloud does not allow row policies on system tables.
+  `system.processes` to see whether its own statements are still running, so the Loom user
+  sees every user's past and running queries on that server, literals included. On a
+  server Loom shares, a self-managed admin can keep both to Loom's own: `CREATE ROW POLICY
+loom_own ON system.query_log, system.processes USING user IN ('loom', 'loom_reader') TO
+loom`; ClickHouse Cloud does not allow row policies on system tables.
 - **Switching.** Run the install command again with `--clickhouse` (the table above) to
-  move an install to your own server; Loom starts on an empty `loom` database there. The bundled container keeps
-  running on its old volume until you stop it (the installer prints the command); copy
-  the data first with [backup and restore](./backup-and-recovery.md) if you need it.
+  move an install to your own server; Loom starts on an empty `loom` database there. The
+  bundled container keeps running on its old volume until you stop it (the installer
+  prints the command); copy the data first with [backup and
+  restore](./backup-and-recovery.md) if you need it.
 
 Every boot runs the same checks before it connects (the oldest replica's version, the
 database, the grants, a Keeper) and stops with one line naming the fix. Every Loom process
