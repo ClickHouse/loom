@@ -211,6 +211,26 @@ describe("stored conversations", () => {
     expect(readIndex().entries.map((e) => e.id)).toEqual(["c2"]);
   });
 
+  it("stops listing a conversation whose key went to make room when the save is refused anyway", () => {
+    saveConversation(conv("old", [turn(0)], { updated: Date.now() - 2000 }));
+    saveConversation(conv("kept", [turn(0)], { updated: Date.now() - 1000 }));
+    // Every write of the new conversation is refused; the index shrinking fits.
+    const real = Storage.prototype.setItem;
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+      this: Storage,
+      key: string,
+      value: string,
+    ) {
+      if (key === "loom_assistant_c_new") throw new DOMException("full", "QuotaExceededError");
+      real.call(this, key, value);
+    });
+    expect(() => saveConversation(conv("new", [turn(0)]))).toThrow(StorageRefused);
+    spy.mockRestore();
+    const listed = readIndex().entries.map((e) => e.id);
+    for (const id of listed) expect(localStorage.getItem(`loom_assistant_c_${id}`)).not.toBeNull();
+    expect(listed).toEqual(["kept"]);
+  });
+
   it("merges two tabs' copies turn by turn, the newer copy of each turn winning", () => {
     const mine = [turn(0), { ...turn(1), answer: "mine", at: 5 }];
     const theirs = [turn(0), { ...turn(1), answer: "theirs", at: 9 }, turn(2)];
