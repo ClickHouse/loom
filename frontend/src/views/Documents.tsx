@@ -1,4 +1,14 @@
-import { memo, startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  type ReactNode,
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -38,6 +48,7 @@ import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { DatasetsDialog } from "../flows/DatasetsDialog";
 import { Modal } from "../components/ui/Modal";
+import { distinctTitle, repeatedTitles } from "../lib/collections";
 import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
@@ -193,6 +204,8 @@ export function Documents() {
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  // An upload of many files has started: the dialog stays open when the place shown changes.
+  const batchStarted = useRef(false);
   // The header's New › Document adds to the header's namespace: it steps aside while a
   // collection is linked here, so a document meant for it is added from this page.
   const elsewhere = resolving || noPlace || (!!shown && shown.namespace !== picked.namespace);
@@ -586,7 +599,8 @@ export function Documents() {
       return null;
     });
     setShowText(false);
-    setAddOpen(false);
+    // A batch that has started keeps sending where it began; a dialog with nothing sent closes.
+    if (!batchStarted.current) setAddOpen(false);
     setReplaceEntry(null);
     setEditEntry(null);
     setTablesFor(null);
@@ -826,6 +840,30 @@ export function Documents() {
     />
   );
 
+  // Mounted while open, beside either page, so a batch outlives a page move.
+  const addDialog = addOpen && (
+    <AddDocumentDialog
+      open={addOpen}
+      onOpenChange={(v) => {
+        if (!v) batchStarted.current = false;
+        setAddOpen(v);
+      }}
+      onBatchStarted={(v) => {
+        batchStarted.current = v;
+      }}
+      identity={{ org: identity.org, namespace: identity.namespace }}
+      place={shown ? distinctTitle(shown, repeatedTitles(collections.rows ?? [])) : identity.namespace}
+      onAdded={reload}
+    />
+  );
+  // The dialog keeps one place in the tree whichever page shows, so React keeps it.
+  const withDialog = (page: ReactNode) => (
+    <>
+      {page}
+      {addDialog}
+    </>
+  );
+
   if (noPlace) {
     // Where this namespace's data lives instead, as the memory views' empty page says.
     const kind = kindOf(picked.namespace, mine);
@@ -846,7 +884,7 @@ export function Documents() {
         : picked.namespace
           ? `${picked.namespace} holds no documents.`
           : "Your token reaches no namespace yet.";
-    return (
+    const page = (
       <PageContainer>
         <PageHeader title="Library">
           <ScopeBadge kind="namespace" value={picked.namespace} />
@@ -866,9 +904,10 @@ export function Documents() {
         {inside}
       </PageContainer>
     );
+    return withDialog(page);
   }
 
-  return (
+  return withDialog(
     <PageContainer>
       <PageHeader
         title="Library"
@@ -975,15 +1014,6 @@ export function Documents() {
         </div>
       )}
 
-      {/* Mounted while open, not on every render. */}
-      {addOpen && (
-        <AddDocumentDialog
-          open={addOpen}
-          onOpenChange={setAddOpen}
-          identity={{ org: identity.org, namespace: identity.namespace }}
-          onAdded={reload}
-        />
-      )}
       {!!replaceEntry && (
         <AddDocumentDialog
           open={!!replaceEntry}
@@ -1286,7 +1316,7 @@ export function Documents() {
           onClose={() => setTablesFor(null)}
         />
       )}
-    </PageContainer>
+    </PageContainer>,
   );
 }
 

@@ -24,6 +24,10 @@ const api = vi.hoisted(() => ({
   listKnowledge: vi.fn(),
   getKnowledge: vi.fn(),
   fetchKnowledgePreview: vi.fn(),
+  knowledgeFormats: vi.fn(),
+  uploadKnowledgeFile: vi.fn(),
+  ingestKnowledge: vi.fn(),
+  knowledgeIngestStatus: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 const confirm = vi.hoisted(() => ({ next: false }));
@@ -442,6 +446,120 @@ describe("the Library on a collection", () => {
     // The link is kept for "Load collections again"; only a list without it drops it.
     expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
     expect(screen.getByText(/Couldn't load collections/)).toBeInTheDocument();
+  });
+
+  it("keeps an upload going when the page moves to a namespace with no documents", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });
+    api.knowledgeFormats.mockResolvedValue({
+      formats: [{ format: "markdown", extensions: ["md"], media_types: [], available: true }],
+      max_upload_bytes: 1_000_000,
+      refused_extensions: [],
+      default_format: "text",
+    });
+    api.uploadKnowledgeFile.mockImplementation(async (_id: unknown, f: File) => ({ upload_id: f.name }));
+    api.ingestKnowledge.mockImplementation(async (_id: unknown, o: { source_uri: string }) => ({
+      ingestion_id: o.source_uri,
+    }));
+    // The first three take a while; the fourth is sent once one of them ends.
+    let finish: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      finish = r;
+    });
+    api.knowledgeIngestStatus.mockImplementation(async (_id: unknown, job: string) => {
+      await held;
+      return { found: true, ingestion_id: job, source_uri: job, state: "ready", revision: 1 };
+    });
+    useStore.setState({
+      identity: { org: "acme", namespace: "code-repo", agent: "loom-ui" },
+      myNamespaces: [{ namespace: "code-repo", kind: "code" } as never],
+    });
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />);
+    await settle();
+    const user = userEvent.setup({ applyAccept: false });
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    await user.upload(
+      screen.getByLabelText("Choose a file to upload"),
+      ["a.md", "b.md", "c.md", "d.md"].map((n) => new File([n], n)),
+    );
+    const upload = await screen.findByRole("button", { name: "Upload 4 files to col-q3" });
+    await waitFor(() => expect(upload).not.toHaveAttribute("aria-disabled"));
+    await user.click(upload);
+    await waitFor(() => expect(api.ingestKnowledge).toHaveBeenCalledTimes(3));
+    await act(async () => {
+      history.replaceState(null, "", "/library");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await settle();
+    expect(screen.getByRole("heading", { name: "Add documents to col-q3" })).toBeInTheDocument();
+    await act(async () => finish());
+    await waitFor(() => expect(api.ingestKnowledge).toHaveBeenCalledTimes(4));
+    expect(api.ingestKnowledge.mock.calls.every(([id]) => (id as { namespace: string }).namespace === "col-q3")).toBe(
+      true,
+    );
+  });
+
+  it("keeps an upload's dialog open, sending where it began, when the page shows another place", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });
+    api.knowledgeFormats.mockResolvedValue({
+      formats: [{ format: "markdown", extensions: ["md"], media_types: [], available: true }],
+      max_upload_bytes: 1_000_000,
+      refused_extensions: [],
+      default_format: "text",
+    });
+    api.uploadKnowledgeFile.mockImplementation(async (_id: unknown, f: File) => ({ upload_id: f.name }));
+    api.ingestKnowledge.mockImplementation(async (_id: unknown, o: { source_uri: string }) => ({
+      ingestion_id: o.source_uri,
+    }));
+    api.knowledgeIngestStatus.mockReturnValue(new Promise(() => {})); // still processing
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />);
+    await settle();
+    const user = userEvent.setup({ applyAccept: false });
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    await user.upload(screen.getByLabelText("Choose a file to upload"), [
+      new File(["a"], "a.md"),
+      new File(["b"], "b.md"),
+    ]);
+    const upload = await screen.findByRole("button", { name: "Upload 2 files to col-q3" });
+    await waitFor(() => expect(upload).not.toHaveAttribute("aria-disabled"));
+    await user.click(upload);
+    await waitFor(() => expect(api.ingestKnowledge).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      history.replaceState(null, "", "/library");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await settle();
+    expect(screen.getByRole("heading", { name: "Add documents to col-q3" })).toBeInTheDocument();
+    expect(api.ingestKnowledge.mock.calls.every(([id]) => (id as { namespace: string }).namespace === "col-q3")).toBe(
+      true,
+    );
+  });
+
+  it("names an upload's destination with its address when another collection shares its title", async () => {
+    api.listCollections.mockResolvedValue({
+      collections: [entry("col-notes", { title: "Notes" }), entry("col-notes-ab12", { title: "Notes" })],
+      next_cursor: null,
+    });
+    api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });
+    api.knowledgeFormats.mockResolvedValue({
+      formats: [{ format: "markdown", extensions: ["md"], media_types: [], available: true }],
+      max_upload_bytes: 1_000_000,
+      refused_extensions: [],
+      default_format: "text",
+    });
+    history.replaceState(null, "", "/library?collection=col-notes");
+    render(<Documents />);
+    await settle();
+    const user = userEvent.setup({ applyAccept: false });
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    await user.upload(screen.getByLabelText("Choose a file to upload"), [
+      new File(["a"], "a.md"),
+      new File(["b"], "b.md"),
+    ]);
+    expect(await screen.findByRole("button", { name: "Upload 2 files to Notes (col-notes)" })).toBeInTheDocument();
   });
 
   it("an error from another place does not send a readable collection back", async () => {

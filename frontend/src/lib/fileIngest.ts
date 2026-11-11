@@ -26,6 +26,22 @@ export interface FileVerdict {
   available: boolean | null;
   /** Why it will not be sent, in words a person can act on; "" when it can be. */
   refusal: string;
+  /** Whether its name or media type names a listed format (false when the formats are not
+   *  known, or a refusal came before the formats were looked at). */
+  listed: boolean;
+}
+
+/** A document's title from its file's name: the name without its extension. */
+export function titleFromName(name: string): string {
+  return name.replace(/\.[^.]+$/, "");
+}
+
+/** The tags typed in a document form's tags field: comma-separated, blanks dropped. */
+export function tagsFrom(text: string): string[] {
+  return text
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
 }
 
 /** The format the server reads `file` as (its extension, else its media type, else the
@@ -35,29 +51,36 @@ export function fileVerdict(
   formats: KnowledgeFormats | null,
 ): FileVerdict {
   const ext = file.name.includes(".") ? (file.name.split(".").pop() ?? "").toLowerCase() : "";
-  if (!formats) return { format: "", available: null, refusal: "" };
+  if (!formats) return { format: "", available: null, refusal: "", listed: false };
   if (formats.refused_extensions.includes(ext))
-    return { format: "", available: false, refusal: `.${ext} files are not read; save it as .${ext}x and pick that.` };
+    return {
+      format: "",
+      available: false,
+      refusal: `.${ext} files are not read; save it as .${ext}x and pick that.`,
+      listed: false,
+    };
   // The upload refuses an empty body too.
-  if (file.size === 0) return { format: "", available: false, refusal: `${file.name} is empty.` };
+  if (file.size === 0) return { format: "", available: false, refusal: `${file.name} is empty.`, listed: false };
   if (file.size > formats.max_upload_bytes)
     return {
       format: "",
       available: false,
       refusal: `${file.name} is ${mb(file.size)}; this deployment takes files up to ${mb(formats.max_upload_bytes)}.`,
+      listed: false,
     };
   const media = file.type.split(";")[0].trim().toLowerCase();
-  const entry: KnowledgeFormat | undefined =
-    formats.formats.find((f) => f.extensions.includes(ext)) ??
-    formats.formats.find((f) => media !== "" && f.media_types.includes(media)) ??
-    formats.formats.find((f) => f.format === formats.default_format);
-  if (!entry) return { format: "", available: null, refusal: "" }; // a listing without its default format
+  const named =
+    formats.formats.find((f) => ext !== "" && f.extensions.includes(ext)) ??
+    formats.formats.find((f) => media !== "" && f.media_types.includes(media));
+  const entry: KnowledgeFormat | undefined = named ?? formats.formats.find((f) => f.format === formats.default_format);
+  if (!entry) return { format: "", available: null, refusal: "", listed: false }; // a listing without its default format
   // Unknown (null) is no refusal: the extractor could not be asked just now, and an
   // ingest sent waits for it.
   return {
     format: entry.format,
     available: entry.available,
     refusal: entry.available === false ? `No extractor on this deployment reads ${entry.format} files.` : "",
+    listed: !!named,
   };
 }
 
@@ -110,7 +133,20 @@ export class FollowLost extends Error {
 
 /** The pause between polls; tests replace it to follow a job without waiting. */
 export const ingestClock = {
-  sleep: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)),
+  /** Waits `ms`; a `signal` that aborts ends the wait at once, rejecting. */
+  sleep: (ms: number, signal?: AbortSignal): Promise<void> =>
+    new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(signal.reason);
+      const onAbort = () => {
+        clearTimeout(t);
+        reject(signal?.reason);
+      };
+      const t = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    }),
 };
 
 /** Where a file is: its bytes on their way (cancellable: nothing is queued yet), the
@@ -129,14 +165,20 @@ export async function ingestFile(
   file: File,
   fields: KnowledgeIngestFields,
   onStep: (line: string, phase: IngestPhase) => void,
-  opts: { signal?: AbortSignal; onQueued?: (ingestionId: string) => void } = {},
+  opts: {
+    signal?: AbortSignal;
+    onQueued?: (ingestionId: string) => void;
+    /** Wraps the upload and the ingest call, to send each again when the server allows. */
+    retry?: <T>(step: () => Promise<T>) => Promise<T>;
+  } = {},
 ): Promise<KnowledgeIngestStatus> {
   const { signal } = opts;
+  const retry = opts.retry ?? ((step) => step());
   onStep("Uploading…", "upload");
-  const up = await uploadKnowledgeFile(id, file, signal);
+  const up = await retry(() => uploadKnowledgeFile(id, file, signal));
   signal?.throwIfAborted(); // cancelled while the bytes went: nothing is queued
   onStep("Queuing…", "queue");
-  const job = await ingestKnowledge(id, { ...fields, upload_id: up.upload_id });
+  const job = await retry(() => ingestKnowledge(id, { ...fields, upload_id: up.upload_id }));
   opts.onQueued?.(job.ingestion_id);
   let missed = 0;
   for (;;) {
@@ -149,12 +191,12 @@ export async function ingestFile(
       // A poll that fails (a replica restarting, a rate limit, a dropped connection) is
       // tried again; the job is queued and goes on whatever the page hears of it.
       if (++missed >= POLL_MISSES) throw new FollowLost(job.ingestion_id, e);
-      await ingestClock.sleep(POLL_MS);
+      await ingestClock.sleep(POLL_MS, signal);
       continue;
     }
     signal?.throwIfAborted();
     onStep(ingestStep(status), "follow");
     if (!status.found || INGEST_DONE.has(status.state)) return status;
-    await ingestClock.sleep(POLL_MS);
+    await ingestClock.sleep(POLL_MS, signal);
   }
 }

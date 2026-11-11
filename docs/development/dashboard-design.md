@@ -46,7 +46,7 @@ Loom keeps a few elements of its own, on Click UI tokens:
 - Triggers that show an avatar or a namespace name: native buttons on tokens; Click UI's `empty` button is link text.
 - Date and date-time fields (the graph's "Valid as of", a task's due time): native `date` and `datetime-local` inputs drawn with Click UI's field tokens, because Click UI's `DatePicker` takes no `name` or `id` for a label and has no time.
 - The tracker source's repository list: a native input inside a field-styled box that turns each entry into a removable tag, because Click UI has no tag input.
-- File pickers: a hidden native `file` input opened by a Click UI `Button`.
+- File pickers: a hidden native `file` input opened by a Click UI `Button`. Where files may also be dropped (the document dialogs), the button sits in `ui/DropZone`, a dashed drop target (Click UI has none) tinted while files are over it; its hint hides under a coarse pointer.
 - An id field that suggests known ids and still takes any other (the Assistant's user and agent field): a Click UI `TextField` with a native `datalist`, because Click UI's `AutoComplete` picks from its list and keeps no free text.
 - Sidebar nav items: anchors drawn with Click UI's `--click-sidebar-*` tokens. Click UI's `SidebarNavigationItem` is a `div` whose label may hold a link, which would put the selected state on the `div`, not the link.
 - Loom-specific widgets (the graph canvas, the task grid and board, the patterns board), with Click UI controls inside them.

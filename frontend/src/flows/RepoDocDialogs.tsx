@@ -21,6 +21,7 @@ import { addKnowledge, downloadKnowledge, getKnowledge, textDownloadName, type K
 import { relativeTime } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { toast, toastError } from "../components/Toast";
+import { DropZone } from "../components/ui/DropZone";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
 import { slugify } from "../lib/docFiles";
@@ -71,7 +72,6 @@ export function RepoDocAddDialog({
   const [busy, setBusy] = useState<IngestPhase | "saving" | null>(null);
   const [step, setStep] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [over, setOver] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const formats = useKnowledgeFormats({ org, namespace }, open);
   const verdict = file ? fileVerdict(file, formats) : null;
@@ -92,9 +92,7 @@ export function RepoDocAddDialog({
   };
 
   const onDrop = (e: DragEvent) => {
-    e.preventDefault();
-    setOver(false);
-    if (busy === null) take(e.dataTransfer.files?.[0]); // not while a file is on its way
+    take(e.dataTransfer.files?.[0]);
   };
 
   const saveFile = async (f: File): Promise<string[] | null> => {
@@ -193,21 +191,15 @@ export function RepoDocAddDialog({
         </Tabs.TriggersList>
         <Tabs.Content value="file" className="pt-4">
           {/* Not Click UI's FileUpload: its file input has no name, and it cannot show what was read. */}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: a drop target for dragged files; the "Choose a file" button inside is the keyboard path */}
-          {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above */}
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              if (busy === null) setOver(true); // no target while a file is on its way
-            }}
-            onDragLeave={() => setOver(false)}
-            onDrop={onDrop}
-            className={`rounded border border-dashed p-5 text-center text-sm ${over ? "border-accent bg-accent-soft" : "border-border-strong"}`}
-          >
+          <DropZone busy={busy !== null} onDrop={onDrop} className="p-5 text-center text-sm">
             {file && verdict ? (
               <PickedFile file={file} verdict={verdict} />
             ) : (
-              <p className="text-text-muted">Drop a file here{readable ? ` (${readable})` : ""}</p>
+              <p className="text-text-muted">
+                {/* The formats stay on a touch screen; the drop words go. */}
+                <span className="drop-hint">Drop a file here </span>
+                {readable ? `(reads ${readable})` : ""}
+              </p>
             )}
             <div className="mt-3 flex justify-center">
               <Button
@@ -228,7 +220,7 @@ export function RepoDocAddDialog({
               onChange={(e) => take(e.target.files?.[0])}
               tabIndex={-1}
             />
-          </div>
+          </DropZone>
           <div className="mt-3 space-y-2">
             {verdict?.refusal && <ErrorNote>{verdict.refusal}</ErrorNote>}
             <AllowPartial checked={allowPartial} onChange={setAllowPartial} disabled={busy !== null} />
