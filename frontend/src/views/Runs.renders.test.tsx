@@ -76,16 +76,21 @@ describe("Runs row renders", () => {
   it("with no run says what a run is and offers Connect an agent", async () => {
     listRunsPage.mockResolvedValue({ runs: [], total: 0, paged: true });
     render(<Runs />);
-    // Runs with no memory activity are folded at first: that state offers the connect too.
+    // Runs with no memory activity are folded at first: that state's action unfolds them, and
+    // Connect an agent sits beside it as the secondary.
     expect(await screen.findByRole("heading", { name: "No runs with memory activity" })).toBeInTheDocument();
     expect(screen.queryByText(/run_id|memory\.set|run\.complete/)).toBeNull();
     expect(screen.getByRole("button", { name: "Connect an agent" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("checkbox", { name: "Show runs with no memory activity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show runs with no memory activity" }));
     expect(await screen.findByRole("heading", { name: "No runs yet" })).toBeInTheDocument();
     expect(
       screen.getByText(/A run is one session of an agent's work: what it read and what it wrote/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/run\.begin/)).toBeNull();
     expect(screen.getByRole("button", { name: "Connect an agent" })).toBeInTheDocument();
+    // The unfold left with its state: focus is on the toolbar's toggle, now checked.
+    const toggle = screen.getByRole("checkbox", { name: "Show runs with no memory activity" });
+    expect(toggle).toHaveFocus();
+    expect(toggle).toBeChecked();
   });
 });

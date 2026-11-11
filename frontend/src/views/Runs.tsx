@@ -883,6 +883,7 @@ export function Runs() {
             </Select>
           )}
           <Checkbox
+            id={UNFOLD_ID}
             label="Show runs with no memory activity"
             checked={!hideConn}
             onCheckedChange={(c) => refilter(setHideConn)(c !== true)}
@@ -921,8 +922,18 @@ export function Runs() {
           {...(hideConn
             ? {
                 title: "No runs with memory activity",
-                description: `Runs that neither relied on nor saved a memory are folded. Use "Show runs with no memory activity"${phone ? " in the View menu" : ""} to see them. A run has memory activity when its agent saves memories under it, or names the memories it relied on when it finishes.`,
-                connect: "primary" as const,
+                description:
+                  "Runs that neither relied on nor saved a memory are folded. A run has memory activity when its agent saves memories under it, or names the memories it relied on when it finishes.",
+                action: {
+                  label: "Show runs with no memory activity",
+                  // The button leaves with this state: focus goes to the toolbar's toggle, else
+                  // (a phone, where it is in the View menu) to the page's heading.
+                  onClick: () => {
+                    refilter(setHideConn)(false);
+                    focusAfterUnfold();
+                  },
+                },
+                connect: "secondary" as const,
               }
             : {
                 title: "No runs yet",
@@ -1169,4 +1180,14 @@ export function Runs() {
       </Modal>
     </PageContainer>
   );
+}
+
+const UNFOLD_ID = "runs-show-unfolded";
+
+/** After the empty state's unfold: the toolbar's toggle, else the page's heading. */
+function focusAfterUnfold(): void {
+  const target = document.getElementById(UNFOLD_ID) ?? document.querySelector<HTMLElement>("main h1");
+  if (!target) return;
+  if (target.tagName === "H1" && !target.hasAttribute("tabindex")) target.tabIndex = -1;
+  target.focus();
 }

@@ -57,7 +57,7 @@ describe("Repositories page without the repository-job sandbox", () => {
     });
     stubNetwork(() => [UNSANDBOXED]);
     await mount();
-    expect(await screen.findByText(/Ask the operator to list them in LOOM_CODE_REPOS_JSON/)).toBeTruthy();
+    expect(await screen.findByText(/List them in LOOM_CODE_REPOS_JSON\./)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Add repository/ })).toBeNull();
   });
 

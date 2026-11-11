@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { OP_MIN_ROLE } from "../lib/canCall";
 
 // An empty list says, in plain words, what will appear there and what fills it
-// (docs/features/dashboard.md): no op name, header or "via MCP" in an empty state's text.
-// This reads every `EmptyState` and `ListState kind="empty"` in the page sources, from its
-// opening tag to its close at the same indentation.
+// (docs/features/dashboard.md): no operation name, wire field, header, environment variable
+// or "via MCP" in an empty state's text. This reads every `EmptyState` and
+// `ListState kind="empty"` in the page sources, from its opening tag to its close at the
+// same indentation.
+//
+// The operation names are every op the registry serves: the SDK's generated table
+// (`sdk/typescript/src/generated/ops.ts`, written by `scripts/codegen/sdk_ts_gen.py` from
+// `server.operations.registry`), read as `lib/canCall.test.ts` reads it, together with the
+// ops the dashboard gates on (`OP_MIN_ROLE`), which is all a frontend-only checkout has.
 
 const SOURCES = import.meta.glob<string>(["../views/**/*.tsx", "../components/**/*.tsx", "!../**/*.test.tsx"], {
   query: "?raw",
@@ -11,8 +18,23 @@ const SOURCES = import.meta.glob<string>(["../views/**/*.tsx", "../components/**
   eager: true,
 });
 
-const BANNED =
-  /\b(run\.begin|run\.complete|knowledge\.search|namespace\.register|memory\.set|conversation\.append|task\.create|task\.pull|inbox\.register)\b|via MCP|X-Loom-/;
+const GENERATED_OPS = new URL("../../../sdk/typescript/src/generated/ops.ts", import.meta.url).pathname;
+
+async function opNames(): Promise<{ names: Set<string>; fromRegistry: boolean }> {
+  const names = new Set(Object.keys(OP_MIN_ROLE).filter((op) => op.includes(".")));
+  // vitest runs on node; the frontend tsconfig carries no node types (see canCall.test.ts).
+  type Fs = { existsSync(p: string): boolean; readFileSync(p: string, enc: "utf8"): string };
+  const fs = (await import(/* @vite-ignore */ "node:" + "fs")) as Fs;
+  if (!fs.existsSync(GENERATED_OPS)) return { names, fromRegistry: false };
+  for (const m of fs.readFileSync(GENERATED_OPS, "utf8").matchAll(/\{ name: "([a-z0-9_.]+)",/g)) names.add(m[1]);
+  return { names, fromRegistry: true };
+}
+
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** What an empty state may still say, by file: the Repositories page names the variable that
+ *  lists repositories to whoever runs the deployment, and to no one else. */
+const ALLOWED: { file: string; text: string }[] = [{ file: "/Code.tsx", text: "LOOM_CODE_REPOS_JSON" }];
 
 /** Each empty state's source: the opening tag's line to its `/>` or closing tag. */
 function emptyStates(text: string): { line: number; block: string }[] {
@@ -35,18 +57,33 @@ function emptyStates(text: string): { line: number; block: string }[] {
 }
 
 describe("empty states", () => {
-  it("name no op, header or transport", () => {
+  it("name no operation, wire field, header, variable or transport", async () => {
+    const { names, fromRegistry } = await opNames();
+    // A checkout with the SDK tree reads the whole registry, not only the dashboard's gates.
+    if (fromRegistry) expect(names.size).toBeGreaterThan(300);
+    const banned = new RegExp(
+      `(?<![\\w.])(${[...names].map(escape).join("|")})(?![\\w])|\\brun_id\\b|\\bLOOM_[A-Z_]+|via MCP|X-Loom-`,
+      "g",
+    );
     const hits = Object.entries(SOURCES).flatMap(([path, text]) =>
-      emptyStates(text)
-        .filter(({ block }) => BANNED.test(block))
-        .map(({ line, block }) => `${path}:${line}: ${BANNED.exec(block)?.[0]}`),
+      emptyStates(text).flatMap(({ line, block }) =>
+        [...block.matchAll(banned)]
+          .map((m) => m[0])
+          .filter((said) => !ALLOWED.some((a) => path.endsWith(a.file) && a.text === said))
+          .map((said) => `${path}:${line}: ${said}`),
+      ),
     );
     expect(Object.keys(SOURCES).length).toBeGreaterThan(50);
     expect(hits).toEqual([]);
   });
 
-  it("finds the empty states it reads", () => {
-    const count = Object.values(SOURCES).reduce((n, text) => n + emptyStates(text).length, 0);
-    expect(count).toBeGreaterThan(20);
+  it("finds the empty states it reads, the allowed operator line among them", () => {
+    const blocks = Object.entries(SOURCES).flatMap(([path, text]) => emptyStates(text).map((b) => ({ path, ...b })));
+    expect(blocks.length).toBeGreaterThan(20);
+    for (const a of ALLOWED)
+      expect(
+        blocks.some((b) => b.path.endsWith(a.file) && b.block.includes(a.text)),
+        a.text,
+      ).toBe(true);
   });
 });

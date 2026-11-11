@@ -108,12 +108,14 @@ signed-in session, where an assistant answer's help citation leads; links betwee
 stay on it).
 
 A page with nothing to list says what will appear there and offers the action that fills
-it. Where only an agent fills it (memories, runs, conversations, connected clients),
-**Connect an agent** opens the token form in a dialog on that page (with auth off, the
-plugin's install lines), so connecting needs no trip to **Settings**. Where only an operator
-or an admin fills it, the page says so, and names a deployment setting only to a platform
-admin. A viewer's empty Memories page names who can write there and opens the namespace's
-members, where its admins are listed.
+it. Memories are filled by an agent or by hand; runs, conversations and connected clients
+only by an agent. Where an agent fills it, **Connect an
+agent** opens the token form in a dialog on that page (with auth off, the plugin's install
+lines), so connecting needs no trip to **Settings**; Conversations offers it only while
+**Record conversations** is on. Where only an operator or an admin fills it, the page says
+so, and names a deployment setting only to whoever runs the deployment (a platform admin,
+or anyone with auth off). A viewer's empty Memories page names who can write there and
+opens the namespace's members, where its admins are listed.
 
 ### The assistant panel
 

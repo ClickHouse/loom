@@ -94,8 +94,9 @@ describe("Memories empty state", () => {
 
   it("tells a viewer who writes here and opens the members list, with no Add memory or connect", async () => {
     seed("viewer", ["VIEWER"]);
-    render(<Recent />);
+    const { container } = render(<Recent />);
     const state = await empty();
+    expect(await axeViolations(container)).toEqual([]);
     expect(
       within(state).getByText("Memories appear here when someone with writer access saves one."),
     ).toBeInTheDocument();

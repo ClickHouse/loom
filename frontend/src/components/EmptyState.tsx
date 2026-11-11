@@ -12,9 +12,8 @@ interface EmptyStateProps {
   /** Controls that own their own state (a button with the dialog it opens), after `action`
    *  in the same row: secondary where `action` is the primary. */
   actions?: ReactNode;
-  /** Operator detail (op names, worker names, env flags) behind a closed
-   *  "How it works" disclosure, so the description itself stays in plain
-   * language. */
+  /** More of how the list fills, in the same plain words, behind a closed "How it works"
+   *  disclosure, so the description stays short. */
   details?: ReactNode;
   /** A line under the description (an error's request id). */
   children?: ReactNode;

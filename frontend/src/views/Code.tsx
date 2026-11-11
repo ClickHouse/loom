@@ -710,9 +710,7 @@ function RepositoriesHome({
               ? "Loom indexes a Git branch so you and your agents can search and ask about its code."
               : sandbox === "warn"
                 ? `This server cannot add repositories from this page, because it runs without the repository-job sandbox. ${
-                    operator
-                      ? "Ask the operator to list them in LOOM_CODE_REPOS_JSON."
-                      : "Ask the operator to add them."
+                    operator ? "List them in LOOM_CODE_REPOS_JSON." : "Ask the operator to add them."
                   }`
                 : "This server cannot index repositories until its repository-job sandbox runs. Ask the operator."
           }

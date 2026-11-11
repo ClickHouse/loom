@@ -13,22 +13,14 @@ const QuickConnect = lazy(() => import("../views/Tokens").then((m) => ({ default
 const INSTRUCTIONS_ID = "connect-agent-instructions";
 
 /**
- * ConnectAgentDialog — connecting an agent from wherever the page is: an empty list that
- * only an agent fills opens it in place, with no move to Settings. With auth on it is the
+ * ConnectAgentDialog — connecting an agent from wherever the page is: an empty list an
+ * agent fills opens it in place, with no move to Settings. With auth on it is the
  * token form (the Tokens page's `QuickConnect`); with auth off, the plugin install lines,
  * since that server takes no token. Opening focuses the instructions, so a reader starts
  * on what the dialog is for; closing returns focus to the opener (`ui/Modal`). Pages open it
  * through `ConnectAgentButton`, which loads this module on the first press.
  */
-export function ConnectAgentDialog({
-  open,
-  onOpenChange,
-  onCloseAutoFocus,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCloseAutoFocus?: (e: Event) => void;
-}) {
+export function ConnectAgentDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const authOff = isAuthDisabled();
   return (
     <Modal
@@ -40,7 +32,6 @@ export function ConnectAgentDialog({
         e.preventDefault();
         document.getElementById(INSTRUCTIONS_ID)?.focus();
       }}
-      onCloseAutoFocus={onCloseAutoFocus}
     >
       {authOff ? (
         <AuthOffConnect instructionsId={INSTRUCTIONS_ID} />

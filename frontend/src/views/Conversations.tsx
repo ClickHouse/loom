@@ -590,8 +590,19 @@ export function Conversations() {
           kind="empty"
           icon="chat"
           title="No conversations yet in this namespace"
-          description={`Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on${loggingEnabled === false ? ". It is off here" : ""}.`}
-          connect="primary"
+          // Recording off: no agent can fill the page until it is on, so the next step is the
+          // switch (in the header, for whoever may set it), not a connect.
+          {...(loggingEnabled === false
+            ? {
+                description: canSetLogging
+                  ? "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here: turn on Record conversations above, then connect an agent."
+                  : "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here; an admin of this namespace can turn it on.",
+              }
+            : {
+                description:
+                  "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on.",
+                connect: "primary" as const,
+              })}
         />
       )}
 
