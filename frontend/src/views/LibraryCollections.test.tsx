@@ -741,16 +741,29 @@ describe("the Library on a collection", () => {
     useStore.setState({ myNamespaces: null });
   });
 
-  it("with no namespace and only one's own collection, says how to get in", async () => {
+  it("with no namespace, opens one's own files in place of the page, else the first collection", async () => {
     api.listCollections.mockResolvedValue({
-      collections: [entry("col-me-1a2b", { personal: true })],
+      collections: [entry("col-a", { title: "Alpha" }), entry("col-me-1a2b", { personal: true })],
       next_cursor: null,
     });
     useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
+    const entries = window.history.length;
     render(<Documents />);
     await settle();
-    expect(screen.getByText(/^Your token reaches no namespace yet\./)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
+    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-me-1a2b");
+    // A correction, not a pick: Back leaves the Library.
+    expect(window.history.length).toBe(entries);
+    expect(api.listKnowledge.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "col-me-1a2b" });
+    expect(screen.queryByText(/reaches no namespace/)).not.toBeInTheDocument();
+    cleanup();
+    window.history.replaceState(null, "", "/library");
+    api.listCollections.mockResolvedValue({
+      collections: [entry("col-z", { title: "Zeta" }), entry("col-a", { title: "Alpha" })],
+      next_cursor: null,
+    });
+    render(<Documents />);
+    await settle();
+    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-a");
   });
 
   it("says nothing of collections or namespaces while the list is read", async () => {

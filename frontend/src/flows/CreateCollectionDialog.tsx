@@ -52,6 +52,8 @@ interface Props {
   parents: CollectionEntry[];
   /** The parent the form starts on; "" for top level. */
   initialParent?: string;
+  /** The header's namespace, named so a top-level collection is not taken to sit in it. */
+  namespace?: string | null;
   /** Fires with the collection's name: the new one, or the one the title already names there. */
   onCreated: (namespace: string) => void;
 }
@@ -64,7 +66,15 @@ interface Props {
  * names it explicitly. The creator becomes its admin; under a parent it also inherits the
  * parent's grants, which needs writer on the parent.
  */
-export function CreateCollectionDialog({ open, onOpenChange, org, parents, initialParent = "", onCreated }: Props) {
+export function CreateCollectionDialog({
+  open,
+  onOpenChange,
+  org,
+  parents,
+  initialParent = "",
+  namespace = null,
+  onCreated,
+}: Props) {
   const [title, setTitle] = useState("");
   const [ownAddress, setOwnAddress] = useState(false);
   const [name, setName] = useState(COLLECTION_PREFIX);
@@ -189,7 +199,7 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, initi
             onSelect={setParent}
             triggerProps={{ "aria-describedby": "create-collection-parent-hint" }}
           >
-            <Select.Item value={TOP_LEVEL}>None (top level)</Select.Item>
+            <Select.Item value={TOP_LEVEL}>Top level, in the org</Select.Item>
             {parents.map((p) => (
               <Select.Item key={p.namespace} value={p.namespace}>
                 {distinctTitle(p, repeated)}
@@ -197,7 +207,10 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, initi
             ))}
           </Select>
           <p id="create-collection-parent-hint" className="mt-1 text-xs text-text-muted">
-            A collection inside another inherits its grants. Only collections you can write are listed.
+            {parent === TOP_LEVEL
+              ? `A top-level collection belongs to the org${namespace ? `, not to ${namespace}` : ""}: only the members you add read it.`
+              : "A collection inside another inherits its grants."}{" "}
+            Only collections you can write are listed.
           </p>
         </div>
         <TextField

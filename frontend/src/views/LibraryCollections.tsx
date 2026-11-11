@@ -346,6 +346,7 @@ export function LibraryCollections({
           onOpenChange={setCreating}
           org={org}
           parents={parents}
+          namespace={namespace}
           initialParent={current && parents.includes(current) ? current.namespace : ""}
           onCreated={(name) => {
             // No rows until a read that lists the new collection lands (or gives up), so the

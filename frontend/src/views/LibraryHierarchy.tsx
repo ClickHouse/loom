@@ -1,8 +1,8 @@
 /**
  * Where a collection sits, on the Library: the path to it from the top, on one line before the
  * select (the parent a link, the ones above it folded; on a phone, one button back to the
- * parent), and the collections inside the one shown, or the top-level ones on "My files" and
- * on a namespace. The tree is the server's (`collection.list` gives each collection's
+ * parent), and the collections inside the one shown, or on "My files" and on a namespace the
+ * top-level ones and those shared with the caller. The tree is the server's (`collection.list` gives each collection's
  * parent); in the path, a parent the caller cannot read is a dots button, never a link, and
  * gives its address when tapped.
  */
@@ -39,6 +39,7 @@ import { isModifiedClick } from "../lib/graphLink";
 import { navigationHref } from "../lib/state";
 
 const HEADING_ID = "library-collections-inside";
+const SHARED_HEADING_ID = "library-collections-shared";
 
 /** Collections inside listed at first, and how many more each "Show more" adds. */
 const FIRST_INSIDE = 6;
@@ -70,15 +71,37 @@ export function collectionPath(
   return path;
 }
 
-/** The collections listed under the place shown: the children of a collection, or the
- *  top-level ones (and those whose parent the caller cannot read) elsewhere. */
+/** A collection someone shared with the caller: one they read or write but do not
+ *  administer. `collection.list` names no owner, so the role is the signal: one shared as
+ *  admin is the caller's to manage, and sits with their own. */
+export function isSharedWithMe(c: CollectionEntry): boolean {
+  return !c.personal && c.role !== "admin";
+}
+
+/** The collections listed under the place shown: the children of a collection, or at the top
+ *  level the caller's own top-level ones (and those whose parent the caller cannot read). */
 export function collectionsInside(rows: CollectionEntry[], current: CollectionEntry | null): CollectionEntry[] {
   const names = new Set(rows.map((c) => c.namespace));
   const under =
     current && !current.personal
       ? rows.filter((c) => c.parent === current.namespace)
-      : rows.filter((c) => !c.personal && (!c.parent || !names.has(c.parent)));
+      : rows.filter((c) => !c.personal && !isSharedWithMe(c) && (!c.parent || !names.has(c.parent)));
   return under.sort(collectionOrder);
+}
+
+/** "Shared with you", at the top level: each collection shared with the caller whose parent
+ *  is not itself shared with them (a shared one's children are inside it), wherever it sits. */
+export function sharedWithMe(rows: CollectionEntry[]): CollectionEntry[] {
+  const shared = new Set(rows.filter(isSharedWithMe).map((c) => c.namespace));
+  return rows.filter((c) => shared.has(c.namespace) && !shared.has(c.parent ?? "")).sort(collectionOrder);
+}
+
+/** Where a collection sits, as one line of titles from the top ("Team › Research"); a parent
+ *  the caller cannot read is "…". Empty for a top-level one. */
+export function pathText(c: CollectionEntry, byName: Map<string, CollectionEntry>, repeated: Set<string>): string {
+  const path = collectionPath(c, byName);
+  if (path.length < 2) return "";
+  return path.map((p) => ("hidden" in p ? "…" : distinctTitle(p, repeated))).join(" › ");
 }
 
 /** The place above the top: its label, the collection it is (null for the header's
@@ -278,12 +301,40 @@ export function CollectionsInside({
   onPick: (collection: string) => void;
   className?: string;
 }) {
+  const inside = useMemo(() => collectionsInside(rows, current), [rows, current]);
+  const top = !current || current.personal;
+  const shared = useMemo(() => (top ? sharedWithMe(rows) : []), [rows, top]);
+  if (inside.length === 0 && shared.length === 0) return null;
+  return (
+    <div className={`space-y-6 ${className}`}>
+      <PlaceList id={HEADING_ID} label="Collections" items={inside} rows={rows} onPick={onPick} />
+      <PlaceList id={SHARED_HEADING_ID} label="Shared with you" items={shared} rows={rows} onPick={onPick} withPath />
+    </div>
+  );
+}
+
+/** One list of places to open, revealed a step at a time; `withPath` says where each sits. */
+function PlaceList({
+  id,
+  label,
+  items,
+  rows,
+  onPick,
+  withPath = false,
+}: {
+  id: string;
+  label: string;
+  items: CollectionEntry[];
+  rows: CollectionEntry[];
+  onPick: (collection: string) => void;
+  withPath?: boolean;
+}) {
   const [count, setCount] = useState(FIRST_INSIDE);
   const list = useRef<HTMLUListElement | null>(null);
-  const inside = useMemo(() => collectionsInside(rows, current), [rows, current]);
   // Over every collection listed, as the select and the path count them.
   const repeated = useMemo(() => repeatedTitles(rows), [rows]);
-  const left = inside.length - count;
+  const byName = useMemo(() => new Map(rows.map((c) => [c.namespace, c])), [rows]);
+  const left = items.length - count;
   // The last Show more removes its button: the focus goes to the first collection it added.
   const markShown = useLastPageFocus({
     loading: false,
@@ -293,26 +344,30 @@ export function CollectionsInside({
         const link = li.querySelector<HTMLElement>("a");
         return link ? [[li.dataset.collection ?? "", link] as [string, HTMLElement]] : [];
       }),
-    fallback: () => document.getElementById(HEADING_ID),
+    fallback: () => document.getElementById(id),
   });
-  if (inside.length === 0) return null;
+  if (items.length === 0) return null;
   // Links to other places, not rows of this list: a plain list, revealed a step at a time
   // (the select above finds any of them).
   return (
-    <section aria-labelledby={HEADING_ID} className={`space-y-1 ${className}`}>
-      <SectionHeading id={HEADING_ID} level={2} label="Collections" count={inside.length} focusable />
+    <section aria-labelledby={id} className="space-y-1">
+      <SectionHeading id={id} level={2} label={label} count={items.length} focusable />
       <ul ref={list} className="space-y-1">
-        {inside.slice(0, count).map((c) => (
-          <li key={c.namespace} data-collection={c.namespace}>
-            <div className="flex flex-wrap items-baseline gap-x-2">
-              <PlaceLink collection={c.namespace} onOpen={() => onPick(c.namespace)}>
-                {distinctTitle(c, repeated)}
-              </PlaceLink>
-              <span className="text-xs text-text-muted">{roleLabel(c.role)}</span>
-            </div>
-            {c.description && <TextClamp text={c.description} reach="tooltip" className="text-xs text-text-muted" />}
-          </li>
-        ))}
+        {items.slice(0, count).map((c) => {
+          const path = withPath ? pathText(c, byName, repeated) : "";
+          return (
+            <li key={c.namespace} data-collection={c.namespace}>
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <PlaceLink collection={c.namespace} onOpen={() => onPick(c.namespace)}>
+                  {distinctTitle(c, repeated)}
+                </PlaceLink>
+                <span className="text-xs text-text-muted">{roleLabel(c.role)}</span>
+                {path && <span className="text-xs text-text-muted">{path}</span>}
+              </div>
+              {c.description && <TextClamp text={c.description} reach="tooltip" className="text-xs text-text-muted" />}
+            </li>
+          );
+        })}
       </ul>
       <div className="flex gap-3">
         {left > 0 && (
@@ -320,7 +375,7 @@ export function CollectionsInside({
             type="empty"
             htmlType="button"
             onClick={() => {
-              markShown(inside.slice(0, count).map((c) => c.namespace));
+              markShown(items.slice(0, count).map((c) => c.namespace));
               setCount(count + MORE_INSIDE);
             }}
           >
@@ -333,7 +388,7 @@ export function CollectionsInside({
             htmlType="button"
             onClick={() => {
               // Its button goes with the list it shortens; the heading stays.
-              document.getElementById(HEADING_ID)?.focus();
+              document.getElementById(id)?.focus();
               setCount(FIRST_INSIDE);
             }}
           >

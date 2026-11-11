@@ -315,8 +315,11 @@ describe("boot order", () => {
     );
     render(<App />);
     await until(() => order.includes("collection.list"));
-    expect(await screen.findByText("Pick a collection")).toBeInTheDocument();
-    expect(order).not.toContain("knowledge.list");
+    // The code namespace holds no documents: the Library opens the collection listed instead.
+    await until(() => new URLSearchParams(window.location.search).get("collection") === "col-q3");
+    await until(() => order.includes("knowledge.list"));
+    const reads = vi.mocked(fetch).mock.calls.filter(([u]) => String(u).includes("knowledge.list"));
+    for (const [, init] of reads) expect(JSON.parse(String(init?.body)).namespace).toBe("col-q3");
   });
 });
 
@@ -530,10 +533,10 @@ describe("a link's namespace", () => {
     await until(() => useStore.getState().view === "knowledge");
     expect(useStore.getState().identity?.namespace).toBe("");
     expect(screen.queryByText(/can reach no namespace yet/)).toBeNull();
-    // The namespace menu holds nothing for this account: the page sends no one there.
-    expect(
-      await screen.findByText(/^Collections are shared document libraries\. Pick a collection above\.$/),
-    ).toBeInTheDocument();
+    // The Library opens the collection by itself; the namespace menu holds nothing to send to.
+    await until(
+      () => new URLSearchParams(window.location.search).get("collection") === "col-research-0123456789abcdef",
+    );
     expect(screen.queryByRole("button", { name: "Open the namespace menu" })).toBeNull();
   });
 

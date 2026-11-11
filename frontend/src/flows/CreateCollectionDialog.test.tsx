@@ -71,6 +71,26 @@ describe("CreateCollectionDialog", () => {
     expect(toast).toHaveBeenCalledWith("Created Q3 Plans", "ok");
   });
 
+  it("says a top-level collection belongs to the org, not to the header's namespace", () => {
+    render(
+      <CreateCollectionDialog
+        open
+        onOpenChange={() => {}}
+        org="acme"
+        parents={[parent("col-team", "Team")]}
+        namespace="research"
+        onCreated={vi.fn()}
+      />,
+    );
+    const hint = document.getElementById("create-collection-parent-hint");
+    expect(hint?.textContent).toContain("A top-level collection belongs to the org, not to research");
+    cleanup();
+    mount(vi.fn(), [parent("col-team", "Team")], "col-team");
+    expect(document.getElementById("create-collection-parent-hint")?.textContent).toContain(
+      "A collection inside another inherits its grants.",
+    );
+  });
+
   it("opens the collection a title already names there", async () => {
     create.mockResolvedValue({ namespace: "col-docs", parent: "", created: false, title: "Docs" });
     const onCreated = mount();

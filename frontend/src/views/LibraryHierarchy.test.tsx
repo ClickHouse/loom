@@ -14,13 +14,14 @@ import {
   CollectionsInside,
   collectionPath,
   collectionsInside,
+  sharedWithMe,
 } from "./LibraryHierarchy";
 
 const entry = (namespace: string, over: Partial<CollectionEntry> = {}): CollectionEntry => ({
   namespace,
   parent: "",
   personal: false,
-  role: "writer",
+  role: "admin",
   description: "",
   ...over,
 });
@@ -174,6 +175,33 @@ describe("CollectionsInside", () => {
     cleanup();
     render(<CollectionsInside rows={ROWS} current={ROWS[2]} onPick={onPick} />);
     expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
+  });
+
+  it("lists the collections shared with the caller apart, each with where it sits", () => {
+    const rows = [
+      entry("col-lib", { title: "Library" }),
+      entry("col-r", { parent: "col-lib", title: "Research", role: "viewer" }),
+      entry("col-r-notes", { parent: "col-r", title: "Notes", role: "viewer" }),
+      entry("col-far", { parent: "col-hidden", title: "Far", role: "writer" }),
+      // Shared as admin: the caller's to manage, so with their own.
+      entry("col-ops", { title: "Ops" }),
+      entry("col-me-1a2b", { personal: true, role: "admin" }),
+    ];
+    // A shared one's children are inside it, not listed again.
+    expect(sharedWithMe(rows).map((c) => c.namespace)).toEqual(["col-far", "col-r"]);
+    expect(collectionsInside(rows, null).map((c) => c.namespace)).toEqual(["col-lib", "col-ops"]);
+    render(<CollectionsInside rows={rows} current={null} onPick={() => {}} />);
+    const shared = screen.getByRole("region", { name: /Shared with you/ });
+    expect(within(shared).getByRole("link", { name: "Research" })).toBeInTheDocument();
+    expect(within(shared).getByText("Library › Research")).toBeInTheDocument();
+    expect(within(shared).getByText("… › Far")).toBeInTheDocument();
+    expect(within(shared).queryByRole("link", { name: "Ops" })).toBeNull();
+    const own = screen.getByRole("region", { name: /^Collections/ });
+    expect(within(own).queryByRole("link", { name: "Research" })).toBeNull();
+    cleanup();
+    // Inside a collection, only its children: no "Shared with you".
+    render(<CollectionsInside rows={rows} current={rows[0]} onPick={() => {}} />);
+    expect(screen.queryByRole("region", { name: /Shared with you/ })).toBeNull();
   });
 
   it("tells two collections with one title apart by their address", () => {
