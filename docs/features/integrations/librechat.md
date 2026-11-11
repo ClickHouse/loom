@@ -245,7 +245,7 @@ The `sed` reads the line as `install.sh` writes it: unquoted, with no comment af
 Stop the stack with `docker compose --profile bundled --profile assistant down`: the
 installer's printed `--profile bundled down` leaves LibreChat running, and naming
 `bundled` also stops a bundled ClickHouse a switch left running.
-Re-running `install.sh` to switch ClickHouse (`--clickhouse`, `--bundled`) rewrites
+Running the install command again to switch ClickHouse (`--clickhouse`, `--bundled`) rewrites
 `COMPOSE_PROFILES`: run the `sed` again afterwards.
 
 A checkout runs this build through `make dev`, whose `--profile bundled` takes the place
