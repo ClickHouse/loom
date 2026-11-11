@@ -20,19 +20,30 @@ describe("supportLabel", () => {
     const label = supportLabel("supported", [cite(true), cite(true), cite(false, "code")]);
     expect(label?.text).toBe("Partly confirmed: 2 of 3 sources found in Loom");
     expect(label?.why).toBe(
-      "Loom found 2 of the 3 sources this answer cites in what Loom holds or in what the answer's own reads returned; each other source says why.",
+      "Loom found 2 of the 3 sources this answer cites in what Loom holds, in this build's documentation or in what the answer's own reads returned; each other source says why.",
     );
   });
 
   it("says none was found on an unsupported answer with sources", () => {
     expect(supportLabel("unsupported", [cite(false), cite(false)])?.why).toBe(
-      "Loom found none of the sources this answer cites in what Loom holds or in what the answer's own reads returned; each source below says why.",
+      "Loom found none of the sources this answer cites in what Loom holds, in this build's documentation or in what the answer's own reads returned; each source below says why.",
     );
   });
 
   it("says each was found when all were", () => {
     expect(supportLabel("supported", [cite(true)])?.why).toBe(
-      "Loom found each source this answer cites in what Loom holds or in what the answer's own reads returned.",
+      "Loom found each source this answer cites in what Loom holds, in this build's documentation or in what the answer's own reads returned.",
     );
+  });
+
+  it("names the documentation for an answer that cites only help sections", () => {
+    expect(supportLabel("supported", [cite(true, "help")])?.why).toContain("in this build's documentation");
+  });
+
+  it("says the sources could not be checked on an unchecked answer with sources", () => {
+    expect(supportLabel("unchecked", [cite(false, "code")])).toMatchObject({
+      text: "Sources not checked",
+      why: "Loom could not check this answer's sources; each source below says why.",
+    });
   });
 });

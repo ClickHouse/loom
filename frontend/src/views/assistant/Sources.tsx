@@ -15,13 +15,13 @@ interface Label {
 }
 
 // Where a check looks for each cited source.
-const IN_LOOM = "in what Loom holds or in what the answer's own reads returned";
+const IN_LOOM = "in what Loom holds, in this build's documentation or in what the answer's own reads returned";
 
 /**
  * The label of an answer with this support and these citations; null when it has none.
- * "Checked" says whether the check ran and "confirm" says what it found. `unknownNames` are
- * the op and setting names it wrote that the server neither serves nor documents, which make
- * it unsupported whatever it cites.
+ * When some sources were not found it leads with how many were. `unknownNames` are the op
+ * and setting names it wrote that the server neither serves nor documents, which make it
+ * unsupported whatever it cites.
  */
 export function supportLabel(support: Support, citations: Citation[], unknownNames: string[] = []): Label | null {
   const found = citations.filter((c) => c.verified).length;
@@ -66,7 +66,7 @@ export function supportLabel(support: Support, citations: Citation[], unknownNam
   return citations.length > 0
     ? {
         text: "Sources not checked",
-        why: "Loom could not compare this answer's sources with what it holds; each source below says why.",
+        why: "Loom could not check this answer's sources; each source below says why.",
         icon: "info-in-circle",
         tone: "text-text-muted",
       }

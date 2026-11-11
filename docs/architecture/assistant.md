@@ -328,13 +328,13 @@ rows away in its URL. Under a finished answer its Sources
 it: one found in Loom reads "Found in Loom", a memory opening in the memory drawer, a
 document in the Library and a help citation on the Help page at its section, by the
 citation's `ref`; any other reads "Not confirmed" with its reason. A label above them
-says the answer's support in words, where "checked" says whether the check ran and
-"confirm" says what it found: "Checked against what Loom holds", "Partly confirmed: n of
-m sources found in Loom", "Couldn't confirm: 0 of m sources found in Loom", "Couldn't
-confirm: it names …" (an op or setting this Loom does not have), "Couldn't confirm: it
-gives no sources", "Sources not checked" or "Not checked: it cites nothing Loom holds".
-Each label's "Why this label" note says why it reads as it does; an answer whose support
-is `none` has no label. A value the dashboard does not know reads as `unchecked`.
+says the answer's support in words, leading with how many sources were found when some
+were not: "Checked against what Loom holds", "Partly confirmed: n of m sources found in
+Loom", "Couldn't confirm: 0 of m sources found in Loom", "Couldn't confirm: it names …"
+(an op or setting this Loom does not have), "Couldn't confirm: it gives no sources",
+"Sources not checked" or "Not checked: it cites nothing Loom holds". Each label's "Why
+this label" note says why it reads as it does; an answer whose support is `none` has no
+label. A value the dashboard does not know reads as `unchecked`.
 
 ## The agent definition
 
