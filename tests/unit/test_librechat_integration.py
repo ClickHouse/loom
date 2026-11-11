@@ -854,7 +854,8 @@ def test_memory_citations_skip_help_pages_and_quoted_examples(monkeypatch):
         "Keys look like `scope/kind/id` [help:features/memory/writing.md § Keys]. "
         "The freeze: [memory:policy/deploy/freeze@v1793745407448901606]."
     )
-    # A help page's path is no key; on the direct path a quoted example still reads as one.
+    # A help page's path is no key; straight through LibreChat (no bridge) a quoted example
+    # still reads as one.
     assert q.check_citations(st, person, text)[0] == ["scope/kind/id", "policy/deploy/freeze"]
     # Through the bridge only a `[memory:]` citation is a memory citation.
     asked.clear()
@@ -1364,7 +1365,7 @@ def test_a_server_without_docs_stops_the_help_checks(monkeypatch):
         q.require_docs(st, people, [_case("memory-freeze")])
 
 
-def test_a_run_with_help_cases_checks_for_docs_before_any_answer(monkeypatch):
+def test_a_run_checks_for_docs_before_any_answer(monkeypatch):
     import argparse
 
     q = _qualify()
