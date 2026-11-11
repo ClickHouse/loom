@@ -1158,3 +1158,34 @@ def test_native_only_takes_the_cases_current_use_case_labels(monkeypatch, tmp_pa
     q.run_native_only({}, people, argparse.Namespace(out=str(out), only=[]))
     saved = json.loads(out.read_text())["rows"][0]
     assert saved["use_case"] == _case("help-revoke-token")["use_case"]
+
+
+def test_the_harness_reads_citations_in_the_servers_own_forms():
+    from server.assistant.domain import citations
+
+    q = _qualify()
+    assert q.MEMORY_CITE_RE.pattern == citations._MEMORY.pattern
+    assert q.CODE_CITE_RE.pattern == citations._CODE.pattern
+    assert q.HELP_CITE_RE.pattern == citations._HELP.pattern
+
+
+def test_a_documented_settings_family_member_is_documented():
+    q = _qualify()
+    assert q.undocumented_settings("`LOOM_WEBHOOK_SECRET_ACME__HOOK`") == []
+    assert q.undocumented_settings("`LOOM_UI_THEME`") == ["LOOM_UI_THEME"]
+
+
+def test_a_history_case_takes_an_earlier_version_through_the_bridge(monkeypatch):
+    q = _qualify()
+
+    def fake_call(base, token, op, body):
+        if op == "memory.history":
+            return 200, {"rows": [{"version": 2}, {"version": 1}]}, 0.0
+        return 200, {"found": True, "version": 2}, 0.0
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    st = {"loom_url": "u", "bridge": True, "tokens": {"scorer:acme-handbook": "t"}}
+    person = {"org": "acme", "namespace": "acme-handbook"}
+    text = "Before: [memory:policy/api/rate-limit@v1]; now [memory:policy/api/rate-limit@v2]."
+    assert q.check_citations(st, person, text, history_ok=True) == (["policy/api/rate-limit"], [])
+    assert q.check_citations(st, person, text)[1] == ["policy/api/rate-limit@1"]

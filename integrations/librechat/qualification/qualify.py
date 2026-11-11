@@ -593,6 +593,8 @@ HELP_ABSTAIN_PATTERNS = (
 
 DOCS = HERE.parents[2] / "docs"
 SETTING_RE = re.compile(r"\bLOOM_[A-Z0-9_]*[A-Z0-9]")
+# A settings family a docs page writes with a placeholder (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`).
+SETTING_FAMILY_RE = re.compile(r"\b(LOOM_[A-Z0-9_]*_)<")
 # The kinds whose right answer is an abstention: from the namespace, or from the docs.
 ABSTAIN_KINDS = ("abstain", "help_abstain")
 
@@ -610,10 +612,27 @@ def documented_settings() -> frozenset[str]:
     )
 
 
+@functools.cache
+def documented_families() -> tuple[str, ...]:
+    """The prefixes of the settings families the docs write with a placeholder."""
+    return tuple(
+        sorted(
+            {
+                prefix
+                for page in DOCS.rglob("*.md")
+                if not page.relative_to(DOCS).as_posix().startswith("development/")
+                for prefix in SETTING_FAMILY_RE.findall(page.read_text(encoding="utf-8"))
+            }
+        )
+    )
+
+
 def undocumented_settings(text: str) -> list[str]:
-    """The `LOOM_*` names an answer writes that no docs page does: a setting the answer made
-    up, even one it names to deny."""
-    return sorted(set(SETTING_RE.findall(text)) - documented_settings())
+    """The `LOOM_*` names an answer writes that no docs page does, as a name or as a member
+    of a family it writes with a placeholder: a setting the answer made up, even one it
+    names to deny."""
+    names = set(SETTING_RE.findall(text)) - documented_settings()
+    return sorted(n for n in names if not n.startswith(documented_families()))
 
 
 def is_help_case(case: dict[str, Any]) -> bool:
