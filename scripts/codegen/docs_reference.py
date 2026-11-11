@@ -441,9 +441,9 @@ def render_llms_txt() -> str:
         "with Postgres as an option for live memory and knowledge state, and serves it over "
         "MCP, HTTP and the Python and TypeScript SDKs.",
         "",
-        "Start with docs/index.md (the map). To install Loom, a coding agent follows "
-        "docs/getting-started/agent-setup.md; each release attaches it with its pins filled "
-        "in as agent-setup.txt. To connect to a running server: "
+        "Start with docs/index.md (the map). To install Loom, a coding agent reads "
+        "docs/getting-started/agent-setup.md and runs the agent-setup.txt each release "
+        "attaches, with its pins filled in. To connect to a running server: "
         "docs/getting-started/connect-a-coding-agent.md. To decide whether Loom fits: "
         "docs/getting-started/overview.md. Every operation's fields are in "
         "docs/reference/operations/.",

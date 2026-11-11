@@ -62,7 +62,7 @@ migrating user `CURRENT GRANTS ON loom_telemetry.*`, and preflight names that gr
 it is missing.
 
 **State outside ClickHouse.** Under the Postgres memory authority, Postgres holds the
-state [storage authority](storage-authority.md#the-tables) lists. Uploaded document
+tables [storage authority](storage-authority.md#the-tables) lists. Uploaded document
 originals are rows of `document_blobs`, addressed per namespace by SHA-256
 (`server/knowledge/store/blobs.py`); with `LOOM_DOCUMENT_OBJECT_STORE=s3` each row is
 the catalog entry of an object in an S3-compatible bucket, which holds the bytes

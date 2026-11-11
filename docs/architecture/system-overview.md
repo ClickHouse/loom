@@ -376,8 +376,10 @@ and on this page.
 Under the default ClickHouse authority, every plane (facts and vectors, BM25 and token
 indexes, the entity graph walked with `WITH RECURSIVE`, the code index, ledgers and
 cost) is a set of ClickHouse tables. Under `LOOM_STORAGE_AUTHORITY=postgres`, live
-memory and knowledge state are held in Postgres
-([why two stores](storage-authority.md#why-two-stores)).
+memory and knowledge state are held in Postgres, which trades one backup and one
+consistency domain for transactional memory writes
+([why two stores](storage-authority.md#why-two-stores)); the Why and Cost below are the
+default's.
 
 **Why:** one backup, one access boundary, one query language for retrieval and analytics,
 and joins between memory and its telemetry without a sync job. Hybrid retrieval runs as
