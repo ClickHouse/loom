@@ -10,6 +10,7 @@ from typing import Any
 
 from server.auth.aliases import lowered
 from server.auth.grant_claims import admins_change, grant_change
+from server.auth.sharing import collection_kind, is_collection
 from server.core.ch import get_client
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.api.models import (
@@ -40,7 +41,6 @@ async def handle_namespace_join(
     namespace land `pending` — zero access until an admin approves.
     Idempotent: re-joining at or below the current role is a no-op.
     """
-    from server.auth.sharing import is_collection
     from server.core.errors import ValidationError
 
     if is_collection(input.namespace):
@@ -390,6 +390,7 @@ _MEMBERSHIP_SQL = """
             g.granted_at AS joined_at,
             toString(ifNull(n.visibility, 'private')) AS visibility,
             ifNull(n.kind, '') AS kind,
+            ifNull(n.title, '') AS title,
             ifNull(n.description, '') AS description,
             if(g.granted_by != g.subject AND
                (v.last_seen_at IS NULL OR v.last_seen_at < g.granted_at),
@@ -419,8 +420,11 @@ _MEMBERSHIP_SQL = """
 
 def _kind(configured: dict[str, str], namespace: str, kind: object) -> str:
     """A namespace's kind: its directory row's, else a configured repository's (`code`,
-    from `configured_kinds`), else `memory`, the directory's own default."""
-    return str(kind) if kind else configured.get(namespace, "memory")
+    from `configured_kinds`), else the one its name's reserved prefix gives (`collection`
+    for a `col-` name whose directory row is missing), else `memory`."""
+    if kind:
+        return str(kind)
+    return configured.get(namespace) or collection_kind(namespace) or "memory"
 
 
 async def _membership_rows(ch: Any, org: str, subjects: list[str]) -> list[dict[str, Any]]:
@@ -550,6 +554,7 @@ async def handle_namespace_list_mine(
             pending_admins=admins_by_ns.get(r["namespace"], []),
             visibility=r.get("visibility") or "private",
             kind=_kind(configured, r["namespace"], r.get("kind")),
+            title=r.get("title") or "",
             description=r.get("description") or "",
             joined_at=r["joined_at"],
             is_new=bool(r.get("is_new")),
@@ -578,6 +583,7 @@ async def handle_namespace_list_mine(
                     role="jwt",
                     visibility=m.get("visibility") or "private",  # type: ignore[arg-type]
                     kind=_kind(configured, ns, m.get("kind")),
+                    title=m.get("title") or "",
                     description=m.get("description") or "",
                 )
             )
@@ -592,6 +598,7 @@ async def handle_namespace_list_mine(
                 status="active",
                 visibility=r.get("visibility") or "private",
                 kind=_kind(configured, r["namespace"], r.get("kind")),
+                title=r.get("title") or "",
                 description=r.get("description") or "",
                 joined_at=r.get("joined_at"),
                 is_new=False,
@@ -603,13 +610,12 @@ async def handle_namespace_list_mine(
 
 
 async def _namespace_meta(ch: Any, org: str, namespaces: list[str]) -> dict[str, dict[str, str]]:
-    """kind/visibility/description for a handful of namespaces; {} on error
-    (fail-open to the private/memory defaults — never sink list_mine)."""
+    """kind/visibility/title/description for a handful of namespaces; {} on error
+    (fail-open to the private defaults and the name's kind — never sink list_mine)."""
     try:
         rows = await ch.query_all(
             """
-            SELECT namespace, ifNull(kind, 'memory') AS kind,
-                   toString(visibility) AS visibility, description
+            SELECT namespace, kind, toString(visibility) AS visibility, title, description
             FROM loom.namespaces FINAL
             WHERE org = {org:String} AND namespace IN {ns:Array(String)}
             """,
@@ -619,8 +625,9 @@ async def _namespace_meta(ch: Any, org: str, namespaces: list[str]) -> dict[str,
         return {}
     return {
         str(r["namespace"]): {
-            "kind": str(r.get("kind") or "memory"),
+            "kind": str(r.get("kind") or ""),
             "visibility": str(r.get("visibility") or "private"),
+            "title": str(r.get("title") or ""),
             "description": str(r.get("description") or ""),
         }
         for r in rows

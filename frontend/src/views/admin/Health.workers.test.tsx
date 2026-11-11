@@ -84,7 +84,7 @@ describe("WorkersPanel", () => {
           last_pass_status: "ok",
           reporting_from: "iso:wt:7801",
           source: "store",
-          namespace: "reporter-public",
+          namespace: "col-research",
           trigger: "manual",
         },
         erasure_recovery: {
@@ -120,8 +120,13 @@ describe("WorkersPanel", () => {
     expect(screen.getAllByText("green").length).toBeGreaterThanOrEqual(2);
     // The namespace a pass reached and a manual run.
     expect(screen.getByText("clickhouse-main")).toBeInTheDocument();
-    expect(screen.getByText("reporter-public")).toBeInTheDocument();
-    expect(screen.getAllByText(/reached:/).length).toBe(2);
+    expect(screen.getByText("col-research")).toBeInTheDocument();
+    expect(screen.getAllByText(/reached/).length).toBe(2);
+    // A collection is named as one, never as a namespace.
+    expect(screen.getByText("col-research").parentElement).toHaveTextContent("last collection reached: col-research");
+    expect(screen.getByText("clickhouse-main").parentElement).toHaveTextContent(
+      "last namespace reached: clickhouse-main",
+    );
     expect(screen.getByText(/manual run/)).toBeInTheDocument();
     expect(screen.getByText(/Timed out at its deadline/)).toBeInTheDocument();
     expect(screen.getByTestId("reporting-colours")).toHaveTextContent("Reporting from green");

@@ -38,7 +38,9 @@ describe("Ask about this in the document preview", () => {
     resetNamespaceRoleCache();
     api.listKnowledge.mockResolvedValue({ rows: [ROW], total: 1, next_cursor: null });
     api.listCollections.mockResolvedValue({
-      collections: [{ namespace: "col-plans", parent: "", personal: false, role: "viewer", description: "" }],
+      collections: [
+        { namespace: "col-plans", parent: "", personal: false, role: "viewer", description: "", title: "Plans" },
+      ],
       next_cursor: null,
     });
     api.getKnowledge.mockResolvedValue({
@@ -149,7 +151,10 @@ describe("Ask about this in the document preview", () => {
     await settle();
     const ask = screen.getByRole("button", { name: "Ask the assistant about this document" });
     expect(ask).toHaveAttribute("aria-disabled", "true");
-    expect(ask).toHaveAccessibleDescription("The assistant answers about team; this document is in col-plans.");
+    // The collection by its title: its address is no name a person reads.
+    expect(ask).toHaveAccessibleDescription(
+      "The assistant answers about team; this document is in the collection Plans.",
+    );
     await userEvent.setup().click(ask);
     await new Promise((r) => setTimeout(r, 20));
     expect(useDock.getState().item).toBeNull();

@@ -193,7 +193,7 @@ The caller's own namespaces depend on the token:
 | Token                                                       | Namespaces `all_mine` adds                                                                     |
 | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Flat (most tokens; `loom mint-token`, self-signup)          | The namespaces the token names, plus every namespace the subject holds a grant on              |
-| Scoped (`ns_roles`; a token for _Only these namespaces_)    | Exactly the namespaces the token lists, in that order; grants added later do not join          |
+| Scoped (`ns_roles`; a token for _Only what you choose_)     | Exactly the namespaces the token lists, in that order; grants added later do not join          |
 | Delegated with `*` (a token for _Everything you belong to_) | The creator's live grants, so a namespace the person joins later is searched too               |
 | Delegated naming namespaces                                 | The ones it names where the creator still holds a grant                                        |
 | None, auth off (`single-user`)                              | The namespaces the single user holds a grant on: the default one and every one they registered |
@@ -364,7 +364,9 @@ grant on one can name a `user:`, `group:` or `agent:` principal, or `everyone` (
 request acting in the org), besides a person or a service account. People name a
 collection by its title, and the server derives its `col-…` name from it; the name stays
 its address for good. [Sharing knowledge](../architecture/sharing.md) describes the model
-and how a name is derived.
+and how a name is derived. People see a collection as a collection, in the Library, by its
+title and its place there; the namespace that stores it is what grants, search scope, audit
+and erasure key on, and it never appears in the dashboard's namespace picker.
 
 When `LOOM_IDENTITY_PROVIDER` is empty the server infers the mode: auth off gives
 `single-user`, auth on with `LOOM_SELF_SIGNUP=open` gives `trust-network`, auth on

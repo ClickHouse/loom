@@ -18,7 +18,7 @@ import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { GuideDialog } from "../flows/GuideDialog";
-import { isPersonalCollection } from "../lib/namespace";
+import { isCollectionName } from "../lib/namespace";
 import { canEditGuide, roleOnNamespace } from "../lib/namespaceRole";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
@@ -125,7 +125,8 @@ export function Browse() {
       if (!live()) return;
       setRefreshing(false);
       setError(failed);
-      // Code namespaces are surfaced in the Code section, not as joinable memory.
+      // Repositories are surfaced in the Repositories section, not as joinable memory. The server
+      // lists no collection here: one is shared in the Library, never joined.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
       setRepoCount(browseRows.filter((r) => r.kind === "code").length);
       setMineRows(mineRead);
@@ -191,13 +192,17 @@ export function Browse() {
     }
   };
 
-  // A code index is kind=code and a tracker record kind=qa or tracker, as the server says.
-  const managedMemory = adminNs.filter((r) => !isCodeKind(r.kind) && !isTrackerKind(r.kind));
+  // A repository is kind=code and a tracker record kind=qa or tracker, as the server says; a
+  // collection is known by its reserved name and managed in the Library.
+  const managedCollections = adminNs.filter((r) => isCollectionName(r.namespace)).length;
+  const managedMemory = adminNs.filter(
+    (r) => !isCodeKind(r.kind) && !isTrackerKind(r.kind) && !isCollectionName(r.namespace),
+  );
   const managedCode = adminNs.filter((r) => isCodeKind(r.kind));
   const managedTracker = adminNs.filter((r) => isTrackerKind(r.kind));
   const repoHint = repoCount > 0 && (
     <div className="text-xs text-text-muted">
-      Looking for a code index or a tracker source? Both are joined from{" "}
+      Looking for a repository or a tracker source? Both are joined from{" "}
       <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
         Repositories
       </Link>{" "}
@@ -341,6 +346,15 @@ export function Browse() {
               ))}
             </div>
           </section>
+        )}
+        {managedCollections > 0 && (
+          <p className="mb-6 text-xs text-text-muted">
+            {managedCollections === 1 ? "The collection you manage is" : "Collections you manage are"} in the{" "}
+            <Link component="button" type="button" size="sm" onClick={() => setView("knowledge")}>
+              Library
+            </Link>
+            .
+          </p>
         )}
 
         {/* SECTION 2: public namespaces in the org to join. */}
@@ -550,9 +564,8 @@ const SpaceRow = memo(function SpaceRow({
    *  Leave where you belong. */
   const menu: RowMenuItem[] = [
     ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
-    // A row whose summary is shown opens the guide from it: one way in, not two. A personal
-    // collection takes no guide, so it offers none.
-    ...(canReadGuide && !guideSummary && !isPersonalCollection(namespace)
+    // A row whose summary is shown opens the guide from it: one way in, not two.
+    ...(canReadGuide && !guideSummary
       ? [{ label: "Guide", icon: "info-in-circle" as const, onSelect: () => actions.guide(namespace) }]
       : []),
     {
@@ -652,7 +665,7 @@ const SpaceRow = memo(function SpaceRow({
 });
 
 const MANAGED = {
-  code: { label: "Code indexes you manage", icon: "code", link: "Manage indexing in Repositories" },
+  code: { label: "Repositories you manage", icon: "code", link: "Manage indexing in Repositories" },
   tracker: { label: "Tracker records you manage", icon: "flag", link: "Manage tracker sources in Repositories" },
 } as const;
 

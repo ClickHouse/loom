@@ -472,6 +472,59 @@ for (const phone of [false, true]) {
       await expectWhole(page, "/spaces guide", { targets: [ROW, "[data-guide-link]"] });
     });
 
+    test("the token form with a collection to tick: every focus ring is drawn whole", async ({ page }) => {
+      // A direct grant on a collection with a long title: the title's tooltip target is a stop.
+      await installApi(page, {
+        mine: [
+          { namespace: NAMESPACE, role: "writer", status: "active", visibility: "private", kind: "memory" },
+          {
+            namespace: "col-research",
+            role: "writer",
+            status: "active",
+            visibility: "private",
+            kind: "collection",
+            title: `Research ${"notes and papers ".repeat(6)}`,
+          },
+        ],
+        claims: [NAMESPACE, "col-research"],
+      });
+      await page.goto("/settings");
+      await page.getByRole("radio", { name: "Only what you choose" }).click();
+      await expect(page.getByRole("checkbox", { name: /^Read the collection Research/ })).toBeVisible();
+      // A long title never squeezes out the place, which tells same-named collections apart.
+      const place = await page.locator("[data-collection-place]").first().boundingBox();
+      expect(place?.width ?? 0).toBeGreaterThan(20);
+      await expectWhole(page, "/settings collections", { targets: ['fieldset [role="note"]'] });
+    });
+
+    test("Sharing with a long collection title: the card holds it and its ring is drawn whole", async ({ page }) => {
+      const title = `Research ${"notes and papers ".repeat(10)}`;
+      await installApi(page, {
+        mine: [
+          { namespace: NAMESPACE, role: "writer", status: "active", visibility: "private", kind: "memory" },
+          {
+            namespace: "col-research",
+            role: "writer",
+            status: "active",
+            visibility: "private",
+            kind: "collection",
+            title,
+          },
+        ],
+        claims: [NAMESPACE, "col-research"],
+        sharingNamespaces: [{ namespace: "col-research", role: "writer" }],
+      });
+      await page.goto("/flow");
+      const open = page.getByRole("button", { name: /^Research notes/ });
+      await expect(open).toBeVisible();
+      // The title's link and the role badge after it stay inside their card.
+      const card = await open.locator("xpath=ancestor::div[contains(@class,'rounded-xl')][1]").boundingBox();
+      const badge = await open.locator("xpath=following-sibling::*[1]").boundingBox();
+      if (!card || !badge) throw new Error("card not drawn");
+      expect(badge.x + badge.width).toBeLessThanOrEqual(card.x + card.width);
+      await expectWhole(page, "/flow collections", { targets: ["section button"] });
+    });
+
     test("the Explorer with a walk: every focus ring is drawn whole", async ({ page }) => {
       await open(page, `/graph?seed=${SMALL_SEED}`);
       await expect(page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem").first()).toBeVisible();
@@ -518,13 +571,13 @@ for (const phone of [false, true]) {
       await open(page, "/memories", MINE);
       await page.getByRole("button", { name: /^Namespace: / }).click();
       const dialog = page.getByRole("dialog", { name: "Namespaces" });
-      await dialog.getByRole("button", { name: /^Code indexes/ }).click();
+      await dialog.getByRole("button", { name: /^Repositories/ }).click();
       await expect(dialog.getByRole("button", { name: "Show all 10" })).toBeVisible();
       // Into the list from its search field, at its tab stop (the group just opened), and Home
       // to its first option, so the arrows rove over every item.
       await dialog.getByLabel("Search namespaces").focus();
       await page.keyboard.press("ArrowDown");
-      await expect(dialog.getByRole("button", { name: /^Code indexes/ })).toBeFocused();
+      await expect(dialog.getByRole("button", { name: /^Repositories/ })).toBeFocused();
       await page.keyboard.press("Home");
       await expectWhole(page, "namespace picker", {
         fromFocus: true,

@@ -120,7 +120,7 @@ def test_a_scoped_token_refused_a_collection_is_told_its_claim_must_name_it() ->
     )
     text = capped["structuredContent"]["error"]
     assert text == (
-        "namespace 'col-research' is not in your accessible list: this token's claim must name"
+        "collection 'col-research' is not in your accessible list: this token's claim must name"
         " it, and 'avery@example.com' must hold a grant of at least viewer on it or a collection"
         " above it (directly, through a group or to everyone)."
     )
@@ -160,7 +160,7 @@ def test_an_unverified_collection_refusal_asks_for_no_grant() -> None:
     text = mcp_auth._not_accessible_result(
         "loom_memory_get", auth, "col-research", unverified=True
     )["structuredContent"]["error"]
-    assert text == "namespace 'col-research' is not in your accessible list."
+    assert text == "collection 'col-research' is not in your accessible list."
 
 
 def test_a_claim_capped_delegated_token_is_told_its_creator_needs_a_grant_too() -> None:
@@ -196,3 +196,20 @@ def test_a_collection_refusal_never_says_to_omit_the_namespace() -> None:
     assert "collection.list (through loom_op)" in text
     plain = mcp_auth._not_accessible_result("loom_op", auth, "team-x")["structuredContent"]["error"]
     assert "Omit the namespace argument" in plain
+
+
+def test_a_collection_refusal_names_a_collection_never_a_namespace() -> None:
+    auth = AuthInfo(
+        subject="avery@example.com",
+        org="clickhouse",
+        namespaces=("n",),
+        roles=(Role.WRITER,),
+        is_service_account=False,
+    )
+    for tool in ("loom_op", "loom_memory_get"):
+        for name in ("col-handbook", "col-me-0123456789abcdef"):
+            text = mcp_auth._not_accessible_result(tool, auth, name)["structuredContent"]["error"]
+            assert text.startswith(f"collection {name!r} is not in your accessible list")
+            assert "namespace 'col-" not in text
+    plain = mcp_auth._not_accessible_result("loom_op", auth, "team-x")["structuredContent"]["error"]
+    assert plain.startswith("namespace 'team-x' is not in your accessible list")

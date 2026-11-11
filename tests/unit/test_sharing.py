@@ -261,6 +261,8 @@ def test_a_refusal_points_at_the_library_and_confirms_nothing(
     # No tool route: the gate knows no transport (an assistant connection has no loom_op).
     assert "collection.list (or the dashboard's Library) lists the ones you can read" in messages[0]
     assert messages[0] == messages[1], "an existing and a missing collection read the same"
+    # It names a collection, from the reserved prefix alone, never a namespace.
+    assert messages[0].startswith("principal 'user:alice' cannot access the collection acme/<name>")
     # Someone else's personal collection takes no grant: no advice to ask for one.
     with pytest.raises(PermissionError) as refused:
         asyncio.run(sharing.check(_user("alice"), Role.VIEWER, ORG, "col-me-0123456789abcdef"))
@@ -476,6 +478,22 @@ def test_a_delegated_token_reaches_a_collection_no_further_than_its_creator(
     assert _role(token, "col-q3") is Role.VIEWER
     org_state["grants"] = {"sa:ci": {"col-q3": 2}}
     assert _role(token, "col-q3") is None, "the creator holds nothing there"
+
+
+def test_a_delegated_everything_token_reads_no_collection_its_claim_does_not_name(
+    org_state: dict[str, Any],
+) -> None:
+    """A `*` claim never names a collection: a delegated token reads one only when its claim
+    lists it, whatever the grants of the token and its creator hold. The dashboard's
+    Everything token therefore lists no collection as read."""
+    org_state["grants"] = {"sa:ci": {"col-q3": 2}, "ann@acme.io": {"col-q3": 2}}
+    everything = _person(namespaces=("*",), roles=(Role.WRITER,), creator="ann@acme.io")
+    assert _role(everything, "col-q3") is None
+    with pytest.raises(PermissionError, match="claim must name it"):
+        asyncio.run(sharing.check(everything, Role.VIEWER, ORG, "col-q3"))
+    listed = _person(namespaces=("col-q3",), roles=(Role.WRITER,), creator="ann@acme.io")
+    assert _role(listed, "col-q3") is Role.WRITER
+    asyncio.run(sharing.check(listed, Role.VIEWER, ORG, "col-q3"))
 
 
 def test_a_trusted_caller_cannot_become_a_grant_principal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1059,7 +1077,7 @@ def test_an_unreadable_grant_refuses_with_the_short_words(
     monkeypatch.setattr(sharing, "tree", _broken)
     with pytest.raises(PermissionError) as refused:
         asyncio.run(sharing.check(_user("alice"), Role.WRITER, ORG, "col-hr"))
-    assert str(refused.value) == f"principal 'user:alice' cannot access {ORG}/col-hr"
+    assert str(refused.value) == f"principal 'user:alice' cannot access the collection {ORG}/col-hr"
 
 
 def test_every_op_an_end_user_reaches_without_a_namespace_is_known() -> None:

@@ -144,6 +144,22 @@ export function linkedNamespace(): string | null {
   return ns && NAMESPACE_NAME.test(ns) ? ns : null;
 }
 
+/** A link whose `?namespace=` is a collection opens that collection in the Library: no other
+ *  view reads one, and the header never holds one. The address is rewritten in place (a
+ *  Library link keeps its own `?collection=` and `?doc=`), and the view to boot is returned. */
+export function collectionLinkView(view: View | null): View | null {
+  const ns = linkedNamespace();
+  if (!isCollectionName(ns)) return view;
+  const kept = new URLSearchParams(view === "knowledge" ? window.location.search : "");
+  kept.delete(NAMESPACE_KEY);
+  // The root's `?view=` named the page the path now names.
+  kept.delete("view");
+  // A link naming the collection as its namespace: its `?doc=` is a document in it.
+  if (!isCollectionName(kept.get("collection"))) kept.set("collection", ns);
+  patchEntry({}, `${viewHref("knowledge")}?${kept}${window.location.hash}`);
+  return "knowledge";
+}
+
 /** How a navigation goes. `query`: the keys the destination opens on (`{ seed }` for a
  *  walk), in place of the ones the current URL carries.
  *  `back`: what the person left, when the jump offers a way back to it ("memory

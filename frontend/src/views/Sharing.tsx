@@ -4,6 +4,7 @@ import { useAbortableEffect } from "../lib/hooks";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { Link } from "@clickhouse/click-ui/Link";
 import { Table } from "@clickhouse/click-ui/Table";
 import { Title } from "@clickhouse/click-ui/Title";
 import { getMySharingSummary, type SharingSummary, type CodeRepoSummary } from "../api";
@@ -17,6 +18,14 @@ import { humanizeError } from "../lib/errorWords";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { LoadingSkeleton, PageHeader, Stat, TipTarget } from "../components/ui";
+import {
+  collectionPlace,
+  collectionTitleOf,
+  knownCollections,
+  useSharedCollections,
+  withTwinNames,
+} from "../lib/collectionPlaces";
+import { isCollectionName } from "../lib/namespace";
 
 export function Sharing() {
   // The summary itself spans every namespace the caller holds a grant on
@@ -39,7 +48,13 @@ export function Sharing() {
   // memory namespace).
   const [repoInfo, setRepoInfo] = useState<Map<string, CodeRepoSummary>>(new Map());
   const setView = useStore((s) => s.setView);
+  const navigate = useStore((s) => s.navigate);
   const whoami = useStore((s) => s.whoami);
+  const mine = useStore((s) => s.myNamespaces);
+  // The titles are read only once the summary names a collection.
+  const collectionRows = useSharedCollections(
+    data?.namespaces.some((n) => isCollectionName(n.namespace)) ? identity.org : null,
+  );
   useAbortableEffect(
     (_signal, live) => {
       // `code.repos` follows the list_mine read and runs only when a code-kind row (or an
@@ -103,7 +118,7 @@ export function Sharing() {
         <p className="text-sm text-text-muted mb-6">
           Where your memories flow — which tools wrote, which read, and which namespaces you share with.
         </p>
-        {/* Shaped like the page: the four totals, then the two lists. */}
+        {/* Placeholders for the totals, then the two lists. */}
         <LoadingSkeleton label="Loading activity">
           <div className="space-y-3">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -123,9 +138,31 @@ export function Sharing() {
   const { totals, window_days } = data;
   // A code index is a repository you read, not a namespace you share into — it gets its
   // own block and its own verbs (in the Repositories section), never a row among memory
-  // namespaces.
-  const namespaces = data.namespaces.filter((n) => !repoNames.has(n.namespace));
+  // namespaces. A collection is shared in the Library: listed apart, by title, and not
+  // counted as a namespace.
+  const namespaces = data.namespaces.filter((n) => !repoNames.has(n.namespace) && !isCollectionName(n.namespace));
   const repos = data.namespaces.filter((n) => repoNames.has(n.namespace));
+  const collections = data.namespaces.filter((n) => isCollectionName(n.namespace));
+  // Two that look the same are told apart by their names, as in the Library.
+  const collectionName = withTwinNames(
+    (ns) => collectionTitleOf(ns, collectionRows, mine),
+    [...collections.map((c) => c.namespace), ...knownCollections(collectionRows, mine)],
+  );
+  // "1 namespace, 2 repositories and 1 collection" for a list of places; "2 collections",
+  // never "0 namespaces and 2 collections"; "" for none, where the line says nothing of a count.
+  // A repository's branches are one repository.
+  const counted = (names: readonly string[]): string => {
+    const memory = names.filter((n) => !repoNames.has(n) && !isCollectionName(n)).length;
+    const repoCount = new Set(names.filter((n) => repoNames.has(n)).map((n) => repoInfo.get(n)?.repo ?? n)).size;
+    const shared = names.filter(isCollectionName).length;
+    const parts = [
+      memory > 0 ? `${memory} namespace${memory === 1 ? "" : "s"}` : "",
+      repoCount > 0 ? `${repoCount} ${repoCount === 1 ? "repository" : "repositories"}` : "",
+      shared > 0 ? `${shared} collection${shared === 1 ? "" : "s"}` : "",
+    ].filter(Boolean);
+    return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : (parts[0] ?? "");
+  };
+  const spanned = counted(data.namespaces.map((n) => n.namespace));
   const empty = totals.namespaces === 0 && totals.agents === 0;
 
   if (empty) {
@@ -155,18 +192,19 @@ export function Sharing() {
         <Title type="h2" size="sm" className="mb-3">
           Last {window_days} days
         </Title>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className={`grid grid-cols-2 gap-3 ${namespaces.length > 0 ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
           <Stat label="Writes" value={totals.writes.toLocaleString()} />
           <Stat label="Recalls" value={totals.recalls.toLocaleString()} />
           <Stat label="Cross-namespace recalls" value={totals.cross_namespace_recalls.toLocaleString()} />
-          <Stat label="Active namespaces" value={totals.namespaces.toLocaleString()} />
+          {/* Collections and repositories are counted in the line below, not as namespaces. */}
+          {namespaces.length > 0 && <Stat label="Active namespaces" value={namespaces.length.toLocaleString()} />}
         </div>
         <p className="mt-2 text-xs text-text-muted leading-relaxed">
-          Totals span the {totals.namespaces} namespace{totals.namespaces === 1 ? "" : "s"} you hold a grant on. A write
-          is any operation that puts knowledge into a namespace — a memory, a captured observation, a seeded
-          conversation, a typed record. A recall is a <code className="code-inline">memory.search</code> or a code read.
-          A cross-namespace recall is a search that fanned out across your own namespaces (
-          <code className="code-inline">namespace_scope=all_mine</code>), not only the one it was addressed to.
+          {spanned && `Totals span the ${spanned} you hold a grant on. `}A write is any operation that puts knowledge
+          into a namespace — a memory, a captured observation, a seeded conversation, a typed record. A recall is a{" "}
+          <code className="code-inline">memory.search</code> or a code read. A cross-namespace recall is a search that
+          fanned out across your own namespaces (<code className="code-inline">namespace_scope=all_mine</code>), not
+          only the one it was addressed to.
         </p>
       </section>
 
@@ -219,6 +257,45 @@ export function Sharing() {
           </div>
         )}
       </section>
+
+      {collections.length > 0 && (
+        <section className="mb-8">
+          <Title type="h2" size="sm" className="mb-3">
+            Collections
+          </Title>
+          <div className="space-y-2">
+            {collections.map((n) => (
+              <div
+                key={n.namespace}
+                className="p-3.5 rounded-xl border border-border bg-surface flex items-center gap-3"
+              >
+                <Icon name="folder-open" size="sm" aria-hidden="true" className="shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {/* The title wraps inside its link, so a long one is read whole and neither
+                        widens the card nor has its ring clipped; the place under it is the link's
+                        description, and look-alikes differ by name. */}
+                    <Link
+                      component="button"
+                      type="button"
+                      size="sm"
+                      className="min-w-0 max-w-full text-left"
+                      aria-describedby={`place-${n.namespace}`}
+                      onClick={() => navigate("knowledge", { query: { collection: n.namespace } })}
+                    >
+                      <span className="break-words">{collectionName(n.namespace)}</span>
+                    </Link>
+                    <RoleBadge role={n.role} />
+                  </div>
+                  <p id={`place-${n.namespace}`} className="mt-1 break-words text-xs text-text-muted">
+                    {collectionPlace(n.namespace, collectionRows)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {repos.length > 0 && (
         <section className="mb-8">
@@ -309,15 +386,13 @@ export function Sharing() {
                 {scope.kind === "namespace" && (
                   <span className="ml-2 font-mono font-normal text-xs">in {scope.namespace}</span>
                 )}
-                {withNamespace && (
-                  <span className="ml-2 font-normal text-xs">
-                    across {scope.namespaces} namespace{scope.namespaces === 1 ? "" : "s"} you can read
-                  </span>
+                {withNamespace && scope.places.length > 0 && (
+                  <span className="ml-2 font-normal text-xs">across the {counted(scope.places)} you can read</span>
                 )}
               </Title>
-              {scope.kind === "namespace" && scope.others > 0 && (
+              {scope.kind === "namespace" && scope.otherPlaces.length > 0 && (
                 <Button type="empty" htmlType="button" onClick={() => setShowAllNamespaces(true)}>
-                  Show {scope.others} other namespace{scope.others === 1 ? "" : "s"}
+                  Also show {counted(scope.otherPlaces)}
                 </Button>
               )}
               {scope.kind === "all" && identity.namespace && (
@@ -341,7 +416,7 @@ export function Sharing() {
               }
               headers={[
                 { label: "Agent" },
-                ...(withNamespace ? [{ label: "Namespace" }] : []),
+                ...(withNamespace ? [{ label: "Where" }] : []),
                 { label: "Writes" },
                 { label: "Recalls" },
                 {
@@ -364,7 +439,15 @@ export function Sharing() {
                       ),
                     },
                     ...(withNamespace
-                      ? [{ label: <span className="font-mono text-xs text-text-muted">{ns}</span> }]
+                      ? [
+                          {
+                            label: isCollectionName(ns) ? (
+                              <span className="text-xs text-text-muted">collection {collectionName(ns)}</span>
+                            ) : (
+                              <span className="font-mono text-xs text-text-muted">{ns}</span>
+                            ),
+                          },
+                        ]
                       : []),
                     { label: <span className="tabular">{a.writes.toLocaleString()}</span> },
                     { label: <span className="tabular">{a.recalls.toLocaleString()}</span> },

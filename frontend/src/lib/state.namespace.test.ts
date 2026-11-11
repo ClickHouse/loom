@@ -219,6 +219,27 @@ describe("an entry Back reaches from another namespace", () => {
   });
 });
 
+describe("an entry Back reaches whose address names a collection", () => {
+  beforeEach(() => {
+    useStore.setState({ identity: team, deniedNamespace: null, view: "memories" });
+    at("/memories?namespace=team");
+  });
+
+  it("never makes the collection the header's namespace: the address names the page's", async () => {
+    // An entry whose namespace is a collection.
+    history.pushState({ loomNamespace: "col-research" }, "", "/memories?namespace=col-research&memory=k");
+    useStore.getState().navigate("recall");
+    await back("memories");
+    expect(useStore.getState().identity).toEqual(team);
+    expect(address()).toBe("/memories?namespace=team");
+    // The same when only the address moves, as a move inside one view does.
+    at("/memories?namespace=col-research");
+    addressPageNamespace();
+    expect(useStore.getState().identity).toEqual(team);
+    expect(address()).toBe("/memories?namespace=team");
+  });
+});
+
 describe("what boot records of a link", () => {
   beforeEach(() => useStore.setState({ identity: null, deniedNamespace: null, linkOpened: null }));
 

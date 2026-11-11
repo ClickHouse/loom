@@ -4,6 +4,7 @@ import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { copyMemoryTo, listMine, type Identity, type MyNamespaceEntry } from "../api";
 import { humanizeError } from "../lib/errorWords";
+import { isCollectionName } from "../lib/namespace";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
@@ -40,9 +41,10 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey }:
               WRITABLE.has(r.role) &&
               r.status !== "pending" &&
               r.namespace !== source.namespace &&
-              // A code index is read-only reference data, never a copy target
-              // — even for its maintainers.
-              r.kind !== "code",
+              // A repository is read-only reference data, never a copy target
+              // — even for its maintainers; a collection is shared in the Library.
+              r.kind !== "code" &&
+              !isCollectionName(r.namespace),
           ),
         ),
       )

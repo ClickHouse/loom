@@ -4,6 +4,7 @@ import { Select } from "@clickhouse/click-ui/Select";
 import { moveCollection, type CollectionEntry } from "../api";
 import { collectionTitle, distinctTitle, repeatedTitles } from "../lib/collections";
 import { humanizeError } from "../lib/errorWords";
+import { invalidateSharedCollections } from "../lib/collectionPlaces";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert } from "../components/ui";
@@ -48,6 +49,7 @@ export function MoveCollectionDialog({
     setError(null);
     try {
       await moveCollection(org, collection.namespace, target);
+      invalidateSharedCollections();
       toast(target ? `Moved ${self} into ${shown(target)}` : `${self} is top-level`, "ok");
       onMoved();
       onClose();

@@ -42,7 +42,7 @@ for (const width of [1400, 375]) {
   test(`the open picker with code and tracker groups is axe-clean at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const dialog = await openPicker(page);
-    const code = dialog.getByRole("button", { name: /^Code indexes/ });
+    const code = dialog.getByRole("button", { name: /^Repositories/ });
     await expect(code).toHaveAttribute("aria-expanded", "false");
     await code.click();
     await expect(dialog.getByRole("button", { name: /ClickHouse\/ClickHouse @ master/ })).toBeVisible();
@@ -82,10 +82,26 @@ test("an open name family is axe-clean, each member led by its description", asy
   expect(await violations(page)).toEqual([]);
 });
 
+test("a collection is not in the open picker, which links to the Library instead", async ({ page }) => {
+  const collections = [
+    { ...row("col-research", "collection", "admin"), title: "Research" },
+    row("col-handbook", "collection", "viewer"),
+  ];
+  await installApi(page, { mine: [...MINE, ...collections], claims: MINE.map((r) => r.namespace) });
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  await page.getByRole("button", { name: /^Namespace: / }).click();
+  const dialog = page.getByRole("dialog", { name: "Namespaces" });
+  await expect(dialog.getByRole("button", { name: new RegExp(`\\b${NAMESPACE}\\b`) })).toBeVisible();
+  await expect(dialog.getByText(/col-research|col-handbook|Research/)).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Open collections in the Library" }).click();
+  await expect(page).toHaveURL(/\/library/);
+});
+
 test("a search opens the group it matches", async ({ page }) => {
   const dialog = await openPicker(page);
   await dialog.getByRole("textbox", { name: "Search namespaces" }).fill("loom");
-  await expect(dialog.getByRole("button", { name: /^Code indexes/ })).toHaveAttribute("aria-expanded", "true");
+  await expect(dialog.getByRole("button", { name: /^Repositories/ })).toHaveAttribute("aria-expanded", "true");
   await expect(dialog.getByRole("button", { name: /acme\/loom @ main/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /^Tracker records/ })).toHaveCount(0);
 });

@@ -628,7 +628,7 @@ for (const [width, touch] of [
         mine: [row("bench", "admin"), row("team-research-notes", "writer"), row("shared-handbook", "viewer")],
       });
       await page.goto("/settings");
-      await page.getByRole("radio", { name: "Only these namespaces" }).click();
+      await page.getByRole("radio", { name: "Only what you choose" }).click();
       await page.getByRole("checkbox", { name: "Read team-research-notes" }).click();
       await page.getByRole("checkbox", { name: "Read shared-handbook" }).click();
       const order = page.getByRole("list", { name: "Search order" });

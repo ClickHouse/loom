@@ -856,6 +856,11 @@ export interface InstallOptions {
   /** The `namespace.list_mine` rows (default: `LIST_MINE.rows`, plus any joined tracker
    *  source namespaces). */
   mine?: Record<string, unknown>[];
+  /** The Sharing page's namespaces (default: none), each with a role. */
+  sharingNamespaces?: { namespace: string; role: string }[];
+  /** Answer `collection.list` with these rows (default: two collections, one inside the
+   *  other). */
+  collections?: Record<string, unknown>[];
   /** The saved pick in localStorage; `null` saves none (default: `NAMESPACE`). */
   savedNamespace?: string | null;
   /** Answer `code.repos` with these rows (joins flip their standing). Default: none. */
@@ -1003,18 +1008,30 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
           subject: "",
           org: "",
           window_days: 0,
-          totals: { writes: 0, recalls: 0, cross_namespace_recalls: 0, namespaces: 0, agents: 0 },
+          totals: {
+            writes: 0,
+            recalls: 0,
+            cross_namespace_recalls: 0,
+            namespaces: (options.sharingNamespaces ?? []).length,
+            agents: 0,
+          },
           writes: 0,
           recalls: 0,
           cross_namespace_recalls: 0,
-          namespaces: [],
+          namespaces: (options.sharingNamespaces ?? []).map((n) => ({
+            ...n,
+            visibility: "private",
+            member_count: 1,
+            writes_7d: 0,
+            recalls_7d: 0,
+          })),
           agents: [],
           agent_namespaces: [],
         });
       // Two collections, one inside the other, so the Library's select draws a tree.
       case "/v1/collection.list":
         return json({
-          collections: [
+          collections: options.collections ?? [
             { namespace: "col-handbook", parent: "", personal: false, role: "admin", description: "Team handbook" },
             {
               namespace: "col-handbook-oncall",

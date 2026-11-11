@@ -55,3 +55,44 @@ describe("a link token where the page sends none", () => {
     });
   }
 });
+
+describe("a link whose namespace is a collection, with auth off", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useStore.setState({ authed: false, whoami: null, myNamespaces: null, identity: null, view: "memories" });
+    Element.prototype.scrollTo = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () => new Response(JSON.stringify({ rows: [], collections: [], next_cursor: null }), { status: 200 }),
+      ),
+    );
+    mode.authOff = true;
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    mode.authOff = false;
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("opens the Library at that collection, its document kept", async () => {
+    window.history.replaceState(null, "", "/library?namespace=col-r&doc=notes.md");
+    render(<App />);
+    await waitFor(() => expect(useStore.getState().view).toBe("knowledge"));
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("collection")).toBe("col-r");
+    expect(params.get("doc")).toBe("notes.md");
+    expect(useStore.getState().identity?.namespace).not.toBe("col-r");
+  });
+
+  it("drops the root's view key when it rewrites the link for the Library", async () => {
+    window.history.replaceState(null, "", "/?view=library&namespace=col-r&doc=notes.md");
+    render(<App />);
+    await waitFor(() => expect(useStore.getState().view).toBe("knowledge"));
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("view")).toBeNull();
+    expect(params.get("collection")).toBe("col-r");
+    expect(params.get("doc")).toBe("notes.md");
+  });
+});

@@ -22,7 +22,6 @@ const created = (over: Partial<TokenCreated> = {}): TokenCreated => ({
   saves_to: "ns-a",
   created_at: "2026-01-01T00:00:00",
   expires_at: null,
-  restricted_namespaces: [],
   mcp_url: "http://loom.test/mcp",
   ...over,
 });
@@ -38,9 +37,10 @@ vi.mock("../api", async (importOriginal) => {
     listBlacklist: vi.fn(async () => ({ rows: [] })),
     createToken: vi.fn(async () => created()),
     registerNamespace: vi.fn(async () => ({ registered: true })),
+    listCollections: vi.fn(async () => ({ collections: [], next_cursor: null })),
   };
 });
-import { createToken, listCodeRepos, listMine, listTokens } from "../api";
+import { createToken, listCodeRepos, listCollections, listMine, listTokens } from "../api";
 
 const ORG = "dev";
 function row(namespace: string, over: Partial<MyNamespaceEntry> = {}): MyNamespaceEntry {
@@ -99,6 +99,7 @@ describe("the token form", () => {
     invalidateShared();
     vi.mocked(listMine).mockResolvedValue(ROWS);
     vi.mocked(listCodeRepos).mockResolvedValue(REPOS);
+    vi.mocked(listCollections).mockResolvedValue({ collections: [], next_cursor: null });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("{}", { status: 200 })),
@@ -155,9 +156,9 @@ describe("the token form", () => {
     expect(await create()).toMatchObject({ name: "laptop", namespaces: ["ns-a", "*", "code-secret"] });
   });
 
-  it("only these: the ticked list in search order with a role each", async () => {
+  it("only what you choose: the ticked list in search order with a role each", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-c" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
@@ -201,7 +202,7 @@ describe("the token form", () => {
     vi.mocked(listCodeRepos).mockResolvedValue(repos);
     useStore.setState({ myNamespaces: owner, identity: { org: ORG, namespace: "team-private", agent: "loom-ui" } });
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     // The repository by its name, its branches beneath it, marked restricted; never its
     // namespace identifier among the memory namespaces.
     const repo = await screen.findByRole("checkbox", { name: "Read every branch of acme/private" }, WAIT);
@@ -223,12 +224,12 @@ describe("the token form", () => {
     ]);
   }, 20_000);
 
-  it("only these: nothing is ticked at first, the page's namespace and the personal one included", async () => {
+  it("only what you choose: nothing is ticked at first, the page's namespace and the personal one included", async () => {
     const mine = [row("personal-a"), ...ROWS];
     vi.mocked(listMine).mockResolvedValue(mine);
     useStore.setState({ myNamespaces: mine, identity: { org: ORG, namespace: "ns-b", agent: "loom-ui" } });
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     const personal = await screen.findByRole("checkbox", { name: "Read personal-a" }, WAIT);
     expect(personal).not.toBeChecked();
     for (const ns of ["ns-a", "ns-b", "ns-c"]) {
@@ -236,12 +237,12 @@ describe("the token form", () => {
     }
     expect(screen.queryByRole("list", { name: "Search order" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Create token/ })).toBeDisabled();
-    expect(screen.getByText(/Tick the namespaces this token reads/)).toBeInTheDocument();
+    expect(screen.getByText(/Tick what this token reads/)).toBeInTheDocument();
   });
 
-  it("only these: each row shows your role, and the ordered list offers roles up to it", async () => {
+  it("only what you choose: each row shows your role, and the ordered list offers roles up to it", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await screen.findByRole("checkbox", { name: "Read ns-b" }, WAIT);
     const name = screen.getAllByText("ns-b").find((el) => el.tagName === "SPAN") as HTMLElement;
     expect(name.parentElement).toHaveTextContent("Your role: Writer");
@@ -252,9 +253,9 @@ describe("the token form", () => {
     expect(within(options).queryByText("Admin")).not.toBeInTheDocument();
   });
 
-  it("only these: one ticked namespace offers nothing to reorder", async () => {
+  it("only what you choose: one ticked namespace offers nothing to reorder", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
     const order = screen.getByRole("list", { name: "Search order" });
     expect(order.querySelector("[draggable]")).toBeNull();
@@ -266,9 +267,9 @@ describe("the token form", () => {
     expect(order).toHaveAccessibleDescription(/^Number 1 is searched first\. Drag a row by its grip/);
   });
 
-  it("only these: every tick can be taken back, and then nothing is created", async () => {
+  it("only what you choose: every tick can be taken back, and then nothing is created", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
@@ -277,9 +278,9 @@ describe("the token form", () => {
     expect(screen.getByRole("button", { name: /Create token/ })).toBeDisabled();
   });
 
-  it("only these: the arrows reorder the list, and the token carries the order shown", async () => {
+  it("only what you choose: the arrows reorder the list, and the token carries the order shown", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     for (const ns of ["ns-a", "ns-b", "ns-c"]) {
       await userEvent.click(await screen.findByRole("checkbox", { name: `Read ${ns}` }, WAIT));
     }
@@ -322,9 +323,9 @@ describe("the token form", () => {
     ]);
   });
 
-  it("only these: a role is picked in the ordered list and sent with the namespace", async () => {
+  it("only what you choose: a role is picked in the ordered list and sent with the namespace", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
     await pickOption(/^Role on ns-a$/, /^Viewer$/);
     expect((await create()).namespaces).toEqual([{ namespace: "ns-a", role: "viewer" }]);
@@ -340,7 +341,7 @@ describe("the token form", () => {
       }),
     );
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-c" }, WAIT));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
     await create();
@@ -349,9 +350,9 @@ describe("the token form", () => {
     );
   });
 
-  it("only these: a namespace created here joins the order last and clears the status", async () => {
+  it("only what you choose: a namespace created here joins the order last and clears the status", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     await userEvent.click(screen.getByRole("button", { name: "Move ns-b up" }));
@@ -366,7 +367,7 @@ describe("the token form", () => {
     expect(screen.getByRole("status")).toHaveTextContent("");
   });
 
-  it("only these on a touch screen: no grip to drag, and the hint names the arrows", async () => {
+  it("only what you choose on a touch screen: no grip to drag, and the hint names the arrows", async () => {
     vi.stubGlobal(
       "matchMedia",
       vi.fn((q: string) => ({
@@ -376,7 +377,7 @@ describe("the token form", () => {
       })),
     );
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     const order = screen.getByRole("list", { name: "Search order" });
@@ -384,9 +385,9 @@ describe("the token form", () => {
     expect(screen.getByText(/Use a row's arrows to change the order/)).toBeInTheDocument();
   });
 
-  it("only these: a row dragged onto another takes its place", async () => {
+  it("only what you choose: a row dragged onto another takes its place", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     for (const ns of ["ns-a", "ns-b", "ns-c"]) {
       await userEvent.click(await screen.findByRole("checkbox", { name: `Read ${ns}` }, WAIT));
     }
@@ -424,13 +425,13 @@ describe("the token form", () => {
     ]);
   });
 
-  it("only these: a collection at Writer is not where it saves, and the hint says so", async () => {
+  it("only what you choose: a collection at Writer is not where it saves, and the hint says so", async () => {
     const mine = [...ROWS, row("col-team")];
     vi.mocked(listMine).mockResolvedValue(mine);
     useStore.setState({ myNamespaces: mine });
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
-    await userEvent.click(await screen.findByRole("checkbox", { name: "Read col-team" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read the collection col-team" }, WAIT));
     expect(screen.getByTestId("token-saves-nowhere")).toHaveTextContent(
       "Nowhere by default: a call names where it saves.",
     );
@@ -470,19 +471,19 @@ describe("the token form", () => {
     }
   });
 
-  it("only these: a repository at Writer alone only reads, since a repository is always read", async () => {
+  it("only what you choose: a repository at Writer alone only reads, since a repository is always read", async () => {
     const mine = ROWS.map((r) => (r.namespace === "code-x" ? { ...r, role: "writer" as const } : r));
     vi.mocked(listMine).mockResolvedValue(mine);
     useStore.setState({ myNamespaces: mine });
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read org/x branch main" }, WAIT));
     expect(screen.getByTestId("token-saves-nowhere")).toHaveTextContent("Nowhere: this token only reads.");
   });
 
-  it("only these with nothing writable says it saves nowhere", async () => {
+  it("only what you choose with nothing writable says it saves nowhere", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT);
     expect(screen.getByRole("button", { name: /Create token/ })).toBeDisabled();
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-c" }));
@@ -490,14 +491,15 @@ describe("the token form", () => {
     expect(await create()).not.toHaveProperty("saves_to");
   });
 
-  it("only these: where it saves is a ticked namespace it writes, in search order, and is sent", async () => {
+  it("only what you choose: where it saves is a ticked namespace it writes, in search order, and is sent", async () => {
     const mine = [...ROWS, row("col-team"), row("bench-x", { kind: "bench" })];
     vi.mocked(listMine).mockResolvedValue(mine);
     useStore.setState({ myNamespaces: mine });
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     for (const ns of ["ns-c", "col-team", "bench-x", "ns-b", "ns-a"]) {
-      await userEvent.click(await screen.findByRole("checkbox", { name: `Read ${ns}` }, WAIT));
+      const name = ns === "col-team" ? "Read the collection col-team" : `Read ${ns}`;
+      await userEvent.click(await screen.findByRole("checkbox", { name }, WAIT));
     }
     await userEvent.click(screen.getByRole("checkbox", { name: "Read org/x branch main" }));
     // The first it writes by default: ns-c is read-only, a collection, a bench corpus and a
@@ -516,9 +518,9 @@ describe("the token form", () => {
     expect((await create()).saves_to).toBe("ns-a");
   });
 
-  it("only these: with no pick the target is the first in search order, and follows a move", async () => {
+  it("only what you choose: with no pick the target is the first in search order, and follows a move", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-b" }, WAIT));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
     expect(savesTo()).toHaveTextContent(/^ns-b/);
@@ -529,9 +531,9 @@ describe("the token form", () => {
     expect((await create()).saves_to).toBe("ns-a");
   });
 
-  it("only these: a pick that a tick or a role takes away gives way to the first, and says why", async () => {
+  it("only what you choose: a pick that a tick or a role takes away gives way to the first, and says why", async () => {
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-a" }, WAIT));
     await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-b" }));
     await pickOption(/Saves memories to/, /^ns-b$/);
@@ -568,9 +570,7 @@ describe("the token form", () => {
   });
 
   it("the result names what the token reads and where it saves, as the server minted it", async () => {
-    vi.mocked(createToken).mockResolvedValueOnce(
-      created({ namespaces: ["ns-a", "*", "code-secret"], restricted_namespaces: ["code-secret"] }),
-    );
+    vi.mocked(createToken).mockResolvedValueOnce(created({ namespaces: ["ns-a", "*", "code-secret"] }));
     render(<Setup />);
     await waitFor(() => expect(savesTo()).toHaveTextContent(/^ns-a/), WAIT);
     await create();
@@ -579,6 +579,19 @@ describe("the token form", () => {
     );
     expect(screen.getByLabelText(/^Connect/)).toHaveTextContent("Claude Code");
     expect(screen.getByTestId("claude-code-recommended")).toBeInTheDocument();
+  });
+
+  it("the result of a `*` token whose claim names a collection names it, and no other", async () => {
+    const rows = [...ROWS, row("col-r", { role: "viewer", kind: "collection", title: "Research" })];
+    vi.mocked(listMine).mockResolvedValue(rows);
+    useStore.setState({ myNamespaces: rows });
+    vi.mocked(createToken).mockResolvedValueOnce(created({ namespaces: ["ns-a", "*", "col-r"] }));
+    render(<Setup />);
+    await screen.findByTestId("token-read-scope", undefined, WAIT);
+    await create();
+    expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
+      /^Reads everything you belong to, including namespaces you join later, plus the collection Research, but no other collection\./,
+    );
   });
 
   it("says so, and creates nothing, when your namespaces cannot be read", async () => {
@@ -652,18 +665,19 @@ describe("the token form", () => {
     );
   });
 
-  it("names a read default as read, not as where it saves, when the token writes only a collection", async () => {
-    // Viewer on ns-a, writer on a collection: no namespace a token saves to unasked.
+  it("everything: one who writes only a collection gets a read-only token, its default named as read", async () => {
+    // Viewer on ns-a, writer on a collection: a `*` claim names no collection, so the token
+    // reads and writes none.
     const rows = [row("ns-a", { role: "viewer" }), row("col-team", { role: "writer" })];
     vi.mocked(listMine).mockResolvedValue(rows);
     useStore.setState({ myNamespaces: rows });
     vi.mocked(createToken).mockResolvedValueOnce(created({ namespaces: ["*"], saves_to: "ns-a" }));
     render(<Setup />);
     const nowhere = await screen.findByTestId("token-saves-nowhere", undefined, WAIT);
-    expect(nowhere).toHaveTextContent("Nowhere by default.");
+    expect(nowhere).toHaveTextContent("Nowhere: this token only reads.");
     await create();
     expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
-      "Nowhere by default; calls that name no namespace read ns-a.",
+      "Read-only; calls that name no namespace read ns-a.",
     );
   });
 
@@ -681,9 +695,9 @@ describe("the token form", () => {
       }),
     );
     render(<Setup />);
-    await userEvent.click(await screen.findByRole("radio", { name: "Only these namespaces" }, WAIT));
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Read ns-c" }, WAIT));
-    await userEvent.click(screen.getByRole("checkbox", { name: "Read col-team" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read the collection col-team" }));
     expect(screen.getByTestId("token-saves-nowhere")).toHaveTextContent(
       "Nowhere by default: a call names where it saves.",
     );
@@ -733,5 +747,346 @@ describe("the token form", () => {
     expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
       "Each call must name a namespace.",
     );
+  });
+
+  it("everything: reads no collection, and says how a token reads one", async () => {
+    const rows = [...ROWS, row("col-r", { role: "writer", kind: "collection", title: "Research" })];
+    vi.mocked(listMine).mockResolvedValue(rows);
+    useStore.setState({ myNamespaces: rows });
+    render(<Setup />);
+    expect(
+      await screen.findByText(
+        "Every namespace and repository you are a member of, including ones you join later, at your role in each.",
+        undefined,
+        WAIT,
+      ),
+    ).toBeInTheDocument();
+    const scope = await screen.findByTestId("token-read-scope", undefined, WAIT);
+    expect(scope).not.toHaveTextContent(/col-r|Research/);
+    expect(await screen.findByTestId("token-read-scope-collections", undefined, WAIT)).toHaveTextContent(
+      "This token reads no collection. To include a shared collection, pick “Only what you choose” and tick it.",
+    );
+  });
+
+  it("only what you choose: one of two look-alike collections, ticked alone, keeps its name in the order and the result", async () => {
+    const mine = [
+      ...ROWS,
+      row("col-a", { role: "writer", kind: "collection", title: "Research" }),
+      row("col-b", { role: "writer", kind: "collection", title: "research " }),
+    ];
+    vi.mocked(listMine).mockResolvedValue(mine);
+    vi.mocked(listCollections).mockResolvedValue({
+      collections: [
+        { namespace: "col-a", parent: "", personal: false, role: "writer", title: "Research" },
+        { namespace: "col-b", parent: "", personal: false, role: "writer", title: "research " },
+      ],
+      next_cursor: null,
+    });
+    useStore.setState({ myNamespaces: mine });
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Read the collection Research (col-a)" }, WAIT));
+    const order = within(screen.getByRole("list", { name: "Search order" }));
+    expect(order.getAllByRole("listitem")[0]).toHaveTextContent(/^1Research \(col-a\)/);
+    vi.mocked(createToken).mockResolvedValueOnce(
+      created({ namespaces: ["col-a"], reads_everything: false, saves_to: null }),
+    );
+    await create();
+    expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
+      /^Reads only the collection Research \(col-a\)\./,
+    );
+  });
+
+  it("only what you choose: two collections that look alike differ by name in the form, the search order and the result", async () => {
+    const mine = [
+      ...ROWS,
+      // Both at the top, so their places match too; one title differs only in case and spacing.
+      row("col-a", { role: "writer", kind: "collection", title: "Research" }),
+      row("col-b", { role: "writer", kind: "collection", title: "research " }),
+    ];
+    vi.mocked(listMine).mockResolvedValue(mine);
+    vi.mocked(listCollections).mockResolvedValue({
+      collections: [
+        { namespace: "col-a", parent: "", personal: false, role: "writer", title: "Research" },
+        { namespace: "col-b", parent: "", personal: false, role: "writer", title: "research " },
+      ],
+      next_cursor: null,
+    });
+    useStore.setState({ myNamespaces: mine });
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
+    const a = await screen.findByRole("checkbox", { name: "Read the collection Research (col-a)" }, WAIT);
+    const b = screen.getByRole("checkbox", { name: /^Read the collection research\s+\(col-b\)$/ });
+    await userEvent.click(a);
+    await userEvent.click(b);
+    const order = within(screen.getByRole("list", { name: "Search order" }));
+    expect(order.getByRole("button", { name: "Move Research (col-a) down" })).toBeInTheDocument();
+    expect(order.getByRole("button", { name: /^Move research\s+\(col-b\) up$/ })).toBeInTheDocument();
+    // The result names them the same way.
+    vi.mocked(createToken).mockResolvedValueOnce(
+      created({ namespaces: ["col-a", "col-b"], reads_everything: false, saves_to: null }),
+    );
+    await create();
+    expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
+      /1\. the collection Research \(col-a\), 2\. the collection research\s+\(col-b\)\./,
+    );
+  });
+
+  it("only what you choose: a collection is offered under Collections by its title and place, and sends its name", async () => {
+    const mine = [...ROWS, row("col-r", { role: "writer", kind: "collection", title: "Research" })];
+    vi.mocked(listMine).mockResolvedValue(mine);
+    vi.mocked(listCollections).mockResolvedValue({
+      collections: [
+        { namespace: "col-lib", parent: "", personal: false, role: "viewer", title: "Papers" },
+        { namespace: "col-r", parent: "col-lib", personal: false, role: "writer", title: "Research" },
+        // Read through its parent, with no grant of its own: the mint would refuse it.
+        { namespace: "col-inherited", parent: "col-lib", personal: false, role: "viewer", title: "Inherited" },
+      ],
+      next_cursor: null,
+    });
+    useStore.setState({ myNamespaces: mine });
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
+    const box = await screen.findByRole("checkbox", { name: "Read the collection Research" }, WAIT);
+    const group = screen.getByText("Collections", { selector: ".section-label" }).parentElement as HTMLElement;
+    expect(within(group).getByText("Research")).toBeInTheDocument();
+    // Its place is where it sits, its own title shown once, beside it.
+    await waitFor(() => expect(within(group).getByText("Library › Papers")).toBeInTheDocument(), WAIT);
+    // The place describes the checkbox, so two collections of one title differ by ear too.
+    expect(box).toHaveAccessibleDescription("Library › Papers");
+    expect(within(group).getAllByText(/Research/)).toHaveLength(1);
+    // Never under the namespaces, never by its address, and none it reads only through a parent.
+    expect(screen.queryByRole("checkbox", { name: "Read col-r" })).toBeNull();
+    expect(screen.queryByText("col-r")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Inherited|col-inherited/ })).toBeNull();
+    // Its address is in a tooltip the keyboard reaches: the title is the next tab stop.
+    box.focus();
+    await userEvent.tab();
+    expect(document.activeElement).toHaveTextContent("Research");
+    // Its ring is drawn whole and its place stays visible with a long title: focus-rings.spec.ts.
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("col-r");
+    await userEvent.click(box);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Read ns-a" }));
+    // In the search order it is a row of its own, named by its title alone.
+    const order = within(screen.getByRole("list", { name: "Search order" }));
+    expect(order.getAllByRole("listitem")[0]).toHaveTextContent(/^1Research/);
+    expect(order.queryByText(/col-r|the collection/)).toBeNull();
+    expect(order.getByRole("button", { name: /^Role on Research/ })).toBeInTheDocument();
+    await userEvent.click(order.getByRole("button", { name: "Move Research down" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Research moved to 2 of 2");
+    expect((await create()).namespaces).toEqual([
+      { namespace: "ns-a", role: "admin" },
+      { namespace: "col-r", role: "writer" },
+    ]);
+  });
+
+  it("the token list names a collection by its title", async () => {
+    const mine = [row("team"), row("col-r", { role: "viewer", kind: "collection", title: "Research" })];
+    vi.mocked(listMine).mockResolvedValue(mine);
+    useStore.setState({ myNamespaces: mine });
+    vi.mocked(listTokens).mockResolvedValue([
+      {
+        name: "bot",
+        sa_subject: "sa:bot",
+        namespaces: ["col-r", "team"],
+        roles: [],
+        ns_roles: { "col-r": "viewer", team: "viewer" },
+        saves_to: undefined,
+        yours: true,
+        ttl_days: 90,
+        created_by: "me",
+        created_at: null,
+        expires_at: null,
+        revoked_at: null,
+        revoked_by: "",
+      },
+    ]);
+    try {
+      render(<Setup />);
+      expect(
+        await screen.findByText(/reads only the collection Research, team \(viewer\)/, undefined, WAIT),
+      ).toBeInTheDocument();
+    } finally {
+      vi.mocked(listTokens).mockResolvedValue([]);
+    }
+  });
+
+  it("the token list tells two collections of one title apart by their names", async () => {
+    const mine = [
+      row("col-a", { role: "viewer", kind: "collection", title: "Research" }),
+      row("col-b", { role: "viewer", kind: "collection", title: "Research" }),
+    ];
+    vi.mocked(listMine).mockResolvedValue(mine);
+    vi.mocked(listCollections).mockResolvedValue({
+      collections: [
+        { namespace: "col-legal", parent: "", personal: false, role: "viewer", title: "Legal" },
+        { namespace: "col-a", parent: "", personal: false, role: "viewer", title: "Research" },
+        { namespace: "col-b", parent: "col-legal", personal: false, role: "viewer", title: "Research" },
+      ],
+      next_cursor: null,
+    });
+    useStore.setState({ myNamespaces: mine });
+    vi.mocked(listTokens).mockResolvedValue([
+      {
+        name: "bot",
+        sa_subject: "sa:bot",
+        namespaces: ["col-a", "col-b"],
+        roles: [],
+        ns_roles: { "col-a": "viewer", "col-b": "viewer" },
+        saves_to: undefined,
+        yours: true,
+        ttl_days: 90,
+        created_by: "me",
+        created_at: null,
+        expires_at: null,
+        revoked_at: null,
+        revoked_by: "",
+      },
+    ]);
+    try {
+      render(<Setup />);
+      expect(
+        await screen.findByText(
+          /reads only the collection Research \(col-a\), the collection Research \(col-b\) \(viewer\)/,
+          undefined,
+          WAIT,
+        ),
+      ).toBeInTheDocument();
+    } finally {
+      vi.mocked(listTokens).mockResolvedValue([]);
+    }
+  });
+
+  it("everything: a writer only on a tracker record reads, in the form, the result and the list", async () => {
+    const rows = [row("ns-a", { role: "viewer" }), row("tracker-x", { role: "writer", kind: "qa" })];
+    vi.mocked(listMine).mockResolvedValue(rows);
+    useStore.setState({ myNamespaces: rows });
+    // No token yet, so the form is open; the one created is then listed.
+    vi.mocked(listTokens)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([
+        {
+          name: "bot",
+          sa_subject: "sa:bot",
+          namespaces: ["*"],
+          roles: ["writer"],
+          ns_roles: {},
+          saves_to: undefined,
+          yours: true,
+          ttl_days: 90,
+          created_by: "me",
+          created_at: null,
+          expires_at: null,
+          revoked_at: null,
+          revoked_by: "",
+        },
+      ]);
+    vi.mocked(createToken).mockResolvedValueOnce(created({ namespaces: ["*"], saves_to: "ns-a" }));
+    try {
+      render(<Setup />);
+      const nowhere = await screen.findByTestId("token-saves-nowhere", undefined, WAIT);
+      expect(nowhere).toHaveTextContent("Nowhere: this token only reads.");
+      await create();
+      expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
+        "Read-only; calls that name no namespace read ns-a.",
+      );
+      expect(
+        await screen.findByText(/reads everything you belong to · read-only/, undefined, WAIT),
+      ).toBeInTheDocument();
+    } finally {
+      vi.mocked(listTokens).mockResolvedValue([]);
+    }
+  }, 20_000);
+
+  it("everything: a member of a collection is told, in the result and the list, that the token reads none", async () => {
+    const rows = [
+      row("ns-a", { role: "writer" }),
+      row("col-r", { role: "viewer", kind: "collection", title: "Research" }),
+    ];
+    vi.mocked(listMine).mockResolvedValue(rows);
+    useStore.setState({ myNamespaces: rows });
+    const token = {
+      name: "bot",
+      sa_subject: "sa:bot",
+      namespaces: ["*"],
+      roles: ["writer"],
+      ns_roles: {},
+      saves_to: undefined,
+      yours: true,
+      ttl_days: 90,
+      created_by: "me",
+      created_at: null,
+      expires_at: null,
+      revoked_at: null,
+      revoked_by: "",
+    };
+    vi.mocked(listTokens).mockResolvedValueOnce([]).mockResolvedValue([token]);
+    vi.mocked(createToken).mockResolvedValueOnce(created({ namespaces: ["*"], saves_to: "ns-a" }));
+    try {
+      render(<Setup />);
+      expect(await screen.findByTestId("token-read-scope-collections", undefined, WAIT)).toBeInTheDocument();
+      await create();
+      expect(await screen.findByTestId("minted-token-scope", undefined, WAIT)).toHaveTextContent(
+        /^Reads everything you belong to, including namespaces you join later, but no collection\./,
+      );
+      expect(
+        await screen.findByText(/reads everything you belong to, but no collection · /, undefined, WAIT),
+      ).toBeInTheDocument();
+    } finally {
+      vi.mocked(listTokens).mockResolvedValue([]);
+    }
+  }, 20_000);
+
+  it("only what you choose: an account that holds only collections gets no empty Namespaces list", async () => {
+    const rows = [row("col-r", { role: "writer", kind: "collection", title: "Research" })];
+    vi.mocked(listMine).mockResolvedValue(rows);
+    vi.mocked(listCodeRepos).mockResolvedValue([]);
+    useStore.setState({ myNamespaces: rows });
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("radio", { name: "Only what you choose" }, WAIT));
+    await screen.findByRole("checkbox", { name: "Read the collection Research" }, WAIT);
+    const reads = screen.getByRole("group", { name: "What this token reads" });
+    expect(within(reads).queryByText("Namespaces", { selector: ".section-label" })).toBeNull();
+    expect(reads.querySelectorAll(".divide-y")).toHaveLength(1);
+  });
+
+  it("everything: says nothing of collections to someone who reads none, and does to one who reads one through a group", async () => {
+    vi.mocked(listMine).mockResolvedValue(ROWS);
+    useStore.setState({ myNamespaces: ROWS });
+    vi.mocked(listCollections).mockResolvedValue({ collections: [], next_cursor: null });
+    const first = render(<Setup />);
+    await screen.findByTestId("token-read-scope", undefined, WAIT);
+    // Never drawn for someone who reads none: not while the collection read is out, nor
+    // once its answer (none) is drawn.
+    await waitFor(() => expect(listCollections).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.queryByTestId("token-read-scope-collections")).toBeNull();
+    first.unmount();
+    // Reached through a group: no list_mine row, but collection.list names it.
+    invalidateShared();
+    vi.mocked(listCollections).mockResolvedValue({
+      collections: [{ namespace: "col-team", parent: "", personal: false, role: "viewer", title: "Team" }],
+      next_cursor: null,
+    });
+    render(<Setup />);
+    expect(await screen.findByTestId("token-read-scope-collections", undefined, WAIT)).toHaveTextContent(
+      /^This token reads no collection\.$/,
+    );
+  });
+
+  it("everything: says nothing of collections to one who reaches a collection only through its creator", async () => {
+    // A client token's rows read through its creator: the collection gate admits none of them.
+    const rows = [...ROWS, row("col-team", { role: "writer", kind: "collection", inherited: true })];
+    vi.mocked(listMine).mockResolvedValue(rows);
+    useStore.setState({ myNamespaces: rows });
+    render(<Setup />);
+    await screen.findByTestId("token-read-scope", undefined, WAIT);
+    await waitFor(() => expect(listCollections).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.queryByTestId("token-read-scope-collections")).toBeNull();
   });
 });

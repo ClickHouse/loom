@@ -9,9 +9,9 @@
 import type { SharingAgentNamespaceRow, SharingAgentRow, SharingSummary } from "../api";
 
 export type ToolActivityScope =
-  | { kind: "namespace"; namespace: string; rows: SharingAgentRow[]; others: number }
-  | { kind: "all"; rows: SharingAgentNamespaceRow[]; namespaces: number }
-  | { kind: "outside"; namespace: string; rows: SharingAgentNamespaceRow[]; namespaces: number };
+  | { kind: "namespace"; namespace: string; rows: SharingAgentRow[]; otherPlaces: string[] }
+  | { kind: "all"; rows: SharingAgentNamespaceRow[]; places: string[] }
+  | { kind: "outside"; namespace: string; rows: SharingAgentNamespaceRow[]; places: string[] };
 
 /** Sum per-namespace rows into one row per agent, most active first. */
 export function sumByAgent(rows: SharingAgentNamespaceRow[]): SharingAgentRow[] {
@@ -34,7 +34,7 @@ function byActivity<T extends SharingAgentRow>(rows: T[]): T[] {
  * Rows for the Tool activity table.
  * - `showAll` → every agent × namespace row, with the namespace column.
  * - the selected namespace is in the summary's scope → its rows only, plus
- *   how many other namespaces carry activity.
+ *   the other places that carry activity.
  * - the selected namespace is outside the scope (no grant) → say so and fall
  *   back to the full table rather than an empty one.
  */
@@ -44,11 +44,12 @@ export function toolActivityRows(
   showAll: boolean,
 ): ToolActivityScope {
   const per = data.agent_namespaces;
-  const namespaces = new Set(per.map((r) => r.namespace)).size;
-  if (showAll || !namespace) return { kind: "all", rows: byActivity(per), namespaces };
+  // The places with activity (namespaces, repositories, collections), each once.
+  const places = [...new Set(per.map((r) => r.namespace))];
+  if (showAll || !namespace) return { kind: "all", rows: byActivity(per), places };
   const inScope = data.namespaces.some((n) => n.namespace === namespace);
-  if (!inScope) return { kind: "outside", namespace, rows: byActivity(per), namespaces };
+  if (!inScope) return { kind: "outside", namespace, rows: byActivity(per), places };
   const mine = per.filter((r) => r.namespace === namespace);
-  const others = new Set(per.filter((r) => r.namespace !== namespace).map((r) => r.namespace)).size;
-  return { kind: "namespace", namespace, rows: sumByAgent(mine), others };
+  const otherPlaces = places.filter((n) => n !== namespace);
+  return { kind: "namespace", namespace, rows: sumByAgent(mine), otherPlaces };
 }

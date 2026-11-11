@@ -256,30 +256,6 @@ describe("Spaces: the rows", () => {
     }
   });
 
-  it("an end user's personal collection offers no guide in its menu", async () => {
-    mine.push({
-      namespace: "col-me-alice",
-      role: "admin",
-      status: "active",
-      visibility: "private",
-      description: "",
-      joined_at: null,
-      is_new: false,
-      kind: "memory",
-    });
-    try {
-      const user = userEvent.setup();
-      render(<Browse />);
-      await screen.findAllByText("alpha");
-      await user.click(within(row("col-me-alice")).getByRole("button", { name: "Actions for col-me-alice" }));
-      const menu = await screen.findByRole("menu", { name: "Actions for col-me-alice" });
-      // It takes no guide, so its menu offers none.
-      expect(within(menu).queryByRole("menuitem", { name: "Guide" })).toBeNull();
-    } finally {
-      mine.pop();
-    }
-  });
-
   it("the rows are one tab stop; the arrows move between them, across both sections", async () => {
     const user = userEvent.setup();
     render(<Browse />);
@@ -292,6 +268,46 @@ describe("Spaces: the rows", () => {
     expect(opens[1]).toHaveFocus();
     await user.keyboard("{End}");
     expect(opens[2]).toHaveFocus();
+  });
+
+  it("a collection you manage is not a namespace you manage: the Library holds it", async () => {
+    const before = [...mine];
+    mine.push({
+      namespace: "col-research",
+      role: "admin",
+      status: "active",
+      visibility: "private",
+      description: "",
+      joined_at: null,
+      is_new: false,
+      kind: "collection",
+      title: "Research",
+    });
+    mine.push({
+      namespace: "col-me-alice",
+      role: "admin",
+      status: "active",
+      visibility: "private",
+      description: "",
+      joined_at: null,
+      is_new: false,
+      kind: "personal",
+    });
+    try {
+      const user = userEvent.setup();
+      render(<Browse />);
+      const managed = (await screen.findByRole("heading", { name: /Namespaces you manage/ })).closest(
+        "section",
+      ) as HTMLElement;
+      expect(within(managed).queryByText(/col-research|Research/)).toBeNull();
+      expect(screen.queryByText("col-research")).toBeNull();
+      expect(screen.queryByText("col-me-alice")).toBeNull();
+      expect(screen.getByText(/Collections you manage are in the/)).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Library" }));
+      expect(useStore.getState().view).toBe("knowledge");
+    } finally {
+      mine.splice(0, mine.length, ...before);
+    }
   });
 });
 

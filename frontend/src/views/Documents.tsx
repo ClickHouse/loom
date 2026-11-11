@@ -34,7 +34,7 @@ import {
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
-import { roleOnNamespace } from "../lib/namespaceRole";
+import { collectionTitle } from "../lib/collections";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError } from "../components/Toast";
@@ -159,15 +159,12 @@ export function Documents() {
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
   const collections = useReadableCollections(picked.org);
-  // A header namespace that is itself a collection is shown as that collection, with its role.
-  const shown = collections.rows?.find((c) => c.namespace === (collection ?? picked.namespace)) ?? null;
+  const shown = collections.rows?.find((c) => c.namespace === collection) ?? null;
   const resolving = !!collection && collections.rows === null && !collections.error;
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
   const mine = useStore((s) => s.myNamespaces);
-  // A header namespace deleted here (it was a collection) holds nothing more to read.
-  const [deleted, setDeleted] = useState<string | null>(null);
-  const ownShelf = isMemoryNamespace(picked.namespace, mine) && deleted !== picked.namespace;
+  const ownShelf = isMemoryNamespace(picked.namespace, mine);
   const noPlace = !shown && !resolving && !ownShelf;
   const fallback = ownShelf ? `showing ${picked.namespace}` : "pick another";
   const createdTold = useRef("");
@@ -191,14 +188,7 @@ export function Documents() {
     pickCollection(null);
   }, [collection, collections.rows, collections.truncated, collections.expected, shown, pickCollection, fallback]);
   const identity = useMemo(() => (shown ? { ...picked, namespace: shown.namespace } : picked), [picked, shown]);
-  // A header namespace that is a collection, before (or without) the list naming its role,
-  // takes it from the namespace menu, and writes nothing while neither says.
-  // Read as the header reads it: a claim-only row by the token's claim, a pending one as none.
-  const whoami = useStore((s) => s.whoami);
-  const headerRole = roleOnNamespace(whoami, mine, picked.namespace);
-  const readOnly = shown
-    ? shown.role === "viewer"
-    : isCollectionName(picked.namespace) && (!headerRole || headerRole === "viewer");
+  const readOnly = shown?.role === "viewer";
   const phone = useMedia(PHONE_QUERY);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
@@ -207,8 +197,9 @@ export function Documents() {
   // An upload of many files has started: the dialog stays open when the place shown changes.
   const batchStarted = useRef(false);
   // The header's New › Document adds to the header's namespace: it steps aside while a
-  // collection is linked here, so a document meant for it is added from this page.
-  const elsewhere = resolving || noPlace || (!!shown && shown.namespace !== picked.namespace);
+  // collection is shown (the header never holds one), so a document meant for it is added
+  // from this page.
+  const elsewhere = resolving || noPlace || !!shown;
   useEffect(() => {
     useStore.getState().setLibraryElsewhere(elsewhere);
   }, [elsewhere]);
@@ -813,8 +804,6 @@ export function Documents() {
     [toggleRow, readOnly],
   );
 
-  // The header's own namespace, picked as a collection, is the header's namespace shown.
-  const openPlace = (c: string | null) => goTo(c === picked.namespace ? null : c);
   // Below the documents, so they start where the list rules want them; on a phone the
   // select, a tree, lists the collections inside.
   const inside = !phone && collections.rows && (
@@ -822,7 +811,7 @@ export function Documents() {
       key={shown?.namespace ?? ""}
       rows={collections.rows}
       current={shown}
-      onPick={openPlace}
+      onPick={goTo}
       className="mt-6"
     />
   );
@@ -834,8 +823,7 @@ export function Documents() {
       current={shown}
       opening={resolving ? collection : null}
       place={collection ?? picked.namespace}
-      onPick={openPlace}
-      onDeleted={setDeleted}
+      onPick={goTo}
       onLeave={pickCollection}
     />
   );
@@ -868,39 +856,50 @@ export function Documents() {
     // Where this namespace's data lives instead, as the memory views' empty page says.
     const kind = kindOf(picked.namespace, mine);
     const go = useStore.getState();
-    const action = !picked.namespace
-      ? { label: "Browse and join spaces", onClick: () => go.setView("browse") }
-      : kind === "qa" || kind === "tracker"
-        ? { label: "Open in Patterns", onClick: () => go.navigate("graph", { query: { mode: "patterns" } }) }
-        : kind === "code"
-          ? { label: "Open repositories", onClick: () => go.setView("code") }
-          : undefined;
     // The list's answer decides: none while it is read, and a failure is not "none".
     const listed = collections.rows;
+    // No namespace, but shared collections to pick (one's own alone is no way in): the page
+    // asks only for the pick.
+    const picking = !picked.namespace && !!listed?.some((c) => !c.personal);
+    const unknown = !picked.namespace && listed === null && !collections.error;
+    const action = picking
+      ? undefined
+      : !picked.namespace
+        ? { label: "Browse and join spaces", onClick: () => go.setView("browse") }
+        : kind === "qa" || kind === "tracker"
+          ? { label: "Open in Patterns", onClick: () => go.navigate("graph", { query: { mode: "patterns" } }) }
+          : kind === "code"
+            ? { label: "Open repositories", onClick: () => go.setView("code") }
+            : undefined;
     const pick = listed !== null && listed.length === 0 ? "Create a collection above" : "Pick a collection above";
-    const where =
-      deleted === picked.namespace
-        ? `${picked.namespace} was deleted.`
-        : picked.namespace
-          ? `${picked.namespace} holds no documents.`
-          : "Your token reaches no namespace yet.";
+    const where = picked.namespace
+      ? `${picked.namespace} holds no documents. `
+      : picking
+        ? "Collections are shared document libraries. "
+        : "Your token reaches no namespace yet. ";
     const page = (
       <PageContainer>
         <PageHeader title="Library">
           <ScopeBadge kind="namespace" value={picked.namespace} />
         </PageHeader>
         {picker}
-        <EmptyState
-          icon="folder-open"
-          title={listed !== null && listed.length === 0 ? "No collection yet" : "Pick a collection"}
-          description={`${where} ${pick}, or a memory namespace from the namespace menu.`}
-          action={action}
-        />
-        <p className="text-center text-sm text-text-muted">
-          <Link component="button" type="button" onClick={() => go.openNamespacePicker(true)}>
-            Open the namespace menu
-          </Link>
-        </p>
+        {/* Not known yet: nothing said, so nothing is taken back. */}
+        {!unknown && (
+          <EmptyState
+            icon="folder-open"
+            title={listed !== null && listed.length === 0 ? "No collection yet" : "Pick a collection"}
+            // With no namespace to reach, the namespace menu holds none to offer.
+            description={`${where}${pick}${picked.namespace ? ", or a memory namespace from the namespace menu" : ""}.`}
+            action={action}
+          />
+        )}
+        {picked.namespace && (
+          <p className="text-center text-sm text-text-muted">
+            <Link component="button" type="button" onClick={() => go.openNamespacePicker(true)}>
+              Open the namespace menu
+            </Link>
+          </p>
+        )}
         {inside}
       </PageContainer>
     );
@@ -1178,8 +1177,12 @@ export function Documents() {
               )}
               <AskAboutThis
                 what="document"
-                // A linked collection's document is not in the namespace the answer reads.
-                namespace={identity.namespace}
+                // A collection's document is not in the namespace the answer reads: said by title.
+                reason={
+                  shown && ownShelf
+                    ? `The assistant answers about ${picked.namespace}; this document is in the collection ${collectionTitle(shown)}.`
+                    : undefined
+                }
                 item={{
                   chip: `document ${previewEntry.title || previewEntry.original_filename || previewEntry.source_uri}`,
                   line: `document ${exact(previewEntry.source_uri)}${

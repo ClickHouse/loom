@@ -28,6 +28,16 @@ flowchart LR
   (`namespace.delete` refuses a collection). A
   deleted collection's name is never used again, and no grant reaches it any more. A
   document lives in one collection and follows its grants from the moment it is written.
+- **Collections in the namespace lists.** `namespace.list_mine` gives a collection
+  `kind = 'collection'` from its directory row; a `col-` name with no row takes
+  `collection`, or `personal` for `col-me-…`, from its reserved prefix, so it still reads
+  as a collection. Each `list_mine` row also carries the directory's `title`. A refusal
+  on a collection says "cannot access the collection org/name", chosen by the prefix
+  alone, so it reads the same whether or not the collection exists. The dashboard never
+  shows a collection as a namespace: the Library lists them, the token form and Flow give
+  them a Collections heading of their own, and admin Users tags each grant on one inline
+  ("collection Research · writer"), each by its title, and another person's own collection
+  as "personal collection".
 - **A collection's name and its title.** The name is the address: grants, search scope,
   audit and erasure key on it, so it is unique in the org and never reused. The title is
   what people see; titles repeat. `collection.create` with `derive_name` takes a title

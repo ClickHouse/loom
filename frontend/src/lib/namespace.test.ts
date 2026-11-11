@@ -312,3 +312,30 @@ describe("isPersonalNamespace: the auto-claimed personal-<subject> row", () => {
     expect(isPersonalNamespace("")).toBe(false);
   });
 });
+
+describe("a collection is never a namespace the header holds", () => {
+  const COLLECTION = (namespace: string, over: Partial<MyNamespaceEntry> = {}) =>
+    admin(namespace, { kind: "collection", ...over });
+
+  it("is neither selectable nor a memory namespace, by its reserved name whatever its kind", () => {
+    const mine = [COLLECTION("col-r"), admin("col-old", { kind: "memory" }), entry("team", { kind: "memory" })];
+    for (const name of ["col-r", "col-old", "col-me-0123456789abcdef"]) {
+      expect(isSelectableNamespace({ namespace: name, kind: "memory" })).toBe(false);
+      expect(isMemoryNamespace(name, mine)).toBe(false);
+    }
+    expect(isSelectableNamespace({ namespace: "team", kind: "memory" })).toBe(true);
+  });
+
+  it("a saved collection, an administered one and a claimed one are passed over", () => {
+    const mine = [COLLECTION("col-mine"), admin("team-b", { joined_at: "2026-02-01T00:00:00Z" })];
+    expect(landingNamespace("col-mine", ["col-claim", "team-b"], mine)).toBe("team-b");
+    expect(landingNamespace(null, ["col-claim"], [COLLECTION("col-mine")])).toBeNull();
+  });
+
+  it("an account that reads only collections is Setup's here: the Library's call is landingWithCollections", () => {
+    expect(landingTarget(null, [], [COLLECTION("col-a", { role: "viewer" })])).toEqual({
+      view: "setup",
+      namespace: null,
+    });
+  });
+});

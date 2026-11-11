@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -24,7 +24,17 @@ import { confirmAction } from "../../components/ConfirmDialog";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { TableSkeleton } from "../../components/Skeleton";
-import { Alert, PageHeader } from "../../components/ui";
+import { Alert, PageHeader, TipTarget } from "../../components/ui";
+import { isCollectionName } from "../../lib/namespace";
+import {
+  collectionPlace,
+  isOthersPersonal,
+  knownCollections,
+  collectionTitleOf,
+  type CollectionsRead,
+  useSharedCollectionsRead,
+  withTwinNames,
+} from "../../lib/collectionPlaces";
 
 type Filter = "all" | "pending" | "active7d";
 
@@ -362,10 +372,15 @@ function FilterLabel({ label, count, icon }: { label: string; count: number | nu
   );
 }
 
-const USER_HEADERS = [{ label: "Subject" }, { label: "Namespaces" }, { label: "Auth" }, { label: "Last active" }];
+const USER_HEADERS = [{ label: "Subject" }, { label: "Grants" }, { label: "Auth" }, { label: "Last active" }];
 
 // A new page scrolls to the table and gives it focus.
 function UserListTable({ rows, filter }: { rows: AdminUserRow[]; filter: Filter }) {
+  // A grant on a collection is tagged as one, by title where the viewer can read it.
+  const org = useStore((s) => s.identity?.org);
+  const collectionsRead = useSharedCollectionsRead(
+    rows.some((u) => u.grants.some((g) => isCollectionName(g.namespace))) ? org : null,
+  );
   return (
     <Table
       id="users-list"
@@ -407,25 +422,7 @@ function UserListTable({ rows, filter }: { rows: AdminUserRow[]; filter: Filter 
             overflowMode: "wrap",
           },
           {
-            label: (
-              <div className="flex flex-wrap gap-1.5">
-                {u.grants.length === 0 && <span className="text-xs text-text-muted">—</span>}
-                {u.grants.map((g) => (
-                  <Badge
-                    key={`${g.namespace}-${g.role}`}
-                    size="sm"
-                    state={g.pending_role ? "warning" : g.is_owner ? "info" : "neutral"}
-                    text={
-                      <span className="font-mono">
-                        {g.pending_role && <span className="sr-only">Pending elevation: </span>}
-                        {g.namespace} ·{" "}
-                        {g.pending_role ? `${g.role} → ${g.pending_role}` : `${g.role}${g.is_owner ? " · owner" : ""}`}
-                      </span>
-                    }
-                  />
-                ))}
-              </div>
-            ),
+            label: <GrantBadges grants={u.grants} read={collectionsRead} />,
             overflowMode: "wrap",
           },
           { label: <span className="text-xs text-text-muted">{u.has_password_auth ? "password" : "token / SA"}</span> },
@@ -439,5 +436,52 @@ function UserListTable({ rows, filter }: { rows: AdminUserRow[]; filter: Filter 
         ],
       }))}
     />
+  );
+}
+
+/** One person's grants as badges; a collection by its title, with its place and address in
+ *  its tip. */
+function GrantBadges({ grants, read }: { grants: AdminUserRow["grants"]; read: CollectionsRead | null }) {
+  const collections = read?.rows ?? null;
+  // Past `collection.list`'s first page, a title the viewer's own list_mine row carries.
+  const mine = useStore((s) => s.myNamespaces);
+  // Two of one person's collections that look alike differ by name, as everywhere else.
+  const title = withTwinNames(
+    (ns) => collectionTitleOf(ns, collections, mine),
+    [...grants.map((g) => g.namespace), ...knownCollections(collections, mine)],
+  );
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {grants.length === 0 && <span className="text-xs text-text-muted">—</span>}
+      {grants.map((g) => {
+        const key = `${g.namespace}-${g.role}`;
+        const collection = isCollectionName(g.namespace);
+        const badge = (
+          <Badge
+            size="sm"
+            state={g.pending_role ? "warning" : g.is_owner ? "info" : "neutral"}
+            text={
+              <span className={collection ? undefined : "font-mono"}>
+                {g.pending_role && <span className="sr-only">Pending elevation: </span>}
+                {collection
+                  ? isOthersPersonal(g.namespace, read)
+                    ? "personal collection"
+                    : `collection ${title(g.namespace)}`
+                  : g.namespace}{" "}
+                · {g.pending_role ? `${g.role} → ${g.pending_role}` : `${g.role}${g.is_owner ? " · owner" : ""}`}
+              </span>
+            }
+          />
+        );
+        if (!collection) return <Fragment key={key}>{badge}</Fragment>;
+        // Titles repeat: a collection's place and address are in its tip.
+        const place = collectionPlace(g.namespace, collections);
+        return (
+          <TipTarget key={key} tip={place ? `${place} · ${g.namespace}` : g.namespace}>
+            {badge}
+          </TipTarget>
+        );
+      })}
+    </div>
   );
 }

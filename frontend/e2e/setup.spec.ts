@@ -133,7 +133,7 @@ test.describe("settings tabs", () => {
     await shot(page, "19-settings-tokens-folded");
     await page.getByRole("button", { name: "New token" }).click();
     await expect(page.getByRole("button", { name: /Create token/ })).toBeVisible();
-    await page.getByRole("radio", { name: "Only these namespaces" }).click();
+    await page.getByRole("radio", { name: "Only what you choose" }).click();
     await expect(page.getByRole("checkbox", { name: "Read bench" })).toBeVisible();
     await shot(page, "20-settings-tokens-form-open");
     await page.getByRole("button", { name: "Cancel" }).click();
@@ -268,7 +268,7 @@ test("a restricted repository is picked by repository and branch in the token fo
     });
   });
   await page.goto("/settings");
-  await page.getByRole("radio", { name: "Only these namespaces" }).click();
+  await page.getByRole("radio", { name: "Only what you choose" }).click();
   const repo = page.getByRole("checkbox", { name: "Read every branch of acme/private" });
   await expect(repo).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Read acme/private branch 26.8" })).toBeVisible();

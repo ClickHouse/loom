@@ -105,6 +105,29 @@ describe("HeaderSearch", () => {
     expect(option).not.toHaveAttribute("href");
   });
 
+  it("offers no collection as a namespace to jump to", async () => {
+    vi.mocked(sharedMine).mockResolvedValueOnce([
+      { namespace: "coffee-team", visibility: "private", description: "", role: "writer", status: "active" },
+      {
+        namespace: "col-coffee",
+        kind: "collection",
+        title: "Coffee",
+        visibility: "private",
+        description: "",
+        role: "admin",
+        status: "active",
+      },
+    ] as never);
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    const input = screen.getByRole("combobox", { name: "Search Loom" });
+    await user.click(input);
+    await user.type(input, "coffee");
+    const jump = await screen.findByRole("group", { name: "Jump to" });
+    expect(within(jump).getByText("coffee-team")).toBeInTheDocument();
+    expect(within(jump).queryByText("col-coffee")).toBeNull();
+  });
+
   it("rings the option the keys move to, and only tints the one the pointer is on", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);

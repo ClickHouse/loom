@@ -32,23 +32,20 @@ export function exact(id: string): string {
  * sends nothing. `leave` runs first: a drawer or a dialog closes itself, with a flag so its
  * close hands the focus to nobody (the panel's field takes it). Shown to whoever the
  * assistant's route admits on the header's namespace. Unavailable, with the reason, for the
- * caller's own `reason`, on a header namespace that holds no memories, for an item read from
- * another namespace than the header's (`namespace`: the answer reads only the header's), and
- * while the assistant cannot answer.
+ * caller's own `reason` (an item read from another place than the header's namespace, which
+ * is all the answer reads), on a header namespace that holds no memories, and while the
+ * assistant cannot answer.
  */
 export function AskAboutThis({
   what,
   item,
   reason,
-  namespace: from,
   leave,
   short = false,
 }: {
   what: "memory" | "document" | "result";
   item: Omit<AskItem, "view" | "org" | "namespace">;
   reason?: string | null;
-  /** The namespace the item was read from, when the page may read another than the header's. */
-  namespace?: string;
   leave?: () => void;
   /** "Ask" alone, for a table row; the name says the rest. */
   short?: boolean;
@@ -62,9 +59,6 @@ export function AskAboutThis({
   const why =
     reason ||
     (!isMemoryNamespace(namespace, mine) ? "The assistant answers about a memory namespace." : null) ||
-    (from !== undefined && from !== namespace
-      ? `The assistant answers about ${namespace}; this ${what} is in ${from}.`
-      : null) ||
     (unavailable ? `The assistant can't answer now: ${unavailable}.` : null);
   return (
     <Unavailable reason={why}>

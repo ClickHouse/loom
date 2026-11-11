@@ -59,6 +59,13 @@ def is_personal(namespace: str) -> bool:
     return namespace.startswith(PERSONAL_PREFIX)
 
 
+def collection_kind(namespace: str) -> str | None:
+    """`personal` or `collection` for a name with a collection's reserved prefix, else None."""
+    if is_personal(namespace):
+        return "personal"
+    return "collection" if is_collection(namespace) else None
+
+
 @dataclass(frozen=True)
 class Tree:
     """An org's collections, personal ones aside: each one's parent ('' for a root)."""
@@ -326,7 +333,10 @@ async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -
     if auth.has_role(Role.PLATFORM_ADMIN):
         return
     # The same words whether or not the collection exists, so they confirm nothing.
-    bare = PermissionError(f"principal {auth.subject!r} cannot access {org}/{namespace}")
+    # "collection" comes from the reserved prefix this gate runs on, not from a lookup.
+    bare = PermissionError(
+        f"principal {auth.subject!r} cannot access the collection {org}/{namespace}"
+    )
     # Another org's caller, and someone else's personal collection (which takes no grant),
     # get the short refusal: the advice below could not work for them.
     if not may_act_in_org(auth, org):

@@ -63,14 +63,24 @@ function fold(text: string): string {
 
 /** The titles shown more than once among `rows`: those are printed with their name. */
 export function repeatedTitles(rows: CollectionEntry[]): Set<string> {
+  return repeatedLooks(rows.map(collectionTitle));
+}
+
+/** The looks (`looksKey`) that `titles` hold more than once. */
+export function repeatedLooks(titles: readonly string[]): Set<string> {
   const seen = new Set<string>();
   const twice = new Set<string>();
-  for (const c of rows) {
-    const k = looksKey(collectionTitle(c));
+  for (const t of titles) {
+    const k = looksKey(t);
     if (seen.has(k)) twice.add(k);
     seen.add(k);
   }
   return twice;
+}
+
+/** Whether `title` is one of `repeated` (from `repeatedLooks`). */
+export function looksRepeated(title: string, repeated: Set<string>): boolean {
+  return repeated.has(looksKey(title));
 }
 
 /** The title, with the name beside it when another collection shows the same title. */
