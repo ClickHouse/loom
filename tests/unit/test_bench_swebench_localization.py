@@ -1,7 +1,13 @@
 """The SWE-bench localization bench scores files the gold patch edits, never the
-files it adds, and its BM25 baseline ranks by the textbook formula."""
+files it adds, its BM25 baseline ranks by the textbook formula, and its index step
+reads the repository registry before it looks up the entry."""
 
 from __future__ import annotations
+
+import asyncio
+from unittest.mock import AsyncMock
+
+import pytest
 
 from bench import swebench_localization as S
 
@@ -165,11 +171,6 @@ def test_the_index_step_reads_the_registry_before_it_looks_up_the_entry(
     """The index step runs in a fresh process: it reads the self-service registry before
     `repo_for_namespace`, which refuses until it is read, and stops naming why when the
     read fails."""
-    import asyncio
-    from unittest.mock import AsyncMock
-
-    import pytest
-
     from server.code.app.index import repo_registry
     from server.code.domain.index import repos
     from server.core import ch
