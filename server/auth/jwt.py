@@ -82,6 +82,11 @@ class RevocationUnavailable(AuthUnavailable):
     token was revoked. The list loads on the next refresh."""
 
 
+class CellUnavailable(AuthUnavailable):
+    """This process is a cell whose own rows are unread or do not accept its
+    configuration (`server.core.cell.gate_reason`): it judges no token."""
+
+
 class KeyringUnavailable(AuthUnavailable):
     """This process has not read the signing keyring yet, or not within
     `jwt_revocation_max_stale_seconds`, so a retired kid may not be known."""
@@ -359,7 +364,12 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     """
     if secret is None:
         from server.auth import keyring
+        from server.core import cell
 
+        # First, before any issuer's branch: a cell configured to accept what its
+        # directory row does not judges nothing with it.
+        if reason := cell.gate_reason():
+            raise CellUnavailable(reason)
         end_user = _end_user_key(token)
         if end_user is not None:
             return _verify_end_user(token, *end_user)

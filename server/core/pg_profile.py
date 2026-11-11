@@ -183,6 +183,12 @@ async def _pg_record() -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def deployment_id() -> str:
+    """The deployment id Postgres records ('' when it records none)."""
+    held = await _pg_record()
+    return str(held["deployment_id"]) if held else ""
+
+
 async def require_authority(ch: Any) -> None:
     """Record the authority at a deployment's first boot, or refuse a replica whose
     LOOM_STORAGE_AUTHORITY (or LOOM_PG_DSN) disagrees with what is recorded."""

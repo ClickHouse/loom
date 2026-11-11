@@ -5,7 +5,8 @@ process's: `python -m server.worker_main --lease-fd N --alive-fd M`, started by
 It runs the supervisor and only what the workers use: the ClickHouse client,
 the provider configuration (and the participant row a provider transition
 waits for), the event emitter, the tracker and repository registries and the
-similarity gates. No port, no instance row, no migrations, no token state.
+similarity gates, and, with `LOOM_CELL` set, the cell's own rows (its passes verify
+tokens). No port, no instance row, no migrations, no token state.
 """
 
 from __future__ import annotations
@@ -104,6 +105,10 @@ async def _serve(fd: int, alive_fd: int) -> None:
     await boot.open_storage_authority()
     try:
         services = await _start_services(ch)
+        if settings.cell:
+            # The passes verify tokens and judge the gate as the parent does: the child
+            # reads the cell's rows itself.
+            services += await boot.start_cell_state()
         supervisor = get_supervisor()
         supervisor.start_all()
         await stop.wait()

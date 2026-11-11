@@ -233,6 +233,11 @@
           "type": "number",
           "description": "Seconds between each replica's re-read of the shared calibration (loom.embedder_calibration), so every replica serves the same gates."
         },
+        "cell": {
+          "default": "",
+          "type": "string",
+          "description": "This deployment's cell name (1 to 32 of a-z, 0-9, '-') when it is one of several behind a router; \"\" = not a cell. Set, the process serves only while its cell's rows in Postgres are read and match its configuration (docs/architecture/cells.md)."
+        },
         "ch_analysis_max_concurrent": {
           "default": 8,
           "maximum": 256,
@@ -6091,6 +6096,12 @@
           "default": 5,
           "type": "integer",
           "description": "Seconds between webhook delivery passes while notices are going out."
+        },
+        "tenancy_mode_cache_s": {
+          "default": 5.0,
+          "minimum": 1.0,
+          "type": "number",
+          "description": "Seconds (at least 1) between re-reads of a cell's three rows (LOOM_CELL); a change takes effect within this on every process that can read them. LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this, and a process that cannot read them is gated past it."
         },
         "tenant_max_concurrent_requests": {
           "default": 256,
