@@ -77,8 +77,9 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
 
 
 def _what_loom_is(text: str) -> str:
-    """The clause after "Loom, ", or after a link on Loom, up to the end of its sentence."""
-    m = re.search(r"Loom(?:\]\([^)]*\))?, (.+?\.)(?:\s|$)", text)
+    """The clause after "Loom, ", or after a link on Loom, up to the end of its sentence,
+    with line breaks read as spaces: a wrapped paragraph renders as one line."""
+    m = re.search(r"Loom(?:\]\([^)]*\))?, (.+?\.)(?:\s|$)", " ".join(text.split()))
     assert m, f"no 'Loom, <what it is>.' clause in {text!r}"
     return m.group(1)
 
