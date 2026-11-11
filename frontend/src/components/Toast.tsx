@@ -136,7 +136,7 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
 /** An error toast whose caller built its own sentence (how much of a batch went through):
  *  the request id underneath and the reading time, as toastError gives every error toast. */
 export function toastErrorLine(msg: string, err: unknown, opts: { key?: string } = {}): void {
-  toastWithId(msg, "error", err, { key: opts.key });
+  toastWithId(msg, "error", err, opts);
 }
 
 /** A toast for a line a page builds about a failed or committed call: the call's request id
