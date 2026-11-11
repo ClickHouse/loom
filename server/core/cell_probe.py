@@ -6,10 +6,11 @@ it is the one whose stores they write to (docs/architecture/cells.md, "Preparing
   is not rate-limited, so a flood on the main port cannot stall attach's host check.
 - On the probe listener (`LOOM_CELL_PROBE_PORT`, off by default) the same path also
   answers the values under prepare's nonce keys, read on that request from this
-  process's own connections: the Postgres row `loom.cell_probe`, the ClickHouse key
-  `loom._migration_lock` and the bucket object `<prefix>/_cell_probe`. None of these values
-  is secret. It answers 429 past PROBES_PER_MINUTE per process. Every web process of a host
-  accepts on the port (SO_REUSEPORT); the workers child opens none.
+  process's own connections: the Postgres row `loom.cell_probe`, the key `cell-probe` of
+  the ClickHouse KeeperMap `loom._migration_lock` and the bucket object
+  `<prefix>/_cell_probe`. None of these values is secret. It answers 429 past
+  PROBES_PER_MINUTE per process. Every web process of a host accepts on the port
+  (SO_REUSEPORT); the workers child opens none.
 
 Prepare writes a nonce to each store, reads it back here, and deletes it. A copy of
 another deployment's stores answers that deployment's id with none of this nonce.
@@ -53,7 +54,7 @@ class StoreUnreadable(Exception):
     """A store the listener could not read, by name (`postgres`, `clickhouse`, `bucket`)."""
 
     def __init__(self, store: str, error: BaseException) -> None:
-        # Words the listener writes: the store and the error's type, never its text.
+        # The 503's words: the store and the error's type, never its text (the log has it).
         self.reason = f"{store} could not be read ({type(error).__name__})"
         super().__init__(self.reason)
         self.store = store
@@ -74,7 +75,9 @@ async def nonces() -> dict[str, str | None]:
             try:
                 values[store] = await read()
             except Exception as e:  # re-raised with the store named, answered as a 503
-                log.warning("probe: the %s nonce could not be read: %s", store, e)
+                log.warning(
+                    "probe: the %s nonce could not be read: %s: %s", store, type(e).__name__, e
+                )
                 raise StoreUnreadable(store, e) from e
     return values
 

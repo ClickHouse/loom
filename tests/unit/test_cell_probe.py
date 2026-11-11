@@ -77,7 +77,7 @@ def test_the_listener_answers_the_id_and_each_stores_nonce(
 
 
 def test_a_store_the_listener_cannot_read_answers_503(
-    deployment: str, monkeypatch: pytest.MonkeyPatch
+    deployment: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     async def _down() -> Any:
         raise OSError("refused")
@@ -88,8 +88,10 @@ def test_a_store_the_listener_cannot_read_answers_503(
         return "n"
 
     monkeypatch.setattr(cell_probe, "_postgres", _ok)
-    r = TestClient(cell_probe.listener_app()).get(cell_probe.PATH)
+    with caplog.at_level(logging.WARNING, logger="loom.cell_probe"):
+        r = TestClient(cell_probe.listener_app()).get(cell_probe.PATH)
     assert r.status_code == 503 and r.json()["store"] == "clickhouse"
+    assert "clickhouse nonce could not be read: OSError: refused" in caplog.text
     assert r.json()["error"] == "clickhouse could not be read (OSError)"
 
 
@@ -188,3 +190,21 @@ def test_the_listener_serves_on_its_port_and_leaves_the_signal_handlers(
             assert listener.task.done() and not listener.task.cancelled()
 
     assert asyncio.run(_run())["deployment_id"] == deployment
+
+
+def test_the_bucket_nonce_is_the_object_under_the_prefix_and_none_without_it(
+    monkeypatch: pytest.MonkeyPatch, settings_override: Any
+) -> None:
+    """Prepare writes `<prefix>/_cell_probe`; the listener reads it back, and reads None
+    once it is deleted or with no bucket at all."""
+    from server.core import object_store
+    from tests.unit.test_document_object_store import FakeS3
+
+    fake = FakeS3()
+    monkeypatch.setattr(object_store, "_client", lambda: fake)
+    settings_override(document_s3_bucket="probe-bucket", document_s3_prefix="loom/originals")
+    assert asyncio.run(cell_probe._bucket()) is None
+    fake.objects[("probe-bucket", "loom/originals/_cell_probe")] = (b"n-bucket", None)
+    assert asyncio.run(cell_probe._bucket()) == "n-bucket"
+    settings_override(document_s3_bucket="")
+    assert asyncio.run(cell_probe._bucket()) is None
