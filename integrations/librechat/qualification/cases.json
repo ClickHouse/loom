@@ -603,7 +603,7 @@
         "limit": 5
       }
     },
-    "forbid": ["\\b(entities|they) (are|is) not extracted"],
+    "forbid": ["\\b(entities|they) (are|is) not extracted|\\b(never|does ?n[o']t|do not|won'?t) extracts?\\b"],
     "samples": {
       "right": [
         "Pass them in `entities` on `memory.set`; otherwise the extractor worker extracts them from the memory's text.",
@@ -611,7 +611,8 @@
       ],
       "wrong": [
         "Entities are not extracted from memories; an admin adds them by hand only.",
-        "Entities come from `memory.set`; they are not extracted from text."
+        "Entities come from `memory.set`; they are not extracted from text.",
+        "Pass them in `entities` on `memory.set`; Loom never extracts entities from the text."
       ]
     }
   },
@@ -1088,11 +1089,12 @@
         "The quickstart won't run without an API key.",
         "Yes, the quickstart needs an API key; nothing runs without an OpenAI API key.",
         "Yes, the quickstart does not run without an OpenAI API key.",
-        "Yes. Without an API key the quickstart cannot start."
+        "Yes. Without an API key the quickstart cannot start.",
+        "Yes. It won't run without your OpenAI key."
       ]
     },
     "forbid": [
-      "\\b(does ?n[o']t|do not|will not|won'?t|can ?not|can't) (start|run)\\w* without an? (\\w+ )?API key|\\bwithout an? (\\w+ )?API key,? (it|the quickstart) (cannot|can't|won'?t|will not|does ?n[o']t|does not)",
+      "\\b(does ?n[o']t|do not|will not|won'?t|can ?not|can't) (start|run)\\w* without (an?|the|your) (\\w+ )?(API )?key|\\bwithout (an?|the|your) (\\w+ )?(API )?key,? (it|the quickstart) (cannot|can't|won'?t|will not|does ?n[o']t|does not)",
       "\\b(it|the quickstart) (needs?|requires?) an? (\\w+ )?API key|\\bnothing (runs|starts|works) without"
     ]
   },
