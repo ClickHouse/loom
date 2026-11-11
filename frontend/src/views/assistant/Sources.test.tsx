@@ -7,7 +7,12 @@ const cite = (verified: boolean, kind = "memory"): Citation => ({
   kind,
   text: `${kind}:k`,
   verified,
-  reason: verified ? "" : "no such key in this namespace",
+  // The server's own reasons (server/assistant/app/citations.py).
+  reason: verified
+    ? ""
+    : kind === "code"
+      ? "code citations are not checked"
+      : "no memory.search, memory.ask, memory.get, memory.list, memory.inspect call in this answer was returned this key",
   ref: "k",
 });
 
