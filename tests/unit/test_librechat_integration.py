@@ -1283,3 +1283,11 @@ def test_a_failed_direct_read_cites_no_labeled_source():
         q.native_score(_case("help-revoke-token"), 503, {"detail": "x"})["cited_expected"] is False
     )
     assert q.native_score(_case("memory-freeze"), 503, {"detail": "x"})["cited_expected"] is False
+
+
+def test_a_case_whose_direct_path_cannot_cite_leaves_the_count_either_way():
+    q = _qualify()
+    case = _case("data-history")
+    assert q.native_score(case, 503, {"detail": "x"})["cited_expected"] is None
+    two = {"rows": [{"version": 2}, {"version": 1}]}
+    assert q.native_score(case, 200, two)["cited_expected"] is None

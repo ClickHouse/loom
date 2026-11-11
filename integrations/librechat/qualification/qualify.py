@@ -682,14 +682,11 @@ def check_help_citations(
         if name in cited:
             continue
         cited.append(name)
-        # help.get answers 422 to a path past its 300 characters, which would stop the run:
-        # such a path names no page.
-        path = m["path"].removeprefix("docs/")
+        # The path as cited: help.get strips one `docs/` itself, as the bridge's check does,
+        # and answers 422 past 300 characters, which would stop the run.
         if len(m["path"]) > 300:
             invalid.append(f"{name}: no such page")
             continue
-        # help.get strips `docs/` itself, once, as the bridge's check does: send the path as
-        # cited, so `docs/docs/…` is no page here either.
         page = scorer_read(st, scorer, "help.get", {"path": m["path"]})
         if not page.get("found"):
             invalid.append(f"{name}: no such page")
@@ -701,7 +698,7 @@ def check_help_citations(
         ):
             invalid.append(f"{name}: no such section")
             continue
-        expected = expected or path in pages
+        expected = expected or m["path"].removeprefix("docs/") in pages
     return cited, invalid, expected
 
 
@@ -875,8 +872,9 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
         text = f"{code} {out.get('detail', out)}"
         # The direct path of a question the docs leave open is not scored, whatever answered.
         correct = None if case["kind"] == "help_abstain" else case["kind"] == "refusal"
-        # A failed read cites nothing: a labeled source counts as not cited.
-        expected = False if case.get("cite") or case.get("cite_help") else None
+        # A failed read cites nothing: a source it could have cited counts as not cited.
+        can_cite = (case.get("cite") and spec["op"] == "memory.search") or case.get("cite_help")
+        expected = False if can_cite else None
     elif spec["op"] == "memory.search":
         hits = out.get("results") or []
         abstained = bool(out.get("abstain")) or not hits
