@@ -68,8 +68,11 @@ it.
 
 ## The tables
 
-The schema is `schemas/pg_migrations/` ([migrations](#migrations)). Every primary key
-and every tenant index leads with `org`.
+The schema is `schemas/pg_migrations/` ([migrations](#migrations)). Every tenant primary
+key leads with `org`, and so does every tenant index but the maintenance indexes of the
+sweeps and claim scans ([storage layout](storage-layout.md#postgres)).
+[Storage layout](storage-layout.md) places every table, of either store, and the wave
+that moves it.
 
 | Table                       | Key                                                        | Holds                                                                                                                                                                                                                                                                                                                                                                                   |
 | --------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

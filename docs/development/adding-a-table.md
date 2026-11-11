@@ -88,6 +88,13 @@ Prefer a new version row on a `ReplacingMergeTree`, a tombstone column, or a lig
 - [ ] Erasure classification: `_CENSUS` + saga step, `STEP_ONLY_TABLES`, or
       `NO_MEMORY_CONTENT` with a reason.
 - [ ] Any new mutation listed in the inventory test.
+- [ ] A row in [storage layout](../architecture/storage-layout.md), in its family's table
+      for a ClickHouse table (the `_` tables' section for a name that starts with `_`),
+      with every column filled. `tests/unit/test_storage_layout_rows.py` checks that the
+      row exists (and, for a ClickHouse table, is gone once the table is dropped; a dropped
+      Postgres table's row is removed by hand), and for a ClickHouse row that its
+      Today cell matches the schema, its Erasure cell the census, and its citations name
+      the table; with the schema dump pending, it fails until the dump lands.
 - [ ] `make test-unit` (the additive, numbering, mirror, classification and inventory tests).
 
 ## Related
