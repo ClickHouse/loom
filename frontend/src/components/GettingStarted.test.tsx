@@ -301,6 +301,20 @@ describe("GettingStarted on Memories", () => {
     await waitFor(() => expect(getModelStatus).toHaveBeenCalledTimes(1), WAIT);
   });
 
+  it("says all set on the bar, with no Continue, once both steps tick on a later visit", async () => {
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
+    rows.entries = [memory("claude-code")];
+    seed([personal]);
+    render(<Recent />);
+    const bar = await screen.findByTestId("getting-started-bar", {}, WAIT);
+    await waitFor(() => expect(bar).toHaveTextContent("Getting started · all set"), WAIT);
+    expect(within(bar).queryByRole("button", { name: "Continue" })).toBeNull();
+    expect(within(bar).getByRole("button", { name: "Hide getting started" })).toBeInTheDocument();
+  });
+
   it("names the bar's Hide for what it hides, and Hide hands focus to the search", async () => {
     localStorage.setItem(
       onboardingKey(SUBJECT, `dev/${NS}`),

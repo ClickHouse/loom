@@ -103,11 +103,11 @@ export interface GettingStartedProps {
   hasMemory: boolean;
   authOff: boolean;
   /** One line under the list's toolbar instead of the full checklist. */
-  collapsed?: boolean;
-  onExpand?: () => void;
+  collapsed: boolean;
+  onExpand: () => void;
   onMemoryAdded: () => void;
   /** Hidden: the checklist leaves the page, so focus goes where the caller names. */
-  onHidden?: () => void;
+  onHidden: () => void;
 }
 
 const STEP_META: Record<OnboardingStep, { title: string; why: string; icon: IconName }> = {
@@ -136,7 +136,7 @@ export function GettingStarted({
   agentSeen,
   hasMemory,
   authOff,
-  collapsed = false,
+  collapsed,
   onExpand,
   onMemoryAdded,
   onHidden,
@@ -144,7 +144,7 @@ export function GettingStarted({
   const { state, mark } = onboarding;
   const hide = () => {
     onboarding.dismiss();
-    onHidden?.();
+    onHidden();
   };
   const createRef = useRef<HTMLButtonElement | null>(null);
   const focusCreate = useRef(false);
@@ -220,22 +220,23 @@ export function GettingStarted({
       >
         <span className="text-sm">
           <span className="text-text font-medium">Getting started</span>
-          <span className="text-text-muted">
-            {" "}
-            · {n} of {total} set up
-          </span>
+          <span className="text-text-muted"> · {allDone ? "all set" : `${n} of ${total} set up`}</span>
         </span>
         <span className="flex items-center gap-2">
-          <Button
-            type="secondary"
-            htmlType="button"
-            onClick={() => {
-              focusHeading.current = true;
-              onExpand?.();
-            }}
-          >
-            Continue
-          </Button>
+          {/* Done in full (finished in another visit than the one it started in): nothing to
+              continue, only to hide. */}
+          {!allDone && (
+            <Button
+              type="secondary"
+              htmlType="button"
+              onClick={() => {
+                focusHeading.current = true;
+                onExpand();
+              }}
+            >
+              Continue
+            </Button>
+          )}
           <Button type="empty" htmlType="button" aria-label="Hide getting started" onClick={hide}>
             Hide
           </Button>
