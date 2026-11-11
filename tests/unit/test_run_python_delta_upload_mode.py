@@ -189,6 +189,7 @@ def test_the_manual_python_pass_goes_where_the_entry_and_its_tree_say(
     Python build file (its Go and TypeScript tiers work in their own trees)."""
     from unittest.mock import AsyncMock
 
+    from server.code.app.index import repo_registry
     from server.code.domain.index import repos
     from server.code.store import index as store_index
     from server.core import ch
@@ -205,9 +206,65 @@ def test_the_manual_python_pass_goes_where_the_entry_and_its_tree_say(
         org="org", namespace="code-x", scip_producer=producer, scip_extra_producers=extras
     )
     monkeypatch.setattr(repos, "configured_repos", lambda: [cfg])
+    monkeypatch.setattr(repo_registry, "read_registry", AsyncMock(return_value=True))
     monkeypatch.setenv("ORG_ARG", "org")
     monkeypatch.setenv("NS_ARG", "code-x")
 
     exec(_ident_snippet(), {})
 
     assert capsys.readouterr().out.split()[-1] == owner
+
+
+def test_the_identity_read_loads_the_repository_registry_before_listing_entries(
+    monkeypatch, capsys
+) -> None:
+    """The script runs in a fresh process, which has not read the self-service registry:
+    `configured_repos` refuses until it is read, so the snippet reads it first."""
+    from unittest.mock import AsyncMock
+
+    from server.code.app.index import repo_registry
+    from server.code.domain.index import repos
+    from server.code.store import index as store_index
+    from server.core import ch
+    from tests.unit.code_fixtures import repo_config
+
+    repo = AsyncMock()
+    repo.get_state.return_value = ""
+    monkeypatch.setattr(store_index, "CodeRepo", lambda: repo)
+    monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
+    read = {"done": False}
+
+    async def fake_read_registry(ch=None):
+        read["done"] = True
+        return True
+
+    def listed():
+        if not read["done"]:
+            raise repos.RegistryUnread("the self-service repository registry is not read yet")
+        return [repo_config(org="org", namespace="code-x", scip_producer="go")]
+
+    monkeypatch.setattr(repo_registry, "read_registry", fake_read_registry)
+    monkeypatch.setattr(repos, "configured_repos", listed)
+    monkeypatch.setenv("ORG_ARG", "org")
+    monkeypatch.setenv("NS_ARG", "code-x")
+
+    exec(_ident_snippet(), {})
+
+    assert capsys.readouterr().out.split()[-1] == "go"
+
+
+def test_an_unreadable_registry_stops_the_identity_read(monkeypatch) -> None:
+    """With the registry unreadable the snippet exits non-zero and names why, rather than
+    guessing which entries are configured."""
+    from unittest.mock import AsyncMock
+
+    from server.code.app.index import repo_registry
+    from server.code.store import index as store_index
+    from server.core import ch
+
+    monkeypatch.setattr(store_index, "CodeRepo", lambda: AsyncMock())
+    monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
+    monkeypatch.setattr(repo_registry, "read_registry", AsyncMock(return_value=False))
+
+    with pytest.raises(SystemExit, match="registry is unreadable"):
+        exec(_ident_snippet(), {})
