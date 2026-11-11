@@ -334,6 +334,17 @@ class AuthSettings(BaseModel):
     # Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not
     # held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
     tenancy_mode_cache_s: float = Field(default=5.0, ge=1.0)
+    # The router's directory, its own Postgres database (`loom router serve` and
+    # `loom router migrate`); "" = none. Never a cell's memory authority database.
+    router_pg_dsn: str = ""
+    # Placement calls one cell may make in a minute, counted by each router replica.
+    router_placements_per_minute: int = Field(default=60, ge=1)
+    # Seconds (at least 1) a router replica keeps the cells' credential hashes before
+    # reading them from the directory again; a cell's new credential works within this.
+    router_directory_cache_s: float = Field(default=5.0, ge=1.0)
+    # Org lookups one client address may make in a minute, counted by each router
+    # replica (`GET /cells/lookup`).
+    router_lookups_per_minute: int = Field(default=60, ge=1)
 
     def jwt_secret_is_dev_default(self) -> bool:
         """Whether the root secret is the checked-in dev default — the value

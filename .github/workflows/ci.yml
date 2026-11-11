@@ -799,6 +799,8 @@ jobs:
       # Stock Postgres with one synchronous standby (dev/ci_start_postgres.sh).
       LOOM_STORAGE_AUTHORITY: postgres
       LOOM_PG_DSN: postgres://loom:loomdev@localhost:5432/loom
+      # The cells router's directory: a database of its own on the same server.
+      LOOM_ROUTER_PG_DSN: postgres://loom:loomdev@localhost:5432/loom_router
       # An org's own Postgres with pg_clickhouse, reading the SQL surface
       # (dev/ci_start_pg_clickhouse.sh); the image tag pins the extension release.
       LOOM_PGCH_DSN: postgres://app:appdev@127.0.0.1:5433/app
@@ -824,6 +826,8 @@ jobs:
         env:
           LOOM_PG_IMAGE: postgres:${{ matrix.postgres }}
         run: bash dev/ci_start_postgres.sh
+      - name: Create the router directory's database
+        run: docker exec loom-pg psql -U loom -d loom -qc "CREATE DATABASE loom_router"
       - name: Start Postgres with pg_clickhouse
         env:
           LOOM_PGCH_POSTGRES: ${{ matrix.postgres }}
@@ -888,6 +892,7 @@ jobs:
           tests/integration/test_sql_surface_live_ch.py
           tests/integration/test_pg_clickhouse_live_ch.py
           tests/integration/test_cell_tenancy_pg.py
+          tests/integration/test_router_directory_pg.py
       # The tenant-isolation gates again, against a second server that enforces auth:
       # the Postgres read paths (heads by key and by id, narrowed scopes) see real tokens.
       # They run whether or not the memory suites passed (`!cancelled()`).

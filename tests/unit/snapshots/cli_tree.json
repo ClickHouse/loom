@@ -11425,6 +11425,220 @@
       }
      ]
     },
+    "router": {
+     "prog": "loom router",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "router_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "router_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "serve": {
+         "prog": "loom router serve",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.router:_cmd_serve"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "host",
+            "port",
+            "log_level"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--host"
+           ],
+           "dest": "host",
+           "action": "_StoreAction",
+           "default": "127.0.0.1",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Address to listen on",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--port"
+           ],
+           "dest": "port",
+           "action": "_StoreAction",
+           "default": 7780,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "Port to listen on",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--log-level"
+           ],
+           "dest": "log_level",
+           "action": "_StoreAction",
+           "default": "info",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "uvicorn's log level",
+           "metavar": null
+          }
+         ]
+        },
+        "migrate": {
+         "prog": "loom router migrate",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.router:_cmd_migrate"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "serve": "loom router serve",
+        "migrate": "loom router migrate"
+       },
+       "choices_help": [
+        {
+         "dest": "serve",
+         "help": "Serve the placement API and org lookups from the directory.",
+         "metavar": "serve"
+        },
+        {
+         "dest": "migrate",
+         "help": "Apply the directory's pending migrations.",
+         "metavar": "migrate"
+        }
+       ]
+      }
+     ]
+    },
     "tracker-probe": {
      "prog": "loom tracker-probe",
      "usage": null,
@@ -13913,6 +14127,7 @@
     "namespaces-gc": "loom namespaces-gc",
     "erasure-re-verify": "loom erasure-re-verify",
     "reconcile": "loom reconcile",
+    "router": "loom router",
     "tracker-probe": "loom tracker-probe",
     "tracker-contract-check": "loom tracker-contract-check",
     "tracker-dupcheck-fit": "loom tracker-dupcheck-fit",
@@ -14151,6 +14366,11 @@
      "dest": "reconcile",
      "help": "After a restore of ClickHouse or Postgres, run again in the restored store the erasures and redactions the other records past the restore point, and (after a ClickHouse restore) publish again every revision committed after it. Stop every server and worker first. Dry run by default.",
      "metavar": "reconcile"
+    },
+    {
+     "dest": "router",
+     "help": "The router in front of a deployment's cells.",
+     "metavar": "router"
     },
     {
      "dest": "tracker-probe",

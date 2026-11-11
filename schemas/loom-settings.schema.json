@@ -5858,6 +5858,24 @@
           "type": "number",
           "description": "Fraction of searches sent to an independent LLM judge, written back as a `retrieval_relevance` score (unlike loom's own confidence scores, it shares no state with retrieval). 0.0 = off: it costs money per search; a few percent (e.g. 0.05) suits production."
         },
+        "router_directory_cache_s": {
+          "default": 5.0,
+          "minimum": 1.0,
+          "type": "number",
+          "description": "Seconds (at least 1) a router replica keeps the cells' credential hashes before reading them from the directory again; a cell's new credential works within this."
+        },
+        "router_lookups_per_minute": {
+          "default": 60,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Org lookups one client address may make in a minute, counted by each router replica (`GET /cells/lookup`)."
+        },
+        "router_placements_per_minute": {
+          "default": 60,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Placement calls one cell may make in a minute, counted by each router replica."
+        },
         "runtime_dir": {
           "default": "",
           "type": "string",

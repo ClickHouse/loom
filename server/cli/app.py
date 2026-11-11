@@ -39,6 +39,7 @@ from server.cli.reports import (
     _cmd_export_actions,
 )
 from server.cli.restore import _add_reconcile_parser
+from server.cli.router import _add_router_parser
 from server.cli.serve import _add_serve_and_migrate_parsers
 from server.cli.shell import _add_shell_client_parsers
 from server.cli.tracker import (
@@ -355,6 +356,7 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
     _add_doctor_report_parsers,
     _add_namespace_hygiene_parsers,
     _add_reconcile_parser,
+    _add_router_parser,
     *_TRACKER_REGISTRARS,
     _add_namespaces_adopt_parser,
     _add_sensitivity_sweep_parser,

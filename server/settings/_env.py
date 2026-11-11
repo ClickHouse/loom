@@ -144,8 +144,8 @@ _SECRET_FIELD = re.compile(
             r"^document_extractors_json$",
             r"^document_extractor_tokens_json$",
             r"(?:^|_)otlp_headers$",
-            # A Postgres DSN carries the password.
-            r"^pg_dsn$",
+            # A Postgres DSN carries the password: the memory authority's and the router's.
+            r"(?:^|_)pg_dsn$",
         )
     )
 )
