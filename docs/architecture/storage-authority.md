@@ -165,10 +165,9 @@ and a tenant's rows are still found by their primary keys.
 
 ### A database per tenant
 
-Tenants share one schema in one database per Postgres placement unit, every key and
-tenant index led by `org`; a tenant that needs isolation gets its own placement unit
-(a cluster), not its own database. A database per tenant was weighed by what each
-of its costs grows with:
+Tenants share one schema in one database per Postgres unit, every key and tenant index
+led by `org`; a tenant that needs isolation gets a [cell](cells.md) of its own, not its
+own database. A database per tenant was weighed by what each of its costs grows with:
 
 | Cost                  | One database per tenant                                                                                                                                                                                                      | Shared schema                                      |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
@@ -177,14 +176,14 @@ of its costs grows with:
 | Vacuum and wraparound | 3 autovacuum workers by default for the whole cluster, a launch per database per naptime, a `datfrozenxid` horizon per database ([Postgres](https://www.postgresql.org/docs/16/routine-vacuuming.html))                      | one set of tables                                  |
 | Migrations            | applied once per database; a boot's advisory lock covers one database, a partial run leaves tenants on different schemas                                                                                                     | one transaction per file                           |
 | Isolation             | none: the WAL, buffers, IO, checkpoints and vacuum workers are the cluster's ([Postgres](https://www.postgresql.org/docs/16/manage-ag-overview.html))                                                                        | the same; a separate unit isolates                 |
-| Moving a tenant       | one `pg_dump` of its database                                                                                                                                                                                                | the tenant's rows by `org`, then the route's epoch |
+| Moving a tenant       | one `pg_dump` of its database                                                                                                                                                                                                | out of scope ([cells](cells.md#operations))        |
 | Erasure               | `DROP DATABASE`, fast, but not in a transaction and refused while a slot uses the database ([Postgres](https://www.postgresql.org/docs/16/sql-dropdatabase.html)); backups and archived WAL keep the data either way         | delete by `org` under the scope's generation locks |
 
 Its one advantage, moving a tenant with one dump, does not pay for the rest, and it
 isolates nothing a shared database does not. A schema per tenant has the same
 migration and catalog costs, and a transaction pooler refuses the `search_path` it
 needs per connection. A dedicated database on a shared cluster for a regulated tenant
-shares that cluster's WAL, IO and backups; a dedicated placement unit does not.
+shares that cluster's WAL, IO and backups; a cell of its own does not.
 
 ### Postgres branching
 
@@ -1323,11 +1322,11 @@ finds another migrating waits on the advisory lock for as long as that takes.
 
 ## Deployment profiles
 
-The Postgres connection is one DSN (`LOOM_PG_DSN`) and the pool sizes
-(`LOOM_PG_POOL_MIN_SIZE`, `LOOM_PG_POOL_MAX_SIZE`). Postgres 16 or newer, core
-features only; no extension is required. Every connection sets
-`synchronous_commit = on`. At boot Loom reads `synchronous_standby_names` and
-`pg_stat_replication`:
+The Postgres connection is one DSN (`LOOM_PG_DSN`; a deployment of several
+[cells](cells.md) has one per cell) and the pool sizes (`LOOM_PG_POOL_MIN_SIZE`,
+`LOOM_PG_POOL_MAX_SIZE`). Postgres 16 or newer, core features only; no extension is
+required. Every connection sets `synchronous_commit = on`. At boot Loom reads
+`synchronous_standby_names` and `pg_stat_replication`:
 
 | `LOOM_PG_DURABILITY`    | No synchronous standby configured | A standby configured, none attached |
 | ----------------------- | --------------------------------- | ----------------------------------- |
@@ -1343,6 +1342,12 @@ The server's own `synchronous_commit` default does not matter: Loom's sessions s
 | What Loom checks              | the same boot check                           | the same boot check                                                                                                                |
 
 Both are the operator's configuration, not code ([Postgres operations](../operations/postgres.md)).
+
+## Cells
+
+A deployment can spread its orgs over several cells, each a complete deployment with its
+own Postgres unit, ClickHouse service and bucket; every guarantee on this page holds
+within one cell. How an org is placed and routed is in [cells](cells.md).
 
 ## Release gates
 

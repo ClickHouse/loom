@@ -135,6 +135,7 @@ client sees one the server no longer reads.
 [ClickHouse](architecture/clickhouse.md) ·
 [Memory architecture](architecture/memory-architecture.md) ·
 [Storage authority](architecture/storage-authority.md) ·
+[Cells](architecture/cells.md) ·
 [Code-index architecture](architecture/code-index-architecture.md) ·
 [Document extraction](architecture/document-extraction.md) ·
 [LLM and embeddings](architecture/llm-architecture.md) ·
