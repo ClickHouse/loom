@@ -476,6 +476,31 @@ def test_knowledge_download_refuses_a_revoked_acted_for_subject(_bob_revoked: An
     assert "acts for is revoked" in r.json()["detail"]["message"]
 
 
+def test_an_op_refuses_acting_for_a_tokens_own_subject(
+    monkeypatch: pytest.MonkeyPatch, _bob_revoked: Any
+) -> None:
+    """POST /v1/{op} acting for an `sa:` subject no bot holds (a token's own, live or
+    dead): 403 AUTH_INSUFFICIENT before anything reads under it."""
+    from server.auth import machines
+
+    async def no_bot(name: str, **_: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(machines, "active", no_bot)
+    r = _bob_revoked.post(
+        "/v1/memory.search",
+        json={"org": "clickhouse", "namespace": "ns", "query": "q"},
+        headers={**_AS_BOB, "X-Loom-On-Behalf-Of": "sa:triage-a1b2c3"},
+    )
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"] == {
+        "code": "AUTH_INSUFFICIENT",
+        "message": "an sa: subject is acted for only while it names an active bot or its agent",
+        "category": "auth",
+        "retryable": False,
+    }
+
+
 def test_an_op_refuses_a_revoked_acted_for_subject_with_no_index_reason(
     monkeypatch: pytest.MonkeyPatch, _bob_revoked: Any
 ) -> None:
@@ -492,7 +517,7 @@ def test_an_op_refuses_a_revoked_acted_for_subject_with_no_index_reason(
     assert r.status_code == 403, r.text
     assert r.json()["detail"] == {
         "code": "AUTH_INSUFFICIENT",
-        "message": "the subject this request acts for is revoked, deprovisioned or disabled",
+        "message": "the subject this request acts for is revoked or deprovisioned",
         "category": "auth",
         "retryable": False,
     }
@@ -567,7 +592,7 @@ def test_a_trusted_caller_acts_only_for_an_active_bot_or_its_agents(
     monkeypatch.setattr(machines, "active", is_active)
     acting = authz.check_acted_for(_acting(subject, "acme"), "acme")
     if refused:
-        with pytest.raises(authz.ActedForRevoked):
+        with pytest.raises(authz.ActedForRevoked, match="names an active bot"):
             asyncio.run(acting)
     else:
         asyncio.run(acting)

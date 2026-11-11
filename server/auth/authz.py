@@ -72,13 +72,14 @@ def may_act_in_org(auth: AuthInfo, org: str) -> bool:
     return auth.org in ("*", org) or auth.has_role(Role.PLATFORM_ADMIN)
 
 
-_ACTED_FOR_REVOKED = "the subject this request acts for is revoked, deprovisioned or disabled"
+_ACTED_FOR_REVOKED = "the subject this request acts for is revoked or deprovisioned"
 _ACTED_FOR_NO_BOT = "an sa: subject is acted for only while it names an active bot or its agent"
 
 
 class ActedForRevoked(PermissionError):
-    """The subject a trusted caller acts for is revoked: a refusal of the subject, not
-    of the caller's access to an index, so a transport adds no index reason to it."""
+    """The subject a trusted caller acts for is refused (revoked, deprovisioned, or an
+    `sa:` subject naming no active bot): a refusal of the subject, not of the caller's
+    access to an index, so a transport adds no index reason to it."""
 
 
 async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
@@ -169,7 +170,7 @@ async def _bot_ended(name: str) -> bool:
     except LoomServerError:
         raise
     except Exception as e:  # an unread bot row refuses, as the grant read does
-        raise BackendUnavailableError("cannot read whether the bot is disabled") from e
+        raise BackendUnavailableError("cannot read whether the bot is active") from e
 
 
 @marks_unverified
