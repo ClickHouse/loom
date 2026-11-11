@@ -331,8 +331,8 @@ Claims, roles and grants are in [Tokens and grants](../guides/tokens-and-grants.
 ## 4. First memory over HTTP
 
 Every operation is a `POST /v1/<op>` with a JSON body that names the identity
-`(org, namespace, agent)`. A fresh install from the one-line installer is single-user:
-org `dev`, namespace `local`, and no token, so the calls below work as written. If a call
+`(org, namespace, agent)`. A fresh install with the stock `.env`, from either path in step 1,
+is single-user: org `dev`, namespace `local`, and no token, so the calls below work as written. If a call
 without a token answers 401 `AUTH_INVALID`, auth is on: use a token and your account's
 org and namespace, as the next paragraph says.
 
@@ -354,8 +354,8 @@ With auth on, add `-H "Authorization: Bearer $LOOM_API_KEY"` and use your accoun
 and namespace; a header with an empty token is refused. The `memory.set` response
 carries `memory_id`, `content_sha256` and `status`. `memory.get` reads one key back:
 `found` says whether the key holds a live value, and `value` is the value as written.
-The search response carries
-`results` and `abstain`, which says whether the best hit is strong enough to answer from.
+The search response carries `results` and `abstain`, which says whether the best hit is
+strong enough to answer from.
 Search reads every agent's memories in the namespace, including those added in the
 dashboard; name an `agent` to read only that agent's.
 `GET /v1/operations` lists every operation, and <http://localhost:7777/docs> lets you try
@@ -385,7 +385,7 @@ async def main():
     ) as a:  # reads LOOM_API_KEY; none needed in single-user mode
         await a.memory.set("deploy_window", "Tue and Thu only; never Friday.")
         row = await a.memory.get("deploy_window")  # None when the key is unset
-        print(row["value"])
+        print(row["value"] if row else "unset")
         for hit in await a.memory.search("when can we deploy?"):
             print(hit.content_excerpt)
 
