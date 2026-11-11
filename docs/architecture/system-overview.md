@@ -344,11 +344,10 @@ flowchart LR
   lease, erasure checkpoints, the blacklist version, the idempotency cache, the recorded
   authority) and uploaded document originals live in ClickHouse, the bytes of those
   written with `LOOM_DOCUMENT_OBJECT_STORE=s3` in an S3-compatible bucket instead. Under
-  the Postgres authority the idempotency cache lives in Postgres, which also keeps its
-  own erasure ledger and a copy of the recorded authority
-  ([the tables](storage-authority.md#the-tables),
-  [recorded authority](storage-authority.md#recorded-authority)). A new Loom with the
-  same ClickHouse (and Postgres, under that authority), env config and
+  the Postgres authority, Postgres holds the tables
+  [storage authority](storage-authority.md#the-tables) lists, among them the idempotency
+  cache, its own erasure ledger and a copy of the recorded authority. A new Loom with
+  the same ClickHouse (and Postgres, under that authority), env config and
   `LOOM_JWT_SECRET`, and that bucket while rows name objects in it, gets every feature
   back.
 - **State outside ClickHouse and Postgres.** The code plane's git mirrors under
