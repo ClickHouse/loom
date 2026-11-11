@@ -242,7 +242,7 @@ def test_the_identity_read_loads_the_repository_registry_before_listing_entries(
             "repo": "acme/x",
             "git_branch": "main",
             "active": 1,
-            "row_kind": "entry",
+            "row_kind": "page",
             "scip_producer": "go",
         }
     ]
@@ -291,10 +291,8 @@ def test_an_unreadable_registry_stops_the_identity_read(monkeypatch) -> None:
     from unittest.mock import AsyncMock
 
     from server.code.app.index import repo_registry
-    from server.code.store import index as store_index
     from server.core import ch
 
-    monkeypatch.setattr(store_index, "CodeRepo", lambda: AsyncMock())
     monkeypatch.setattr(ch, "get_client", lambda: AsyncMock())
     monkeypatch.setattr(repo_registry, "read_registry", AsyncMock(return_value=False))
 
