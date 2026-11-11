@@ -1340,3 +1340,10 @@ def test_no_help_forbid_matches_the_pages_the_case_cites(case):
         text = (ROOT / "docs" / page).read_text(encoding="utf-8")
         for pattern in case["forbid"]:
             assert not re.search(pattern, text, re.IGNORECASE | re.MULTILINE), (page, pattern)
+
+
+@pytest.mark.parametrize("case", _help_cases(), ids=lambda c: c["id"])
+def test_no_help_label_is_met_by_repeating_the_question(case):
+    # An answer that only echoes the question (a setting or problem name in it) states nothing.
+    for pattern in case["expect"]:
+        assert not re.search(pattern, case["question"], re.IGNORECASE), pattern
