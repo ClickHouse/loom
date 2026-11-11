@@ -573,8 +573,9 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
         ),
         conversation_logging_enabled=(
             # Absent column reads as off, matching the gate in
-            # conversation_repo.namespace_logging_enabled — the settings view
-            # must not show "Recording on" for a namespace that isn't recording.
+            # conversation_repo.namespace_logging_enabled — the Conversations
+            # page must not show the Record conversations switch on for a
+            # namespace that isn't recording.
             False
             if row.get("conversation_logging_enabled") is None
             else bool(row["conversation_logging_enabled"])

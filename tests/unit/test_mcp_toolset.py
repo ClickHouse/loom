@@ -78,7 +78,7 @@ def test_core_surface_is_small_and_focused():
         assert demoted not in names, demoted
     # Conversation capture is in-band: MCP is pull-based, so the transcript
     # only lands if the model can see + call these. Without them, the
-    # Sessions view stays empty for MCP clients.
+    # Conversations page stays empty for MCP clients.
     assert "loom_conversation_create" in names
     assert "loom_conversation_append" in names
     # Comfortably under the ~30-50 tool-selection degradation knee.

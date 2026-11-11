@@ -8,7 +8,8 @@ a raw thread_id into something readable.
 
 On by default (`conversation_titler_enabled`), gated per-namespace by
 `conversation_logging_enabled` — any namespace that records conversations gets
-readable titles, and the Sessions "Recording" toggle doubles as the off-switch.
+readable titles, and the Conversations page's Record conversations switch
+doubles as the off-switch.
 Makes one LLM call per untitled thread; no-ops when the LLM is the fake dev
 provider, so on-by-default is safe out of the box.
 """

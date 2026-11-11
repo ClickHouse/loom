@@ -2,11 +2,15 @@
 
 This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom
 server. Install the plugin (or wire the MCP entry), point it at the server, and work as
-usual. Loom captures each session, and the next session starts with what the last one
-saved. To run a server yourself, start with the [quickstart](quickstart.md); to have your agent
-install a pinned release and prove it works, give it the latest release's
-`https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt`
-([Set up Loom with your coding agent](agent-setup.md)).
+usual. The next session starts with what the agent saved. What the Claude Code and Codex
+plugins send to Loom is in [data
+handling](../features/integrations/claude-code.md#data-handling). Conversation recording
+is off by default; the namespace owner turns it on with the **Record conversations**
+switch on the Conversations page, or with `conversation.set_logging`. To run a server
+yourself, start with the [quickstart](quickstart.md); to have your agent install a pinned
+release and prove it works, give it the latest release's
+`https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt` ([Set up
+Loom with your coding agent](agent-setup.md)).
 
 ## What you need
 
@@ -33,7 +37,8 @@ claude plugin install loom@loom \
 Both `--config` values are optional; without them Claude Code asks once. Start a new
 session. Loom's session primer arrives at the top, and from then on:
 
-- the hooks capture the conversation and tool observations into Loom;
+- the hooks send Loom what [data handling](../features/integrations/claude-code.md#data-handling)
+  lists;
 - the `loom-memory`, `loom-code`, `loom-session` and other skills tell Claude when to save
   a fact, when to search, and how to use the code index;
 - `loom_search`, `loom_memory_set` and the code tools are available as MCP tools.
@@ -61,7 +66,13 @@ the plugin installed: an entry with the same name replaces the plugin's.
 
 ## Cursor and other MCP clients
 
-With the `loom` CLI installed (`pip install -e .` from a clone of the repository):
+In the dashboard, open **Settings → Tokens**, fill in the **New token** form (press **New
+token** first if a token exists) and press **Create token**, then choose your client
+(Cursor, VS Code, Cline, Windsurf, Zed or Claude Desktop) under **Connect**: the dialog
+shows the entry for its config file, with the token in it. For any other MCP client, copy
+the entry from [MCP clients](../features/integrations/mcp-clients.md). With the `loom` CLI
+installed (`pip install -e .` from a clone of the repository), one command writes the
+entry instead:
 
 ```bash
 loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"
@@ -81,8 +92,8 @@ command writes.
    reached the server.
 2. Tell the agent something durable, for example "our deploy window is Tuesday and
    Thursday only". In a new session, ask "when can we deploy?". The answer comes from Loom.
-3. Open the dashboard (`<server>/`). The session's conversation and the saved fact are there, and you can
-   correct or delete either.
+3. Open the dashboard (`<server>/`). The saved fact is there, and the session's
+   conversation too while conversation recording is on; you can correct or delete either.
 
 `loom doctor --client` adds the local wiring checks when you have the CLI.
 

@@ -463,7 +463,7 @@ class ConversationListSavedMessagesOutput(BaseModel):
 
 
 # conversation.threads — recent thread list (grouped over loom.conversations),
-# for the Sessions view's no-query "what threads exist" entry point.
+# for the Conversations page's no-query "what threads exist" entry point.
 class ConversationThreadsInput(BaseModel):
     org: str
     namespace: str

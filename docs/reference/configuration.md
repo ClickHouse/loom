@@ -851,7 +851,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | --- | --- | --- | --- | --- |
 | `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY` | `float` | `0.3` | live | conversation.search cosine floor; without it the top_k nearest threads return however far. Stricter than memory recall: chat excerpts are noisy. |
 | `LOOM_CONVERSATION_SEARCH_EXCERPT_CHARS` | `int` | `240` | live | Characters of a turn a conversation search hit or a saved-message listing shows; it changes no stored row. At most 2048, the most an embedding row stores (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message listing reads this many characters and a fixed margin past them, and checks them all for a high shape before it cuts the excerpt. |
-| `LOOM_CONVERSATION_TITLER_ENABLED` | `bool` | `True` |  | LLM-title untitled threads in namespaces with conversation_logging_enabled (the Sessions "Recording" toggle is the off-switch). Skipped with the fake LLM. |
+| `LOOM_CONVERSATION_TITLER_ENABLED` | `bool` | `True` |  | LLM-title untitled threads in namespaces with conversation_logging_enabled (the Conversations page's Record conversations switch is the off-switch). Skipped with the fake LLM. |
 | `LOOM_CONVERSATION_TITLER_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between titler passes. |
 | `LOOM_CONVERSATION_TITLER_WINDOW_HOURS` | `int` | `168` |  | Only threads with a turn in the last this-many hours are titled. |
 | `LOOM_CONVERSATION_TITLER_MAX_THREADS_PER_PASS` | `int` | `10` |  | Threads one pass titles at most. |
