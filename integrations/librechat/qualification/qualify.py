@@ -593,46 +593,59 @@ HELP_ABSTAIN_PATTERNS = (
 
 DOCS = HERE.parents[2] / "docs"
 SETTING_RE = re.compile(r"\bLOOM_[A-Z0-9_]*[A-Z0-9]")
-# A settings family a docs page writes with a placeholder (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`).
-SETTING_FAMILY_RE = re.compile(r"\b(LOOM_[A-Z0-9_]*_)<")
+# A settings family a docs page writes with placeholders (`LOOM_RETENTION_<TABLE>_DAYS`).
+SETTING_FAMILY_RE = re.compile(r"\bLOOM_[A-Z0-9_]*(?:<[A-Z]+>[A-Z0-9_]*)+")
 # The kinds whose right answer is an abstention: from the namespace, or from the docs.
 ABSTAIN_KINDS = ("abstain", "help_abstain")
 
 
 @functools.cache
-def documented_settings() -> frozenset[str]:
-    """Every `LOOM_*` name a docs page the server ships writes (the help index skips
-    `development/`): the documentation half of the server's unknown-name check
-    (`server.assistant.domain.names`)."""
-    return frozenset(
-        name
-        for page in DOCS.rglob("*.md")
+def shipped_docs() -> tuple[str, ...]:
+    """The text of every docs page the server ships (the help index skips `development/`)."""
+    return tuple(
+        page.read_text(encoding="utf-8")
+        for page in sorted(DOCS.rglob("*.md"))
         if not page.relative_to(DOCS).as_posix().startswith("development/")
-        for name in SETTING_RE.findall(page.read_text(encoding="utf-8"))
     )
 
 
 @functools.cache
-def documented_families() -> tuple[str, ...]:
-    """The prefixes of the settings families the docs write with a placeholder."""
+def documented_settings() -> frozenset[str]:
+    """Every `LOOM_*` name a shipped docs page writes: the documentation half of the
+    server's unknown-name check (`server.assistant.domain.names`)."""
+    return frozenset(name for text in shipped_docs() for name in SETTING_RE.findall(text))
+
+
+@functools.cache
+def documented_families() -> tuple[re.Pattern[str], ...]:
+    """Each settings family the docs write with placeholders, as the pattern its members
+    match: `LOOM_RETENTION_<TABLE>_DAYS` takes `LOOM_RETENTION_EVENTS_DAYS`, not
+    `LOOM_RETENTION_THEME`."""
+    # A placeholder right after `LOOM_` (`LOOM_<NAME>`) names the scheme, not a family.
+    families = {
+        f
+        for text in shipped_docs()
+        for f in SETTING_FAMILY_RE.findall(text)
+        if not f.startswith("LOOM_<")
+    }
     return tuple(
-        sorted(
-            {
-                prefix
-                for page in DOCS.rglob("*.md")
-                if not page.relative_to(DOCS).as_posix().startswith("development/")
-                for prefix in SETTING_FAMILY_RE.findall(page.read_text(encoding="utf-8"))
-            }
+        re.compile(
+            "".join(
+                "[A-Z0-9_]+" if part.startswith("<") else re.escape(part)
+                for part in re.split(r"(<[A-Z]+>)", family)
+                if part
+            )
         )
+        for family in sorted(families)
     )
 
 
 def undocumented_settings(text: str) -> list[str]:
     """The `LOOM_*` names an answer writes that no docs page does, as a name or as a member
-    of a family it writes with a placeholder: a setting the answer made up, even one it
+    of a family it writes with placeholders: a setting the answer made up, even one it
     names to deny."""
     names = set(SETTING_RE.findall(text)) - documented_settings()
-    return sorted(n for n in names if not n.startswith(documented_families()))
+    return sorted(n for n in names if not any(f.fullmatch(n) for f in documented_families()))
 
 
 def is_help_case(case: dict[str, Any]) -> bool:
@@ -658,6 +671,10 @@ def check_help_citations(
             continue
         cited.append(name)
         path = m["path"].removeprefix("docs/")
+        # A path help.get refuses outright (empty, or past its 300 characters) names no page.
+        if not path or len(path) > 300:
+            invalid.append(f"{name}: no such page")
+            continue
         page = scorer_read(st, scorer, "help.get", {"path": path})
         if not page.get("found"):
             invalid.append(f"{name}: no such page")

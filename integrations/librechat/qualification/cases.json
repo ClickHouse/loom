@@ -773,8 +773,12 @@
     },
     "samples": {
       "right": ["Run `loom revoke-token --jti <jti>`."],
-      "wrong": ["Tokens cannot be revoked; wait for them to expire."]
-    }
+      "wrong": [
+        "Tokens cannot be revoked; wait for them to expire.",
+        "There is no `loom revoke-token` command; tokens cannot be revoked, only left to expire."
+      ]
+    },
+    "forbid": ["\\b(no|there is no) `?(loom )?revoke-token", "`?(loom )?revoke-token`? (does ?n[o']t exist|is removed)"]
   },
   {
     "id": "help-models-keys",
@@ -795,8 +799,15 @@
       "right": [
         "On the server: set `LOOM_LLM_PROVIDER` and `LOOM_LLM_MODEL`, and the provider's key, or use the dashboard's Models & keys page."
       ],
-      "wrong": ["Each namespace picks its model in its profile."]
-    }
+      "wrong": [
+        "Each namespace picks its model in its profile.",
+        "There is no `LOOM_LLM_MODEL` or Models & keys page; each namespace picks its model."
+      ]
+    },
+    "forbid": [
+      "\\b(no|there is no) `?(LOOM_LLM_(MODEL|PROVIDER)|Models (&|and) keys)",
+      "`?(LOOM_LLM_(MODEL|PROVIDER)|Models (&|and) keys)`? (does ?n[o']t exist|is removed)"
+    ]
   },
   {
     "id": "help-health-assistant",
@@ -995,9 +1006,11 @@
       ],
       "wrong": [
         "A cache of recent searches; it expires after a day.",
-        "A block given every time; it expires after 24 hours."
+        "A block given every time; it expires after 24 hours.",
+        "A small block given every time; it has no TTL but does not survive restarts."
       ]
-    }
+    },
+    "forbid": ["\\b(does ?n[o']t|do not|not|never|won't) surviv"]
   },
   {
     "id": "help-langfuse",
@@ -1043,8 +1056,12 @@
         "It sets the model the assistant's agent runs, in place of `agent.yaml`'s; a change takes effect at the next restart.",
         "It sets the model the assistant's agent runs in LibreChat; empty keeps `agent.yaml`'s model."
       ],
-      "wrong": ["I could not find what LOOM_ASSISTANT_MODEL sets."]
-    }
+      "wrong": [
+        "I could not find what LOOM_ASSISTANT_MODEL sets.",
+        "There is no `LOOM_ASSISTANT_MODEL`; the agent definition and its model come from agent.yaml at boot."
+      ]
+    },
+    "forbid": ["\\b(no|there is no) `?LOOM_ASSISTANT_MODEL", "`?LOOM_ASSISTANT_MODEL`? (does ?n[o']t exist|is removed)"]
   },
   {
     "id": "help-quickstart",
@@ -1068,8 +1085,13 @@
         "No, you don't need an API key to run the quickstart.",
         "No, it doesn't require an API key."
       ],
-      "wrong": ["Yes, you need an API key; no account is needed."]
-    }
+      "wrong": [
+        "Yes, you need an API key; no account is needed.",
+        "Yes: the quickstart won't start without an OpenAI API key.",
+        "The quickstart won't run without an API key."
+      ]
+    },
+    "forbid": ["\\b(won'?t|can ?not|can't) (start|run)\\w* without an? (\\w+ )?API key"]
   },
   {
     "id": "help-upgrade",

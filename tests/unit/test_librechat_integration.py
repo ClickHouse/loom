@@ -1172,6 +1172,9 @@ def test_the_harness_reads_citations_in_the_servers_own_forms():
 def test_a_documented_settings_family_member_is_documented():
     q = _qualify()
     assert q.undocumented_settings("`LOOM_WEBHOOK_SECRET_ACME__HOOK`") == []
+    assert q.undocumented_settings("`LOOM_RETENTION_EVENTS_DAYS`") == []
+    # A family's prefix alone documents nothing: the placeholder's suffix must be there.
+    assert q.undocumented_settings("`LOOM_RETENTION_THEME`") == ["LOOM_RETENTION_THEME"]
     assert q.undocumented_settings("`LOOM_UI_THEME`") == ["LOOM_UI_THEME"]
 
 
@@ -1189,3 +1192,22 @@ def test_a_history_case_takes_an_earlier_version_through_the_bridge(monkeypatch)
     text = "Before: [memory:policy/api/rate-limit@v1]; now [memory:policy/api/rate-limit@v2]."
     assert q.check_citations(st, person, text, history_ok=True) == (["policy/api/rate-limit"], [])
     assert q.check_citations(st, person, text)[1] == ["policy/api/rate-limit@1"]
+
+
+@pytest.mark.parametrize(
+    "case", json.loads((QUAL / "cases.json").read_text()), ids=lambda c: c["id"]
+)
+def test_every_case_names_its_use_case_and_cites_pages_that_exist(case):
+    assert re.fullmatch(r"U\d+ \S.*", case.get("use_case", "")), case["id"]
+    for page in case.get("cite_help") or []:
+        assert (ROOT / "docs" / page).is_file(), page
+
+
+def test_a_help_citation_help_get_would_refuse_is_no_page(monkeypatch):
+    q = _qualify()
+    monkeypatch.setattr(q, "scorer_read", lambda *a: pytest.fail("help.get was called"))
+    st = {"tokens": {"scorer:acme-handbook": "t"}}
+    cited, invalid, _ = q.check_help_citations(
+        st, {"namespace": "acme-handbook"}, {}, "[help:docs/]"
+    )
+    assert invalid == ["help:docs/: no such page"]
