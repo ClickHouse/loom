@@ -87,7 +87,9 @@ shared with, whose credential is the integration's token; and `recording`, the
 transcripts of a meeting store's recordings ([recordings](#a-recording-source)). The
 `knowledge_source_sync` worker pulls each source's files into the repository's documents
 ([syncing](#syncing-a-source)); `list` says whether this deployment runs it (`enabled`,
-`LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default).
+`LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default). The design of sources on any
+namespace, connected accounts and access that follows the store's permissions is in
+[document sources](../architecture/document-sources.md).
 
 On the dashboard, an opened repository on the Repositories page shows its sources under
 Sources: each source's kind, last sync and counts, to anyone who reads the repository. A
