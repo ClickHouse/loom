@@ -13,7 +13,7 @@
         "top_k": 1
       }
     },
-    "use_case": "U1 look up a stored fact"
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "memory-db-version",
@@ -29,7 +29,7 @@
         "top_k": 1
       }
     },
-    "use_case": "U1 look up a stored fact"
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "memory-oncall",
@@ -45,7 +45,7 @@
         "top_k": 1
       }
     },
-    "use_case": "U1 look up a stored fact"
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "memory-webhook-retries",
@@ -61,7 +61,7 @@
         "top_k": 1
       }
     },
-    "use_case": "U1 look up a stored fact"
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "memory-backups",
@@ -77,7 +77,7 @@
         "top_k": 1
       }
     },
-    "use_case": "U1 look up a stored fact"
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "memory-revised-rate-limit",
@@ -94,7 +94,7 @@
       }
     },
     "forbid": ["\\b300\\b"],
-    "use_case": "U1 look up a stored fact"
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "inventory-count",
@@ -108,7 +108,7 @@
       "path": ["sections", 0, "count"],
       "equals": 10
     },
-    "use_case": "U3 what the namespace holds"
+    "use_case": "U3 What the namespace holds"
   },
   {
     "id": "inventory-top-agent",
@@ -125,7 +125,7 @@
         "rows": 7
       }
     },
-    "use_case": "U3 what the namespace holds"
+    "use_case": "U3 What the namespace holds"
   },
   {
     "id": "inspect-agent",
@@ -142,7 +142,7 @@
       "path": ["own", "live_rows"],
       "equals": 3
     },
-    "use_case": "U3 what the namespace holds"
+    "use_case": "U3 What the namespace holds"
   },
   {
     "id": "tune-drafts",
@@ -158,7 +158,7 @@
       "equals": 0
     },
     "forbid": ["\\b([1-9]\\d*|one|two|three|four|five)\\s+(tuning\\s+)?(proposals?|drafts?)\\b"],
-    "use_case": "U6 write memory better"
+    "use_case": "U6 Write memory better"
   },
   {
     "id": "cross-tenant",
@@ -175,7 +175,7 @@
         "top_k": 1
       }
     },
-    "use_case": "U28 refusals and abstentions"
+    "use_case": "U28 Refusals and abstentions"
   },
   {
     "id": "revoked-token",
@@ -190,7 +190,7 @@
         "top_k": 1
       }
     },
-    "use_case": "U28 refusals and abstentions"
+    "use_case": "U28 Refusals and abstentions"
   },
   {
     "id": "abstain-wifi",
@@ -204,7 +204,7 @@
         "top_k": 1
       }
     },
-    "use_case": "U28 refusals and abstentions"
+    "use_case": "U28 Refusals and abstentions"
   },
   {
     "id": "abstain-cfo",
@@ -218,7 +218,7 @@
         "top_k": 1
       }
     },
-    "use_case": "U28 refusals and abstentions"
+    "use_case": "U28 Refusals and abstentions"
   },
   {
     "id": "doc-release-reviews",
@@ -237,7 +237,7 @@
         "top_k": 5
       }
     },
-    "use_case": "U2 what a document says"
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-migration-rollback",
@@ -256,7 +256,7 @@
         "top_k": 5
       }
     },
-    "use_case": "U2 what a document says"
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-canary",
@@ -275,7 +275,7 @@
         "top_k": 5
       }
     },
-    "use_case": "U2 what a document says"
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-contract-notice",
@@ -294,7 +294,7 @@
         "top_k": 5
       }
     },
-    "use_case": "U2 what a document says"
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-orders-ttl",
@@ -313,7 +313,7 @@
         "top_k": 5
       }
     },
-    "use_case": "U2 what a document says"
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-cache-entries",
@@ -332,7 +332,7 @@
         "top_k": 5
       }
     },
-    "use_case": "U2 what a document says"
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-revised-ack",
@@ -352,7 +352,7 @@
       }
     },
     "forbid": ["\\b(15|fifteen)\\s*min"],
-    "use_case": "U2 what a document says"
+    "use_case": "U2 What a document says"
   },
   {
     "id": "abstain-doc-credit",
@@ -366,7 +366,7 @@
         "top_k": 5
       }
     },
-    "use_case": "U2 what a document says"
+    "use_case": "U2 What a document says"
   },
   {
     "id": "abstain-doc-phone",
@@ -380,7 +380,7 @@
         "top_k": 5
       }
     },
-    "use_case": "U2 what a document says"
+    "use_case": "U2 What a document says"
   },
   {
     "id": "analysis-per-agent",
@@ -396,7 +396,7 @@
       "path": ["rows"],
       "equals": [["handbook-bot", 7], ["ops-bot", 3]]
     },
-    "use_case": "U4 usage counts and trends"
+    "use_case": "U4 Usage counts and trends"
   },
   {
     "id": "analysis-per-scope",
@@ -412,7 +412,7 @@
       "path": ["rows"],
       "equals": [["infra", 4], ["policy", 3], ["team", 2], ["runbook", 1]]
     },
-    "use_case": "U4 usage counts and trends"
+    "use_case": "U4 Usage counts and trends"
   },
   {
     "id": "analysis-other-tenants",
@@ -431,7 +431,7 @@
       "path": ["rows"],
       "equals": [["acme", "acme-handbook", 10]]
     },
-    "use_case": "U4 usage counts and trends"
+    "use_case": "U4 Usage counts and trends"
   },
   {
     "id": "recommend-key-shape",
@@ -444,7 +444,7 @@
       "args": {},
       "findings": ["hash_keys", "double_encoded_values"]
     },
-    "use_case": "U6 write memory better"
+    "use_case": "U6 Write memory better"
   },
   {
     "id": "recommend-runbook-plane",
@@ -462,12 +462,12 @@
       "path": ["value"],
       "min_chars": 2048
     },
-    "use_case": "U6 write memory better"
+    "use_case": "U6 Write memory better"
   },
   {
     "id": "help-ask-vs-search",
     "kind": "help",
-    "use_case": "U1 look up a stored fact",
+    "use_case": "U1 Look up a stored fact",
     "person": "alice",
     "question": "What is the difference between memory.search and memory.ask?",
     "expect": ["memory\\.ask", "(answer|synthes)"],
@@ -483,7 +483,7 @@
   {
     "id": "help-upload-file",
     "kind": "help",
-    "use_case": "U2 what a document says",
+    "use_case": "U2 What a document says",
     "person": "alice",
     "question": "How do I add a PDF file to Loom as a document?",
     "expect": ["knowledge\\.(upload|ingest)"],
@@ -499,7 +499,7 @@
   {
     "id": "help-cost-cap",
     "kind": "help",
-    "use_case": "U5 cost and spend",
+    "use_case": "U5 Cost and spend",
     "person": "alice",
     "question": "What is the default daily spend cap of a namespace, and what does Loom skip once it is spent?",
     "expect": ["(\\$\\s?1(\\.0+)?\\b|\\b1(\\.0)? ?(USD|dollar)|\\b1\\.0\\b)", "(synthes|extract|skip)"],
@@ -515,7 +515,7 @@
   {
     "id": "help-key-shape",
     "kind": "help",
-    "use_case": "U6 write memory better",
+    "use_case": "U6 Write memory better",
     "person": "alice",
     "question": "What shape should a memory key have?",
     "expect": ["scope", "kind"],
@@ -531,7 +531,7 @@
   {
     "id": "help-history",
     "kind": "help",
-    "use_case": "U7 history of a fact",
+    "use_case": "U7 History of a fact",
     "person": "alice",
     "question": "How do I see every earlier version of a memory?",
     "expect": ["memory[._]history"],
@@ -547,7 +547,7 @@
   {
     "id": "help-graph",
     "kind": "help",
-    "use_case": "U8 entity graph",
+    "use_case": "U8 Entity graph",
     "person": "alice",
     "question": "How do entities get into Loom's entity graph?",
     "expect": ["entit", "(extract|memory\\.set)"],
@@ -563,7 +563,7 @@
   {
     "id": "help-add-repo",
     "kind": "help",
-    "use_case": "U9 code index",
+    "use_case": "U9 Code index",
     "person": "alice",
     "question": "How do I add a repository to Loom's code index?",
     "expect": ["add (a )?repositor"],
@@ -579,7 +579,7 @@
   {
     "id": "help-conflict",
     "kind": "help",
-    "use_case": "U10 conflicts and refusal",
+    "use_case": "U10 Conflicts and refusal",
     "person": "alice",
     "question": "What happens when I write a memory that conflicts with one already stored?",
     "expect": ["conflict", "(review|conflicts\\.resolve|resolve)"],
@@ -595,7 +595,7 @@
   {
     "id": "help-collection",
     "kind": "help",
-    "use_case": "U11 sharing and collections",
+    "use_case": "U11 Sharing and collections",
     "person": "alice",
     "question": "What is a collection in Loom, and how is one shared?",
     "expect": ["col-", "grant"],
@@ -615,7 +615,7 @@
   {
     "id": "help-my-role",
     "kind": "help",
-    "use_case": "U12 my role and who can change it",
+    "use_case": "U12 My role and who can change it",
     "person": "alice",
     "question": "Can I write memories in this namespace? If not, how would I get that?",
     "expect": ["viewer", "(admin|grant)"],
@@ -636,7 +636,7 @@
   {
     "id": "help-claude-code",
     "kind": "help",
-    "use_case": "U13 connect a coding agent",
+    "use_case": "U13 Connect a coding agent",
     "person": "alice",
     "question": "How do I connect Claude Code to Loom?",
     "expect": ["claude plugin (marketplace add|install)"],
@@ -652,7 +652,7 @@
   {
     "id": "help-revoke-token",
     "kind": "help",
-    "use_case": "U14 tokens",
+    "use_case": "U14 Tokens",
     "person": "alice",
     "question": "How do I revoke a Loom token?",
     "expect": ["revoke-token"],
@@ -668,7 +668,7 @@
   {
     "id": "help-models-keys",
     "kind": "help",
-    "use_case": "U15 models and keys",
+    "use_case": "U15 Models and keys",
     "person": "alice",
     "question": "Where do I configure the LLM that Loom uses, and its API key?",
     "expect": ["(LOOM_LLM_(MODEL|PROVIDER)|Models (&|and) keys)"],
@@ -684,7 +684,7 @@
   {
     "id": "help-health-assistant",
     "kind": "help",
-    "use_case": "U16 health problems",
+    "use_case": "U16 Health problems",
     "person": "alice",
     "question": "What does the health problem assistant_service_failing mean?",
     "expect": ["LibreChat"],
@@ -700,7 +700,7 @@
   {
     "id": "help-why-ranked",
     "kind": "help",
-    "use_case": "U17 why search returned this",
+    "use_case": "U17 Why search returned this",
     "person": "alice",
     "question": "How can I see why a search ranked a memory where it did?",
     "expect": ["(explain|score_components|search_trace|Recall)"],
@@ -716,7 +716,7 @@
   {
     "id": "help-runs",
     "kind": "help",
-    "use_case": "U18 runs",
+    "use_case": "U18 Runs",
     "person": "alice",
     "question": "What is a run in Loom, and how does an agent start one?",
     "expect": ["run\\.begin"],
@@ -732,7 +732,7 @@
   {
     "id": "help-tasks",
     "kind": "help",
-    "use_case": "U19 tasks between agents",
+    "use_case": "U19 Tasks between agents",
     "person": "alice",
     "question": "How does one agent hand work to another agent in Loom?",
     "expect": ["(task|inbox)"],
@@ -748,7 +748,7 @@
   {
     "id": "help-tracker",
     "kind": "help",
-    "use_case": "U20 tracker",
+    "use_case": "U20 Tracker",
     "person": "alice",
     "question": "Does Loom copy our issue tracker's data into its own database?",
     "expect": ["(never copies|reads it live|live|does not copy|doesn't copy)"],
@@ -764,7 +764,7 @@
   {
     "id": "help-erase-user",
     "kind": "help",
-    "use_case": "U21 retention and erasure",
+    "use_case": "U21 Retention and erasure",
     "person": "alice",
     "question": "Who may erase every memory of one user id across the org?",
     "expect": ["org admin"],
@@ -780,7 +780,7 @@
   {
     "id": "help-extraction",
     "kind": "help",
-    "use_case": "U22 extraction from transcripts",
+    "use_case": "U22 Extraction from transcripts",
     "person": "alice",
     "question": "How do I have Loom extract memories from a conversation transcript?",
     "expect": ["memory\\.set_from_messages"],
@@ -796,7 +796,7 @@
   {
     "id": "help-working-memory",
     "kind": "help",
-    "use_case": "U23 working memory",
+    "use_case": "U23 Working memory",
     "person": "alice",
     "question": "What is working memory in Loom, and does it expire?",
     "expect": ["(no TTL|surviv|do(es)? not expire|never expire|n.t expire)"],
@@ -812,7 +812,7 @@
   {
     "id": "help-langfuse",
     "kind": "help",
-    "use_case": "U24 integrations",
+    "use_case": "U24 Integrations",
     "person": "alice",
     "question": "Which settings send Loom's traces to Langfuse?",
     "expect": ["LOOM_LANGFUSE_URL", "LOOM_LANGFUSE_ADMIN_TOKEN"],
@@ -828,7 +828,7 @@
   {
     "id": "help-setting",
     "kind": "help",
-    "use_case": "U25 what a setting does",
+    "use_case": "U25 What a setting does",
     "person": "alice",
     "question": "What does LOOM_ASSISTANT_MODEL set?",
     "expect": ["(assistant|agent)", "model"],
@@ -844,7 +844,7 @@
   {
     "id": "help-quickstart",
     "kind": "help",
-    "use_case": "U26 getting started",
+    "use_case": "U26 Getting started",
     "person": "alice",
     "question": "Does Loom's quickstart need an API key?",
     "expect": ["\\bno\\b"],
@@ -860,7 +860,7 @@
   {
     "id": "help-upgrade",
     "kind": "help",
-    "use_case": "U27 operating a deployment",
+    "use_case": "U27 Operating a deployment",
     "person": "alice",
     "question": "How do I upgrade a Loom deployment to a new release?",
     "expect": ["migrate"],
@@ -876,7 +876,7 @@
   {
     "id": "help-undocumented",
     "kind": "help_abstain",
-    "use_case": "U28 refusals and abstentions",
+    "use_case": "U28 Refusals and abstentions",
     "person": "alice",
     "question": "Which Loom setting changes the colour theme of the dashboard?",
     "expect": [],
@@ -893,7 +893,7 @@
   {
     "id": "data-connected-agents",
     "kind": "inventory",
-    "use_case": "U24 integrations",
+    "use_case": "U24 Integrations",
     "person": "alice",
     "question": "Which agents have written to this namespace?",
     "expect": ["handbook-bot", "ops-bot"],
@@ -908,7 +908,7 @@
   {
     "id": "data-history",
     "kind": "memory",
-    "use_case": "U7 history of a fact",
+    "use_case": "U7 History of a fact",
     "person": "alice",
     "question": "Has the default public API rate limit changed over time? What was it before?",
     "expect": ["300", "600"],

@@ -480,7 +480,7 @@ def check_citations(
     st: dict[str, Any], person: dict[str, Any], text: str
 ) -> tuple[list[str], list[str]]:
     """Every memory key the answer names, and those that do not exist in the person's namespace
-    or name a version other than the row's current one."""
+    or name a version the key never had."""
     ns = person["namespace"]
     scorer = st["tokens"][f"scorer:{ns}"]
     # memory.get over HTTP reads one writer's row; the fixture says who wrote each key.
@@ -576,6 +576,10 @@ HELP_ABSTAIN_PATTERNS = (
 )
 
 
+# The kinds whose right answer is an abstention: from the namespace, or from the docs.
+ABSTAIN_KINDS = ("abstain", "help_abstain")
+
+
 def is_help_case(case: dict[str, Any]) -> bool:
     """A question about Loom itself: its direct path is help.search."""
     return case["baseline"]["op"] == "help.search"
@@ -605,7 +609,8 @@ def check_help_citations(
             continue
         section = m["section"] or ""
         if section and not names_section(
-            section_key(section), [section_key(e["section"]) for e in page.get("sections", [])]
+            help_breadcrumb(section),
+            [help_breadcrumb(e["section"]) for e in page.get("sections", [])],
         ):
             invalid.append(f"{name}: no such section")
             continue
@@ -620,6 +625,12 @@ def names_section(cited: tuple[str, ...], sections: list[tuple[str, ...]]) -> bo
     if cited in sections or any(s[1:] == cited for s in sections):
         return True
     return sum(s[-len(cited) :] == cited for s in sections) == 1
+
+
+def help_breadcrumb(section: str) -> tuple[str, ...]:
+    """A help breadcrumb as its headings, as the server reads it
+    (`server.help.domain.index.section_path`): each trimmed, case and inner spacing kept."""
+    return tuple(part.strip() for part in section.split(">") if part.strip())
 
 
 def section_key(section: str) -> tuple[str, ...]:
@@ -730,6 +741,14 @@ def score(case: dict[str, Any], text: str) -> dict[str, Any]:
     return {"correct": correct, "abstained": abstained}
 
 
+def score_answer(case: dict[str, Any], got: dict[str, Any]) -> dict[str, Any]:
+    """Score an answer through LibreChat: its text, and wrong when it names an op or setting
+    the build neither serves nor documents (the bridge's `unknown_names`)."""
+    result = score(case, got["answer"] or got["error"])
+    result["correct"] = result["correct"] and not got.get("unknown_names")
+    return result
+
+
 # ---------------------------------------------------------------- run
 
 
@@ -776,11 +795,13 @@ def native_score(case: dict[str, Any], code: int, out: dict[str, Any]) -> dict[s
     elif spec["op"] == "knowledge.search":
         return native_document_score(case, out)
     elif spec["op"] == "help.search":
-        # The direct path finds the page; it writes no answer, so only that is scored.
+        # The direct path finds the page; it writes no answer, so only that is scored. A
+        # question the docs leave open has no page to find, and a word search finds some
+        # page for any question, so that case's direct path is not scored (None).
         pages = [h["path"] for h in out.get("hits") or []]
         text = json.dumps(pages)
         wanted = set(case.get("cite_help") or [])
-        correct = bool(wanted & set(pages)) if wanted else not pages
+        correct = bool(wanted & set(pages)) if wanted else None
         cited = pages[:1]
     elif "findings" in spec:
         # A recommendation's direct path: the audit names each labeled finding on rows.
@@ -862,9 +883,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         time.sleep(2)  # the ledger write is asynchronous
         calls = loom_calls(args.ch_url, case["person"], t0, t1)
         text = got["answer"] or got["error"]
-        result = score(case, text)
-        # An answer that names an op or setting the build neither serves nor documents.
-        result["correct"] = result["correct"] and not got.get("unknown_names")
+        result = score_answer(case, got)
         rows.append(
             {
                 "id": case["id"],
@@ -887,9 +906,9 @@ def cmd_run(args: argparse.Namespace) -> None:
         )
         lc = rows[-1]["librechat"]
         print(
-            f"{case['id']:<28} librechat {'ok ' if lc['correct'] else 'BAD'} "
+            f"{case['id']:<28} librechat {verdict(lc['correct'])} "
             f"{lc['latency_s']:5.1f}s tools={lc['tool_calls']} | "
-            f"native {'ok ' if native['correct'] else 'BAD'} {native['latency_s']:.2f}s"
+            f"native {verdict(native['correct'])} {native['latency_s']:.2f}s"
         )
     if args.cancel_probe:
         rows.append(cancel_probe(st, args))
@@ -936,8 +955,7 @@ def run_native_only(st: dict[str, Any], people: dict[str, Any], args: argparse.N
             rows[case["id"]]["native"] = baseline(st, case, people[case["person"]])
             native = rows[case["id"]]["native"]
             print(
-                f"{case['id']:<28} native {'ok ' if native['correct'] else 'BAD'} "
-                f"{native['latency_s']:.2f}s"
+                f"{case['id']:<28} native {verdict(native['correct'])} {native['latency_s']:.2f}s"
             )
     out.write_text(json.dumps(saved, indent=2))
     print(report(saved["rows"], saved.get("model", "")))
@@ -1044,6 +1062,15 @@ def pct(values: list[float], q: float) -> float:
     return values[min(len(values) - 1, round(q * (len(values) - 1)))]
 
 
+def verdict(correct: bool | None) -> str:
+    """A case's line in a run's log: `-  ` for a path that is not scored."""
+    return "-  " if correct is None else "ok " if correct else "BAD"
+
+
+def yes_no(correct: bool | None) -> str:
+    return "-" if correct is None else "yes" if correct else "no"
+
+
 def fmt_s(seconds: float | None, digits: int = 2, unit: str = "") -> str:
     return "-" if seconds is None else f"{seconds:.{digits}f}{unit}"
 
@@ -1062,13 +1089,14 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
             f"| {r['id']} | {r['kind']} | {'yes' if lc['correct'] else 'no'} | {len(lc['cited'])} "
             f"({len(lc['invalid_citations'])}) | {lc['tool_calls']} | {lc['latency_s']:.1f} | "
             f"{ttft} | "
-            f"{'yes' if nv['correct'] else 'no'} | {nv['latency_s']:.2f} |"
+            f"{yes_no(nv['correct'])} | {nv['latency_s']:.2f} |"
         )
     # The document cases are reported on their own lines (document_report).
     others = [r for r in cases if not r.get("documents")]
     if others:
         for side in ("librechat", "native"):
             got = [r[side] for r in others]
+            scored = [g for g in got if g["correct"] is not None]
             lat = [g["latency_s"] for g in got]
             ttft = [g["ttft_s"] for g in got if g["ttft_s"] is not None]
             cited = sum(len(g["cited"]) for g in got)
@@ -1076,14 +1104,16 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
             # The direct path cites the search hit itself, so its citations are not checked.
             validity = "-" if side == "native" else f"{cited - invalid}/{cited} valid"
             expected = [g["cited_expected"] for g in got if g["cited_expected"] is not None]
-            abst = [r for r in others if r["kind"] == "abstain"]
+            abst = [
+                r for r in others if r["kind"] in ABSTAIN_KINDS and r[side]["correct"] is not None
+            ]
             false_abst = [
                 r
                 for r in others
-                if r["kind"] not in ("abstain", "refusal") and r[side]["abstained"]
+                if r["kind"] not in (*ABSTAIN_KINDS, "refusal") and r[side]["abstained"]
             ]
             lines.append(
-                f"\n{side}: correct {sum(g['correct'] for g in got)}/{len(got)}; "
+                f"\n{side}: correct {sum(g['correct'] for g in scored)}/{len(scored)}; "
                 f"citations {validity}, "
                 f"expected key cited {sum(expected)}/{len(expected)}; "
                 f"abstained {sum(r[side]['correct'] for r in abst)}/{len(abst)} where it should, "
@@ -1126,7 +1156,7 @@ def use_case_report(cases: list[dict[str, Any]]) -> list[str]:
         "\n| use case | correct | citations valid | unknown names |",
         "| --- | --- | --- | --- |",
     ]
-    for name in sorted(by):
+    for name in sorted(by, key=use_case_order):
         got = [r["librechat"] for r in by[name]]
         valid = sum(not g["invalid_citations"] for g in got)
         unknown = sorted({n for g in got for n in g.get("unknown_names") or []})
@@ -1135,6 +1165,12 @@ def use_case_report(cases: list[dict[str, Any]]) -> list[str]:
             f"| {', '.join(unknown) or '-'} |"
         )
     return lines
+
+
+def use_case_order(name: str) -> tuple[int, str]:
+    """`U2` before `U10`: by the use case's number, an unlabeled case last."""
+    number = name.split()[0][1:]
+    return (int(number) if name[:1] == "U" and number.isdigit() else 1_000_000, name)
 
 
 def document_report(cases: list[dict[str, Any]]) -> list[str]:

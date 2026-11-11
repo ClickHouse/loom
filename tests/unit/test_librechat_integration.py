@@ -754,3 +754,173 @@ def test_seed_writes_each_documents_revision_after_its_first_write(monkeypatch):
     # Every document is written before any revision of one.
     first = {b["source_uri"]: i for i, b in reversed(list(enumerate(docs)))}
     assert docs.index(next(b for b in docs if b["content"] == writes[-1])) > max(first.values())
+
+
+_HELP_PAGE = """# Cost and usage
+
+## Daily spend caps
+
+Text.
+
+## Limits
+
+### Daily spend caps
+
+More.
+
+## Webhooks
+
+### Retries
+"""
+
+
+@pytest.mark.parametrize(
+    "breadcrumb",
+    [
+        "Cost and usage > Webhooks > Retries",  # exact
+        "Webhooks > Retries",  # without the page title
+        "Retries",  # a tail one section has
+        "Daily spend caps",  # a tail two sections have
+        "Limits > Daily spend caps",
+        "webhooks > retries",  # the server compares case
+        "Web hooks > Retries",
+        "  Webhooks  >Retries ",  # and trims each heading
+        "Cost and usage",
+    ],
+)
+def test_help_section_rule_is_the_servers(breadcrumb):
+    from server.help.domain.index import build, find_section, page_sections, section_path
+
+    q = _qualify()
+    index = build([("features/cost.md", _HELP_PAGE)])
+    sections = [s.breadcrumb for s in page_sections(index, "features/cost.md")]
+    server = find_section(index, "features/cost.md", section_path(breadcrumb)) is not None
+    assert q.names_section(q.help_breadcrumb(breadcrumb), sections) is server
+
+
+def test_check_help_citations_reads_the_page_and_its_sections(monkeypatch):
+    q = _qualify()
+
+    def fake_read(st, token, op, body):
+        assert op == "help.get" and token == "viewer-token"
+        if body["path"] != "features/cost.md":
+            return {"found": False}
+        return {"found": True, "sections": [{"section": "Cost and usage > Daily spend caps"}]}
+
+    monkeypatch.setattr(q, "scorer_read", fake_read)
+    st = {"tokens": {"scorer:acme-handbook": "viewer-token"}}
+    person = {"namespace": "acme-handbook"}
+    case = {"cite_help": ["features/cost.md"]}
+    text = (
+        "[help:docs/features/cost.md § Daily spend caps] "
+        "[help:features/cost.md § daily spend caps] "
+        "[help:features/other.md]"
+    )
+    cited, invalid, expected = q.check_help_citations(st, person, case, text)
+    assert cited == [
+        "help:docs/features/cost.md § Daily spend caps",
+        "help:features/cost.md § daily spend caps",
+        "help:features/other.md",
+    ]
+    assert invalid == [
+        "help:features/cost.md § daily spend caps: no such section",
+        "help:features/other.md: no such page",
+    ]
+    assert expected is True
+
+
+def test_memory_citations_skip_help_pages_and_quoted_examples(monkeypatch):
+    q = _qualify()
+    asked = []
+
+    def fake_call(base, token, op, body):
+        asked.append(body["memory_key"])
+        return 200, {"found": True, "version": 1793745407448901606}, 0.0
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    st = {"loom_url": "http://loom", "tokens": {"scorer:acme-handbook": "viewer-token"}}
+    person = {"org": "acme", "namespace": "acme-handbook"}
+    text = (
+        "Keys look like `scope/kind/id` [help:features/memory/writing.md § Keys]. "
+        "The freeze: [memory:policy/deploy/freeze@v1793745407448901606]."
+    )
+    # A help page's path is no key; on the direct path a quoted example still reads as one.
+    assert q.check_citations(st, person, text)[0] == ["scope/kind/id", "policy/deploy/freeze"]
+    # Through the bridge only a `[memory:]` citation is a memory citation.
+    asked.clear()
+    assert q.check_citations({**st, "bridge": True}, person, text) == (
+        ["policy/deploy/freeze"],
+        [],
+    )
+    assert asked == ["policy/deploy/freeze"]
+
+
+def test_a_help_abstention_and_an_unknown_name_are_scored():
+    q = _qualify()
+    case = {"kind": "help_abstain", "expect": [], "baseline": {"op": "help.search"}}
+    said = {"answer": "Loom's documentation doesn't cover a colour theme.", "error": ""}
+    assert q.score_answer(case, said) == {"correct": True, "abstained": True}
+    guessed = {"answer": "Set LOOM_DASHBOARD_THEME=dark.", "error": ""}
+    assert q.score_answer(case, guessed)["correct"] is False
+    # A right answer that names an op the build neither serves nor documents is wrong.
+    case = {"kind": "fact", "expect": [r"revoke-token"], "baseline": {"op": "help.search"}}
+    answer = {"answer": "Run `loom revoke-token`.", "error": ""}
+    assert q.score_answer(case, answer)["correct"] is True
+    assert q.score_answer(case, {**answer, "unknown_names": ["token.revoke_all"]}) == {
+        "correct": False,
+        "abstained": False,
+    }
+
+
+def test_the_direct_path_does_not_score_a_question_the_docs_leave_open():
+    q = _qualify()
+    case = {"kind": "help_abstain", "cite_help": [], "baseline": {"op": "help.search"}}
+    hit = {"hits": [{"path": "features/dashboard.md"}]}
+    assert q.native_score(case, 200, hit)["correct"] is None
+    case = {"kind": "fact", "cite_help": ["features/dashboard.md"], "baseline": case["baseline"]}
+    assert q.native_score(case, 200, hit)["correct"] is True
+
+
+def test_report_counts_a_help_abstention_and_orders_the_use_cases():
+    q = _qualify()
+
+    def side(correct, abstained=False):
+        return {
+            "correct": correct,
+            "abstained": abstained,
+            "cited": [],
+            "invalid_citations": [],
+            "cited_expected": None,
+            "tool_calls": 1,
+            "latency_s": 1.0,
+            "ttft_s": 0.5,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
+
+    rows = [
+        {
+            "id": f"case-{n}",
+            "kind": "fact",
+            "use_case": f"U{n} Case {n}",
+            "librechat": side(True),
+            "native": side(True),
+        }
+        for n in (10, 2, 1)
+    ]
+    rows.append(
+        {
+            "id": "help-undocumented",
+            "kind": "help_abstain",
+            "use_case": "U28 Refusals and abstentions",
+            "librechat": side(True, abstained=True),
+            "native": side(None),
+        }
+    )
+    text = q.report(rows, "m")
+    assert "librechat: correct 4/4;" in text
+    assert "abstained 1/1 where it should, 0 false abstentions" in text
+    # The direct path does not score that case.
+    assert "native: correct 3/3;" in text and "abstained 0/0 where it should" in text
+    order = [line.split(" | ")[0][2:] for line in text.splitlines() if line.startswith("| U")]
+    assert order == ["U1 Case 1", "U2 Case 2", "U10 Case 10", "U28 Refusals and abstentions"]
