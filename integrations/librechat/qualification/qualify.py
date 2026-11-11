@@ -478,10 +478,11 @@ def matches(patterns: tuple[str, ...] | list[str], text: str) -> bool:
 
 
 def check_citations(
-    st: dict[str, Any], person: dict[str, Any], text: str
+    st: dict[str, Any], person: dict[str, Any], text: str, history_ok: bool = False
 ) -> tuple[list[str], list[str]]:
     """Every memory key the answer names, and those that do not exist in the person's namespace
-    or name a version the key never had."""
+    or name a version other than the row's current one. With `history_ok` (a question about
+    a key's history), an earlier version the key had is valid too."""
     ns = person["namespace"]
     scorer = st["tokens"][f"scorer:{ns}"]
     # memory.get over HTTP reads one writer's row; the fixture says who wrote each key.
@@ -497,37 +498,36 @@ def check_citations(
     current: dict[str, int | None] = {}  # each key's current version, read once
     versions: dict[str, set[int]] = {}  # each key's every version, read when one is cited
 
+    def body(key: str) -> dict[str, Any]:
+        return {
+            "org": person["org"],
+            "namespace": ns,
+            "memory_key": key,
+            "agent": writers.get(key, "-"),
+        }
+
     def history(key: str) -> set[int]:
+        # The key exists (memory.get found it), so a failed history read says nothing about
+        # the answer: scorer_read waits out a 429 and stops the run on anything else.
         if key not in versions:
-            body = {
-                "org": person["org"],
-                "namespace": ns,
-                "memory_key": key,
-                "agent": writers.get(key, "-"),
-            }
-            rows = scorer_read(st, scorer, "memory.history", body).get("rows") or []
+            rows = scorer_read(st, scorer, "memory.history", body(key)).get("rows") or []
             versions[key] = {int(r["version"]) for r in rows if r.get("version")}
         return versions[key]
 
     for key, version in memory_mentions(st, text):
         if key not in current:
             cited.append(key)
-            body = {
-                "org": person["org"],
-                "namespace": ns,
-                "memory_key": key,
-                "agent": writers.get(key, "-"),
-            }
-            code, out, _ = loom_call(st["loom_url"], scorer, "memory.get", body)
+            # A key that is not there is the answer's fault: it is marked invalid.
+            code, out, _ = loom_call(st["loom_url"], scorer, "memory.get", body(key))
             ok = code == 200 and out.get("found", True) and out.get("version")
             current[key] = int(out["version"]) if ok else None
             if current[key] is None:
                 invalid.append(key)
         if current[key] is None or version is None or version == current[key]:
             continue
-        # An earlier version is a valid citation of what the key once held (an answer about
-        # its history); a version the key never had is not.
-        if version in history(key):
+        # An earlier version cites what the key once held: valid in an answer about its
+        # history, and stale anywhere else.
+        if history_ok and version in history(key):
             continue
         stale = f"{key}@{version}"
         if stale not in invalid:
@@ -535,8 +535,10 @@ def check_citations(
     return cited, invalid
 
 
-# A memory citation as Loom's assistant writes it (`server.assistant.domain.citations`).
+# A memory and a code citation as Loom's assistant writes them
+# (`server.assistant.domain.citations`).
 MEMORY_CITE_RE = re.compile(r"\[memory:(?P<key>[^\]\s]+)@v(?P<version>\d+)\]")
+CODE_CITE_RE = re.compile(r"\[code:(?P<path>[^\]\s]+?):(?P<line>\d+)\]")
 
 
 def memory_mentions(st: dict[str, Any], text: str) -> list[tuple[str, int | None]]:
@@ -593,10 +595,14 @@ ABSTAIN_KINDS = ("abstain", "help_abstain")
 
 @functools.cache
 def documented_settings() -> frozenset[str]:
-    """Every `LOOM_*` name a docs page writes: the documentation half of the server's
-    unknown-name check (`server.assistant.domain.names`)."""
+    """Every `LOOM_*` name a docs page the server ships writes (the help index skips
+    `development/`): the documentation half of the server's unknown-name check
+    (`server.assistant.domain.names`)."""
     return frozenset(
-        name for page in DOCS.rglob("*.md") for name in SETTING_RE.findall(page.read_text())
+        name
+        for page in DOCS.rglob("*.md")
+        if not page.relative_to(DOCS).as_posix().startswith("development/")
+        for name in SETTING_RE.findall(page.read_text())
     )
 
 
@@ -954,12 +960,12 @@ def answer_citations(
     """The memory keys, document passages and help pages an answer cites, the invalid ones,
     and whether the labeled key, section or page is among them: False for a case that labels
     a help page when the answer cites none, None when the case labels nothing."""
-    cited, invalid = check_citations(st, person, text)
+    cited, invalid = check_citations(st, person, text, history_ok=bool(case.get("cite_history")))
     expected = case.get("cite") in cited if case.get("cite") else None
     if is_document_case(case):
-        # Help and memory citations (`[help:…]`, `[memory:…]`) are checked as such, not as
+        # Help, memory and code citations (`[help:…]`, `[memory:…]`, `[code:…]`) are not
         # documents.
-        doc_text = MEMORY_CITE_RE.sub("", HELP_CITE_RE.sub("", text))
+        doc_text = CODE_CITE_RE.sub("", MEMORY_CITE_RE.sub("", HELP_CITE_RE.sub("", text)))
         doc_cited, doc_invalid, doc_expected = check_doc_citations(st, person, case, doc_text)
         cited, invalid = cited + doc_cited, invalid + doc_invalid
         expected = doc_expected if case.get("cite_doc") else None

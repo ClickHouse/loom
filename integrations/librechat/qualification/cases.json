@@ -506,8 +506,15 @@
     },
     "samples": {
       "right": ["Upload it with `knowledge.upload`."],
-      "wrong": ["Save its text with `memory.set`."]
-    }
+      "wrong": [
+        "Save its text with `memory.set`.",
+        "`knowledge.upload` does not accept a PDF; convert it to text first."
+      ]
+    },
+    "forbid": [
+      "\\bno `?knowledge\\.(upload|ingest)",
+      "`?knowledge\\.(upload|ingest)`? (does ?n[o']t|cannot|can ?not) (take|accept|read) (a )?PDF"
+    ]
   },
   {
     "id": "help-cost-cap",
@@ -570,8 +577,12 @@
     },
     "samples": {
       "right": ["Call `memory.history` with the key."],
-      "wrong": ["Loom keeps only the latest version."]
-    }
+      "wrong": [
+        "Loom keeps only the latest version.",
+        "Loom has no `memory.history` op; it keeps only the latest version."
+      ]
+    },
+    "forbid": ["\\bno `?memory\\.history", "only (keeps |the )?(the )?latest"]
   },
   {
     "id": "help-graph",
@@ -616,8 +627,12 @@
     },
     "samples": {
       "right": ["Use **Repositories → Add repository** in the dashboard, or call `code.repo.add`."],
-      "wrong": ["You cannot add a repository; Loom indexes only its own code."]
-    }
+      "wrong": [
+        "You cannot add a repository; Loom indexes only its own code.",
+        "You cannot use `code.repo.add`; only Loom's own repository is indexed."
+      ]
+    },
+    "forbid": ["\\bno `?code\\.repo\\.add", "(cannot|can ?not|can't) (call|use) `?code\\.repo\\.add"]
   },
   {
     "id": "help-conflict",
@@ -689,7 +704,12 @@
         "limit": 5
       }
     },
-    "forbid": ["^\\W*yes\\b", "\\byou (can|may) already write\\b", "\\byou are (a |an )?(writer|admin)\\b"],
+    "forbid": [
+      "^\\W*yes\\b",
+      "\\byou (can|may) already write\\b",
+      "\\byou are (a |an )?(writer|admin)\\b",
+      "\\bviewers? (can|may) write"
+    ],
     "samples": {
       "right": [
         "You are a viewer here, so you cannot write; an admin can grant you writer.",
@@ -699,7 +719,8 @@
         "Yes, you can write here.",
         "You are an admin, so you can write.",
         "You can already write here as a viewer.",
-        "You are a viewer, but you can already write here; an admin can grant more."
+        "You are a viewer, but you can already write here; an admin can grant more.",
+        "You are a viewer; viewers can write here, no admin grant needed."
       ]
     }
   },
@@ -822,8 +843,12 @@
     },
     "samples": {
       "right": ["A run is one execution of a task; the agent starts it with `run.begin`."],
-      "wrong": ["A run is a CI job; agents cannot start one."]
-    }
+      "wrong": [
+        "A run is a CI job; agents cannot start one.",
+        "There is no `run.begin`; a run starts on its own when an agent connects."
+      ]
+    },
+    "forbid": ["\\bno `?run\\.begin", "`?run\\.begin`? (does ?n[o']t exist|is removed)"]
   },
   {
     "id": "help-tasks",
@@ -913,8 +938,12 @@
     },
     "samples": {
       "right": ["Send the transcript to `memory.set_from_messages`."],
-      "wrong": ["Copy each fact out by hand and call `memory.set`."]
-    }
+      "wrong": [
+        "Copy each fact out by hand and call `memory.set`.",
+        "`memory.set_from_messages` does not exist; copy each fact out by hand."
+      ]
+    },
+    "forbid": ["\\bno `?memory\\.set_from_messages", "`?memory\\.set_from_messages`? (does ?n[o']t exist|is removed)"]
   },
   {
     "id": "help-working-memory",
@@ -1095,6 +1124,7 @@
       "path": ["rows"],
       "count": true,
       "equals": 2
-    }
+    },
+    "cite_history": true
   }
 ]

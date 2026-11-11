@@ -208,7 +208,9 @@ def test_check_citations_flags_unknown_keys_and_stale_versions(monkeypatch):
         ["policy/deploy/freeze@1793745407000000000"],
     )
     earlier = "Before: `policy/deploy/freeze` (version 1793745400000000000)."
-    assert q.check_citations(st, person, earlier) == (["policy/deploy/freeze"], [])
+    assert q.check_citations(st, person, earlier, history_ok=True) == (["policy/deploy/freeze"], [])
+    # Outside a question about history, an earlier version cited is stale.
+    assert q.check_citations(st, person, earlier)[1] == ["policy/deploy/freeze@1793745400000000000"]
     unknown = "See policy/deploy/thaw."
     assert q.check_citations(st, person, unknown) == (
         ["policy/deploy/thaw"],
@@ -990,13 +992,13 @@ def test_rescore_keeps_the_unknown_name_rule_and_takes_the_current_labels(tmp_pa
 
 def test_a_help_answer_that_cites_no_page_misses_the_labeled_one(monkeypatch):
     q = _qualify()
-    monkeypatch.setattr(q, "check_citations", lambda st, person, text: ([], []))
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text, **_: ([], []))
     case = _case("help-revoke-token")
     person = {"namespace": "acme-handbook"}
     got = q.answer_citations({}, case, person, "Run `loom revoke-token`.")
     assert got == {"cited": [], "invalid_citations": [], "cited_expected": False}
     # A memory key cited beside the page does not decide it: the labeled page does.
-    monkeypatch.setattr(q, "check_citations", lambda st, person, text: (["a/b/c"], []))
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text, **_: (["a/b/c"], []))
     monkeypatch.setattr(
         q, "check_help_citations", lambda st, person, case, text: (["help:x.md"], [], False)
     )
@@ -1046,7 +1048,7 @@ def test_each_help_label_passes_its_right_samples_and_fails_its_wrong_ones(case)
 def test_a_document_answer_that_cites_a_help_page_checks_it_as_help(monkeypatch):
     q = _qualify()
     docs_read = []
-    monkeypatch.setattr(q, "check_citations", lambda st, person, text: ([], []))
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text, **_: ([], []))
 
     def fake_docs(st, person, case, text):
         docs_read.append(text)
@@ -1100,7 +1102,7 @@ def test_each_help_forbid_is_what_fails_one_wrong_sample(case):
 def test_a_memory_citation_in_a_document_answer_is_no_document(monkeypatch):
     q = _qualify()
     read = []
-    monkeypatch.setattr(q, "check_citations", lambda st, person, text: ([], []))
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text, **_: ([], []))
     monkeypatch.setattr(
         q,
         "check_doc_citations",

@@ -136,7 +136,8 @@ orgs, mints a token per person, revokes one, and scores each answer:
   other org's canary for the cross-tenant case, the person's own answer (`friday`) for the
   revoked-token case, and a stale or wrong value for some others.
 - **citation valid:** every memory key the answer names exists in the person's namespace,
-  and a version written next to it is the row's current version.
+  and a version written next to it is the row's current version, or, for a question about
+  the key's history (`cite_history`), one of its earlier versions.
 - **tool calls:** the `mcp` rows Loom ledgered under the person's subject during the answer.
 - **latency and time to first token:** end to end, and to the first streamed delta, which
   for the harness's own agent (`setup`) is the model's one-line preamble before its first
@@ -222,9 +223,9 @@ answer the label is tested against. Its answer is scored correct when it states 
 names no op or setting the server neither serves nor documents (`unknown_names` on the
 answer's `loom.citations` event). For the case with no answer in the docs, the answer is
 correct when it says so and writes no `LOOM_` name that no docs page writes; an answer
-that names an invented setting only to deny it is scored wrong. A help citation is valid when its page is in the server's
-documentation (`help.get`) and its section is one of the page's own, by the rule the
-server's own check uses. The cases go through Loom's assistant route
+that names an invented setting only to deny it is scored wrong. A help citation is valid
+when its page is in the server's documentation (`help.get`) and its section is one of the
+page's own, by the rule the server's own check uses. The cases go through Loom's assistant route
 (`qualify.py setup-bridge`), so each answer also carries the question's asker line and
 the bridge's own citation check.
 
