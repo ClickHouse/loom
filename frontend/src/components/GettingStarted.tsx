@@ -28,9 +28,6 @@ import type { Identity } from "../api";
  *  the Tokens page's own, loaded only when the step is opened. */
 const QuickConnect = lazy(() => import("../views/Tokens").then((m) => ({ default: m.QuickConnect })));
 
-/** The dashboard writes as this agent; a memory from any other agent means one connected. */
-export const DASHBOARD_AGENT = "loom-ui";
-
 export interface OnboardingHandle {
   state: OnboardingState;
   mark: (step: OnboardingStep) => void;
@@ -210,7 +207,12 @@ export function GettingStarted({
   const connected = !!done.connect;
   const n = countDone(done);
   const total = ONBOARDING_STEPS.length;
-  const allDone = n === total;
+  // Every step ticked, and no models row still asking (it has no tick of its own).
+  const stepsDone = n === total;
+  const allDone = stepsDone && !(canSetModels && modelsUnset);
+  // The bar reads no models status: for whoever can set models it keeps Continue, which opens
+  // the list where the models row shows.
+  const barDone = stepsDone && !canSetModels;
 
   if (collapsed) {
     return (
@@ -220,12 +222,12 @@ export function GettingStarted({
       >
         <span className="text-sm">
           <span className="text-text font-medium">Getting started</span>
-          <span className="text-text-muted"> · {allDone ? "all set" : `${n} of ${total} set up`}</span>
+          <span className="text-text-muted"> · {barDone ? "all set" : `${n} of ${total} set up`}</span>
         </span>
         <span className="flex items-center gap-2">
           {/* Done in full (finished in another visit than the one it started in): nothing to
               continue, only to hide. */}
-          {!allDone && (
+          {!barDone && (
             <Button
               type="secondary"
               htmlType="button"

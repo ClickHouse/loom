@@ -315,6 +315,28 @@ describe("GettingStarted on Memories", () => {
     expect(within(bar).getByRole("button", { name: "Hide getting started" })).toBeInTheDocument();
   });
 
+  it("does not say all set while the models row still asks, and the bar keeps Continue for it", async () => {
+    auth.off = true;
+    seed(null, { ...writer, subject: "local", roles: ["PLATFORM_ADMIN"] });
+    const first = render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    rows.entries = [memory("claude-code")];
+    act(() => useStore.getState().bumpMemoriesVersion());
+    expect(await within(panel).findByText("2 of 2 done", undefined, WAIT)).toBeInTheDocument();
+    expect(await within(panel).findByRole("button", { name: "Open Models & keys" }, WAIT)).toBeInTheDocument();
+    expect(within(panel).queryByText(/^All set/)).toBeNull();
+    first.unmount();
+    // Ticked on an earlier visit, with rows: the bar, which cannot see the models, keeps Continue.
+    localStorage.setItem(
+      onboardingKey("local", `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
+    render(<Recent />);
+    const bar = await screen.findByTestId("getting-started-bar", {}, WAIT);
+    await waitFor(() => expect(bar).toHaveTextContent("2 of 2 set up"), WAIT);
+    expect(within(bar).getByRole("button", { name: "Continue" })).toBeInTheDocument();
+  });
+
   it("names the bar's Hide for what it hides, and Hide hands focus to the search", async () => {
     localStorage.setItem(
       onboardingKey(SUBJECT, `dev/${NS}`),

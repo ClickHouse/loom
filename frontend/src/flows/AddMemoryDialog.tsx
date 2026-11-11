@@ -5,6 +5,7 @@ import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { setMemory, type Identity } from "../api";
 import { sharedTagVocabulary } from "../lib/sharedReads";
+import { DASHBOARD_AGENT } from "../lib/format";
 import { humanizeError, toastCommitted } from "../lib/errorWords";
 import { isPublicationPending } from "../lib/errors";
 import { toast } from "../components/Toast";
@@ -79,7 +80,7 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
     try {
       // Attribute to `loom-ui`, not the picker (which is "view as", not the
       // writer) — Conflicts/Audit/Spending key off `agent`.
-      await setMemory({ ...identity, agent: "loom-ui" }, memoryKey.trim(), value.trim(), {
+      await setMemory({ ...identity, agent: DASHBOARD_AGENT }, memoryKey.trim(), value.trim(), {
         memoryType: "semantic",
         tags,
         ttlSeconds: EXPIRY_OPTIONS[expiryIdx].ttlSeconds,
