@@ -48,6 +48,7 @@ vi.mock("./Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./Toast")>()),
   toast: vi.fn(),
   toastError: vi.fn(),
+  toastCommitted: vi.fn(),
   ToastViewport: () => null,
 }));
 vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true), ConfirmViewport: () => null }));
@@ -88,7 +89,7 @@ vi.mock("../api", async (importOriginal) => {
 });
 import { deleteMemory, getMemory, moveMemory, pinMemory, setMemory } from "../api";
 import { ApiError } from "../lib/errors";
-import { toast } from "./Toast";
+import { toast, toastCommitted } from "./Toast";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,
@@ -211,14 +212,22 @@ describe("MemoryInspector rename with redirect", () => {
     vi.mocked(moveMemory).mockRejectedValueOnce(PENDING);
     await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
     await waitFor(() =>
-      expect(toast).toHaveBeenCalledWith(
+      expect(toastCommitted).toHaveBeenCalledWith(
+        PENDING,
         "prefs/coffee is written, but coffee_pref is not moved yet. Rename again to finish the move.",
-        "info",
       ),
     );
-    // A second Rename finishes the move: the form is still there to send it.
+    // A second Rename finishes the move: the form is still there to send it, and holds the
+    // key and the redirect, since another key would leave the first one behind.
     expect(screen.getByTestId("rename-form")).toBeInTheDocument();
+    expect(within(form).getByLabelText("New key")).toHaveAttribute("readonly");
+    expect(within(form).getByRole("checkbox", { name: "Keep old key readable (redirect)" })).toBeDisabled();
     expect(onChanged).not.toHaveBeenCalled();
+    vi.mocked(getMemory).mockResolvedValue(REDIRECTED);
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(screen.queryByTestId("rename-form")).toBeNull());
+    expect(vi.mocked(moveMemory).mock.calls.at(-1)?.slice(1, 3)).toEqual(["coffee_pref", "prefs/coffee"]);
+    expect(onChanged).toHaveBeenCalled();
   });
 
   it("closes the editor on a saved value whose search copy lags, and reads the row again", async () => {

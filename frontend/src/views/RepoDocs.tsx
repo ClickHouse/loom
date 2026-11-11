@@ -216,9 +216,13 @@ export function RepoDocsList({
             onOpenChange={(v) => {
               if (!v) setAdding(false);
             }}
-            onAdded={(title, lost, lagging) => {
-              if (lagging) toast(`Added ${title}; the list may not show it for a moment`, "info");
-              else if (lost === null) toast(`Added ${title}`, "ok");
+            onAdded={(title, lost, said) => {
+              // A write that committed with lists behind: the dialog already said so.
+              if (said) {
+                setNonce((n) => n + 1);
+                return;
+              }
+              if (lost === null) toast(`Added ${title}`, "ok");
               else
                 toast(
                   `Added ${title}, partial: part of the file could not be read${lost.length ? ` (lost: ${lost.join(", ")})` : ""}`,

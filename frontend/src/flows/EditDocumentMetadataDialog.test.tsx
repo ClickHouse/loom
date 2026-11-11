@@ -13,9 +13,15 @@ vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
   toastError: vi.fn(),
+  // As the real one decides, so the test sees the failure it toasts.
+  committedAnyway: vi.fn((context: string, e: unknown) => {
+    toastError(context, e);
+    return isPublicationPending(e);
+  }),
 }));
 import { updateKnowledgeMetadata, type KnowledgeEntry } from "../api";
-import { ApiError } from "../lib/errors";
+import { toastError } from "../components/Toast";
+import { ApiError, isPublicationPending } from "../lib/errors";
 import { EditDocumentMetadataDialog } from "./EditDocumentMetadataDialog";
 
 const ENTRY = {
@@ -60,8 +66,8 @@ describe("EditDocumentMetadataDialog", () => {
   it("stays open on a failure", async () => {
     vi.mocked(updateKnowledgeMetadata).mockRejectedValue(new ApiError({ status: 500, message: "boom" }));
     const { onSaved, onOpenChange } = mount();
-    await waitFor(() => expect(updateKnowledgeMetadata).toHaveBeenCalled());
-    await Promise.resolve();
+    // The failure is said: only then is it known that nothing closed.
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Save failed", expect.any(ApiError)));
     expect(onSaved).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });

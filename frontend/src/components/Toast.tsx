@@ -88,10 +88,14 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
 }
 
 /** The line for a write that committed with only lists and search behind
- *  (`PUBLICATION_PENDING`), with its request id and an error's reading time: for a dialog
- *  that words its own failures inline and closes on this answer. */
-export function toastCommitted(err: unknown): void {
-  toastWithId(PUBLICATION_PENDING, "info", err);
+ *  (`PUBLICATION_PENDING`), with its request id and an error's reading time. `msg` is a
+ *  page's own line for it (what was done, what to do next); `opts` adds a key or an action. */
+export function toastCommitted(
+  err: unknown,
+  msg: string = PUBLICATION_PENDING,
+  opts: Pick<ToastOpts, "key" | "action"> = {},
+): void {
+  toastWithId(msg, "info", err, opts);
 }
 
 /** For a write's catch: toasts the failure as `toastError` does and says whether the write
@@ -112,7 +116,7 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
   // "<context>:" in front of it. Said before the wording loads, so a chunk that cannot load
   // never turns it into "failed".
   if (isPublicationPending(err)) {
-    toastWithId(PUBLICATION_PENDING, "info", err);
+    toastCommitted(err);
     return;
   }
   // The wording is a lazy chunk (the boot chunk's budget), loaded by the viewport soon
@@ -132,14 +136,14 @@ export function toastError(context: string, err: unknown, opts: { read?: boolean
 /** An error toast whose caller built its own sentence (how much of a batch went through):
  *  the request id underneath and the reading time, as toastError gives every error toast. */
 export function toastErrorLine(msg: string, err: unknown, opts: { key?: string } = {}): void {
-  toastWithId(msg, "error", err, opts.key);
+  toastWithId(msg, "error", err, { key: opts.key });
 }
 
-function toastWithId(msg: string, kind: ToastKind, err: unknown, key?: string): void {
+function toastWithId(msg: string, kind: ToastKind, err: unknown, opts: Pick<ToastOpts, "key" | "action"> = {}): void {
   const rid = errorRequestId(err);
   // An id the line already says (an internal error's) is not printed a second time.
   const detail = rid && !msg.includes(rid) ? { detail: `request id ${rid}` } : {};
-  toast(msg, kind, { ...detail, key, durationMs: errorToastMs(msg) });
+  toast(msg, kind, { ...detail, ...opts, durationMs: errorToastMs(msg) });
 }
 
 export function errorToastMs(msg: string): number {

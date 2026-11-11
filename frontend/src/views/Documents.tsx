@@ -37,7 +37,7 @@ import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { collectionTitle } from "../lib/collections";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
-import { committedAnyway, toast, toastError } from "../components/Toast";
+import { committedAnyway, toast, toastCommitted, toastError } from "../components/Toast";
 import { isPublicationPending } from "../lib/errors";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
@@ -439,25 +439,22 @@ export function Documents() {
     )
       return;
     const place = { org: identity.org, namespace: identity.namespace };
-    // Deleted, with only lists and search behind: still a delete, with its Undo.
-    let lagging = false;
     try {
       await deleteKnowledge(place, source_uri);
+      // Keyed by the document, so a later delete of it replaces this notice and its Undo.
+      toast(`Deleted ${source_uri}`, "ok", undoNotice(place, source_uri));
     } catch (e) {
       if (!isPublicationPending(e)) {
         toastError("Delete failed", e);
         return;
       }
-      lagging = true;
+      // Deleted, with only lists and search behind: still a delete, with its Undo.
+      toastCommitted(
+        e,
+        `Deleted ${source_uri}; the list may show it for a moment, and Undo may need a moment too`,
+        undoNotice(place, source_uri),
+      );
     }
-    // Keyed by the document, so a later delete of it replaces this notice and its Undo.
-    toast(
-      lagging
-        ? `Deleted ${source_uri}; the list may show it for a moment, and Undo may need a moment too`
-        : `Deleted ${source_uri}`,
-      lagging ? "info" : "ok",
-      undoNotice(place, source_uri),
-    );
     // The row and its menu leave with the next read: focus then goes to the search.
     focusSearchOnRead.current = true;
     reload();
@@ -484,7 +481,7 @@ export function Documents() {
     } catch (e) {
       // Not yet (the delete is still being recorded, or the server is busy): the notice comes
       // back with its Undo, which left when it was pressed.
-      if (e instanceof ApiError && e.status === 503) {
+      if (e instanceof ApiError && e.code === "BACKEND_UNAVAILABLE") {
         toast(`${source_uri} is not restored yet; try Undo again in a moment`, "info", undoNotice(place, source_uri));
         return;
       }

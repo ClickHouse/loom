@@ -36,8 +36,9 @@ vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () =>
 vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
+  toastCommitted: vi.fn(),
 }));
-import { toast, ToastViewport } from "../components/Toast";
+import { toast, toastCommitted, ToastViewport } from "../components/Toast";
 import { ingestClock } from "../lib/fileIngest";
 import {
   type KnowledgeUpload,
@@ -298,10 +299,11 @@ describe("RepoDocsList", () => {
     // Closed, so it is not sent again, and said as added.
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(addKnowledge).toHaveBeenCalledTimes(1);
-    // One line: added, and the list may lag.
-    expect(vi.mocked(toast).mock.calls.filter(([m]) => /Runbook|caught up/.test(String(m)))).toEqual([
-      ["Added Runbook; the list may not show it for a moment", "info"],
+    // One line: added, and the list may lag, with the request id and an error's reading time.
+    expect(vi.mocked(toastCommitted).mock.calls.map(([, m]) => m)).toEqual([
+      "Added Runbook; the list may not show it for a moment",
     ]);
+    expect(vi.mocked(toast).mock.calls.filter(([m]) => /Runbook/.test(String(m)))).toEqual([]);
   });
 
   it("a writer adds a file as its bytes, ingested under an address made from its name", async () => {

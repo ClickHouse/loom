@@ -57,7 +57,7 @@ import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { isPublicationPending } from "../lib/errors";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
-import { committedAnyway, keepOpenOnToasts, toast, toastError } from "./Toast";
+import { committedAnyway, keepOpenOnToasts, toast, toastCommitted, toastError } from "./Toast";
 import { IconButton } from "./IconButton";
 import { SkeletonText } from "./Skeleton";
 import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
@@ -2094,6 +2094,9 @@ function RenameForm({
   const redirect = keepRedirect || mustRedirect;
   const [preview, setPreview] = useState<MemoryMoveResult | null>(null);
   const [busy, setBusy] = useState<"preview" | "rename" | null>(null);
+  // A move half done (the new key written, the old one not moved yet): only the same move
+  // finishes it, so the key and the redirect hold until it does.
+  const [halfDone, setHalfDone] = useState(false);
   const target = toKey.trim();
   const valid = target.length > 0 && target !== fromKey;
 
@@ -2107,9 +2110,10 @@ function RenameForm({
       if (dryRun) toastError("Preview failed", e, { read: true });
       // The new key is written, but the server answers before it moves the old one: a second
       // Rename finishes the move, so the form stays open and says so.
-      else if (isPublicationPending(e))
-        toast(`${target} is written, but ${fromKey} is not moved yet. Rename again to finish the move.`, "info");
-      else toastError("Rename failed", e);
+      else if (isPublicationPending(e)) {
+        setHalfDone(true);
+        toastCommitted(e, `${target} is written, but ${fromKey} is not moved yet. Rename again to finish the move.`);
+      } else toastError("Rename failed", e);
     } finally {
       setBusy(null);
     }
@@ -2127,6 +2131,7 @@ function RenameForm({
       <TextField
         label="New key"
         value={toKey}
+        readOnly={halfDone}
         onChange={(v) => {
           setToKey(v);
           setPreview(null);
@@ -2143,7 +2148,7 @@ function RenameForm({
       <Checkbox
         label="Keep old key readable (redirect)"
         checked={redirect}
-        disabled={mustRedirect}
+        disabled={mustRedirect || halfDone}
         onCheckedChange={(c) => {
           setKeepRedirect(c === true);
           setPreview(null);

@@ -212,9 +212,8 @@ export function AddDocumentDialog({
   const canSubmit =
     sourceUri.trim() !== "" && busy === null && (mode === "file" ? !!file && !verdict?.refusal : content.trim() !== "");
 
-  // `msg` null: the line was already said (a committed write's).
-  const finish = (msg: string | null, level: "ok" | "info" = "ok") => {
-    if (msg) toast(msg, level);
+  const finish = (msg: string, level: "ok" | "info" = "ok") => {
+    toast(msg, level);
     onAdded();
     reset();
     onOpenChange(false);
@@ -287,7 +286,9 @@ export function AddDocumentDialog({
       // Saved, with only lists and search behind: closed as after a success, not sent again.
       if (isPublicationPending(e)) {
         toastCommitted(e);
-        finish(null);
+        onAdded();
+        reset();
+        onOpenChange(false);
         return;
       }
       setError(humanizeError(e));
