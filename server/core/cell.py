@@ -101,8 +101,8 @@ def _code_repo_orgs() -> set[str]:
     write them, so attach places them, and a placement is permanent."""
     try:
         entries = json.loads(settings.code_repos_json or "[]")
-    except ValueError:
-        return set()  # the code config falls back to the scalar entry: `code_org`
+    except Exception:  # noqa: BLE001 — the code config falls back to `code_org` here too
+        return set()
     if not isinstance(entries, list):
         return set()
     orgs: set[str] = set()

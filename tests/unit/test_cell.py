@@ -688,10 +688,11 @@ _REPO_ENTRIES = [
 ]
 
 
+@pytest.mark.parametrize("code_org", ["", "acme"])
 @pytest.mark.parametrize("code_repo", ["", "o/main"])
-@pytest.mark.parametrize("repos_json", _REPO_ENTRIES)
+@pytest.mark.parametrize("repos_json", [*_REPO_ENTRIES, "[" * 100_000])
 def test_the_configured_orgs_hold_the_org_of_each_repository_entry_the_code_config_keeps(
-    monkeypatch: pytest.MonkeyPatch, repos_json: str, code_repo: str
+    monkeypatch: pytest.MonkeyPatch, repos_json: str, code_repo: str, code_org: str
 ) -> None:
     """The code workers write the org of every entry the code config keeps, so attach
     places each with the cell's other configured orgs, and no other: a placement is
@@ -701,8 +702,8 @@ def test_the_configured_orgs_hold_the_org_of_each_repository_entry_the_code_conf
     for field in ("oidc_jit_org", "tracker_org"):
         monkeypatch.setattr(settings, field, "")
     monkeypatch.setattr(settings, "self_signup", "off")
-    monkeypatch.setattr(settings, "code_org", "acme")
+    monkeypatch.setattr(settings, "code_org", code_org)
     monkeypatch.setattr(settings, "code_repo", code_repo)
     monkeypatch.setattr(settings, "code_repos_json", repos_json)
     kept = {r.org for r in repos._configured_from_env()}
-    assert set(cell.fingerprint("dep-1")["configured_orgs"]) == {"acme"} | kept
+    assert set(cell.fingerprint("dep-1")["configured_orgs"]) == ({code_org} | kept) - {""}
