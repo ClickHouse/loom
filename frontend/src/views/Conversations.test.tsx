@@ -342,6 +342,26 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
   });
 
+  it("with the recording read failed, gives a viewer the viewer's wording and no connect", async () => {
+    roleHere.role = "viewer";
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v@x", org: "dev", roles: ["VIEWER"], namespaces: ["ns-a"] },
+    });
+    try {
+      listConversationThreads.mockResolvedValue({ threads: [] });
+      getNamespace.mockRejectedValue(new Error("unreachable"));
+      listMemories.mockResolvedValue(noMemories);
+      render(<Conversations />);
+      expect(
+        await screen.findByRole("heading", { name: "No conversations yet in this namespace" }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/when someone with writer access connects an agent/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+    } finally {
+      roleHere.role = "admin";
+    }
+  });
+
   it("with recording on and no thread, says what fills the page and offers Connect an agent", async () => {
     await emptyWith(true);
     expect(

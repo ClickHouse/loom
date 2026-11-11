@@ -613,23 +613,14 @@ export function Conversations() {
                     ? "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here: turn on Record conversations above, then connect an agent."
                     : "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here; an admin of this namespace can turn it on.",
                 }
-              : loggingEnabled === null
-                ? {
-                    // The read failed: whether recording is on is not known, so no connect.
-                    description:
-                      "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on.",
-                  }
-                : canWrite(roleHere)
-                  ? {
-                      description:
-                        "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on.",
-                      connect: "primary" as const,
-                    }
-                  : {
-                      // A viewer's agent saves nothing here.
-                      description:
-                        "Conversations appear here when someone with writer access connects an agent that saves its chat turns, one thread per chat, while Record conversations is on.",
-                    })}
+              : {
+                  // A viewer's agent saves nothing here; a read that failed leaves whether
+                  // recording is on unknown. Either way, no connect.
+                  description: canWrite(roleHere)
+                    ? "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on."
+                    : "Conversations appear here when someone with writer access connects an agent that saves its chat turns, one thread per chat, while Record conversations is on.",
+                  ...(loggingEnabled === true && canWrite(roleHere) ? { connect: "primary" as const } : {}),
+                })}
           />
         )}
 

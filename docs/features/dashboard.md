@@ -115,8 +115,8 @@ on that page (with auth off, the plugin's install lines), so connecting needs no
 offered only to someone who can write in the namespace; a viewer's empty Memories, Runs or
 Conversations page says who can fill it instead. Where only an operator or an admin fills
 it, the page says so, and names a deployment setting only to whoever runs the deployment (a
-platform admin, or anyone with auth off). A viewer's empty Memories page names who can write
-there and opens the namespace's members, where its admins are listed.
+platform admin, or anyone with auth off). A viewer's empty Memories page also opens the
+namespace's members, where its admins are listed.
 
 ### The assistant panel
 

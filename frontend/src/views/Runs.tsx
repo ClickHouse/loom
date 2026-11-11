@@ -49,6 +49,7 @@ import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { RunGrade } from "../flows/RunGrade";
 import { canCall } from "../lib/canCall";
 import { canWrite, useNamespaceRole } from "../lib/namespaceRole";
+import { focusViewHeading } from "../lib/place";
 
 // The ten fields a run row reads of the twenty a run carries; the replay reads the rest
 // (the request, the expected outcome, the response, the confidence) from run.get.
@@ -1211,8 +1212,7 @@ const UNFOLD_ID = "runs-show-unfolded";
 
 /** After the empty state's unfold: the toolbar's toggle, else the page's heading. */
 function focusAfterUnfold(): void {
-  const target = document.getElementById(UNFOLD_ID) ?? document.querySelector<HTMLElement>("main h1");
-  if (!target) return;
-  if (target.tagName === "H1" && !target.hasAttribute("tabindex")) target.tabIndex = -1;
-  target.focus();
+  const toggle = document.getElementById(UNFOLD_ID);
+  if (toggle) toggle.focus();
+  else focusViewHeading();
 }
