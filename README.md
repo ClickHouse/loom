@@ -80,8 +80,8 @@ Python, TypeScript and Go compiler indexers; TypeScript dependencies are prepare
 automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
 
 The installation lives in `~/.loom` (`LOOM_INSTALL_DIR` chooses another directory): the
-Compose file and the startup settings in `~/.loom/.env`. Re-running the installer upgrades
-in place and keeps your `.env` settings.
+Compose file and the startup settings in `~/.loom/.env`. Running the install command again
+upgrades in place and keeps your `.env` settings.
 
 Keep single-user mode localhost-only. For shared access, follow the
 [team deployment guide](./docs/operations/deployment.md#identity-modes), including TLS.

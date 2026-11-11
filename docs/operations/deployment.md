@@ -93,8 +93,8 @@ switches an install back to the bundled container.
   a server Loom shares, a self-managed admin can keep both to Loom's own:
   `CREATE ROW POLICY loom_own ON system.query_log, system.processes USING user IN ('loom', 'loom_reader') TO loom`;
   ClickHouse Cloud does not allow row policies on system tables.
-- **Switching.** Re-run the installer with `--clickhouse` to move an install to your own
-  server; Loom starts on an empty `loom` database there. The bundled container keeps
+- **Switching.** Run the install command again with `--clickhouse` (the table above) to
+  move an install to your own server; Loom starts on an empty `loom` database there. The bundled container keeps
   running on its old volume until you stop it (the installer prints the command); copy
   the data first with [backup and restore](./backup-and-recovery.md) if you need it.
 
