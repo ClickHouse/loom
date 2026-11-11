@@ -189,7 +189,10 @@ export function GettingStarted({
     const ctl = new AbortController();
     getModelStatus(ctl.signal)
       .then((s) => setModelsUnset(s.requires_setup))
-      .catch(() => setModelsUnset(false));
+      // A failed read ends in All set; a read left (the effect ran again) answers nothing.
+      .catch(() => {
+        if (!ctl.signal.aborted) setModelsUnset(false);
+      });
     return () => ctl.abort();
   }, [canSetModels, collapsed]);
 
