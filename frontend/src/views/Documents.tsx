@@ -452,12 +452,11 @@ export function Documents() {
     }
     // Keyed by the document, so a later delete of it replaces this notice and its Undo.
     toast(
-      lagging ? `Deleted ${source_uri}; the list may show it for a moment` : `Deleted ${source_uri}`,
+      lagging
+        ? `Deleted ${source_uri}; the list may show it for a moment, and Undo may need a moment too`
+        : `Deleted ${source_uri}`,
       lagging ? "info" : "ok",
-      {
-        key: `delete:${place.org}/${place.namespace}/${source_uri}`,
-        action: { label: "Undo", run: () => void onRestore(place, source_uri) },
-      },
+      undoNotice(place, source_uri),
     );
     // The row and its menu leave with the next read: focus then goes to the search.
     focusSearchOnRead.current = true;
@@ -483,9 +482,20 @@ export function Documents() {
         toast(`${source_uri} was not restored: ${RESTORE_REFUSED[r.reason]}`, "info");
       }
     } catch (e) {
+      // Not yet (the delete is still being recorded, or the server is busy): the notice comes
+      // back with its Undo, which left when it was pressed.
+      if (e instanceof ApiError && e.status === 503) {
+        toast(`${source_uri} is not restored yet; try Undo again in a moment`, "info", undoNotice(place, source_uri));
+        return;
+      }
       toastError("Restore failed", e);
     }
   };
+  // A delete's notice options: its key (a later delete of the document replaces it) and Undo.
+  const undoNotice = (place: { org: string; namespace: string }, source_uri: string) => ({
+    key: `delete:${place.org}/${place.namespace}/${source_uri}`,
+    action: { label: "Undo", run: () => void onRestore(place, source_uri) },
+  });
 
   const onDownload = async (r: KnowledgeEntry) => {
     try {

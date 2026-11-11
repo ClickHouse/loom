@@ -7,7 +7,7 @@ import { setMemory, type Identity } from "../api";
 import { sharedTagVocabulary } from "../lib/sharedReads";
 import { humanizeError } from "../lib/errorWords";
 import { isPublicationPending } from "../lib/errors";
-import { toast, toastError } from "../components/Toast";
+import { toast, toastCommitted } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
 
@@ -86,14 +86,14 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
       });
       toast("Memory added", "ok");
     } catch (e) {
-      // Added, with only lists and search behind (a key that already held a value): the
-      // dialog closes as after a success, so it is not sent again.
+      // Added, with only lists and search behind: the dialog closes as after a success, so
+      // it is not sent again.
       if (!isPublicationPending(e)) {
         setError(humanizeError(e));
         setBusy(false);
         return;
       }
-      toastError("Couldn't add the memory", e);
+      toastCommitted(e);
     }
     onAdded();
     reset();

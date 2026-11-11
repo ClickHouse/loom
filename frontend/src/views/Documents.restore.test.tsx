@@ -85,8 +85,30 @@ describe("Library delete Undo", () => {
     );
     const undo = await deleteRow();
     expect(undo).toBeInTheDocument();
-    expect(screen.getByText("Deleted docs/refunds.md; the list may show it for a moment")).toBeInTheDocument();
+    expect(
+      screen.getByText("Deleted docs/refunds.md; the list may show it for a moment, and Undo may need a moment too"),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Delete failed/)).toBeNull();
+    // Undo while the delete is still being recorded: refused for now, and the notice comes back
+    // with its Undo, which works once the server has caught up.
+    api.restoreKnowledge.mockRejectedValueOnce(
+      new ApiError({ status: 503, code: "BACKEND_UNAVAILABLE", detail: { category: "dependency", retryable: true } }),
+    );
+    await userEvent.click(undo);
+    expect(
+      await screen.findByText("docs/refunds.md is not restored yet; try Undo again in a moment"),
+    ).toBeInTheDocument();
+    api.restoreKnowledge.mockResolvedValueOnce({
+      restored: true,
+      reason: "",
+      doc_id: "d1",
+      revision: 2,
+      chunks_restored: 3,
+      original: "none",
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("Restored docs/refunds.md")).toBeInTheDocument();
+    expect(api.restoreKnowledge).toHaveBeenCalledTimes(2);
   });
 
   it("says why a refused restore left the document deleted", async () => {

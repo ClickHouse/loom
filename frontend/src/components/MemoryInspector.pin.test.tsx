@@ -25,11 +25,11 @@ const LIVE: MemoryDetail = {
   agent: "claude-desktop",
 };
 
-vi.mock("./Toast", () => ({
+// The real committedAnyway: a committed write's answer counts as done.
+vi.mock("./Toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./Toast")>()),
   toast: vi.fn(),
   toastError: vi.fn(),
-  // The real rule: a committed write's answer counts as done.
-  committedAnyway: vi.fn((_: string, e: unknown) => e instanceof ApiError && e.code === "PUBLICATION_PENDING"),
   ToastViewport: () => null,
 }));
 

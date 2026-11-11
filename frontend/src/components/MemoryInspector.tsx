@@ -54,6 +54,7 @@ import { LockMemoryDialog, RedactVersionDialog, RejectMemoryDialog } from "../fl
 import { navigationHref, useStore } from "../lib/state";
 import { openerUsable } from "../lib/place";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
+import { isPublicationPending } from "../lib/errors";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
 import { committedAnyway, keepOpenOnToasts, toast, toastError } from "./Toast";
@@ -2104,8 +2105,11 @@ function RenameForm({
       else onRenamed(r);
     } catch (e) {
       if (dryRun) toastError("Preview failed", e, { read: true });
-      // Moved, with no answer to follow: the form closes, so the move is not sent again.
-      else if (committedAnyway("Rename failed", e)) onCancel();
+      // The new key is written, but the server answers before it moves the old one: a second
+      // Rename finishes the move, so the form stays open and says so.
+      else if (isPublicationPending(e))
+        toast(`${target} is written, but ${fromKey} is not moved yet. Rename again to finish the move.`, "info");
+      else toastError("Rename failed", e);
     } finally {
       setBusy(null);
     }

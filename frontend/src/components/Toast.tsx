@@ -87,6 +87,13 @@ export function toast(msg: string, kind: ToastKind = "ok", opts: ToastOpts = {})
   _listeners.forEach((l) => l(item));
 }
 
+/** The line for a write that committed with only lists and search behind
+ *  (`PUBLICATION_PENDING`), with its request id and an error's reading time: for a dialog
+ *  that words its own failures inline and closes on this answer. */
+export function toastCommitted(err: unknown): void {
+  toastWithId(PUBLICATION_PENDING, "info", err);
+}
+
 /** For a write's catch: toasts the failure as `toastError` does and says whether the write
  *  committed anyway (`PUBLICATION_PENDING`: only lists and search lag). On true the caller
  *  goes on as after a success, so the page shows the write as made and never invites a

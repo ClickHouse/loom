@@ -22,8 +22,9 @@ vi.mock("../components/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../components/Toast")>()),
   toast: vi.fn(),
   toastError: vi.fn(),
+  toastCommitted: vi.fn(),
 }));
-import { toast, toastError } from "../components/Toast";
+import { toast, toastCommitted, toastError } from "../components/Toast";
 import {
   type KnowledgeUpload,
   addKnowledge,
@@ -36,6 +37,7 @@ import {
   uploadKnowledgeFile,
 } from "../api";
 import { ingestClock } from "../lib/fileIngest";
+import { ApiError } from "../lib/errors";
 import { AddDocumentDialog } from "./AddDocumentDialog";
 
 const realSleep = ingestClock.sleep;
@@ -129,6 +131,24 @@ describe("AddDocumentDialog", () => {
       allow_partial: false,
     });
     expect(addKnowledge).not.toHaveBeenCalled();
+  });
+
+  it("closes on pasted text that committed with only lists and search behind", async () => {
+    vi.mocked(addKnowledge).mockRejectedValue(
+      new ApiError({ status: 503, code: "PUBLICATION_PENDING", detail: { retryable: false } }),
+    );
+    const { onAdded, onOpenChange } = mount();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Paste text" }));
+    await user.type(screen.getByLabelText("Content"), "Refunds go to the lead.");
+    await user.type(screen.getByLabelText(/^Source URI/), "docs/refunds.md");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(onAdded).toHaveBeenCalledTimes(1);
+    expect(addKnowledge).toHaveBeenCalledTimes(1);
+    // One line, the committed write's, and no success toast beside it.
+    expect(toastCommitted).toHaveBeenCalledTimes(1);
+    expect(toast).not.toHaveBeenCalled();
   });
 
   it("refuses a format no extractor reads before anything is sent", async () => {

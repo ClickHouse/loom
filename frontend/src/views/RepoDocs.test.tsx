@@ -298,7 +298,10 @@ describe("RepoDocsList", () => {
     // Closed, so it is not sent again, and said as added.
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(addKnowledge).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(toast).mock.calls.some(([m]) => m === "Added Runbook")).toBe(true);
+    // One line: added, and the list may lag.
+    expect(vi.mocked(toast).mock.calls.filter(([m]) => /Runbook|caught up/.test(String(m)))).toEqual([
+      ["Added Runbook; the list may not show it for a moment", "info"],
+    ]);
   });
 
   it("a writer adds a file as its bytes, ingested under an address made from its name", async () => {

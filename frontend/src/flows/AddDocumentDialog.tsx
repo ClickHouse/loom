@@ -5,8 +5,8 @@ import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, cancelIngestion, type Identity, type IngestCancelResult } from "../api";
-import { toast, toastError } from "../components/Toast";
-import { isPublicationPending, PUBLICATION_PENDING } from "../lib/errors";
+import { toast, toastCommitted, toastError } from "../components/Toast";
+import { isPublicationPending } from "../lib/errors";
 import { DropZone } from "../components/ui/DropZone";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { TabTrigger } from "../components/ui/TabTrigger";
@@ -212,8 +212,9 @@ export function AddDocumentDialog({
   const canSubmit =
     sourceUri.trim() !== "" && busy === null && (mode === "file" ? !!file && !verdict?.refusal : content.trim() !== "");
 
-  const finish = (msg: string, level: "ok" | "info" = "ok") => {
-    toast(msg, level);
+  // `msg` null: the line was already said (a committed write's).
+  const finish = (msg: string | null, level: "ok" | "info" = "ok") => {
+    if (msg) toast(msg, level);
     onAdded();
     reset();
     onOpenChange(false);
@@ -285,7 +286,8 @@ export function AddDocumentDialog({
     } catch (e) {
       // Saved, with only lists and search behind: closed as after a success, not sent again.
       if (isPublicationPending(e)) {
-        finish(PUBLICATION_PENDING, "info");
+        toastCommitted(e);
+        finish(null);
         return;
       }
       setError(humanizeError(e));

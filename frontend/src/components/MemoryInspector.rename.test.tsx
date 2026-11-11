@@ -44,7 +44,12 @@ const MOVED: MemoryMoveResult = {
 };
 
 // The toast store has no viewport in this render; assert the call.
-vi.mock("./Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
+vi.mock("./Toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./Toast")>()),
+  toast: vi.fn(),
+  toastError: vi.fn(),
+  ToastViewport: () => null,
+}));
 vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true), ConfirmViewport: () => null }));
 
 vi.mock("../api", async (importOriginal) => {
@@ -82,6 +87,7 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 import { deleteMemory, getMemory, moveMemory, pinMemory, setMemory } from "../api";
+import { ApiError } from "../lib/errors";
 import { toast } from "./Toast";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
@@ -102,6 +108,8 @@ const person: WhoAmI = {
   namespaces: ["team-alerts"],
 };
 const identity = { org: "dev", namespace: "team-alerts", agent: "loom-ui" };
+
+const PENDING = new ApiError({ status: 503, code: "PUBLICATION_PENDING", detail: { retryable: false } });
 
 function seed(role: MyNamespaceEntry["role"]) {
   useStore.setState({
@@ -189,6 +197,43 @@ describe("MemoryInspector rename with redirect", () => {
     const badge = await screen.findByTestId("redirect-badge");
     expect(badge).toHaveTextContent("redirects to prefs/coffee");
     expect(toast).toHaveBeenCalledWith("Renamed to prefs/coffee — the old key redirects to it", "ok");
+  });
+
+  it("keeps the form open when the new key is written but the old one is not moved yet", async () => {
+    seed("writer");
+    const onChanged = vi.fn();
+    await open(onChanged);
+    await openRename();
+    const form = screen.getByTestId("rename-form");
+    const input = within(form).getByLabelText("New key");
+    await userEvent.clear(input);
+    await userEvent.type(input, "prefs/coffee");
+    vi.mocked(moveMemory).mockRejectedValueOnce(PENDING);
+    await userEvent.click(within(form).getByRole("button", { name: "Rename" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(
+        "prefs/coffee is written, but coffee_pref is not moved yet. Rename again to finish the move.",
+        "info",
+      ),
+    );
+    // A second Rename finishes the move: the form is still there to send it.
+    expect(screen.getByTestId("rename-form")).toBeInTheDocument();
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it("closes the editor on a saved value whose search copy lags, and reads the row again", async () => {
+    seed("writer");
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const value = screen.getByLabelText("Memory value");
+    await userEvent.clear(value);
+    await userEvent.type(value, "black");
+    vi.mocked(setMemory).mockRejectedValueOnce(PENDING);
+    vi.mocked(getMemory).mockResolvedValue({ ...LIVE, value: "black" });
+    await userEvent.click(screen.getByRole("button", { name: "Save new version" }));
+    await waitFor(() => expect(screen.queryByLabelText("Memory value")).toBeNull());
+    expect(await screen.findByText("black")).toBeInTheDocument();
+    expect(setMemory).toHaveBeenCalledTimes(1);
   });
 
   it("holds the redirect on a no_delete row, which a rename without one would delete", async () => {

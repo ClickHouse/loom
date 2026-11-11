@@ -3,7 +3,7 @@
 import { act, cleanup, render, screen } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/errors";
-import { ToastViewport, errorToastMs, toastError, toastErrorLine } from "./Toast";
+import { ToastViewport, committedAnyway, errorToastMs, toastError, toastErrorLine } from "./Toast";
 
 afterEach(() => {
   cleanup();
@@ -72,6 +72,23 @@ describe("toastError", () => {
     // Information, not a failure: no alert, no danger icon.
     expect(document.querySelector("[data-toast-kind]")).toHaveAttribute("data-toast-kind", "info");
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("tells a write's catch that a committed write went through, and toasts every failure", async () => {
+    render(<ToastViewport />);
+    const pending = new ApiError({ status: 503, code: "PUBLICATION_PENDING", requestId: "req-p", detail: {} });
+    let committed = false;
+    act(() => {
+      committed = committedAnyway("Save failed", pending);
+    });
+    expect(committed).toBe(true);
+    expect(await screen.findByText(/^Done, but lists and search have not caught up yet/)).toBeInTheDocument();
+    expect(screen.getByText("request id req-p")).toBeInTheDocument();
+    act(() => {
+      committed = committedAnyway("Save failed", new ApiError({ status: 409, message: "the row changed" }));
+    });
+    expect(committed).toBe(false);
+    expect(await screen.findByText(/^Save failed: /)).toBeInTheDocument();
   });
 
   it("gives a caller's own line the request id, and one toast per key", async () => {

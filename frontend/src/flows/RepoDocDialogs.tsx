@@ -60,7 +60,8 @@ export function RepoDocAddDialog({
   repo: string;
   takenUris: string[];
   /** `lost`: what a file published as partial lost ([] for nothing named); null when whole. */
-  onAdded: (title: string, lost: string[] | null) => void;
+  /** `lagging`: added, with lists and search not caught up yet. */
+  onAdded: (title: string, lost: string[] | null, lagging?: boolean) => void;
 }) {
   const [mode, setMode] = useState<"file" | "paste">("file");
   const [file, setFile] = useState<File | null>(null);
@@ -148,8 +149,7 @@ export function RepoDocAddDialog({
       }
       if (isPublicationPending(e)) {
         // Added, with only lists and search behind: closed as after a success, not sent again.
-        toastError("Couldn't add the document", e);
-        onAdded(title.trim(), null);
+        onAdded(title.trim(), null, true);
         onOpenChange(false);
         return;
       }
