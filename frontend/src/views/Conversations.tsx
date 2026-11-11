@@ -85,7 +85,7 @@ export function Conversations() {
   // claude-desktop, …). Threads are scoped to the namespace; an agent filter
   // keeps you from staring at every tool's sessions at once.
   const [agentFilter, setAgentFilter] = useState("*");
-  // Per-namespace "record my conversations" switch (null = not yet loaded).
+  // The namespace's Record conversations switch (null = not yet loaded).
   const [loggingEnabled, setLoggingEnabled] = useState<boolean | null>(null);
   // Recent threads landing — populated on mount so a user with no
   // query sees what's there instead of a dead-end empty state. Also

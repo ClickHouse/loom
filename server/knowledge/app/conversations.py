@@ -96,7 +96,7 @@ SaveRefusal = Literal[
 
 
 async def namespace_recording_enabled(org: str, namespace: str) -> bool:
-    """The namespace owner's "record my conversations" switch. Fails closed: a
+    """The namespace owner's Record conversations switch. Fails closed: a
     namespace with no stored answer is not recording."""
     from server.knowledge.store import conversations as conversation_repo
 

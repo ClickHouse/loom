@@ -3,10 +3,9 @@
 // The owner's Record conversations switch in the dashboard
 // (`conversation_logging_enabled`) is the only thing that decides whether turns
 // are kept. The server accepts an append into a namespace with the switch off
-// and stores nothing
-// (`stored: false, reason: "logging_disabled"`), so a client that ignored
-// the reply would send every turn for nothing and its primer would claim
-// logging it does not do. This module keeps what the server said, per
+// and stores nothing (`stored: false, reason: "logging_disabled"`), so a client
+// that ignored the reply would send every turn for nothing and its primer would
+// claim logging it does not do. This module keeps what the server said, per
 // server + org + namespace, in a small tmp file:
 //
 //   - the flusher records each append batch's verdict;

@@ -134,9 +134,8 @@ async function main() {
       rendered: result && typeof result.rendered === "string" ? result.rendered : "",
       codeBlock,
       lines: [taskLine, briefsLine, collectionsText],
-      // The model must not log turns itself: the Stop hook does, when the
-      // owner's Record conversations switch is on. Always said, even with no
-      // primer.
+      // The model must not log turns itself: the Stop hook does when the owner's
+      // Record conversations switch is on. Always said, even with no primer.
       recordingLine: recordingPrimerLine(recording, scope.namespace),
     }),
   );
