@@ -9,6 +9,7 @@ import {
   ANSWER_MAX_MS,
   ConversationDeleted,
   KEPT_TURNS,
+  StorageRefused,
   adoptEpoch,
   deleteAllConversations,
   deleteConversation,
@@ -186,6 +187,28 @@ describe("stored conversations", () => {
     expect(() => saveConversation(conv("c2", [turn(0)]))).toThrow();
     setItem.mockRestore();
     expect(localStorage.getItem(INDEX_KEY)).toContain("c1");
+  });
+
+  it("leaves no key behind for a new conversation whose index entry was refused, and keeps an existing one's", () => {
+    // The conversation's key fits; the index write after it is refused, every time.
+    const real = Storage.prototype.setItem;
+    const refuseIndex = () =>
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+        if (key === INDEX_KEY) throw new DOMException("full", "QuotaExceededError");
+        real.call(this, key, value);
+      });
+    let spy = refuseIndex();
+    expect(() => saveConversation(conv("c1", [turn(0)]))).toThrow(StorageRefused);
+    spy.mockRestore();
+    expect(localStorage.getItem("loom_assistant_c_c1")).toBeNull();
+    expect(readIndex().entries).toEqual([]);
+
+    saveConversation(conv("c2", [turn(0)]));
+    spy = refuseIndex();
+    expect(() => saveConversation(conv("c2", [turn(0), turn(1)]))).toThrow(StorageRefused);
+    spy.mockRestore();
+    expect(localStorage.getItem("loom_assistant_c_c2")).not.toBeNull();
+    expect(readIndex().entries.map((e) => e.id)).toEqual(["c2"]);
   });
 
   it("merges two tabs' copies turn by turn, the newer copy of each turn winning", () => {

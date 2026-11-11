@@ -201,20 +201,32 @@ export function saveConversation(c: Conversation): boolean {
     localStorage.setItem(CONVERSATION_PREFIX + c.id, text);
     writeIndex({ entries, tombstones: index.tombstones });
   };
+  // Refused: a new conversation's key, written before the index refused its entry, goes,
+  // since only the index's entries expire and are cleared.
+  const refused = () => {
+    if (!index.entries.some((e) => e.id === c.id)) {
+      try {
+        localStorage.removeItem(CONVERSATION_PREFIX + c.id);
+      } catch {
+        /* refused too: nothing more to do */
+      }
+    }
+    return new StorageRefused();
+  };
   try {
     attempt();
     return true;
   } catch {
     // The browser's own quota: the oldest other conversation makes room, once.
     const oldest = entries.filter((e) => e.id !== c.id).pop();
-    if (!oldest) throw new StorageRefused();
+    if (!oldest) throw refused();
     dropped.push(oldest);
     entries = entries.filter((e) => e !== oldest);
     try {
       attempt();
       return true;
     } catch {
-      throw new StorageRefused();
+      throw refused();
     }
   }
 }
