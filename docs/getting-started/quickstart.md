@@ -332,9 +332,9 @@ Claims, roles and grants are in [Tokens and grants](../guides/tokens-and-grants.
 
 Every operation is a `POST /v1/<op>` with a JSON body that names the identity
 `(org, namespace, agent)`. A fresh install with the stock `.env`, from the released image or a
-checkout, is single-user: org `dev`, namespace `local`, and no token, so the calls below work as written. If a call
-without a token answers 401 `AUTH_INVALID`, auth is on: use a token and your account's
-org and namespace, as the next paragraph says.
+checkout, is single-user: org `dev`, namespace `local`, and no token, so the calls below
+work as written. If a call without a token answers 401 `AUTH_INVALID`, auth is on: use a
+token and your account's org and namespace, as the next paragraph says.
 
 ```bash
 curl -sX POST http://localhost:7777/v1/memory.set -H 'Content-Type: application/json' \
