@@ -5,7 +5,7 @@ import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
 import { listTokens, type TokenEntry } from "../api";
 import { getModelStatus } from "../api/models";
 import { useStore } from "../lib/state";
-import { pluginInstallLines } from "../lib/clients";
+import { FIRST_CALL_POLL_MS, FIRST_CALL_WAIT_MS, pluginInstallLines } from "../lib/clients";
 import { parseChTime } from "../lib/format";
 import { useVisiblePoll } from "../lib/hooks";
 import { hasPlatformAdminClaim } from "../lib/role";
@@ -30,8 +30,6 @@ const QuickConnect = lazy(() => import("../views/Tokens").then((m) => ({ default
 
 /** The dashboard writes as this agent; a memory from any other agent means one connected. */
 export const DASHBOARD_AGENT = "loom-ui";
-/** A token made in this visit is polled for its first call this long, every 15 s. */
-const FIRST_CALL_WAIT_MS = 10 * 60_000;
 
 export interface OnboardingHandle {
   state: OnboardingState;
@@ -182,7 +180,7 @@ export function GettingStarted({
   // Only a token made in this visit is followed to its first call; an older one is read
   // again on the next visit.
   const following = connect === "waiting" && mintedAt !== null && Date.now() - mintedAt < FIRST_CALL_WAIT_MS;
-  useVisiblePoll(reloadTokens, 15_000, following && !authOff);
+  useVisiblePoll(reloadTokens, FIRST_CALL_POLL_MS, following && !authOff);
 
   // The models row: only for whoever can set them, while they are not set.
   const canSetModels = authOff || hasPlatformAdminClaim(whoami);
@@ -292,7 +290,7 @@ export function GettingStarted({
               does not bring the step's actions back. */}
           {connected ? (
             <p className="text-xs text-text-muted mt-1">
-              {agentSeen ? "An agent is saving memories here." : "Your agent has connected."}
+              {agentSeen ? "An agent is saving memories here." : "Connected."}
             </p>
           ) : authOff ? (
             <AuthOffConnect />
@@ -379,7 +377,7 @@ export function GettingStarted({
       {allDone && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
           <span className="text-success font-medium">
-            {agentSeen ? "All set: your agent is saving memories here." : "All set: your agent is connected."}
+            {agentSeen ? "All set: your agent is saving memories here." : "All set."}
           </span>
           <Button type="secondary" htmlType="button" onClick={hide}>
             Hide this checklist

@@ -3,6 +3,11 @@
 // server/identity/app/token_clients.py builds the same setups, held together by
 // clientSetups.fixture.json.
 
+/** A token made in this visit is polled for its first call this long, every 15 s (the
+ *  Tokens page and the first-run checklist), so a never-used token is not polled forever. */
+export const FIRST_CALL_WAIT_MS = 10 * 60_000;
+export const FIRST_CALL_POLL_MS = 15_000;
+
 export type ClientId = "claude-desktop" | "claude-code" | "codex" | "cursor" | "vscode" | "cline" | "windsurf" | "zed";
 
 interface MCPClient {

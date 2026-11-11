@@ -31,6 +31,8 @@ import { COARSE_POINTER, useMedia } from "../lib/useMedia";
 import {
   CLIENTS,
   configPreviewText,
+  FIRST_CALL_POLL_MS,
+  FIRST_CALL_WAIT_MS,
   formatMcpConfig,
   isClientId,
   pluginInstallLines,
@@ -184,10 +186,10 @@ export function TokensSection({
   const [mintedAtMs, setMintedAtMs] = useState<number | null>(null);
   const waitingForFirstCall =
     mintedAtMs !== null &&
-    Date.now() - mintedAtMs < 10 * 60_000 &&
+    Date.now() - mintedAtMs < FIRST_CALL_WAIT_MS &&
     (tokens || []).some((s) => !s.last_used_at && !s.revoked_at);
   // Each poll's reload re-renders, which re-checks the ten-minute window.
-  useVisiblePoll(reloadTokens, 15_000, waitingForFirstCall);
+  useVisiblePoll(reloadTokens, FIRST_CALL_POLL_MS, waitingForFirstCall);
 
   const onRevoke = async (tokenName: string) => {
     if (

@@ -7,6 +7,7 @@ import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { onboardingKey } from "../lib/onboarding";
 import { axeViolations } from "../test/axe";
 import { Recent } from "../views/Recent";
+import { listTokens } from "../api";
 
 // The first-run checklist sits on Memories, the bare root's landing. It shows for an
 // account with only its personal namespace and no memories, in place of the empty state;
@@ -44,9 +45,12 @@ vi.mock("../api/models", async (importOriginal) => {
 vi.mock("../views/Tokens", () => ({
   // The token form itself is the Tokens page's, tested there; here only that it opens in place
   // and what the step does when it is closed.
-  QuickConnect: ({ onClose }: { onClose: () => void }) => (
+  QuickConnect: ({ onMinted, onClose }: { onMinted: (r: unknown) => void; onClose: () => void }) => (
     <div>
       Token form
+      <button type="button" onClick={() => onMinted({})}>
+        Make the token
+      </button>
       <button type="button" onClick={onClose}>
         Close the form
       </button>
@@ -182,6 +186,34 @@ describe("GettingStarted on Memories", () => {
     expect(await within(panel).findByRole("button", { name: "Create a token" }, WAIT)).toHaveFocus();
   });
 
+  it("follows a token made in the step to its first call, every 15 s", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      seed([personal]);
+      render(<Recent />);
+      const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+      await userEvent.click(within(panel).getByRole("button", { name: "Create a token" }));
+      tokens.list = [token()];
+      await userEvent.click(await within(panel).findByRole("button", { name: "Make the token" }, WAIT));
+      expect(
+        await within(panel).findByText(
+          "Waiting for the first call from your agent. This updates on its own.",
+          undefined,
+          WAIT,
+        ),
+      ).toBeInTheDocument();
+      const reads = vi.mocked(listTokens).mock.calls.length;
+      tokens.list = [token({ last_used_at: "2026-09-18T09:05:00" })];
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(vi.mocked(listTokens).mock.calls.length).toBeGreaterThan(reads);
+      expect(await within(panel).findByText("Connected.", undefined, WAIT)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("waits on a token of mine that has made no call, and ticks once it has", async () => {
     tokens.list = [token()];
     seed([personal]);
@@ -194,8 +226,8 @@ describe("GettingStarted on Memories", () => {
     first.unmount();
     tokens.list = [token({ last_used_at: "2026-09-18T09:05:00" })];
     render(<Recent />);
-    // A token's first call says the agent connected; only its memory here says it saves.
-    expect(await screen.findByText("Your agent has connected.", undefined, WAIT)).toBeInTheDocument();
+    // A token's first call says only that it connected; only a memory here says it saves.
+    expect(await screen.findByText("Connected.", undefined, WAIT)).toBeInTheDocument();
   });
 
   it("keeps a connect step ticked on an earlier visit done, with no token to make", async () => {
@@ -208,7 +240,7 @@ describe("GettingStarted on Memories", () => {
     seed([personal]);
     render(<Recent />);
     const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
-    expect(within(panel).getByText("Your agent has connected.")).toBeInTheDocument();
+    expect(within(panel).getByText("Connected.")).toBeInTheDocument();
     expect(within(panel).queryByRole("button", { name: /Create (a|another) token/ })).toBeNull();
     expect(within(panel).getByText("1 of 2 done")).toBeInTheDocument();
     // The next step's action is the page's primary one.

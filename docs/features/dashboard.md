@@ -269,7 +269,7 @@ shows the same namespace.
 - **Back and Forward** never switch namespace: an entry made in another namespace opens
   nothing it names, and the address names the page's namespace. The one exception is Back
   from a tracker's Patterns board, which returns to the namespace its Open left.
-- **On the bare root**, the default namespace opens on Memories, and `?view=` names another page by view id or path (`/?view=memories`,
+- **On the bare root**, a default memory namespace opens on Memories (the landing rules above give the rest), and `?view=` names another page by view id or path (`/?view=memories`,
   `/?view=admin/health`) and `?memory=<key>` opens that memory on Memories.
 - **A single sign-on** started on a page returns to it, within ten minutes.
 - **The namespace picker** lists namespaces only, each with its description, and folds
