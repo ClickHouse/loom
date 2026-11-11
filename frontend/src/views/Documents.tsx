@@ -441,7 +441,6 @@ export function Documents() {
     const place = { org: identity.org, namespace: identity.namespace };
     try {
       await deleteKnowledge(place, source_uri);
-      // Keyed by the document, so a later delete of it replaces this notice and its Undo.
       toast(`Deleted ${source_uri}`, "ok", undoNotice(place, source_uri));
     } catch (e) {
       if (!isPublicationPending(e)) {
@@ -479,10 +478,9 @@ export function Documents() {
         toast(`${source_uri} was not restored: ${RESTORE_REFUSED[r.reason]}`, "info");
       }
     } catch (e) {
-      // Not yet (the delete is still being recorded, or the server is busy): the notice comes
-      // back with its Undo, which left when it was pressed.
+      // Refused for now (another write holds the source, or a delivery may still land, which
+      // can wait on an operator): the notice comes back with its Undo, which left when pressed.
       if (e instanceof ApiError && e.code === "BACKEND_UNAVAILABLE") {
-        // The wait can be short (another write holds it) or an operator's (a parked delivery).
         toastWithId(
           `${source_uri} is not restored yet; try Undo again later`,
           "info",
