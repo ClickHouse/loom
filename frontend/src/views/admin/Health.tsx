@@ -467,7 +467,7 @@ export function WorkersPanel() {
           title={rows.length === 0 ? "No workers reporting" : "Nothing to show"}
           description={
             rows.length === 0
-              ? "Neither this process nor loom.worker_status has a worker pass on record. Either no workers colour is running, or /v1/admin/workers.status is not reachable from here."
+              ? "Neither this process nor loom.worker_status has a worker pass on record. Either no workers colour is running, or this page cannot reach the workers' status."
               : "All workers are disabled in config."
           }
           action={rows.length > 0 ? { label: "Show all", onClick: () => setShowAll(true) } : undefined}

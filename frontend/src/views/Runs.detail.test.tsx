@@ -147,7 +147,8 @@ describe("Runs page", () => {
     render(<Runs />);
     expect(await screen.findByText("No runs with memory activity")).toBeInTheDocument();
     expect(screen.queryByText("No runs yet")).toBeNull();
-    fireEvent.click(screen.getByText("Show runs with no memory activity"));
+    // The empty state's own action unfolds them.
+    fireEvent.click(screen.getByRole("button", { name: "Show runs with no memory activity" }));
     expect(await screen.findByText("ISSUE_TRIAGE issue_114194")).toBeInTheDocument();
   });
 

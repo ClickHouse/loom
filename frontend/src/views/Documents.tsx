@@ -207,6 +207,8 @@ export function Documents() {
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  // New collection: the picker's dialog, which the empty Library opens too.
+  const [creatingCollection, setCreatingCollection] = useState(false);
   // An upload of many files has started: the dialog stays open when the place shown changes.
   const batchStarted = useRef(false);
   // The header's New › Document adds to the header's namespace: it steps aside while a
@@ -864,6 +866,8 @@ export function Documents() {
       place={collection ?? picked.namespace}
       onPick={goTo}
       onLeave={pickCollection}
+      creating={creatingCollection}
+      onCreatingChange={setCreatingCollection}
     />
   );
 
@@ -910,7 +914,13 @@ export function Documents() {
           : kind === "code"
             ? { label: "Open repositories", onClick: () => go.setView("code") }
             : undefined;
-    const pick = listed !== null && listed.length === 0 ? "Create a collection above" : "Pick a collection above";
+    const none = listed !== null && listed.length === 0;
+    const pick = none ? "Create a collection" : "Pick a collection above";
+    const orNamespace = !picked.namespace
+      ? ""
+      : none
+        ? ", or pick a memory namespace from the namespace menu"
+        : ", or a memory namespace from the namespace menu";
     const where = picked.namespace
       ? `${picked.namespace} holds no documents. `
       : picking
@@ -926,10 +936,18 @@ export function Documents() {
         {!unknown && (
           <EmptyState
             icon="folder-open"
-            title={listed !== null && listed.length === 0 ? "No collection yet" : "Pick a collection"}
+            title={none ? "No collection yet" : "Pick a collection"}
             // With no namespace to reach, the namespace menu holds none to offer.
-            description={`${where}${pick}${picked.namespace ? ", or a memory namespace from the namespace menu" : ""}.`}
-            action={action}
+            description={`${where}${pick}${orNamespace}.`}
+            action={none ? { label: "New collection", onClick: () => setCreatingCollection(true) } : action}
+            actions={
+              none &&
+              action && (
+                <Button type="secondary" htmlType="button" onClick={action.onClick}>
+                  {action.label}
+                </Button>
+              )
+            }
           />
         )}
         {picked.namespace && (
@@ -1102,7 +1120,7 @@ export function Documents() {
           description={
             readOnly
               ? "Nothing has been added yet. Its members who write can add documents."
-              : "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file: the server extracts it, your agents search it with knowledge.search, and you can download the original back any time."
+              : "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file: the server extracts it, your agents search it, and you can download the original back any time."
           }
           action={readOnly ? undefined : { label: "Add document", onClick: () => setAddOpen(true) }}
         />

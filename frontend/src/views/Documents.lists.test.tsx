@@ -130,6 +130,8 @@ describe("Library list", () => {
     render(<Documents />);
     expect(await screen.findByText("Your library is empty")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Add document/ })).toHaveLength(1);
+    expect(screen.getByText(/your agents search it, and you can download the original/)).toBeInTheDocument();
+    expect(screen.queryByText(/knowledge\.search/)).toBeNull();
   });
 
   it("says a tag filter once, in the field, and a filter that matches nothing on one line", async () => {

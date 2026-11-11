@@ -1,5 +1,6 @@
 // The Library shows the header's namespace or one of the collections the caller reads: a
 // tree with each one's description, a menu that shares or deletes it, and New collection.
+import { useState, type ComponentProps } from "react";
 import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
@@ -133,6 +134,12 @@ describe("collection names and order", () => {
   });
 });
 
+/** The picker as Documents mounts it: the New collection dialog's open state is the page's. */
+function Picker(props: Omit<ComponentProps<typeof LibraryCollections>, "creating" | "onCreatingChange">) {
+  const [creating, setCreating] = useState(false);
+  return <LibraryCollections {...props} creating={creating} onCreatingChange={setCreating} />;
+}
+
 describe("LibraryCollections", () => {
   afterEach(() => {
     cleanup();
@@ -142,13 +149,7 @@ describe("LibraryCollections", () => {
 
   it("names the namespace when no collection is shown, and passes axe", async () => {
     const { container } = render(
-      <LibraryCollections
-        org="acme"
-        namespace="team"
-        collections={read(ROWS)}
-        current={null}
-        onPick={() => undefined}
-      />,
+      <Picker org="acme" namespace="team" collections={read(ROWS)} current={null} onPick={() => undefined} />,
     );
     expect(screen.getByRole("button", { name: "Show the documents of" })).toHaveTextContent("Namespace team");
     expect(screen.queryByRole("button", { name: /Actions for/ })).not.toBeInTheDocument();
@@ -157,30 +158,14 @@ describe("LibraryCollections", () => {
   });
 
   it("shows the collection shown with its role, and its menu for an admin", () => {
-    render(
-      <LibraryCollections
-        org="acme"
-        namespace="team"
-        collections={read(ROWS)}
-        current={ROWS[1]}
-        onPick={() => undefined}
-      />,
-    );
+    render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={ROWS[1]} onPick={() => undefined} />);
     expect(screen.getByRole("button", { name: "Show the documents of" })).toHaveTextContent("col-q3 · Quarter plans");
     expect(screen.getByText("Admin")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Actions for col-q3" })).toBeInTheDocument();
   });
 
   it("gives a viewer Members and no Delete", async () => {
-    render(
-      <LibraryCollections
-        org="acme"
-        namespace="team"
-        collections={read(ROWS)}
-        current={ROWS[0]}
-        onPick={() => undefined}
-      />,
-    );
+    render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={ROWS[0]} onPick={() => undefined} />);
     fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for col-plans" }), { button: 0, ctrlKey: false });
     await settle();
     expect(screen.getByRole("menuitem", { name: "Members" })).toBeInTheDocument();
@@ -193,7 +178,7 @@ describe("LibraryCollections", () => {
 
   it("closes Members when another collection is shown, so a grant never lands on it", async () => {
     const view = (current: CollectionEntry) => (
-      <LibraryCollections
+      <Picker
         org="acme"
         namespace="team"
         collections={read(ROWS)}
@@ -228,44 +213,20 @@ describe("LibraryCollections", () => {
       entry("col-q3-k", { parent: "col-q3", title: "Kid" }),
       entry("col-q3-k-1", { parent: "col-q3-k" }),
     ];
-    render(
-      <LibraryCollections
-        org="acme"
-        namespace="team"
-        collections={read(rows)}
-        current={rows[2]}
-        onPick={() => undefined}
-      />,
-    );
+    render(<Picker org="acme" namespace="team" collections={read(rows)} current={rows[2]} onPick={() => undefined} />);
     expect(screen.getByRole("button", { name: "Back to Kid" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "Collection path" })).toBeNull();
   });
 
   it("gives the user's own collection no menu", () => {
-    render(
-      <LibraryCollections
-        org="acme"
-        namespace="team"
-        collections={read(ROWS)}
-        current={ROWS[2]}
-        onPick={() => undefined}
-      />,
-    );
+    render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={ROWS[2]} onPick={() => undefined} />);
     expect(screen.getByRole("button", { name: "Show the documents of" })).toHaveTextContent("My files");
     expect(screen.queryByRole("button", { name: /Actions for/ })).not.toBeInTheDocument();
   });
 
   it("says when the collections cannot be read, and reads them again on request", () => {
     const collections = read(null, { error: new Error("offline") });
-    render(
-      <LibraryCollections
-        org="acme"
-        namespace="team"
-        collections={collections}
-        current={null}
-        onPick={() => undefined}
-      />,
-    );
+    render(<Picker org="acme" namespace="team" collections={collections} current={null} onPick={() => undefined} />);
     expect(screen.getByText(/Couldn't load collections/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Load collections again" }));
     expect(collections.reload).toHaveBeenCalled();
@@ -276,15 +237,7 @@ describe("the path's place above the top", () => {
   it("is the header's namespace, else My files, else none", () => {
     const onPick = vi.fn();
     const at = (namespace: string | null, rows: CollectionEntry[], current: CollectionEntry) =>
-      render(
-        <LibraryCollections
-          org="acme"
-          namespace={namespace}
-          collections={read(rows)}
-          current={current}
-          onPick={onPick}
-        />,
-      );
+      render(<Picker org="acme" namespace={namespace} collections={read(rows)} current={current} onPick={onPick} />);
     at("team", ROWS, ROWS[1]);
     const namespaceLink = within(screen.getByRole("navigation", { name: "Collection path" })).getByRole("link", {
       name: "Namespace team",
@@ -850,8 +803,12 @@ describe("the Library on a collection", () => {
     await settle();
     expect(api.listKnowledge).not.toHaveBeenCalled();
     expect(screen.getByText("No collection yet", { selector: "h2, h3, p, div" })).toBeInTheDocument();
-    expect(screen.getByText(/Create a collection above/)).toBeInTheDocument();
+    expect(screen.getByText(/Create a collection\./)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
+    // New collection opens the picker's own create dialog in place.
+    const state = screen.getByRole("heading", { name: "No collection yet" }).parentElement as HTMLElement;
+    await userEvent.click(within(state).getByRole("button", { name: "New collection" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
   it("leaves the collection deleted here for the header's namespace, replacing the entry", async () => {
@@ -929,15 +886,7 @@ describe("the Library on a collection", () => {
 
   it("keeps the whole description in an item for the search, past the cut", () => {
     const long = entry("col-long", { description: `${"x ".repeat(50)}checklist` });
-    render(
-      <LibraryCollections
-        org="acme"
-        namespace="team"
-        collections={read([long])}
-        current={null}
-        onPick={() => undefined}
-      />,
-    );
+    render(<Picker org="acme" namespace="team" collections={read([long])} current={null} onPick={() => undefined} />);
     fireEvent.pointerDown(screen.getByRole("button", { name: "Show the documents of" }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole("button", { name: "Show the documents of" }));
     const item = within(screen.getByRole("dialog")).getByText(/^col-long/);
@@ -973,15 +922,7 @@ describe("the Library on a collection", () => {
   });
 
   it("finds a collection by typing in the select", async () => {
-    render(
-      <LibraryCollections
-        org="acme"
-        namespace="team"
-        collections={read(ROWS)}
-        current={null}
-        onPick={() => undefined}
-      />,
-    );
+    render(<Picker org="acme" namespace="team" collections={read(ROWS)} current={null} onPick={() => undefined} />);
     fireEvent.pointerDown(screen.getByRole("button", { name: "Show the documents of" }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole("button", { name: "Show the documents of" }));
     expect(within(screen.getByRole("dialog")).getByRole("textbox")).toBeInTheDocument();

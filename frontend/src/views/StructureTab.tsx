@@ -136,7 +136,11 @@ function RecordSchemas({ canRegister, canDecide }: { canRegister: boolean; canDe
         }
       />
       <SectionState error={error} loading={data === null} things="record schemas" onRetry={refresh} />
-      {data?.schemas.length === 0 && <p className="mt-2 text-sm text-text-muted">No record schema yet.</p>}
+      {data?.schemas.length === 0 && (
+        <p className="mt-2 text-sm text-text-muted">
+          {canRegister ? "No record schema yet. Add one with New schema." : "No record schema yet."}
+        </p>
+      )}
       <ul className="mt-2 divide-y divide-border">
         {data?.schemas.map((s) => (
           <li key={s.name} className="flex flex-wrap items-center gap-2 py-2">
@@ -574,7 +578,11 @@ function Ontology({ canRegister }: { canRegister: boolean }) {
     <Panel>
       <SectionHeading label="Graph ontology" level={2} caption="The entity types and relations the graph uses." />
       <SectionState error={error} loading={data === null} things="the ontology" onRetry={refresh} />
-      {data?.length === 0 && <p className="mt-2 text-sm text-text-muted">No term registered.</p>}
+      {data?.length === 0 && (
+        <p className="mt-2 text-sm text-text-muted">
+          {canRegister ? "No term registered. Add one below." : "No term registered."}
+        </p>
+      )}
       <ul className="mt-2 divide-y divide-border">
         {data?.map((e) => (
           <li key={`${e.kind}-${e.name}`} className="flex flex-wrap items-center gap-2 py-1.5">
@@ -661,7 +669,11 @@ function Categories({ canAdd }: { canAdd: boolean }) {
     <Panel>
       <SectionHeading label="Categories" level={2} caption="The categories agents file memories under." />
       <SectionState error={error} loading={data === null} things="categories" onRetry={refresh} />
-      {data?.length === 0 && <p className="mt-2 text-sm text-text-muted">No category yet.</p>}
+      {data?.length === 0 && (
+        <p className="mt-2 text-sm text-text-muted">
+          {canAdd ? "No category yet. Add one below." : "No category yet."}
+        </p>
+      )}
       <ul className="mt-2 divide-y divide-border">
         {data?.map((c) => (
           <li key={c.category_id} className="flex items-center gap-2 py-1.5">

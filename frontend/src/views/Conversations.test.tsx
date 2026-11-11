@@ -31,9 +31,10 @@ vi.mock("../api", async (importOriginal) => {
     listConversationMessages: (...args: unknown[]) => listConversationMessages(...args),
   };
 });
+const roleHere = vi.hoisted(() => ({ role: "admin" as "admin" | "writer" | "viewer" }));
 vi.mock("../lib/namespaceRole", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/namespaceRole")>()),
-  useNamespaceRole: () => "admin",
+  useNamespaceRole: () => roleHere.role,
 }));
 vi.mock("../components/SessionBriefsSection", () => ({ SessionBriefsSection: () => null }));
 vi.mock("../components/SessionBriefPanel", () => ({ SessionBriefPanel: () => null }));
@@ -306,6 +307,110 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     render(<Conversations />);
     expect(await screen.findByText(/Thread not found/)).toBeInTheDocument();
     expect(screen.queryByText("0 messages")).toBeNull();
+  });
+
+  const emptyWith = async (logging: boolean) => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: logging });
+    listMemories.mockResolvedValue(noMemories);
+    render(<Conversations />);
+    expect(await screen.findByRole("heading", { name: "No conversations yet in this namespace" })).toBeInTheDocument();
+  };
+
+  it("draws no empty state while the recording read is out", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockReturnValue(new Promise(() => {}));
+    listMemories.mockResolvedValue(noMemories);
+    render(<Conversations />);
+    await waitFor(() => expect(listConversationThreads).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(screen.queryByRole("heading", { name: "No conversations yet in this namespace" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+  });
+
+  it("with the recording read failed, says what fills the page and offers no connect", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockRejectedValue(new Error("unreachable"));
+    listMemories.mockResolvedValue(noMemories);
+    render(<Conversations />);
+    expect(await screen.findByRole("heading", { name: "No conversations yet in this namespace" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/saves its chat turns, one thread per chat, while Record conversations is on\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+  });
+
+  it("with the recording read failed, gives a viewer the viewer's wording and no connect", async () => {
+    roleHere.role = "viewer";
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v@x", org: "dev", roles: ["VIEWER"], namespaces: ["ns-a"] },
+    });
+    try {
+      listConversationThreads.mockResolvedValue({ threads: [] });
+      getNamespace.mockRejectedValue(new Error("unreachable"));
+      listMemories.mockResolvedValue(noMemories);
+      render(<Conversations />);
+      expect(
+        await screen.findByRole("heading", { name: "No conversations yet in this namespace" }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/when someone with writer access connects an agent/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+    } finally {
+      roleHere.role = "admin";
+    }
+  });
+
+  it("with recording on and no thread, says what fills the page and offers Connect an agent", async () => {
+    await emptyWith(true);
+    expect(
+      screen.getByText(
+        "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/conversation\.append/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect an agent" })).toBeInTheDocument();
+  });
+
+  it("with recording on, offers a viewer no connect and says who fills the page", async () => {
+    roleHere.role = "viewer";
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v@x", org: "dev", roles: ["VIEWER"], namespaces: ["ns-a"] },
+    });
+    try {
+      await emptyWith(true);
+      expect(
+        screen.getByText(/when someone with writer access connects an agent that saves its chat turns/),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+    } finally {
+      roleHere.role = "admin";
+    }
+  });
+
+  it("with recording off, points whoever may set it at the switch, and offers no connect", async () => {
+    await emptyWith(false);
+    expect(await screen.findByText(/It is off here: turn on Record conversations above/)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Record conversations" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+  });
+
+  it("with recording off, tells whoever may not set it that an admin can, and offers no connect", async () => {
+    roleHere.role = "writer";
+    useStore.setState({
+      whoami: { authenticated: true, subject: "w@x", org: "dev", roles: ["WRITER"], namespaces: ["ns-a"] },
+    });
+    try {
+      await emptyWith(false);
+      expect(
+        await screen.findByText(/It is off here; an admin of this namespace can turn it on\./),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("switch", { name: "Record conversations" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+    } finally {
+      roleHere.role = "admin";
+    }
   });
 
   it("keeps two agents' turns that share an id apart", async () => {

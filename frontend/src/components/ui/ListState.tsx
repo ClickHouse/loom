@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { errorRequestId } from "../../lib/format";
 import { humanizeError } from "../../lib/errorWords";
 import { EmptyState } from "../EmptyState";
+import { ConnectAgentButton } from "../ConnectAgentButton";
 
 /** Nothing exists yet: the big state, with its one action. */
 export interface ListEmptyProps {
@@ -12,7 +13,15 @@ export interface ListEmptyProps {
   title: string;
   description?: string;
   action?: { label: string; onClick: () => void };
+  /** Controls that own their own state, after `action` (`EmptyState`). */
+  actions?: ReactNode;
+  /** Only an agent fills the list: "Connect an agent" after `action`, which opens the
+   *  connect dialog in place. Drawn here, in the chunk every list page loads already, so the
+   *  button costs the boot chunk no entry of its own. */
+  connect?: "primary" | "secondary";
   details?: ReactNode;
+  /** A line under the description. */
+  children?: ReactNode;
 }
 
 /** Rows exist, but none match the search or filters in force. */
@@ -87,8 +96,26 @@ export function ListState(props: ListStateProps) {
       </div>
     );
   }
-  const { icon, title, description, action, details } = props;
-  return <EmptyState icon={icon} title={title} description={description} action={action} details={details} />;
+  const { icon, title, description, action, actions, connect, details, children } = props;
+  return (
+    <EmptyState
+      icon={icon}
+      title={title}
+      description={description}
+      action={action}
+      actions={
+        (actions || connect) && (
+          <>
+            {actions}
+            {connect && <ConnectAgentButton type={connect} />}
+          </>
+        )
+      }
+      details={details}
+    >
+      {children}
+    </EmptyState>
+  );
 }
 
 function FilteredState({ things, filter, among, onClear }: ListFilteredProps) {

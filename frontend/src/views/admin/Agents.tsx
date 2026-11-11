@@ -149,9 +149,10 @@ export function Agents() {
           title="No client has written in this window"
           description={
             windowHours <= 24
-              ? "If you just configured a client, make sure you restarted it. Settings generates the MCP config; paste it into Claude Desktop / Cursor / VS Code and restart."
+              ? "A client shows here once it writes. Connect an agent to set one up; a client you just set up writes after you restart it."
               : "Either no client has ever written to this org, or the window is too narrow. Try 7 days or 30 days."
           }
+          connect="primary"
         />
       )}
       {!error && rows !== null && rows.length > 0 && (

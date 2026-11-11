@@ -142,6 +142,27 @@ describe("StructureTab", () => {
     await waitFor(() => expect(api.setProfileSchema).toHaveBeenCalledWith(expect.objectContaining(scope), valid));
   });
 
+  it("says an empty section's next step to whoever can take it, and only its emptiness to a viewer", async () => {
+    // Once per render below: the other tests read the listed rows.
+    for (let i = 0; i < 2; i++) {
+      vi.mocked(api.listRecordSchemas).mockResolvedValueOnce({ schemas: [] });
+      vi.mocked(api.listOntology).mockResolvedValueOnce([]);
+      vi.mocked(api.listCategories).mockResolvedValueOnce([]);
+    }
+    signIn("admin");
+    render(<StructureTab />);
+    expect(await screen.findByText("No record schema yet. Add one with New schema.")).toBeInTheDocument();
+    expect(await screen.findByText("No term registered. Add one below.")).toBeInTheDocument();
+    expect(await screen.findByText("No category yet. Add one below.")).toBeInTheDocument();
+    cleanup();
+    resetNamespaceRoleCache();
+    signIn("viewer");
+    render(<StructureTab />);
+    expect(await screen.findByText("No record schema yet.")).toBeInTheDocument();
+    expect(await screen.findByText("No term registered.")).toBeInTheDocument();
+    expect(await screen.findByText("No category yet.")).toBeInTheDocument();
+  });
+
   it("lets a writer add a category", async () => {
     signIn("writer");
     render(<StructureTab />);

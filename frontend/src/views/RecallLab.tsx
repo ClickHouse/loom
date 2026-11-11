@@ -227,7 +227,7 @@ function RecallHistory() {
           title={runFilter ? "No recorded searches under this run" : "No recorded searches"}
           description={
             runFilter
-              ? "A search counts for a run when the caller passed run_id on it or sent the X-Loom-Run-Id header (the SDK's run scope and the plugin do); this run's searches, if any, carried neither."
+              ? "A search is listed under a run when the agent tags it with the run, as the Claude Code plugin and the SDK's run scope do; this run's searches, if any, were not tagged."
               : "Either nothing has been searched in this window, or per-query recall telemetry is switched off for this deployment."
           }
         />

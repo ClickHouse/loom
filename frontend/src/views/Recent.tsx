@@ -1,4 +1,14 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  lazy,
+  startTransition,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
@@ -46,6 +56,8 @@ import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useRowSelection } from "../lib/useRowSelection";
 import { sameFilter, useMemoryListRead, useMemorySearch, useSameFilter, type TagAgentFilter } from "./memoryListReads";
+
+const MembersDialog = lazy(() => import("../flows/MembersDialog").then((m) => ({ default: m.MembersDialog })));
 
 // The cards the first screen shows. A page of a hundred mounts them all in one task
 // (395–681 ms of long tasks at 4x CPU, LCP 0.9–1.4 s); the first screen is about two
@@ -138,6 +150,7 @@ function MemoryList() {
   const [pageSize, setPageSize] = usePageSize("memories");
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
   const [query, setQuery] = useState("");
   // Another namespace's conflict keys and agents are not this one's: they go during render,
   // before the new namespace's first read or paint can use them (useMemorySearch drops its
@@ -836,19 +849,33 @@ function MemoryList() {
           kind="empty"
           icon="clock"
           title="No memories yet"
-          description={
-            // Keyed on auth-off, not on the name "local": the namespace an
-            // auth-disabled deployment serves is configurable
-            // (LOOM_DEFAULT_NAMESPACE), and this onboarding copy is about the
-            // mode, not the name.
-            isAuthDisabled()
-              ? "This is your private single-user namespace. Anything you or your agent writes here stays — across browser sessions, container restarts, and Loom upgrades. Add a memory below, or wire up an MCP client (Settings) so your agent writes here automatically."
-              : readOnly
-                ? `Memories accumulate when an agent with writer access writes via MCP. ${READ_ONLY_TIP}.`
-                : "Memories accumulate when your agent writes via MCP — or add one yourself to seed."
-          }
-          action={readOnly ? undefined : { label: "Add memory", onClick: () => setAddOpen(true) }}
+          // Auth off reads as a writer's: the connect dialog itself shows that server's setup.
+          {...(readOnly
+            ? {
+                description: "Memories appear here when someone with writer access saves one.",
+                actions: (
+                  <Button type="secondary" htmlType="button" onClick={() => setMembersOpen(true)}>
+                    See who the admins are
+                  </Button>
+                ),
+                children: (
+                  <p className="mt-2 max-w-md text-sm text-text-muted">
+                    You're a viewer in {identity.namespace}. Ask an admin for writer to add memories.
+                  </p>
+                ),
+              }
+            : {
+                description: "Memories appear here when your agent saves one. Connect an agent, or add one yourself.",
+                action: { label: "Add memory", onClick: () => setAddOpen(true) },
+                connect: "secondary" as const,
+              })}
         />
+      )}
+      {/* A viewer reads the members list to find an admin; its chunk loads on the first open. */}
+      {membersOpen && (
+        <Suspense fallback={null}>
+          <MembersDialog open onOpenChange={setMembersOpen} org={identity.org} namespace={identity.namespace} />
+        </Suspense>
       )}
 
       {/* Rows exist, or a filter was asked of the server, and none pass: one line and a way
