@@ -1,34 +1,32 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
-import { Select } from "@clickhouse/click-ui/Select";
-import { Tabs } from "@clickhouse/click-ui/Tabs";
-import type { Identity, MyNamespaceEntry, TokenEntry } from "../api";
+import { listTokens, type TokenEntry } from "../api";
+import { getModelStatus } from "../api/models";
 import { useStore } from "../lib/state";
-import { paletteShortcut } from "../lib/platform";
-import { CLIENTS, formatMcpConfig, type ClientId } from "../lib/clients";
+import { FIRST_CALL_POLL_MS, FIRST_CALL_WAIT_MS, pluginInstallLines } from "../lib/clients";
+import { parseChTime } from "../lib/format";
+import { useVisiblePoll } from "../lib/hooks";
+import { hasPlatformAdminClaim } from "../lib/role";
 import {
   countDone,
   loadOnboarding,
+  onboardingKey,
   ONBOARDING_STEPS,
   saveOnboarding,
   type OnboardingState,
   type OnboardingStep,
 } from "../lib/onboarding";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
-import { MembersDialog } from "../flows/MembersDialog";
-import { DOCS_MCP_URL, DOCS_QUICKSTART_URL, DOCS_TOKENS_URL } from "../flows/TokenGate";
-import { ExternalLink, Kbd, Panel, TabTrigger } from "./ui";
+import { DOCS_MCP_URL } from "../flows/TokenGate";
+import { ExternalLink, Loading, Panel } from "./ui";
 import { CopyButton } from "./CopyButton";
+import type { Identity } from "../api";
 
-/**
- * GettingStarted — the four-step checklist a new account lands on. Each step is a card
- * with a one-sentence "why", a primary action that opens the EXISTING flow (the token
- * form, AddMemoryDialog, the ⌘K palette, MembersDialog), and a tick once done. Ticks come
- * from live data where the page already has it (tokens, memory total, palette opens) and
- * are persisted per subject in localStorage — see lib/onboarding.ts.
- */
+/** The token form, with the dialog that shows each client's setup once a token is made:
+ *  the Tokens page's own, loaded only when the step is opened. */
+const QuickConnect = lazy(() => import("../views/Tokens").then((m) => ({ default: m.QuickConnect })));
 
 export interface OnboardingHandle {
   state: OnboardingState;
@@ -37,20 +35,25 @@ export interface OnboardingHandle {
   dismiss: () => void;
 }
 
-export function useOnboarding(subject: string): OnboardingHandle {
-  const [state, setState] = useState<OnboardingState>(() => loadOnboarding(subject));
-  useEffect(() => {
-    setState(loadOnboarding(subject));
-  }, [subject]);
+/** The checklist's ticks for `subject` in `place` (`org/namespace`). */
+export function useOnboarding(subject: string, place: string): OnboardingHandle {
+  const [state, setState] = useState<OnboardingState>(() => loadOnboarding(subject, place));
+  // Another subject or namespace reads its own ticks before anything renders or writes.
+  const key = onboardingKey(subject, place);
+  const [loadedFor, setLoadedFor] = useState(key);
+  if (loadedFor !== key) {
+    setLoadedFor(key);
+    setState(loadOnboarding(subject, place));
+  }
   const update = useCallback(
     (fn: (prev: OnboardingState) => OnboardingState) => {
       setState((prev) => {
         const next = fn(prev);
-        if (next !== prev) saveOnboarding(subject, next);
+        if (next !== prev) saveOnboarding(subject, place, next);
         return next;
       });
     },
-    [subject],
+    [subject, place],
   );
   const mark = useCallback(
     (step: OnboardingStep) =>
@@ -62,139 +65,213 @@ export function useOnboarding(subject: string): OnboardingHandle {
   return { state, mark, start, dismiss };
 }
 
+/** Where the connect step stands. */
+type Connect = "none" | "waiting" | "connected";
+
+/** A token of mine that reaches this namespace and can still make a call. */
+function reachesHere(t: TokenEntry, namespace: string): boolean {
+  const ends = parseChTime(t.expires_at);
+  const expired = !!ends && ends.getTime() <= Date.now();
+  return (
+    t.yours !== false && !t.revoked_at && !expired && (t.namespaces.includes("*") || t.namespaces.includes(namespace))
+  );
+}
+
+function connectState(args: {
+  agentSeen: boolean;
+  tokens: TokenEntry[] | null;
+  namespace: string;
+  authOff: boolean;
+}): Connect {
+  if (args.agentSeen) return "connected";
+  if (args.authOff) return "waiting";
+  const mine = (args.tokens ?? []).filter((t) => reachesHere(t, args.namespace));
+  if (mine.some((t) => t.last_used_at)) return "connected";
+  return mine.length > 0 ? "waiting" : "none";
+}
+
 export interface GettingStartedProps {
   onboarding: OnboardingHandle;
   identity: Identity;
-  mine: MyNamespaceEntry[] | null;
-  /** Namespace-wide memory count from the one `memory.list` read Setup makes. */
-  memoryTotal: number | null;
-  /** The tokens list the Connect section already fetched. */
-  tokens: TokenEntry[] | null;
-  /** The most recent MCP token minted on this page, for the connect line. */
-  lastMint: { token: string; mcpUrl: string } | null;
-  /** Scroll to and focus the token form. */
-  onConnect: () => void;
+  /** The namespace's own memory list (unfiltered, live, first page) holds a memory an agent
+   *  other than the dashboard wrote. */
+  agentSeen: boolean;
+  /** The namespace holds at least one memory. */
+  hasMemory: boolean;
+  authOff: boolean;
+  /** One line under the list's toolbar instead of the full checklist. */
+  collapsed: boolean;
+  onExpand: () => void;
   onMemoryAdded: () => void;
+  /** Hidden: the checklist leaves the page, so focus goes where the caller names. */
+  onHidden: () => void;
 }
-
-const SAMPLE_QUERY = "deploy window";
 
 const STEP_META: Record<OnboardingStep, { title: string; why: string; icon: IconName }> = {
   connect: {
-    title: "Connect a client",
-    why: "Your AI tool talks to Loom through a token — mint one, paste one line into the tool, restart it.",
+    title: "Connect an agent",
+    why: "Your coding agent or AI tool saves what it learns here, and reads it back in its next session.",
     icon: "plug",
   },
   write: {
-    title: "Write your first memory",
-    why: "A memory is one fact Loom keeps for you — a preference, a decision, a deadline your tools should not forget.",
+    title: "First memory",
+    why: "A memory is one fact Loom keeps: a preference, a decision, a deadline your tools should not forget. Your agent saves them as it works; you can add one too.",
     icon: "pencil",
-  },
-  find: {
-    title: "Find it again",
-    why: "Search is how your tools get memories back; try it yourself so you know what they see.",
-    icon: "search",
-  },
-  invite: {
-    title: "Invite a teammate",
-    why: "Your space is private until you add someone — a viewer reads it, a writer adds to it.",
-    icon: "users",
   },
 };
 
+/**
+ * GettingStarted — the first-run checklist, at the top of Memories (the bare root's
+ * landing): connect an agent, see the first memory, and for whoever can set them, the
+ * models. Each step ticks from what Loom holds — a memory an agent wrote, a token's first
+ * call, the memory count — never from pressing its button; ticks persist per subject, org
+ * and namespace (lib/onboarding.ts) so a later filter or a revoked token never un-ticks one.
+ */
 export function GettingStarted({
   onboarding,
   identity,
-  mine,
-  memoryTotal,
-  tokens,
-  lastMint,
-  onConnect,
+  agentSeen,
+  hasMemory,
+  authOff,
+  collapsed,
+  onExpand,
   onMemoryAdded,
+  onHidden,
 }: GettingStartedProps) {
-  const { state, mark, dismiss } = onboarding;
-  const openPalette = useStore((s) => s.openPalette);
-  const paletteOpens = useStore((s) => s.paletteOpens);
+  const { state, mark } = onboarding;
+  const hide = () => {
+    onboarding.dismiss();
+    onHidden();
+  };
+  const createRef = useRef<HTMLButtonElement | null>(null);
+  const focusCreate = useRef(false);
+  // Continue replaces the bar with the checklist: focus goes to its heading.
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const focusHeading = useRef(false);
+  useEffect(() => {
+    if (collapsed || !focusHeading.current) return;
+    focusHeading.current = false;
+    headingRef.current?.focus();
+  }, [collapsed]);
+  const whoami = useStore((s) => s.whoami);
+  const navigate = useStore((s) => s.navigate);
   const [addOpen, setAddOpen] = useState(false);
-  const [membersOpen, setMembersOpen] = useState(false);
+  const [minting, setMinting] = useState(false);
+  useEffect(() => {
+    if (minting || !focusCreate.current) return;
+    focusCreate.current = false;
+    (createRef.current ?? headingRef.current)?.focus();
+  }, [minting]);
 
-  // Live signals the page already holds tick a step and persist the tick,
-  // so a revoked token or a switched namespace never un-ticks it later.
-  const liveConnected = (tokens ?? []).some((t) => !t.revoked_at);
-  const liveWrote = (memoryTotal ?? 0) > 0;
-  const liveFound = paletteOpens > 0;
+  const [tokens, setTokens] = useState<TokenEntry[] | null>(null);
+  const [mintedAt, setMintedAt] = useState<number | null>(null);
+  const reloadTokens = useCallback(() => {
+    if (authOff) return;
+    listTokens()
+      .then(setTokens)
+      .catch(() => setTokens((t) => t ?? []));
+  }, [authOff]);
+  useEffect(reloadTokens, [reloadTokens]);
+
+  const connect = connectState({ agentSeen, tokens, namespace: identity.namespace, authOff });
+  // Only a token made in this visit is followed to its first call; an older one is read
+  // again on the next visit.
+  const following = connect === "waiting" && mintedAt !== null && Date.now() - mintedAt < FIRST_CALL_WAIT_MS;
+  useVisiblePoll(reloadTokens, FIRST_CALL_POLL_MS, following && !authOff);
+
+  // The models row: only for whoever can set them, while they are not set, and read only
+  // when the full list shows (the one-line bar has no models row).
+  const canSetModels = authOff || hasPlatformAdminClaim(whoami);
+  // null until read: "not read yet" is not "set", so All set waits for the answer.
+  const [modelsUnset, setModelsUnset] = useState<boolean | null>(null);
   useEffect(() => {
-    if (liveConnected) mark("connect");
-  }, [liveConnected, mark]);
+    if (!canSetModels || collapsed) return;
+    const ctl = new AbortController();
+    getModelStatus(ctl.signal)
+      .then((s) => setModelsUnset(s.requires_setup))
+      // A failed read ends in All set; a read left (the effect ran again) answers nothing.
+      .catch(() => {
+        if (!ctl.signal.aborted) setModelsUnset(false);
+      });
+    return () => ctl.abort();
+  }, [canSetModels, collapsed]);
+
   useEffect(() => {
-    if (liveWrote) mark("write");
-  }, [liveWrote, mark]);
+    if (connect === "connected") mark("connect");
+  }, [connect, mark]);
   useEffect(() => {
-    if (liveFound) mark("find");
-  }, [liveFound, mark]);
+    if (hasMemory) mark("write");
+  }, [hasMemory, mark]);
 
   const done: OnboardingState["done"] = {
     ...state.done,
-    ...(liveConnected ? { connect: true } : {}),
-    ...(liveWrote ? { write: true } : {}),
-    ...(liveFound ? { find: true } : {}),
+    ...(connect === "connected" ? { connect: true } : {}),
+    ...(hasMemory ? { write: true } : {}),
   };
+  const connected = !!done.connect;
   const n = countDone(done);
   const total = ONBOARDING_STEPS.length;
-  const allDone = n === total;
-  const current = (mine ?? []).find((m) => m.namespace === identity.namespace);
-  const spaceName = identity.namespace;
+  // Every step ticked, and no models row still asking (it has no tick of its own).
+  const stepsDone = n === total;
+  const allDone = stepsDone && (!canSetModels || modelsUnset === false);
+  // The bar reads no models status: for whoever can set models it keeps Continue, which opens
+  // the list where the models row shows.
+  const barDone = stepsDone && !canSetModels;
 
-  const actions: Record<OnboardingStep, { label: string; run: () => void; docs?: { href: string; label: string } }> = {
-    connect: {
-      label: lastMint ? "Mint another token" : "Mint a token",
-      run: onConnect,
-      docs: { href: DOCS_MCP_URL, label: "Learn more: connecting a client" },
-    },
-    write: {
-      label: "Write a memory",
-      run: () => setAddOpen(true),
-      docs: { href: DOCS_QUICKSTART_URL, label: "Learn more: quickstart" },
-    },
-    find: {
-      label: "Search your memories",
-      run: () => {
-        openPalette(liveWrote ? "" : SAMPLE_QUERY);
-        mark("find");
-      },
-    },
-    invite: {
-      label: "Add a teammate",
-      run: () => setMembersOpen(true),
-      docs: { href: DOCS_TOKENS_URL, label: "Learn more: roles and access" },
-    },
-  };
+  if (collapsed) {
+    return (
+      <div
+        className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-sm border border-border bg-surface px-3 py-2"
+        data-testid="getting-started-bar"
+      >
+        <span className="text-sm">
+          <span className="text-text font-medium">Getting started</span>
+          <span className="text-text-muted"> · {barDone ? "all set" : `${n} of ${total} set up`}</span>
+        </span>
+        <span className="flex items-center gap-2">
+          {/* Done in full (finished in another visit than the one it started in): nothing to
+              continue, only to hide. */}
+          {!barDone && (
+            <Button
+              type="secondary"
+              htmlType="button"
+              onClick={() => {
+                focusHeading.current = true;
+                onExpand();
+              }}
+            >
+              Continue
+            </Button>
+          )}
+          <Button type="empty" htmlType="button" aria-label="Hide getting started" onClick={hide}>
+            Hide
+          </Button>
+        </span>
+      </div>
+    );
+  }
 
   return (
     <Panel
       as="section"
       aria-labelledby="getting-started-title"
-      className="mb-8 max-w-3xl"
+      className="mb-6 max-w-3xl"
       padding="md"
       data-testid="getting-started"
     >
       <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
-          <h2 id="getting-started-title">Getting started</h2>
+          <h2 id="getting-started-title" ref={headingRef} tabIndex={-1}>
+            Getting started
+          </h2>
           <p className="text-xs text-text-muted mt-0.5 max-w-xl">
-            Loom remembers for your AI tools. Everything you save lands in your space (a <em>namespace</em>, in the
-            docs)
-            {spaceName ? (
-              <>
-                {" "}
-                — <code className="code-inline text-xs">{spaceName}</code>
-              </>
-            ) : null}
-            . Four steps show the whole loop; about five minutes.
+            Loom keeps memories and documents for your AI agents. They live in a namespace —{" "}
+            <code className="code-inline text-xs">{identity.namespace}</code> — that you and the people you add can
+            read.
           </p>
         </div>
-        <Button type="empty" htmlType="button" onClick={dismiss} className="shrink-0">
-          Skip the tour
+        <Button type="empty" htmlType="button" onClick={hide} className="shrink-0">
+          Hide
         </Button>
       </div>
 
@@ -208,69 +285,109 @@ export function GettingStarted({
           aria-valuemax={total}
           aria-valuenow={n}
           aria-valuetext={`${n} of ${total} steps done`}
-          className="flex-1"
         />
-        <span className="text-xs tabular text-text-muted">
+        {/* A tick that lands from a poll is announced here, once. */}
+        <span className="text-xs tabular text-text-muted" role="status">
           {n} of {total} done
         </span>
       </div>
 
       <ol className="space-y-2">
-        {ONBOARDING_STEPS.map((step, i) => {
-          const meta = STEP_META[step];
-          const act = actions[step];
-          const isDone = !!done[step];
-          return (
-            <li
-              key={step}
-              className={`rounded-sm border p-3 ${isDone ? "border-border bg-surface" : "border-border-strong bg-surface-2"}`}
-            >
-              <div className="flex items-start gap-3">
-                <span className="mt-0.5 shrink-0" aria-hidden="true">
-                  {isDone ? (
-                    <Icon name="check-in-circle" size="md" color="var(--color-success)" />
-                  ) : (
-                    <Icon name="circle" size="md" color="var(--color-text-muted)" />
-                  )}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <h3 className="flex items-center gap-2">
-                    <span className="text-text-muted tabular">{i + 1}.</span>
-                    <Icon name={meta.icon} size="xs" aria-hidden="true" />
-                    <span>{meta.title}</span>
-                    {isDone && <span className="sr-only">(done)</span>}
-                  </h3>
-                  <p className="text-xs text-text-muted mt-0.5">{meta.why}</p>
-                  {step === "find" && !isDone && (
-                    <p className="text-xs text-text-muted mt-1">
-                      Or press <Kbd>{paletteShortcut()}</Kbd> anywhere and type a few words.
-                    </p>
-                  )}
-                  {step === "connect" && lastMint && <ConnectLine mint={lastMint} />}
-                  <div className="mt-2 flex flex-wrap items-center gap-3">
-                    <Button type={isDone ? "secondary" : "primary"} htmlType="button" onClick={act.run}>
-                      {act.label}
-                    </Button>
-                    {act.docs && (
-                      <ExternalLink href={act.docs.href} size="sm">
-                        {act.docs.label}
-                      </ExternalLink>
-                    )}
-                  </div>
+        <Step step="connect" index={0} done={connected}>
+          {/* A tick, once there, holds: a later visit (tokens not read yet) or a revoked token
+              does not bring the step's actions back. */}
+          {connected ? (
+            <p className="text-xs text-text-muted mt-1">
+              {agentSeen ? "An agent is saving memories here." : "Connected."}
+            </p>
+          ) : authOff ? (
+            <AuthOffConnect />
+          ) : connect === "waiting" ? (
+            <p className="text-xs text-text-muted mt-1">
+              {following
+                ? "Waiting for the first call from your agent. This updates on its own."
+                : "Waiting for your agent's first memory. Start a session in your agent; this updates when it saves one."}
+            </p>
+          ) : null}
+          {/* A form opened here stays until it is done with, connected or not: its dialog is
+              the one place the new token is shown. */}
+          {!authOff && (minting || !connected) && (
+            <div className="mt-2">
+              {minting ? (
+                <Suspense fallback={<Loading layout="inline" label="Loading the token form" />}>
+                  <QuickConnect
+                    onMinted={() => {
+                      setMintedAt(Date.now());
+                      reloadTokens();
+                    }}
+                    onClose={() => {
+                      // The form leaves: focus goes back to the button that opened it, or to
+                      // the heading once the step is done and has no button.
+                      focusCreate.current = true;
+                      setMinting(false);
+                    }}
+                  />
+                </Suspense>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    ref={createRef}
+                    type={connect === "none" ? "primary" : "secondary"}
+                    htmlType="button"
+                    onClick={() => setMinting(true)}
+                  >
+                    {connect === "none" ? "Create a token" : "Create another token"}
+                  </Button>
+                  <ExternalLink href={DOCS_MCP_URL} size="sm">
+                    Learn more: connecting an agent
+                  </ExternalLink>
+                </div>
+              )}
+            </div>
+          )}
+        </Step>
+        <Step step="write" index={1} done={!!done.write}>
+          {!done.write && (
+            <div className="mt-2">
+              <Button type={connected ? "primary" : "secondary"} htmlType="button" onClick={() => setAddOpen(true)}>
+                Add a memory yourself
+              </Button>
+            </div>
+          )}
+        </Step>
+        {canSetModels && modelsUnset && (
+          <li className="rounded-sm border border-border-strong bg-surface-2 p-3">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 shrink-0" aria-hidden="true">
+                <Icon name="gear" size="md" color="var(--color-text-muted)" />
+              </span>
+              <div className="flex-1 min-w-0">
+                <h3>Set up models</h3>
+                <p className="text-xs text-text-muted mt-0.5">
+                  Loom uses a language model to pull facts out of conversations and an embedding model to search them.
+                  Pick a provider and add its key.
+                </p>
+                <div className="mt-2">
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    onClick={() => navigate("setup", { query: { tab: "models" } })}
+                  >
+                    Open Models &amp; keys
+                  </Button>
                 </div>
               </div>
-            </li>
-          );
-        })}
+            </div>
+          </li>
+        )}
       </ol>
 
       {allDone && (
-        <div
-          role="status"
-          className="mt-3 pt-3 border-t border-border flex flex-wrap items-center justify-between gap-2 text-xs"
-        >
-          <span className="text-success font-medium">All four done — Loom is remembering for you.</span>
-          <Button type="secondary" htmlType="button" onClick={dismiss}>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+          <span className="text-success font-medium">
+            {agentSeen ? "All set: your agent is saving memories here." : "All set."}
+          </span>
+          <Button type="secondary" htmlType="button" onClick={hide}>
             Hide this checklist
           </Button>
         </div>
@@ -280,75 +397,60 @@ export function GettingStarted({
         open={addOpen}
         onOpenChange={setAddOpen}
         identity={identity}
-        onAdded={() => {
-          mark("write");
-          onMemoryAdded();
-        }}
+        // The step ticks from the count the list reads again, not from this dialog.
+        onAdded={onMemoryAdded}
       />
-      {membersOpen && (
-        <MembersDialog
-          open={true}
-          onOpenChange={(v) => {
-            if (!v) setMembersOpen(false);
-          }}
-          org={identity.org}
-          namespace={identity.namespace}
-          kind={current?.kind}
-          onChanged={() => mark("invite")}
-        />
-      )}
     </Panel>
   );
 }
 
-/** After a mint: the one line that connects Claude Code (the config's `command`),
- *  Cursor's block, and a picker for every other client. */
-function ConnectLine({ mint }: { mint: { token: string; mcpUrl: string } }) {
-  const [other, setOther] = useState<ClientId>("claude-desktop");
-  const claude = formatMcpConfig({ client: "claude-code", token: mint.token, mcpUrl: mint.mcpUrl });
-  const cursor = formatMcpConfig({ client: "cursor", token: mint.token, mcpUrl: mint.mcpUrl });
-  const otherCfg = formatMcpConfig({ client: other, token: mint.token, mcpUrl: mint.mcpUrl });
-  const others = CLIENTS.filter((c) => c.id !== "claude-code" && c.id !== "cursor");
+function Step({
+  step,
+  index,
+  done,
+  children,
+}: {
+  step: OnboardingStep;
+  index: number;
+  done: boolean;
+  children: React.ReactNode;
+}) {
+  const meta = STEP_META[step];
+  return (
+    <li className={`rounded-sm border p-3 ${done ? "border-border bg-surface" : "border-border-strong bg-surface-2"}`}>
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 shrink-0" aria-hidden="true">
+          {done ? (
+            <Icon name="check-in-circle" size="md" color="var(--color-success)" />
+          ) : (
+            <Icon name="circle" size="md" color="var(--color-text-muted)" />
+          )}
+        </span>
+        <div className="flex-1 min-w-0">
+          <h3 className="flex items-center gap-2">
+            <span className="text-text-muted tabular">{index + 1}.</span>
+            <Icon name={meta.icon} size="xs" aria-hidden="true" />
+            <span>{meta.title}</span>
+            {done && <span className="sr-only">(done)</span>}
+          </h3>
+          <p className="text-xs text-text-muted mt-0.5">{meta.why}</p>
+          {children}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+/** A single-user server takes no token: the plugin needs only the address. */
+function AuthOffConnect() {
+  const lines = `${pluginInstallLines("claude-code")} --config server_url=${window.location.origin}`;
   return (
     <div className="mt-2">
-      <Tabs defaultValue="claude-code">
-        <Tabs.TriggersList aria-label="Client">
-          <TabTrigger value="claude-code">Claude Code</TabTrigger>
-          <TabTrigger value="cursor">Cursor</TabTrigger>
-          <TabTrigger value="other">Other clients</TabTrigger>
-        </Tabs.TriggersList>
-        <Tabs.Content value="claude-code" className="mt-2">
-          <p className="text-xs text-text-muted mb-1">
-            Run this once in a terminal, then start a new Claude Code session — Loom&apos;s profile and context arrive
-            when the client connects. For capture and hooks, install the plugin from Settings instead:
-          </p>
-          <CopyBlock text={claude.command ?? ""} label="Copy command" />
-        </Tabs.Content>
-        <Tabs.Content value="cursor" className="mt-2">
-          <p className="text-xs text-text-muted mb-1">
-            Paste into Cursor's MCP settings (<code className="code-inline">.cursor/mcp.json</code>), then restart
-            Cursor:
-          </p>
-          <CopyBlock text={JSON.stringify(cursor.block, null, 2)} label="Copy config" />
-        </Tabs.Content>
-        <Tabs.Content value="other" className="mt-2 space-y-2">
-          <Select
-            label="Client"
-            value={other}
-            onSelect={(v) => {
-              const picked = others.find((c) => c.id === v)?.id;
-              if (picked) setOther(picked);
-            }}
-          >
-            {others.map((c) => (
-              <Select.Item key={c.id} value={c.id}>
-                {c.label}
-              </Select.Item>
-            ))}
-          </Select>
-          <CopyBlock text={JSON.stringify(otherCfg.block, null, 2)} label="Copy config" />
-        </Tabs.Content>
-      </Tabs>
+      <p className="text-xs text-text-muted mb-1">
+        This server runs for one person, so no token is needed. For Claude Code, run this once in a terminal, then start
+        a new session; other agents connect from Settings › Tokens.
+      </p>
+      <CopyBlock text={lines} label="Copy commands" />
     </div>
   );
 }

@@ -27,8 +27,10 @@ import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastErrorLine } from "../components/Toast";
 import { toastCommitted } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
-import { dayLabel, restoreText, displayAgent, SENTINEL_AGENTS } from "../lib/format";
+import { dayLabel, restoreText, displayAgent, DASHBOARD_AGENT, SENTINEL_AGENTS } from "../lib/format";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
+import { GettingStarted, useOnboarding } from "../components/GettingStarted";
+import { shouldShowGettingStarted } from "../lib/onboarding";
 import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -265,6 +267,7 @@ function MemoryList() {
     entriesAt,
     browsedTotal,
     filterRead,
+    listedIn,
     retry,
   } = useMemoryListRead({
     identity,
@@ -276,6 +279,45 @@ function MemoryList() {
     memoriesVersion,
   });
   const browsedCurrent = entriesAt.size === pageSize;
+
+  // The first-run checklist (components/GettingStarted). Every signal it takes comes from
+  // this list's one read: the unfiltered, live first page, read in this namespace for the
+  // filter in force. Right after a namespace switch or a filter change the rows on screen
+  // are still the last read's, and count for nothing.
+  const whoami = useStore((s) => s.whoami);
+  const mine = useStore((s) => s.myNamespaces);
+  const authOff = isAuthDisabled();
+  const onboarding = useOnboarding(whoami?.subject ?? (authOff ? "local" : ""), namespaceKey);
+  const plainRead =
+    entries !== null &&
+    listedIn === namespaceKey &&
+    filterRead &&
+    !filterPending &&
+    !loadError &&
+    page === 0 &&
+    !listFiltered &&
+    !showDeleted;
+  const memoryTotal = plainRead ? (browsedTotal ?? entries.length) : null;
+  const readEmpty = memoryTotal === 0;
+  const agentSeen =
+    plainRead && entries.some((e) => !!e.agent && e.agent !== DASHBOARD_AGENT && !SENTINEL_AGENTS.has(e.agent));
+  const isNew = shouldShowGettingStarted({ mine, memoryTotal, authOff });
+  const { start } = onboarding;
+  useEffect(() => {
+    if (isNew) start();
+  }, [isNew, start]);
+  const checklist =
+    !readOnly &&
+    entries !== null &&
+    listedIn === namespaceKey &&
+    !onboarding.state.dismissed &&
+    !onboarding.state.finished &&
+    (isNew || onboarding.state.started);
+  // Open in full while the namespace is empty, and kept open once it was, so the first
+  // memory's arrival ticks the step in place; otherwise one line under the toolbar. Kept
+  // per namespace: another one's checklist starts as its own.
+  const [checklistOpenFor, setChecklistOpenFor] = useState<string | null>(null);
+  const checklistOpen = checklistOpenFor === namespaceKey;
   useEffect(() => {
     if (!firstScreenOnly || entries === null) return;
     let raf = 0;
@@ -318,7 +360,6 @@ function MemoryList() {
   // Only when the role here is known to allow it: an unknown role sends nothing and the
   // cards simply carry no conflict chip, instead of a token-only viewer drawing an
   // AUTH_INSUFFICIENT per Memories load from this read.
-  const whoami = useStore((s) => s.whoami);
   const conflictsReadable = canCall("conflicts.list", role, whoami);
   useEffect(() => {
     // A role here that cannot read conflicts, or a failed read, shows no chip (never
@@ -520,6 +561,9 @@ function MemoryList() {
   const failed = entries !== null && entries.length === 0 && !!loadError;
   const emptyNamespace =
     entries !== null && entries.length === 0 && !loadError && !listFiltered && !filterPending && !showDeleted;
+  useEffect(() => {
+    if (readEmpty && checklist) setChecklistOpenFor(namespaceKey);
+  }, [readEmpty, checklist, namespaceKey]);
 
   // Group entries by day label, but not while searching — day buckets would hide the
   // relevance ranking.
@@ -750,6 +794,23 @@ function MemoryList() {
         />
       )}
 
+      {checklist && (
+        <GettingStarted
+          // A token form opened, or a token followed, in one namespace is not another's.
+          key={namespaceKey}
+          onboarding={onboarding}
+          identity={identity}
+          agentSeen={agentSeen}
+          // The live, unfiltered count: a deleted memory is not a first memory.
+          hasMemory={(memoryTotal ?? 0) > 0}
+          authOff={authOff}
+          collapsed={!readEmpty && !checklistOpen}
+          onExpand={() => setChecklistOpenFor(namespaceKey)}
+          onMemoryAdded={() => bumpMemoriesVersion()}
+          onHidden={() => searchInputRef.current?.focus()}
+        />
+      )}
+
       {entries === null && (
         <LoadingSkeleton label="Loading memories">
           <div className="space-y-2">
@@ -770,7 +831,7 @@ function MemoryList() {
         />
       )}
 
-      {emptyNamespace && (
+      {emptyNamespace && !checklist && (
         <ListState
           kind="empty"
           icon="clock"

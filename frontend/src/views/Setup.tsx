@@ -4,17 +4,8 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import {
-  listTokens,
-  type TokenEntry,
-  importCuratedDoc,
-  type ImportCuratedResult,
-  countMemories,
-  isAuthDisabled,
-} from "../api";
+import { listTokens, type TokenEntry, importCuratedDoc, type ImportCuratedResult, isAuthDisabled } from "../api";
 import { useStore, useIdentity } from "../lib/state";
-import { shouldShowGettingStarted } from "../lib/onboarding";
-import { GettingStarted, useOnboarding } from "../components/GettingStarted";
 import { toast, toastError } from "../components/Toast";
 import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
 import { canCall } from "../lib/canCall";
@@ -66,18 +57,12 @@ export function Setup() {
   const setView = useStore((s) => s.setView);
   const whoami = useStore((s) => s.whoami);
   const canManageModels = isAuthDisabled() || hasPlatformAdminClaim(whoami);
-  const subject = whoami?.subject ?? "";
   // list_mine was fetched once at boot (App.tsx) — reuse it, never re-read.
   const mine = useStore((s) => s.myNamespaces);
-  // A code index or a tracker namespace holds no memories, so the memory-plane reads
-  // below are skipped there — the checklist and the total are about a memory namespace
-  // only.
+  // A code index or a tracker namespace holds no memories: Structure is a memory
+  // namespace's tab only.
   const memoryNamespace = isMemoryNamespace(namespace, mine) ? namespace : "";
-  const memoriesVersion = useStore((s) => s.memoriesVersion);
-  const bumpMemoriesVersion = useStore((s) => s.bumpMemoriesVersion);
 
-  // The tokens list is owned here so the Connect section and the checklist
-  // read the same fetch (a list is one request).
   const [tokens, setTokens] = useState<TokenEntry[] | null>(null);
   const loadTokens = () => {
     listTokens()
@@ -85,46 +70,9 @@ export function Setup() {
       .catch(() => setTokens([]));
   };
   useEffect(loadTokens, []);
-  const [lastMint, setLastMint] = useState<{ token: string; mcpUrl: string } | null>(null);
 
-  // One `memory.list` with `count_only` for the namespace-wide total
-  // (the two cached counts, no page — `limit 1` would read every preview in the
-  // namespace) — the checklist's "is this account new" signal and its "wrote a memory"
-  // tick. Only when the token's role here is known — an unknown role (no grant, no claim
-  // on this namespace) sends nothing and the checklist stays hidden, as it does for a
-  // null total.
   const role = useNamespaceRole(namespace);
-  const canListMemories = canCall("memory.list", role, whoami);
   const showStructure = !!memoryNamespace && canCall("memory_schema.list", role, whoami);
-  const [memoryTotal, setMemoryTotal] = useState<number | null>(null);
-  useEffect(() => {
-    if (!memoryNamespace || !canListMemories) {
-      setMemoryTotal(null);
-      return;
-    }
-    let live = true;
-    countMemories(identity)
-      .then((n) => {
-        if (live) setMemoryTotal(n);
-      })
-      .catch(() => {
-        if (live) setMemoryTotal(null);
-      });
-    return () => {
-      live = false;
-    };
-  }, [identity, memoryNamespace, memoriesVersion, canListMemories]);
-
-  // A first visit is the four-step checklist. Once shown it stays (persisted `started`)
-  // until "Skip the tour" or "Hide", so ticking step two — the first memory — never hides
-  // the list mid-tour.
-  const onboarding = useOnboarding(subject);
-  const isNew = shouldShowGettingStarted({ mine, memoryTotal });
-  useEffect(() => {
-    if (isNew) onboarding.start();
-  }, [isNew, onboarding]);
-  const showChecklist = !!memoryNamespace && !onboarding.state.dismissed && (isNew || onboarding.state.started);
-
   const [tab, setTab] = useState<SettingsTab>(() => readTabParam() ?? "tokens");
   // A link that opens Settings on a tab while it already shows (an assistant card's) moves
   // to that tab: the page is not drawn again.
@@ -139,20 +87,6 @@ export function Setup() {
   };
   // The token form is folded once a live token exists; `null` follows the list.
   const [formOpen, setFormOpen] = useState<boolean | null>(null);
-
-  // The checklist's "Mint a token": open the Tokens tab and the form, then
-  // scroll and focus once they have rendered (an effect, not a timer).
-  const [focusRequest, setFocusRequest] = useState(0);
-  const focusConnect = () => {
-    selectTab("tokens");
-    setFormOpen(true);
-    setFocusRequest((n) => n + 1);
-  };
-  useEffect(() => {
-    if (!focusRequest) return;
-    document.getElementById("setup-connect")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    document.getElementById("setup-generate-token")?.focus({ preventScroll: true });
-  }, [focusRequest]);
 
   return (
     <PageContainer>
@@ -193,36 +127,6 @@ export function Setup() {
           }
         />
       )}
-      {canManageModels && showChecklist && tab !== "models" && (
-        <Alert
-          className="mb-4"
-          state="info"
-          size="medium"
-          text={
-            <>
-              Set up Loom's LLM and embedding provider before evaluating memory and search quality.
-              <span className="mt-2 flex">
-                <Button type="empty" htmlType="button" onClick={() => selectTab("models")}>
-                  Configure models and keys
-                </Button>
-              </span>
-            </>
-          }
-        />
-      )}
-      {showChecklist && tab !== "models" && (
-        <GettingStarted
-          onboarding={onboarding}
-          identity={identity}
-          mine={mine}
-          memoryTotal={memoryTotal}
-          tokens={tokens}
-          lastMint={lastMint}
-          onConnect={focusConnect}
-          onMemoryAdded={bumpMemoriesVersion}
-        />
-      )}
-
       <Tabs
         value={tab}
         onValueChange={(v) => {
@@ -248,13 +152,7 @@ export function Setup() {
           )}
         </Tabs.TriggersList>
         <Tabs.Content value="tokens">
-          <TokensSection
-            tokens={tokens}
-            reloadTokens={loadTokens}
-            onMinted={setLastMint}
-            formOpen={formOpen}
-            onFormOpenChange={setFormOpen}
-          />
+          <TokensSection tokens={tokens} reloadTokens={loadTokens} formOpen={formOpen} onFormOpenChange={setFormOpen} />
         </Tabs.Content>
         <Tabs.Content value="memory">
           <MemoryTab />

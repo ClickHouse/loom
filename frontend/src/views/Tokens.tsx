@@ -31,6 +31,8 @@ import { COARSE_POINTER, useMedia } from "../lib/useMedia";
 import {
   CLIENTS,
   configPreviewText,
+  FIRST_CALL_POLL_MS,
+  FIRST_CALL_WAIT_MS,
   formatMcpConfig,
   isClientId,
   pluginInstallLines,
@@ -148,15 +150,12 @@ function parseTtl(raw: string): number | null | "invalid" {
 export function TokensSection({
   tokens,
   reloadTokens,
-  onMinted,
   formOpen,
   onFormOpenChange,
 }: {
-  /** The tokens list, fetched once by Setup and shared with the checklist. */
+  /** The tokens list, fetched once by Setup. */
   tokens: TokenEntry[] | null;
   reloadTokens: () => void;
-  /** A token was made — the checklist renders its connect line. */
-  onMinted: (r: { token: string; mcpUrl: string }) => void;
   /** The form is folded once a live token exists; `null` follows the list. */
   formOpen: boolean | null;
   onFormOpenChange: (open: boolean) => void;
@@ -187,10 +186,10 @@ export function TokensSection({
   const [mintedAtMs, setMintedAtMs] = useState<number | null>(null);
   const waitingForFirstCall =
     mintedAtMs !== null &&
-    Date.now() - mintedAtMs < 10 * 60_000 &&
+    Date.now() - mintedAtMs < FIRST_CALL_WAIT_MS &&
     (tokens || []).some((s) => !s.last_used_at && !s.revoked_at);
   // Each poll's reload re-renders, which re-checks the ten-minute window.
-  useVisiblePoll(reloadTokens, 15_000, waitingForFirstCall);
+  useVisiblePoll(reloadTokens, FIRST_CALL_POLL_MS, waitingForFirstCall);
 
   const onRevoke = async (tokenName: string) => {
     if (
@@ -233,7 +232,6 @@ export function TokensSection({
             onCancel={liveTokens.length > 0 ? () => toggleForm(false) : undefined}
             onCreated={(r) => {
               setCreated(r);
-              onMinted({ token: r.token, mcpUrl: r.mcp_url });
               setMintedAtMs(Date.now());
               reloadTokens();
             }}
@@ -409,6 +407,46 @@ function SearchOrder({
   );
 }
 
+/** The token form and the dialog that shows each client's setup once a token is made, on
+ *  their own: the first-run checklist on Memories makes a token in place with them. */
+export function QuickConnect({
+  onMinted,
+  onClose,
+}: {
+  onMinted: (r: TokenCreated) => void;
+  /** Cancelled, or the token's setup dialog closed: the form is done here. */
+  onClose: () => void;
+}) {
+  const formRef = useRef<HTMLElement>(null);
+  const [created, setCreated] = useState<TokenCreated | null>(null);
+  // It opens in place of the button that asked for it: focus moves to the form's title,
+  // which is there at once (its fields follow their reads), not its header's Cancel, which
+  // one key press would take to close the form again.
+  useEffect(() => {
+    formRef.current?.querySelector<HTMLElement>("#new-token-title")?.focus();
+  }, []);
+  return (
+    <>
+      <TokenForm
+        formRef={formRef}
+        titleAs="h4"
+        onCancel={onClose}
+        onCreated={(r) => {
+          setCreated(r);
+          onMinted(r);
+        }}
+      />
+      <CreatedDialog
+        created={created}
+        onClose={() => {
+          setCreated(null);
+          onClose();
+        }}
+      />
+    </>
+  );
+}
+
 type RepoInfo = Record<string, { repo: string; branch: string; classification?: string }>;
 
 /** Repository and branch per code namespace, from code.repos. `code.repos` only when the
@@ -460,8 +498,11 @@ function TokenForm({
   formRef,
   onCancel,
   onCreated,
+  titleAs: Title = "h2",
 }: {
   formRef: React.RefObject<HTMLElement>;
+  /** The title's level: a checklist step's form sits under its h3. */
+  titleAs?: "h2" | "h4";
   /** Absent while no live token exists: the form is the page's first step. */
   onCancel?: () => void;
   onCreated: (r: TokenCreated) => void;
@@ -701,9 +742,9 @@ function TokenForm({
       aria-labelledby="new-token-title"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="new-token-title" className="text-text">
+        <Title id="new-token-title" className="text-text" tabIndex={-1}>
           New token
-        </h2>
+        </Title>
         {onCancel && (
           <Button type="empty" htmlType="button" onClick={onCancel}>
             Cancel
@@ -974,7 +1015,7 @@ function TokenForm({
             }
           </Field>
         )}
-        <Field hint="Optional. Shown in the list below; it cannot be changed later.">
+        <Field hint="Optional. Shown in the tokens list; it cannot be changed later.">
           {(hintId) => (
             <TextField
               label="Name"
@@ -1147,7 +1188,7 @@ function CreatedDialog({ created, onClose }: { created: TokenCreated | null; onC
             <ClientConnect client={target} token={created.token} mcpUrl={created.mcp_url} />
           )}
           <div className="text-xs text-text-muted leading-relaxed">
-            Revoke it in the list below to disconnect every tool that uses it at once.
+            Revoke it in Settings › Tokens to disconnect every tool that uses it at once.
           </div>
         </div>
       )}

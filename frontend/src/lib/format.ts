@@ -205,6 +205,9 @@ export function displayAgent(agent: string | null | undefined): string {
 
 export const SENTINEL_AGENTS = new Set(["*", "-"]);
 
+/** The agent the dashboard's own writes carry; a memory from any other agent is an agent's. */
+export const DASHBOARD_AGENT = "loom-ui";
+
 /** Service-account subjects are minted as `sa:<client>-<6 hex>` (see
  *  server/identity/app/me_service_accounts.py). Nobody should read that string on a card:
  *  `sa:reporter-a1b2c3` → "Reporter bot". Human subjects (emails, the self-signup

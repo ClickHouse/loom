@@ -1,239 +1,498 @@
 import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MyNamespaceEntry, TokenEntry, WhoAmI } from "../api";
+import type { MemoryListEntry, MyNamespaceEntry, TokenEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
+import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { onboardingKey } from "../lib/onboarding";
 import { axeViolations } from "../test/axe";
-import { Setup } from "../views/Setup";
+import { Recent } from "../views/Recent";
+import { listTokens } from "../api";
+import { getModelStatus } from "../api/models";
 
-// A first visit to Setup is a four-step checklist. It shows for an account with only its
-// personal namespace and no memories, hides for one with memories, each step opens the
-// EXISTING flow, ticks persist across a remount, and the whole thing passes axe.
+// The first-run checklist sits on Memories, the bare root's landing. It shows for an
+// account with only its personal namespace and no memories, in place of the empty state;
+// each step ticks from what Loom holds (a memory an agent wrote, a token's first call,
+// the memory count), never from pressing its button; Hide holds per namespace; and the
+// whole thing passes axe.
+
+const auth = vi.hoisted(() => ({ off: false }));
+const rows = vi.hoisted(() => ({ entries: [] as MemoryListEntry[] }));
+const tokens = vi.hoisted(() => ({ list: [] as TokenEntry[] }));
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
-    listTokens: vi.fn(async (): Promise<TokenEntry[]> => []),
+    isAuthDisabled: () => auth.off,
+    listTokens: vi.fn(async (): Promise<TokenEntry[]> => tokens.list),
     listMine: vi.fn(async (): Promise<MyNamespaceEntry[]> => []),
-    listMemories: vi.fn(async () => ({ entries: [], truncated: false, total: 0, today: 0 })),
-    countMemories: vi.fn(async () => 0),
-    listBlacklist: vi.fn(async () => ({ rows: [] })),
-    listGrants: vi.fn(async () => ({ rows: [] })),
-    createToken: vi.fn(async () => ({
-      token: "tok-123",
-      name: "token-2026-01-01-abcdef",
-      sa_subject: "sa:t",
-      org: "dev",
-      namespaces: ["personal-n", "*"],
-      ns_roles: {},
-      roles: ["writer"],
-      reads_everything: true,
-      saves_to: "personal-n",
-      created_at: "2026-01-01T00:00:00",
-      expires_at: null,
-      mcp_url: "http://loom.test/mcp",
+    listMemories: vi.fn(async () => ({
+      entries: rows.entries,
+      truncated: false,
+      total: rows.entries.length,
+      today: 0,
     })),
+    countMemories: vi.fn(async () => rows.entries.length),
+    bulkGetMemories: vi.fn(async () => ({ results: {}, missing: [] })),
+    conflictKeys: vi.fn(async (): Promise<string[]> => []),
+    listGrants: vi.fn(async () => ({ rows: [] })),
   };
 });
-import { countMemories, createToken, listGrants, listMemories } from "../api";
+vi.mock("../api/models", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/models")>();
+  return { ...actual, getModelStatus: vi.fn(async () => ({ requires_setup: true })) };
+});
+vi.mock("../views/Tokens", () => ({
+  // The token form itself is the Tokens page's, tested there; here only that it opens in place
+  // and what the step does when it is closed.
+  QuickConnect: ({ onMinted, onClose }: { onMinted: (r: unknown) => void; onClose: () => void }) => (
+    <div>
+      Token form
+      <button type="button" onClick={() => onMinted({})}>
+        Make the token
+      </button>
+      <button type="button" onClick={onClose}>
+        Close the form
+      </button>
+    </div>
+  ),
+}));
 
 const SUBJECT = "n@x";
 const NS = "personal-n";
-const whoami: WhoAmI = { authenticated: true, subject: SUBJECT, org: "dev", roles: ["WRITER"], namespaces: [NS] };
+const writer: WhoAmI = { authenticated: true, subject: SUBJECT, org: "dev", roles: ["WRITER"], namespaces: [NS] };
 const personal: MyNamespaceEntry = {
   namespace: NS,
   role: "admin",
+  status: "active",
   visibility: "private",
   description: "",
   joined_at: "2026-09-16T00:00:00Z",
   is_new: true,
   kind: "memory",
 };
+const team: MyNamespaceEntry = { ...personal, namespace: "team", role: "writer" };
 
-function seed(mine: MyNamespaceEntry[]) {
+const memory = (agent: string): MemoryListEntry => ({
+  memory_key: "user_editor",
+  memory_type: "semantic",
+  confidence: 1,
+  version: 1,
+  created_at: "2026-09-18T09:00:00Z",
+  expires_at: null,
+  pinned: false,
+  tags: [],
+  agent,
+  value: "uses vim",
+});
+
+const token = (over: Partial<TokenEntry> = {}): TokenEntry => ({
+  name: "laptop",
+  sa_subject: "sa:laptop",
+  namespaces: ["*"],
+  roles: ["writer"],
+  ttl_days: 90,
+  created_by: SUBJECT,
+  created_at: "2026-09-18T09:00:00",
+  expires_at: null,
+  revoked_at: null,
+  revoked_by: "",
+  last_used_at: null,
+  yours: true,
+  ...over,
+});
+
+function seed(mine: MyNamespaceEntry[] | null, who: WhoAmI = writer, namespace = NS) {
   useStore.setState({
     authed: true,
-    whoami,
+    whoami: who,
     myNamespaces: mine,
-    identity: { org: "dev", namespace: NS, agent: "loom-ui" },
-    view: "setup",
+    identity: { org: "dev", namespace, agent: "loom-ui" },
+    view: "memories",
     memoriesVersion: 0,
-    paletteRequest: null,
-    paletteOpens: 0,
   });
 }
 
 const checklist = () => screen.queryByRole("region", { name: "Getting started" });
-// One budget for every wait: CI runners are slower than the 1 s default assumes.
 const WAIT = { timeout: 5000 };
 
-describe("GettingStarted on Setup", () => {
-  beforeEach(() => {
-    vi.useRealTimers();
-    vi.clearAllMocks();
-    localStorage.clear();
-    // Stray fetches answer an empty object; nothing here is about them.
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("{}", { status: 200 })),
-    );
-    Element.prototype.scrollIntoView = vi.fn();
-    vi.mocked(listMemories).mockResolvedValue({ entries: [], truncated: false, total: 0, today: 0 });
-    vi.mocked(countMemories).mockResolvedValue(0);
-  });
-  afterEach(() => {
-    // Unmount before the store loses its identity: afterEach hooks run
-    // newest-first, so the shared cleanup would otherwise come second.
-    cleanup();
-    vi.unstubAllGlobals();
-    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
-  });
+beforeEach(() => {
+  localStorage.clear();
+  resetNamespaceRoleCache();
+  auth.off = false;
+  rows.entries = [];
+  tokens.list = [];
+});
+afterEach(cleanup);
 
-  it("renders four steps at 0 of 4 for a new account", async () => {
+describe("GettingStarted on Memories", () => {
+  it("replaces the empty state for a new account, says what Loom is, and passes axe", async () => {
     seed([personal]);
-    render(<Setup />);
-    const region = await screen.findByRole("region", { name: "Getting started" });
-    expect(within(region).getAllByRole("listitem")).toHaveLength(4);
-    expect(within(region).getByRole("heading", { name: /Connect a client/ })).toBeInTheDocument();
-    expect(within(region).getByRole("heading", { name: /Write your first memory/ })).toBeInTheDocument();
-    expect(within(region).getByRole("heading", { name: /Find it again/ })).toBeInTheDocument();
-    expect(within(region).getByRole("heading", { name: /Invite a teammate/ })).toBeInTheDocument();
-    expect(within(region).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
-    // The intro names the space in plain language, with the technical word once.
-    expect(region).toHaveTextContent(/your space \(a namespace, in the docs\)/);
-    // The rest of the page is a tab away; the token form is open because there is no
-    // token yet.
-    expect(screen.getByRole("tab", { name: "Memory" })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /Create token/ })).toBeInTheDocument();
-    // One count for the total, never a page.
-    expect(countMemories).toHaveBeenCalledTimes(1);
-    expect(listMemories).not.toHaveBeenCalled();
+    const { container } = render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(within(panel).getByText(/Loom keeps memories and documents for your AI agents/)).toBeInTheDocument();
+    expect(within(panel).getByRole("heading", { name: /Connect an agent/ })).toBeInTheDocument();
+    expect(within(panel).getByRole("heading", { name: /First memory/ })).toBeInTheDocument();
+    expect(screen.queryByText("No memories yet")).toBeNull();
+    expect(await axeViolations(container)).toEqual([]);
   });
 
-  it("is hidden for an account that already has memories, and the page reads as before", async () => {
-    vi.mocked(countMemories).mockResolvedValue(12);
+  it("is not shown to an account that already belongs to another namespace", async () => {
+    seed([personal, team]);
+    render(<Recent />);
+    expect(await screen.findByText("No memories yet", undefined, WAIT)).toBeInTheDocument();
+    expect(checklist()).toBeNull();
+  });
+
+  it("is not shown to a viewer, who cannot connect a writing agent here", async () => {
+    seed([{ ...personal, role: "viewer" }], { ...writer, roles: ["VIEWER"] });
+    render(<Recent />);
+    expect(await screen.findByText("No memories yet", undefined, WAIT)).toBeInTheDocument();
+    expect(checklist()).toBeNull();
+  });
+
+  it("opens the token form in place, not on another page", async () => {
     seed([personal]);
-    render(<Setup />);
-    await waitFor(() => expect(countMemories).toHaveBeenCalled(), WAIT);
-    await screen.findByRole("tab", { name: "Tokens" });
-    expect(checklist()).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Memory" })).toBeInTheDocument();
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    await userEvent.click(within(panel).getByRole("button", { name: "Create a token" }));
+    expect(await within(panel).findByText("Token form", undefined, WAIT)).toBeInTheDocument();
+    expect(useStore.getState().view).toBe("memories");
   });
 
-  it("is hidden for an account that joined another space", async () => {
-    seed([personal, { ...personal, namespace: "team-x", role: "writer", is_new: false }]);
-    render(<Setup />);
-    await waitFor(() => expect(countMemories).toHaveBeenCalled(), WAIT);
-    await screen.findByRole("tab", { name: "Tokens" });
-    expect(checklist()).not.toBeInTheDocument();
-  });
-
-  it("each step's action opens its existing flow", async () => {
-    const user = userEvent.setup();
+  it("keeps the step's token form when the agent connects while it is open, then focuses the heading", async () => {
     seed([personal]);
-    render(<Setup />);
-    const region = await screen.findByRole("region", { name: "Getting started" });
-
-    // 1. Connect → scrolls to and focuses the token form's Create button.
-    await user.click(within(region).getByRole("button", { name: "Mint a token" }));
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /Create token/ })).toHaveFocus();
-    // A mint ticks the step and renders the one-line Claude Code command.
-    await user.click(screen.getByRole("button", { name: /Create token/ }));
-    await waitFor(() => expect(createToken).toHaveBeenCalled(), WAIT);
-    // The existing post-mint dialog opens as before; close it to read the
-    // checklist (a modal hides the rest of the page from assistive tech).
-    expect(await screen.findByRole("dialog", { name: /Token created/ })).toBeInTheDocument();
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument(), WAIT);
-    const cmd = await within(region).findByText(/claude mcp add --transport http loom/);
-    expect(cmd).toHaveTextContent('"http://loom.test/mcp?toolset=coding" -H "Authorization: Bearer tok-123" -s user');
-    expect(within(region).getByRole("tab", { name: "Cursor" })).toBeInTheDocument();
-    expect(within(region).getByRole("tab", { name: "Other clients" })).toBeInTheDocument();
-    // A refused clipboard write says so instead of claiming "Copied".
-    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValueOnce(new Error("denied"));
-    const copy = within(region).getByRole("button", { name: "Copy command" });
-    await user.click(copy);
-    await waitFor(() => expect(copy).toHaveTextContent("Copy failed"), WAIT);
-
-    // 2. Write → the AddMemoryDialog.
-    await user.click(within(region).getByRole("button", { name: "Write a memory" }));
-    expect(await screen.findByRole("dialog", { name: /Add memory/ })).toBeInTheDocument();
-    await user.keyboard("{Escape}");
-
-    // 3. Find → the ⌘K palette, asked to open with a hint; ticks at once.
-    await user.click(within(region).getByRole("button", { name: "Search your memories" }));
-    expect(useStore.getState().paletteRequest).toMatchObject({ hint: "deploy window" });
-
-    // 4. Invite → the MembersDialog for this namespace.
-    await user.click(within(region).getByRole("button", { name: "Add a teammate" }));
-    expect(await screen.findByRole("dialog", { name: /Members of/ })).toBeInTheDocument();
-    expect(listGrants).toHaveBeenCalledWith({ org: "dev", namespace: NS });
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    await userEvent.click(within(panel).getByRole("button", { name: "Create a token" }));
+    expect(await within(panel).findByText("Token form", undefined, WAIT)).toBeInTheDocument();
+    rows.entries = [memory("claude-code")];
+    act(() => useStore.getState().bumpMemoriesVersion());
+    expect(await screen.findByText("An agent is saving memories here.", undefined, WAIT)).toBeInTheDocument();
+    // The new token is shown only there: the form stays until it is closed.
+    expect(screen.getByText("Token form")).toBeInTheDocument();
+    // Closed once the step is done: no button to return to, so focus goes to the heading.
+    await userEvent.click(screen.getByRole("button", { name: "Close the form" }));
+    await waitFor(() => expect(screen.queryByText("Token form")).toBeNull());
+    expect(screen.getByRole("heading", { name: "Getting started" })).toHaveFocus();
   });
 
-  it("ticks persist across a remount, and Skip the tour hides it for good", async () => {
-    const user = userEvent.setup();
+  it("returns focus to the step's button when its form is closed before the agent connects", async () => {
     seed([personal]);
-    const first = render(<Setup />);
-    let region = await screen.findByRole("region", { name: "Getting started" });
-    await user.click(within(region).getByRole("button", { name: "Search your memories" }));
-    expect(within(region).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    await userEvent.click(within(panel).getByRole("button", { name: "Create a token" }));
+    await userEvent.click(await within(panel).findByRole("button", { name: "Close the form" }, WAIT));
+    expect(await within(panel).findByRole("button", { name: "Create a token" }, WAIT)).toHaveFocus();
+  });
+
+  it("follows a token made in the step to its first call, every 15 s", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      seed([personal]);
+      render(<Recent />);
+      const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+      await userEvent.click(within(panel).getByRole("button", { name: "Create a token" }));
+      tokens.list = [token()];
+      await userEvent.click(await within(panel).findByRole("button", { name: "Make the token" }, WAIT));
+      expect(
+        await within(panel).findByText(
+          "Waiting for the first call from your agent. This updates on its own.",
+          undefined,
+          WAIT,
+        ),
+      ).toBeInTheDocument();
+      const reads = vi.mocked(listTokens).mock.calls.length;
+      tokens.list = [token({ last_used_at: "2026-09-18T09:05:00" })];
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(vi.mocked(listTokens).mock.calls.length).toBeGreaterThan(reads);
+      expect(await within(panel).findByText("Connected.", undefined, WAIT)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits on a token of mine that has made no call, and ticks once it has", async () => {
+    tokens.list = [token()];
+    seed([personal]);
+    const first = render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(
+      await within(panel).findByText(/Waiting for your agent's first memory/, undefined, WAIT),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText("0 of 2 done")).toBeInTheDocument();
     first.unmount();
-
-    // Fresh store fields, same browser: the tick is read back from storage.
-    seed([personal]);
-    const second = render(<Setup />);
-    region = await screen.findByRole("region", { name: "Getting started" });
-    expect(within(region).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
-    expect(JSON.parse(localStorage.getItem(onboardingKey(SUBJECT)) ?? "{}")).toMatchObject({
-      done: { find: true },
-      started: true,
-    });
-
-    await user.click(within(region).getByRole("button", { name: "Skip the tour" }));
-    expect(checklist()).not.toBeInTheDocument();
-    second.unmount();
-
-    seed([personal]);
-    render(<Setup />);
-    await screen.findByRole("tab", { name: "Tokens" });
-    await waitFor(() => expect(countMemories).toHaveBeenCalled(), WAIT);
-    expect(checklist()).not.toBeInTheDocument();
+    tokens.list = [token({ last_used_at: "2026-09-18T09:05:00" })];
+    render(<Recent />);
+    // A token's first call says only that it connected; only a memory here says it saves.
+    expect(await screen.findByText("Connected.", undefined, WAIT)).toBeInTheDocument();
   });
 
-  it("stays through the first memory, ticking step two instead of disappearing", async () => {
-    seed([personal]);
-    render(<Setup />);
-    const region = await screen.findByRole("region", { name: "Getting started" });
-    expect(within(region).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
-    const readsBefore = vi.mocked(countMemories).mock.calls.length;
-    // A write elsewhere bumps memoriesVersion; Setup re-reads the total. The
-    // read resolves only when this test says so, inside act, so the tick is
-    // asserted after the state has flushed — not raced against a timer.
-    let resolveTotal!: (n: number) => void;
-    vi.mocked(countMemories).mockImplementationOnce(
-      () =>
-        new Promise<number>((res) => {
-          resolveTotal = res;
-        }),
+  it("keeps a connect step ticked on an earlier visit done, with no token to make", async () => {
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: { connect: true }, started: true, dismissed: false }),
     );
-    await act(async () => {
-      useStore.getState().bumpMemoriesVersion();
-    });
-    await waitFor(() => expect(vi.mocked(countMemories).mock.calls.length).toBeGreaterThan(readsBefore), WAIT);
-    await act(async () => {
-      resolveTotal(1);
-    });
-    await waitFor(() => expect(within(region).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1"), WAIT);
-    expect(checklist()).toBeInTheDocument();
+    // The token that made its first call is gone (revoked): the tick holds.
+    tokens.list = [];
+    seed([personal]);
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(within(panel).getByText("Connected.")).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: /Create (a|another) token/ })).toBeNull();
+    expect(within(panel).getByText("1 of 2 done")).toBeInTheDocument();
+    // The next step's action is the page's primary one.
+    expect(within(panel).getByRole("button", { name: "Add a memory yourself" }).className).toMatch(/primary/i);
   });
 
-  it("passes axe", async () => {
+  it("ticks both steps when an agent's first memory arrives, in place", async () => {
     seed([personal]);
-    render(<Setup />);
-    const region = await screen.findByRole("region", { name: "Getting started" });
-    expect(await axeViolations(region)).toEqual([]);
+    render(<Recent />);
+    await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    rows.entries = [memory("claude-code")];
+    act(() => useStore.getState().bumpMemoriesVersion());
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(await within(panel).findByText("2 of 2 done", undefined, WAIT)).toBeInTheDocument();
+    expect(within(panel).getByText(/All set: your agent is saving memories here/)).toBeInTheDocument();
+  });
+
+  it("does not count the dashboard's own memory as an agent connecting", async () => {
+    seed([personal]);
+    render(<Recent />);
+    await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    rows.entries = [memory("loom-ui")];
+    act(() => useStore.getState().bumpMemoriesVersion());
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(await within(panel).findByText("1 of 2 done", undefined, WAIT)).toBeInTheDocument();
+  });
+
+  it("is one line under the toolbar on a namespace with memories, and Continue opens it", async () => {
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
+    rows.entries = [memory("loom-ui")];
+    seed([personal]);
+    render(<Recent />);
+    const bar = await screen.findByTestId("getting-started-bar", {}, WAIT);
+    expect(within(bar).getByText(/1 of 2 set up/)).toBeInTheDocument();
+    await userEvent.click(within(bar).getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("region", { name: "Getting started" }, WAIT)).toBeInTheDocument();
+    // The bar it was pressed in is gone: focus is on the checklist's heading.
+    expect(screen.getByRole("heading", { name: "Getting started" })).toHaveFocus();
+  });
+
+  it("reads the models status only once the full list shows, not for the one-line bar", async () => {
+    vi.mocked(getModelStatus).mockClear();
+    auth.off = true;
+    localStorage.setItem(
+      onboardingKey("local", `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
+    rows.entries = [memory("loom-ui")];
+    seed(null, { ...writer, subject: "local", roles: ["PLATFORM_ADMIN"] });
+    render(<Recent />);
+    const bar = await screen.findByTestId("getting-started-bar", {}, WAIT);
+    expect(getModelStatus).not.toHaveBeenCalled();
+    await userEvent.click(within(bar).getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(getModelStatus).toHaveBeenCalledTimes(1), WAIT);
+  });
+
+  it("says all set on the bar, with no Continue, once both steps tick on a later visit", async () => {
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
+    rows.entries = [memory("claude-code")];
+    seed([personal]);
+    render(<Recent />);
+    const bar = await screen.findByTestId("getting-started-bar", {}, WAIT);
+    await waitFor(() => expect(bar).toHaveTextContent("Getting started · all set"), WAIT);
+    expect(within(bar).queryByRole("button", { name: "Continue" })).toBeNull();
+    expect(within(bar).getByRole("button", { name: "Hide getting started" })).toBeInTheDocument();
+  });
+
+  it("does not say all set while the models row still asks, and the bar keeps Continue for it", async () => {
+    auth.off = true;
+    seed(null, { ...writer, subject: "local", roles: ["PLATFORM_ADMIN"] });
+    const first = render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    rows.entries = [memory("claude-code")];
+    act(() => useStore.getState().bumpMemoriesVersion());
+    expect(await within(panel).findByText("2 of 2 done", undefined, WAIT)).toBeInTheDocument();
+    expect(await within(panel).findByRole("button", { name: "Open Models & keys" }, WAIT)).toBeInTheDocument();
+    expect(within(panel).queryByText(/^All set/)).toBeNull();
+    first.unmount();
+    // Ticked on an earlier visit, with rows: the bar, which cannot see the models, keeps Continue.
+    localStorage.setItem(
+      onboardingKey("local", `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
+    render(<Recent />);
+    const bar = await screen.findByTestId("getting-started-bar", {}, WAIT);
+    await waitFor(() => expect(bar).toHaveTextContent("2 of 2 set up"), WAIT);
+    // Continue opens the list; until the models status answers, it does not say all set.
+    let answer: (v: { requires_setup: boolean }) => void = () => {};
+    vi.mocked(getModelStatus).mockImplementationOnce(() => new Promise((r) => (answer = r)) as never);
+    await userEvent.click(within(bar).getByRole("button", { name: "Continue" }));
+    const list = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(within(list).queryByText(/^All set/)).toBeNull();
+    await act(async () => answer({ requires_setup: true }));
+    expect(await within(list).findByRole("button", { name: "Open Models & keys" }, WAIT)).toBeInTheDocument();
+    expect(within(list).queryByText(/^All set/)).toBeNull();
+  });
+
+  it("names the bar's Hide for what it hides, and Hide hands focus to the search", async () => {
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
+    rows.entries = [memory("loom-ui")];
+    seed([personal]);
+    render(<Recent />);
+    const bar = await screen.findByTestId("getting-started-bar", {}, WAIT);
+    await userEvent.click(within(bar).getByRole("button", { name: "Hide getting started" }));
+    await waitFor(() => expect(screen.queryByTestId("getting-started-bar")).toBeNull());
+    expect(document.activeElement?.tagName).toBe("INPUT");
+  });
+
+  it("offers a new token, not a wait, when the only token of mine has expired", async () => {
+    tokens.list = [token({ expires_at: "2020-01-01T00:00:00" })];
+    seed([personal]);
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(await within(panel).findByRole("button", { name: "Create a token" }, WAIT)).toBeInTheDocument();
+    expect(within(panel).queryByText(/Waiting for/)).toBeNull();
+  });
+
+  it("shows no models row to an account that cannot set the models", async () => {
+    seed([personal]);
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(within(panel).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(panel).queryByRole("button", { name: "Open Models & keys" })).toBeNull();
+  });
+
+  it("starts another namespace's checklist as its own, with no token form left open", async () => {
+    seed([personal]);
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    await userEvent.click(within(panel).getByRole("button", { name: "Create a token" }));
+    expect(await within(panel).findByText("Token form", undefined, WAIT)).toBeInTheDocument();
+    const other = { ...personal, namespace: "personal-other" };
+    act(() =>
+      useStore.setState({
+        myNamespaces: [other],
+        identity: { org: "dev", namespace: other.namespace, agent: "loom-ui" },
+      }),
+    );
+    await waitFor(() => expect(screen.queryByText("Token form")).toBeNull(), WAIT);
+    const next = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(within(next).getByRole("button", { name: "Create a token" })).toBeInTheDocument();
+  });
+
+  it("stays hidden once hidden, for that namespace only", async () => {
+    seed([personal]);
+    const first = render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    await userEvent.click(within(panel).getByRole("button", { name: "Hide" }));
+    await waitFor(() => expect(checklist()).toBeNull());
+    first.unmount();
+    render(<Recent />);
+    expect(await screen.findByText("No memories yet", undefined, WAIT)).toBeInTheDocument();
+    expect(checklist()).toBeNull();
+    expect(JSON.parse(localStorage.getItem(onboardingKey(SUBJECT, `dev/${NS}`)) ?? "{}")).toMatchObject({
+      dismissed: true,
+    });
+    // Another new namespace still shows its own.
+    const other = { ...personal, namespace: "personal-other" };
+    act(() =>
+      useStore.setState({
+        myNamespaces: [other],
+        identity: { org: "dev", namespace: other.namespace, agent: "loom-ui" },
+      }),
+    );
+    await waitFor(() => expect(checklist()).not.toBeNull(), WAIT);
+  });
+
+  it("starts no checklist in a namespace with memories reached by a switch from a new one", async () => {
+    const bob = { ...personal, namespace: "personal-bob" };
+    seed([personal, bob]);
+    render(<Recent />);
+    await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    rows.entries = [memory("claude-code")];
+    act(() => useStore.setState({ identity: { org: "dev", namespace: bob.namespace, agent: "loom-ui" } }));
+    expect(await screen.findByText("uses vim", undefined, WAIT)).toBeInTheDocument();
+    // The last namespace's empty page made nothing of this one new.
+    expect(checklist()).toBeNull();
+    expect(screen.queryByTestId("getting-started-bar")).toBeNull();
+    expect(localStorage.getItem(onboardingKey(SUBJECT, `dev/${bob.namespace}`))).toBeNull();
+  });
+
+  it("is the one-line bar, not the full list, after a switch to a started namespace with memories", async () => {
+    const bob = { ...personal, namespace: "personal-bob" };
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${bob.namespace}`),
+      JSON.stringify({ done: { write: true }, started: true, dismissed: false }),
+    );
+    seed([personal, bob]);
+    render(<Recent />);
+    await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    rows.entries = [memory("loom-ui")];
+    act(() => useStore.setState({ identity: { org: "dev", namespace: bob.namespace, agent: "loom-ui" } }));
+    // Once this namespace's rows are read, its started checklist is the bar.
+    expect(await screen.findByText("uses vim", undefined, WAIT)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("getting-started-bar")).not.toBeNull(), WAIT);
+    expect(checklist()).toBeNull();
+  });
+
+  it("stays the bar when a filter that matched nothing is cleared on a namespace with memories", async () => {
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
+    rows.entries = [memory("loom-ui")];
+    seed([personal]);
+    render(<Recent />);
+    await screen.findByTestId("getting-started-bar", {}, WAIT);
+    rows.entries = [];
+    await userEvent.type(screen.getByLabelText("Search memories"), "tag:nomatch");
+    expect(
+      await screen.findByText((_, el) => el?.textContent === "No memories match tag:nomatch", undefined, WAIT),
+    ).toBeInTheDocument();
+    rows.entries = [memory("loom-ui")];
+    await userEvent.click(screen.getAllByRole("button", { name: "Clear filters" })[0]);
+    expect(await screen.findByText("uses vim", undefined, WAIT)).toBeInTheDocument();
+    // The filter's empty page was not this namespace's: the checklist did not open in full.
+    await waitFor(() => expect(screen.queryByTestId("getting-started-bar")).not.toBeNull(), WAIT);
+    expect(checklist()).toBeNull();
+  });
+
+  it("does not come back on a visit after every step was done", async () => {
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: { connect: true, write: true }, started: true, dismissed: false }),
+    );
+    rows.entries = [memory("claude-code")];
+    seed([personal]);
+    render(<Recent />);
+    await screen.findByText("uses vim", undefined, WAIT);
+    expect(checklist()).toBeNull();
+    expect(screen.queryByTestId("getting-started-bar")).toBeNull();
+  });
+
+  it("with auth off shows the plugin setup that needs no token, and the models step", async () => {
+    auth.off = true;
+    seed(null, { ...writer, subject: "local", roles: ["PLATFORM_ADMIN"] });
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(within(panel).getByText(/claude plugin install loom@loom --config server_url=/)).toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Create a token" })).toBeNull();
+    await userEvent.click(await within(panel).findByRole("button", { name: "Open Models & keys" }, WAIT));
+    expect(useStore.getState().view).toBe("setup");
+    expect(new URLSearchParams(window.location.search).get("tab")).toBe("models");
   });
 });
