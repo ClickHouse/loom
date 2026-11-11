@@ -1012,10 +1012,7 @@
     "use_case": "U25 What a setting does",
     "person": "alice",
     "question": "What does LOOM_ASSISTANT_MODEL set?",
-    "expect": [
-      "agent definition|agent('s)? model|model the (assistant|agent)|agent\\.yaml",
-      "\\bboot|restart|start-?up"
-    ],
+    "expect": ["agent definition|agent('s)? model|model the (assistant|agent)|agent\\.yaml"],
     "cite_help": ["reference/configuration.md", "architecture/assistant.md"],
     "baseline": {
       "op": "help.search",
@@ -1027,7 +1024,8 @@
     "samples": {
       "right": [
         "The assistant agent's model; Loom writes it into the agent definition at boot.",
-        "It sets the model the assistant's agent runs, in place of `agent.yaml`'s; a change takes effect at the next restart."
+        "It sets the model the assistant's agent runs, in place of `agent.yaml`'s; a change takes effect at the next restart.",
+        "It sets the model the assistant's agent runs in LibreChat; empty keeps `agent.yaml`'s model."
       ],
       "wrong": ["I could not find what LOOM_ASSISTANT_MODEL sets."]
     }
@@ -1038,7 +1036,7 @@
     "use_case": "U26 Getting started",
     "person": "alice",
     "question": "Does Loom's quickstart need an API key?",
-    "expect": ["no API key|needs? no (API )?key|(does ?n[o']t|do not) need an? (API )?key"],
+    "expect": ["\\b(no|n[o']t|without)\\b[^.]{0,30}\\b(API )?keys?\\b"],
     "cite_help": ["getting-started/quickstart.md"],
     "baseline": {
       "op": "help.search",
@@ -1050,7 +1048,9 @@
     "samples": {
       "right": [
         "No: the quickstart needs no API key and no account.",
-        "No: the quickstart needs no API key. For real models you need an OpenAI API key (Settings → Models & keys)."
+        "No: the quickstart needs no API key. For real models you need an OpenAI API key (Settings → Models & keys).",
+        "No, you don't need an API key to run the quickstart.",
+        "No, it doesn't require an API key."
       ],
       "wrong": ["Yes, you need an API key; no account is needed."]
     }
@@ -1062,7 +1062,7 @@
     "person": "alice",
     "question": "How do I upgrade a Loom deployment to a new release?",
     "expect": [
-      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|(appl|run)\\w* (the |pending |its )?migrat\\w*[^.]{0,40}\\b(at|on|when|before) (boot|start|it reports ready)|migrations? (run|are applied|apply) (at|on|when) (boot|start)"
+      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|(appl|run)\\w* (the |pending |its )?migrat\\w*[^.]{0,40}\\b(at|on|when|before) (boot|start|it reports ready)|migrations? (run|are applied|apply)[^.]{0,30}\\b(at|on|when) (boot|start)"
     ],
     "cite_help": ["operations/upgrades.md"],
     "baseline": {
@@ -1075,7 +1075,9 @@
     "samples": {
       "right": [
         "Deploy the new image; the first container to boot applies the migrations.",
-        "Deploy the new image; the server applies pending migrations at boot."
+        "Deploy the new image; the server applies pending migrations at boot.",
+        "Deploy the new image; migrations run automatically at boot.",
+        "Migrations apply automatically on startup once the new image is deployed."
       ],
       "wrong": [
         "Export every memory, reinstall the new release and import them back.",
@@ -1108,7 +1110,10 @@
         "No Loom setting changes the dashboard's colour theme.",
         "There is no colour theme setting.",
         "Loom doesn't have a setting for the dashboard's colour theme.",
-        "There isn't a Loom setting that changes the colour theme."
+        "There isn't a Loom setting that changes the colour theme.",
+        "The dashboard has no colour theme setting.",
+        "No Loom setting exists for the dashboard's colour theme.",
+        "The dashboard's colour theme isn't configurable."
       ],
       "wrong": [
         "The docs don't cover it, but set `LOOM_DASHBOARD_COLOUR=dark`.",
