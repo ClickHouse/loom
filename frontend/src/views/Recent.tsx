@@ -24,7 +24,7 @@ import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowSkeleton } from "../components/Skeleton";
-import { toast, toastCommitted } from "../components/Toast";
+import { toast, toastCommitted, toastErrorLine } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { dayLabel, restoreText, displayAgent, SENTINEL_AGENTS } from "../lib/format";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
@@ -409,8 +409,10 @@ function MemoryList() {
     const keys = Array.from(selected);
     let ok = 0,
       fail = 0;
-    // The last pin that committed with lists behind, for its request id.
+    // The last pin that committed with lists behind, and the last call that failed, for
+    // their request ids.
     let lagging: unknown = null;
+    let failure: unknown = null;
     for (const k of keys) {
       const entry = flatList.find((e) => e.memory_key === k);
       if (!entry) {
@@ -434,15 +436,19 @@ function MemoryList() {
         if (isPublicationPending(e)) {
           ok++;
           lagging = e;
-        } else fail++;
+        } else {
+          fail++;
+          failure = e;
+        }
       }
     }
     setBusy(false);
     selection.clear();
     const behind = lagging ? " · lists may show the old state for a moment" : "";
     const line = `Pinned ${ok}${fail ? ` · ${fail} failed` : ""}${behind}`;
-    if (lagging && !fail) toastCommitted(lagging, line);
-    else toast(line, fail ? "error" : "ok");
+    if (fail) toastErrorLine(line, failure);
+    else if (lagging) toastCommitted(lagging, line);
+    else toast(line, "ok");
     bumpMemoriesVersion();
   };
 

@@ -509,7 +509,9 @@ describe("Memories list chrome", () => {
     expect(screen.getByText("request id req-p")).toBeInTheDocument();
     cleanup();
     vi.mocked(pinMemory).mockRejectedValueOnce(pending);
-    vi.mocked(pinMemory).mockRejectedValueOnce(new ApiError({ status: 500, code: "INTERNAL", detail: {} }));
+    vi.mocked(pinMemory).mockRejectedValueOnce(
+      new ApiError({ status: 500, code: "INTERNAL", requestId: "req-f", detail: {} }),
+    );
     render(
       <>
         <ToastViewport />
@@ -524,5 +526,6 @@ describe("Memories list chrome", () => {
       await screen.findByText("Pinned 1 · 1 failed · lists may show the old state for a moment"),
     ).toBeInTheDocument();
     expect(document.querySelector("[data-toast-kind]")).toHaveAttribute("data-toast-kind", "error");
+    expect(screen.getByText("request id req-f")).toBeInTheDocument();
   });
 });
