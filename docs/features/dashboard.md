@@ -174,8 +174,8 @@ before an answer could finish, and model calls switched off for the org (see
 [the bridge](../architecture/assistant.md#the-bridge-each-callers-own-identity)). **Try again**
 reads readiness again and asks a refused question again once nothing refuses it, with what the
 chip shows then; when the chip's line would make it longer than the route accepts it sends
-nothing, leaving the question in an empty field or, with other text there, saying why in the
-panel. **Health**
+nothing, leaving the question in the field, which says why, or, with other text there, saying
+why in the panel. **Health**
 shows the same check as its Assistant row, once readiness can be read: to platform admins
 always, and to anyone else who opens Health while the assistant sets up or fails.
 
