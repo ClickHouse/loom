@@ -927,7 +927,7 @@
     "person": "alice",
     "question": "Does Loom copy our issue tracker's data into its own database?",
     "expect": [
-      "never copies (it|your|the|any)|(does ?n[o']t|does not|never) (copy|store|keep) (it|your|the|any)|(reads|queries)\\b[^.]{0,30}\\blive|keeps? no copy"
+      "never copies (it|your|the|any)|(does ?n[o']t|does not|never) (copy|store|keep) (it|(your|the|any) (issue )?(tracker|issue))|(reads|queries)\\b[^.]{0,30}\\blive|keeps? no copy"
     ],
     "cite_help": ["features/tracker/overview.md"],
     "baseline": {
@@ -946,10 +946,15 @@
       "wrong": [
         "Yes, it copies every issue into its database each night.",
         "Yes: Loom copies every issue into its database each night; it doesn't store attachments.",
-        "Yes: Loom copies every issue into its database each night; it doesn't store the attachments."
+        "Yes: Loom copies every issue into its database each night; it doesn't store the attachments.",
+        "Yes, Loom imports every issue into ClickHouse each night; it doesn't store the attachments.",
+        "Yes. Loom copies the issues into its own tables.",
+        "Yes: Loom syncs every issue each night, and it doesn't store the tracker credentials."
       ]
     },
-    "forbid": ["\\byes\\b[^.]{0,20}\\bcop(y|ies)\\b|\\bcopies (every|each|all)\\b"]
+    "forbid": [
+      "(^|[.!?:]\\s*)yes\\b[^.]{0,40}\\b(cop(y|ies)|imports?|syncs?|mirrors?)\\b|\\bcopies (every|each|all)\\b|\\b(imports?|syncs?|mirrors?) (every|each|all|the) (issue|tracker)"
+    ]
   },
   {
     "id": "help-erase-user",
@@ -1106,7 +1111,7 @@
     "person": "alice",
     "question": "Does Loom's quickstart need an API key?",
     "expect": [
-      "\\b(needs?|requires?) no (API )?keys?\\b|\\bno API key (is )?(needed|required)\\b|\\b(does ?n[o']t|do ?n[o']t|do not|does not) (need|require) an? (API )?key"
+      "\\b(needs?|requires?) no (API )?keys?\\b|\\bno API key (is )?(needed|required)\\b|\\b(you|it|the quickstart) (does ?n[o']t|do ?n[o']t|do not|does not) (need|require) an? (API )?key"
     ],
     "cite_help": ["getting-started/quickstart.md"],
     "baseline": {
@@ -1132,7 +1137,8 @@
         "Yes. Without an API key the quickstart cannot start.",
         "Yes. It won't run without your OpenAI key.",
         "Yes: you cannot use the quickstart without an API key.",
-        "Yes. With no API key, the quickstart won't start."
+        "Yes. With no API key, the quickstart won't start.",
+        "Yes, the quickstart needs an OpenAI API key; search doesn't need a key."
       ]
     }
   },

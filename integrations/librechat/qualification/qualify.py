@@ -680,7 +680,9 @@ def check_help_citations(
         if not path or len(m["path"]) > 300:
             invalid.append(f"{name}: no such page")
             continue
-        page = scorer_read(st, scorer, "help.get", {"path": path})
+        # help.get strips `docs/` itself, once, as the bridge's check does: send the path as
+        # cited, so `docs/docs/…` is no page here either.
+        page = scorer_read(st, scorer, "help.get", {"path": m["path"]})
         if not page.get("found"):
             invalid.append(f"{name}: no such page")
             continue

@@ -807,7 +807,8 @@ def test_check_help_citations_reads_the_page_and_its_sections(monkeypatch):
 
     def fake_read(st, token, op, body):
         assert op == "help.get" and token == "viewer-token"
-        if body["path"] != "features/cost.md":
+        # help.get strips one `docs/` prefix, as the server does.
+        if body["path"].removeprefix("docs/") != "features/cost.md":
             return {"found": False}
         return {"found": True, "sections": [{"section": "Cost and usage > Daily spend caps"}]}
 
@@ -819,7 +820,8 @@ def test_check_help_citations_reads_the_page_and_its_sections(monkeypatch):
         "[help:docs/features/cost.md § Daily spend caps] "
         "[help:features/cost.md § daily spend caps] "
         "[help:features/other.md] "
-        "[help:features/cost.md § >]"  # only separators: the page itself, as the server reads it
+        "[help:features/cost.md § >] "  # only separators: the page itself, as the server reads it
+        "[help:docs/docs/features/cost.md]"  # one prefix is stripped, as the bridge strips it
     )
     cited, invalid, expected = q.check_help_citations(st, person, case, text)
     assert cited == [
@@ -827,10 +829,12 @@ def test_check_help_citations_reads_the_page_and_its_sections(monkeypatch):
         "help:features/cost.md § daily spend caps",
         "help:features/other.md",
         "help:features/cost.md § >",
+        "help:docs/docs/features/cost.md",
     ]
     assert invalid == [
         "help:features/cost.md § daily spend caps: no such section",
         "help:features/other.md: no such page",
+        "help:docs/docs/features/cost.md: no such page",
     ]
     assert expected is True
 
