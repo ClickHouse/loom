@@ -680,7 +680,8 @@
     },
     "samples": {
       "right": [
-        "The new row is stored and flagged as a conflict; the namespace owner decides in the Review queue or with `conflicts.resolve`."
+        "The new row is stored and flagged as a conflict; the namespace owner decides in the Review queue or with `conflicts.resolve`.",
+        "The new row is stored and flagged as a conflict; the owner decides in the Review queue or with `conflicts.resolve`. A pair on the allowlist is not flagged."
       ],
       "wrong": [
         "The new write overwrites the old one.",
@@ -688,7 +689,7 @@
         "Loom does not flag it; the new write wins with no Review queue entry or `conflicts.resolve`."
       ]
     },
-    "forbid": ["\\b(does ?n[o']t|do not|never|is not|isn't) (flag|mark)\\w*"]
+    "forbid": ["(Loom|it|the (new )?write)\\s+(does ?n[o']t|do not|never) (flag|mark)"]
   },
   {
     "id": "help-collection",
@@ -1250,7 +1251,8 @@
         "The dashboard has no colour theme setting.",
         "No Loom setting exists for the dashboard's colour theme.",
         "The dashboard's colour theme isn't configurable.",
-        "Loom's documentation does not cover it."
+        "Loom's documentation does not cover it.",
+        "Loom's memories, documents and documentation hold nothing about a dashboard colour theme. Nothing stored in Loom answers this."
       ],
       "wrong": [
         "The docs don't cover it, but set `LOOM_DASHBOARD_COLOUR=dark`.",

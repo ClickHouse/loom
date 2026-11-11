@@ -511,8 +511,7 @@ def check_citations(
         }
 
     def history(key: str) -> set[int]:
-        # The key exists (memory.get found it), so a failed history read says nothing about
-        # the answer: scorer_read waits out a 429 and stops the run on anything else.
+        # The key exists: a failed read says nothing about the answer.
         if key not in versions:
             rows = scorer_read(st, scorer, "memory.history", body(key)).get("rows") or []
             versions[key] = {int(r["version"]) for r in rows if r.get("version")}
@@ -594,6 +593,8 @@ HELP_ABSTAIN_PATTERNS = (
     r"\b(does ?n[o']t|do not) (have|offer|provide|expose) an? (\w+ ){0,3}(setting|option)",
     r"\bis ?n[o']t an? (\w+ ){0,3}(setting|option)",
     r"\b(could ?n[o']t|did ?n[o']t|can ?not) find\b",
+    # The sentence the agent ends an abstention with (agent.yaml), after all three searches.
+    r"\bnothing stored in loom\b",
 )
 
 
