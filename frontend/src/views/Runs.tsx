@@ -48,7 +48,7 @@ import { DraftSearch } from "../components/ui/DraftSearch";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { RunGrade } from "../flows/RunGrade";
 import { canCall } from "../lib/canCall";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { canWrite, useNamespaceRole } from "../lib/namespaceRole";
 
 // The ten fields a run row reads of the twenty a run carries; the replay reads the rest
 // (the request, the expected outcome, the response, the confidence) from run.get.
@@ -715,6 +715,28 @@ export function Runs() {
   // The read of what is asked now answered with no rows, on the first page shown.
   const nothingShown =
     error === null && shown !== null && !loading && rows.length === 0 && (localRows ? page : shown.page) === 0;
+  // The fold hides runs with no memory activity on the server, so an empty folded first
+  // page cannot tell an empty namespace from one whose runs are all hidden: one read of a
+  // single run, unfolded, says which. Until it answers the page says nothing more; a failed
+  // read leaves the folded state, which claims no runs either way.
+  const probeKey = nothingShown && hideConn && !searching ? (shown?.key ?? "") : "";
+  const [anyRun, setAnyRun] = useState<{ key: string; exists: boolean } | null>(null);
+  useEffect(() => {
+    if (!probeKey) return;
+    const ctl = new AbortController();
+    listRunsPage(
+      { org: identity.org, namespace: identity.namespace },
+      { limit: 1, fields: ["run_id"], memoryActivity: "", signal: ctl.signal },
+    )
+      .then((p) => setAnyRun({ key: probeKey, exists: p.runs.length > 0 }))
+      .catch(() => {
+        if (!ctl.signal.aborted) setAnyRun({ key: probeKey, exists: true });
+      });
+    return () => ctl.abort();
+  }, [probeKey, identity.org, identity.namespace]);
+  const runsExist = !probeKey ? null : anyRun?.key === probeKey ? anyRun.exists : undefined;
+  // A viewer's agent writes nothing here: no connect, and the words say who can.
+  const writes = canWrite(roleHere);
   // Rows read for another search or filter are not counted as this one's matches.
   const count =
     shown && !error && (localRows !== null || shown.filterKey === filterKey)
@@ -915,15 +937,17 @@ export function Runs() {
           onClear={clearFilters}
         />
       )}
-      {nothingShown && !searching && (
+      {/* Folded and not yet known whether any run exists: nothing, rather than a state the
+          next answer takes back. */}
+      {nothingShown && !searching && runsExist !== undefined && (
         <ListState
           kind="empty"
           icon="list-numbered"
-          {...(hideConn
+          {...(hideConn && runsExist !== false
             ? {
                 title: "No runs with memory activity",
                 description:
-                  "Runs that neither relied on nor saved a memory are folded. A run has memory activity when its agent saves memories under it, or names the memories it relied on when it finishes.",
+                  "No run with memory activity yet. Runs without any are hidden. A run has memory activity when its agent saves memories under it, or names the memories it relied on when it finishes.",
                 action: {
                   label: "Show runs with no memory activity",
                   // The button leaves with this state: focus goes to the toolbar's toggle, else
@@ -933,13 +957,14 @@ export function Runs() {
                     focusAfterUnfold();
                   },
                 },
-                connect: "secondary" as const,
+                ...(writes ? { connect: "secondary" as const } : {}),
               }
             : {
                 title: "No runs yet",
-                description:
-                  "A run is one session of an agent's work: what it read and what it wrote. Runs appear here when a connected agent starts one; the Claude Code plugin starts one on a session's first prompt.",
-                connect: "primary" as const,
+                description: writes
+                  ? "A run is one session of an agent's work: what it read and what it wrote. Runs appear here when a connected agent starts one; the Claude Code plugin starts one on a session's first prompt."
+                  : "A run is one session of an agent's work: what it read and what it wrote. Runs appear here when someone with writer access connects an agent that starts one.",
+                ...(writes ? { connect: "primary" as const } : {}),
               })}
         />
       )}

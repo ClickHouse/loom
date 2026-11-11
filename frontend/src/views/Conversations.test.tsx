@@ -328,6 +328,22 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(screen.getByRole("button", { name: "Connect an agent" })).toBeInTheDocument();
   });
 
+  it("with recording on, offers a viewer no connect and says who fills the page", async () => {
+    roleHere.role = "viewer";
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v@x", org: "dev", roles: ["VIEWER"], namespaces: ["ns-a"] },
+    });
+    try {
+      await emptyWith(true);
+      expect(
+        screen.getByText(/when someone with writer access connects an agent that saves its chat turns/),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+    } finally {
+      roleHere.role = "admin";
+    }
+  });
+
   it("with recording off, points whoever may set it at the switch, and offers no connect", async () => {
     await emptyWith(false);
     expect(await screen.findByText(/It is off here: turn on Record conversations above/)).toBeInTheDocument();

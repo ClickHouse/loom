@@ -3,9 +3,10 @@ import { OP_MIN_ROLE } from "../lib/canCall";
 
 // An empty list says, in plain words, what will appear there and what fills it
 // (docs/features/dashboard.md): no operation name, wire field, header, environment variable
-// or "via MCP" in an empty state's text. This reads every `EmptyState` and
-// `ListState kind="empty"` in the page sources, from its opening tag to its close at the
-// same indentation.
+// or "via MCP" in an empty state's text. What this scans: the source lines of each
+// `EmptyState` and `ListState kind="empty"` tag that starts its own line, from that line to
+// the tag's close at the same indentation, as literal text. Text a page builds in a variable
+// outside the tag, or a tag sharing its line with other code, is outside it.
 //
 // The operation names are every op the registry serves: the SDK's generated table
 // (`sdk/typescript/src/generated/ops.ts`, written by `scripts/codegen/sdk_ts_gen.py` from
@@ -32,9 +33,10 @@ async function opNames(): Promise<{ names: Set<string>; fromRegistry: boolean }>
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** What an empty state may still say, by file: the Repositories page names the variable that
- *  lists repositories to whoever runs the deployment, and to no one else. */
-const ALLOWED: { file: string; text: string }[] = [{ file: "/Code.tsx", text: "LOOM_CODE_REPOS_JSON" }];
+/** Lines an empty state may still say, by file and exact text: the Repositories page's line
+ *  for whoever runs the deployment (and no one else), naming the variable that lists
+ *  repositories. Each is taken out of its block before the scan, so the rest of it is read. */
+const ALLOWED: { file: string; text: string }[] = [{ file: "/Code.tsx", text: "List them in LOOM_CODE_REPOS_JSON." }];
 
 /** Each empty state's source: the opening tag's line to its `/>` or closing tag. */
 function emptyStates(text: string): { line: number; block: string }[] {
@@ -66,12 +68,10 @@ describe("empty states", () => {
       "g",
     );
     const hits = Object.entries(SOURCES).flatMap(([path, text]) =>
-      emptyStates(text).flatMap(({ line, block }) =>
-        [...block.matchAll(banned)]
-          .map((m) => m[0])
-          .filter((said) => !ALLOWED.some((a) => path.endsWith(a.file) && a.text === said))
-          .map((said) => `${path}:${line}: ${said}`),
-      ),
+      emptyStates(text).flatMap(({ line, block }) => {
+        const read = ALLOWED.filter((a) => path.endsWith(a.file)).reduce((b, a) => b.split(a.text).join(""), block);
+        return [...read.matchAll(banned)].map((m) => `${path}:${line}: ${m[0]}`);
+      }),
     );
     expect(Object.keys(SOURCES).length).toBeGreaterThan(50);
     expect(hits).toEqual([]);
