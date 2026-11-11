@@ -846,7 +846,7 @@
     "question": "What does the health problem assistant_service_failing mean?",
     "expect": [
       "LibreChat",
-      "(set ?up|setup|regist\\w*|sign-?in|creat\\w*)[^.]{0,80}(fail|could ?n[o']t|did ?n[o']t)|fail\\w*[^.]{0,80}(set ?up|setup|regist|sign-?in)|fail\\w*[^.]{0,80}retr(y|ies)|retr(y|ies)[^.]{0,40}(set ?up|regist)"
+      "(set ?up|setup|regist\\w*|sign-?in|creat\\w*)[^.]{0,80}((?<![a-z_])fail(?!ing`)|could ?n[o']t|did ?n[o']t)|(?<![a-z_])fail(?!ing`)\\w*[^.]{0,80}(set ?up|setup|regist|sign-?in)|(?<![a-z_])fail(?!ing`)\\w*[^.]{0,80}retr(y|ies)|retr(y|ies)[^.]{0,40}(set ?up|regist)"
     ],
     "cite_help": ["features/integrations/librechat.md", "architecture/assistant.md"],
     "baseline": {
@@ -865,7 +865,10 @@
         "It means the LibreChat chat history is full.",
         "It means LibreChat's chat history is full; create a new chat.",
         "It means LibreChat's chat history is full; retry in a new chat.",
-        "It does not mean LibreChat's setup failed; the chat history is full."
+        "It does not mean LibreChat's setup failed; the chat history is full.",
+        "`assistant_service_failing` means LibreChat's chat history is full; retry in a new chat.",
+        "`assistant_service_failing` means the LibreChat sign-in page is down for maintenance.",
+        "Setup is fine; `assistant_service_failing` only means a chat is full."
       ]
     },
     "forbid": ["\\b(does ?n[o']t|do not|not) mean\\b"]

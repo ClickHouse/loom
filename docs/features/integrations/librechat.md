@@ -274,15 +274,15 @@ counting every prompt token, a mean of $0.053 per answer. The figures take 14 ca
 memory, nine document and two help cases) from one run and the other 42 from a full run,
 on agent definitions that differ from `integrations/librechat/agent.yaml` in one sentence
 on the asker's role, and for the full run also in the wording of the first step's
-searches. Twelve answers cite nothing: two refusals, three abstentions and seven
-counts, which come from tallies with no row to cite; every other answer cites one. The
-misses:
+searches. Twelve answers cite no memory, document or help page: two refusals, three
+abstentions, three SQL analyses (which cite their statement instead) and four counts,
+which come from tallies with no row to cite; every other answer cites one. The misses:
 
 - `doc-cache-entries` asks for a value one of the namespace's documents holds
   (`config/cache.toml`); the answer searches Loom's own documentation instead and does not
   find it: the question and Loom's settings share their words.
 - Two recommendation answers cite `mentor.guide`, Loom's writing guide, as a docs page,
-  which the check marks unverified: the guide has no citation form.
+  which the harness marks invalid (no such page): the guide has no citation form.
 - One answer names a section the page does not have.
 
 Answers vary from run to run at this model. A question about the person's own data that
