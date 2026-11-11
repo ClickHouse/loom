@@ -444,20 +444,25 @@ it. Claim it again at once after such a restore.
 
 **Impersonation.** A subject in `LOOM_TRUSTED_CALLERS` may send `X-Loom-On-Behalf-Of` over
 HTTP to act as another principal. The header's subject becomes the effective subject, and
-`impersonated_by` records the caller on its `agent_events` rows. A subject revoked
-outright or deprovisioned, in any case and under any spelling it holds in the target org
-or the caller's own org (itself, and the handle and email of each active account of it
-whose email is verified), is not acted for (403), nor is a bot that is revoked outright or
-disabled, nor any of its agents (a disable leaves their grants). A request that names no
-org, from a caller whose token is for every org, has no org to read spellings in, so only
-the subject as sent is checked. An unverified email is not held: revoking a stranger's
-account that typed someone's email does not refuse acting for that email. Sign-up refuses
-a trusted caller's own subject as a name (the sign-up rule under roles above). Sign-up
-refuses a handle the caller acts for as a new name only once a row reserves it there (the
-sign-up rule above): a service-account caller, or one acting in another org, provisions
-nothing there, so acting for `carol` alone does not stop a stranger signing up as `carol`
-and sharing that subject. With self-signup open, have a trusted caller act for email
-subjects, which a sign-up name cannot spell, or grant each handle in
+`impersonated_by` records the caller on its `agent_events` rows. A subject revoked outright
+or deprovisioned, in any case and under any spelling it holds in the target org or the
+caller's own org (itself, and the handle and email of each active account of it whose email
+is verified), is not acted for (403), nor is a bot that is revoked outright or disabled, nor
+any of its agents (a disable leaves their grants). Of the `sa:` subjects, only an active bot
+and its agents are acted for: any other is a token's own subject, whose direct grants belong
+to the token and must end with it, and a token ends in ways its grants do not record (an
+expiry, a revoke by `jti`, a cutoff on its maker or on itself), so a trusted caller acting
+for one would keep reaching what a dead token held. A token minted under a subject without
+`sa:` cannot be told from a person's, and is acted for until its subject is revoked
+outright. A request that names no org, from a caller whose token is for every org, has no
+org to read spellings in, so only the subject as sent is checked. An unverified email is not
+held: revoking a stranger's account that typed someone's email does not refuse acting for
+that email. Sign-up refuses a trusted caller's own subject as a name (the sign-up rule under
+roles above). Sign-up refuses a handle the caller acts for as a new name only once a row
+reserves it there (the sign-up rule above): a service-account caller, or one acting in
+another org, provisions nothing there, so acting for `carol` alone does not stop a stranger
+signing up as `carol` and sharing that subject. With self-signup open, have a trusted caller
+act for email subjects, which a sign-up name cannot spell, or grant each handle in
 `LOOM_SELF_SIGNUP_ORG` first ([tokens and grants](../guides/tokens-and-grants.md)).
 
 **OIDC and OAuth.** OIDC login trusts only the configured issuer's discovery, verified

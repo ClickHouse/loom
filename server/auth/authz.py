@@ -72,17 +72,22 @@ def may_act_in_org(auth: AuthInfo, org: str) -> bool:
     return auth.org in ("*", org) or auth.has_role(Role.PLATFORM_ADMIN)
 
 
-_ACTED_FOR_REVOKED = "the subject this request acts for is revoked, deprovisioned or disabled"
+_ACTED_FOR_REVOKED = "the subject this request acts for is revoked or deprovisioned"
+_ACTED_FOR_NO_BOT = "an sa: subject is acted for only while it names an active bot or its agent"
 
 
-class ActedForRevoked(PermissionError):
-    """The subject a trusted caller acts for is revoked: a refusal of the subject, not
-    of the caller's access to an index, so a transport adds no index reason to it."""
+class ActedForRefused(PermissionError):
+    """The subject a trusted caller acts for is refused (revoked, deprovisioned, or an
+    `sa:` subject naming no active bot): a refusal of the subject, not of the caller's
+    access to an index, so a transport adds no index reason to it."""
 
 
 async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
-    """Refuse a trusted caller acting for a revoked, SCIM-deactivated or disabled-bot
-    subject under any spelling it holds; docs/architecture/security.md, Impersonation."""
+    """Refuse a trusted caller acting for a revoked or SCIM-deactivated subject under any
+    spelling it holds, or for an `sa:` subject that is not an active bot or one of its
+    agents: a token's own subject, whose grants are the token's and end with it however
+    it ends (an expiry, a revoke by jti, a cutoff on its maker), none of which its grants
+    record; docs/architecture/security.md, Impersonation."""
     from server.auth import machines, revocation
     from server.auth.gateway import is_end_user
     from server.core import grant_cache
@@ -95,21 +100,24 @@ async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
         if may_act_in_org(auth, scope_org):  # an org it cannot act in is refused after this
             spellings.update((await grant_cache.grant_map(scope_org, auth.subject)).held)
     folded = auth.subject.lower()  # bot names are lower-case; grants are read case-folded
-    bot = folded.removeprefix("sa:").partition(":")[0] if folded.startswith("sa:") else ""
+    service_account = folded.startswith("sa:")
+    bot = folded.removeprefix("sa:").partition(":")[0] if service_account else ""
+    if service_account and not bot:
+        raise ActedForRefused(_ACTED_FOR_NO_BOT)
     if bot:
         spellings.add(machines.subject(bot))  # a revoked bot refuses its agents, as their mint does
     if any(revocation.revoked_outright_any_case(s) for s in spellings):
-        raise ActedForRevoked(_ACTED_FOR_REVOKED)
+        raise ActedForRefused(_ACTED_FOR_REVOKED)
     for email in {s.lower() for s in spellings if "@" in s}:
         if await _remembered(("scim", email), _scim_deactivated):
-            raise ActedForRevoked(_ACTED_FOR_REVOKED)
-    if bot and await _remembered(("bot", bot), _bot_disabled):
-        raise ActedForRevoked(_ACTED_FOR_REVOKED)
+            raise ActedForRefused(_ACTED_FOR_REVOKED)
+    if bot and await _remembered(("bot", bot), _bot_ended):
+        raise ActedForRefused(_ACTED_FOR_NO_BOT)
 
 
-# (kind, key) -> (read at, ended), kept grant_cache_ttl_seconds: a SCIM deactivation or a
-# bot disable written by another process reaches this one within that, and one written
-# here drops its entry (`forget_ended`); emptied past _ENDED_MAX.
+# (kind, key) -> (read at, ended), kept grant_cache_ttl_seconds: a SCIM deactivation, or
+# a bot created or disabled, by another process reaches this one within that, and one
+# written here drops its entry (`forget_ended`); emptied past _ENDED_MAX.
 _ENDED: dict[tuple[str, str], tuple[float, bool]] = {}
 _forgets = 0  # forgets so far: a read that one overtook is not kept
 _ENDED_MAX = 10_000  # not a setting: a memory bound on a memo the TTL already ages
@@ -148,20 +156,21 @@ async def _scim_deactivated(email: str) -> bool:
         return await scim.deactivated(email)
     except login.SignInUnavailable as e:
         if isinstance(e.__cause__, LoomServerError):
-            raise e.__cause__ from None  # its own code and Retry-After, as _bot_disabled does
+            raise e.__cause__ from None  # its own code and Retry-After, as _bot_ended does
         raise BackendUnavailableError("cannot read whether SCIM deactivated the subject") from e
 
 
-async def _bot_disabled(name: str) -> bool:
+async def _bot_ended(name: str) -> bool:
+    """Whether no active bot holds `name`: it is disabled, or no bot ever held it."""
     from server.auth import machines
     from server.core.errors import BackendUnavailableError, LoomServerError
 
     try:
-        return await machines.disabled(name)
+        return await machines.get(name) is None
     except LoomServerError:
         raise
     except Exception as e:  # an unread bot row refuses, as the grant read does
-        raise BackendUnavailableError("cannot read whether the bot is disabled") from e
+        raise BackendUnavailableError("cannot read whether the bot is active") from e
 
 
 @marks_unverified

@@ -579,20 +579,27 @@ in, `loom claim-release` the revoked account, which clears its contact so it nam
 That is also what a release does to an offboarded account tidied up later: it lets the
 person sign up again, under a new subject.
 
-**An aggregator acting for its users.** A subject listed in `LOOM_TRUSTED_CALLERS` may
-send `X-Loom-On-Behalf-Of: <subject>`: the call runs as that subject and every ledger row
-records the real caller in `impersonated_by`. A subject spelled like a grant principal
-(`user:`, `group:`, `agent:`, `everyone`, in any case, bare or after a `/`) is refused:
-end users are signed in by their own issuer. A subject revoked outright
-(`loom revoke-token --subject`) or deprovisioned through SCIM is not acted for (403), nor
-is a bot that `loom bot disable` has disabled, or one of its agents (`sa:<bot>`,
-`sa:<bot>:<agent>`): a disable leaves the agents' grants and ends the bot's tokens with a
-cutoff. Revoking a bot outright refuses acting for its agents too. A cutoff
-(`--issued-before`) ends that subject's own tokens but not a trusted caller's calls for
-it. Empty disables the header. With self-signup open, act for email subjects (a sign-up
-name cannot spell one) or grant each handle in `LOOM_SELF_SIGNUP_ORG` before acting for
-it: a handle nothing reserves there is open to sign-up, and acting for it from a service
-account or another org grants nothing there.
+**An aggregator acting for its users.** A subject listed in `LOOM_TRUSTED_CALLERS` may send
+`X-Loom-On-Behalf-Of: <subject>`: the call runs as that subject and every ledger row records
+the real caller in `impersonated_by`. A subject spelled like a grant principal (`user:`,
+`group:`, `agent:`, `everyone`, in any case, bare or after a `/`) is refused: end users are
+signed in by their own issuer. A subject revoked outright (`loom revoke-token --subject`) or
+deprovisioned through SCIM is not acted for (403), nor is a bot that `loom bot disable` has
+disabled, or one of its agents (`sa:<bot>`, `sa:<bot>:<agent>`): a disable leaves the
+agents' grants and ends the bot's tokens with a cutoff. Revoking a bot outright refuses
+acting for its agents too. Any other `sa:` subject (a dashboard token's, an agent sign-up
+token's, or one `loom mint-token` minted) is never acted for: it is a token's own subject,
+and its grants must not outlive the token. A token minted under a subject without `sa:`
+(`loom mint-token --subject support-bot`) reads to the server like a person's, so a trusted
+caller may act for it until `loom revoke-token --subject` revokes it outright. Mint a token
+that holds direct grants under an `sa:` name that no bot holds and that has no `:` in it,
+since a bot's subject and its agents' (`sa:<bot>:<agent>`) are acted for while the bot is
+active. A cutoff (`--issued-before`) ends a subject's own tokens but not a trusted caller's
+calls for a subject it still acts for (a person, an active bot or one of its agents). Empty
+disables the header. With self-signup open, act for email subjects (a sign-up name cannot
+spell one) or grant each handle in `LOOM_SELF_SIGNUP_ORG` before acting for it: a handle
+nothing reserves there is open to sign-up, and acting for it from a service account or
+another org grants nothing there.
 
 ## Act for a service's end users
 

@@ -128,17 +128,6 @@ async def get(name: str, *, active_only: bool = True, ch: Any = None) -> Machine
     return _machine(row) if row is not None else None
 
 
-async def disabled(name: str, *, ch: Any = None) -> bool:
-    """Whether bot `name` exists and is disabled; a subject with no bot (a minted
-    service account) is not. Read as of every write that landed."""
-    with own_write_reads():
-        row = await (ch or get_client()).query_one(
-            f"SELECT active FROM {TABLE} FINAL WHERE name = {{name:String}}",
-            params={"name": name},
-        )
-    return row is not None and not row["active"]
-
-
 def _machine(row: dict[str, Any]) -> Machine:
     return {
         "name": row["name"],

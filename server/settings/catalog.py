@@ -363,7 +363,8 @@ class AuthSettings(BaseModel):
     # change reaches other processes through the per-org grant watermark
     # (acl_watermark_poll_seconds), and this bounds one whose watermark row was
     # never written. It also bounds how long a SCIM deactivation of an email, or a
-    # bot disable, takes to stop a trusted caller acting for it on another process.
+    # bot disable, takes to stop a trusted caller acting for it on another process,
+    # and how long a bot created there takes to be acted for.
     grant_cache_ttl_seconds: float = 10.0
     # Seconds between each process's reads of the per-org grant watermark
     # (loom.acl_versions): a revoke on one replica is enforced on every other

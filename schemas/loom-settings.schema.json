@@ -2726,7 +2726,7 @@
         "grant_cache_ttl_seconds": {
           "default": 10.0,
           "type": "number",
-          "description": "Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there. The backstop: a grant change reaches other processes through the per-org grant watermark (acl_watermark_poll_seconds), and this bounds one whose watermark row was never written. It also bounds how long a SCIM deactivation of an email, or a bot disable, takes to stop a trusted caller acting for it on another process."
+          "description": "Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there. The backstop: a grant change reaches other processes through the per-org grant watermark (acl_watermark_poll_seconds), and this bounds one whose watermark row was never written. It also bounds how long a SCIM deactivation of an email, or a bot disable, takes to stop a trusted caller acting for it on another process, and how long a bot created there takes to be acted for."
         },
         "hsts_max_age_seconds": {
           "default": 31536000,

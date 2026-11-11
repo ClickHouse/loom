@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -307,7 +308,7 @@ def test_the_tokens_own_org_is_checked_too(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
     monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"bob"}))
     # its own refusal, so the HTTP 403 adds no code-index reason to it
-    with pytest.raises(authz.ActedForRevoked, match="acts for is revoked"):
+    with pytest.raises(authz.ActedForRefused, match="acts for is revoked"):
         asyncio.run(authz.check_acted_for(_acting("bob@corp.com", "clickhouse"), "acme"))
 
 
@@ -427,15 +428,23 @@ def test_a_refreshed_snapshot_folds_a_revocation_written_in_another_case(
     assert not revocation.revoked_outright_any_case("carol")
 
 
+def _bots(active: Callable[[str], Awaitable[bool]]) -> Callable[..., Awaitable[Any]]:
+    """`machines.get` over a fake that says whether an active bot holds a name."""
+
+    async def get(name: str, **_: Any) -> Any:
+        return {"name": name} if await active(name) else None
+
+    return get
+
+
 # ── the routes outside the op gate, and the gate end to end ─────────────────
 
 
 @pytest.fixture
-def _bob_revoked(monkeypatch: pytest.MonkeyPatch) -> object:
-    """A trusted caller's token, `bob` revoked outright, and the app's client."""
+def _trusted(monkeypatch: pytest.MonkeyPatch) -> object:
+    """The app's client, called with a trusted caller's token."""
     from fastapi.testclient import TestClient
 
-    from server.auth import revocation
     from server.core import grant_cache
     from server.main import app
     from server.transport import http as http_mod
@@ -446,8 +455,16 @@ def _bob_revoked(monkeypatch: pytest.MonkeyPatch) -> object:
     monkeypatch.setattr(bearer_mod, "verify_token", lambda *a, **k: _auth("sa:gateway"))
     monkeypatch.setattr(http_mod.settings, "trusted_callers", "sa:gateway")
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"bob"}))
     return TestClient(app)
+
+
+@pytest.fixture
+def _bob_revoked(monkeypatch: pytest.MonkeyPatch, _trusted: object) -> object:
+    """`_trusted`, with `bob` revoked outright."""
+    from server.auth import revocation
+
+    monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"bob"}))
+    return _trusted
 
 
 _AS_BOB = {"Authorization": "Bearer fake-token", "X-Loom-On-Behalf-Of": "bob"}
@@ -476,6 +493,31 @@ def test_knowledge_download_refuses_a_revoked_acted_for_subject(_bob_revoked: An
     assert "acts for is revoked" in r.json()["detail"]["message"]
 
 
+def test_an_op_refuses_acting_for_a_tokens_own_subject(
+    monkeypatch: pytest.MonkeyPatch, _trusted: Any
+) -> None:
+    """POST /v1/{op} acting for an `sa:` subject no bot holds (a token's own, live or
+    dead): 403 AUTH_INSUFFICIENT."""
+    from server.auth import machines
+
+    async def no_bot(name: str, **_: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(machines, "get", _bots(no_bot))
+    r = _trusted.post(
+        "/v1/memory.search",
+        json={"org": "clickhouse", "namespace": "ns", "query": "q"},
+        headers={"Authorization": "Bearer fake-token", "X-Loom-On-Behalf-Of": "sa:triage-a1b2c3"},
+    )
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"] == {
+        "code": "AUTH_INSUFFICIENT",
+        "message": "an sa: subject is acted for only while it names an active bot or its agent",
+        "category": "auth",
+        "retryable": False,
+    }
+
+
 def test_an_op_refuses_a_revoked_acted_for_subject_with_no_index_reason(
     monkeypatch: pytest.MonkeyPatch, _bob_revoked: Any
 ) -> None:
@@ -492,7 +534,7 @@ def test_an_op_refuses_a_revoked_acted_for_subject_with_no_index_reason(
     assert r.status_code == 403, r.text
     assert r.json()["detail"] == {
         "code": "AUTH_INSUFFICIENT",
-        "message": "the subject this request acts for is revoked, deprovisioned or disabled",
+        "message": "the subject this request acts for is revoked or deprovisioned",
         "category": "auth",
         "retryable": False,
     }
@@ -522,7 +564,7 @@ def test_the_acted_for_check_reads_the_held_spellings_not_every_tied_one(
     grant_cache.clear()
     acting = authz.check_acted_for(_acting("carol@corp.com", "acme"), "acme")
     if refused:
-        with pytest.raises(authz.ActedForRevoked):
+        with pytest.raises(authz.ActedForRefused):
             asyncio.run(acting)
     else:
         asyncio.run(acting)
@@ -537,28 +579,37 @@ def test_the_acted_for_check_reads_the_held_spellings_not_every_tied_one(
         ("sa:CI:agent-1", {"ci"}, True),
         ("Sa:Ci", {"ci"}, True),
         ("sa:ci:agent-1", set(), False),  # its bot is active
-        ("sa:minted", set(), False),  # a minted service account: no bot row
+        ("sa:ci", set(), False),
+        # A token's own subject, which a revoke by jti or a cutoff ends without its row
+        # or its grants saying so: never acted for, live or dead.
+        ("sa:minted", set(), True),  # `loom mint-token --subject sa:minted`: no bot row
+        ("sa:token-2026-01-02-0a1b2c3d4e5f-9f8e7d", set(), True),  # a dashboard token
+        ("sa:helper-1a2b3c", set(), True),  # an agent sign-up token
+        ("sa:", set(), True),
+        ("sa:ghost:agent-1", set(), True),  # an agent of no bot
     ],
 )
-def test_a_disabled_bot_or_its_agent_is_not_acted_for(
+def test_a_trusted_caller_acts_only_for_an_active_bot_or_its_agents(
     monkeypatch: pytest.MonkeyPatch, subject: str, disabled: set[str], refused: bool
 ) -> None:
-    """A disable ends the bot's tokens with a cutoff, which does not refuse acting for
-    a subject, and leaves its agents' grants: the bot's own state refuses."""
+    """Of the `sa:` subjects, a trusted caller acts for an active bot and its agents only.
+    A disable ends the bot's tokens with a cutoff, which does not refuse acting for a
+    subject, and leaves its agents' grants: the bot's own state refuses. Any other `sa:`
+    subject is a token's own, whose grants must end with the token however it ends."""
     from server.auth import authz, machines
     from server.core import grant_cache
 
     async def grant_map(org: str, subject_: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks={"ci-agent-1": 3}, held=(subject_,))
 
-    async def is_disabled(name: str, **_: Any) -> bool:
-        return name in disabled
+    async def is_active(name: str, **_: Any) -> bool:
+        return name == "ci" and name not in disabled
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "disabled", is_disabled)
+    monkeypatch.setattr(machines, "get", _bots(is_active))
     acting = authz.check_acted_for(_acting(subject, "acme"), "acme")
     if refused:
-        with pytest.raises(authz.ActedForRevoked):
+        with pytest.raises(authz.ActedForRefused, match="names an active bot"):
             asyncio.run(acting)
     else:
         asyncio.run(acting)
@@ -585,30 +636,13 @@ def test_an_unreadable_bot_refuses(
         raise error
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "disabled", unreadable)
+    monkeypatch.setattr(machines, "get", _bots(unreadable))
     with pytest.raises(LoomServerError) as refused:
         asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))
     if kept:
         assert refused.value is error  # its own code and retry hint
     else:
         assert type(refused.value) is BackendUnavailableError
-
-
-@pytest.mark.parametrize(
-    ("rows", "disabled"),
-    [([{"active": 0}], True), ([{"active": 1}], False), ([], False)],
-)
-def test_a_bot_is_disabled_only_when_its_row_says_so(
-    rows: list[dict[str, Any]], disabled: bool
-) -> None:
-    from server.auth import machines
-
-    class _CH:
-        async def query_one(self, sql: str, params: dict[str, Any], **_: Any) -> Any:
-            assert params == {"name": "ci"}
-            return rows[0] if rows else None
-
-    assert asyncio.run(machines.disabled("ci", ch=_CH())) is disabled
 
 
 def test_a_remembered_answer_is_reused_until_the_grant_cache_ttl_and_read_after(
@@ -626,12 +660,12 @@ def test_a_remembered_answer_is_reused_until_the_grant_cache_ttl_and_read_after(
     async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks={}, held=(subject,))
 
-    async def is_disabled(name: str, **_: Any) -> bool:
+    async def is_active(name: str, **_: Any) -> bool:
         reads.append(name)
-        return name in disabled
+        return name not in disabled
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "disabled", is_disabled)
+    monkeypatch.setattr(machines, "get", _bots(is_active))
     monkeypatch.setattr(time, "monotonic", clock.monotonic)  # the process clock
     monkeypatch.setattr(authz, "_ENDED", {})
     monkeypatch.setattr(settings, "grant_cache_ttl_seconds", 10.0)
@@ -641,7 +675,7 @@ def test_a_remembered_answer_is_reused_until_the_grant_cache_ttl_and_read_after(
     asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))  # the memo answers
     assert reads == ["ci"]
     clock.advance(0.1)
-    with pytest.raises(authz.ActedForRevoked):
+    with pytest.raises(authz.ActedForRefused):
         asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))
     assert reads == ["ci", "ci"]
 
@@ -660,11 +694,11 @@ def test_the_memo_is_emptied_past_its_bound(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-def test_a_bot_disabled_on_this_process_is_refused_at_once(
+def test_a_bot_created_or_disabled_on_this_process_takes_effect_at_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The disabling process drops its memo of the bot, and `machines.disabled` reads the
-    real table."""
+    """The process that creates or disables a bot drops its memo of it, and
+    `machines.get` reads the real table."""
     from server.auth import authz, machines
     from server.core import grant_cache
 
@@ -704,10 +738,12 @@ def test_a_bot_disabled_on_this_process_is_refused_at_once(
         "max_access_token_s": 86400,
         "platform_admin": False,
     }
+    with pytest.raises(authz.ActedForRefused):  # no bot yet, and that is remembered
+        asyncio.run(authz.check_acted_for(_acting("sa:ci:agent-1", "acme"), "acme"))
     asyncio.run(machines.save(bot, by="cli:root"))
     asyncio.run(authz.check_acted_for(_acting("sa:ci:agent-1", "acme"), "acme"))  # remembered
     asyncio.run(machines.save(bot, by="cli:root", active=False))
-    with pytest.raises(authz.ActedForRevoked):
+    with pytest.raises(authz.ActedForRefused):
         asyncio.run(authz.check_acted_for(_acting("sa:ci:agent-1", "acme"), "acme"))
 
 
@@ -739,7 +775,7 @@ def test_a_scim_deactivation_on_this_process_refuses_at_once(
     monkeypatch.setattr(authz, "_ENDED", {("scim", "alice@corp.com"): (time.monotonic(), False)})
     row = {"id": "u1", "email": "Alice@corp.com", "active": 1}
     asyncio.run(scim._write_audited(row, {**row, "active": 0}))
-    with pytest.raises(authz.ActedForRevoked):
+    with pytest.raises(authz.ActedForRefused):
         asyncio.run(authz.check_acted_for(_acting("alice@corp.com", "acme"), "acme"))
 
 
@@ -772,7 +808,7 @@ def test_a_bot_save_that_raised_still_refuses_at_once(monkeypatch: pytest.Monkey
             raise BackendTimeoutError("machine identities timed out")
 
     async def landed(name: str, **_: Any) -> bool:
-        return True
+        return False  # the disable landed
 
     async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks={}, held=(subject.lower(),))
@@ -781,8 +817,8 @@ def test_a_bot_save_that_raised_still_refuses_at_once(monkeypatch: pytest.Monkey
     monkeypatch.setattr(authz, "_ENDED", {("bot", "ci"): (time.monotonic(), False)})
     with pytest.raises(BackendTimeoutError):
         asyncio.run(machines.save({"name": "ci"}, by="cli:root", active=False, ch=_Lost()))  # type: ignore[typeddict-item]
-    monkeypatch.setattr(machines, "disabled", landed)
-    with pytest.raises(authz.ActedForRevoked):
+    monkeypatch.setattr(machines, "get", _bots(landed))
+    with pytest.raises(authz.ActedForRefused):
         asyncio.run(authz.check_acted_for(_acting("sa:ci", "acme"), "acme"))
 
 
@@ -798,12 +834,12 @@ def test_a_bot_revoked_outright_refuses_acting_for_its_agents(
     async def grant_map(org: str, subject_: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks={}, held=(subject_.lower(),))
 
-    async def not_disabled(name: str, **_: Any) -> bool:
-        return False
+    async def still_active(name: str, **_: Any) -> bool:
+        return True
 
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
-    monkeypatch.setattr(machines, "disabled", not_disabled)
+    monkeypatch.setattr(machines, "get", _bots(still_active))
     monkeypatch.setattr(authz, "_ENDED", {})
     monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"sa:ci"}))
-    with pytest.raises(authz.ActedForRevoked):
+    with pytest.raises(authz.ActedForRefused):
         asyncio.run(authz.check_acted_for(_acting(subject, "acme"), "acme"))

@@ -211,8 +211,9 @@ async def authorize(
         if org_level and op.name not in END_USER_ORG_OPS:
             raise PermissionError(f"{op.name} is not open to an end user")
     else:
-        # A revoked subject a trusted caller acts for is refused before anything is
-        # provisioned for it (`check_acted_for` admits every other call).
+        # A subject a trusted caller may not act for (revoked, deprovisioned, or an `sa:`
+        # subject naming no active bot) is refused before anything is provisioned for it
+        # (`check_acted_for` admits every other call).
         await check_acted_for(auth, target.org)
         await ensure_personal_namespace_cached(
             org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account

@@ -22,7 +22,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 
-from server.auth.authz import ActedForRevoked
+from server.auth.authz import ActedForRefused
 from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.fail_closed import answered_unverified
 from server.auth.jwt import AuthInfo
@@ -414,10 +414,10 @@ async def _authorize(
         # namespace or org it is for.
         raise _refuse(op, call, 400, error_code="IDENTITY_INCOMPLETE", e=e) from e
     except PermissionError as e:
-        # A code/tracker index says why, as MCP's refusal does; a revoked subject a
-        # trusted caller acts for is not an index's refusal.
+        # A code/tracker index says why, as MCP's refusal does; a subject a trusted
+        # caller may not act for is not an index's refusal.
         ns = target.namespace
-        indexed = ar.is_plane_op(op.name) and not isinstance(e, ActedForRevoked)
+        indexed = ar.is_plane_op(op.name) and not isinstance(e, ActedForRefused)
         unverified = bool(getattr(e, "unverified", False))
         why: dict[str, object] = (
             ar.reason_fields(ns, unverified=unverified)
