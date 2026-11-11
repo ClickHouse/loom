@@ -230,43 +230,46 @@ the bridge's own citation check.
 assistant: an agent with no help tools. It answered 10 of 26 by its own knowledge and
 cited none. **After** is the current agent definition.
 
-| Use case                          | Cases | Before: answered with a citation | After: correct | After: citations valid |
-| --------------------------------- | ----- | -------------------------------- | -------------- | ---------------------- |
-| U1 Look up a stored fact          | 7     | 0 of 1                           | 7 of 7         | 7 of 7                 |
-| U2 What a document says           | 10    | 0 of 1                           | 9 of 10        | 9 of 10                |
-| U3 What the namespace holds       | 3     | -                                | 3 of 3         | 3 of 3                 |
-| U4 Usage counts and trends        | 3     | -                                | 3 of 3         | 3 of 3                 |
-| U5 Cost and spend                 | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U6 Write memory better            | 4     | 0 of 1                           | 4 of 4         | 2 of 4                 |
-| U7 History of a fact              | 2     | 0 of 1                           | 2 of 2         | 2 of 2                 |
-| U8 Entity graph                   | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U9 Code index                     | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U10 Conflicts and refusal         | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U11 Sharing and collections       | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U12 My role and who can change it | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U13 Connect a coding agent        | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U14 Tokens                        | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U15 Models and keys               | 1     | 0 of 1                           | 1 of 1         | 0 of 1                 |
-| U16 Health problems               | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U17 Why search returned this      | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U18 Runs                          | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U19 Tasks between agents          | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U20 Tracker                       | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U21 Retention and erasure         | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U22 Extraction from transcripts   | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U23 Working memory                | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U24 Integrations                  | 2     | 0 of 1                           | 2 of 2         | 2 of 2                 |
-| U25 What a setting does           | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U26 Getting started               | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U27 Operating a deployment        | 1     | 0 of 1                           | 1 of 1         | 1 of 1                 |
-| U28 Refusals and abstentions      | 5     | 0 of 1                           | 5 of 5         | 5 of 5                 |
-| All                               | 56    | 0 of 26                          | 55 of 56       | 52 of 56               |
+| Use case                          | Cases | Before: answered with a citation | After: correct | After: no invalid citation |
+| --------------------------------- | ----- | -------------------------------- | -------------- | -------------------------- |
+| U1 Look up a stored fact          | 7     | 0 of 1                           | 7 of 7         | 7 of 7                     |
+| U2 What a document says           | 10    | 0 of 1                           | 9 of 10        | 9 of 10                    |
+| U3 What the namespace holds       | 3     | -                                | 3 of 3         | 3 of 3                     |
+| U4 Usage counts and trends        | 3     | -                                | 3 of 3         | 3 of 3                     |
+| U5 Cost and spend                 | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U6 Write memory better            | 4     | 0 of 1                           | 4 of 4         | 2 of 4                     |
+| U7 History of a fact              | 2     | 0 of 1                           | 2 of 2         | 2 of 2                     |
+| U8 Entity graph                   | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U9 Code index                     | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U10 Conflicts and refusal         | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U11 Sharing and collections       | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U12 My role and who can change it | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U13 Connect a coding agent        | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U14 Tokens                        | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U15 Models and keys               | 1     | 0 of 1                           | 1 of 1         | 0 of 1                     |
+| U16 Health problems               | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U17 Why search returned this      | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U18 Runs                          | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U19 Tasks between agents          | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U20 Tracker                       | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U21 Retention and erasure         | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U22 Extraction from transcripts   | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U23 Working memory                | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U24 Integrations                  | 2     | 0 of 1                           | 2 of 2         | 2 of 2                     |
+| U25 What a setting does           | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U26 Getting started               | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U27 Operating a deployment        | 1     | 0 of 1                           | 1 of 1         | 1 of 1                     |
+| U28 Refusals and abstentions      | 5     | 0 of 1                           | 5 of 5         | 5 of 5                     |
+| All                               | 56    | 0 of 26                          | 55 of 56       | 52 of 56                   |
 
 Measured on v0.8.8 with `claude-haiku-4-5`, on a server running fake embeddings and a fake
 LLM for Loom's own model jobs. A full run of the 56 cases costs about $3 at list price
 counting every prompt token, a mean of $0.053 per answer. The after columns are from a
-full run, with the 14 cases the last instruction change touches (the memory and document
-cases and three others) from a run after that change. The misses:
+full run, with the 14 cases the last instruction change touches (three memory cases, the
+seven document cases, the two unanswerable document cases and two help cases) from a run
+after that change. Twelve answers cite nothing: the refusals, the abstentions and the
+counts, which come from tallies with no row to cite; every other answer cites one. The
+misses:
 
 - `doc-cache-entries` answers a question the namespace's documents leave open from Loom's
   own settings instead of abstaining: the question and a Loom setting share their words.

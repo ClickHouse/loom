@@ -725,13 +725,14 @@ def check_doc_citations(
 def score(case: dict[str, Any], text: str) -> dict[str, Any]:
     """Score a written answer: the labeled values present, no forbidden text."""
     kind = case["kind"]
-    abstained = matches(ABSTAIN_PATTERNS, text) or (
-        is_document_case(case) and matches(DOC_ABSTAIN_PATTERNS, text)
-    )
-    if kind == "abstain":
-        correct = abstained
-    elif kind == "help_abstain":
+    if is_help_case(case):
+        # A question about Loom: an abstention says the documentation does not cover it.
         abstained = matches(HELP_ABSTAIN_PATTERNS, text)
+    else:
+        abstained = matches(ABSTAIN_PATTERNS, text) or (
+            is_document_case(case) and matches(DOC_ABSTAIN_PATTERNS, text)
+        )
+    if kind in ABSTAIN_KINDS:
         correct = abstained
     elif kind == "refusal":
         correct = matches(REFUSAL_PATTERNS, text)
@@ -1153,7 +1154,7 @@ def use_case_report(cases: list[dict[str, Any]]) -> list[str]:
     for r in cases:
         by.setdefault(r.get("use_case") or "-", []).append(r)
     lines = [
-        "\n| use case | correct | citations valid | unknown names |",
+        "\n| use case | correct | no invalid citation | unknown names |",
         "| --- | --- | --- | --- |",
     ]
     for name in sorted(by, key=use_case_order):

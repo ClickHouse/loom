@@ -751,7 +751,7 @@
     "use_case": "U20 Tracker",
     "person": "alice",
     "question": "Does Loom copy our issue tracker's data into its own database?",
-    "expect": ["(never copies|reads it live|live|does not copy|doesn't copy)"],
+    "expect": ["(never copies|reads it live|does not copy|doesn't copy)"],
     "cite_help": ["features/tracker/overview.md"],
     "baseline": {
       "op": "help.search",
@@ -900,9 +900,8 @@
     "baseline": {
       "op": "namespace.inventory",
       "args": {},
-      "path": ["populations"],
-      "count": true,
-      "equals": 4
+      "path": ["populations", 1, "total"],
+      "equals": 2
     }
   },
   {

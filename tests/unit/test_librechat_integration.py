@@ -924,3 +924,28 @@ def test_report_counts_a_help_abstention_and_orders_the_use_cases():
     assert "native: correct 3/3;" in text and "abstained 0/0 where it should" in text
     order = [line.split(" | ")[0][2:] for line in text.splitlines() if line.startswith("| U")]
     assert order == ["U1 Case 1", "U2 Case 2", "U10 Case 10", "U28 Refusals and abstentions"]
+
+
+def test_a_help_answer_is_read_for_an_abstention_from_the_docs():
+    q = _qualify()
+    case = {"kind": "help", "expect": [r"revoke-token"], "baseline": {"op": "help.search"}}
+    left_open = "Loom's documentation doesn't cover revoking every token at once."
+    assert q.score(case, left_open)["abstained"] is True
+    # A how-to answer that quotes an error is no abstention.
+    quoted = "`loom revoke-token` answers `not found` for a token it doesn't have."
+    assert q.score(case, quoted) == {"correct": True, "abstained": False}
+
+
+def test_the_connected_agents_direct_path_counts_the_agents():
+    q = _qualify()
+    case = _case("data-connected-agents")
+
+    def inventory(agents):
+        return {
+            "populations": [{"population": p, "total": 0} for p in ("members",)]
+            + [{"population": "agents", "total": agents}]
+            + [{"population": p, "total": 0} for p in ("authors", "subjects")]
+        }
+
+    assert q.native_score(case, 200, inventory(2))["correct"] is True
+    assert q.native_score(case, 200, inventory(1))["correct"] is False
