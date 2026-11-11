@@ -334,7 +334,15 @@ describe("GettingStarted on Memories", () => {
     render(<Recent />);
     const bar = await screen.findByTestId("getting-started-bar", {}, WAIT);
     await waitFor(() => expect(bar).toHaveTextContent("2 of 2 set up"), WAIT);
-    expect(within(bar).getByRole("button", { name: "Continue" })).toBeInTheDocument();
+    // Continue opens the list; until the models status answers, it does not say all set.
+    let answer: (v: { requires_setup: boolean }) => void = () => {};
+    vi.mocked(getModelStatus).mockImplementationOnce(() => new Promise((r) => (answer = r)) as never);
+    await userEvent.click(within(bar).getByRole("button", { name: "Continue" }));
+    const list = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(within(list).queryByText(/^All set/)).toBeNull();
+    await act(async () => answer({ requires_setup: true }));
+    expect(await within(list).findByRole("button", { name: "Open Models & keys" }, WAIT)).toBeInTheDocument();
+    expect(within(list).queryByText(/^All set/)).toBeNull();
   });
 
   it("names the bar's Hide for what it hides, and Hide hands focus to the search", async () => {

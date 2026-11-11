@@ -182,7 +182,8 @@ export function GettingStarted({
   // The models row: only for whoever can set them, while they are not set, and read only
   // when the full list shows (the one-line bar has no models row).
   const canSetModels = authOff || hasPlatformAdminClaim(whoami);
-  const [modelsUnset, setModelsUnset] = useState(false);
+  // null until read: "not read yet" is not "set", so All set waits for the answer.
+  const [modelsUnset, setModelsUnset] = useState<boolean | null>(null);
   useEffect(() => {
     if (!canSetModels || collapsed) return;
     const ctl = new AbortController();
@@ -209,7 +210,7 @@ export function GettingStarted({
   const total = ONBOARDING_STEPS.length;
   // Every step ticked, and no models row still asking (it has no tick of its own).
   const stepsDone = n === total;
-  const allDone = stepsDone && !(canSetModels && modelsUnset);
+  const allDone = stepsDone && (!canSetModels || modelsUnset === false);
   // The bar reads no models status: for whoever can set models it keeps Continue, which opens
   // the list where the models row shows.
   const barDone = stepsDone && !canSetModels;
