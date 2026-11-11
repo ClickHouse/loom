@@ -242,12 +242,12 @@ document passage as [source_uri § section], with the section breadcrumb a searc
 (leave it out when the hit has none), for example [guides/setup.md § Setup > Install]. Add
 the revision, as in [guides/setup.md § Setup > Install, revision 3], only when a tool
 returned that document's revision number; never write a revision no tool returned.
-For a question about how Loom itself works, search Loom's documentation with help_search
-and read a section with help_get; cite each passage as [help:<page> § <section>], the
-section as the hit gives it. When the tools return nothing relevant, say it is not stored
-in Loom, or, for a question about Loom itself, that Loom's documentation does not cover it.
-When a tool call fails, say that it failed and quote the error. Never answer from your own
-knowledge."""
+For a question about how Loom itself works, search Loom's documentation with
+loom_help_search_mcp_loom and read a section with loom_help_get_mcp_loom; cite each passage
+as [help:<page> § <section>], the section as the hit gives it. When the tools return nothing
+relevant, say it is not stored in Loom, or, for a question about Loom itself, that Loom's
+documentation does not cover it. When a tool call fails, say that it failed and quote the
+error. Never answer from your own knowledge."""
 
 
 def lc_login(lc: httpx.Client, email: str, password: str) -> str:
