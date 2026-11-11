@@ -576,3 +576,18 @@ def test_a_replaced_credential_still_cached_is_refused_on_the_state_read(
 def test_a_state_read_while_the_directory_is_down_answers_503(fake: _Directory) -> None:
     fake.down = True
     assert _state(_client()).status_code == 503
+
+
+def test_a_state_read_with_its_credential_cached_answers_503_when_the_directory_goes_down(
+    fake: _Directory,
+) -> None:
+    """The credential was read, then the directory fails on the row: the read itself
+    answers 503 with the directory's reason, not the cached credential's."""
+    fake.cells["eu-1"] = _row(is_first=True)
+    client = _client()
+    assert _state(client).status_code == 200
+    fake.down = True
+    r = _state(client)
+    assert r.status_code == 503
+    assert r.json()["error"] == "the directory could not be read: OSError"
+    assert fake.credential_reads == 1  # the credential came from the cache
