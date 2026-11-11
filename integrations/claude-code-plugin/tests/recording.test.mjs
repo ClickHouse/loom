@@ -59,7 +59,7 @@ test("the primer states the switch instead of claiming automatic logging", () =>
   const off = recordingPrimerLine(false, "agent-x");
   assert.match(
     off,
-    /conversation recording is off for agent-x \(the owner's Recording switch in the dashboard\); turns are not kept/,
+    /conversation recording is off for agent-x \(the owner's Record conversations switch on the dashboard's Conversations page\); turns are not kept/,
   );
   assert.doesNotMatch(off, /automatic/);
   assert.match(recordingPrimerLine(true, "agent-x"), /conversation logging is automatic \(handled by the Stop hook\)/);

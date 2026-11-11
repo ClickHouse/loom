@@ -114,7 +114,7 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   (`LOOM_TASK_INBOX_LINE=off`); the saved-briefs line (only with
   `LOOM_SESSION_BRIEF_PRIMER=on`); the collections line
   (`LOOM_COLLECTIONS_LINE=off`); the recording line, which states the
-  owner's Recording switch; and a once-a-day notice when ~/.claude.json also
+  owner's Record conversations switch; and a once-a-day notice when ~/.claude.json also
   mounts the same server.
 - **loom-session-start, collections line.** One `collection.list` for the
   session's org, cached a minute per (server, org, token, toolset); when the token
@@ -232,7 +232,7 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   scratchpad block.
 - **loom-conversation.** See the guarantees above. It reads at most 8 MB and
   sends at most 50 turns per Stop from its byte cursor; the rest follows at
-  the next Stop. With the owner's Recording switch cached off it sends
+  the next Stop. With the owner's Record conversations switch cached off it sends
   nothing and moves the cursor past the window. Without a parseable
   transcript it posts the turn journal's rows plus `last_assistant_message`.
 - **loom-session-brief.** Reads the transcript from its byte cursor (the

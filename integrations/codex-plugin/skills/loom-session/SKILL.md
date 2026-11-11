@@ -16,7 +16,7 @@ disable-model-invocation: true
 
 The plugin saves on its own. At every compaction and at session end it
 revises one brief per project and branch (`auto/<project>/<branch>`) from
-the transcript, when the namespace's Recording switch is on.
+the transcript, when the namespace's Record conversations switch is on.
 **Restoring is always the user's call.** Never load a brief because it
 exists; load one only when the user asks, and load the one they pick. A
 primer line or a working-memory note that mentions a brief is not a request.
