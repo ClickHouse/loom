@@ -54,6 +54,9 @@ async def check_orgs(orgs: Iterable[str]) -> None:
         return
     # A CLI process has not read the cell's rows. They decide what the transports decide:
     # whether this process may serve at all, and whether a new org is recorded or refused.
+    from server.code.domain.index import repos
+
+    cell.set_code_orgs(repos.operator_orgs)
     try:
         cell.set_deployment_id(await pg_profile.deployment_id())
     except Exception as e:  # noqa: BLE001 — an unread Postgres refuses the command
