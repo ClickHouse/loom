@@ -11,18 +11,24 @@ import { toast, toastError } from "../components/Toast";
 import { CreateCollectionDialog, parentChoices } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
 import { MembersDialog } from "../flows/MembersDialog";
-import { collectionTitle, distinctTitle, repeatedTitles } from "../lib/collections";
+import { CollectionBack, CollectionPath } from "./LibraryHierarchy";
+import {
+  COLLECTIONS_LISTED,
+  COLLECTIONS_PAGES,
+  collectionOrder,
+  collectionTitle,
+  distinctTitle,
+  roleLabel,
+  repeatedTitles,
+} from "../lib/collections";
+import { fmtInt } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { useStore } from "../lib/state";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
-
-/** Pages of `collection.list` read before the select stops and says so. */
-const MAX_PAGES = 20;
-
-const ROLE_LABEL: Record<string, string> = { viewer: "Viewer", writer: "Writer", admin: "Admin" };
 
 /** A description beside a name is cut to this many characters; the name never is. */
 const LABEL_TEXT = 80;
@@ -56,22 +62,17 @@ export function treeOrder(rows: CollectionEntry[]): { c: CollectionEntry; depth:
     if (siblings) siblings.push(c);
     else children.set(parent, [c]);
   }
-  // The user's own collection first, then by what is shown, then by name.
-  const order = (a: CollectionEntry, b: CollectionEntry) =>
-    Number(b.personal) - Number(a.personal) ||
-    collectionTitle(a).localeCompare(collectionTitle(b)) ||
-    a.namespace.localeCompare(b.namespace);
   const out: { c: CollectionEntry; depth: number }[] = [];
   const seen = new Set<string>();
   const visit = (c: CollectionEntry, depth: number) => {
     if (seen.has(c.namespace)) return;
     seen.add(c.namespace);
     out.push({ c, depth });
-    for (const child of [...(children.get(c.namespace) ?? [])].sort(order)) visit(child, depth + 1);
+    for (const child of [...(children.get(c.namespace) ?? [])].sort(collectionOrder)) visit(child, depth + 1);
   };
-  for (const c of [...(children.get("") ?? [])].sort(order)) visit(c, 0);
+  for (const c of [...(children.get("") ?? [])].sort(collectionOrder)) visit(c, 0);
   // A cycle reaches no top-level collection: its members start at the top.
-  for (const c of [...rows].sort(order)) visit(c, 0);
+  for (const c of [...rows].sort(collectionOrder)) visit(c, 0);
   return out;
 }
 
@@ -106,7 +107,7 @@ export function useReadableCollections(org: string): ReadableCollections {
         for (let attempt = 0; ; attempt++) {
           const rows: CollectionEntry[] = [];
           let cursor: string | null = null;
-          for (let page = 0; page < MAX_PAGES; page++) {
+          for (let page = 0; page < COLLECTIONS_PAGES; page++) {
             const r = await listCollections(org, { cursor, signal });
             rows.push(...r.collections);
             cursor = r.next_cursor;
@@ -179,6 +180,17 @@ export function LibraryCollections({
     setMoving(null);
   }, [place]);
   const ordered = useMemo(() => treeOrder(rows ?? []), [rows]);
+  // A phone gets the path as one back button in the select's row, and no Collections list.
+  const phone = useMedia(PHONE_QUERY);
+  // Above the top of a collection's path: the header's namespace, else the user's own files,
+  // the places that list the top-level collections.
+  const own = (rows ?? []).find((c) => c.personal);
+  const home =
+    namespace !== null && !(rows ?? []).some((c) => c.namespace === namespace)
+      ? { label: `Namespace ${namespace}`, collection: null, open: () => onPick(null) }
+      : own
+        ? { label: collectionTitle(own), collection: own.namespace, open: () => onPick(own.namespace) }
+        : undefined;
   const repeated = useMemo(() => repeatedTitles(rows ?? []), [rows]);
   const byName = useMemo(() => new Map((rows ?? []).map((c) => [c.namespace, c])), [rows]);
   const parents = useMemo(() => parentChoices(rows ?? []), [rows]);
@@ -222,7 +234,7 @@ export function LibraryCollections({
   const about = current
     ? current.personal
       ? "Your own files: no one else's grants reach them."
-      : `${ROLE_LABEL[current.role] ?? current.role} of a collection: only its members read it${current.parent ? `, with everyone who reaches ${parentShown(current.parent)}` : ""}. Agents find it with knowledge.search at its address ${current.namespace}.`
+      : `${roleLabel(current.role)} of a collection: only its members read it${current.parent ? `, with everyone who reaches ${parentShown(current.parent)}` : ""}. Agents find it with knowledge.search at its address ${current.namespace}.`
     : `${namespace === null ? "" : "The namespace picked at the top. "}A collection is a shelf of documents that only its members read; agents search the ones they can read.`;
   const shownRef = useRef<string | null>(null);
   shownRef.current = current?.namespace ?? null;
@@ -237,8 +249,27 @@ export function LibraryCollections({
 
   return (
     <div className="mb-2 space-y-2 sm:mb-4">
-      {/* One row at every width, so the list starts where the list rules want it. */}
-      <div className="flex items-center gap-2">
+      {/* One row at the widths the list budget measures, so the documents start where the list
+          rules want them: the path leads it (on a phone, one back button). Narrower, it wraps. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {!phone && current && !current.personal && (
+          <CollectionPath
+            current={current}
+            rows={rows ?? []}
+            truncated={collections.truncated}
+            home={home}
+            onPick={onPick}
+          />
+        )}
+        {phone && current && !current.personal && (
+          <CollectionBack
+            current={current}
+            rows={rows ?? []}
+            truncated={collections.truncated}
+            home={home}
+            onPick={onPick}
+          />
+        )}
         <Select
           value={opening ? "" : current ? current.namespace : namespace === null ? "" : NAMESPACE_SHELF}
           placeholder={opening ? `Opening ${opening}…` : namespace === null ? "Pick a collection" : undefined}
@@ -267,9 +298,7 @@ export function LibraryCollections({
           ))}
         </Select>
         {current && (
-          <span className="hidden shrink-0 text-sm text-text-muted sm:inline">
-            {ROLE_LABEL[current.role] ?? current.role}
-          </span>
+          <span className="hidden shrink-0 text-sm text-text-muted sm:inline">{roleLabel(current.role)}</span>
         )}
         {/* A popover, not a tooltip: a tap on a phone opens it, where the role is not printed. */}
         <Popover>
@@ -295,7 +324,7 @@ export function LibraryCollections({
       </div>
       {collections.truncated && (
         <p className="text-xs text-text-muted">
-          {`Only the first 10,000 collections are listed here; a link to a later one ${namespace === null ? "asks to pick another" : "shows the namespace"}.`}
+          {`Only the first ${fmtInt(COLLECTIONS_LISTED)} collections are listed here; a link to a later one ${namespace === null ? "asks to pick another" : "shows the namespace"}.`}
         </p>
       )}
       {/* The namespace's documents still show: a note, not a second alert beside the list's. */}

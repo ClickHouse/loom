@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { installApi } from "./fixtures";
+import { boxOf, installApi, MIN_TARGET_PX } from "./fixtures";
 
 // The Library's cards and rows: a phone-width card keeps its parts inside it, and the row's
 // More menu shows before a hover and on a touch screen.
@@ -68,4 +68,121 @@ test("a sort over a partly loaded library says it covers the loaded documents", 
   await page.getByLabel("Sort documents").first().click();
   await page.getByRole("dialog", { name: "Options" }).getByText("Title (A–Z)").click();
   await expect(bar).toContainText("The first 3, sorted");
+});
+
+// A collection deep in the tree, with collections inside it: on a phone the path is one
+// 44 px back button in the select's row, the select lists the collections inside, and the
+// first document still starts within the list pages' chrome budget (y ≤ 360 at 375 × 812).
+test.describe("a collection's path on a phone with a touch pointer", () => {
+  test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
+
+  test("is one back button, and the first document starts within the budget", async ({ page }) => {
+    await installApi(page, { knowledgeRows: 4 });
+    const entry = (namespace: string, parent: string, title: string) => ({
+      namespace,
+      parent,
+      personal: false,
+      role: "writer",
+      description: "",
+      title,
+    });
+    const collections = [
+      entry("col-team", "", "Team handbook and onboarding"),
+      entry("col-q3", "col-team", "Quarter three planning"),
+      entry("col-interviews", "col-q3", "Customer interviews"),
+      entry("col-notes", "col-interviews", "Interview notes"),
+      ...Array.from({ length: 8 }, (_, i) => entry(`col-notes-${i}`, "col-notes", `Session ${i + 1} notes`)),
+    ];
+    await page.route("**/v1/collection.list", (r) => r.fulfill({ json: { collections, next_cursor: null } }));
+    await page.goto("/library?collection=col-notes");
+    const back = page.getByRole("button", { name: "Back to Customer interviews" });
+    await expect(back).toBeVisible();
+    const box = await boxOf(back);
+    expect(box.height).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(375);
+    await expect(page.getByRole("region", { name: /Collections/ })).toHaveCount(0);
+    const first = page.locator("main [data-doc-row]").first();
+    await expect(first).toBeVisible();
+    expect(await first.evaluate((el) => el.getBoundingClientRect().top)).toBeLessThanOrEqual(360);
+    await back.click();
+    await expect(page).toHaveURL(/collection=col-interviews/);
+  });
+
+  test("goes back to the namespace when the parent is one the person cannot read", async ({ page }) => {
+    await installApi(page, { knowledgeRows: 4 });
+    const collections = [
+      {
+        namespace: "col-shared",
+        parent: "col-hidden",
+        personal: false,
+        role: "viewer",
+        description: "",
+        title: "Shared",
+      },
+    ];
+    await page.route("**/v1/collection.list", (r) => r.fulfill({ json: { collections, next_cursor: null } }));
+    await page.goto("/library?collection=col-shared");
+    const back = page.getByRole("button", { name: /^Back to Namespace / });
+    await expect(back).toBeVisible();
+    const box = await boxOf(back);
+    expect(box.height).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+    await back.tap();
+    await expect(page).not.toHaveURL(/collection=/);
+  });
+});
+
+// On a desktop the path leads the select's row on one line, and the collections inside follow
+// the documents: a collection four deep still starts its first document within y ≤ 300.
+test.describe("a collection's path at 1400 px", () => {
+  test.use({ viewport: { width: 1400, height: 900 } });
+
+  test("keeps the first document within the budget, the collections inside after it", async ({ page }) => {
+    await installApi(page, { knowledgeRows: 4 });
+    const entry = (namespace: string, parent: string, title: string) => ({
+      namespace,
+      parent,
+      personal: false,
+      role: "writer",
+      description: "",
+      title,
+    });
+    const collections = [
+      entry("col-team", "", "Team handbook and onboarding"),
+      entry("col-q3", "col-team", "Quarter three planning"),
+      // Long enough to be cut: the worst case for the row's one line.
+      entry("col-interviews", "col-q3", "Customer interviews from the third quarter's discovery round"),
+      entry("col-notes", "col-interviews", "Interview notes"),
+      ...Array.from({ length: 8 }, (_, i) => entry(`col-notes-${i}`, "col-notes", `Session ${i + 1} notes`)),
+    ];
+    await page.route("**/v1/collection.list", (r) => r.fulfill({ json: { collections, next_cursor: null } }));
+    await page.goto("/library?collection=col-notes");
+    const path = page.getByRole("navigation", { name: "Collection path" });
+    await expect(path).toBeVisible();
+    // The path and the select share one line.
+    const select = page.getByRole("button", { name: "Show the documents of" });
+    expect(Math.abs((await boxOf(path)).y - (await boxOf(select)).y)).toBeLessThan(16);
+    // Cut on screen, whole as the link's name.
+    const long = path.getByRole("link", { name: "Customer interviews from the third quarter's discovery round" });
+    await expect(long).toBeVisible();
+    // A cut title opens its whole text on keyboard focus; one that fits opens nothing.
+    await long.focus();
+    await expect(page.getByRole("tooltip")).toContainText(
+      "Customer interviews from the third quarter's discovery round",
+    );
+    await page.keyboard.press("Escape");
+    await path.getByRole("link", { name: /^Namespace / }).focus();
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    const first = page.locator("main [data-doc-row]").first();
+    await expect(first).toBeVisible();
+    expect((await boxOf(first)).y).toBeLessThanOrEqual(300);
+    const inside = page.getByRole("region", { name: /Collections/ });
+    expect((await boxOf(inside)).y).toBeGreaterThan((await boxOf(first)).y);
+    // Enter on the cut title opens its collection, and no tooltip is left over the page.
+    await long.focus();
+    await expect(page.getByRole("tooltip")).toBeVisible();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/collection=col-interviews/);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+  });
 });

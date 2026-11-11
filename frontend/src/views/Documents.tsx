@@ -41,6 +41,7 @@ import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
+import { CollectionsInside } from "./LibraryHierarchy";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
@@ -795,6 +796,19 @@ export function Documents() {
     [toggleRow, readOnly],
   );
 
+  // The header's own namespace, picked as a collection, is the header's namespace shown.
+  const openPlace = (c: string | null) => goTo(c === picked.namespace ? null : c);
+  // Below the documents, so they start where the list rules want them; on a phone the
+  // select, a tree, lists the collections inside.
+  const inside = !phone && collections.rows && (
+    <CollectionsInside
+      key={shown?.namespace ?? ""}
+      rows={collections.rows}
+      current={shown}
+      onPick={openPlace}
+      className="mt-6"
+    />
+  );
   const picker = (
     <LibraryCollections
       org={picked.org}
@@ -803,8 +817,7 @@ export function Documents() {
       current={shown}
       opening={resolving ? collection : null}
       place={collection ?? picked.namespace}
-      // The header's own namespace, picked as a collection, is the header's namespace shown.
-      onPick={(c) => goTo(c === picked.namespace ? null : c)}
+      onPick={openPlace}
       onDeleted={setDeleted}
       onLeave={pickCollection}
     />
@@ -847,6 +860,7 @@ export function Documents() {
             Open the namespace menu
           </Link>
         </p>
+        {inside}
       </PageContainer>
     );
   }
@@ -1061,6 +1075,8 @@ export function Documents() {
           </BusyButton>
         </div>
       )}
+
+      {inside}
 
       <Modal
         open={!!previewEntry}
