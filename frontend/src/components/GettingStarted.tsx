@@ -40,24 +40,25 @@ export interface OnboardingHandle {
   dismiss: () => void;
 }
 
-export function useOnboarding(subject: string, namespace: string): OnboardingHandle {
-  const [state, setState] = useState<OnboardingState>(() => loadOnboarding(subject, namespace));
+/** The checklist's ticks for `subject` in `place` (`org/namespace`). */
+export function useOnboarding(subject: string, place: string): OnboardingHandle {
+  const [state, setState] = useState<OnboardingState>(() => loadOnboarding(subject, place));
   // Another subject or namespace reads its own ticks before anything renders or writes.
-  const key = onboardingKey(subject, namespace);
+  const key = onboardingKey(subject, place);
   const [loadedFor, setLoadedFor] = useState(key);
   if (loadedFor !== key) {
     setLoadedFor(key);
-    setState(loadOnboarding(subject, namespace));
+    setState(loadOnboarding(subject, place));
   }
   const update = useCallback(
     (fn: (prev: OnboardingState) => OnboardingState) => {
       setState((prev) => {
         const next = fn(prev);
-        if (next !== prev) saveOnboarding(subject, namespace, next);
+        if (next !== prev) saveOnboarding(subject, place, next);
         return next;
       });
     },
-    [subject, namespace],
+    [subject, place],
   );
   const mark = useCallback(
     (step: OnboardingStep) =>

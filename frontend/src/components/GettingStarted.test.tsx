@@ -185,7 +185,10 @@ describe("GettingStarted on Memories", () => {
   });
 
   it("is one line under the toolbar on a namespace with memories, and Continue opens it", async () => {
-    localStorage.setItem(onboardingKey(SUBJECT, NS), JSON.stringify({ done: {}, started: true, dismissed: false }));
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
     rows.entries = [memory("loom-ui")];
     seed([personal]);
     render(<Recent />);
@@ -198,7 +201,10 @@ describe("GettingStarted on Memories", () => {
   });
 
   it("names the bar's Hide for what it hides, and Hide hands focus to the search", async () => {
-    localStorage.setItem(onboardingKey(SUBJECT, NS), JSON.stringify({ done: {}, started: true, dismissed: false }));
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${NS}`),
+      JSON.stringify({ done: {}, started: true, dismissed: false }),
+    );
     rows.entries = [memory("loom-ui")];
     seed([personal]);
     render(<Recent />);
@@ -253,7 +259,9 @@ describe("GettingStarted on Memories", () => {
     render(<Recent />);
     expect(await screen.findByText("No memories yet", undefined, WAIT)).toBeInTheDocument();
     expect(checklist()).toBeNull();
-    expect(JSON.parse(localStorage.getItem(onboardingKey(SUBJECT, NS)) ?? "{}")).toMatchObject({ dismissed: true });
+    expect(JSON.parse(localStorage.getItem(onboardingKey(SUBJECT, `dev/${NS}`)) ?? "{}")).toMatchObject({
+      dismissed: true,
+    });
     // Another new namespace still shows its own.
     const other = { ...personal, namespace: "personal-other" };
     act(() =>
@@ -276,12 +284,29 @@ describe("GettingStarted on Memories", () => {
     // The last namespace's empty page made nothing of this one new.
     expect(checklist()).toBeNull();
     expect(screen.queryByTestId("getting-started-bar")).toBeNull();
-    expect(localStorage.getItem(onboardingKey(SUBJECT, bob.namespace))).toBeNull();
+    expect(localStorage.getItem(onboardingKey(SUBJECT, `dev/${bob.namespace}`))).toBeNull();
+  });
+
+  it("is the one-line bar, not the full list, after a switch to a started namespace with memories", async () => {
+    const bob = { ...personal, namespace: "personal-bob" };
+    localStorage.setItem(
+      onboardingKey(SUBJECT, `dev/${bob.namespace}`),
+      JSON.stringify({ done: { write: true }, started: true, dismissed: false }),
+    );
+    seed([personal, bob]);
+    render(<Recent />);
+    await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    rows.entries = [memory("loom-ui")];
+    act(() => useStore.setState({ identity: { org: "dev", namespace: bob.namespace, agent: "loom-ui" } }));
+    // Once this namespace's rows are read, its started checklist is the bar.
+    expect(await screen.findByText("uses vim", undefined, WAIT)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId("getting-started-bar")).not.toBeNull(), WAIT);
+    expect(checklist()).toBeNull();
   });
 
   it("does not come back on a visit after every step was done", async () => {
     localStorage.setItem(
-      onboardingKey(SUBJECT, NS),
+      onboardingKey(SUBJECT, `dev/${NS}`),
       JSON.stringify({ done: { connect: true, write: true }, started: true, dismissed: false }),
     );
     rows.entries = [memory("claude-code")];

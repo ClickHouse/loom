@@ -111,4 +111,10 @@ describe("onboarding persistence", () => {
     localStorage.setItem(onboardingKey("f@x", "n"), JSON.stringify({ done: 5, started: true, dismissed: true }));
     expect(loadOnboarding("f@x", "n")).toEqual({ done: {}, started: true, dismissed: true, finished: false });
   });
+
+  it("keeps one subject's ticks apart in two orgs with a namespace of the same name", () => {
+    saveOnboarding("a@x", "org-a/team", { done: {}, started: true, dismissed: true, finished: false });
+    expect(loadOnboarding("a@x", "org-a/team").dismissed).toBe(true);
+    expect(loadOnboarding("a@x", "org-b/team").dismissed).toBe(false);
+  });
 });

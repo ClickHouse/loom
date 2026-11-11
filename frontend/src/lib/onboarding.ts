@@ -6,7 +6,7 @@ import { isRecord } from "./guards";
  * The first-run checklist on Memories: which steps exist, when it shows, and where its
  * ticks live.
  *
- * Ticks are per browser and per subject and namespace, under one versioned localStorage
+ * Ticks are per browser and per subject, org and namespace, under one versioned localStorage
  * key: Loom has no per-user preference store on the server (`loom.user_state` carries
  * `default_namespace` only). Every read and write is wrapped: a private window or a
  * blocked store degrades to "not persisted", never to a crash on the landing view.
@@ -19,7 +19,7 @@ export interface OnboardingState {
   /** The namespace was new on a visit. The checklist then stays until hidden, so writing
    *  the first memory ticks step two instead of hiding the list. */
   started: boolean;
-  /** "Hide" — the checklist stays hidden for this subject and namespace. */
+  /** "Hide" — the checklist stays hidden for this subject, org and namespace. */
   dismissed: boolean;
   /** Every step was done on an earlier visit: this visit does not show it again. */
   finished: boolean;
@@ -27,15 +27,16 @@ export interface OnboardingState {
 
 const KEY_PREFIX = "loom_getting_started_v2";
 
-export function onboardingKey(subject: string, namespace: string): string {
-  return `${KEY_PREFIX}:${subject || "-"}:${namespace || "-"}`;
+/** `place` is `org/namespace`: one subject in two orgs keeps each one's ticks. */
+export function onboardingKey(subject: string, place: string): string {
+  return `${KEY_PREFIX}:${subject || "-"}:${place || "-"}`;
 }
 
 export const EMPTY_ONBOARDING: OnboardingState = { done: {}, started: false, dismissed: false, finished: false };
 
-export function loadOnboarding(subject: string, namespace: string): OnboardingState {
+export function loadOnboarding(subject: string, place: string): OnboardingState {
   try {
-    const raw = localStorage.getItem(onboardingKey(subject, namespace));
+    const raw = localStorage.getItem(onboardingKey(subject, place));
     if (!raw) return EMPTY_ONBOARDING;
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed)) return EMPTY_ONBOARDING;
@@ -56,10 +57,10 @@ export function loadOnboarding(subject: string, namespace: string): OnboardingSt
   }
 }
 
-export function saveOnboarding(subject: string, namespace: string, state: OnboardingState): void {
+export function saveOnboarding(subject: string, place: string, state: OnboardingState): void {
   try {
     const { finished: _readAtLoad, ...kept } = state;
-    localStorage.setItem(onboardingKey(subject, namespace), JSON.stringify(kept));
+    localStorage.setItem(onboardingKey(subject, place), JSON.stringify(kept));
   } catch {
     /* quota, private mode, or storage disabled: the session keeps its in-memory ticks */
   }

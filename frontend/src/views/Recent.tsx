@@ -286,7 +286,7 @@ function MemoryList() {
   const whoamiNow = useStore((s) => s.whoami);
   const mine = useStore((s) => s.myNamespaces);
   const authOff = isAuthDisabled();
-  const onboarding = useOnboarding(whoamiNow?.subject ?? (authOff ? "local" : ""), identity.namespace);
+  const onboarding = useOnboarding(whoamiNow?.subject ?? (authOff ? "local" : ""), namespaceKey);
   // Only rows read in this namespace: right after a switch the list still holds the last one's.
   const plainRead =
     entries !== null && listedIn === namespaceKey && !loadError && page === 0 && !listFiltered && !showDeleted;
@@ -551,8 +551,15 @@ function MemoryList() {
   // The namespace is empty only when the read worked and no filter narrowed it; a filter
   // that matches nothing keeps the toolbar and says so below.
   const failed = entries !== null && entries.length === 0 && !!loadError;
+  // Empty as read in this namespace: right after a switch the rows are the last one's.
   const emptyNamespace =
-    entries !== null && entries.length === 0 && !loadError && !listFiltered && !filterPending && !showDeleted;
+    entries !== null &&
+    listedIn === namespaceKey &&
+    entries.length === 0 &&
+    !loadError &&
+    !listFiltered &&
+    !filterPending &&
+    !showDeleted;
   useEffect(() => {
     if (emptyNamespace && checklist) setChecklistOpenFor(namespaceKey);
   }, [emptyNamespace, checklist, namespaceKey]);
