@@ -97,7 +97,8 @@ def normalise_host(value: str) -> str:
 
 # The orgs the operator's code entries name (`repos.operator_orgs`), which attach places
 # since the code workers write them. Handed in at boot (`boot.require_storage_authority`,
-# `boot.start_cell_state`): `server.core` may not import the code plane. None counts none.
+# `boot.start_cell_state`) and by a CLI (`server.cli._ch.check_orgs`): `server.core` may
+# not import the code plane. None counts none.
 _code_orgs: Callable[[], set[str]] | None = None
 
 
