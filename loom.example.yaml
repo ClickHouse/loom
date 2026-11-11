@@ -697,16 +697,13 @@ settings:
   # signing-key rotate` waits out two of the slowest process's. [restart]
   # jwt_keyring_refresh_seconds: 30.0
 
-  # This deployment's cell name (1 to 32 of a-z, 0-9, '-') when it is one of several
-  # behind a router; "" = not a cell. Set, the process serves only while its cell's rows
-  # in Postgres are read and match its configuration (docs/architecture/cells.md).
-  # [restart]
+  # This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set,
+  # the process serves only while its cell's rows accept it
+  # (docs/architecture/cells.md). [restart]
   # cell: ""
 
-  # Seconds (at least 1) between re-reads of a cell's three rows (LOOM_CELL); a change
-  # takes effect within this on every process that can read them.
-  # LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this, and a
-  # process that cannot read them is gated past it. [restart]
+  # Seconds between re-reads of a cell's three rows (LOOM_CELL); changes apply within
+  # this. [restart]
   # tenancy_mode_cache_s: 5.0
 
   # The `iss` Loom stamps on every token it mints; a verified token carries it or one of

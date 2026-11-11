@@ -320,14 +320,10 @@ class AuthSettings(BaseModel):
     # Seconds between re-reads of loom.signing_keys in every process (at least
     # 1); `loom signing-key rotate` waits out two of the slowest process's.
     jwt_keyring_refresh_seconds: float = Field(default=30.0, ge=1.0)
-    # This deployment's cell name (1 to 32 of a-z, 0-9, '-') when it is one of several
-    # behind a router; "" = not a cell. Set, the process serves only while its cell's
-    # rows in Postgres are read and match its configuration (docs/architecture/cells.md).
+    # This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set,
+    # the process serves only while its cell's rows accept it (docs/architecture/cells.md).
     cell: str = ""
-    # Seconds (at least 1) between re-reads of a cell's three rows (LOOM_CELL); a change
-    # takes effect within this on every process that can read them.
-    # LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this, and a
-    # process that cannot read them is gated past it.
+    # Seconds between re-reads of a cell's three rows (LOOM_CELL); changes apply within this.
     tenancy_mode_cache_s: float = Field(default=5.0, ge=1.0)
 
     def jwt_secret_is_dev_default(self) -> bool:

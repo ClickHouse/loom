@@ -288,10 +288,8 @@ class MalformedRow(ValueError):
 
 
 def _decoded(row: Any) -> _View:
-    # The outer values arrive as JSON text without the pool's codec; the nested
-    # fingerprints are always decoded with them, so a string there is a jsonb scalar.
-    first = _object(row["first"], text=True) if row else None
-    own = _object(row["own"], text=True) if row else None
+    first = _object(row["first"]) if row else None
+    own = _object(row["own"]) if row else None
     return _View(
         read_at=time.monotonic(),
         first=(bool(first["is_first"]), str(first["cell"])) if first else None,
@@ -301,13 +299,10 @@ def _decoded(row: Any) -> _View:
     )
 
 
-def _object(value: Any, *, text: bool = False) -> dict[str, Any] | None:
-    """A JSON object, from asyncpg's decoded value (or its text, for an outer value);
-    None for SQL NULL."""
+def _object(value: Any) -> dict[str, Any] | None:
+    """A JSON object, as the pool's codec decodes it; None for SQL NULL."""
     if value is None:
         return None
-    if text and isinstance(value, str):
-        value = json.loads(value)
     if not isinstance(value, dict):
         raise MalformedRow(f"expected a JSON object, read {type(value).__name__}")
     return value

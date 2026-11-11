@@ -176,9 +176,10 @@ def test_refresh_reads_the_three_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _row(sql, *_a):
         assert "loom.cell_first" in sql and "loom.tenancy_mode" in sql and "loom.cell_self" in sql
         return {
-            "first": json.dumps({"is_first": True, "cell": "eu-1"}),
+            # As the pool's json codec decodes them.
+            "first": {"is_first": True, "cell": "eu-1"},
             "mode": "recording",
-            "own": json.dumps({"current_fp": value, "next_fp": None}),
+            "own": {"current_fp": value, "next_fp": None},
         }
 
     monkeypatch.setattr(pg, "fetchrow", _row)
