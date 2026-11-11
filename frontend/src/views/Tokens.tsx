@@ -151,7 +151,7 @@ export function TokensSection({
   formOpen,
   onFormOpenChange,
 }: {
-  /** The tokens list, fetched once by Setup and shared with the checklist. */
+  /** The tokens list, fetched once by Setup. */
   tokens: TokenEntry[] | null;
   reloadTokens: () => void;
   /** The form is folded once a live token exists; `null` follows the list. */
@@ -410,10 +410,15 @@ function SearchOrder({
 export function QuickConnect({ onMinted }: { onMinted: (r: TokenCreated) => void }) {
   const formRef = useRef<HTMLElement>(null);
   const [created, setCreated] = useState<TokenCreated | null>(null);
+  // It opens in place of the button that asked for it: focus moves into the form.
+  useEffect(() => {
+    formRef.current?.querySelector<HTMLElement>("button, input, select, textarea")?.focus();
+  }, []);
   return (
     <>
       <TokenForm
         formRef={formRef}
+        titleAs="h4"
         onCreated={(r) => {
           setCreated(r);
           onMinted(r);
@@ -475,8 +480,11 @@ function TokenForm({
   formRef,
   onCancel,
   onCreated,
+  titleAs: Title = "h2",
 }: {
   formRef: React.RefObject<HTMLElement>;
+  /** The title's level: a checklist step's form sits under its h3. */
+  titleAs?: "h2" | "h4";
   /** Absent while no live token exists: the form is the page's first step. */
   onCancel?: () => void;
   onCreated: (r: TokenCreated) => void;
@@ -716,9 +724,9 @@ function TokenForm({
       aria-labelledby="new-token-title"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="new-token-title" className="text-text">
+        <Title id="new-token-title" className="text-text">
           New token
-        </h2>
+        </Title>
         {onCancel && (
           <Button type="empty" htmlType="button" onClick={onCancel}>
             Cancel

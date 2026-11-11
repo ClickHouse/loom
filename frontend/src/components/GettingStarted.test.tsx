@@ -193,6 +193,54 @@ describe("GettingStarted on Memories", () => {
     expect(within(bar).getByText(/1 of 2 set up/)).toBeInTheDocument();
     await userEvent.click(within(bar).getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("region", { name: "Getting started" }, WAIT)).toBeInTheDocument();
+    // The bar it was pressed in is gone: focus is on the checklist's heading.
+    expect(screen.getByRole("heading", { name: "Getting started" })).toHaveFocus();
+  });
+
+  it("names the bar's Hide for what it hides, and Hide hands focus to the search", async () => {
+    localStorage.setItem(onboardingKey(SUBJECT, NS), JSON.stringify({ done: {}, started: true, dismissed: false }));
+    rows.entries = [memory("loom-ui")];
+    seed([personal]);
+    render(<Recent />);
+    const bar = await screen.findByTestId("getting-started-bar", {}, WAIT);
+    await userEvent.click(within(bar).getByRole("button", { name: "Hide getting started" }));
+    await waitFor(() => expect(screen.queryByTestId("getting-started-bar")).toBeNull());
+    expect(document.activeElement?.tagName).toBe("INPUT");
+  });
+
+  it("offers a new token, not a wait, when the only token of mine has expired", async () => {
+    tokens.list = [token({ expires_at: "2020-01-01T00:00:00" })];
+    seed([personal]);
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(await within(panel).findByRole("button", { name: "Create a token" }, WAIT)).toBeInTheDocument();
+    expect(within(panel).queryByText(/Waiting for/)).toBeNull();
+  });
+
+  it("shows no models row to an account that cannot set the models", async () => {
+    seed([personal]);
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(within(panel).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(panel).queryByRole("button", { name: "Open Models & keys" })).toBeNull();
+  });
+
+  it("starts another namespace's checklist as its own, with no token form left open", async () => {
+    seed([personal]);
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    await userEvent.click(within(panel).getByRole("button", { name: "Create a token" }));
+    expect(await within(panel).findByText("Token form", undefined, WAIT)).toBeInTheDocument();
+    const other = { ...personal, namespace: "personal-other" };
+    act(() =>
+      useStore.setState({
+        myNamespaces: [other],
+        identity: { org: "dev", namespace: other.namespace, agent: "loom-ui" },
+      }),
+    );
+    await waitFor(() => expect(screen.queryByText("Token form")).toBeNull(), WAIT);
+    const next = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    expect(within(next).getByRole("button", { name: "Create a token" })).toBeInTheDocument();
   });
 
   it("stays hidden once hidden, for that namespace only", async () => {

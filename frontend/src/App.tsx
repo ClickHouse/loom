@@ -565,7 +565,7 @@ export default function App() {
             // it would cover that notice's actions.
             bootView("setup");
           } else {
-            bootView(target.view ?? (isCollectionName(target.namespace) ? "knowledge" : "memories"));
+            bootView(target.view ?? "memories");
           }
         }
 

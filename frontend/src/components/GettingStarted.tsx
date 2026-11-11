@@ -1,10 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { ProgressBar } from "@clickhouse/click-ui/ProgressBar";
 import { listTokens, type TokenEntry } from "../api";
 import { getModelStatus } from "../api/models";
 import { useStore } from "../lib/state";
+import { pluginInstallLines } from "../lib/clients";
+import { parseChTime } from "../lib/format";
 import { useVisiblePoll } from "../lib/hooks";
 import { hasPlatformAdminClaim } from "../lib/role";
 import {
@@ -65,9 +67,13 @@ export function useOnboarding(subject: string, namespace: string): OnboardingHan
 /** Where the connect step stands. */
 type Connect = "none" | "waiting" | "connected";
 
-/** A token of mine that reaches this namespace. */
+/** A token of mine that reaches this namespace and can still make a call. */
 function reachesHere(t: TokenEntry, namespace: string): boolean {
-  return t.yours !== false && !t.revoked_at && (t.namespaces.includes("*") || t.namespaces.includes(namespace));
+  const ends = parseChTime(t.expires_at);
+  const expired = !!ends && ends.getTime() <= Date.now();
+  return (
+    t.yours !== false && !t.revoked_at && !expired && (t.namespaces.includes("*") || t.namespaces.includes(namespace))
+  );
 }
 
 export function connectState(args: {
@@ -96,6 +102,8 @@ export interface GettingStartedProps {
   collapsed?: boolean;
   onExpand?: () => void;
   onMemoryAdded: () => void;
+  /** Hidden: the checklist leaves the page, so focus goes where the caller names. */
+  onHidden?: () => void;
 }
 
 const STEP_META: Record<OnboardingStep, { title: string; why: string; icon: IconName }> = {
@@ -127,8 +135,21 @@ export function GettingStarted({
   collapsed = false,
   onExpand,
   onMemoryAdded,
+  onHidden,
 }: GettingStartedProps) {
-  const { state, mark, dismiss } = onboarding;
+  const { state, mark } = onboarding;
+  const hide = () => {
+    onboarding.dismiss();
+    onHidden?.();
+  };
+  // Continue replaces the bar with the checklist: focus goes to its heading.
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const focusHeading = useRef(false);
+  useEffect(() => {
+    if (collapsed || !focusHeading.current) return;
+    focusHeading.current = false;
+    headingRef.current?.focus();
+  }, [collapsed]);
   const whoami = useStore((s) => s.whoami);
   const navigate = useStore((s) => s.navigate);
   const [addOpen, setAddOpen] = useState(false);
@@ -192,10 +213,17 @@ export function GettingStarted({
           </span>
         </span>
         <span className="flex items-center gap-2">
-          <Button type="secondary" htmlType="button" onClick={onExpand}>
+          <Button
+            type="secondary"
+            htmlType="button"
+            onClick={() => {
+              focusHeading.current = true;
+              onExpand?.();
+            }}
+          >
             Continue
           </Button>
-          <Button type="empty" htmlType="button" onClick={dismiss}>
+          <Button type="empty" htmlType="button" aria-label="Hide getting started" onClick={hide}>
             Hide
           </Button>
         </span>
@@ -213,14 +241,16 @@ export function GettingStarted({
     >
       <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
-          <h2 id="getting-started-title">Getting started</h2>
+          <h2 id="getting-started-title" ref={headingRef} tabIndex={-1}>
+            Getting started
+          </h2>
           <p className="text-xs text-text-muted mt-0.5 max-w-xl">
             Loom keeps memories and documents for your AI agents. They live in a namespace —{" "}
             <code className="code-inline text-xs">{identity.namespace}</code> — that you and the people you add can
             read.
           </p>
         </div>
-        <Button type="empty" htmlType="button" onClick={dismiss} className="shrink-0">
+        <Button type="empty" htmlType="button" onClick={hide} className="shrink-0">
           Hide
         </Button>
       </div>
@@ -326,7 +356,7 @@ export function GettingStarted({
       {allDone && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
           <span className="text-success font-medium">All set: your agent is saving memories here.</span>
-          <Button type="secondary" htmlType="button" onClick={dismiss}>
+          <Button type="secondary" htmlType="button" onClick={hide}>
             Hide this checklist
           </Button>
         </div>
@@ -384,7 +414,7 @@ function Step({
 
 /** A single-user server takes no token: the plugin needs only the address. */
 function AuthOffConnect() {
-  const lines = `claude plugin marketplace add ClickHouse/loom\nclaude plugin install loom@loom --config server_url=${window.location.origin}`;
+  const lines = `${pluginInstallLines("claude-code")} --config server_url=${window.location.origin}`;
   return (
     <div className="mt-2">
       <p className="text-xs text-text-muted mb-1">

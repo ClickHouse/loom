@@ -302,8 +302,10 @@ function MemoryList() {
     !onboarding.state.finished &&
     (isNew || onboarding.state.started);
   // Open in full while the namespace is empty, and kept open once it was, so the first
-  // memory's arrival ticks the step in place; otherwise one line under the toolbar.
-  const [checklistOpen, setChecklistOpen] = useState(false);
+  // memory's arrival ticks the step in place; otherwise one line under the toolbar. Kept
+  // per namespace: another one's checklist starts as its own.
+  const [checklistOpenFor, setChecklistOpenFor] = useState<string | null>(null);
+  const checklistOpen = checklistOpenFor === namespaceKey;
   useEffect(() => {
     if (!firstScreenOnly || entries === null) return;
     let raf = 0;
@@ -549,8 +551,8 @@ function MemoryList() {
   const emptyNamespace =
     entries !== null && entries.length === 0 && !loadError && !listFiltered && !filterPending && !showDeleted;
   useEffect(() => {
-    if (emptyNamespace && checklist) setChecklistOpen(true);
-  }, [emptyNamespace, checklist]);
+    if (emptyNamespace && checklist) setChecklistOpenFor(namespaceKey);
+  }, [emptyNamespace, checklist, namespaceKey]);
 
   // Group entries by day label, but not while searching — day buckets would hide the
   // relevance ranking.
@@ -783,14 +785,18 @@ function MemoryList() {
 
       {checklist && (
         <GettingStarted
+          // A token form opened, or a token followed, in one namespace is not another's.
+          key={namespaceKey}
           onboarding={onboarding}
           identity={identity}
           agentSeen={agentSeen}
-          hasMemory={(memoryTotal ?? 0) > 0 || (entries?.length ?? 0) > 0}
+          // The live, unfiltered count: a deleted memory is not a first memory.
+          hasMemory={(memoryTotal ?? 0) > 0}
           authOff={authOff}
           collapsed={!emptyNamespace && !checklistOpen}
-          onExpand={() => setChecklistOpen(true)}
+          onExpand={() => setChecklistOpenFor(namespaceKey)}
           onMemoryAdded={() => bumpMemoriesVersion()}
+          onHidden={() => searchInputRef.current?.focus()}
         />
       )}
 

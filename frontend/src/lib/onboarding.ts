@@ -16,8 +16,8 @@ export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 
 export interface OnboardingState {
   done: Partial<Record<OnboardingStep, true>>;
-  /** The checklist has been shown once. It then stays until hidden, so writing the first
-   *  memory ticks step two instead of hiding the list. */
+  /** The namespace was new on a visit. The checklist then stays until hidden, so writing
+   *  the first memory ticks step two instead of hiding the list. */
   started: boolean;
   /** "Hide" — the checklist stays hidden for this subject and namespace. */
   dismissed: boolean;
