@@ -276,3 +276,26 @@ test("below xl, under a fine pointer, the launcher is a 32 px icon", async ({ pa
   expect(Math.round(box?.height ?? 0)).toBe(32);
   await expect(launcher(page).getByText("Assistant", { exact: true })).toBeHidden();
 });
+
+// The muted look of an unavailable launcher is the components layer's colour over Click
+// UI's button colour: the computed colour shows which layer wins.
+test("at 1440 px an unavailable launcher takes the muted text colour", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await installApi(page);
+  await page.route("**/v1/health/ready", (r) =>
+    r.fulfill({ status: 503, json: { ready: false, checks: { assistant: { ok: false, reason: "failing" } } } }),
+  );
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  await launcher(page).click();
+  await expect(launcher(page)).toHaveAttribute("data-launcher-state", "unavailable");
+  const colours = await launcher(page).evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--color-text-muted)";
+    document.body.append(probe);
+    const muted = getComputedStyle(probe).color;
+    probe.remove();
+    return { launcher: getComputedStyle(el).color, muted };
+  });
+  expect(colours.launcher).toBe(colours.muted);
+});
