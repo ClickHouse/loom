@@ -5,11 +5,18 @@ import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { useStore } from "../lib/state";
 
-/** One item's words in the context line, on one line and cut, so a long key or query never
- *  crowds the question. */
+/** One item's words on one line, cut to `max` characters (by code point, so a character
+ *  outside the BMP is never split), so a long key or query never crowds the question. */
 export function clip(text: string, max = 200): string {
-  const one = text.replace(/\s+/g, " ").trim();
-  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
+  const chars = Array.from(text.replace(/\s+/g, " ").trim());
+  return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("");
+}
+
+/** A name for the context line, clipped and written as a JSON string literal: a key, an
+ *  agent, a title or a query written by someone else stays one delimited value, its quotes
+ *  escaped, whatever it holds. */
+export function quoted(text: string, max = 200): string {
+  return JSON.stringify(clip(text, max));
 }
 
 /**
@@ -28,7 +35,7 @@ export function AskAboutThis({
   short = false,
 }: {
   what: "memory" | "document" | "result";
-  item: Omit<AskItem, "view" | "namespace">;
+  item: Omit<AskItem, "view" | "org" | "namespace">;
   reason?: string | null;
   leave?: () => void;
   /** "Ask" alone, for a table row; the name says the rest. */
@@ -50,7 +57,12 @@ export function AskAboutThis({
         onClick={(e) => {
           e.stopPropagation();
           const st = useStore.getState();
-          const asked: AskItem = { ...item, view: st.view, namespace: st.identity?.namespace ?? "" };
+          const asked: AskItem = {
+            ...item,
+            view: st.view,
+            org: st.identity?.org ?? "",
+            namespace: st.identity?.namespace ?? "",
+          };
           leave?.();
           // After the closing layer has gone, so its focus trap cannot take the focus back.
           window.setTimeout(() => void loadDockRuntime().then((m) => m.askAbout(asked)), 0);

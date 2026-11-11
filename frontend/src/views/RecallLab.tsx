@@ -19,7 +19,7 @@ import { displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { humanizeError } from "../lib/errorWords";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, termText, whyTerms } from "../lib/whyNote";
-import { AskAboutThis, clip } from "../components/AskAboutThis";
+import { AskAboutThis, quoted } from "../components/AskAboutThis";
 import { canCall } from "../lib/canCall";
 import { useNamespaceRole } from "../lib/namespaceRole";
 
@@ -381,7 +381,7 @@ function scoreRow(
                   short
                   item={{
                     chip: `result ${row.key}`,
-                    line: `result ${i + 1}, memory ${clip(row.key)}, for the query "${clip(query)}"`,
+                    line: `result ${i + 1}, memory ${quoted(row.key)}, for the query ${quoted(query)}`,
                   }}
                 />
               ),
@@ -406,6 +406,8 @@ export function RecallLab() {
   }, [runFilter]);
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<RecallRow[] | null>(null);
+  // The query the rows on screen answer (the box may hold a newer one still waiting).
+  const [rowsQuery, setRowsQuery] = useState("");
   const [abstain, setAbstain] = useState(false);
   const [model, setModel] = useState("");
   const [loading, setLoading] = useState(false);
@@ -476,6 +478,7 @@ export function RecallLab() {
         const keyword = new Map((kw?.entries ?? []).map((e) => [e.memory_key, e] as const));
         const ranked = new Map((r?.results ?? []).map((h) => [h.memory_key, h] as const));
         const order = keywordThenRanked([...keyword.keys()], [...ranked.keys()]);
+        setRowsQuery(q);
         setRows(
           order.map((key) => {
             const hit = ranked.get(key);
@@ -600,9 +603,7 @@ export function RecallLab() {
                   aria-busy={loading || undefined}
                   size="sm"
                   headers={askable ? ASK_HEADERS : SCORE_HEADERS}
-                  rows={rows.map((row, i) =>
-                    scoreRow(row, i, topScore, open, askable ? parseSearchQuery(query).text : null),
-                  )}
+                  rows={rows.map((row, i) => scoreRow(row, i, topScore, open, askable ? rowsQuery : null))}
                 />
               )}
             </>

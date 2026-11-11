@@ -210,10 +210,17 @@ export function installDock(): void {
       // The session card must be reachable: a modal panel closes (its state stays).
       if (s.sessionExpired && layoutOf(useDock.getState()).mode !== "push") closeAssistant("nav");
     }
-    // The item "Ask about this" set belongs to the page and namespace it was asked from; a
-    // removed chip comes back on another page, which it never named.
+    // The item "Ask about this" set belongs to the page, org and namespace it was asked
+    // from, and to the person who asked; a removed chip comes back on another page, which it
+    // never named.
     const item = useDock.getState().item;
-    if (item && (s.view !== item.view || (s.identity?.namespace ?? "") !== item.namespace))
+    if (
+      item &&
+      (s.view !== item.view ||
+        (s.identity?.org ?? "") !== item.org ||
+        (s.identity?.namespace ?? "") !== item.namespace ||
+        s.whoami !== prev.whoami)
+    )
       useDock.setState({ item: null });
     if (s.view !== prev.view && useDock.getState().pageOff) useDock.setState({ pageOff: false });
     if (s.navSeq !== prev.navSeq) {

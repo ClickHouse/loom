@@ -129,21 +129,25 @@ conversation's newest 50 messages.
 **Each question says which page it is asked from**, and shows it: a chip above the field,
 "Includes: Memories", sends one leading line with the question (`Context: Memories page`),
 which the transcript shows as the chip, not as text. Its remove button, **Don't include this
-page**, sends nothing about the page for that question; the next question, or another page, carries the chip
-again. A line under the field says so until the chip is removed once or a first question is
-asked. **Ask about this** adds the item to the chip for one question ("Includes: Memories ·
-key user/pref/lang"; the line names the memory's key and writer agent, the document's source
-URI and title, or the result's rank, key and query). It is in the memory drawer's footer
-after Edit, in the document preview's actions before Download, and on each Recall lab result
-row as **Ask**. It closes the drawer or the preview without handing the focus back to what
-opened it, opens the panel in the mode the window gives with the focus in its field, keeps
-the question being typed and sends nothing. The item leaves with the chip, after the
-question, or when the page or the namespace changes. On a conversation about another
-namespace it starts a new one in the header's namespace, the question being typed and the
-chip moving to it, and says "New conversation in <namespace>; the one about <old> is in
-History." The button is there for anyone the assistant's route admits on the namespace;
-while the assistant cannot answer it is unavailable with the reason, and in the drawer
-while an edit or a rename is open, with "Save or cancel the edit first".
+page**, sends nothing about the page for that question; the next question, or another page,
+carries the chip again. "Your question names this page. Remove it here." shows under the
+field until the chip is removed once or a first question is asked. **Ask about this** adds
+the item to the chip for one question ("Includes: Memories · key user/pref/lang"; the line
+names the memory's key and writer agent, the document's source URI and title, or the
+result's rank, key and the query its rows came from, each quoted). It is in the memory
+drawer's footer after Edit, in the document preview's actions before Download, and on each
+Recall lab result row as **Ask**. It closes the drawer or the preview without handing the
+focus back to what opened it, opens the panel in the mode the window gives with the focus in
+its field, keeps the question being typed and sends nothing. The item leaves with the chip,
+after the question is answered (one the route refuses comes back to the field with its
+chip), and when the page, the namespace, the org or the signed-in person changes. On a
+conversation about another namespace it starts a new one in the header's namespace, the
+question being typed and the chip moving to it, and says "New conversation in <namespace>;
+the one about <old> is in History." While an answer is still coming in there, it starts
+none: the panel asks how to go on with that conversation, as after any switch of namespace,
+and the chip keeps the item. The button is there for anyone the assistant's route admits on
+the namespace; while the assistant cannot answer it is unavailable with the reason, and in
+the drawer while an edit or a rename is open, with "Save or cancel the edit first."
 
 One panel serves every window width:
 

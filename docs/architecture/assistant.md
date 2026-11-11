@@ -405,13 +405,16 @@ does: the docs are not the namespace's data. A read returns at most 16,000 chara
 and a cut one names the offset its rest starts at; a page read, or a cut one, adds the
 page's outline.
 
-**The page's context.** The dashboard's panel starts a question with one line about the
-page it is asked from, `Context: <page> page`, and with the item "Ask about this" named,
-`Context: Memories page, memory <key> (agent <agent>)`, `Context: Library page, document
-<source URI> ("<title>")` or `Context: Recall page, result <rank>, memory <key>, for the
-query "<query>"`: a key or source URI the agent reads with `memory.get` or `knowledge.get`. The line is
-the person's own text, removable before it is sent, and grants nothing; no server or wire
-field carries it ([the assistant panel](../features/dashboard.md#the-assistant-panel)).
+**The page's context.** The dashboard's panel starts a question with one line about the page
+it is asked from, `Context: <page> page`, and with the item "Ask about this" named,
+`Context: Memories page, memory "<key>" (agent "<agent>")`, `Context: Library page, document
+"<source URI>" (title "<title>")` or `Context: Recall page, result <rank>, memory "<key>",
+for the query "<query>"`: a key or source URI the agent reads with `memory.get` or
+`knowledge.get`. The line quotes names that others wrote (keys, agents, source URIs, titles)
+and the person's own query, each as a JSON string literal on one line, so a quote or a line
+break in one cannot end it. The person sees it as a chip and can remove it before it is
+sent; it grants nothing, and no server or wire field carries it
+([the assistant panel](../features/dashboard.md#the-assistant-panel)).
 
 **The asker's context.** An answer's token is `viewer` on one namespace, so the agent
 cannot tell from it what the person asking may do. The bridge, which holds the caller's

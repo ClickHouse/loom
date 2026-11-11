@@ -64,7 +64,7 @@ import { AnchoredPopover } from "./ui/AnchoredPopover";
 import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
-import { AskAboutThis, clip } from "./AskAboutThis";
+import { AskAboutThis, quoted } from "./AskAboutThis";
 import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
 import { absoluteTime, relativeTime, formatValue, parseChTime, SENTINEL_AGENTS } from "../lib/format";
 import { errorLine } from "../lib/errorWords";
@@ -1394,11 +1394,11 @@ export function MemoryInspector({
                 what="memory"
                 item={{
                   chip: `key ${memoryKey}`,
-                  line: `memory ${clip(memoryKey)}${
-                    detail.agent && !SENTINEL_AGENTS.has(detail.agent) ? ` (agent ${clip(detail.agent, 80)})` : ""
+                  line: `memory ${quoted(memoryKey)}${
+                    detail.agent && !SENTINEL_AGENTS.has(detail.agent) ? ` (agent ${quoted(detail.agent, 80)})` : ""
                   }`,
                 }}
-                reason={formOpen ? "Save or cancel the edit first" : null}
+                reason={formOpen ? "Save or cancel the edit first." : null}
                 leave={() => {
                   leaving.current = true;
                   onClose();

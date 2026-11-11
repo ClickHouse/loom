@@ -403,7 +403,7 @@ describe("Try again", () => {
     signIn("viewer", { read_scope: "own_session" });
     show();
     await unavailable();
-    useChat.setState({ refused: { question: "Who?", context: null } });
+    useChat.setState({ refused: "Who?" });
     await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(paths).toContain("/v1/health/ready"));
     expect(paths).not.toContain("/v1/assistant/chat/completions");
@@ -1277,13 +1277,14 @@ describe("the focus, beside the page", () => {
 describe("the page a question is asked from", () => {
   const item = (over: Partial<AskItem> = {}): AskItem => ({
     view: "memories",
+    org: "acme",
     namespace: "team",
     chip: "key user/pref/lang",
-    line: "memory user/pref/lang",
+    line: 'memory "user/pref/lang"',
     ...over,
   });
   const chipText = () => screen.getByTestId("assistant-page-chip").textContent;
-  const HINT = "The assistant sees the page you're on. Remove it here.";
+  const HINT = "Your question names this page. Remove it here.";
   beforeEach(() => useStore.setState({ view: "memories" }));
 
   it("each new question carries the page, shown as a chip, sent as a leading line the transcript leaves out", async () => {
@@ -1338,7 +1339,7 @@ describe("the page a question is asked from", () => {
     expect(chat).toHaveLength(1);
     await askIt("Who wrote it?");
     await screen.findByText("Ada.");
-    expect(sent).toEqual([["Context: Memories page, memory user/pref/lang\n\nWho wrote it?"]]);
+    expect(sent).toEqual([['Context: Memories page, memory "user/pref/lang"\n\nWho wrote it?']]);
     expect(screen.getByRole("list", { name: "Conversation" })).toHaveTextContent(
       "Includes: Memories · key user/pref/lang",
     );
@@ -1409,5 +1410,100 @@ describe("the page a question is asked from", () => {
     await waitFor(() => expect(document.getElementById("loom-assistant-status")).toHaveTextContent(line));
     await userEvent.setup().click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByRole("button", { name: "Who owns billing?" })).toBeInTheDocument();
+  });
+});
+
+describe("the page chip on a question that is not answered", () => {
+  const item = (over: Partial<AskItem> = {}): AskItem => ({
+    view: "memories",
+    org: "acme",
+    namespace: "team",
+    chip: "key user/pref/lang",
+    line: 'memory "user/pref/lang"',
+    ...over,
+  });
+  const chip = () => screen.queryByTestId("assistant-page-chip")?.textContent ?? null;
+  beforeEach(() => useStore.setState({ view: "memories" }));
+
+  it("a refused question comes back with its item in the chip", async () => {
+    signIn("viewer");
+    show();
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    act(() => askAbout(item()));
+    await askIt("Who wrote it?");
+    await unavailable();
+    expect(screen.getByLabelText("Question")).toHaveValue("Who wrote it?");
+    expect(chip()).toBe("Includes: Memories · key user/pref/lang");
+  });
+
+  it("Try again sends what the chip shows now: removed since, nothing about the page", async () => {
+    signIn("viewer");
+    show();
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    act(() => askAbout(item()));
+    await askIt("Who wrote it?");
+    await unavailable();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Don't include this page" }));
+    chat.push(() => answer("Ada."));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText("Ada.");
+    expect(sent[0]).toEqual(['Context: Memories page, memory "user/pref/lang"\n\nWho wrote it?']);
+    expect(sent[1]).toEqual(["Who wrote it?"]);
+  });
+
+  it("a refusal that names no reason gives back the question and its item", async () => {
+    signIn("viewer");
+    show();
+    chat.push(refusal(429, { code: "RATE_LIMITED", message: "over the cap", retry_after_s: 60 }));
+    act(() => askAbout(item()));
+    await askIt("Who wrote it?");
+    await screen.findByRole("alert");
+    expect(screen.getByLabelText("Question")).toHaveValue("Who wrote it?");
+    expect(chip()).toBe("Includes: Memories · key user/pref/lang");
+  });
+
+  it("a question asked without the chip comes back without it", async () => {
+    signIn("viewer");
+    show();
+    chat.push(refusal(429, { code: "RATE_LIMITED", message: "over the cap", retry_after_s: 60 }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Don't include this page" }));
+    await askIt("Who?");
+    await screen.findByRole("alert");
+    expect(chip()).toBeNull();
+  });
+
+  it("the item goes when the namespace, the org or the person changes", async () => {
+    signIn("viewer");
+    await loadDockRuntime();
+    show();
+    act(() => askAbout(item()));
+    await waitFor(() => expect(chip()).toBe("Includes: Memories · key user/pref/lang"));
+    act(() =>
+      useStore.setState({
+        identity: { org: "acme", namespace: "ops", agent: "loom-ui" },
+        myNamespaces: [
+          { namespace: "team", role: "reader", status: "active", kind: "memory" } as never,
+          { namespace: "ops", role: "reader", status: "active", kind: "memory" } as never,
+        ],
+      }),
+    );
+    expect(useDock.getState().item).toBeNull();
+    expect(chip()).toBe("Includes: Memories");
+
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" } }));
+    act(() => askAbout(item()));
+    act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
+    expect(useDock.getState().item).toBeNull();
+
+    act(() => useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" } }));
+    act(() => askAbout(item()));
+    act(() =>
+      useStore.setState({
+        whoami: { authenticated: true, subject: "bob", org: "acme", namespaces: ["team"], roles: ["VIEWER"] },
+      }),
+    );
+    expect(useDock.getState().item).toBeNull();
   });
 });

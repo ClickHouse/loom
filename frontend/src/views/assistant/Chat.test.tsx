@@ -416,10 +416,7 @@ describe("AssistantChat", () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
-    expect(useChat.getState().refused).toEqual({
-      question: "Who owns billing?",
-      context: { chip: "Memories", line: "Context: Memories page" },
-    });
+    expect(useChat.getState().refused).toBe("Who owns billing?");
     expect(screen.queryByRole("list", { name: "Conversation" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Question")).toHaveValue("Who owns billing?");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -704,6 +701,47 @@ describe("AssistantChat", () => {
     expect(screen.getByRole("button", { name: "Ask" })).toHaveAccessibleDescription(
       "Your role on this namespace is not known.",
     );
+  });
+
+  it.each([
+    ["the page alone", null],
+    [
+      "an item",
+      {
+        view: "memories" as const,
+        org: "acme",
+        namespace: "team",
+        chip: "key user/pref/lang",
+        line: 'memory "user/pref/lang"',
+      },
+    ],
+  ])("with the chip on (%s), a question fills what the route accepts after its line", async (_, item) => {
+    useDock.setState({ item });
+    const line = item ? `Context: Memories page, ${item.line}` : "Context: Memories page";
+    const limit = MAX_MESSAGE_CHARS - line.length - 2;
+    answers.push(() => {
+      const s = sse();
+      queueMicrotask(() => s.done());
+      return s;
+    });
+    render(<AssistantChat namespace="team" blocked={null} />);
+    const user = userEvent.setup();
+    const field = screen.getByLabelText("Question");
+    await user.click(field);
+    await user.paste("x".repeat(limit + 1));
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription(
+      expect.stringContaining(`A question is at most ${limit.toLocaleString("en-US")} characters.`),
+    );
+    await user.keyboard("{Enter}");
+    expect(calls).toHaveLength(0);
+    await user.keyboard("{Backspace}");
+    expect(field).not.toHaveAttribute("aria-invalid");
+    await user.keyboard("{Enter}");
+    expect(calls).toHaveLength(1);
+    const sentText = calls[0].body.messages.at(-1)?.content ?? "";
+    expect(sentText).toBe(`${line}\n\n${"x".repeat(limit)}`);
+    expect(sentText).toHaveLength(MAX_MESSAGE_CHARS);
   });
 
   it("Enter asks and Shift+Enter adds a line", async () => {

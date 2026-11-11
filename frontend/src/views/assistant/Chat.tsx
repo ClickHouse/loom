@@ -26,6 +26,11 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
   const item = useDock((s) => s.item);
   const pageOff = useDock((s) => s.pageOff);
   const context = pageContext(view, item, pageOff);
+  // The same trimmed question `ask` sends, after its context line; past the route's length
+  // it says so on the field.
+  const limit = MAX_MESSAGE_CHARS - (context ? context.line.length + 2 : 0);
+  const tooLong =
+    draft.trim().length > limit ? `A question is at most ${limit.toLocaleString("en-US")} characters.` : null;
   // Shown until the chip is removed once or a first question is asked.
   const [hint, setHint] = useState(() => !pageHintSeen());
   const hintSeen = () => {
@@ -51,7 +56,7 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
     const question = draft.trim();
     if (!question || question.length > limit || answering || blocked) return;
     if (hint) hintSeen();
-    ask(question, namespace, context);
+    ask(question, namespace, { context, item: context ? item : null });
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -62,11 +67,6 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
     }
   };
 
-  // The same trimmed question `ask` sends, after its context line; past the route's length
-  // it says so on the field.
-  const limit = MAX_MESSAGE_CHARS - (context ? context.line.length + 2 : 0);
-  const tooLong =
-    draft.trim().length > limit ? `A question is at most ${limit.toLocaleString("en-US")} characters.` : null;
   const sendBlocked =
     blocked ?? (answering ? "An answer is still coming in." : !draft.trim() ? "Type a question." : tooLong);
   const error = fieldError("assistant-question-error", tooLong);
@@ -132,9 +132,7 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
             />
           </div>
         )}
-        {context && hint && (
-          <p className="text-xs text-text-muted">The assistant sees the page you're on. Remove it here.</p>
-        )}
+        {context && hint && <p className="text-xs text-text-muted">Your question names this page. Remove it here.</p>}
         <TextAreaField
           ref={field}
           id="assistant-question"

@@ -144,7 +144,7 @@ describe("Ask about this in the memory drawer", () => {
       view: "memories",
       namespace: "ns",
       chip: "key api/rate-limit",
-      line: "memory api/rate-limit (agent claude-desktop)",
+      line: 'memory "api/rate-limit" (agent "claude-desktop")',
     });
     expect(screen.getByTestId("assistant-page-chip")).toHaveTextContent("Includes: Memories · key api/rate-limit");
     // The card that opened the drawer did not take the focus back.
@@ -159,7 +159,7 @@ describe("Ask about this in the memory drawer", () => {
     await user.type(value, "a new value");
     const ask = footer().getByRole("button", { name: "Ask the assistant about this memory" });
     expect(ask).toHaveAttribute("aria-disabled", "true");
-    expect(ask).toHaveAccessibleDescription("Save or cancel the edit first");
+    expect(ask).toHaveAccessibleDescription("Save or cancel the edit first.");
     await user.click(ask);
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.getByRole("textbox", { name: "Memory value" })).toHaveValue("a new value");

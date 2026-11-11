@@ -338,7 +338,7 @@ for (const width of [1440, 390]) {
     expect(messages).toHaveLength(1);
     // The memory's writer agent follows its key when the drawer knows it.
     expect(messages[0].content).toMatch(
-      new RegExp(`^Context: Memories page, memory ${key}( \\(agent [^)]+\\))?\\n\\nWho wrote it\\?$`),
+      new RegExp(`^Context: Memories page, memory "${key}"( \\(agent "[^"]+"\\))?\\n\\nWho wrote it\\?$`),
     );
     await expect(conversation(page)).toContainText(`Includes: Memories · key ${key}`);
     await expect(conversation(page)).not.toContainText("Context:");

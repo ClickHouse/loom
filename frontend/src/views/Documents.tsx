@@ -25,7 +25,7 @@ import {
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { roleOnNamespace } from "../lib/namespaceRole";
-import { AskAboutThis, clip } from "../components/AskAboutThis";
+import { AskAboutThis, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -1150,8 +1150,8 @@ export function Documents() {
                 what="document"
                 item={{
                   chip: `document ${previewEntry.title || previewEntry.original_filename || previewEntry.source_uri}`,
-                  line: `document ${clip(previewEntry.source_uri)}${
-                    previewEntry.title ? ` ("${clip(previewEntry.title, 120)}")` : ""
+                  line: `document ${quoted(previewEntry.source_uri)}${
+                    previewEntry.title ? ` (title ${quoted(previewEntry.title, 120)})` : ""
                   }`,
                 }}
                 leave={() => {

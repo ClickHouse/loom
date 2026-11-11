@@ -21,10 +21,12 @@ import type { AssistantReason } from "./assistantLayout";
  *  Recall result, on the page and in the namespace it was asked from. */
 export interface AskItem {
   view: View;
+  org: string;
   namespace: string;
   /** The chip's words after the page ("key user/pref/lang"). */
   chip: string;
-  /** The context line's words after the page, which the agent's tools can read. */
+  /** The context line's words after the page, which the agent's tools can read; every
+   *  name in them is quoted (`quoted` in components/AskAboutThis.tsx). */
   line: string;
 }
 

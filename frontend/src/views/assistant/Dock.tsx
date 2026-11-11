@@ -23,6 +23,7 @@ import { useStore } from "../../lib/state";
 import { AssistantChat } from "./Chat";
 import { useChat, newConversation, openConversation, resetChat, saveOnHide, ask, storedChanged } from "./chatStore";
 import { adoptEpoch, deleteAllConversations, deleteConversation, listConversations, sameOwner } from "./conversations";
+import { currentAsk } from "./pageContext";
 import { readReadiness } from "./readiness";
 import { tokenReadScope } from "./tokenScope";
 
@@ -88,7 +89,8 @@ export function DockBody() {
   // "Ask about this" (lib/assistantDockRuntime.ts askAbout): the chat shows, and a
   // conversation about another namespace gives way to a new one in the header's, which the
   // question being typed and the chip move to (they are the panel's); the old one stays in
-  // History.
+  // History. While an answer still streams there, none starts: the mismatch prompt shows and
+  // the chip keeps the item.
   const askSeq = useDock((s) => s.askSeq);
   const handledAsk = useRef(0);
   useEffect(() => {
@@ -204,7 +206,8 @@ export function DockBody() {
       memory: isMemoryNamespace(header, st.myNamespaces),
       mismatch: c.turns.length > 0 && c.namespace !== null && c.namespace !== header,
     });
-    if (refused && !stillBlocked) ask(refused.question, c.namespace ?? header, refused.context);
+    // It goes with what the chip shows now: a chip removed since sends nothing about the page.
+    if (refused && !stillBlocked) ask(refused, c.namespace ?? header, currentAsk());
   };
 
   if (expired)

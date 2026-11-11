@@ -83,6 +83,8 @@ describe("Ask about this on a Recall lab result", () => {
       </>,
     );
     const table = await score("deploy  steps");
+    // A newer query typed while these rows show: the line names the one they answer.
+    fireEvent.change(screen.getByLabelText("Recall query"), { target: { value: "rollback" } });
     const second = within(table).getAllByRole("row")[2];
     const ask = within(second).getByRole("button", { name: "Ask the assistant about this result" });
     expect(ask).toHaveTextContent("Ask");
@@ -92,9 +94,27 @@ describe("Ask about this on a Recall lab result", () => {
     expect(useDock.getState().item).toMatchObject({
       view: "recall",
       chip: "result rollback_runbook",
-      line: 'result 2, memory rollback_runbook, for the query "deploy steps"',
+      line: 'result 2, memory "rollback_runbook", for the query "deploy steps"',
     });
     expect(screen.getByTestId("assistant-page-chip")).toHaveTextContent("Includes: Recall · result rollback_runbook");
+  });
+
+  it("quotes a key or query that holds quotes, as one JSON string each", async () => {
+    searchMemory.mockResolvedValue({ results: [hit('say "hi"', 0.9)] });
+    render(<RecallLab />);
+    const table = await score('why "hi"');
+    await userEvent.setup().click(within(table).getByRole("button", { name: "Ask the assistant about this result" }));
+    await waitFor(() =>
+      expect(useDock.getState().item?.line).toBe('result 1, memory "say \\"hi\\"", for the query "why \\"hi\\""'),
+    );
+  });
+
+  it("offers no Ask, and no column for it, to a role the assistant's route does not admit", async () => {
+    useStore.setState({ myNamespaces: [] });
+    render(<RecallLab />);
+    const table = await score();
+    expect(within(table).queryByRole("button", { name: "Ask the assistant about this result" })).toBeNull();
+    expect(within(table).getAllByRole("columnheader")).toHaveLength(7);
   });
 
   it("an unavailable Ask opens nothing either", async () => {

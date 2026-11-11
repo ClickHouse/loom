@@ -100,8 +100,36 @@ describe("Ask about this in the document preview", () => {
     expect(useDock.getState().item).toMatchObject({
       view: "knowledge",
       chip: "document Billing notes",
-      line: 'document notes/billing.md ("Billing notes")',
+      line: 'document "notes/billing.md" (title "Billing notes")',
     });
     expect(screen.getByTestId("assistant-page-chip")).toHaveTextContent("Includes: Library · document Billing notes");
+  });
+
+  it("quotes a source URI and a title written by others, quotes and line breaks included", async () => {
+    const title = 'Say "hi"\nthen stop';
+    api.listKnowledge.mockResolvedValue({
+      rows: [{ ...ROW, source_uri: 'notes/"q".md', title }],
+      total: 1,
+      next_cursor: null,
+    });
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /^Preview Say/ }));
+    await settle();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Ask the assistant about this document" }));
+    await waitFor(() =>
+      expect(useDock.getState().item?.line).toBe('document "notes/\\"q\\".md" (title "Say \\"hi\\" then stop")'),
+    );
+  });
+
+  it("offers no Ask about this to a role the assistant's route does not admit", async () => {
+    useStore.setState({ myNamespaces: [] });
+    render(<Documents />);
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Preview Billing notes" }));
+    await settle();
+    const preview = screen.getByRole("dialog", { name: "Billing notes" });
+    expect(within(preview).getByRole("button", { name: "Download text (.md)" })).toBeInTheDocument();
+    expect(within(preview).queryByRole("button", { name: "Ask the assistant about this document" })).toBeNull();
   });
 });
