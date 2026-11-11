@@ -1013,7 +1013,7 @@ function TokenForm({
             }
           </Field>
         )}
-        <Field hint="Optional. Shown in the list below; it cannot be changed later.">
+        <Field hint="Optional. Shown in the tokens list; it cannot be changed later.">
           {(hintId) => (
             <TextField
               label="Name"
@@ -1186,7 +1186,7 @@ function CreatedDialog({ created, onClose }: { created: TokenCreated | null; onC
             <ClientConnect client={target} token={created.token} mcpUrl={created.mcp_url} />
           )}
           <div className="text-xs text-text-muted leading-relaxed">
-            Revoke it in the list below to disconnect every tool that uses it at once.
+            Revoke it in Settings › Tokens to disconnect every tool that uses it at once.
           </div>
         </div>
       )}

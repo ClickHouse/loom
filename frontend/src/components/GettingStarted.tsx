@@ -165,7 +165,7 @@ export function GettingStarted({
   useEffect(() => {
     if (minting || !focusCreate.current) return;
     focusCreate.current = false;
-    createRef.current?.focus();
+    (createRef.current ?? headingRef.current)?.focus();
   }, [minting]);
 
   const [tokens, setTokens] = useState<TokenEntry[] | null>(null);
@@ -303,7 +303,9 @@ export function GettingStarted({
                 : "Waiting for your agent's first memory. Start a session in your agent; this updates when it saves one."}
             </p>
           ) : null}
-          {!authOff && !connected && (
+          {/* A form opened here stays until it is done with, connected or not: its dialog is
+              the one place the new token is shown. */}
+          {!authOff && (minting || !connected) && (
             <div className="mt-2">
               {minting ? (
                 <Suspense fallback={<Loading layout="inline" label="Loading the token form" />}>
@@ -313,7 +315,8 @@ export function GettingStarted({
                       reloadTokens();
                     }}
                     onClose={() => {
-                      // The form leaves: focus goes back to the button that opened it.
+                      // The form leaves: focus goes back to the button that opened it, or to
+                      // the heading once the step is done and has no button.
                       focusCreate.current = true;
                       setMinting(false);
                     }}

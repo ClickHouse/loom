@@ -148,6 +148,19 @@ describe("GettingStarted on Memories", () => {
     expect(useStore.getState().view).toBe("memories");
   });
 
+  it("keeps the step's token form, and its dialog, when the agent connects while it is open", async () => {
+    seed([personal]);
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    await userEvent.click(within(panel).getByRole("button", { name: "Create a token" }));
+    expect(await within(panel).findByText("Token form", undefined, WAIT)).toBeInTheDocument();
+    rows.entries = [memory("claude-code")];
+    act(() => useStore.getState().bumpMemoriesVersion());
+    expect(await screen.findByText("An agent is saving memories here.", undefined, WAIT)).toBeInTheDocument();
+    // The new token is shown only there: the form stays until it is closed.
+    expect(screen.getByText("Token form")).toBeInTheDocument();
+  });
+
   it("waits on a token of mine that has made no call, and ticks once it has", async () => {
     tokens.list = [token()];
     seed([personal]);
