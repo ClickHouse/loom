@@ -19,6 +19,7 @@ SDK_ROOT = ROOT / "sdk" / "python"
 TRACKED = {str(p) for f in tracked() for p in [Path(f), *Path(f).parents] if str(p) != "."}
 README = (SDK_ROOT / "README.md").read_text()
 PROJECT = tomllib.loads((SDK_ROOT / "pyproject.toml").read_text())["project"]
+PACKAGE = json.loads((ROOT / "sdk" / "typescript" / "package.json").read_text())
 
 
 def test_readme_states_the_python_floor_and_runtime_deps() -> None:
@@ -41,11 +42,7 @@ def test_readme_lists_every_agent_client() -> None:
     ("sdk", "install", "name"),
     [
         ("python", "pip install", PROJECT["name"]),
-        (
-            "typescript",
-            "npm install",
-            json.loads((ROOT / "sdk" / "typescript" / "package.json").read_text())["name"],
-        ),
+        ("typescript", "npm install", PACKAGE["name"]),
     ],
 )
 def test_the_readme_installs_the_published_package(sdk: str, install: str, name: str) -> None:
@@ -77,3 +74,25 @@ def test_the_package_readme_links_resolve_on_the_registry(sdk: str) -> None:
             assert ref == "main" and path.rstrip("/") in TRACKED, target
             if anchor and dest.suffix == ".md":
                 assert anchor.lower() in anchors(dest), target
+
+
+def _what_loom_is(text: str) -> str:
+    """The clause after "Loom, ", or after a link on Loom, up to the end of its sentence,
+    with line breaks read as spaces: a wrapped paragraph renders as one line."""
+    m = re.search(r"Loom(?:\]\([^)]*\))?, (.+?\.)(?:\s|$)", " ".join(text.split()))
+    assert m, f"no 'Loom, <what it is>.' clause in {text!r}"
+    return m.group(1)
+
+
+@pytest.mark.parametrize(
+    ("sdk", "description"),
+    [
+        ("python", PROJECT["description"]),
+        ("typescript", PACKAGE["description"]),
+    ],
+)
+def test_the_readme_lead_says_what_the_package_description_says(sdk: str, description: str) -> None:
+    """The README's first paragraph leads the package's registry page, under the
+    description the registry shows as its summary: both say the same of Loom."""
+    lead = (ROOT / "sdk" / sdk / "README.md").read_text().split("\n\n")[1]
+    assert _what_loom_is(lead) == _what_loom_is(description)
