@@ -12,7 +12,8 @@
         "query": "On which day of the week are production deploys frozen?",
         "top_k": 1
       }
-    }
+    },
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "memory-db-version",
@@ -27,7 +28,8 @@
         "query": "Which PostgreSQL version does the orders database run?",
         "top_k": 1
       }
-    }
+    },
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "memory-oncall",
@@ -42,7 +44,8 @@
         "query": "How often does the payments on-call rotation hand over, and on which day?",
         "top_k": 1
       }
-    }
+    },
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "memory-webhook-retries",
@@ -57,7 +60,8 @@
         "query": "How many times is a webhook delivery retried at most?",
         "top_k": 1
       }
-    }
+    },
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "memory-backups",
@@ -72,7 +76,8 @@
         "query": "How long are database backups kept?",
         "top_k": 1
       }
-    }
+    },
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "memory-revised-rate-limit",
@@ -88,7 +93,8 @@
         "top_k": 1
       }
     },
-    "forbid": ["\\b300\\b"]
+    "forbid": ["\\b300\\b"],
+    "use_case": "U1 Look up a stored fact"
   },
   {
     "id": "inventory-count",
@@ -101,7 +107,8 @@
       "args": {},
       "path": ["sections", 0, "count"],
       "equals": 10
-    }
+    },
+    "use_case": "U3 What the namespace holds"
   },
   {
     "id": "inventory-top-agent",
@@ -117,7 +124,8 @@
         "name": "handbook-bot",
         "rows": 7
       }
-    }
+    },
+    "use_case": "U3 What the namespace holds"
   },
   {
     "id": "inspect-agent",
@@ -133,7 +141,8 @@
       },
       "path": ["own", "live_rows"],
       "equals": 3
-    }
+    },
+    "use_case": "U3 What the namespace holds"
   },
   {
     "id": "tune-drafts",
@@ -148,7 +157,8 @@
       "count": true,
       "equals": 0
     },
-    "forbid": ["\\b([1-9]\\d*|one|two|three|four|five)\\s+(tuning\\s+)?(proposals?|drafts?)\\b"]
+    "forbid": ["\\b([1-9]\\d*|one|two|three|four|five)\\s+(tuning\\s+)?(proposals?|drafts?)\\b"],
+    "use_case": "U6 Write memory better"
   },
   {
     "id": "cross-tenant",
@@ -164,7 +174,8 @@
         "query": "Project Nightjar launch",
         "top_k": 1
       }
-    }
+    },
+    "use_case": "U28 Refusals and abstentions"
   },
   {
     "id": "revoked-token",
@@ -178,7 +189,8 @@
         "query": "On which day of the week are production deploys frozen?",
         "top_k": 1
       }
-    }
+    },
+    "use_case": "U28 Refusals and abstentions"
   },
   {
     "id": "abstain-wifi",
@@ -191,7 +203,8 @@
         "query": "What is the office Wi-Fi password?",
         "top_k": 1
       }
-    }
+    },
+    "use_case": "U28 Refusals and abstentions"
   },
   {
     "id": "abstain-cfo",
@@ -204,7 +217,8 @@
         "query": "Who is the chief financial officer?",
         "top_k": 1
       }
-    }
+    },
+    "use_case": "U28 Refusals and abstentions"
   },
   {
     "id": "doc-release-reviews",
@@ -222,7 +236,8 @@
         "query": "How many approving reviews does a release need before it joins the release train?",
         "top_k": 5
       }
-    }
+    },
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-migration-rollback",
@@ -240,7 +255,8 @@
         "query": "How is a bad database schema migration handled: is it rolled back?",
         "top_k": 5
       }
-    }
+    },
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-canary",
@@ -258,7 +274,8 @@
         "query": "What share of production traffic does a canary receive, and for how long?",
         "top_k": 5
       }
-    }
+    },
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-contract-notice",
@@ -276,7 +293,8 @@
         "query": "How much notice stops the hosting agreement from renewing?",
         "top_k": 5
       }
-    }
+    },
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-orders-ttl",
@@ -294,7 +312,8 @@
         "query": "How long are rows kept in the orders table?",
         "top_k": 5
       }
-    }
+    },
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-cache-entries",
@@ -312,7 +331,8 @@
         "query": "What is the maximum number of entries in the session cache?",
         "top_k": 5
       }
-    }
+    },
+    "use_case": "U2 What a document says"
   },
   {
     "id": "doc-revised-ack",
@@ -331,7 +351,8 @@
         "top_k": 5
       }
     },
-    "forbid": ["\\b(15|fifteen)\\s*min"]
+    "forbid": ["\\b(15|fifteen)\\s*min"],
+    "use_case": "U2 What a document says"
   },
   {
     "id": "abstain-doc-credit",
@@ -344,7 +365,8 @@
         "query": "What service credit does Acme get when the hosting provider misses its uptime guarantee?",
         "top_k": 5
       }
-    }
+    },
+    "use_case": "U2 What a document says"
   },
   {
     "id": "abstain-doc-phone",
@@ -357,7 +379,8 @@
         "query": "What is the hosting provider's escalation phone number?",
         "top_k": 5
       }
-    }
+    },
+    "use_case": "U2 What a document says"
   },
   {
     "id": "analysis-per-agent",
@@ -372,7 +395,8 @@
       },
       "path": ["rows"],
       "equals": [["handbook-bot", 7], ["ops-bot", 3]]
-    }
+    },
+    "use_case": "U4 Usage counts and trends"
   },
   {
     "id": "analysis-per-scope",
@@ -387,7 +411,8 @@
       },
       "path": ["rows"],
       "equals": [["infra", 4], ["policy", 3], ["team", 2], ["runbook", 1]]
-    }
+    },
+    "use_case": "U4 Usage counts and trends"
   },
   {
     "id": "analysis-other-tenants",
@@ -405,7 +430,8 @@
       },
       "path": ["rows"],
       "equals": [["acme", "acme-handbook", 10]]
-    }
+    },
+    "use_case": "U4 Usage counts and trends"
   },
   {
     "id": "recommend-key-shape",
@@ -417,7 +443,8 @@
       "op": "namespace.audit",
       "args": {},
       "findings": ["hash_keys", "double_encoded_values"]
-    }
+    },
+    "use_case": "U6 Write memory better"
   },
   {
     "id": "recommend-runbook-plane",
@@ -434,6 +461,843 @@
       },
       "path": ["value"],
       "min_chars": 2048
+    },
+    "use_case": "U6 Write memory better"
+  },
+  {
+    "id": "help-ask-vs-search",
+    "kind": "help",
+    "use_case": "U1 Look up a stored fact",
+    "person": "alice",
+    "question": "What is the difference between memory.search and memory.ask?",
+    "expect": ["memory\\.search`?[^.]{0,60}(rank|hits)", "memory\\.ask`?[^.]{0,80}(synthesi|answer)"],
+    "cite_help": ["features/memory/search-and-ask.md", "features/unified-search.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "What is the difference between memory.search and memory.ask?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "`memory.search` returns ranked hits for the agent to read; `memory.ask` runs the same retrieval and writes a synthesised, cited answer."
+      ],
+      "wrong": [
+        "They are the same op and return the same answer.",
+        "`memory.ask` returns ranked hits; `memory.search` writes a synthesised answer.",
+        "`memory.search` returns ranked hits; `memory.ask` does not write an answer, it returns the same hits."
+      ]
+    },
+    "forbid": ["memory\\.ask`?[^.]{0,40}(does ?n[o']t|do not|never) (synthesi|write|return)"]
+  },
+  {
+    "id": "help-upload-file",
+    "kind": "help",
+    "use_case": "U2 What a document says",
+    "person": "alice",
+    "question": "How do I add a PDF file to Loom as a document?",
+    "expect": ["knowledge\\.(upload|ingest)"],
+    "cite_help": ["features/knowledge.md", "reference/operations/knowledge.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "How do I add a PDF file to Loom as a document?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": ["Upload it with `knowledge.upload`."],
+      "wrong": [
+        "Save its text with `memory.set`.",
+        "`knowledge.upload` does not accept a PDF; convert it to text first.",
+        "There is no `knowledge.upload`; save the text with `memory.set`."
+      ]
+    },
+    "forbid": [
+      "`?knowledge\\.(upload|ingest)`? (does ?n[o']t|cannot|can ?not) (take|accept|read) (a )?PDF",
+      "\\b(no|there is no|has no) `?knowledge\\.(upload|ingest)"
+    ]
+  },
+  {
+    "id": "help-cost-cap",
+    "kind": "help",
+    "use_case": "U5 Cost and spend",
+    "person": "alice",
+    "question": "What is the default daily spend cap of a namespace, and what does Loom skip once it is spent?",
+    "expect": ["(\\$\\s?1(\\.0+)?(?!\\.?\\d)|\\b1(\\.0)? ?(USD|dollar)|\\b1\\.0(?!\\.?\\d))", "(synthes|extract)"],
+    "cite_help": ["features/observability/cost-and-usage.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "What is the default daily spend cap of a namespace, and what does Loom skip once it is spent?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "$1.0 a day; once it is spent Loom skips synthesis and entity extraction.",
+        "The default cap is $1. Once it is spent, Loom skips synthesis.",
+        "The cap is $1.0. Past it Loom skips entity extraction."
+      ],
+      "wrong": [
+        "$1.0, and nothing is skipped: the cap only warns.",
+        "There is no default cap; extraction keeps running.",
+        "$1.50 a day; once it is spent Loom skips synthesis and extraction.",
+        "The default cap is $1.0; Loom does not skip synthesis or extraction once it is spent, it only logs."
+      ]
+    },
+    "forbid": ["\\b(does ?n[o']t|do not|never|won'?t) skip"]
+  },
+  {
+    "id": "help-key-shape",
+    "kind": "help",
+    "use_case": "U6 Write memory better",
+    "person": "alice",
+    "question": "What shape should a memory key have?",
+    "expect": ["<?scope>?/<?kind>?/<?(id|name)\\b"],
+    "cite_help": ["features/memory/writing.md", "concepts/memory.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "What shape should a memory key have?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": ["`<scope>/<kind>/<id>`, readable, like `billing/decision/refund-window`."],
+      "wrong": [
+        "Any string works; a UUID is best.",
+        "Scope and kind are tags, not part of the key.",
+        "Keys need not follow `<scope>/<kind>/<id>`; any string works."
+      ]
+    },
+    "forbid": [
+      "\\b(is ?n[o']t|not|need not be|need ?n[o']t be) (required|needed|followed)|\\bany (string|key) (works|is fine)"
+    ]
+  },
+  {
+    "id": "help-history",
+    "kind": "help",
+    "use_case": "U7 History of a fact",
+    "person": "alice",
+    "question": "How do I see every earlier version of a memory?",
+    "expect": ["memory[._]history"],
+    "cite_help": ["features/memory/history-and-provenance.md", "concepts/memory.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "How do I see every earlier version of a memory?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "Call `memory.history` with the key.",
+        "`memory.get` returns only the latest version; `memory.history` returns every earlier one."
+      ],
+      "wrong": [
+        "Loom keeps only the latest version.",
+        "Loom has no `memory.history` op; it keeps only the latest version.",
+        "Loom has no `memory.history` op; earlier versions are gone."
+      ]
+    },
+    "forbid": ["\\b(no|there is no|has no) `?memory\\.history"]
+  },
+  {
+    "id": "help-graph",
+    "kind": "help",
+    "use_case": "U8 Entity graph",
+    "person": "alice",
+    "question": "How do entities get into Loom's entity graph?",
+    "expect": ["memory\\.set|entities` (array|field|list)|`entities`", "extract"],
+    "cite_help": ["features/entity-graph.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "How do entities get into Loom's entity graph?",
+        "limit": 5
+      }
+    },
+    "forbid": ["\\b(entities|they) (are|is) not extracted|\\b(never|does ?n[o']t|do not|won'?t) extracts?\\b"],
+    "samples": {
+      "right": [
+        "Pass them in `entities` on `memory.set`; otherwise the extractor worker extracts them from the memory's text.",
+        "Relations you pass on `memory.set` are not extracted from the text; `memory.set_from_messages` extracts entities and triples."
+      ],
+      "wrong": [
+        "Entities are not extracted from memories; an admin adds them by hand only.",
+        "Entities come from `memory.set`; they are not extracted from text.",
+        "Pass them in `entities` on `memory.set`; Loom never extracts entities from the text."
+      ]
     }
+  },
+  {
+    "id": "help-add-repo",
+    "kind": "help",
+    "use_case": "U9 Code index",
+    "person": "alice",
+    "question": "How do I add a repository to Loom's code index?",
+    "expect": ["code\\.repo\\.add|Add repository|LOOM_CODE_REPOS_JSON|loom code backfill"],
+    "cite_help": ["features/code-index/repositories.md", "features/code-index/overview.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "How do I add a repository to Loom's code index?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "Use **Repositories → Add repository** in the dashboard, or call `code.repo.add`.",
+        "Add an entry to `LOOM_CODE_REPOS_JSON`, then run `loom code backfill`."
+      ],
+      "wrong": [
+        "You cannot add a repository; Loom indexes only its own code.",
+        "You cannot use `code.repo.add`; only Loom's own repository is indexed.",
+        "There is no `code.repo.add`; Loom indexes only its own repository."
+      ]
+    },
+    "forbid": [
+      "(cannot|can ?not|can't) (call|use) `?code\\.repo\\.add",
+      "\\b(no|there is no|has no) `?code\\.repo\\.add"
+    ]
+  },
+  {
+    "id": "help-conflict",
+    "kind": "help",
+    "use_case": "U10 Conflicts and refusal",
+    "person": "alice",
+    "question": "What happens when I write a memory that conflicts with one already stored?",
+    "expect": ["flag|status.{0,5}conflicted|both (stay|rows)", "Review|conflicts\\.resolve"],
+    "cite_help": ["features/memory/conflicts-and-refusal.md", "concepts/memory.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "What happens when I write a memory that conflicts with one already stored?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "The new row is stored and flagged as a conflict; the namespace owner decides in the Review queue or with `conflicts.resolve`.",
+        "The new row is stored and flagged as a conflict; the owner decides in the Review queue or with `conflicts.resolve`. A pair on the allowlist is not flagged."
+      ],
+      "wrong": [
+        "The new write overwrites the old one.",
+        "Loom refuses the write and asks you to resolve the conflict.",
+        "Loom does not flag it; the new write wins with no Review queue entry or `conflicts.resolve`."
+      ]
+    },
+    "forbid": ["(Loom|it|the (new )?write)\\s+(does ?n[o']t|do not|never) (flag|mark)"]
+  },
+  {
+    "id": "help-collection",
+    "kind": "help",
+    "use_case": "U11 Sharing and collections",
+    "person": "alice",
+    "question": "What is a collection in Loom, and how is one shared?",
+    "expect": [
+      "col-|only grants open|grant-only|opens? only (through|by|via) grants?",
+      "grants?\\b[^.]{0,40}\\bon it|(by|via|with|through) (a |its )?`?grants?|grant(s|ing)? (a |an )?(user|group|agent|principal|`?everyone)|grants? on (one|it|a collection)"
+    ],
+    "cite_help": [
+      "concepts/identities-and-namespaces.md",
+      "architecture/sharing.md",
+      "features/namespaces-and-sharing.md"
+    ],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "What is a collection in Loom, and how is one shared?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "A collection is a `col-…` namespace that opens only through grants; you share it by creating grants on it.",
+        "A collection is a namespace that only grants open; no token claim or org admin role reaches it. Share it by granting a user, group, agent or `everyone` a role on it.",
+        "A collection is a namespace named `col-…` that only grants open; a grant on one can name a `user:`, `group:` or `agent:` principal, or `everyone`."
+      ],
+      "wrong": [
+        "A collection is a folder of documents; share it with a link.",
+        "A `col-` namespace is shared by putting it in the token's claims; no grant is needed.",
+        "A `col-` namespace is shared through its token claims; no grant on it is needed."
+      ]
+    },
+    "forbid": ["\\bno grants?( on it)? (is |are )?(needed|required)"]
+  },
+  {
+    "id": "help-my-role",
+    "kind": "help",
+    "use_case": "U12 My role and who can change it",
+    "person": "alice",
+    "question": "Can I write memories in this namespace? If not, how would I get that?",
+    "expect": ["viewer", "(admin|grant)"],
+    "cite_help": [
+      "concepts/identities-and-namespaces.md",
+      "guides/tokens-and-grants.md",
+      "features/namespaces-and-sharing.md"
+    ],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "Can I write memories in this namespace? If not, how would I get that?",
+        "limit": 5
+      }
+    },
+    "forbid": ["\\byou (can|may) already write\\b", "\\bviewers? (can|may) write"],
+    "samples": {
+      "right": [
+        "You are a viewer here, so you cannot write; an admin can grant you writer.",
+        "No: you are a viewer here. Ask an admin to grant you writer; once granted, you can write here."
+      ],
+      "wrong": [
+        "Yes, you can write here.",
+        "You are an admin, so you can write.",
+        "You can already write here as a viewer.",
+        "You are a viewer, but you can already write here; an admin can grant more.",
+        "You are a viewer; viewers can write here, no admin grant needed."
+      ]
+    }
+  },
+  {
+    "id": "help-claude-code",
+    "kind": "help",
+    "use_case": "U13 Connect a coding agent",
+    "person": "alice",
+    "question": "How do I connect Claude Code to Loom?",
+    "expect": ["claude plugin (marketplace add|install)"],
+    "cite_help": ["getting-started/connect-a-coding-agent.md", "features/integrations/claude-code.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "How do I connect Claude Code to Loom?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": ["Run `claude plugin marketplace add ClickHouse/loom`, then install the plugin."],
+      "wrong": [
+        "Install a Loom editor extension and paste your token.",
+        "`claude plugin install loom` doesn't work; there is no Loom plugin, so paste the token into an editor extension."
+      ]
+    },
+    "forbid": ["\\b(does ?n[o']t|do not|cannot|can't) (work|connect)\\b|\\bthere is no (Loom )?plugin"]
+  },
+  {
+    "id": "help-revoke-token",
+    "kind": "help",
+    "use_case": "U14 Tokens",
+    "person": "alice",
+    "question": "How do I revoke a Loom token?",
+    "expect": ["revoke-token|service_accounts\\.revoke|Settings\\W+Tokens|revok\\w* it (there|in the dashboard)"],
+    "cite_help": ["guides/tokens-and-grants.md", "reference/cli.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "How do I revoke a Loom token?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "Run `loom revoke-token --jti <jti>`.",
+        "Revoke it under Settings → Tokens in the dashboard; that ends it in every tool at once."
+      ],
+      "wrong": [
+        "Tokens cannot be revoked; wait for them to expire.",
+        "There is no `loom revoke-token` command; tokens cannot be revoked, only left to expire."
+      ]
+    },
+    "forbid": ["\\b(no|there is no) `?(loom )?revoke-token"]
+  },
+  {
+    "id": "help-models-keys",
+    "kind": "help",
+    "use_case": "U15 Models and keys",
+    "person": "alice",
+    "question": "Where do I configure the LLM that Loom uses, and its API key?",
+    "expect": ["(LOOM_LLM_(MODEL|PROVIDER)|Models (&|and) keys)"],
+    "cite_help": ["getting-started/models-and-keys.md", "reference/configuration.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "Where do I configure the LLM that Loom uses, and its API key?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "On the server: set `LOOM_LLM_PROVIDER` and `LOOM_LLM_MODEL`, and the provider's key, or use the dashboard's Models & keys page."
+      ],
+      "wrong": [
+        "Each namespace picks its model in its profile.",
+        "There is no `LOOM_LLM_MODEL` or Models & keys page; each namespace picks its model."
+      ]
+    },
+    "forbid": ["\\b(no|there is no) `?(LOOM_LLM_(MODEL|PROVIDER)|Models (&|and) keys)"]
+  },
+  {
+    "id": "help-health-assistant",
+    "kind": "help",
+    "use_case": "U16 Health problems",
+    "person": "alice",
+    "question": "What does the health problem assistant_service_failing mean?",
+    "expect": [
+      "LibreChat",
+      "(set ?up|setup|regist\\w*|sign-?in|creat\\w*)[^.]{0,80}((?<![a-z_])fail(?!ing`)|could ?n[o']t|did ?n[o']t)|(?<![a-z_])fail(?!ing`)\\w*[^.]{0,80}(set ?up|setup|regist|sign-?in)|(?<![a-z_])fail(?!ing`)\\w*[^.]{0,80}retr(y|ies)|retr(y|ies)[^.]{0,40}(set ?up|regist)|sign-?in[^.]{0,40}refus|refus\\w*[^.]{0,40}sign-?in|seal\\w*[^.]{0,60}(neither|cannot|can't) (open|unseal)"
+    ],
+    "cite_help": ["features/integrations/librechat.md", "architecture/assistant.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "What does the health problem assistant_service_failing mean?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "Loom's setup of the LibreChat assistant failed; it retries, and `/v1/health` names what to fix.",
+        "Loom's boot-time registration of its service user and agent in LibreChat failed; it clears once a try succeeds.",
+        "It means LibreChat refuses Loom's sign-in with a 4xx other than 429, or the stored service row's sealed value opens with neither `LOOM_JWT_SECRET` nor `LOOM_JWT_SECRET_PREVIOUS`."
+      ],
+      "wrong": [
+        "It means the LibreChat chat history is full.",
+        "It means LibreChat's chat history is full; create a new chat.",
+        "It means LibreChat's chat history is full; retry in a new chat.",
+        "It does not mean LibreChat's setup failed; the chat history is full.",
+        "`assistant_service_failing` means LibreChat's chat history is full; retry in a new chat.",
+        "`assistant_service_failing` means the LibreChat sign-in page is down for maintenance.",
+        "Setup is fine; `assistant_service_failing` only means a chat is full."
+      ]
+    },
+    "forbid": ["\\b(does ?n[o']t|do not|not) mean\\b"]
+  },
+  {
+    "id": "help-why-ranked",
+    "kind": "help",
+    "use_case": "U17 Why search returned this",
+    "person": "alice",
+    "question": "How can I see why a search ranked a memory where it did?",
+    "expect": ["explain\\s*=\\s*true|score_components"],
+    "cite_help": ["concepts/retrieval-and-ranking.md", "guides/debugging.md", "features/memory/search-and-ask.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "How can I see why a search ranked a memory where it did?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": ["Search with `explain=true`: each hit carries its `score_components`."],
+      "wrong": [
+        "Loom does not explain rankings.",
+        "I can't explain why it ranked there; recall varies.",
+        "Run `memory.search_trace` with the same request; its `rank_score` shows why the memory ranked there.",
+        "`explain=true` does not show why a memory ranked; Loom cannot tell you."
+      ]
+    },
+    "forbid": [
+      "(explain\\s*=\\s*true|score_components)`?[^.]{0,30}(does ?n[o']t|do not|cannot|can't|won'?t) (show|explain|tell)"
+    ]
+  },
+  {
+    "id": "help-runs",
+    "kind": "help",
+    "use_case": "U18 Runs",
+    "person": "alice",
+    "question": "What is a run in Loom, and how does an agent start one?",
+    "expect": ["run\\.(begin|scope)"],
+    "cite_help": ["features/runs.md", "reference/operations/run.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "What is a run in Loom, and how does an agent start one?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "A run is one execution of a task; the agent starts it with `run.begin`.",
+        "A run is one execution of a task; in the SDK, `async with agent.run.scope(goal=...)` opens the run."
+      ],
+      "wrong": [
+        "A run is a CI job; agents cannot start one.",
+        "There is no `run.begin`; a run starts on its own when an agent connects."
+      ]
+    },
+    "forbid": ["\\bno `?run\\.begin"]
+  },
+  {
+    "id": "help-tasks",
+    "kind": "help",
+    "use_case": "U19 Tasks between agents",
+    "person": "alice",
+    "question": "How does one agent hand work to another agent in Loom?",
+    "expect": ["tasks?\\.create", "tasks?\\.pull|inbox"],
+    "cite_help": ["features/tasks-and-decisions.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "How does one agent hand work to another agent in Loom?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "The sender calls `task.create` into the receiver's inbox; the receiver claims it with `task.pull`.",
+        "The sender posts with `a.tasks.create(\"private-bot\", ...)` and the receiver pulls it with `tasks.pull`."
+      ],
+      "wrong": [
+        "The agents share a memory key and poll it.",
+        "They hand work over through a shared task list in the dashboard.",
+        "There is no `tasks.create`; agents poll a shared memory key and the inbox."
+      ]
+    },
+    "forbid": ["\\b(no|there is no|has no) `?tasks?\\.create"]
+  },
+  {
+    "id": "help-tracker",
+    "kind": "help",
+    "use_case": "U20 Tracker",
+    "person": "alice",
+    "question": "Does Loom copy our issue tracker's data into its own database?",
+    "expect": [
+      "never copies (it|your|the|any)|(does ?n[o']t|does not|never) (copy|store|keep) (it|(your|the|any) (issue )?(tracker|issue))|(reads|queries)\\b[^.]{0,30}\\blive|keeps? no copy"
+    ],
+    "cite_help": ["features/tracker/overview.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "Does Loom copy our issue tracker's data into its own database?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "No: Loom never copies it; it reads the tracker live.",
+        "No. Loom doesn't store your tracker's data; it queries it live with a read-only credential.",
+        "No. Loom reads your tracker live with a read-only credential.",
+        "No. Loom does not copy your issue tracker's data into its own database; it reads it live."
+      ],
+      "wrong": [
+        "Yes, it copies every issue into its database each night.",
+        "Yes: Loom copies every issue into its database each night; it doesn't store attachments.",
+        "Yes: Loom copies every issue into its database each night; it doesn't store the attachments.",
+        "Yes, Loom imports every issue into ClickHouse each night; it doesn't store the attachments.",
+        "Yes. Loom copies the issues into its own tables.",
+        "Yes: Loom syncs every issue each night, and it doesn't store the tracker credentials.",
+        "Loom copies your tracker's issues into its own tables and reads them live from there."
+      ]
+    },
+    "forbid": [
+      "(^|[.!?:]\\s*)yes\\b[^.]{0,40}\\b(cop(y|ies)|imports?|syncs?|mirrors?)\\b|(?<!not )(?<!n't )(?<!never )\\bcop(y|ies) (every|each|all|the|your|its)\\b|\\b(imports?|syncs?|mirrors?) (every|each|all|the) (issue|tracker)"
+    ]
+  },
+  {
+    "id": "help-erase-user",
+    "kind": "help",
+    "use_case": "U21 Retention and erasure",
+    "person": "alice",
+    "question": "Who may erase every memory of one user id across the org?",
+    "expect": ["erasure\\.request", "org(ani[sz]ation)? admin|admin of the org"],
+    "cite_help": ["features/memory/retention-and-erasure.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "Who may erase every memory of one user id across the org?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "An org admin, with `erasure.request` and the `user_id` scope.",
+        "`memory.clear` only tombstones one namespace's memories. An org admin uses `erasure.request` with the `user_id` scope.",
+        "Running `memory.clear` is not enough: it only tombstones. An org admin uses `erasure.request` with the `user_id` scope.",
+        "`memory.clear` with `agent` or `user_id` only tombstones in one namespace; an org admin uses `erasure.request` with the `user_id` scope.",
+        "An admin can run `memory.clear`, but it only tombstones; an org admin erases with `erasure.request` and the `user_id` scope.",
+        "Only an organization admin, with `erasure.request` and the `user_id` scope."
+      ],
+      "wrong": [
+        "An org admin runs `memory.clear` with `agent=\"*\"`.",
+        "Any writer may, with `memory.delete`.",
+        "No org admin can: `erasure.request` does not take the `user_id` scope; run `memory.clear` in each namespace."
+      ]
+    },
+    "forbid": [
+      "`?erasure\\.request`? (does ?n[o']t|cannot|can ?not|won'?t) (take|accept|erase)|\\bno (org(ani[sz]ation)? )?admin (can|may)\\b"
+    ]
+  },
+  {
+    "id": "help-extraction",
+    "kind": "help",
+    "use_case": "U22 Extraction from transcripts",
+    "person": "alice",
+    "question": "How do I have Loom extract memories from a conversation transcript?",
+    "expect": ["memory\\.set_from_messages"],
+    "cite_help": ["features/memory/extraction.md", "guides/extraction-pipeline.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "How do I have Loom extract memories from a conversation transcript?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": ["Send the transcript to `memory.set_from_messages`."],
+      "wrong": [
+        "Copy each fact out by hand and call `memory.set`.",
+        "`memory.set_from_messages` does not exist; copy each fact out by hand.",
+        "There is no `memory.set_from_messages`; copy each fact by hand."
+      ]
+    },
+    "forbid": [
+      "`?memory\\.set_from_messages`? (does ?n[o']t exist|is removed)",
+      "\\b(no|there is no|has no) `?memory\\.set_from_messages"
+    ]
+  },
+  {
+    "id": "help-working-memory",
+    "kind": "help",
+    "use_case": "U23 Working memory",
+    "person": "alice",
+    "question": "What is working memory in Loom, and does it expire?",
+    "expect": [
+      "block|not (embedded|ranked|searched)|every (turn|time|call)",
+      "(no TTL|surviv|do(es)? not expire|never expire|n.t expire)"
+    ],
+    "cite_help": ["features/memory/working-memory-and-profiles.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "What is working memory in Loom, and does it expire?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "A small block given to the agent every time instead of searched; it has no TTL and survives restarts."
+      ],
+      "wrong": [
+        "A cache of recent searches; it expires after a day.",
+        "A block given every time; it expires after 24 hours.",
+        "A small block given every time; it has no TTL but does not survive restarts.",
+        "A small block given every time; it survives restarts but expires after 30 days."
+      ]
+    },
+    "forbid": [
+      "\\b(does ?n[o']t|do not|not|never|won't) surviv",
+      "\\bexpires? (after|in|once|at)\\b|\\b(has|have) a TTL\\b"
+    ]
+  },
+  {
+    "id": "help-langfuse",
+    "kind": "help",
+    "use_case": "U24 Integrations",
+    "person": "alice",
+    "question": "Which settings send Loom's traces to Langfuse?",
+    "expect": ["LOOM_LANGFUSE_URL", "LOOM_LANGFUSE_ADMIN_TOKEN"],
+    "cite_help": ["features/integrations/langfuse.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "Which settings send Loom's traces to Langfuse?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "Set `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`.",
+        "Set `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; no other setting is needed."
+      ],
+      "wrong": [
+        "Set `LOOM_TRACE_URL`.",
+        "`LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN` are not used; traces cannot go to Langfuse."
+      ]
+    },
+    "forbid": ["\\b(are|is) (not|no longer) (used|read)\\b|\\bignored\\b"]
+  },
+  {
+    "id": "help-setting",
+    "kind": "help",
+    "use_case": "U25 What a setting does",
+    "person": "alice",
+    "question": "What does LOOM_ASSISTANT_MODEL set?",
+    "expect": ["agent definition|agent('s)? model|model the (assistant|agent)|agent\\.yaml|definition'?s model"],
+    "cite_help": ["reference/configuration.md", "architecture/assistant.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "What does LOOM_ASSISTANT_MODEL set?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "The assistant agent's model; Loom writes it into the agent definition at boot.",
+        "It sets the model the assistant's agent runs, in place of `agent.yaml`'s; a change takes effect at the next restart.",
+        "It sets the model the assistant's agent runs in LibreChat; empty keeps `agent.yaml`'s model.",
+        "It replaces the assistant definition's model."
+      ],
+      "wrong": [
+        "I could not find what LOOM_ASSISTANT_MODEL sets.",
+        "There is no `LOOM_ASSISTANT_MODEL`; the agent definition and its model come from agent.yaml at boot.",
+        "`LOOM_ASSISTANT_MODEL` does not change the model; the assistant always runs agent.yaml's."
+      ]
+    },
+    "forbid": [
+      "\\b(no|there is no) `?LOOM_ASSISTANT_MODEL",
+      "LOOM_ASSISTANT_MODEL`?\\s+(does ?n[o']t|do not|never) (set|change|replace)"
+    ]
+  },
+  {
+    "id": "help-quickstart",
+    "kind": "help",
+    "use_case": "U26 Getting started",
+    "person": "alice",
+    "question": "Does Loom's quickstart need an API key?",
+    "expect": [
+      "\\b(needs?|requires?) no (API )?keys?\\b|\\bno API key (is )?(needed|required)\\b|\\b(you|it|the quickstart) (does ?n[o']t|do ?n[o']t|do not|does not) (need|require) an? (API )?key"
+    ],
+    "cite_help": ["getting-started/quickstart.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "Does Loom's quickstart need an API key?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "No: the quickstart needs no API key and no account.",
+        "No: the quickstart needs no API key. For real models you need an OpenAI API key (Settings → Models & keys).",
+        "No, you don't need an API key to run the quickstart.",
+        "No, it doesn't require an API key."
+      ],
+      "wrong": [
+        "Yes, you need an API key; no account is needed.",
+        "Yes: the quickstart won't start without an OpenAI API key.",
+        "The quickstart won't run without an API key.",
+        "Yes, the quickstart needs an API key; nothing runs without an OpenAI API key.",
+        "Yes, the quickstart does not run without an OpenAI API key.",
+        "Yes. Without an API key the quickstart cannot start.",
+        "Yes. It won't run without your OpenAI key.",
+        "Yes: you cannot use the quickstart without an API key.",
+        "Yes. With no API key, the quickstart won't start.",
+        "Yes, the quickstart needs an OpenAI API key; search doesn't need a key.",
+        "Yes: the quickstart requires an API key, though its embedder needs no key."
+      ]
+    },
+    "forbid": ["(^|[.!?:]\\s*)yes\\b[^.]{0,40}\\b(needs?|requires?)\\b"]
+  },
+  {
+    "id": "help-upgrade",
+    "kind": "help",
+    "use_case": "U27 Operating a deployment",
+    "person": "alice",
+    "question": "How do I upgrade a Loom deployment to a new release?",
+    "expect": [
+      "(boot|start)\\w*[^.]{0,60}(appl|run)\\w* (the |pending |its )?migrat|(appl|run)\\w* (the |pending |its )?(migrat\\w*|files)[^.]{0,40}(\\b(at|on|when) (boot|start)|\\bbefore it reports ready)|migrations? (run|are applied|apply)[^.]{0,30}\\b(at|on|when) (boot|start)|replac\\w* the image[^.]{0,80}appl\\w* (the |its )?migrat"
+    ],
+    "cite_help": ["operations/upgrades.md"],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "How do I upgrade a Loom deployment to a new release?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "Deploy the new image; the first container to boot applies the migrations.",
+        "Deploy the new image; the server applies pending migrations at boot.",
+        "Deploy the new image; migrations run automatically at boot.",
+        "Migrations apply automatically on startup once the new image is deployed.",
+        "Replace the image; the upgrade applies the migrations the new build carries.",
+        "At boot, the server applies pending files before it reports ready."
+      ],
+      "wrong": [
+        "Export every memory, reinstall the new release and import them back.",
+        "Loom cannot be upgraded in place; migrate the data by hand.",
+        "Loom cannot be upgraded in place; migrate the data by hand, then start the new build.",
+        "Stop every server, run the migrations by hand, then start the new release.",
+        "Stop every server, run the migrations by hand before starting the new release.",
+        "Loom does not apply migrations at boot; run `loom migrate` by hand before deploying the new image."
+      ]
+    },
+    "forbid": ["\\b(does ?n[o']t|do not|never|won'?t) (appl|run)\\w* (the |pending |its )?migrat"]
+  },
+  {
+    "id": "help-undocumented",
+    "kind": "help_abstain",
+    "use_case": "U28 Refusals and abstentions",
+    "person": "alice",
+    "question": "Which Loom setting changes the colour theme of the dashboard?",
+    "expect": [],
+    "cite_help": [],
+    "baseline": {
+      "op": "help.search",
+      "args": {
+        "query": "Which Loom setting changes the colour theme of the dashboard?",
+        "limit": 5
+      }
+    },
+    "samples": {
+      "right": [
+        "Loom's documentation does not describe a dashboard colour theme.",
+        "Loom has no setting for the dashboard's colour theme.",
+        "The docs don't list a theme setting; `LOOM_COLOUR` picks a blue/green deployment, not a theme.",
+        "No Loom setting changes the dashboard's colour theme.",
+        "There is no colour theme setting.",
+        "Loom doesn't have a setting for the dashboard's colour theme.",
+        "There isn't a Loom setting that changes the colour theme.",
+        "The dashboard has no colour theme setting.",
+        "No Loom setting exists for the dashboard's colour theme.",
+        "The dashboard's colour theme isn't configurable.",
+        "Loom's documentation does not cover it.",
+        "Loom's memories, documents and documentation hold nothing about a dashboard colour theme. Nothing stored in Loom answers this."
+      ],
+      "wrong": [
+        "The docs don't cover it, but set `LOOM_DASHBOARD_COLOUR=dark`.",
+        "Use LOOM_UI_THEME to change it.",
+        "The docs don't cover it; try setting `LOOM_UI_THEME`.",
+        "There is no setting `LOOM_THEME`; the docs don't cover a colour theme."
+      ]
+    }
+  },
+  {
+    "id": "data-connected-agents",
+    "kind": "inventory",
+    "use_case": "U3 What the namespace holds",
+    "person": "alice",
+    "question": "Which agents have written to this namespace?",
+    "expect": ["handbook-bot", "ops-bot"],
+    "baseline": {
+      "op": "namespace.inventory",
+      "args": {},
+      "path": ["populations", 1, "total"],
+      "equals": 2
+    }
+  },
+  {
+    "id": "data-history",
+    "kind": "memory",
+    "use_case": "U7 History of a fact",
+    "person": "alice",
+    "question": "Has the default public API rate limit changed over time? What was it before?",
+    "expect": ["300", "600"],
+    "cite": "policy/api/rate-limit",
+    "baseline": {
+      "op": "memory.history",
+      "args": {
+        "memory_key": "policy/api/rate-limit",
+        "agent": "handbook-bot"
+      },
+      "path": ["rows"],
+      "count": true,
+      "equals": 2
+    },
+    "cite_history": true
   }
 ]

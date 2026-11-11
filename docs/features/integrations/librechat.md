@@ -134,9 +134,16 @@ orgs, mints a token per person, revokes one, and scores each answer:
   inspect or tune case contains the labeled value; a refusal case says access was refused
   or failed; an abstention case says the fact is not stored. The forbidden text is the
   other org's canary for the cross-tenant case, the person's own answer (`friday`) for the
-  revoked-token case, and a stale or wrong value for some others.
-- **citation valid:** every memory key the answer names exists in the person's namespace,
-  and a version written next to it is the row's current version.
+  revoked-token case, and a stale or wrong value for some others. Through Loom's assistant
+  route, an answer of any kind that names an op or setting the build neither serves nor
+  documents (`unknown_names`) is wrong.
+- **citation valid:** every memory key the answer cites exists in the person's namespace,
+  and a version written next to it is the row's current version, or, for a question about
+  the key's history (`cite_history`), one of its earlier versions. Through Loom's assistant
+  route a memory citation is `[memory:<key>@v<version>]`; otherwise it is any key-shaped
+  text outside a `[help:]` citation, so on that path a help answer that quotes the docs'
+  example key counts it as an invalid memory citation; the help figures below come from
+  the assistant route.
 - **tool calls:** the `mcp` rows Loom ledgered under the person's subject during the answer.
 - **latency and time to first token:** end to end, and to the first streamed delta, which
   for the harness's own agent (`setup`) is the model's one-line preamble before its first
@@ -153,9 +160,10 @@ orgs, mints a token per person, revokes one, and scores each answer:
 | Tool calls per question                                 | at most 3     | at most 3, 16 in all                                                      |
 | Model cost per answer, every prompt token at list price | at most $0.05 | mean $0.029; max $0.064 (`abstain-cfo`, three searches) misses the target |
 
-The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune, refusal
-and abstention cases, scored against the current `cases.json` with `qualify.py rescore`;
-the direct-path numbers are from a later run of that path alone
+The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune and
+refusal cases and memory abstentions (`abstain-wifi`, `abstain-cfo`), other than
+`data-history` and `data-connected-agents`, scored against the current `cases.json` with
+`qualify.py rescore`; the direct-path numbers are from a later run of that path alone
 (`qualify.py run --native-only`) on a fresh seed. The document cases below were run
 separately.
 
@@ -211,6 +219,79 @@ The five documents make a small corpus, so rank 1 for every labeled section says
 breadcrumbs reach the hits, not that retrieval holds up at scale. No citation names a
 revision: the hits of the measured build carry none, and the model read `knowledge.get`
 only on the two unanswerable questions.
+
+### Use cases
+
+The case set holds at least one question per use case of Loom: what a namespace holds and
+how it is used (the data tools), and how Loom works and how to do something in it (the
+help tools, which read the documentation the server ships). Each help case labels the
+values its answer must state and the pages that hold them, with a right and a wrong sample
+answer the label is tested against. Its answer is scored correct when it states them and
+does not deny them (each case's `forbid`), under the unknown-name rule above. For the case
+with no answer in the docs, the answer is correct when it says so and writes no `LOOM_`
+name that no docs page writes, as a name or as a member of a family a page writes with
+placeholders; an answer that names an invented setting only to deny it is scored wrong.
+The labels are patterns over the answer's text, so they err both ways: an answer that
+states the labeled values beside a wrong claim about them can pass, and a right answer
+worded otherwise can fail. A correct score means the answer has what the page says. A help
+citation is valid when its page is in the server's documentation (`help.get`) and its
+section is one of the page's own, by the rule the server's own check uses. The cases go
+through Loom's assistant route (`qualify.py setup-bridge`), so each answer also carries
+the question's asker line and the bridge's own citation check.
+
+| Use case                          | Cases | Correct  | No invalid citation |
+| --------------------------------- | ----- | -------- | ------------------- |
+| U1 Look up a stored fact          | 7     | 7 of 7   | 7 of 7              |
+| U2 What a document says           | 10    | 9 of 10  | 10 of 10            |
+| U3 What the namespace holds       | 4     | 4 of 4   | 4 of 4              |
+| U4 Usage counts and trends        | 3     | 3 of 3   | 3 of 3              |
+| U5 Cost and spend                 | 1     | 1 of 1   | 1 of 1              |
+| U6 Write memory better            | 4     | 4 of 4   | 2 of 4              |
+| U7 History of a fact              | 2     | 2 of 2   | 2 of 2              |
+| U8 Entity graph                   | 1     | 1 of 1   | 1 of 1              |
+| U9 Code index                     | 1     | 1 of 1   | 1 of 1              |
+| U10 Conflicts and refusal         | 1     | 1 of 1   | 1 of 1              |
+| U11 Sharing and collections       | 1     | 1 of 1   | 1 of 1              |
+| U12 My role and who can change it | 1     | 1 of 1   | 1 of 1              |
+| U13 Connect a coding agent        | 1     | 1 of 1   | 1 of 1              |
+| U14 Tokens                        | 1     | 1 of 1   | 1 of 1              |
+| U15 Models and keys               | 1     | 1 of 1   | 0 of 1              |
+| U16 Health problems               | 1     | 1 of 1   | 1 of 1              |
+| U17 Why search returned this      | 1     | 1 of 1   | 1 of 1              |
+| U18 Runs                          | 1     | 1 of 1   | 1 of 1              |
+| U19 Tasks between agents          | 1     | 1 of 1   | 1 of 1              |
+| U20 Tracker                       | 1     | 1 of 1   | 1 of 1              |
+| U21 Retention and erasure         | 1     | 1 of 1   | 1 of 1              |
+| U22 Extraction from transcripts   | 1     | 1 of 1   | 1 of 1              |
+| U23 Working memory                | 1     | 1 of 1   | 1 of 1              |
+| U24 Integrations                  | 1     | 1 of 1   | 1 of 1              |
+| U25 What a setting does           | 1     | 1 of 1   | 1 of 1              |
+| U26 Getting started               | 1     | 1 of 1   | 1 of 1              |
+| U27 Operating a deployment        | 1     | 1 of 1   | 1 of 1              |
+| U28 Refusals and abstentions      | 5     | 5 of 5   | 5 of 5              |
+| All                               | 56    | 55 of 56 | 53 of 56            |
+
+Measured on v0.8.8 with `claude-haiku-4-5`, on a server running fake embeddings and a fake
+LLM for Loom's own model jobs. A full run of the 56 cases costs about $3 at list price
+counting every prompt token, a mean of $0.053 per answer. The figures take 14 cases (three
+memory, nine document and two help cases) from one run and the other 42 from a full run,
+on agent definitions that differ from `integrations/librechat/agent.yaml` in one sentence
+on the asker's role, and for the full run also in the wording of the first step's
+searches. Twelve answers cite no memory, document or help page: two refusals, three
+abstentions, three SQL analyses (which cite their statement instead) and four counts,
+which come from tallies with no row to cite; every other answer cites one. The misses:
+
+- `doc-cache-entries` asks for a value one of the namespace's documents holds
+  (`config/cache.toml`); the answer searches Loom's own documentation instead and does not
+  find it: the question and Loom's settings share their words.
+- Two recommendation answers cite `mentor.guide`, Loom's writing guide, as a docs page,
+  which the harness marks invalid (no such page): the guide has no citation form.
+- One answer names a section the page does not have.
+
+Answers vary from run to run at this model. A question about the person's own data that
+shares words with Loom's docs (a rate limit, webhook retries) is sometimes answered from
+the docs; the agent's instructions ask for the memory, document and help searches together
+in its first step for that reason.
 
 ## The deployed assistant
 
@@ -289,8 +370,9 @@ The qualification runs the same cases through Loom's assistant route
 (`POST /v1/assistant/chat/completions`), each with the person's own token, so Loom
 delegates each answer's token and runs the agent it seeded. `setup-bridge` grants each
 person `viewer` on their namespace, since an answer's token is delegated from a live
-grant. A run spends about a dollar from each namespace's daily model cost cap, and the
-assistant may spend half of it, so raise the cap for the run
+grant. A full run spends about $3, most of it from `acme-handbook`'s daily model cost cap
+(45 of the 56 cases ask there), and the assistant may spend half of a cap, so raise the cap
+for the run
 (`LOOM_DEFAULT_DAILY_COST_CAP_USD=20` on the server, or the namespace's
 `daily_cost_cap_usd`); otherwise the last cases are refused with `RATE_LIMITED`:
 
@@ -302,11 +384,11 @@ python $Q revoke
 python $Q run --cancel-probe
 ```
 
-Beside every earlier case it runs three analysis cases (`insights.query` over the
-namespace, one asking for every org's counts, whose answer must name no other tenant's
-rows) and two recommendation cases over `acme-notes`, a namespace written badly on
-purpose (hash-named keys, a JSON value encoded twice, a 6.5 KB runbook stored as a
-memory).
+Among its cases are three analysis cases (`insights.query` over the namespace, one asking
+for every org's counts, whose answer must name no other tenant's rows) and two
+recommendation cases over `acme-notes`, a namespace written badly on purpose (hash-named
+keys, a JSON value encoded twice, a 6.5 KB runbook stored as a memory). The table measures
+the data cases other than `data-history` and `data-connected-agents`.
 
 | Measured on v0.8.8, 28 cases, `claude-haiku-4-5`, fake embedder   | The deployed agent, asked directly                              |
 | ----------------------------------------------------------------- | --------------------------------------------------------------- |

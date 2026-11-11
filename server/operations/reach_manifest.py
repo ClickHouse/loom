@@ -249,7 +249,11 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "help.get": ("dashboard",),
+    "help.get": (
+        "plugin_hook",
+        "dashboard",
+    ),
+    "help.search": ("plugin_hook",),
     "inbox.list": ("dashboard",),
     "inbox.policy_list": ("dashboard",),
     "inbox.policy_set": ("dashboard",),
@@ -410,6 +414,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.health": ("dashboard",),
     "memory.history": (
         "sdk_method",
+        "plugin_hook",
         "dashboard",
     ),
     "memory.import_curated": ("dashboard",),

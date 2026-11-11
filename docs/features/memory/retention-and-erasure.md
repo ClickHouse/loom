@@ -103,7 +103,11 @@ wins.
 ## Erasure
 
 `erasure.request` erases one scope everywhere Loom keeps it, and returns once it can show
-nothing in scope is left.
+nothing in scope is left. To erase everything one user id holds across the org, an org
+admin requests the `user_id` scope, which erases the user's rows in every namespace of the
+org (`purge=true` deletes them rather than tombstoning them; what it leaves is listed
+below). `memory.clear` tombstones one agent's or user's memories in one namespace only
+([delete is not erase](#delete-is-not-erase)).
 
 | `scope_type`     | `scope_value`                                                               | Who may request it                           |
 | ---------------- | --------------------------------------------------------------------------- | -------------------------------------------- |

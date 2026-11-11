@@ -178,9 +178,14 @@ def test_native_score_compares_counts_as_numbers():
 def test_check_citations_flags_unknown_keys_and_stale_versions(monkeypatch):
     q = _qualify()
     rows = {"policy/deploy/freeze": 1793745407448901606}
+    # An earlier version of a key is a valid citation of what it once held.
+    history = {"policy/deploy/freeze": [1793745407448901606, 1793745400000000000]}
 
     def fake_call(base, token, op, body):
-        assert op == "memory.get" and token == "viewer-token"
+        assert op in ("memory.get", "memory.history") and token == "viewer-token"
+        if op == "memory.history":
+            versions = history.get(body["memory_key"], [])
+            return 200, {"rows": [{"version": v} for v in versions]}, 0.0
         version = rows.get(body["memory_key"])
         return 200, {"found": version is not None, "version": version}, 0.0
 
@@ -202,6 +207,10 @@ def test_check_citations_flags_unknown_keys_and_stale_versions(monkeypatch):
         ["policy/deploy/freeze"],
         ["policy/deploy/freeze@1793745407000000000"],
     )
+    earlier = "Before: `policy/deploy/freeze` (version 1793745400000000000)."
+    assert q.check_citations(st, person, earlier, history_ok=True) == (["policy/deploy/freeze"], [])
+    # Outside a question about history, an earlier version cited is stale.
+    assert q.check_citations(st, person, earlier)[1] == ["policy/deploy/freeze@1793745400000000000"]
     unknown = "See policy/deploy/thaw."
     assert q.check_citations(st, person, unknown) == (
         ["policy/deploy/thaw"],
@@ -634,7 +643,7 @@ def test_report_counts_the_document_cases():
     ]
     text = q.report(rows, "m")
     # Document rows stay out of the memory-key summary line.
-    assert "\nlibrechat: " not in text and "expected key cited" not in text
+    assert "\nlibrechat: " not in text and "expected source cited" not in text
     assert "2 answerable and 1 unanswerable cases; labeled section at rank 1 1/2" in text
     assert "within the top 5 2/2" in text
     assert (
@@ -710,7 +719,9 @@ def test_rescore_checks_a_saved_document_rows_citations_again(monkeypatch, tmp_p
     row = {"id": "doc-revised-ack", "kind": "document", "documents": True}
     out = tmp_path / "results.json"
     out.write_text(
-        json.dumps({"model": "m", "rows": [{**row, "librechat": side, "native": native}]})
+        json.dumps(
+            {"model": "m", "bridge": False, "rows": [{**row, "librechat": side, "native": native}]}
+        )
     )
     q.cmd_rescore(argparse.Namespace(out=str(out), citations=True))
     got = json.loads(out.read_text())["rows"][0]["librechat"]
@@ -747,3 +758,638 @@ def test_seed_writes_each_documents_revision_after_its_first_write(monkeypatch):
     # Every document is written before any revision of one.
     first = {b["source_uri"]: i for i, b in reversed(list(enumerate(docs)))}
     assert docs.index(next(b for b in docs if b["content"] == writes[-1])) > max(first.values())
+
+
+_HELP_PAGE = """# Cost and usage
+
+## Daily spend caps
+
+Text.
+
+## Limits
+
+### Daily spend caps
+
+More.
+
+## Webhooks
+
+### Retries
+"""
+
+
+@pytest.mark.parametrize(
+    "breadcrumb",
+    [
+        "Cost and usage > Webhooks > Retries",  # exact
+        "Webhooks > Retries",  # without the page title
+        "Retries",  # a tail one section has
+        "Daily spend caps",  # a tail two sections have
+        "Limits > Daily spend caps",
+        "webhooks > retries",  # the server compares case
+        "Web hooks > Retries",
+        "  Webhooks  >Retries ",  # and trims each heading
+        "Cost and usage",
+    ],
+)
+def test_help_section_rule_is_the_servers(breadcrumb):
+    from server.help.domain.index import build, find_section, page_sections, section_path
+
+    q = _qualify()
+    index = build([("features/cost.md", _HELP_PAGE)])
+    sections = [s.breadcrumb for s in page_sections(index, "features/cost.md")]
+    server = find_section(index, "features/cost.md", section_path(breadcrumb)) is not None
+    assert q.names_section(q.help_breadcrumb(breadcrumb), sections) is server
+
+
+def test_check_help_citations_reads_the_page_and_its_sections(monkeypatch):
+    q = _qualify()
+
+    def fake_read(st, token, op, body):
+        assert op == "help.get" and token == "viewer-token"
+        # help.get strips one `docs/` prefix, as the server does.
+        if body["path"].removeprefix("docs/") != "features/cost.md":
+            return {"found": False}
+        return {"found": True, "sections": [{"section": "Cost and usage > Daily spend caps"}]}
+
+    monkeypatch.setattr(q, "scorer_read", fake_read)
+    st = {"tokens": {"scorer:acme-handbook": "viewer-token"}}
+    person = {"namespace": "acme-handbook"}
+    case = {"cite_help": ["features/cost.md"]}
+    text = (
+        "[help:docs/features/cost.md § Daily spend caps] "
+        "[help:features/cost.md § daily spend caps] "
+        "[help:features/other.md] "
+        "[help:features/cost.md § >] "  # only separators: the page itself, as the server reads it
+        "[help:docs/docs/features/cost.md]"  # one prefix is stripped, as the bridge strips it
+    )
+    cited, invalid, expected = q.check_help_citations(st, person, case, text)
+    assert cited == [
+        "help:docs/features/cost.md § Daily spend caps",
+        "help:features/cost.md § daily spend caps",
+        "help:features/other.md",
+        "help:features/cost.md § >",
+        "help:docs/docs/features/cost.md",
+    ]
+    assert invalid == [
+        "help:features/cost.md § daily spend caps: no such section",
+        "help:features/other.md: no such page",
+        "help:docs/docs/features/cost.md: no such page",
+    ]
+    assert expected is True
+
+
+def test_memory_citations_skip_help_pages_and_quoted_examples(monkeypatch):
+    q = _qualify()
+    asked = []
+
+    def fake_call(base, token, op, body):
+        asked.append(body["memory_key"])
+        return 200, {"found": True, "version": 1793745407448901606}, 0.0
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    st = {"loom_url": "http://loom", "tokens": {"scorer:acme-handbook": "viewer-token"}}
+    person = {"org": "acme", "namespace": "acme-handbook"}
+    text = (
+        "Keys look like `scope/kind/id` [help:features/memory/writing.md § Keys]. "
+        "The freeze: [memory:policy/deploy/freeze@v1793745407448901606]."
+    )
+    # A help page's path is no key; straight through LibreChat (no bridge) a quoted example
+    # still reads as one.
+    assert q.check_citations(st, person, text)[0] == ["scope/kind/id", "policy/deploy/freeze"]
+    # Through the bridge only a `[memory:]` citation is a memory citation.
+    asked.clear()
+    assert q.check_citations({**st, "bridge": True}, person, text) == (
+        ["policy/deploy/freeze"],
+        [],
+    )
+    assert asked == ["policy/deploy/freeze"]
+
+
+def test_a_help_abstention_and_an_unknown_name_are_scored():
+    q = _qualify()
+    case = {"kind": "help_abstain", "expect": [], "baseline": {"op": "help.search"}}
+    said = {"answer": "Loom's documentation doesn't cover a colour theme.", "error": ""}
+    assert q.score_answer(case, said) == {"correct": True, "abstained": True}
+    guessed = {"answer": "Set LOOM_DASHBOARD_THEME=dark.", "error": ""}
+    assert q.score_answer(case, guessed)["correct"] is False
+    # A right answer that names an op the build neither serves nor documents is wrong.
+    case = {"kind": "fact", "expect": [r"revoke-token"], "baseline": {"op": "help.search"}}
+    answer = {"answer": "Run `loom revoke-token`.", "error": ""}
+    assert q.score_answer(case, answer)["correct"] is True
+    assert q.score_answer(case, {**answer, "unknown_names": ["token.revoke_all"]}) == {
+        "correct": False,
+        "abstained": False,
+    }
+
+
+def test_the_direct_path_does_not_score_a_question_the_docs_leave_open():
+    q = _qualify()
+    case = {"kind": "help_abstain", "cite_help": [], "baseline": {"op": "help.search"}}
+    hit = {"hits": [{"path": "features/dashboard.md"}]}
+    assert q.native_score(case, 200, hit)["correct"] is None
+    case = {"kind": "fact", "cite_help": ["features/dashboard.md"], "baseline": case["baseline"]}
+    assert q.native_score(case, 200, hit)["correct"] is True
+
+
+def test_report_counts_a_help_abstention_and_orders_the_use_cases():
+    q = _qualify()
+
+    def side(correct, abstained=False):
+        return {
+            "correct": correct,
+            "abstained": abstained,
+            "cited": [],
+            "invalid_citations": [],
+            "cited_expected": None,
+            "tool_calls": 1,
+            "latency_s": 1.0,
+            "ttft_s": 0.5,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
+
+    rows = [
+        {
+            "id": f"case-{n}",
+            "kind": "fact",
+            "use_case": f"U{n} Case {n}",
+            "librechat": side(True),
+            "native": side(True),
+        }
+        for n in (10, 2, 1)
+    ]
+    rows.append(
+        {
+            "id": "help-undocumented",
+            "kind": "help_abstain",
+            "use_case": "U28 Refusals and abstentions",
+            "librechat": side(True, abstained=True),
+            "native": side(None),
+        }
+    )
+    text = q.report(rows, "m")
+    assert "librechat: correct 4/4;" in text
+    assert "abstained 1/1 where it should, 0 false abstentions" in text
+    # The direct path does not score that case.
+    assert "native: correct 3/3;" in text and "abstained 0/0 where it should" in text
+    order = [line.split(" | ")[0][2:] for line in text.splitlines() if line.startswith("| U")]
+    assert order == ["U1 Case 1", "U2 Case 2", "U10 Case 10", "U28 Refusals and abstentions"]
+
+
+def test_a_help_answer_is_read_for_an_abstention_from_the_docs():
+    q = _qualify()
+    case = {"kind": "help", "expect": [r"revoke-token"], "baseline": {"op": "help.search"}}
+    left_open = "Loom's documentation doesn't cover revoking every token at once."
+    assert q.score(case, left_open)["abstained"] is True
+    # A how-to answer that quotes an error is no abstention.
+    quoted = "`loom revoke-token` answers `not found` for a token it doesn't have."
+    assert q.score(case, quoted) == {"correct": True, "abstained": False}
+
+
+def test_the_connected_agents_direct_path_counts_the_agents():
+    q = _qualify()
+    case = _case("data-connected-agents")
+
+    def inventory(agents):
+        return {
+            "populations": [{"population": p, "total": 0} for p in ("members",)]
+            + [{"population": "agents", "total": agents}]
+            + [{"population": p, "total": 0} for p in ("authors", "subjects")]
+        }
+
+    assert q.native_score(case, 200, inventory(2))["correct"] is True
+    assert q.native_score(case, 200, inventory(1))["correct"] is False
+
+
+def _saved_side(answer, **extra):
+    return {
+        "answer": answer,
+        "error": "",
+        "correct": True,
+        "abstained": False,
+        "cited": [],
+        "invalid_citations": [],
+        "cited_expected": None,
+        "tool_calls": 1,
+        "latency_s": 1.0,
+        "ttft_s": 0.5,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        **extra,
+    }
+
+
+def test_rescore_keeps_the_unknown_name_rule_and_takes_the_current_labels(tmp_path):
+    import argparse
+
+    q = _qualify()
+    answer = "Run `loom revoke-token <jti>`; `token.revoke_all` revokes them all."
+    side = _saved_side(answer, unknown_names=["token.revoke_all"])
+    row = {"id": "help-revoke-token", "kind": "help", "use_case": "-"}
+    out = tmp_path / "results.json"
+    out.write_text(json.dumps({"model": "m", "rows": [{**row, "librechat": side, "native": side}]}))
+    q.cmd_rescore(argparse.Namespace(out=str(out), citations=False))
+    got = json.loads(out.read_text())["rows"][0]
+    assert got["librechat"]["correct"] is False
+    assert got["use_case"] == _case("help-revoke-token")["use_case"]
+
+
+def test_a_help_answer_that_cites_no_page_misses_the_labeled_one(monkeypatch):
+    q = _qualify()
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text, **_: ([], []))
+    case = _case("help-revoke-token")
+    person = {"namespace": "acme-handbook"}
+    got = q.answer_citations({}, case, person, "Run `loom revoke-token`.")
+    assert got == {"cited": [], "invalid_citations": [], "cited_expected": False}
+    # A memory key cited beside the page does not decide it: the labeled page does.
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text, **_: (["a/b/c"], []))
+    monkeypatch.setattr(
+        q, "check_help_citations", lambda st, person, case, text: (["help:x.md"], [], False)
+    )
+    got = q.answer_citations({}, {**case, "cite": "a/b/c"}, person, "[help:x.md]")
+    assert got["cited_expected"] is False
+
+
+def test_a_question_the_docs_leave_open_is_held_to_the_documented_settings():
+    q = _qualify()
+    case = _case("help-undocumented")
+    # A real variable named beside the abstention is fine; an invented one is not, and the
+    # bridge's unknown names count too.
+    real = _saved_side("The docs don't cover a theme; `LOOM_COLOUR` picks a deployment.")
+    assert q.score_answer(case, real)["correct"] is True
+    assert q.score_answer(case, {**real, "unknown_names": ["LOOM_X"]})["correct"] is False
+    assert q.undocumented_settings("set LOOM_UI_THEME, not LOOM_COLOUR") == ["LOOM_UI_THEME"]
+
+
+def test_the_history_direct_path_counts_the_keys_versions():
+    q = _qualify()
+    case = _case("data-history")
+    assert case["baseline"]["op"] == "memory.history"
+    two = {"rows": [{"version": 2}, {"version": 1}]}
+    assert q.native_score(case, 200, two)["correct"] is True
+    assert q.native_score(case, 200, {"rows": [{"version": 1}]})["correct"] is False
+
+
+def _help_cases():
+    return [
+        c
+        for c in json.loads((QUAL / "cases.json").read_text())
+        if c["baseline"]["op"] == "help.search"
+    ]
+
+
+@pytest.mark.parametrize("case", _help_cases(), ids=lambda c: c["id"])
+def test_each_help_label_passes_its_right_samples_and_fails_its_wrong_ones(case):
+    q = _qualify()
+    samples = case["samples"]
+    assert samples["right"] and samples["wrong"]
+    for answer in samples["right"]:
+        assert q.score_answer(case, {"answer": answer, "error": ""})["correct"], answer
+    for answer in samples["wrong"]:
+        assert not q.score_answer(case, {"answer": answer, "error": ""})["correct"], answer
+
+
+def test_a_document_answer_that_cites_a_help_page_checks_it_as_help(monkeypatch):
+    q = _qualify()
+    docs_read = []
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text, **_: ([], []))
+
+    def fake_docs(st, person, case, text):
+        docs_read.append(text)
+        return [], [], False
+
+    monkeypatch.setattr(q, "check_doc_citations", fake_docs)
+    monkeypatch.setattr(
+        q, "check_help_citations", lambda st, person, case, text: (["help:a.md"], [], False)
+    )
+    case = _case("doc-cache-entries")
+    got = q.answer_citations({}, case, {"namespace": "acme-library"}, "See [help:a.md § A].")
+    assert docs_read == ["See ."]
+    assert got["cited"] == ["help:a.md"] and got["invalid_citations"] == []
+
+
+def test_rescore_reads_memory_citations_by_the_saved_runs_path(monkeypatch, tmp_path):
+    import argparse
+
+    q = _qualify()
+    seen = []
+
+    def fake_citations(st, case, person, text):
+        seen.append(st.get("bridge"))
+        return {"cited": [], "invalid_citations": [], "cited_expected": None}
+
+    monkeypatch.setattr(q, "answer_citations", fake_citations)
+    # The current state is the bridge's; the saved run went straight through LibreChat.
+    monkeypatch.setattr(q, "state", lambda: {"bridge": True})
+    side = _saved_side("The freeze is on Fridays (policy/deploy/freeze).")
+    out = tmp_path / "results.json"
+    row = {"id": "memory-freeze", "kind": "memory", "librechat": side, "native": side}
+    out.write_text(json.dumps({"model": "m", "bridge": False, "rows": [row]}))
+    q.cmd_rescore(argparse.Namespace(out=str(out), citations=True))
+    assert seen == [False]
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in _help_cases() if c.get("forbid")], ids=lambda c: c["id"]
+)
+def test_each_help_forbid_is_what_fails_one_wrong_sample(case):
+    q = _qualify()
+    # Each pattern has a wrong sample that the label and the other patterns let through.
+    for pattern in case["forbid"]:
+        others = [f for f in case["forbid"] if f != pattern]
+        reached = [
+            a
+            for a in case["samples"]["wrong"]
+            if q.score({**case, "forbid": others}, a)["correct"] and not q.score(case, a)["correct"]
+        ]
+        assert reached, (case["id"], pattern)
+
+
+def test_a_memory_citation_in_a_document_answer_is_no_document(monkeypatch):
+    q = _qualify()
+    read = []
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text, **_: ([], []))
+    monkeypatch.setattr(
+        q,
+        "check_doc_citations",
+        lambda st, person, case, text: read.append(text) or ([], [], False),
+    )
+    q.answer_citations({}, _case("doc-cache-entries"), {}, "A [memory:a/b/c@v1793745407448901606].")
+    assert read == ["A ."]
+
+
+def test_through_the_bridge_a_memory_citation_is_read_whole():
+    q = _qualify()
+    text = "`user/pref/example` [memory:user/pref/john_doe@v1793745407448901606]"
+    assert q.memory_mentions({"bridge": True}, text) == [
+        ("user/pref/john_doe", 1793745407448901606)
+    ]
+
+
+def test_rescore_asks_for_a_new_run_when_the_saved_path_is_unknown(tmp_path):
+    import argparse
+
+    q = _qualify()
+    out = tmp_path / "results.json"
+    out.write_text(json.dumps({"model": "m", "rows": []}))
+    with pytest.raises(SystemExit, match="which path"):
+        q.cmd_rescore(argparse.Namespace(out=str(out), citations=True))
+
+
+def test_the_use_case_report_lists_each_use_cases_unknown_names():
+    q = _qualify()
+    rows = [
+        {
+            "use_case": "U14 Tokens",
+            "librechat": _saved_side("a", unknown_names=["token.revoke_all"]),
+        },
+        {"use_case": "U14 Tokens", "librechat": _saved_side("b", correct=False)},
+        {"use_case": "U1 Look up a stored fact", "librechat": _saved_side("c")},
+    ]
+    lines = q.use_case_report(rows)
+    assert "| U1 Look up a stored fact | 1/1 | 1/1 | - |" in lines
+    assert "| U14 Tokens | 1/2 | 2/2 | token.revoke_all |" in lines
+
+
+def test_native_only_takes_the_cases_current_use_case_labels(monkeypatch, tmp_path):
+    import argparse
+
+    q = _qualify()
+    side = _saved_side("ok")
+    monkeypatch.setattr(q, "baseline", lambda st, case, person: side)
+    monkeypatch.setattr(q, "require_docs", lambda st, people, cases: None)
+    out = tmp_path / "results.json"
+    row = {"id": "help-revoke-token", "kind": "help", "librechat": side, "native": side}
+    out.write_text(json.dumps({"model": "m", "bridge": True, "rows": [row]}))
+    people = {p["name"]: p for p in q.load("fixture.json")["people"]}
+    q.run_native_only({}, people, argparse.Namespace(out=str(out), only=[]))
+    saved = json.loads(out.read_text())["rows"][0]
+    assert saved["use_case"] == _case("help-revoke-token")["use_case"]
+
+
+def test_the_harness_reads_citations_in_the_servers_own_forms():
+    from server.assistant.domain import citations
+
+    q = _qualify()
+    assert q.MEMORY_CITE_RE.pattern == citations._MEMORY.pattern
+    assert q.CODE_CITE_RE.pattern == citations._CODE.pattern
+    assert q.HELP_CITE_RE.pattern == citations._HELP.pattern
+
+
+def test_a_documented_settings_family_member_is_documented():
+    q = _qualify()
+    assert q.undocumented_settings("`LOOM_WEBHOOK_SECRET_ACME__HOOK`") == []
+    assert q.undocumented_settings("`LOOM_RETENTION_EVENTS_DAYS`") == []
+    # A family's prefix alone documents nothing: the placeholder's suffix must be there.
+    assert q.undocumented_settings("`LOOM_RETENTION_THEME`") == ["LOOM_RETENTION_THEME"]
+    assert q.undocumented_settings("`LOOM_RETENTION`") == ["LOOM_RETENTION"]
+    # A family written with a wildcard (`LOOM_CH_*`) documents its members.
+    assert q.undocumented_settings("`LOOM_CH_HOST`") == []
+    assert q.undocumented_settings("`LOOM_UI_THEME`") == ["LOOM_UI_THEME"]
+
+
+def test_a_history_case_takes_an_earlier_version_through_the_bridge(monkeypatch):
+    q = _qualify()
+
+    def fake_call(base, token, op, body):
+        if op == "memory.history":
+            return 200, {"rows": [{"version": 2}, {"version": 1}]}, 0.0
+        return 200, {"found": True, "version": 2}, 0.0
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    st = {"loom_url": "u", "bridge": True, "tokens": {"scorer:acme-handbook": "t"}}
+    person = {"org": "acme", "namespace": "acme-handbook"}
+    text = "Before: [memory:policy/api/rate-limit@v1]; now [memory:policy/api/rate-limit@v2]."
+    assert q.check_citations(st, person, text, history_ok=True) == (["policy/api/rate-limit"], [])
+    assert q.check_citations(st, person, text)[1] == ["policy/api/rate-limit@1"]
+
+
+@pytest.mark.parametrize(
+    "case", json.loads((QUAL / "cases.json").read_text()), ids=lambda c: c["id"]
+)
+def test_every_case_names_its_use_case_and_cites_pages_that_exist(case):
+    assert re.fullmatch(r"U\d+ \S.*", case.get("use_case", "")), case["id"]
+    for page in case.get("cite_help") or []:
+        # The help index skips development/, so a page there can never be cited.
+        assert (ROOT / "docs" / page).is_file() and not page.startswith("development/"), page
+
+
+def test_a_help_citation_past_help_gets_limit_is_no_page(monkeypatch):
+    q = _qualify()
+    monkeypatch.setattr(q, "scorer_read", lambda *a: pytest.fail("help.get was called"))
+    st = {"tokens": {"scorer:acme-handbook": "t"}}
+    long = "a/" * 150 + "x.md"
+    cited, invalid, _ = q.check_help_citations(
+        st, {"namespace": "acme-handbook"}, {}, f"[help:{long}]"
+    )
+    assert invalid == [f"help:{long}: no such page"]
+
+
+def test_a_failed_direct_read_of_the_no_docs_question_is_not_scored():
+    q = _qualify()
+    case = _case("help-undocumented")
+    assert q.native_score(case, 503, {"detail": "unavailable"})["correct"] is None
+
+
+def test_ask_assistant_reads_the_bridges_citations_event(monkeypatch):
+    q = _qualify()
+    # The event as server.assistant.app.bridge writes it after the answer's text.
+    event = {
+        "object": "loom.citations",
+        "id": "run-1",
+        "choices": [],
+        "citations": [{"kind": "help", "text": "[help:a.md]", "verified": True}],
+        "support": "supported",
+        "unknown_names": ["token.revoke_all"],
+    }
+    lines = [
+        'data: {"choices": [{"delta": {"content": "Answer."}}]}',
+        f"data: {json.dumps(event)}",
+        "data: [DONE]",
+    ]
+
+    class Response:
+        status_code = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def iter_lines(self):
+            return iter(lines)
+
+    monkeypatch.setattr(q, "answer_request", lambda st, person, question: ("u", {}, {}))
+    monkeypatch.setattr(q.httpx, "stream", lambda *a, **k: Response())
+    got = q.ask_assistant({}, "alice", "q")
+    assert got["answer"] == "Answer."
+    assert got["server_citations"] == event["citations"]
+    assert got["unknown_names"] == ["token.revoke_all"] and got["support"] == "supported"
+
+
+def test_the_help_direct_path_counts_its_top_hit_as_the_expected_page():
+    q = _qualify()
+    case = _case("help-revoke-token")
+    top = {"hits": [{"path": case["cite_help"][0]}, {"path": "other.md"}]}
+    assert q.native_score(case, 200, top)["cited_expected"] is True
+    second = {"hits": [{"path": "other.md"}, {"path": case["cite_help"][0]}]}
+    assert q.native_score(case, 200, second)["cited_expected"] is False
+    assert q.native_score(_case("help-undocumented"), 200, top)["cited_expected"] is None
+
+
+def test_a_failed_direct_read_cites_no_labeled_source():
+    q = _qualify()
+    assert (
+        q.native_score(_case("help-revoke-token"), 503, {"detail": "x"})["cited_expected"] is False
+    )
+    assert q.native_score(_case("memory-freeze"), 503, {"detail": "x"})["cited_expected"] is False
+
+
+def test_a_case_whose_direct_path_cannot_cite_leaves_the_count_either_way():
+    q = _qualify()
+    case = _case("data-history")
+    assert q.native_score(case, 503, {"detail": "x"})["cited_expected"] is None
+    two = {"rows": [{"version": 2}, {"version": 1}]}
+    assert q.native_score(case, 200, two)["cited_expected"] is None
+
+
+def test_a_failed_memory_read_stops_the_check_rather_than_marking_the_key(monkeypatch):
+    q = _qualify()
+    calls = []
+
+    def fake_call(base, token, op, body):
+        calls.append(op)
+        return (
+            (429, {"detail": {"retry_after_s": 0}}, 0.0)
+            if len(calls) == 1
+            else (
+                200,
+                {"found": True, "version": 1793745407448901606},
+                0.0,
+            )
+        )
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    monkeypatch.setattr(q.time, "sleep", lambda s: None)
+    st = {"loom_url": "u", "tokens": {"scorer:acme-handbook": "t"}}
+    person = {"org": "acme", "namespace": "acme-handbook"}
+    text = "`policy/deploy/freeze` (version 1793745407448901606)"
+    assert q.check_citations(st, person, text) == (["policy/deploy/freeze"], [])
+    monkeypatch.setattr(q, "loom_call", lambda *a: (503, {"detail": "down"}, 0.0))
+    with pytest.raises(SystemExit):
+        q.check_citations(st, person, "`policy/deploy/other`")
+
+
+def test_markdown_bold_is_no_settings_family():
+    q = _qualify()
+    assert q.SETTING_FAMILY_RE.findall("**LOOM_COLOUR** and LOOM_CH_*") == ["LOOM_CH_*"]
+
+
+@pytest.mark.parametrize("case", _help_cases(), ids=lambda c: c["id"])
+def test_every_help_case_with_a_claim_forbids_its_denial(case):
+    # The question the docs leave open has no claim to deny; every other help case does.
+    assert case["kind"] == "help_abstain" or case.get("forbid"), case["id"]
+
+
+@pytest.mark.parametrize(
+    "case", [c for c in _help_cases() if c.get("forbid")], ids=lambda c: c["id"]
+)
+def test_no_help_forbid_matches_the_pages_the_case_cites(case):
+    # An answer that quotes its own page must never trip the case's forbid.
+    for page in case["cite_help"]:
+        text = (ROOT / "docs" / page).read_text(encoding="utf-8")
+        for pattern in case["forbid"]:
+            assert not re.search(pattern, text, re.IGNORECASE | re.MULTILINE), (page, pattern)
+
+
+@pytest.mark.parametrize("case", _help_cases(), ids=lambda c: c["id"])
+def test_no_help_label_is_met_by_repeating_the_question(case):
+    # An answer that only echoes the question (a setting or problem name in it) states nothing.
+    for pattern in case["expect"]:
+        assert not re.search(pattern, case["question"], re.IGNORECASE), pattern
+
+
+def test_a_server_without_docs_stops_the_help_checks(monkeypatch):
+    q = _qualify()
+    monkeypatch.setattr(q, "scorer_read", lambda *a: {"available": False, "found": False})
+    st = {"tokens": {"scorer:acme-handbook": "t"}}
+    with pytest.raises(SystemExit, match="no documentation"):
+        q.check_help_citations(st, {"namespace": "acme-handbook"}, {}, "[help:a.md]")
+    monkeypatch.setattr(q, "loom_call", lambda *a: (200, {"available": False, "hits": []}, 0.0))
+    st = {"loom_url": "u", "tokens": {"scorer:acme-handbook": "t"}}
+    people = {p["name"]: p for p in q.load("fixture.json")["people"]}
+    # A data case can cite a help page too, so even a run of data cases stops first.
+    with pytest.raises(SystemExit, match="no documentation"):
+        q.require_docs(st, people, [_case("memory-freeze")])
+
+
+def test_a_run_checks_for_docs_before_any_answer(monkeypatch):
+    import argparse
+
+    q = _qualify()
+    monkeypatch.setattr(
+        q, "state", lambda: {"loom_url": "u", "tokens": {"scorer:acme-handbook": "t"}}
+    )
+    monkeypatch.setattr(q, "loom_call", lambda *a: (200, {"available": False, "hits": []}, 0.0))
+    monkeypatch.setattr(q, "ask_assistant", lambda *a: pytest.fail("a model answer was asked for"))
+    args = argparse.Namespace(native_only=False, only=["help-revoke-token"], out="unused")
+    with pytest.raises(SystemExit, match="no documentation"):
+        q.cmd_run(args)
+
+
+def test_the_docs_probe_stops_the_run_when_it_cannot_read(monkeypatch):
+    q = _qualify()
+    sent = []
+
+    def fake_call(base, token, op, body):
+        sent.append((token, body))
+        return 401, {"detail": "revoked"}, 0.0
+
+    monkeypatch.setattr(q, "loom_call", fake_call)
+    st = {"loom_url": "u", "tokens": {"scorer:acme-handbook": "scorer-token"}}
+    people = {p["name"]: p for p in q.load("fixture.json")["people"]}
+    with pytest.raises(SystemExit):
+        q.require_docs(st, people, [_case("revoked-token"), _case("help-revoke-token")])
+    assert sent == [("scorer-token", {"query": "loom", "limit": 1})]
