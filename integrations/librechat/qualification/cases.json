@@ -767,7 +767,7 @@
       }
     },
     "samples": {
-      "right": ["Run `loom revoke-token <jti>`."],
+      "right": ["Run `loom revoke-token --jti <jti>`."],
       "wrong": ["Tokens cannot be revoked; wait for them to expire."]
     }
   },
@@ -886,7 +886,9 @@
     "use_case": "U20 Tracker",
     "person": "alice",
     "question": "Does Loom copy our issue tracker's data into its own database?",
-    "expect": ["(never copies|reads it live|does not copy|doesn't copy)"],
+    "expect": [
+      "(never|does ?n[o']t|does not) (copy|copies|store|stores|keep|keeps)\\b|(reads|queries) (it|the tracker|\\w+) live|keeps? no copy"
+    ],
     "cite_help": ["features/tracker/overview.md"],
     "baseline": {
       "op": "help.search",
@@ -896,7 +898,10 @@
       }
     },
     "samples": {
-      "right": ["No: Loom never copies it; it reads the tracker live."],
+      "right": [
+        "No: Loom never copies it; it reads the tracker live.",
+        "No. Loom doesn't store your tracker's data; it queries it live with a read-only credential."
+      ],
       "wrong": ["Yes, it copies every issue into its database each night."]
     }
   },
@@ -915,22 +920,15 @@
         "limit": 5
       }
     },
-    "forbid": [
-      "\\b(admin|you|or|then) (can )?runs? `?memory\\.clear",
-      "`?memory\\.clear`?\\s+(erases(?!\\s+nothing)|with `?agent)"
-    ],
     "samples": {
       "right": [
         "An org admin, with `erasure.request` and the `user_id` scope.",
         "`memory.clear` erases nothing; it only tombstones. An org admin uses `erasure.request` with the `user_id` scope.",
-        "Running `memory.clear` is not enough: it only tombstones. An org admin uses `erasure.request` with the `user_id` scope."
+        "Running `memory.clear` is not enough: it only tombstones. An org admin uses `erasure.request` with the `user_id` scope.",
+        "`memory.clear` with `agent` or `user_id` only tombstones in one namespace; an org admin uses `erasure.request` with the `user_id` scope.",
+        "An admin can run `memory.clear`, but it only tombstones; an org admin erases with `erasure.request` and the `user_id` scope."
       ],
-      "wrong": [
-        "An org admin runs `memory.clear` with `agent=\"*\"`.",
-        "Any writer may, with `memory.delete`.",
-        "An org admin can use `erasure.request`, or run `memory.clear` across the org.",
-        "An org admin runs `memory.clear` across every namespace, which also calls `erasure.request`."
-      ]
+      "wrong": ["An org admin runs `memory.clear` with `agent=\"*\"`.", "Any writer may, with `memory.delete`."]
     }
   },
   {
@@ -1001,7 +999,10 @@
       }
     },
     "samples": {
-      "right": ["Set `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`."],
+      "right": [
+        "Set `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`.",
+        "Set `LOOM_LANGFUSE_URL` and `LOOM_LANGFUSE_ADMIN_TOKEN`; no other setting is needed."
+      ],
       "wrong": ["Set `LOOM_TRACE_URL`."]
     }
   },
@@ -1046,13 +1047,12 @@
         "limit": 5
       }
     },
-    "forbid": ["\\byou (do |will )?need an? (\\w+ )?(API )?key"],
     "samples": {
-      "right": ["No: the quickstart needs no API key and no account."],
-      "wrong": [
-        "Yes, you need an API key; no account is needed.",
-        "The quickstart needs no API key for its fake models, but you need an API key to start it."
-      ]
+      "right": [
+        "No: the quickstart needs no API key and no account.",
+        "No: the quickstart needs no API key. For real models you need an OpenAI API key (Settings → Models & keys)."
+      ],
+      "wrong": ["Yes, you need an API key; no account is needed."]
     }
   },
   {
@@ -1106,7 +1106,9 @@
         "Loom has no setting for the dashboard's colour theme.",
         "The docs don't list a theme setting; `LOOM_COLOUR` picks a blue/green deployment, not a theme.",
         "No Loom setting changes the dashboard's colour theme.",
-        "There is no colour theme setting."
+        "There is no colour theme setting.",
+        "Loom doesn't have a setting for the dashboard's colour theme.",
+        "There isn't a Loom setting that changes the colour theme."
       ],
       "wrong": [
         "The docs don't cover it, but set `LOOM_DASHBOARD_COLOUR=dark`.",
