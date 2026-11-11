@@ -202,8 +202,9 @@ export function saveConversation(c: Conversation): boolean {
     writeIndex({ entries, tombstones: index.tombstones });
   };
   // Refused: a new conversation's key, written before the index refused its entry, goes,
-  // since only the index's entries expire and are cleared; and the index stops listing the
-  // conversations whose keys went to make room, the smaller index fitting where they were.
+  // since only the index's entries expire, and are cleared for another person or by Delete
+  // all; and the index stops listing the conversations whose keys went to make room, the
+  // smaller index fitting where they were.
   const refused = () => {
     try {
       if (!index.entries.some((e) => e.id === c.id)) localStorage.removeItem(CONVERSATION_PREFIX + c.id);
