@@ -126,9 +126,12 @@ no request; before its first read, it answers 503. An issuer two cells list (whi
 attach refuses) routes to neither.
 
 A client finds an org's cell with `GET /cells/lookup?org=<org>`, unauthenticated and
-rate-limited; an org with no placement answers the first cell, and before any cell is
-registered the lookup answers 503 with the code `NO_CELL`. A client matches the code,
-never the message: on `NO_CELL`, and on a 404 from a deployment with no router,
+rate-limited; an org with no placement answers the first cell with the same body as an
+org placed there (only a placed org's answer is cached, so timing and an outage can
+still tell them apart: an org name is not a secret), and before any cell is registered
+the lookup answers 503 with the code `NO_CELL`; a directory it cannot read for an org it
+has not cached answers 503 with `BACKEND_UNAVAILABLE`. A client matches the code, never
+the message: on `NO_CELL`, and on a 404 from a deployment with no router,
 `loom login --org` keeps the host it was given (the shared host, served as before by
 rule 4, or the single deployment); on a 429 it waits the `Retry-After` and asks again,
 for at most `--wait` (default 2 minutes), then refuses as a rate refusal; on any other
@@ -890,27 +893,50 @@ the directory row.
 - `loom cell restore`, after any store restore and before `loom reconcile`, writes the
   cell's rows back from the directory ([What each cell runs](#what-each-cell-runs)).
 - `loom cell which --org <org>` names an org's cell (erasure, restore and support start
-  there).
+  there); for an org with no placement it names the first cell, which the lookup does
+  not tell apart.
 - `loom cell limit --cell <cell> --closed` closes a cell to new orgs, `--open` reopens
   it, and `--placements-max <n>` sets its placement quota (`--placements-max none`
   clears it).
+- The router's operator credential is `lco_` and 128 lowercase hex (a router with no
+  `LOOM_ROUTER_OPERATOR_SHA256` answers the operator API 503 with
+  `NO_OPERATOR_CREDENTIAL`), which `loom cell credential new --operator` makes; the
+  router keeps only its SHA-256. The operator API's refusals are not rate-limited: a
+  per-address limit would let one stranger behind a shared ingress lock out every
+  operator, and 512 bits are not guessed online. An operator command knows its outcome
+  only when the connection never opened or the router itself answered, other than
+  `BACKEND_UNAVAILABLE` (a COMMIT can land after its bound); after a timeout, a dropped
+  connection or a gateway's page it says the change may have been made and what a retry
+  shows. The operator credential is rotated by setting the new hash in
+  `LOOM_ROUTER_OPERATOR_SHA256` and restarting the router; while its replicas roll, some
+  still refuse the new credential with 401, and the operator runs the command again
+  until every replica accepts it. The commands call the router at `--router`, else at
+  `LOOM_CELL_ROUTER_URL`, at its root (a path there is refused, since the router
+  forwards one to a cell), and send the operator credential only over https (http on
+  loopback), so an in-network `http` router address serves a cell but not these
+  commands.
 - `loom cell credential new` makes a router credential offline and prints it with its
   SHA-256; `loom cell credential --cell <cell> --next <sha256>` records a new router
   credential's SHA-256 as the cell's `next` hash; like prepare, it takes the hash as an
   argument, in the same form. It uses the router's operator credential, writes only the
   directory and holds the directory lock; it is refused when any cell records that hash
   as current or next, and while a `next` is pending. The router accepts both on
-  placement calls and state reads. Once the new credential is in the cell's pods and,
-  while the first cell's mode is `recording`, its CLI configuration,
-  `loom cell credential --cell <cell> --finish` makes `next` current and drops the old;
-  it checks nothing it cannot see (the router does not know which credential a pod
-  holds), and a cell finished too early fails closed: its placement calls and state
-  reads answer 401, at the latest once the router's cache of the cell's hashes expires
-  (`LOOM_ROUTER_DIRECTORY_CACHE_S`), until its pods hold the new credential, or the old
-  hash is recorded again with `--next` and finished.
-  `loom cell credential --cell <cell> --revert` drops a pending `next`, so a wrong or
-  leaked one never has to be finished; `--finish` and `--revert` refuse with no `next`
-  pending.
+  placement calls and state reads, every replica within `LOOM_ROUTER_DIRECTORY_CACHE_S`
+  of `--next`, so the new credential goes into the pods only after that;
+  `loom router migrate` runs before a router that reads the `next` hash, and a rotation
+  starts once every router replica does. A router rolled back to a build that reads the
+  current hash alone refuses a pod on the next one: roll back with no `next` pending
+  (`--revert` first), and not between `--finish` and the old credential leaving the
+  pods. Once the new credential is in the cell's pods and, while the first cell's mode
+  is `recording`, its CLI configuration, `loom cell credential --cell <cell> --finish`
+  makes `next` current and drops the old; it checks nothing it cannot see (the router
+  does not know which credential a pod holds), and a cell finished too early fails
+  closed: its placement calls and state reads answer 401, at the latest once the
+  router's cache of the cell's hashes expires (`LOOM_ROUTER_DIRECTORY_CACHE_S`), until
+  its pods hold the new credential, or the old hash is recorded again with `--next` and
+  finished. `loom cell credential --cell <cell> --revert` drops a pending `next`, so a
+  wrong or leaked one never has to be finished; `--finish` and `--revert` refuse with no
+  `next` pending.
 - A new cell's settings name `LOOM_CELL`, its public host (`LOOM_PUBLIC_BASE_URL`,
   `LOOM_OAUTH_ISSUER`, `LOOM_JWT_ISSUER`), its keys, its bucket prefix, its configured
   orgs, its identity provider OIDC client and SCIM token, and its router credential
@@ -1010,7 +1036,10 @@ wait on the router's.
   `recording`), routing by rules 1 to 4 (`server/router/routing.py`, which decides, and
   the forward), the org lookup with its cache of placed orgs (which `loom login --org`,
   `loom.credentials.org_server`, asks), their rate limits (`server/router/limits.py`)
-  and the checks a placement passes; `server/router/directory.py` and
+  and the checks a placement passes; its operator API, which `loom cell limit` and
+  `loom cell credential` (`server/cli/cell.py`, with `loom cell which`) call with the
+  router's operator credential (`LOOM_ROUTER_OPERATOR_TOKEN`; the router keeps only
+  `LOOM_ROUTER_OPERATOR_SHA256`); `server/router/directory.py` and
   `schemas/router_migrations/`: the directory, in the router's own Postgres database
   (`LOOM_ROUTER_PG_DSN`, `loom router migrate`).
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 from contextlib import asynccontextmanager
 from typing import Any
@@ -36,6 +37,7 @@ def _row(**over: Any) -> directory.Cell:
         "placements_max": None,
         "placed": 0,
         "credential_sha256": hashlib.sha256(TOKEN.encode()).hexdigest(),
+        "credential_next_sha256": None,
         "deployment_id": "dep-eu-1",
         "current_fp": cell.as_value(FIELDS),
         "next_fp": None,
@@ -58,10 +60,13 @@ class _Directory:
         if self.down:
             raise directory.DirectoryUnavailable("the directory could not be read: OSError")
 
-    async def credentials(self) -> dict[str, str]:
+    async def credentials(self) -> dict[str, tuple[str, ...]]:
         self.credential_reads += 1
         self._check()
-        return {name: row.credential_sha256 for name, row in self.cells.items()}
+        return {
+            name: tuple(h for h in (row.credential_sha256, row.credential_next_sha256) if h)
+            for name, row in self.cells.items()
+        }
 
     async def first_cell(self) -> directory.Cell | None:
         self._check()
@@ -90,6 +95,12 @@ class _Directory:
         name = self.placements.get(org)
         return (name, self.cells[name].host) if name else None
 
+    async def set_limit(self, name: str, **fields: Any) -> directory.Cell:
+        self._check()
+        given = {k: v for k, v in fields.items() if v is not directory.UNSET}
+        self.cells[name] = dataclasses.replace(self.cells[name], **given)
+        return self.cells[name]
+
     async def ping(self) -> None:
         self.pings += 1
         self._check()
@@ -106,7 +117,15 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Directory:
             credential_sha256=hashlib.sha256(US_TOKEN.encode()).hexdigest(),
         ),
     )
-    for name in ("credentials", "first_cell", "first_cell_named", "place", "lookup", "ping"):
+    for name in (
+        "credentials",
+        "first_cell",
+        "first_cell_named",
+        "place",
+        "lookup",
+        "ping",
+        "set_limit",
+    ):
         monkeypatch.setattr(directory, name, getattr(d, name))
     return d
 
@@ -470,7 +489,19 @@ def test_a_lookup_answers_the_orgs_cell_or_the_first(fake: _Directory) -> None:
     none_yet = client.get("/cells/lookup", params={"org": "new"})
     assert none_yet.status_code == 503 and none_yet.json()["code"] == "NO_CELL"
     fake.cells["eu-1"] = _row(is_first=True)
-    assert client.get("/cells/lookup", params={"org": "new"}).json()["cell"] == "eu-1"
+    fake.placements["placed-first"] = "eu-1"
+    unplaced = client.get("/cells/lookup", params={"org": "new"}).json()
+    placed = client.get("/cells/lookup", params={"org": "placed-first"}).json()
+    # The public lookup does not tell an org with no placement from one placed there.
+    assert (
+        {**unplaced, "org": "x"}
+        == {**placed, "org": "x"}
+        == {
+            "org": "x",
+            "cell": "eu-1",
+            "host": "eu-1.example.test",
+        }
+    )
     assert client.get("/cells/lookup").status_code == 400
     assert client.get("/cells/lookup", params={"org": "a\x00b"}).status_code == 400
 
@@ -614,7 +645,7 @@ def test_a_placed_orgs_lookup_is_answered_from_the_cache_while_the_directory_is_
         "host": "us-1.example.test",
     }
     uncached = _lookup(client, "beta")
-    assert uncached.status_code == 503 and "code" not in uncached.json()
+    assert uncached.status_code == 503 and uncached.json()["code"] == "BACKEND_UNAVAILABLE"
 
 
 def test_a_cached_lookup_is_read_again_once_the_window_passes(
@@ -721,3 +752,67 @@ def test_lookups_arriving_together_during_an_outage_make_one_directory_read(
 
     assert asyncio.run(_run()) == [200] * 4
     assert reads == ["acme", "acme"]
+
+
+def test_a_cells_next_credential_places_and_reads_its_state_during_a_rotation(
+    fake: _Directory,
+) -> None:
+    """The router accepts a cell's current and next credential until `--finish`."""
+    new = "rotated-credential-0123456789abcdef"
+    fake.cells["eu-1"] = _row(
+        is_first=True, credential_next_sha256=hashlib.sha256(new.encode()).hexdigest()
+    )
+    client = _client()
+    assert _place(client, "o-1").status_code == 200  # the current one
+    assert _place(client, "o-2", token=new).status_code == 200  # and the next
+    assert _state(client, token=new).json()["state"] == "serving"
+
+
+def test_after_finish_the_old_credential_is_refused(fake: _Directory) -> None:
+    new = "rotated-credential-0123456789abcdef"
+    fake.cells["eu-1"] = _row(
+        is_first=True, credential_sha256=hashlib.sha256(new.encode()).hexdigest()
+    )
+    client = _client()
+    assert _place(client, "o-1").status_code == 401  # the old one, dropped by --finish
+    assert _state(client).status_code == 401
+    assert _place(client, "o-2", token=new).status_code == 200
+
+
+def test_a_replica_still_caching_the_old_hash_refuses_it_on_the_locked_row(
+    fake: _Directory,
+) -> None:
+    """Another replica took --finish: this one's cache still holds the old hash, so the
+    old credential passes the cache and is refused by the row the placement locks."""
+    new = "rotated-credential-0123456789abcdef"
+    sha = hashlib.sha256(new.encode()).hexdigest()
+    fake.cells["eu-1"] = _row(is_first=True, credential_next_sha256=sha)
+    client = _client()
+    assert _place(client, "o-1").status_code == 200  # caches (old, new)
+    fake.cells["eu-1"] = _row(is_first=True, credential_sha256=sha)  # --finish elsewhere
+    reads = fake.credential_reads
+    assert _place(client, "o-2").status_code == 401
+    assert _place(client, "o-3", token=new).status_code == 200
+    assert fake.credential_reads > reads  # the refusal dropped the stale cache
+
+
+def test_a_cell_the_operator_closes_refuses_its_next_new_org(
+    fake: _Directory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The operator API and placement over one directory: a limit posted through the
+    router is the row the next placement is judged on."""
+    operator = "lco_" + "7" * 128
+    monkeypatch.setattr(
+        settings, "router_operator_sha256", hashlib.sha256(operator.encode()).hexdigest()
+    )
+    client = _client()
+    assert _place(client, "before").status_code == 200
+    closed = client.post(
+        "/cells/v1/operator/cells/eu-1/limit",
+        json={"closed": True},
+        headers={"Authorization": f"Bearer {operator}"},
+    )
+    assert closed.status_code == 200 and closed.json()["closed"] is True
+    refused = _place(client, "after")
+    assert refused.status_code == 503 and "closed to new orgs" in refused.json()["error"]
+    assert _place(client, "before").status_code == 200  # a placed org still answers

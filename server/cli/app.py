@@ -11,6 +11,7 @@ from typing import Any
 
 from server.cli._apply import add_apply_flags, dry_run_hint
 from server.cli.access import _add_mint_token_parser, _add_revoke_token_parser, _cmd_claim_release
+from server.cli.cell import _add_cell_parser
 from server.cli.doctor import _DOCTOR_HELP, _add_doctor_flags, _cmd_doctor, _cmd_report, _version
 from server.cli.hygiene import _add_namespace_hygiene_parsers, _add_namespaces_adopt_parser
 from server.cli.import_brain import _add_brain_import_parser
@@ -357,6 +358,7 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
     _add_namespace_hygiene_parsers,
     _add_reconcile_parser,
     _add_router_parser,
+    _add_cell_parser,
     *_TRACKER_REGISTRARS,
     _add_namespaces_adopt_parser,
     _add_sensitivity_sweep_parser,

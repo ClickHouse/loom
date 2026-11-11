@@ -20,6 +20,7 @@ _SECRET = "s3cr3t-canary-value"
         ("jwt_secret_previous", _SECRET),
         ("oidc_client_secret", _SECRET),
         ("scim_token", _SECRET),
+        ("router_operator_token", "lco_" + "5" * 128),  # its form is fixed
         ("langfuse_admin_token", f"pk:{_SECRET}"),
         ("code_github_token", _SECRET),
         ("tracker_credentials_json", f'{{"src": {{"user": "u", "password": "{_SECRET}"}}}}'),

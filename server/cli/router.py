@@ -75,7 +75,7 @@ def _add_router_parser(sub: Any) -> None:
     rsub = p.add_subparsers(dest="router_cmd", required=True)
     serve = rsub.add_parser(
         "serve",
-        help="Serve the placement API and org lookups, and route every other request to a cell.",
+        help="Serve the placement, lookup and operator APIs; route other requests to cells.",
     )
     serve.add_argument("--host", default="127.0.0.1", help="Address to listen on")
     serve.add_argument("--port", type=int, default=7780, help="Port to listen on")

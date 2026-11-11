@@ -263,7 +263,7 @@ HTTP 504, raised as `server.core.errors.BackendTimeoutError`. 504 — a ClickHou
 
 #### `BACKEND_UNAVAILABLE`
 
-HTTP 503, raised as `server.core.errors.BackendUnavailableError`. 503 — ClickHouse could not be reached after the bounded reconnect, the document bucket failed a read, write or delete, or a cell could not read its tenancy or place a new org through the router. Category `dependency`, retryable: yes for an idempotent op, no for another op once it ran.
+HTTP 503, raised as `server.core.errors.BackendUnavailableError`. 503 — ClickHouse, the document bucket, or a cell's tenancy read or placement failed; the router's lookup and operator API send the code when their directory fails. Category `dependency`, retryable: yes for an idempotent op, no for another op once it ran.
 
 #### `BAD_BRANCH`
 
@@ -656,6 +656,10 @@ Raised in `server/router/app.py`. Category `configuration`, retryable: no.
 #### `NO_FIELDS_PROVIDED`
 
 Raised in `server/knowledge/app/conversations.py`.
+
+#### `NO_OPERATOR_CREDENTIAL`
+
+Raised in `server/router/app.py`. Category `configuration`, retryable: no.
 
 #### `NO_ROOT_SECRET`
 

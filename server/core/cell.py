@@ -45,6 +45,10 @@ log = logging.getLogger(__name__)
 # A cell's name: compared exactly, unique in the directory, and the middle field
 # of the cell's SCIM tokens, so it holds no `_`.
 NAME = re.compile(r"[a-z0-9-]{1,32}")
+# A credential's SHA-256 as the directory and the router's settings keep it.
+SHA256 = re.compile(r"[0-9a-f]{64}")
+# The largest placement quota: the directory keeps it in a bigint.
+PLACEMENTS_MAX = 2**63 - 1  # not a setting: the bigint column bounds it
 
 FINGERPRINT_VERSION = 1
 # Every field and the value it has when a configuration does not set it. A value

@@ -318,8 +318,12 @@ python scripts/codegen/docs_reference.py
 | `loom erasure-re-verify` | Re-verify failed erasure sagas: print each one's last step-named reason and a fresh residue census (default, read-only); --resume re-runs them from their checkpoint past the recovery worker's… | `--org`, `--id`, `--resume`, `--skip-external`, `--completed-since`, `--orphan-graph`, `--erase`, `--batch`, `--show`, `--requester` |
 | `loom reconcile` | After a restore of ClickHouse or Postgres, run again in the restored store the erasures and redactions the other records past the restore point, and (after a ClickHouse restore) publish again every… | `--restored`, `--point`, `--allow-live`, `--apply`, `--dry-run` |
 | `loom router` | The router in front of a deployment's cells. |  |
-| `loom router serve` | Serve the placement API and org lookups, and route every other request to a cell. | `--host`, `--port`, `--log-level` |
+| `loom router serve` | Serve the placement, lookup and operator APIs; route other requests to cells. | `--host`, `--port`, `--log-level` |
 | `loom router migrate` | Apply the directory's pending migrations. |  |
+| `loom cell` | Operate a deployment's cells through the router's directory. |  |
+| `loom cell credential` | Make a router credential, or rotate a cell's. | `<action>`, `--cell`, `--next`, `--finish`, `--revert`, `--operator`, `--router` |
+| `loom cell limit` | Close, reopen or bound a cell to new orgs. | `--cell`, `--closed`, `--open`, `--placements-max`, `--router` |
+| `loom cell which` | Print the lookup's cell and host for an org (the first cell if not placed). | `--org`, `--router` |
 | `loom tracker-probe` | Read-only first contact with the tracker source: counts and newest timestamps per upstream table per credential, breaker states, the configured tracker namespaces. |  |
 | `loom tracker-contract-check` | Read-only: does each tracker source's schema meet the record contract (docs/features/tracker/record-contract.md)? | `--source`, `--namespace`, `--json` |
 | `loom tracker-dupcheck-fit` | Refit tracker.duplicate_check's calibrated confidence for one tracker namespace now: replays the duplicate gold at filing time, fits, stores the fit. | `--namespace`, `--org`, `--negatives`, `--dry-run`, `--out` |
