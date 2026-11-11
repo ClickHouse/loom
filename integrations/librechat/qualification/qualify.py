@@ -682,10 +682,10 @@ def check_help_citations(
         if name in cited:
             continue
         cited.append(name)
-        # A path help.get refuses outright (empty, or past its 300 characters as written)
-        # names no page.
+        # help.get answers 422 to a path past its 300 characters, which would stop the run:
+        # such a path names no page.
         path = m["path"].removeprefix("docs/")
-        if not path or len(m["path"]) > 300:
+        if len(m["path"]) > 300:
             invalid.append(f"{name}: no such page")
             continue
         # help.get strips `docs/` itself, once, as the bridge's check does: send the path as

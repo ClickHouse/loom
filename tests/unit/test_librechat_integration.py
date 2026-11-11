@@ -643,7 +643,7 @@ def test_report_counts_the_document_cases():
     ]
     text = q.report(rows, "m")
     # Document rows stay out of the memory-key summary line.
-    assert "\nlibrechat: " not in text and "expected key cited" not in text
+    assert "\nlibrechat: " not in text and "expected source cited" not in text
     assert "2 answerable and 1 unanswerable cases; labeled section at rank 1 1/2" in text
     assert "within the top 5 2/2" in text
     assert (
@@ -1213,14 +1213,15 @@ def test_every_case_names_its_use_case_and_cites_pages_that_exist(case):
         assert (ROOT / "docs" / page).is_file() and not page.startswith("development/"), page
 
 
-def test_a_help_citation_help_get_would_refuse_is_no_page(monkeypatch):
+def test_a_help_citation_past_help_gets_limit_is_no_page(monkeypatch):
     q = _qualify()
     monkeypatch.setattr(q, "scorer_read", lambda *a: pytest.fail("help.get was called"))
     st = {"tokens": {"scorer:acme-handbook": "t"}}
+    long = "a/" * 150 + "x.md"
     cited, invalid, _ = q.check_help_citations(
-        st, {"namespace": "acme-handbook"}, {}, "[help:docs/]"
+        st, {"namespace": "acme-handbook"}, {}, f"[help:{long}]"
     )
-    assert invalid == ["help:docs/: no such page"]
+    assert invalid == [f"help:{long}: no such page"]
 
 
 def test_a_failed_direct_read_of_the_no_docs_question_is_not_scored():
