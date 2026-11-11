@@ -8,7 +8,7 @@ import { useStore } from "../../lib/state";
 import { AnswerText } from "./AnswerText";
 import { MAX_MESSAGE_CHARS, ask, draftEdited, stop, useChat } from "./chatStore";
 import { Sources } from "./Sources";
-import { markPageHintSeen, pageContext, pageHintSeen } from "./pageContext";
+import { contextLength, markPageHintSeen, pageContext, pageHintSeen } from "./pageContext";
 
 /**
  * The assistant's chat: the conversation the panel shows and the question field. The
@@ -28,7 +28,7 @@ export function AssistantChat({ namespace, blocked }: { namespace: string; block
   const context = pageContext(view, item, pageOff);
   // The same trimmed question `ask` sends, after its context line; past the route's length
   // it says so on the field.
-  const limit = MAX_MESSAGE_CHARS - (context ? context.line.length + 2 : 0);
+  const limit = MAX_MESSAGE_CHARS - contextLength(context);
   const tooLong =
     draft.trim().length > limit ? `A question is at most ${limit.toLocaleString("en-US")} characters.` : null;
   // Shown until the chip is removed once or a first question is asked.

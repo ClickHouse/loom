@@ -32,7 +32,7 @@ import {
   storedChanged,
 } from "./chatStore";
 import { adoptEpoch, deleteAllConversations, deleteConversation, listConversations, sameOwner } from "./conversations";
-import { currentAsk, withContext } from "./pageContext";
+import { contextLength, currentAsk, withContext } from "./pageContext";
 import { readReadiness } from "./readiness";
 import { tokenReadScope } from "./tokenScope";
 
@@ -217,14 +217,15 @@ export function DockBody() {
     });
     // It goes with what the chip shows now: a chip removed since sends nothing about the page.
     // A line longer now than when it was asked (an item added since) can push the message
-    // past the route's length: nothing is sent. The question waits in an empty field, which
-    // says why; a field holding other text keeps it, and a line in the panel says why.
+    // past the route's length: nothing is sent. The question waits in the field, which says
+    // why; a field holding other text keeps it, and a line in the panel says why.
     if (!refused || stillBlocked) return;
     const asked = currentAsk();
     if (withContext(refused, asked.context).length > MAX_MESSAGE_CHARS) {
-      if (!useDock.getState().draft) useDock.setState({ draft: refused });
+      const draft = useDock.getState().draft;
+      if (!draft || draft === refused) useDock.setState({ draft: refused });
       else {
-        const limit = MAX_MESSAGE_CHARS - (asked.context ? asked.context.line.length + 2 : 0);
+        const limit = MAX_MESSAGE_CHARS - contextLength(asked.context);
         const line = `Not sent: with this page's line the question is longer than ${limit.toLocaleString("en-US")} characters.`;
         useChat.setState({ notice: line });
         announceAssistant(line);

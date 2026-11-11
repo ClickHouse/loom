@@ -70,6 +70,11 @@ export function withContext(question: string, context: AskContext | null | undef
   return context ? `${context.line}\n\n${question}` : question;
 }
 
+/** How many characters `withContext` adds before the question: the line and its blank line. */
+export function contextLength(context: AskContext | null | undefined): number {
+  return context ? context.line.length + 2 : 0;
+}
+
 // The one-time hint under the field: shown until the person removes the chip once or asks
 // a first question. One key per browser, which sign-out leaves (it says only that the line
 // was seen); storage refused shows it again next time.

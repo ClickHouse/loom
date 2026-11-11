@@ -1539,6 +1539,8 @@ describe("Ask about this, the edge cases", () => {
     const field = screen.getByLabelText("Question");
     expect(field).toHaveValue(question);
     expect(field).toHaveAttribute("aria-invalid", "true");
+    // The field holds the refused question itself: it says why, and the panel adds nothing.
+    expect(screen.queryByText(/^Not sent:/)).not.toBeInTheDocument();
   });
 
   it("with other text in the field, Try again over the length keeps it and says why nothing was sent", async () => {
