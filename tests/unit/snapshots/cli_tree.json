@@ -11627,7 +11627,7 @@
        "choices_help": [
         {
          "dest": "serve",
-         "help": "Serve the placement API and org lookups from the directory.",
+         "help": "Serve the placement API and org lookups, and route every other request to a cell.",
          "metavar": "serve"
         },
         {

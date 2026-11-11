@@ -19,6 +19,7 @@ one, answers 401.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
@@ -28,15 +29,18 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, NamedTuple
+from urllib.parse import parse_qs
 
+import httpx
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from server.auth.tenancy import ORG_FREE
 from server.core import cell as cell_state
-from server.router import directory
+from server.router import directory, routing
 from server.router.limits import MAX_KEYS, Limiter
 from server.settings import settings
 
@@ -69,11 +73,11 @@ def _org(value: Any) -> str | None:
 
 
 def _bearer(request: Request) -> str:
-    scheme, _, token = request.headers.get("authorization", "").partition(" ")
-    return token.strip() if scheme.lower() == "bearer" else ""
+    return routing.bearer(request.headers.get("authorization", ""))
 
 
-async def _body(request: Request) -> Any:
+async def _bounded(request: Request) -> bytes | None:
+    """The request body, or None past MAX_BODY_BYTES (refused without reading it all)."""
     size = request.headers.get("content-length")
     if size is not None and (not size.isdigit() or int(size) > MAX_BODY_BYTES):
         return None
@@ -82,6 +86,13 @@ async def _body(request: Request) -> Any:
         raw += chunk
         if len(raw) > MAX_BODY_BYTES:
             return None
+    return raw
+
+
+async def _body(request: Request) -> Any:
+    raw = await _bounded(request)
+    if raw is None:
+        return None
     try:
         return json.loads(raw)
     except (ValueError, RecursionError):  # not JSON, or nested past the parser's depth
@@ -166,6 +177,13 @@ class Router:
         # answered stale while the directory cannot be read: a placement never changes, so
         # an outage costs only uncached lookups. Bounded: the oldest read is forgotten.
         self._placed: OrderedDict[str, _Placed] = OrderedDict()
+        # The routing table, read like the credential hashes: at most once per window,
+        # and the last one kept while the directory cannot be read.
+        self._table: routing.Table | None = None
+        self._table_at: float | None = None
+        self._table_lock = asyncio.Lock()
+        self._refreshing: asyncio.Task[None] | None = None
+        self._http: httpx.AsyncClient | None = None
 
     async def _credential(self, name: str) -> str | None:
         async with self._lock:
@@ -301,6 +319,129 @@ class Router:
         while len(self._placed) > MAX_KEYS:
             self._placed.popitem(last=False)
 
+    async def _routing_table(self) -> routing.Table | None:
+        """The table, read at most once per window. Once there is one it is answered at
+        once and a stale one is read again in the background, so a directory that hangs
+        delays no request; a failed read keeps the last table and stands for the window."""
+        fresh = self._table_at is not None and (
+            self._clock() - self._table_at < settings.router_directory_cache_s
+        )
+        if fresh:
+            return self._table
+        if self._table is not None:
+            self._refreshing = self._refreshing or asyncio.create_task(self._refresh())
+            return self._table
+        await self._refresh()
+        return self._table
+
+    async def _refresh(self) -> None:
+        try:
+            async with self._table_lock:
+                fresh = self._table_at is not None and (
+                    self._clock() - self._table_at < settings.router_directory_cache_s
+                )
+                if fresh:  # read by the request this one waited behind
+                    return
+                try:
+                    cells, aliases = await directory.routing()
+                except directory.DirectoryUnavailable as e:
+                    log.warning("routing: directory unreadable, keeping the last table: %s", e)
+                else:
+                    self._table = routing.build(
+                        cells,
+                        aliases,
+                        shared_host=settings.router_shared_host,
+                        passthrough=settings.router_upstream_url,
+                    )
+                self._table_at = self._clock()  # when the read ended, failed or not
+        finally:
+            self._refreshing = None
+
+    async def forward(self, request: Request) -> Response:
+        """Rules 1 to 4: every request that is not the router's own goes to one cell,
+        forwarded as the client sent it (raw path and query), with the router's own
+        `X-Forwarded-*` values, both bodies streamed."""
+        table = await self._routing_table()
+        if table is None:
+            return _refused(503, "the router has not read its directory yet")
+        host = request.headers.get("host", "")
+        body: bytes | None = None
+        revoked = ""
+        if request.method == "POST" and routing.reads_revoked(table, host, request.url.path):
+            body = await _bounded(request)
+            if body is None:
+                return _refused(413, "a token revocation is a short form")
+            # The last `token`, as the cell's own form reading takes it.
+            form = parse_qs(body.decode("latin-1"), keep_blank_values=True)
+            revoked = (form.get("token") or [""])[-1]
+        decision = routing.decide(
+            table,
+            host=host,
+            path=request.url.path,
+            authorization=request.headers.get("authorization", ""),
+            revoked=revoked,
+        )
+        if not decision.upstream:
+            # A 401 says how to recover, as a cell's own does (RFC 6750 3).
+            challenge = {"WWW-Authenticate": 'Bearer error="invalid_token"'}
+            headers = challenge if decision.status == 401 else None
+            return _refused(decision.status, decision.reason, headers)
+        return await self._proxy(request, decision.upstream, body)
+
+    async def _proxy(self, request: Request, upstream: str, body: bytes | None) -> Response:
+        if self._http is None:
+            self._http = proxy_client()
+        dropped = _HOP_BY_HOP | _FORWARDED | _named_by_connection(request.headers.raw)
+        headers = [(k, v) for k, v in request.headers.raw if k.lower() not in dropped]
+        # The router's own view of the client, never what the client claims: uvicorn has
+        # already resolved a trusted balancer's chain into `request.client`.
+        headers += [
+            (b"x-forwarded-for", (request.client.host if request.client else "").encode()),
+            (b"x-forwarded-proto", request.url.scheme.encode()),
+            (b"x-forwarded-host", request.headers.get("host", "").encode()),
+        ]
+        if body is None and not (
+            request.headers.get("content-length") or request.headers.get("transfer-encoding")
+        ):
+            body = b""  # no body was sent: none is framed (no chunked empty body)
+        raw_path: bytes = request.scope.get("raw_path") or request.url.path.encode()
+        query: bytes = request.scope.get("query_string") or b""
+        try:
+            url = httpx.URL(upstream).copy_with(
+                raw_path=raw_path + (b"?" + query if query else b"")
+            )
+        except httpx.InvalidURL:
+            return _refused(400, "the request's path is not one the router can forward")
+        outbound = self._http.build_request(
+            request.method,
+            url,
+            headers=[(k.decode("latin-1"), v.decode("latin-1")) for k, v in headers],
+            content=body if body is not None else request.stream(),
+        )
+        try:
+            answer = await self._http.send(outbound, stream=True)
+        except httpx.HTTPError as e:
+            log.warning("routing: %s unreachable: %s", upstream, type(e).__name__)
+            return _refused(502, "the cell this request goes to could not be reached")
+        dropped = _HOP_BY_HOP | _named_by_connection(answer.headers.raw)
+        response = StreamingResponse(
+            answer.aiter_raw(),
+            status_code=answer.status_code,
+            background=BackgroundTask(answer.aclose),
+        )
+        # Every header line as the cell sent it: a second Set-Cookie is not a duplicate.
+        response.raw_headers = [(k, v) for k, v in answer.headers.raw if k.lower() not in dropped]
+        return response
+
+    async def close(self) -> None:
+        if self._refreshing is not None:
+            self._refreshing.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._refreshing
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+
     async def livez(self, _request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
 
@@ -320,6 +461,58 @@ class Router:
         return JSONResponse({"status": "ok"})
 
 
+# Headers that describe one connection, not the message (RFC 9110 7.6.1).
+_HOP_BY_HOP = frozenset(
+    {
+        b"connection",
+        b"keep-alive",
+        b"proxy-authenticate",
+        b"proxy-authorization",
+        b"te",
+        b"trailer",
+        b"transfer-encoding",
+        b"upgrade",
+    }
+)
+# What a client claims about where it came from: the router writes its own.
+_FORWARDED = frozenset(
+    {b"x-forwarded-for", b"x-forwarded-proto", b"x-forwarded-host", b"forwarded"}
+)
+_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+
+def _named_by_connection(raw: list[tuple[bytes, bytes]]) -> frozenset[bytes]:
+    """The headers a `Connection` header names, which describe the hop too."""
+    return frozenset(
+        name.strip().lower()
+        for k, v in raw
+        if k.lower() == b"connection"
+        for name in v.split(b",")
+        if name.strip()
+    )
+
+
+async def _own(_request: Request) -> JSONResponse:
+    return _refused(405, "the router answers this path with GET only")
+
+
+# A connect bound so a gone cell answers 502 soon, no read bound (an event stream may
+# idle), and no bound on open connections, so a request never waits for a pool slot.
+PROXY_TIMEOUT = httpx.Timeout(None, connect=5.0)  # not a setting: cells share the network
+PROXY_LIMITS = httpx.Limits(  # not a setting: 100 idle connections kept, not a cap
+    max_connections=None, max_keepalive_connections=100
+)
+
+
+def proxy_client(transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
+    """The client the forward uses (PROXY_TIMEOUT, PROXY_LIMITS)."""
+    return httpx.AsyncClient(transport=transport, timeout=PROXY_TIMEOUT, limits=PROXY_LIMITS)
+
+
+async def _not_found(_request: Request) -> JSONResponse:
+    return _refused(404, "the router answers no such path")
+
+
 def build_app(router: Router | None = None) -> Starlette:
     router = router or Router()
 
@@ -328,6 +521,7 @@ def build_app(router: Router | None = None) -> Starlette:
         try:
             yield
         finally:
+            await router.close()
             await directory.close()
 
     return Starlette(
@@ -337,6 +531,12 @@ def build_app(router: Router | None = None) -> Starlette:
             Route("/cells/lookup", router.lookup, methods=["GET"]),
             Route("/livez", router.livez, methods=["GET"]),
             Route("/readyz", router.readyz, methods=["GET"]),
+            # Its own paths with any other method: never forwarded.
+            Route("/livez", _own, methods=_METHODS),
+            Route("/readyz", _own, methods=_METHODS),
+            # `/cells/` is the router's own: a path it does not answer is not forwarded.
+            Route("/cells/{rest:path}", _not_found, methods=_METHODS),
+            Route("/{path:path}", router.forward, methods=_METHODS),
         ],
         lifespan=_lifespan,
     )

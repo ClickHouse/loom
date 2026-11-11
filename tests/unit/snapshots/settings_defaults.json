@@ -1043,6 +1043,8 @@
  "router_directory_cache_s": 5.0,
  "router_lookups_per_minute": 60,
  "router_placements_per_minute": 60,
+ "router_shared_host": "",
+ "router_upstream_url": "",
  "runtime_dir": "",
  "runtime_overrides_refresh_seconds": 10.0,
  "schema_status_ttl_s": 60.0,

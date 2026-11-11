@@ -105,6 +105,26 @@ included, to `attaching` and `serving` cells alike, in order:
    first cell's clients use the shared host (`loom logout` revokes at the host it signed
    in at). The shared host's discovery documents are the first cell's.
 
+The router reaches a cell at the `upstream_url` its directory row records, an address
+inside the deployment's network that attach writes, never at the cell's public host,
+which names the router itself; before the first cell is registered, rule 4's cell is the
+deployment it was put in front of (`LOOM_ROUTER_UPSTREAM_URL`). The shared host is
+`LOOM_ROUTER_SHARED_HOST`, the first cell's own host and that cell's `hosts` aliases. It
+forwards each request as the client sent it (its raw path and query, its own `Host`)
+with the router's own view of the client's address, scheme and host in
+`X-Forwarded-For`, `-Proto` and `-Host`, replacing what the client claims there (so each
+cell lists the router's addresses in `LOOM_TRUSTED_PROXIES`, or it counts every client
+as the router for its sign-in limits and reads the scheme as the router's), drops the
+headers that describe one connection (and those `Connection` names), keeps every header
+line of the answer (a second `Set-Cookie` included), streams both bodies (a server-sent
+event stream included), answers 502 when the cell cannot be reached, and never forwards
+a path under `/cells/` (one it does not serve answers 404). A registered first cell with
+no upstream address answers 503, as any cell's does. It reads the cells, their issuers
+and hosts once per `LOOM_ROUTER_DIRECTORY_CACHE_S`, answering from the last table while
+a stale one is read again behind it, so a directory that hangs or cannot be read delays
+no request; before its first read, it answers 503. An issuer two cells list (which
+attach refuses) routes to neither.
+
 A client finds an org's cell with `GET /cells/lookup?org=<org>`, unauthenticated and
 rate-limited; an org with no placement answers the first cell, and before any cell is
 registered the lookup answers 503 with the code `NO_CELL`. A client matches the code,
@@ -986,8 +1006,9 @@ wait on the router's.
   org on the routes outside the registry that act in it, and
   `tests/unit/test_cell_tenancy.py` holds the census of every route;
 - `server/router/app.py` (`loom router serve`): the placement API, the first cell's
-  state read (which `server.auth.tenancy.directory_says_attaching` makes in `recording`)
-  and the org lookup with its cache of placed orgs (which `loom login --org`,
+  state read (which `server.auth.tenancy.directory_says_attaching` makes in
+  `recording`), routing by rules 1 to 4 (`server/router/routing.py`, which decides, and
+  the forward), the org lookup with its cache of placed orgs (which `loom login --org`,
   `loom.credentials.org_server`, asks), their rate limits (`server/router/limits.py`)
   and the checks a placement passes; `server/router/directory.py` and
   `schemas/router_migrations/`: the directory, in the router's own Postgres database

@@ -405,7 +405,7 @@
  ],
  "loom router": [
   "usage: loom router [-h] {serve,migrate} ...",
-  "positional arguments: {serve,migrate} serve Serve the placement API and org lookups from the directory. migrate Apply the directory's pending migrations.",
+  "positional arguments: {serve,migrate} serve Serve the placement API and org lookups, and route every other request to a cell. migrate Apply the directory's pending migrations.",
   "options: -h, --help show this help message and exit"
  ],
  "loom router serve": [

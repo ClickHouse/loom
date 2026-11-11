@@ -98,6 +98,8 @@ Authentication, tokens and identity providers.
 | `LOOM_ROUTER_PLACEMENTS_PER_MINUTE` | `int` | `60` |  | Placement calls one cell may make in a minute, counted by each router replica. |
 | `LOOM_ROUTER_DIRECTORY_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) a router replica keeps the cells' credential hashes and a placed org's lookup answer before reading again; a new credential or host works within this. |
 | `LOOM_ROUTER_LOOKUPS_PER_MINUTE` | `int` | `60` |  | Org lookups one client address may make in a minute, counted by each router replica (`GET /cells/lookup`). |
+| `LOOM_ROUTER_SHARED_HOST` | `str` | `''` |  | The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4, beside the first cell's own host and aliases; "" = only those, once it is registered. |
+| `LOOM_ROUTER_UPSTREAM_URL` | `str` | `''` |  | The address the router forwards the shared host to before a first cell is registered (the deployment it was put in front of); "" = none: those answer 503. |
 | `LOOM_JWT_ISSUER` | `str` | `'loom'` |  | The `iss` Loom stamps on every token it mints; a verified token carries it or one of `jwt_trusted_issuers`. |
 | `LOOM_JWT_AUDIENCE` | `str` | `'loom-platform'` |  | The `aud` claim stamped on minted tokens and required on every verified token. |
 | `LOOM_JWT_TRUSTED_ISSUERS` | `str` | `''` |  | Extra accepted `iss` values, for a gateway minting Loom-shaped JWTs with a key in `jwt_public_keys_json`. Loom's own tokens (iss = jwt_issuer) pass. |

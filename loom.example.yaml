@@ -728,6 +728,15 @@ settings:
   # (`GET /cells/lookup`). [restart]
   # router_lookups_per_minute: 60
 
+  # The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4,
+  # beside the first cell's own host and aliases; "" = only those, once it is
+  # registered. [restart]
+  # router_shared_host: ""
+
+  # The address the router forwards the shared host to before a first cell is registered
+  # (the deployment it was put in front of); "" = none: those answer 503. [restart]
+  # router_upstream_url: ""
+
   # The `iss` Loom stamps on every token it mints; a verified token carries it or one of
   # `jwt_trusted_issuers`. [restart]
   # jwt_issuer: "loom"

@@ -5876,6 +5876,16 @@
           "type": "integer",
           "description": "Placement calls one cell may make in a minute, counted by each router replica."
         },
+        "router_shared_host": {
+          "default": "",
+          "type": "string",
+          "description": "The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4, beside the first cell's own host and aliases; \"\" = only those, once it is registered."
+        },
+        "router_upstream_url": {
+          "default": "",
+          "type": "string",
+          "description": "The address the router forwards the shared host to before a first cell is registered (the deployment it was put in front of); \"\" = none: those answer 503."
+        },
         "runtime_dir": {
           "default": "",
           "type": "string",

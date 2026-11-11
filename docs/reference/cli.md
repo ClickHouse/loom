@@ -318,7 +318,7 @@ python scripts/codegen/docs_reference.py
 | `loom erasure-re-verify` | Re-verify failed erasure sagas: print each one's last step-named reason and a fresh residue census (default, read-only); --resume re-runs them from their checkpoint past the recovery worker's… | `--org`, `--id`, `--resume`, `--skip-external`, `--completed-since`, `--orphan-graph`, `--erase`, `--batch`, `--show`, `--requester` |
 | `loom reconcile` | After a restore of ClickHouse or Postgres, run again in the restored store the erasures and redactions the other records past the restore point, and (after a ClickHouse restore) publish again every… | `--restored`, `--point`, `--allow-live`, `--apply`, `--dry-run` |
 | `loom router` | The router in front of a deployment's cells. |  |
-| `loom router serve` | Serve the placement API and org lookups from the directory. | `--host`, `--port`, `--log-level` |
+| `loom router serve` | Serve the placement API and org lookups, and route every other request to a cell. | `--host`, `--port`, `--log-level` |
 | `loom router migrate` | Apply the directory's pending migrations. |  |
 | `loom tracker-probe` | Read-only first contact with the tracker source: counts and newest timestamps per upstream table per credential, breaker states, the configured tracker namespaces. |  |
 | `loom tracker-contract-check` | Read-only: does each tracker source's schema meet the record contract (docs/features/tracker/record-contract.md)? | `--source`, `--namespace`, `--json` |
