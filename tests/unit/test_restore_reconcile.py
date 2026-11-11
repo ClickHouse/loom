@@ -930,7 +930,7 @@ def test_a_clickhouse_restore_names_each_knowledge_namespace_to_rechunk(
 def test_an_unread_code_registry_refuses_before_any_write(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], _registry_read: list[bool]
 ) -> None:
-    from server.code.app.index.repo_registry import REGISTRY_UNREAD
+    from server.code.app.index.repo_registry import REGISTRY_UNREAD_MESSAGE
     from server.memory.app import restore_reconcile
 
     async def none(*a: Any) -> list[Any]:
@@ -946,7 +946,7 @@ def test_an_unread_code_registry_refuses_before_any_write(
     _registry_read[0] = False
     rc = asyncio.run(cli_restore.reconcile("clickhouse", _now(), apply=True, live=True, ch=_CH()))
     assert rc == 2
-    assert capsys.readouterr().err == f"loom reconcile: refused: {REGISTRY_UNREAD}\n"
+    assert capsys.readouterr().err == f"loom reconcile: refused: {REGISTRY_UNREAD_MESSAGE}\n"
 
 
 def test_erasures_are_read_from_the_point_and_revisions_from_before_it(

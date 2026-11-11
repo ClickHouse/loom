@@ -22,7 +22,7 @@ def _identity(args: argparse.Namespace) -> tuple[str, str]:
     Neither = exit with the missing name; a code namespace is never guessed. The
     default namespace is refused while the registry is unread or when a member added
     it from the page (`repos.default_code_namespace`)."""
-    from server.code.app.index.repo_registry import REGISTRY_UNREAD
+    from server.code.app.index.repo_registry import REGISTRY_UNREAD_MESSAGE
     from server.code.domain.index.repos import RegistryUnread, default_code_namespace
     from server.core.errors import ValidationError
     from server.settings import settings
@@ -31,7 +31,7 @@ def _identity(args: argparse.Namespace) -> tuple[str, str]:
     try:
         ns = args.namespace or default_code_namespace(org)
     except RegistryUnread:
-        raise SystemExit(REGISTRY_UNREAD) from None
+        raise SystemExit(REGISTRY_UNREAD_MESSAGE) from None
     except ValidationError:
         raise SystemExit(
             f"the default code namespace {org}/{settings.code_namespace} was added from the "
@@ -104,7 +104,7 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
     try:
         # A repository added from the Repositories page lives in the registry, not in
         # LOOM_CODE_REPOS_JSON: read it before the subcommand resolves its namespace.
-        from server.code.app.index.repo_registry import REGISTRY_UNREAD, refresh_db_repos
+        from server.code.app.index.repo_registry import REGISTRY_UNREAD_MESSAGE, refresh_db_repos
         from server.code.domain.index.repos import RegistryUnread
 
         await get_client().connect()
@@ -115,7 +115,7 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
             try:
                 return int(await coro)
             except RegistryUnread:
-                raise SystemExit(REGISTRY_UNREAD) from None
+                raise SystemExit(REGISTRY_UNREAD_MESSAGE) from None
             finally:
                 # Some native commands close their own client. Reopen it for
                 # buffered-write drain/retirement before leaving enrollment.
