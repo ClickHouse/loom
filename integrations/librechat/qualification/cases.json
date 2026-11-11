@@ -831,7 +831,7 @@
     "use_case": "U25 What a setting does",
     "person": "alice",
     "question": "What does LOOM_ASSISTANT_MODEL set?",
-    "expect": ["(assistant|agent)", "model"],
+    "expect": ["agent definition", "\\bboot"],
     "cite_help": ["reference/configuration.md", "architecture/assistant.md"],
     "baseline": {
       "op": "help.search",
@@ -847,7 +847,7 @@
     "use_case": "U26 Getting started",
     "person": "alice",
     "question": "Does Loom's quickstart need an API key?",
-    "expect": ["\\bno\\b"],
+    "expect": ["no API key|needs? no (API )?key|(does ?n[o']t|do not) need an? (API )?key"],
     "cite_help": ["getting-started/quickstart.md"],
     "baseline": {
       "op": "help.search",
@@ -855,7 +855,8 @@
         "query": "Does Loom's quickstart need an API key?",
         "limit": 5
       }
-    }
+    },
+    "forbid": ["\\byou (do |will )?need an? (\\w+ )?(API )?key"]
   },
   {
     "id": "help-upgrade",
@@ -888,7 +889,7 @@
         "limit": 5
       }
     },
-    "forbid": ["LOOM_[A-Z_]*THEME"]
+    "forbid": ["\\b(set|use|change)\\s+`?LOOM_[A-Z_]*THEME", "LOOM_[A-Z_]*THEME`?\\s*="]
   },
   {
     "id": "data-connected-agents",
@@ -913,11 +914,14 @@
     "expect": ["300", "600"],
     "cite": "policy/api/rate-limit",
     "baseline": {
-      "op": "memory.search",
+      "op": "memory.history",
       "args": {
-        "query": "default public API rate limit",
-        "top_k": 1
-      }
+        "memory_key": "policy/api/rate-limit",
+        "agent": "handbook-bot"
+      },
+      "path": ["rows"],
+      "count": true,
+      "equals": 2
     }
   }
 ]

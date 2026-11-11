@@ -949,3 +949,95 @@ def test_the_connected_agents_direct_path_counts_the_agents():
 
     assert q.native_score(case, 200, inventory(2))["correct"] is True
     assert q.native_score(case, 200, inventory(1))["correct"] is False
+
+
+def _saved_side(answer, **extra):
+    return {
+        "answer": answer,
+        "error": "",
+        "correct": True,
+        "abstained": False,
+        "cited": [],
+        "invalid_citations": [],
+        "cited_expected": None,
+        "tool_calls": 1,
+        "latency_s": 1.0,
+        "ttft_s": 0.5,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        **extra,
+    }
+
+
+def test_rescore_keeps_the_unknown_name_rule_and_takes_the_current_labels(tmp_path):
+    import argparse
+
+    q = _qualify()
+    answer = "Run `loom revoke-token <jti>`; `token.revoke_all` revokes them all."
+    side = _saved_side(answer, unknown_names=["token.revoke_all"])
+    row = {"id": "help-revoke-token", "kind": "help", "use_case": "-"}
+    out = tmp_path / "results.json"
+    out.write_text(json.dumps({"model": "m", "rows": [{**row, "librechat": side, "native": side}]}))
+    q.cmd_rescore(argparse.Namespace(out=str(out), citations=False))
+    got = json.loads(out.read_text())["rows"][0]
+    assert got["librechat"]["correct"] is False
+    assert got["use_case"] == _case("help-revoke-token")["use_case"]
+
+
+def test_a_help_answer_that_cites_no_page_misses_the_labeled_one(monkeypatch):
+    q = _qualify()
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text: ([], []))
+    case = _case("help-revoke-token")
+    person = {"namespace": "acme-handbook"}
+    got = q.answer_citations({}, case, person, "Run `loom revoke-token`.")
+    assert got == {"cited": [], "invalid_citations": [], "cited_expected": False}
+    # A memory key cited beside the page does not decide it: the labeled page does.
+    monkeypatch.setattr(q, "check_citations", lambda st, person, text: (["a/b/c"], []))
+    monkeypatch.setattr(
+        q, "check_help_citations", lambda st, person, case, text: (["help:x.md"], [], False)
+    )
+    got = q.answer_citations({}, {**case, "cite": "a/b/c"}, person, "[help:x.md]")
+    assert got["cited_expected"] is False
+
+
+@pytest.mark.parametrize(
+    "answer, correct",
+    [
+        ("Loom's documentation does not describe a dashboard colour theme.", True),
+        # Naming a setting to say there is none is still an abstention.
+        ("There is no `LOOM_THEME` setting; the docs don't cover a colour theme.", True),
+        ("The docs don't cover it, but set `LOOM_DASHBOARD_THEME=dark`.", False),
+        ("Use LOOM_UI_THEME to change it.", False),
+    ],
+)
+def test_a_question_the_docs_leave_open(answer, correct):
+    q = _qualify()
+    got = q.score_answer(_case("help-undocumented"), _saved_side(answer, unknown_names=["X"]))
+    assert got["correct"] is correct
+
+
+@pytest.mark.parametrize(
+    "case_id, answer, correct",
+    [
+        (
+            "help-setting",
+            "The agent's model: Loom writes it into the agent definition at boot.",
+            True,
+        ),
+        ("help-setting", "I could not find what LOOM_ASSISTANT_MODEL sets.", False),
+        ("help-quickstart", "No: the quickstart needs no API key and no account.", True),
+        ("help-quickstart", "Yes, you need an API key; no account is needed.", False),
+    ],
+)
+def test_help_labels_need_what_the_page_says(case_id, answer, correct):
+    q = _qualify()
+    assert q.score(_case(case_id), answer)["correct"] is correct
+
+
+def test_the_history_direct_path_counts_the_keys_versions():
+    q = _qualify()
+    case = _case("data-history")
+    assert case["baseline"]["op"] == "memory.history"
+    two = {"rows": [{"version": 2}, {"version": 1}]}
+    assert q.native_score(case, 200, two)["correct"] is True
+    assert q.native_score(case, 200, {"rows": [{"version": 1}]})["correct"] is False

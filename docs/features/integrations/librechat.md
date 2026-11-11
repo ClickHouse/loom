@@ -227,7 +227,7 @@ server's own check uses. The cases go through Loom's assistant route
 the bridge's own citation check.
 
 **Before** is the same help questions on the build before the documentation reached the
-assistant: an agent with no help tools. It answered 10 of 26 by its own knowledge and
+assistant: an agent with no help tools. It answered 9 of 26 by its own knowledge and
 cited none. **After** is the current agent definition.
 
 | Use case                          | Cases | Before: answered with a citation | After: correct | After: no invalid citation |
@@ -267,7 +267,7 @@ LLM for Loom's own model jobs. A full run of the 56 cases costs about $3 at list
 counting every prompt token, a mean of $0.053 per answer. The after columns are from a
 full run, with the 14 cases the last instruction change touches (three memory cases, the
 seven document cases, the two unanswerable document cases and two help cases) from a run
-after that change. Twelve answers cite nothing: the refusals, the abstentions and the
+after that change. Twelve answers cite nothing: two refusals, three abstentions and seven
 counts, which come from tallies with no row to cite; every other answer cites one. The
 misses:
 

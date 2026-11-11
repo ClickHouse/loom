@@ -504,8 +504,7 @@ def check_citations(
                 "memory_key": key,
                 "agent": writers.get(key, "-"),
             }
-            code, out, _ = loom_call(st["loom_url"], scorer, "memory.history", body)
-            rows = (out.get("rows") or []) if code == 200 else []
+            rows = scorer_read(st, scorer, "memory.history", body).get("rows") or []
             versions[key] = {int(r["version"]) for r in rows if r.get("version")}
         return versions[key]
 
@@ -744,9 +743,12 @@ def score(case: dict[str, Any], text: str) -> dict[str, Any]:
 
 def score_answer(case: dict[str, Any], got: dict[str, Any]) -> dict[str, Any]:
     """Score an answer through LibreChat: its text, and wrong when it names an op or setting
-    the build neither serves nor documents (the bridge's `unknown_names`)."""
+    the build neither serves nor documents (the bridge's `unknown_names`). A question the
+    docs leave open is the exception: its answer may name a setting to say there is none,
+    and its case forbids an answer that tells the person to set one."""
     result = score(case, got["answer"] or got["error"])
-    result["correct"] = result["correct"] and not got.get("unknown_names")
+    if case["kind"] != "help_abstain":
+        result["correct"] = result["correct"] and not got.get("unknown_names")
     return result
 
 
@@ -975,7 +977,8 @@ def cmd_rescore(args: argparse.Namespace) -> None:
             lc = row["librechat"]
             case = cases[row["id"]]
             text = lc["answer"] or lc["error"]
-            lc.update(score(case, text))
+            row["use_case"] = case.get("use_case", "")
+            lc.update(score_answer(case, lc))
             if args.citations:
                 lc.update(answer_citations(st, case, people[case["person"]], text))
     Path(args.out).write_text(json.dumps(saved, indent=2))
@@ -1116,7 +1119,7 @@ def report(rows: list[dict[str, Any]], model: str) -> str:
             lines.append(
                 f"\n{side}: correct {sum(g['correct'] for g in scored)}/{len(scored)}; "
                 f"citations {validity}, "
-                f"expected key cited {sum(expected)}/{len(expected)}; "
+                f"expected source cited {sum(expected)}/{len(expected)}; "
                 f"abstained {sum(r[side]['correct'] for r in abst)}/{len(abst)} where it should, "
                 f"{len(false_abst)} false abstentions; "
                 f"latency p50 {pct(lat, 0.5):.2f}s p95 {pct(lat, 0.95):.2f}s; "
