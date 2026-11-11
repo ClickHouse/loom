@@ -907,3 +907,4 @@ def test_the_inspect_path_installs_from_the_checked_bundle(tmp_path: Path) -> No
     passed = (home / ".loom" / "env").read_text().splitlines()
     assert f"LOOM_INSTALL_BUNDLE={home}/loom-stack.tar.gz" in passed, passed
     assert f"LOOM_INSTALL_CHECKSUM={home}/loom-stack.tar.gz.sha256" in passed, passed
+    assert not (home / "loom-install.sh").exists(), (page, install)

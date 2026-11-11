@@ -83,7 +83,7 @@ Then, once what they print looks right, install from the checked bundle:
 
 ```bash
 LOOM_INSTALL_BUNDLE="$PWD/loom-stack.tar.gz" \
-  LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh loom-install.sh
+  LOOM_INSTALL_CHECKSUM="$PWD/loom-stack.tar.gz.sha256" sh loom-install.sh && rm loom-install.sh
 ```
 
 `LOOM_PORT`, `LOOM_BIND_HOST`, `LOOM_IMAGE_REPOSITORY`,
