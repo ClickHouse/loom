@@ -601,8 +601,8 @@ async def _unsave_message(
 async def handle_conversation_set_logging(
     input: ConversationSetLoggingInput,
 ) -> ConversationSetLoggingOutput:
-    """Toggle the per-namespace conversation-logging switch (the dashboard's 'record
-    my conversations' control); conversation.append enforces it (no-op when off).
+    """Toggle the per-namespace conversation-logging switch (the dashboard's Record
+    conversations switch); conversation.append enforces it (no-op when off).
     The switch lives on the namespace directory row."""
     await set_conversation_logging(input.org, input.namespace, input.enabled)
     return ConversationSetLoggingOutput(namespace=input.namespace, enabled=input.enabled)

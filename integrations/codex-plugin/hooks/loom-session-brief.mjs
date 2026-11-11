@@ -102,8 +102,8 @@ async function main() {
   // An automatic brief follows the owner's Record conversations switch. With
   // recording off (the server said so on a recent call) the window is not sent,
   // and the cursor moves past it, so turning recording back on never sends what
-  // happened while it was off. The server
-  // refuses the save too; this only spares the round trip.
+  // happened while it was off. The server refuses the save too; this only spares
+  // the round trip.
   if (readRecording(resolveServerUrl(), scope.org, scope.namespace) === false) {
     writeCursor(cp, next);
     return scheduleExit(0);

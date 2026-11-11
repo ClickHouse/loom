@@ -135,7 +135,8 @@ async function main() {
       codeBlock,
       lines: [taskLine, briefsLine, collectionsText],
       // The model must not log turns itself: the Stop hook does, when the
-      // owner's Record conversations switch is on. Always said, even with no primer.
+      // owner's Record conversations switch is on. Always said, even with no
+      // primer.
       recordingLine: recordingPrimerLine(recording, scope.namespace),
     }),
   );

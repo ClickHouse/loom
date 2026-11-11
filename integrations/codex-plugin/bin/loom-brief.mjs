@@ -150,7 +150,7 @@ async function transcriptBlock(post, sessions, turns) {
     if (found && messages.length) out.push(renderTranscript(sid, messages, { total, capped }));
     else
       out.push(
-        `## Session ${sid} — no recorded turns in Loom (Recording was off for its namespace, or it was not a coding session).`,
+        `## Session ${sid} — no recorded turns in Loom (recording was off for its namespace, or it was not a coding session).`,
       );
     if (local) out.push(`Exact, lossless restore on this machine: \`claude --resume ${sid}\` (transcript ${local}).`);
   }

@@ -51,8 +51,8 @@ async function main() {
       // Without a token every post fails, so an optimistic cursor rolls back.
       post: (op, body) => (token ? postBounded(op, body, { token, serverUrl }) : Promise.resolve(null)),
       cursor,
-      // Keep what the server said about the Record conversations switch, so the next
-      // Stop does not send turns it will not keep.
+      // Keep what the server said about the Record conversations switch, so
+      // the next Stop does not send turns it will not keep.
       noteRecording: (appends, replies) => {
         const first = appends[0] || {};
         writeRecording(serverUrl, first.org, first.namespace, recordingFromAppends(replies));
