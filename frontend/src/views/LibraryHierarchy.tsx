@@ -335,7 +335,7 @@ export function CollectionsInside({
         items={shared}
         rows={rows}
         onPick={onPick}
-        withPath
+        withPath={true}
         truncated={truncated}
       />
     </div>
@@ -349,7 +349,7 @@ function PlaceList({
   items,
   rows,
   onPick,
-  withPath = false,
+  withPath,
   truncated,
 }: {
   id: string;
@@ -357,7 +357,7 @@ function PlaceList({
   items: CollectionEntry[];
   rows: CollectionEntry[];
   onPick: (collection: string) => void;
-  withPath?: boolean;
+  withPath: boolean;
   truncated: boolean;
 }) {
   const [count, setCount] = useState(FIRST_INSIDE);

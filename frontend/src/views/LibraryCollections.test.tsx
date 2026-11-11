@@ -789,6 +789,20 @@ describe("the Library on a collection", () => {
       "info",
     );
     expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-me-1a2b");
+    cleanup();
+    // A list that stopped early: the link may be to a later one.
+    api.listCollections.mockResolvedValue({
+      collections: [entry("col-me-1a2b", { personal: true })],
+      next_cursor: "more",
+    });
+    history.replaceState(null, "", "/library?collection=col-later");
+    render(<Documents />);
+    await settle();
+    expect(toast).toHaveBeenCalledWith(
+      "col-later is past the first collections listed here; showing My files.",
+      "info",
+    );
+    expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-me-1a2b");
   });
 
   it("says nothing of collections or namespaces while the list is read", async () => {
