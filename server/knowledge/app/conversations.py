@@ -153,7 +153,7 @@ async def handle_conversation_append(
         ]
     )
 
-    # Per-namespace logging switch (the dashboard toggle). When off, accept the call
+    # The namespace's Record conversations switch. When off, accept the call
     # but store nothing — a client can't override the user's choice.
     with traced("ch.query.conversation_logging_enabled"):
         logging_on = await conversation_repo.namespace_logging_enabled(input.org, input.namespace)
