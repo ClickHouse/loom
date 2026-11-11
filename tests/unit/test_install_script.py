@@ -834,7 +834,7 @@ _INSTALLS = _documented_installs()
 _INSPECT = "sha256sum -c"
 
 
-def _inspect_then_install() -> tuple[str, str]:
+def _inspect_then_install() -> tuple[str, str, str]:
     """The inspect path's checks followed by its install step, the next code block on the
     same page, as a reader runs them once the checks look right."""
     ((page, checks),) = [(p, e) for p, e in _INSTALLS if _INSPECT in e]
@@ -842,7 +842,7 @@ def _inspect_then_install() -> tuple[str, str]:
     after = text[text.index(_INSPECT) :]
     install = re.search(r"^```[^\n]*\n(.*?)^```", after[after.index("```") + 3 :], re.M | re.S)
     assert install, page
-    return page, checks + "\n" + _joined(install[1]).strip()
+    return page, checks, _joined(install[1]).strip()
 
 
 def test_the_pages_show_install_commands() -> None:
@@ -897,8 +897,8 @@ def test_the_inspect_path_installs_from_the_checked_bundle(tmp_path: Path) -> No
     shutil.copy(checksum, serves / "loom-stack.tar.gz.sha256")
     home = tmp_path / "home"
     home.mkdir()
-    page, script = _inspect_then_install()
-    checks = script.rsplit("\n", 1)[0]
+    page, checks, install = _inspect_then_install()
+    script = checks + "\n" + install
     result = _run_install(checks, home, _WORKING_CURL, serves)
     assert result.returncode == 0, (page, checks, result)
     assert "loom-stack.tar.gz: OK" in result.stdout, (page, checks, result)
