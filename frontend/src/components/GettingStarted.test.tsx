@@ -42,8 +42,16 @@ vi.mock("../api/models", async (importOriginal) => {
   return { ...actual, getModelStatus: vi.fn(async () => ({ requires_setup: true })) };
 });
 vi.mock("../views/Tokens", () => ({
-  // The token form itself is the Tokens page's, tested there; here only that it opens in place.
-  QuickConnect: () => <div>Token form</div>,
+  // The token form itself is the Tokens page's, tested there; here only that it opens in place
+  // and what the step does when it is closed.
+  QuickConnect: ({ onClose }: { onClose: () => void }) => (
+    <div>
+      Token form
+      <button type="button" onClick={onClose}>
+        Close the form
+      </button>
+    </div>
+  ),
 }));
 
 const SUBJECT = "n@x";
@@ -148,7 +156,7 @@ describe("GettingStarted on Memories", () => {
     expect(useStore.getState().view).toBe("memories");
   });
 
-  it("keeps the step's token form, and its dialog, when the agent connects while it is open", async () => {
+  it("keeps the step's token form when the agent connects while it is open, then focuses the heading", async () => {
     seed([personal]);
     render(<Recent />);
     const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
@@ -159,6 +167,19 @@ describe("GettingStarted on Memories", () => {
     expect(await screen.findByText("An agent is saving memories here.", undefined, WAIT)).toBeInTheDocument();
     // The new token is shown only there: the form stays until it is closed.
     expect(screen.getByText("Token form")).toBeInTheDocument();
+    // Closed once the step is done: no button to return to, so focus goes to the heading.
+    await userEvent.click(screen.getByRole("button", { name: "Close the form" }));
+    await waitFor(() => expect(screen.queryByText("Token form")).toBeNull());
+    expect(screen.getByRole("heading", { name: "Getting started" })).toHaveFocus();
+  });
+
+  it("returns focus to the step's button when its form is closed before the agent connects", async () => {
+    seed([personal]);
+    render(<Recent />);
+    const panel = await screen.findByRole("region", { name: "Getting started" }, WAIT);
+    await userEvent.click(within(panel).getByRole("button", { name: "Create a token" }));
+    await userEvent.click(await within(panel).findByRole("button", { name: "Close the form" }, WAIT));
+    expect(await within(panel).findByRole("button", { name: "Create a token" }, WAIT)).toHaveFocus();
   });
 
   it("waits on a token of mine that has made no call, and ticks once it has", async () => {
