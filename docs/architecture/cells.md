@@ -308,41 +308,41 @@ unknown.
 **Checked continuously, not only at attach.** Each process computes its configuration
 fingerprint: named fields under a schema version (the hosts of its
 `LOOM_PUBLIC_BASE_URL` and resolved `LOOM_OAUTH_ISSUER`, its OIDC issuer and client id,
-whether SCIM is on, the bearer issuers it accepts (`trusted_issuers()` and its end-user issuers), its configured orgs,
-the `orgs` of its `jwt_end_user_issuers_json`, the deployment id it verified at boot,
-and the bucket name and prefix). Its Postgres and ClickHouse both carry the deployment
-id (the pairing check a single deployment already runs). The bucket, when one is set, is
-identified by its name and prefix (a cell without a bucket takes part in no bucket
-check), which no two cells share on any endpoint: no cell's prefix in a bucket of the
-same name nests inside another's or holds it, so an endpoint taken from the environment
-cannot land in another cell's prefix. No store is identified by its address, so a
-standby replaced, a failover, an address taken from the environment or a restore to a
-new endpoint changes nothing the cell checks. The deployment id, the bucket name and the
-prefix never change after prepare: `loom cell update` refuses a change to any of them,
-adding a bucket to a cell prepared without one included, and moving a cell's data to
-other stores, or adding one, is a design of its own (Operations). Bots are not in it:
-`loom bot create` adds them at run time, each with one org, and placement already bounds
-them. The cell's own row in `loom.cell_self` holds an accepted fingerprint, `current`,
-and during a change a second, `next`. Its rows, and the cell heartbeat
-(`loom.cell_heartbeats`, keyed by the process's `loom.instances` row and written with
-it, since a KeeperMap table takes no new column: the `LOOM_CELL` it runs with, the mode
-it last read and its fingerprint), hold no memory content and are classified so for
-erasure. A process matches a value when every field both know is equal, a field the
-value lacks counting as equal only at its default, so builds N and N+1 with the same
-configuration match one row. With `LOOM_CELL` set, while its cell's own row, `first` row
-or mode row is unread, the state rows are in a one-row state (the `first` row's rule,
-above), the cell's own row is absent or matched by neither value, or the `first` row
-names another cell, every request it receives but its health probes and the probe route
-answers 503 `AuthUnavailable`: bearer requests (the first check in `verify_token`,
-before the end-user issuer branch), SCIM, and every route that signs in, mints,
-refreshes or exchanges a token, signup, the OAuth and device endpoints and the sign-in
-callback included. It also reports itself unready, and it stands aside from the workers
-as a drifted process does: it stops its passes, gives up the lease and names no lease in
-its instance row, in every `LOOM_BACKGROUND_WORKERS` mode (`on` included: with no lease
-to keep, a cell's `on` process runs the lease loop, which starts and stops the
-supervisor on the gate within `LOOM_TENANCY_MODE_CACHE_S` and one loop period), and its
-instance row does not count it as serving, so an older build beside it keeps the workers
-running. A failed read keeps the last rows for at most
+whether SCIM is on, the bearer issuers it accepts (`trusted_issuers()` and its end-user
+issuers), its configured orgs, the `orgs` of its `jwt_end_user_issuers_json`, the
+deployment id it verified at boot, and the bucket name and prefix). Its Postgres and
+ClickHouse both carry the deployment id (the pairing check a single deployment already
+runs). The bucket, when one is set, is identified by its name and prefix (a cell without
+a bucket takes part in no bucket check), which no two cells share on any endpoint: no
+cell's prefix in a bucket of the same name nests inside another's or holds it, so an
+endpoint taken from the environment cannot land in another cell's prefix. No store is
+identified by its address, so a standby replaced, a failover, an address taken from the
+environment or a restore to a new endpoint changes nothing the cell checks. The
+deployment id, the bucket name and the prefix never change after prepare:
+`loom cell update` refuses a change to any of them, adding a bucket to a cell prepared
+without one included, and moving a cell's data to other stores, or adding one, is a
+design of its own (Operations). Bots are not in it: `loom bot create` adds them at run
+time, each with one org, and placement already bounds them. The cell's own row in
+`loom.cell_self` holds an accepted fingerprint, `current`, and during a change a second,
+`next`. Its rows, and the cell heartbeat (`loom.cell_heartbeats`, keyed by the process's
+`loom.instances` row and written with it, since a KeeperMap table takes no new column:
+the `LOOM_CELL` it runs with, the mode it last read and its fingerprint), hold no memory
+content and are classified so for erasure. A process matches a value when every field
+both know is equal, a field the value lacks counting as equal only at its default, so
+builds N and N+1 with the same configuration match one row. With `LOOM_CELL` set, while
+its cell's own row, `first` row or mode row is unread, the state rows are in a one-row
+state (the `first` row's rule, above), the cell's own row is absent or matched by
+neither value, or the `first` row names another cell, every request it receives but its
+health probes and the probe route answers 503 `AuthUnavailable`: bearer requests (the
+first check in `verify_token`, before the end-user issuer branch), SCIM, and every route
+that signs in, mints, refreshes or exchanges a token, signup, the OAuth and device
+endpoints and the sign-in callback included. It also reports itself unready, and it
+stands aside from the workers as a drifted process does: it stops its passes, gives up
+the lease and names no lease in its instance row, in every `LOOM_BACKGROUND_WORKERS`
+mode (`on` included: with no lease to keep, a cell's `on` process runs the lease loop,
+which starts and stops the supervisor on the gate within `LOOM_TENANCY_MODE_CACHE_S` and
+one loop period), and its instance row does not count it as serving, so an older build
+beside it keeps the workers running. A failed read keeps the last rows for at most
 `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, as the signing keyring and the revocation
 snapshot do; past it the process is gated until a read lands. The mode (below) has the
 same bound. A cell configured to accept another cell's issuer, a host it was not
