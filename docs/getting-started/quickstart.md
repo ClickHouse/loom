@@ -94,12 +94,12 @@ written to the install directory's `.env`, so later `docker compose` commands th
 later installer runs use the same port and images. A `LOOM_BIND_HOST` other than
 loopback publishes Loom beyond this host, and the server refuses to start that way
 without `LOOM_PUBLIC_BASE_URL` and sign-in: install with `LOOM_SKIP_START=1`, set them
-in `.env` (below), then run the installer again.
+in `.env` (below), then run the install command again.
 
 Each release runs the ClickHouse release that was latest when it was built, so rerunning
 the same Loom version keeps its ClickHouse; installing a newer Loom version moves it,
 unless `.env` pins `LOOM_CLICKHOUSE_IMAGE` (delete that line to follow the releases
-again). Rerunning the installer updates the managed Compose/configuration files and
+again). Running the install command again updates the managed Compose/configuration files and
 reconciles the containers. It preserves `~/.loom/.env`, adding the extractor's URL and a
 token to one without, and the named Docker volumes. To stop without deleting data:
 

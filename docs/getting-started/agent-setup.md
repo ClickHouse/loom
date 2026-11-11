@@ -54,7 +54,7 @@ curl -fsSL "https://github.com/ClickHouse/loom/releases/download/v<version>/inst
 ```
 
 The installer verifies the bundle's SHA-256, installs under `~/.loom`, starts the stack
-and waits for the server's `/v1/health`. If it fails, the report is its `install`
+and waits for the server's `/v1/health`. If the command fails, the report is its `install`
 line alone; do not go on. The [quickstart](quickstart.md#1-boot-the-stack) says what the
 installer does in full.
 
