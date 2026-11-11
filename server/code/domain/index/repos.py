@@ -388,6 +388,13 @@ def default_code_namespace(org: str) -> str:
     return ns
 
 
+def operator_orgs() -> set[str]:
+    """The orgs the operator's entries name (`LOOM_CODE_REPOS_JSON`, else the scalar
+    repository), without the self-service registry's: a cell's configured orgs
+    (`server.core.cell`)."""
+    return {c.org for c in _configured_from_env() if c.org}
+
+
 def config_entries() -> list[RepoConfig]:
     """`configured_repos()` before the registry's first read too, for what decides
     access: a namespace's kind and classification, whether it is a code entry. Until

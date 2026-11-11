@@ -610,8 +610,10 @@ async def calibrate_similarity_gates() -> None:
 
 async def start_cell_state() -> list[asyncio.Task[None]]:
     """A cell's process reads its cell's rows before it serves, then on a timer."""
+    from server.code.domain.index import repos
     from server.core import cell, pg_profile
 
+    cell.set_code_orgs(repos.operator_orgs)
     if not cell.deployment_id():
         cell.set_deployment_id(await pg_profile.deployment_id())
     await cell.refresh()

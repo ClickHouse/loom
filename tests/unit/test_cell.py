@@ -705,5 +705,27 @@ def test_the_configured_orgs_hold_the_org_of_each_repository_entry_the_code_conf
     monkeypatch.setattr(settings, "code_org", code_org)
     monkeypatch.setattr(settings, "code_repo", code_repo)
     monkeypatch.setattr(settings, "code_repos_json", repos_json)
+    monkeypatch.setattr(cell, "_code_orgs", repos.operator_orgs)
     kept = {r.org for r in repos._configured_from_env()}
     assert set(cell.fingerprint("dep-1")["configured_orgs"]) == ({code_org} | kept) - {""}
+
+
+def test_a_cell_process_counts_the_code_orgs_once_boot_hands_their_reader_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`server.core` reads no code config itself: until boot hands the reader in, no code
+    org is counted (the fingerprint then matches no accepted value and the process is
+    gated); `start_cell_state` hands it in before the first read."""
+    from server.code.domain.index import repos
+
+    for field in ("oidc_jit_org", "tracker_org", "code_org"):
+        monkeypatch.setattr(settings, field, "")
+    monkeypatch.setattr(settings, "self_signup", "off")
+    monkeypatch.setattr(cell, "_code_orgs", None)
+    monkeypatch.setattr(repos, "operator_orgs", lambda: {"beta"})
+    assert cell.fingerprint("dep-1")["configured_orgs"] == []
+    monkeypatch.setattr(cell, "_deployment_id", "dep-1")
+    monkeypatch.setattr(cell, "refresh", AsyncMock(return_value=True))
+    monkeypatch.setattr(cell, "start_refresh_loop", lambda: "loop")
+    asyncio.run(boot.start_cell_state())
+    assert cell.fingerprint("dep-1")["configured_orgs"] == ["beta"]

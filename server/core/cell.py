@@ -32,7 +32,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -95,28 +95,21 @@ def normalise_host(value: str) -> str:
     return host if port in (None, default) else f"{host}:{port}"
 
 
+# The orgs the operator's code entries name (`repos.operator_orgs`): the code workers
+# write them, so attach places them, and a placement is permanent. `server.core` may not
+# import the code plane, so a process that runs as a cell hands the reader in
+# (`boot.start_cell_state`); until then none is counted, and the fingerprint matches no
+# accepted value, which gates the process rather than serving with a short list.
+_code_orgs: Callable[[], set[str]] | None = None
+
+
+def set_code_orgs(reader: Callable[[], set[str]]) -> None:
+    global _code_orgs
+    _code_orgs = reader
+
+
 def _code_repo_orgs() -> set[str]:
-    """The orgs of the `LOOM_CODE_REPOS_JSON` entries the code config keeps
-    (`repos._configured_from_env`, which `server.core` may not import): the code workers
-    write them, so attach places them, and a placement is permanent."""
-    try:
-        entries = json.loads(settings.code_repos_json or "[]")
-    except Exception:  # noqa: BLE001 — the code config falls back to `code_org` here too
-        return set()
-    if not isinstance(entries, list):
-        return set()
-    orgs: set[str] = set()
-    seen: set[str] = set()
-    for e in entries:
-        # Kept: a namespace with no '.' or '/', not seen before, with an org and a repo.
-        ns = str(e.get("namespace") or "") if isinstance(e, dict) else ""
-        if not ns or "." in ns or "/" in ns or ns in seen:
-            continue
-        seen.add(ns)
-        org = str(e.get("org") or settings.code_org)
-        if org and (e.get("repo") or str(settings.code_repo).strip()):
-            orgs.add(org)
-    return orgs
+    return _code_orgs() if _code_orgs is not None else set()
 
 
 def fingerprint(deployment_id: str) -> dict[str, Any]:
