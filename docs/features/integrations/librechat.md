@@ -386,20 +386,20 @@ rows) and two recommendation cases over `acme-notes`, a namespace written badly 
 purpose (hash-named keys, a JSON value encoded twice, a 6.5 KB runbook stored as a
 memory).
 
-| Measured on v0.8.8, the data cases but `data-history` and `data-connected-agents` (28), `claude-haiku-4-5`, fake embedder | The deployed agent, asked directly                              |
-| ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Correct answers                                                                                                           | 28 of 28, in one run                                            |
-| Analysis cases / recommendation cases                                                                                     | 3 of 3 / 2 of 2                                                 |
-| Cross-tenant, revoked and other-org SQL cases, no leak                                                                    | 3 of 3                                                          |
-| Should-abstain cases that abstain                                                                                         | 4 of 4, no false abstention                                     |
-| Memory citations valid                                                                                                    | 13 of 16                                                        |
-| Document citations valid                                                                                                  | 8 of 9                                                          |
-| End-to-end latency p50 / p95                                                                                              | 3.4 s / 10.7 s; the recommendation cases 10.7 s and 14.5 s      |
-| Tool calls per question                                                                                                   | at most 6 (a recommendation reads the audit, mentor and guides) |
-| Model cost per answer, every prompt token at list price                                                                   | mean $0.033, max $0.048                                         |
-| Loom calls after a client disconnects mid-answer                                                                          | 0                                                               |
-| Answer tokens or service password in LibreChat's logs or database                                                         | none                                                            |
-| What LibreChat stored                                                                                                     | `transactions` only: no messages, conversations or tool calls   |
+| Measured on v0.8.8, the 28 data cases other than `data-history` and `data-connected-agents`, `claude-haiku-4-5`, fake embedder | The deployed agent, asked directly                              |
+| ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| Correct answers                                                                                                                | 28 of 28, in one run                                            |
+| Analysis cases / recommendation cases                                                                                          | 3 of 3 / 2 of 2                                                 |
+| Cross-tenant, revoked and other-org SQL cases, no leak                                                                         | 3 of 3                                                          |
+| Should-abstain cases that abstain                                                                                              | 4 of 4, no false abstention                                     |
+| Memory citations valid                                                                                                         | 13 of 16                                                        |
+| Document citations valid                                                                                                       | 8 of 9                                                          |
+| End-to-end latency p50 / p95                                                                                                   | 3.4 s / 10.7 s; the recommendation cases 10.7 s and 14.5 s      |
+| Tool calls per question                                                                                                        | at most 6 (a recommendation reads the audit, mentor and guides) |
+| Model cost per answer, every prompt token at list price                                                                        | mean $0.033, max $0.048                                         |
+| Loom calls after a client disconnects mid-answer                                                                               | 0                                                               |
+| Answer tokens or service password in LibreChat's logs or database                                                              | none                                                            |
+| What LibreChat stored                                                                                                          | `transactions` only: no messages, conversations or tool calls   |
 
 The same cases asked through Loom's chat route, each with the person's own token: 25 of
 28 correct and the other 3 refused with `RATE_LIMITED` once the namespace had spent the

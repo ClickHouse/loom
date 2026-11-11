@@ -624,7 +624,7 @@
     "use_case": "U9 Code index",
     "person": "alice",
     "question": "How do I add a repository to Loom's code index?",
-    "expect": ["code\\.repo\\.add|Add repository"],
+    "expect": ["code\\.repo\\.add|Add repository|LOOM_CODE_REPOS_JSON|loom code backfill"],
     "cite_help": ["features/code-index/repositories.md", "features/code-index/overview.md"],
     "baseline": {
       "op": "help.search",
@@ -634,7 +634,10 @@
       }
     },
     "samples": {
-      "right": ["Use **Repositories → Add repository** in the dashboard, or call `code.repo.add`."],
+      "right": [
+        "Use **Repositories → Add repository** in the dashboard, or call `code.repo.add`.",
+        "Add an entry to `LOOM_CODE_REPOS_JSON`, then run `loom code backfill`."
+      ],
       "wrong": [
         "You cannot add a repository; Loom indexes only its own code.",
         "You cannot use `code.repo.add`; only Loom's own repository is indexed."
@@ -949,7 +952,7 @@
     "samples": {
       "right": [
         "An org admin, with `erasure.request` and the `user_id` scope.",
-        "`memory.clear` erases nothing; it only tombstones. An org admin uses `erasure.request` with the `user_id` scope.",
+        "`memory.clear` only tombstones one namespace's memories. An org admin uses `erasure.request` with the `user_id` scope.",
         "Running `memory.clear` is not enough: it only tombstones. An org admin uses `erasure.request` with the `user_id` scope.",
         "`memory.clear` with `agent` or `user_id` only tombstones in one namespace; an org admin uses `erasure.request` with the `user_id` scope.",
         "An admin can run `memory.clear`, but it only tombstones; an org admin erases with `erasure.request` and the `user_id` scope.",
@@ -1041,7 +1044,7 @@
     "use_case": "U25 What a setting does",
     "person": "alice",
     "question": "What does LOOM_ASSISTANT_MODEL set?",
-    "expect": ["agent definition|agent('s)? model|model the (assistant|agent)|agent\\.yaml"],
+    "expect": ["agent definition|agent('s)? model|model the (assistant|agent)|agent\\.yaml|definition'?s model"],
     "cite_help": ["reference/configuration.md", "architecture/assistant.md"],
     "baseline": {
       "op": "help.search",
@@ -1054,7 +1057,8 @@
       "right": [
         "The assistant agent's model; Loom writes it into the agent definition at boot.",
         "It sets the model the assistant's agent runs, in place of `agent.yaml`'s; a change takes effect at the next restart.",
-        "It sets the model the assistant's agent runs in LibreChat; empty keeps `agent.yaml`'s model."
+        "It sets the model the assistant's agent runs in LibreChat; empty keeps `agent.yaml`'s model.",
+        "It replaces the assistant definition's model."
       ],
       "wrong": [
         "I could not find what LOOM_ASSISTANT_MODEL sets.",
@@ -1088,10 +1092,14 @@
       "wrong": [
         "Yes, you need an API key; no account is needed.",
         "Yes: the quickstart won't start without an OpenAI API key.",
-        "The quickstart won't run without an API key."
+        "The quickstart won't run without an API key.",
+        "Yes, the quickstart needs an API key; nothing runs without an OpenAI API key."
       ]
     },
-    "forbid": ["\\b(won'?t|can ?not|can't) (start|run)\\w* without an? (\\w+ )?API key"]
+    "forbid": [
+      "\\b(won'?t|can ?not|can't) (start|run)\\w* without an? (\\w+ )?API key",
+      "\\b(it|the quickstart) (needs?|requires?) an? (\\w+ )?API key|\\bnothing (runs|starts|works) without"
+    ]
   },
   {
     "id": "help-upgrade",
