@@ -97,7 +97,9 @@ class CollectionNameTakenError(LoomServerError):
 class WrongCellError(LoomServerError):
     """409 — the org a verified call acts in is placed in another cell of this
     deployment, or in none and the caller may not place it (docs/architecture/cells.md).
-    Nothing was written; the client calls the org's own cell."""
+    Nothing was written; the client calls the org's own cell. `detail.org` names the org
+    and `detail.cell` its cell when the router named one ('' otherwise): the SDKs carry
+    both on `WrongCell`, and `GET /cells/lookup` gives that cell's host."""
 
     code = "WRONG_CELL"
     status_code = 409
@@ -113,7 +115,7 @@ class WrongCellError(LoomServerError):
                 f"org {org!r} is not held by this cell. An org reaches a cell through a "
                 "request with a token of that org."
             )
-        super().__init__(message)
+        super().__init__(message, org=org, cell=cell)
 
 
 class SourceReplacedError(LoomServerError):

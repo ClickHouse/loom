@@ -3797,6 +3797,7 @@
     "SyncAgent",
     "TokenClaims",
     "ValidationError",
+    "WrongCell",
     "__version__",
     "decode_token_claims",
     "login",

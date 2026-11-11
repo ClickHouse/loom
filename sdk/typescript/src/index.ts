@@ -50,6 +50,7 @@ export {
   RateLimited,
   TimeoutError,
   ValidationError,
+  WrongCell,
 } from "./errors.js";
 export type { FileData, IngestFileInput, KnowledgeFiles, Upload, UploadOptions, WaitOptions } from "./files.js";
 export { INGEST_DONE } from "./files.js";

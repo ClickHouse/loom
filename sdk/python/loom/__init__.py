@@ -36,6 +36,7 @@ from loom.errors import (
     PreconditionFailed,
     RateLimited,
     ValidationError,
+    WrongCell,
 )
 from loom.retry import DEFAULT_RETRY_POLICY, RetryPolicy
 from loom.session import Resumed, Session
@@ -76,6 +77,7 @@ __all__ = [
     "SyncAgent",
     "TokenClaims",
     "ValidationError",
+    "WrongCell",
     "__version__",
     "decode_token_claims",
     "login",
