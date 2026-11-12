@@ -247,7 +247,7 @@
         "cell_router_url": {
           "default": "",
           "type": "string",
-          "description": "The router's base URL a cell calls to place a new org; \"\" = none: in `enforced`, a new org answers 503."
+          "description": "The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; \"\" = none: in `enforced`, a new org answers 503."
         },
         "ch_analysis_max_concurrent": {
           "default": 8,
@@ -5869,6 +5869,12 @@
           "minimum": 1,
           "type": "integer",
           "description": "Org lookups one client address may make in a minute, counted by each router replica (`GET /cells/lookup`)."
+        },
+        "router_operator_sha256": {
+          "default": "",
+          "pattern": "^(?:[0-9a-f]{64})?$",
+          "type": "string",
+          "description": "SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell limit` and `loom cell credential` call its operator API with; \"\" = that API refuses."
         },
         "router_placements_per_minute": {
           "default": 60,

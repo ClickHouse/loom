@@ -90,7 +90,7 @@ Authentication, tokens and identity providers.
 | `LOOM_JWT_SECRET_PREVIOUS` | `str` | *(unset)* |  | The root secret LOOM_JWT_SECRET replaced, while a rotation is under way: credentials and signing keys sealed under it still open (tokens it signed as kid `default` do not verify: a leaked root mints nothing). `loom secrets reseal` rewrites the stored ones under the new root; then remove this. "" = none. |
 | `LOOM_JWT_KEYRING_REFRESH_SECONDS` | `float` | `30.0` |  | Seconds between re-reads of loom.signing_keys in every process (at least 1); `loom signing-key rotate` waits out two of the slowest process's. |
 | `LOOM_CELL` | `str` | `''` |  | This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set, the process serves only while its cell's rows accept it (docs/architecture/cells.md). |
-| `LOOM_CELL_ROUTER_URL` | `str` | `''` |  | The router's base URL a cell calls to place a new org; "" = none: in `enforced`, a new org answers 503. |
+| `LOOM_CELL_ROUTER_URL` | `str` | `''` |  | The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; "" = none: in `enforced`, a new org answers 503. |
 | `LOOM_CELL_ROUTER_TOKEN` | `str` | *(unset)* |  | The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64` (never the length of a SHA-256); any other form is refused at boot. "" = none. |
 | `LOOM_CELL_ROUTER_TIMEOUT_S` | `float` | `5.0` |  | Seconds a whole placement call to the router may take before the request answers 503. |
 | `LOOM_TENANCY_MODE_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. |
@@ -100,6 +100,8 @@ Authentication, tokens and identity providers.
 | `LOOM_ROUTER_LOOKUPS_PER_MINUTE` | `int` | `60` |  | Org lookups one client address may make in a minute, counted by each router replica (`GET /cells/lookup`). |
 | `LOOM_ROUTER_SHARED_HOST` | `str` | `''` |  | The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4, beside the first cell's own host and aliases; "" = only those, once it is registered. |
 | `LOOM_ROUTER_UPSTREAM_URL` | `str` | `''` |  | The address the router forwards the shared host to before a first cell is registered (the deployment it was put in front of); "" = none: those answer 503. |
+| `LOOM_ROUTER_OPERATOR_SHA256` | `str` | `''` |  | SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell limit` and `loom cell credential` call its operator API with; "" = that API refuses. |
+| `LOOM_ROUTER_OPERATOR_TOKEN` | `str` | *(unset)* |  | The operator credential itself, for the CLI that calls the router's operator API: `lco_` then `openssl rand -hex 64` (`loom cell credential new --operator`). "" = none. |
 | `LOOM_JWT_ISSUER` | `str` | `'loom'` |  | The `iss` Loom stamps on every token it mints; a verified token carries it or one of `jwt_trusted_issuers`. |
 | `LOOM_JWT_AUDIENCE` | `str` | `'loom-platform'` |  | The `aud` claim stamped on minted tokens and required on every verified token. |
 | `LOOM_JWT_TRUSTED_ISSUERS` | `str` | `''` |  | Extra accepted `iss` values, for a gateway minting Loom-shaped JWTs with a key in `jwt_public_keys_json`. Loom's own tokens (iss = jwt_issuer) pass. |

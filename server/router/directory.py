@@ -11,8 +11,9 @@ retry of the same call answers the same.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -39,6 +40,11 @@ _lookups = asyncio.Semaphore(LOOKUP_SLOTS)
 # transaction left idle is ended at twice that: a stalled router never keeps a cell's row
 # lock. A cell's placement call gives up at its own LOOM_CELL_ROUTER_TIMEOUT_S.
 STATEMENT_TIMEOUT_S = 10  # not a setting: the cell's own timeout bounds it
+# The longest an operator change can take: the connection wait, then eight statements
+# (begin, lock, row, check, update, audit, read-back, commit) at the client bound each.
+OPERATOR_CHANGE_MAX_S = (  # not a setting: derived from the bound above
+    STATEMENT_TIMEOUT_S + 8 * (STATEMENT_TIMEOUT_S + 1)
+)
 # Every directory connection commits through the synchronous standby and reads what
 # committed before each statement, whatever the database's defaults: a placement the
 # router answered survives a failover, and a later placement of one org sees the earlier.
@@ -51,7 +57,7 @@ _SESSION = {
 
 @dataclass(frozen=True)
 class Cell:
-    """What the placement API needs of a cell's row."""
+    """What the router's APIs read of a cell's row."""
 
     cell: str
     is_first: bool
@@ -65,6 +71,19 @@ class Cell:
     deployment_id: str
     current_fp: dict[str, Any] | None
     next_fp: dict[str, Any] | None
+    # The new credential's hash during a rotation (`loom cell credential --next`).
+    credential_next_sha256: str | None
+
+    def holds(self, presented: str) -> bool:
+        """Whether `presented` (a credential's SHA-256) is this cell's, current or next."""
+        hashes = (self.credential_sha256, self.credential_next_sha256)
+        return holds(presented, [h for h in hashes if h])
+
+
+def holds(presented: str, hashes: Iterable[str]) -> bool:
+    """Whether `presented` (a credential's SHA-256) is one of `hashes` (each set), in
+    constant time each."""
+    return any(hmac.compare_digest(presented, h) for h in hashes)
 
 
 class Refusal(RuntimeError):
@@ -172,8 +191,11 @@ async def migrate() -> list[str]:
 
 _CELL = (
     "SELECT cell, is_first, host, state, mode, closed, placements_max, placed, credential_sha256, "
-    "deployment_id, current_fp, next_fp FROM loom_router.cells"
+    "credential_next_sha256, deployment_id, current_fp, next_fp FROM loom_router.cells"
 )
+
+
+_ROUTING = "SELECT cell, host, state, is_first, issuers, upstream_url FROM loom_router.cells"
 
 
 _WINNER = (
@@ -190,19 +212,133 @@ async def routing() -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
     """What routing reads (`server.router.routing.build`): every cell's name, host,
     state, first mark, issuers and upstream address, and every host alias."""
     async with _reading(), _connection() as conn:
-        cells = await conn.fetch(
-            "SELECT cell, host, state, is_first, issuers, upstream_url FROM loom_router.cells "
-            "ORDER BY cell"
-        )
+        cells = await conn.fetch(f"{_ROUTING} ORDER BY cell")
         aliases = await conn.fetch("SELECT host, cell FROM loom_router.hosts")
     return [dict(r) for r in cells], [(str(r["host"]), str(r["cell"])) for r in aliases]
 
 
-async def credentials() -> dict[str, str]:
-    """Every cell's credential hash, by cell name."""
+async def credentials() -> dict[str, tuple[str, ...]]:
+    """Every cell's credential hashes, current then next (during a rotation), by cell."""
     async with _reading(), _connection() as conn:
-        rows = await conn.fetch("SELECT cell, credential_sha256 FROM loom_router.cells")
-    return {str(r["cell"]): str(r["credential_sha256"]) for r in rows}
+        rows = await conn.fetch(
+            "SELECT cell, credential_sha256, credential_next_sha256 FROM loom_router.cells"
+        )
+    return {
+        str(r["cell"]): tuple(
+            str(h) for h in (r["credential_sha256"], r["credential_next_sha256"]) if h
+        )
+        for r in rows
+    }
+
+
+class OperatorRefused(Refusal):
+    """An operator change the directory refuses as it stands; `reason` says why."""
+
+
+class NoSuchCell(OperatorRefused):
+    """The directory has no row for the cell named."""
+
+
+# The directory lock, apart from the placements' per-org one. It keeps the rule the unique
+# indexes cannot hold across two columns: a hash names one cell, as current or next. Any
+# writer of credential_sha256 or credential_next_sha256 takes it and checks both columns.
+_DIRECTORY_LOCK = 0x6C726F64  # "lrod"
+
+
+class _Unset:
+    """A `set_limit` field not given: not written (None is a value, a quota cleared)."""
+
+
+UNSET = _Unset()
+
+
+async def set_limit(
+    cell_name: str,
+    *,
+    closed: bool | _Unset = UNSET,
+    placements_max: int | None | _Unset = UNSET,
+) -> Cell:
+    """`loom cell limit`: close or reopen a cell to new orgs and set or clear its
+    placement quota, on its row alone, audited; the cell's stores are not touched. A
+    field left UNSET is not written (a quota of None clears it)."""
+
+    if closed is UNSET and placements_max is UNSET:
+        raise ValueError("set_limit sets closed, placements_max or both")
+
+    async def change(conn: Any, row: Cell) -> dict[str, Any]:
+        detail: dict[str, Any] = {}
+        if closed is not UNSET:
+            detail["closed"] = closed
+        if placements_max is not UNSET:
+            detail["placements_max"] = placements_max
+        sets = ", ".join(f"{column} = ${i}" for i, column in enumerate(detail, start=2))
+        await conn.execute(
+            f"UPDATE loom_router.cells SET {sets}, updated_at = now() WHERE cell = $1",
+            cell_name,
+            *detail.values(),
+        )
+        return detail
+
+    return await _operator_change(cell_name, "limit", change)
+
+
+async def rotate_credential(cell_name: str, step: str, sha256: str = "") -> Cell:
+    """`loom cell credential`: `next` records a new credential's hash beside the
+    current one, refused when any cell holds it as current or next and while one is
+    pending; `finish` makes `next` current and drops the old; `revert` drops `next`.
+    `finish` and `revert` refuse with no `next` pending."""
+    if step not in ("next", "finish", "revert"):
+        raise ValueError(f"no credential step {step!r}")
+    if (step == "next") != bool(sha256):
+        raise ValueError("a sha256 goes with the next step alone")
+
+    async def change(conn: Any, row: Cell) -> dict[str, Any]:
+        if step == "next":
+            if row.credential_next_sha256 == sha256:
+                raise OperatorRefused(f"that hash is already cell {cell_name!r}'s next credential")
+            if row.credential_next_sha256:
+                raise OperatorRefused(f"cell {cell_name!r} has another next credential pending")
+            taken = await conn.fetchval(
+                "SELECT cell FROM loom_router.cells "
+                "WHERE credential_sha256 = $1 OR credential_next_sha256 = $1",
+                sha256,
+            )
+            if taken:
+                raise OperatorRefused(f"cell {taken!r} records that credential hash already")
+            sql = "SET credential_next_sha256 = $2"
+            args: tuple[Any, ...] = (cell_name, sha256)
+        elif not row.credential_next_sha256:
+            raise OperatorRefused(f"cell {cell_name!r} has no next credential pending")
+        elif step == "finish":
+            sql = "SET credential_sha256 = credential_next_sha256, credential_next_sha256 = NULL"
+            args = (cell_name,)
+        else:  # revert
+            sql = "SET credential_next_sha256 = NULL"
+            args = (cell_name,)
+        await conn.execute(
+            f"UPDATE loom_router.cells {sql}, updated_at = now() WHERE cell = $1", *args
+        )
+        return {"step": step, **({"sha256": sha256} if sha256 else {})}
+
+    return await _operator_change(cell_name, "credential", change)
+
+
+async def _operator_change(
+    cell_name: str, action: str, change: Callable[[Any, Cell], Awaitable[dict[str, Any]]]
+) -> Cell:
+    async with _reading(), _connection() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock($1)", _DIRECTORY_LOCK)
+        locked = await conn.fetchrow(f"{_CELL} WHERE cell = $1 FOR UPDATE", cell_name)
+        if locked is None:
+            raise NoSuchCell(f"cell {cell_name!r} is not in the directory")
+        detail = await change(conn, _cell(locked))
+        await conn.execute(
+            "INSERT INTO loom_router.audit (actor, action, detail) VALUES ('operator', $1, $2)",
+            action,
+            {"cell": cell_name, **detail},
+        )
+        row = await conn.fetchrow(f"{_CELL} WHERE cell = $1", cell_name)
+    return _cell(row)
 
 
 async def first_cell() -> Cell | None:
@@ -268,8 +404,11 @@ async def lookup(org: str) -> tuple[str, str] | None:
 
 
 async def ping() -> None:
+    """Read every cells column this build reads (placement, lookup and routing), so a
+    router rolled out before `loom router migrate` stays unready instead of failing them."""
     async with _reading(), _connection() as conn:
-        await conn.fetchval("SELECT 1")
+        await conn.fetch(f"{_CELL} LIMIT 0")
+        await conn.fetch(f"{_ROUTING} LIMIT 0")
 
 
 @asynccontextmanager

@@ -323,8 +323,8 @@ class AuthSettings(BaseModel):
     # This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set,
     # the process serves only while its cell's rows accept it (docs/architecture/cells.md).
     cell: str = ""
-    # The router's base URL a cell calls to place a new org; "" = none: in `enforced`,
-    # a new org answers 503.
+    # The router's base URL a cell calls to place a new org, and the `loom cell` commands'
+    # default router; "" = none: in `enforced`, a new org answers 503.
     cell_router_url: str = ""
     # The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64`
     # (never the length of a SHA-256); any other form is refused at boot. "" = none.
@@ -351,6 +351,12 @@ class AuthSettings(BaseModel):
     # The address the router forwards the shared host to before a first cell is
     # registered (the deployment it was put in front of); "" = none: those answer 503.
     router_upstream_url: str = ""
+    # SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell
+    # limit` and `loom cell credential` call its operator API with; "" = that API refuses.
+    router_operator_sha256: Annotated[str, Field(pattern=r"^(?:[0-9a-f]{64})?$")] = ""
+    # The operator credential itself, for the CLI that calls the router's operator API:
+    # `lco_` then `openssl rand -hex 64` (`loom cell credential new --operator`). "" = none.
+    router_operator_token: Annotated[str, Field(pattern=r"^(?:lco_[0-9a-f]{128})?$")] = ""
 
     def jwt_secret_is_dev_default(self) -> bool:
         """Whether the root secret is the checked-in dev default — the value

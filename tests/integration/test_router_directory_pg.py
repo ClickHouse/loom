@@ -1,14 +1,18 @@
 """The router's directory against a real Postgres (server/router/directory.py,
 schemas/router_migrations/): its migrations, one org placed once by two cells asking at
-the same moment, the quota held under concurrency, and placements no statement can
-change. Needs LOOM_ROUTER_PG_DSN: a database of its own, never a cell's."""
+the same moment, the quota held under concurrency, placements no statement can change,
+readiness on the columns the build reads, and the operator's changes with their audit.
+Needs LOOM_ROUTER_PG_DSN: a database of its own, never a cell's."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import uuid
+from typing import Any
+from unittest.mock import ANY
 
 import pytest
 
@@ -159,6 +163,126 @@ async def test_the_directory_places_once_and_holds_the_quota(dsn: str) -> None:
         ):
             with pytest.raises(asyncpg.RaiseError):
                 await conn.execute(sql, *args)
+    finally:
+        await conn.close()
+        await directory.close()
+
+
+@pytest.mark.asyncio
+async def test_the_router_is_unready_without_a_column_it_reads(dsn: str) -> None:
+    await directory.migrate()
+    try:
+        await directory.ping()  # reads every column this build needs
+        # Without a column this build reads (before `loom router migrate`), it is unready:
+        # each column list is pointed at a missing column, leaving the schema alone.
+        for name in ("_CELL", "_ROUTING"):
+            with pytest.MonkeyPatch.context() as mp:
+                mp.setattr(directory, name, getattr(directory, name).replace("cell,", "no_col,", 1))
+                with pytest.raises(directory.DirectoryUnavailable):
+                    await directory.ping()
+    finally:
+        await directory.close()
+
+
+@pytest.mark.asyncio
+async def test_operator_changes_write_the_row_and_its_audit(dsn: str) -> None:
+    import asyncpg
+
+    await directory.migrate()
+    a, b, q = (f"it-{uuid.uuid4().hex[:8]}" for _ in range(3))
+    conn = await asyncpg.connect(dsn)
+    try:
+        await _cell(conn, a)
+        await _cell(conn, b)
+        await _cell(conn, q, limit=3)
+
+        async def row(cell: str) -> dict[str, Any]:
+            got = await conn.fetchrow("SELECT * FROM loom_router.cells WHERE cell = $1", cell)
+            assert got is not None
+            return dict(got)
+
+        # The operator's changes: a limit, and a credential rotation with its refusals.
+        # Each writes the fields it names and updated_at, and leaves every other column.
+        before = await row(b)
+        limited = await directory.set_limit(b, closed=True, placements_max=7)
+        assert (limited.closed, limited.placements_max) == (True, 7)
+        after = await row(b)
+        assert after["updated_at"] > before["updated_at"]
+        changed = {"closed": True, "placements_max": 7, "updated_at": after["updated_at"]}
+        assert after == {**before, **changed}
+        cleared = await directory.set_limit(b, placements_max=None)
+        assert (cleared.closed, cleared.placements_max) == (True, None)  # closed is kept
+        assert await row(b) == {**after, "placements_max": None, "updated_at": ANY}
+        with pytest.raises(ValueError):
+            await directory.set_limit(b)  # nothing to set: no statement
+        with pytest.raises(ValueError):
+            await directory.rotate_credential(b, "finsh")  # no such step: nothing written
+        with pytest.raises(ValueError):
+            await directory.rotate_credential(b, "next")  # no hash to record
+        with pytest.raises(ValueError):
+            await directory.rotate_credential(b, "finish", "c" * 64)  # a hash finish ignores
+        with pytest.raises(directory.NoSuchCell):
+            await directory.set_limit(f"nope-{b}", closed=True)
+        sha_b = hashlib.sha256(b.encode()).hexdigest()
+        with pytest.raises(directory.OperatorRefused, match="records that credential hash"):
+            await directory.rotate_credential(a, "next", sha_b)  # b's current hash
+        with pytest.raises(directory.OperatorRefused, match="no next credential"):
+            await directory.rotate_credential(a, "finish")
+        new = hashlib.sha256(f"new-{a}".encode()).hexdigest()
+        before = await row(a)
+        assert (await directory.rotate_credential(a, "next", new)).credential_next_sha256 == new
+        assert await row(a) == {**before, "credential_next_sha256": new, "updated_at": ANY}
+        assert (await directory.credentials())[a] == (hashlib.sha256(a.encode()).hexdigest(), new)
+        with pytest.raises(directory.OperatorRefused, match="already cell .* next credential"):
+            await directory.rotate_credential(a, "next", new)  # this change, retried
+        with pytest.raises(directory.OperatorRefused, match="another next credential pending"):
+            await directory.rotate_credential(a, "next", "e" * 64)
+        with pytest.raises(directory.OperatorRefused, match="records that credential hash"):
+            await directory.rotate_credential(b, "next", new)  # a's next hash
+        # Two cells asking for one next hash at once: the directory lock lets one in.
+        raced = hashlib.sha256(f"raced-{a}".encode()).hexdigest()
+        both = await asyncio.gather(
+            directory.rotate_credential(b, "next", raced),
+            directory.rotate_credential(q, "next", raced),
+            return_exceptions=True,
+        )
+        assert sum(isinstance(r, directory.Cell) for r in both) == 1
+        assert sum(isinstance(r, directory.OperatorRefused) for r in both) == 1
+        pending = await row(a)
+        finished = await directory.rotate_credential(a, "finish")
+        assert (finished.credential_sha256, finished.credential_next_sha256) == (new, None)
+        assert await row(a) == {
+            **pending,
+            "credential_sha256": new,
+            "credential_next_sha256": None,
+            "updated_at": ANY,
+        }
+        winner = b if isinstance(both[0], directory.Cell) else q
+        reverted = await directory.rotate_credential(winner, "revert")
+        assert reverted.credential_next_sha256 is None
+        assert (await directory.credentials())[winner] == (reverted.credential_sha256,)
+        with pytest.raises(directory.OperatorRefused, match="no next credential"):
+            await directory.rotate_credential(winner, "revert")
+
+        def steps(cell: str) -> Any:
+            return conn.fetch(
+                "SELECT action, detail FROM loom_router.audit WHERE actor = 'operator' "
+                "AND detail->>'cell' = $1 ORDER BY id",
+                cell,
+            )
+
+        assert [(r["action"], json.loads(r["detail"])) for r in await steps(a)] == [
+            ("credential", {"cell": a, "step": "next", "sha256": new}),
+            ("credential", {"cell": a, "step": "finish"}),
+        ]
+        assert [(r["action"], json.loads(r["detail"])) for r in await steps(b)][:2] == [
+            ("limit", {"cell": b, "closed": True, "placements_max": 7}),
+            ("limit", {"cell": b, "placements_max": None}),
+        ]
+        assert [(r["action"], json.loads(r["detail"])) for r in await steps(winner)][-2:] == [
+            ("credential", {"cell": winner, "step": "next", "sha256": raced}),
+            ("credential", {"cell": winner, "step": "revert"}),
+        ]
     finally:
         await conn.close()
         await directory.close()

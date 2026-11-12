@@ -9,6 +9,9 @@
   (unauthenticated, rate-limited per client address); a placed org's answer is cached
   and given while the directory cannot be read, and before any cell is registered the
   lookup answers 503 with the code `NO_CELL`;
+- `POST /cells/v1/operator/cells/<cell>/limit` and `.../credential`: the operator's
+  changes to a cell's row (`loom cell limit`, `loom cell credential`), with the router's
+  operator credential;
 - `GET /livez` and `GET /readyz` (the directory answers, read at most once a second).
 
 Every refusal of a placement answers 503 and writes nothing, so the cell's request
@@ -26,7 +29,7 @@ import json
 import logging
 import time
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, NamedTuple
 from urllib.parse import parse_qs
@@ -46,7 +49,7 @@ from server.settings import settings
 
 log = logging.getLogger("loom.router")
 
-# A placement call's body is three short fields: anything larger is refused unread.
+# A placement or operator call's body is a few short fields: anything larger is refused unread.
 MAX_BODY_BYTES = 64 * 1024  # not a setting: the request's own shape bounds it
 # How long a readiness answer stands: a probe every second reads the directory once.
 READY_TTL_S = 1.0  # not a setting: the probe's own cadence bounds it
@@ -155,6 +158,9 @@ class _Placed(NamedTuple):
 
 
 def _answer(org: str, cell: str, host: str) -> JSONResponse:
+    # An org with no placement gets the first cell's answer, the same body as an org
+    # placed there. Its timing and outage answers can still tell a recently looked-up
+    # placed org (cached) from an unplaced one, so an org name is not a secret.
     return JSONResponse({"org": org, "cell": cell, "host": host})
 
 
@@ -166,9 +172,10 @@ class Router:
         # The cells' credential hashes, read from the directory at most once per
         # LOOM_ROUTER_DIRECTORY_CACHE_S: a call with a wrong credential reads nothing.
         # A failed read stands for the window too, so an outage is not read once per call.
-        self._credentials: dict[str, str] = {}
+        self._credentials: dict[str, tuple[str, ...]] = {}
         self._credentials_error = ""
         self._credentials_at: float | None = None
+        self._credentials_gen = 0  # bumped when a change makes the cached hashes old
         self._ready_at: float | None = None
         self._ready = ""
         self._lock = asyncio.Lock()
@@ -185,22 +192,28 @@ class Router:
         self._refreshing: asyncio.Task[None] | None = None
         self._http: httpx.AsyncClient | None = None
 
-    async def _credential(self, name: str) -> str | None:
+    def _forget_credentials(self) -> None:
+        self._credentials_gen += 1
+        self._credentials_at = None
+
+    async def _credential(self, name: str) -> tuple[str, ...]:
         async with self._lock:
             now = self._clock()
             stale = self._credentials_at is None or (
                 now - self._credentials_at >= settings.router_directory_cache_s
             )
             if stale:
+                gen = self._credentials_gen
                 try:
                     self._credentials = await directory.credentials()
                     self._credentials_error = ""
                 except directory.DirectoryUnavailable as e:
                     self._credentials, self._credentials_error = {}, e.reason
-                self._credentials_at = now
+                # A read that began before a change is not kept for a window.
+                self._credentials_at = now if gen == self._credentials_gen else None
             if self._credentials_error:
                 raise directory.DirectoryUnavailable(self._credentials_error)
-            return self._credentials.get(name)
+            return self._credentials.get(name, ())
 
     async def _authenticated(self, request: Request, name: str) -> str | JSONResponse:
         """The SHA-256 of the bearer when it is cell `name`'s credential as the router
@@ -214,7 +227,7 @@ class Router:
         except directory.DirectoryUnavailable as e:
             return _refused(503, e.reason)
         presented = hashlib.sha256(token.encode()).hexdigest()
-        if expected is None or not hmac.compare_digest(presented, expected):
+        if not directory.holds(presented, expected):
             return _refused(401, "the credential names no cell of this directory")
         return presented
 
@@ -242,7 +255,7 @@ class Router:
             # Judged on the row as locked for the placement, so a cell closed, limited
             # or updated meanwhile is judged as it is now.
             nonlocal replaced
-            if not hmac.compare_digest(presented, locked.credential_sha256):
+            if not locked.holds(presented):
                 replaced = True
                 return f"cell {name!r} has another credential now"
             if reason := placement_refusal(locked):
@@ -257,7 +270,7 @@ class Router:
             if replaced:
                 # The cached hash is older than the row: read the directory again on
                 # the next call, and answer as for any credential the row does not hold.
-                self._credentials_at = None
+                self._forget_credentials()
                 return _refused(401, "the credential names no cell of this directory")
             return _refused(503, e.reason)
         log.info("placement of %s: %s (asked by %s)", org, winner, name)
@@ -277,8 +290,8 @@ class Router:
             return _refused(503, e.reason)
         if row is None:
             return _refused(404, f"cell {name!r} is not the first cell")
-        if not hmac.compare_digest(presented, row.credential_sha256):
-            self._credentials_at = None  # the cached hash is older than the row
+        if not row.holds(presented):
+            self._forget_credentials()  # the cached hash is older than the row
             return _refused(401, "the credential names no cell of this directory")
         return JSONResponse({"cell": row.cell, "state": row.state})
 
@@ -307,7 +320,7 @@ class Router:
                 found = (first.cell, first.host) if first else None
         except directory.DirectoryUnavailable as e:
             if cached is None:
-                return _refused(503, e.reason)
+                return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
             return _answer(org, cached.cell, cached.host)
         if found is None:
             return _refused(503, "the directory holds no cell yet", code="NO_CELL")
@@ -442,6 +455,72 @@ class Router:
             await self._http.aclose()
             self._http = None
 
+    def _operator(self, request: Request) -> JSONResponse | None:
+        """The refusal of a call that does not carry the router's operator credential.
+        It is 512 bits (`lco_` and 128 hex), so it is not guessed online; refusals are
+        not rate-limited, since behind an ingress one stranger's refusals would lock
+        out every operator."""
+        expected = settings.router_operator_sha256
+        if not expected:
+            return _refused(
+                503,
+                "the router has no operator credential (LOOM_ROUTER_OPERATOR_SHA256)",
+                code="NO_OPERATOR_CREDENTIAL",
+            )
+        token = _bearer(request)
+        presented = hashlib.sha256(token.encode()).hexdigest() if token else ""
+        if presented and hmac.compare_digest(presented, expected):
+            return None
+        return _refused(401, "the operator credential is not the router's")
+
+    async def set_limit(self, request: Request) -> JSONResponse:
+        """`loom cell limit`: `{"closed": bool}` and/or `{"placements_max": int | null}`."""
+        if refusal := self._operator(request):
+            return refusal
+        if refusal := _malformed_cell_refusal(request):
+            return refusal
+        body = await _body(request)
+        known = {"closed", "placements_max"}
+        if not isinstance(body, dict) or not body or set(body) - known:
+            return _refused(400, "a limit is a JSON object of closed and/or placements_max")
+        closed = body.get("closed", directory.UNSET)
+        quota = body.get("placements_max", directory.UNSET)
+        if "closed" in body and not isinstance(closed, bool):
+            return _refused(400, "closed is true or false")
+        # `type(...) is int`: `true` is not a count of 1.
+        counted = type(quota) is int and 0 <= quota <= cell_state.PLACEMENTS_MAX
+        if quota is not directory.UNSET and quota is not None and not counted:
+            return _refused(400, "placements_max is a whole number, 0 or more, or null")
+        return await _operator_answer(
+            lambda: directory.set_limit(
+                request.path_params["cell"], closed=closed, placements_max=quota
+            )
+        )
+
+    async def rotate_credential(self, request: Request) -> JSONResponse:
+        """`loom cell credential`: `{"step": "next", "sha256": ...}`, `{"step": "finish"}`
+        or `{"step": "revert"}`."""
+        if refusal := self._operator(request):
+            return refusal
+        if refusal := _malformed_cell_refusal(request):
+            return refusal
+        body = await _body(request)
+        if not isinstance(body, dict) or set(body) - {"step", "sha256"}:
+            return _refused(400, "a rotation is a JSON object of step and sha256")
+        step, sha = body.get("step"), body.get("sha256", "")
+        if step not in ("next", "finish", "revert") or (step == "next") != ("sha256" in body):
+            return _refused(400, "a rotation step is next (with sha256), finish or revert")
+        if step == "next" and not (isinstance(sha, str) and cell_state.SHA256.fullmatch(sha)):
+            return _refused(400, "sha256 is 64 lowercase hex characters: the credential's hash")
+        response = await _operator_answer(
+            lambda: directory.rotate_credential(request.path_params["cell"], step, sha)
+        )
+        # This replica reads the hashes again on its next call. A 503 is included: its
+        # change may have committed (BACKEND_UNAVAILABLE).
+        if response.status_code in (200, 503):
+            self._forget_credentials()
+        return response
+
     async def livez(self, _request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
 
@@ -509,6 +588,35 @@ def proxy_client(transport: httpx.AsyncBaseTransport | None = None) -> httpx.Asy
     return httpx.AsyncClient(transport=transport, timeout=PROXY_TIMEOUT, limits=PROXY_LIMITS)
 
 
+def _malformed_cell_refusal(request: Request) -> JSONResponse | None:
+    """The refusal of a cell name no cell can have, before the directory is asked."""
+    if not cell_state.NAME.fullmatch(request.path_params["cell"]):
+        return _refused(404, "no cell has that name")
+    return None
+
+
+async def _operator_answer(change: Callable[[], Awaitable[directory.Cell]]) -> JSONResponse:
+    try:
+        row = await change()
+    except directory.NoSuchCell as e:
+        return _refused(404, e.reason)
+    except directory.OperatorRefused as e:
+        return _refused(409, e.reason)
+    except directory.DirectoryUnavailable as e:
+        # The change may have committed before the answer was lost (a COMMIT that waited
+        # past its bound on the standby): the CLI matches this code.
+        return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
+    return JSONResponse(
+        {
+            "cell": row.cell,
+            "closed": row.closed,
+            "placements_max": row.placements_max,
+            "placed_orgs": row.placed,
+            "next_credential_pending": bool(row.credential_next_sha256),
+        }
+    )
+
+
 async def _not_found(_request: Request) -> JSONResponse:
     return _refused(404, "the router answers no such path")
 
@@ -528,6 +636,12 @@ def build_app(router: Router | None = None) -> Starlette:
         routes=[
             Route("/cells/v1/placements", router.place, methods=["POST"]),
             Route("/cells/v1/cells/{cell}", router.cell_state, methods=["GET"]),
+            Route("/cells/v1/operator/cells/{cell}/limit", router.set_limit, methods=["POST"]),
+            Route(
+                "/cells/v1/operator/cells/{cell}/credential",
+                router.rotate_credential,
+                methods=["POST"],
+            ),
             Route("/cells/lookup", router.lookup, methods=["GET"]),
             Route("/livez", router.livez, methods=["GET"]),
             Route("/readyz", router.readyz, methods=["GET"]),

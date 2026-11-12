@@ -702,8 +702,8 @@ settings:
   # (docs/architecture/cells.md). [restart]
   # cell: ""
 
-  # The router's base URL a cell calls to place a new org; "" = none: in `enforced`, a
-  # new org answers 503. [restart]
+  # The router's base URL a cell calls to place a new org, and the `loom cell` commands'
+  # default router; "" = none: in `enforced`, a new org answers 503. [restart]
   # cell_router_url: ""
 
   # Seconds a whole placement call to the router may take before the request answers
@@ -736,6 +736,11 @@ settings:
   # The address the router forwards the shared host to before a first cell is registered
   # (the deployment it was put in front of); "" = none: those answer 503. [restart]
   # router_upstream_url: ""
+
+  # SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell
+  # limit` and `loom cell credential` call its operator API with; "" = that API refuses.
+  # [restart]
+  # router_operator_sha256: ""
 
   # The `iss` Loom stamps on every token it mints; a verified token carries it or one of
   # `jwt_trusted_issuers`. [restart]

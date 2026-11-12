@@ -94,7 +94,11 @@ def _bounded(f: FieldInfo, value: float) -> bool:
 
 
 # Strings of one fixed form (a field pattern), given a valid value of that form.
-_VALID = {"cell_router_token": "lcr_" + "0" * 128}
+_VALID = {
+    "cell_router_token": "lcr_" + "0" * 128,
+    "router_operator_sha256": "0" * 64,
+    "router_operator_token": "lco_" + "0" * 128,
+}
 
 
 def _other(name: str, f: FieldInfo) -> Any:

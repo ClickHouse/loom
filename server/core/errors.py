@@ -245,10 +245,12 @@ class ModelCallDeferred(ModelCallRefused):
 
 
 class BackendUnavailableError(LoomServerError):
-    """503 — ClickHouse could not be reached after the bounded reconnect, the
-    document bucket failed a read, write or delete, or a cell could not read its
-    tenancy or place a new org through the router. `retry_after_s` is the wait: 1 s,
-    unless the router named one (at most 60 s).
+    """503 — ClickHouse, the document bucket, or a cell's tenancy read or placement
+    failed; the router's lookup and operator API send the code when their directory
+    fails. `retry_after_s` is the wait: 1 s, unless the router named one (at most 60 s).
+
+    The router sends the code without raising this class; on an operator change it means
+    the change may have been made.
 
     The public message deliberately excludes the driver URL and credentials;
     operators get the concrete connection error from health and server logs.
@@ -483,6 +485,8 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     "NO_SIGNING_KEY": ("configuration", False),
     # The router's lookup before any cell is registered: a settled answer, not an outage.
     "NO_CELL": ("configuration", False),
+    # The router's operator API with no LOOM_ROUTER_OPERATOR_SHA256: nothing was done.
+    "NO_OPERATOR_CREDENTIAL": ("configuration", False),
     # Listed, not left to the status: the MCP screen's refusals carry none.
     "RATE_LIMITED": ("capacity", True),
     "AUTH_INVALID": ("auth", False),

@@ -11627,13 +11627,463 @@
        "choices_help": [
         {
          "dest": "serve",
-         "help": "Serve the placement API and org lookups, and route every other request to a cell.",
+         "help": "Serve the placement, lookup and operator APIs; route other requests to cells.",
          "metavar": "serve"
         },
         {
          "dest": "migrate",
          "help": "Apply the directory's pending migrations.",
          "metavar": "migrate"
+        }
+       ]
+      }
+     ]
+    },
+    "cell": {
+     "prog": "loom cell",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "cell_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "cell_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "credential": {
+         "prog": "loom cell credential",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell:_cmd_credential"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "action"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "next",
+            "finish",
+            "revert",
+            "operator",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "action",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": [
+            "new"
+           ],
+           "nargs": "?",
+           "type": null,
+           "required": false,
+           "help": "new: make one offline",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The cell whose credential to rotate",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--next"
+           ],
+           "dest": "next",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Record a new credential's sha256 as next",
+           "metavar": "SHA256"
+          },
+          {
+           "option_strings": [
+            "--finish"
+           ],
+           "dest": "finish",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Make the next credential current",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--revert"
+           ],
+           "dest": "revert",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Drop the pending next credential",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--operator"
+           ],
+           "dest": "operator",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "With new: make the router's operator credential",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
+        "limit": {
+         "prog": "loom cell limit",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell:_cmd_limit"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "closed",
+            "open",
+            "placements_max",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "closed",
+            "open"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The cell to limit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--closed"
+           ],
+           "dest": "closed",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Refuse its new orgs",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--open"
+           ],
+           "dest": "open",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Take new orgs again",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--placements-max"
+           ],
+           "dest": "placements_max",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Its quota of orgs (none: no quota)",
+           "metavar": "N|none"
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
+        "which": {
+         "prog": "loom cell which",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell:_cmd_which"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The org",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "credential": "loom cell credential",
+        "limit": "loom cell limit",
+        "which": "loom cell which"
+       },
+       "choices_help": [
+        {
+         "dest": "credential",
+         "help": "Make a router credential, or rotate a cell's.",
+         "metavar": "credential"
+        },
+        {
+         "dest": "limit",
+         "help": "Close, reopen or bound a cell to new orgs.",
+         "metavar": "limit"
+        },
+        {
+         "dest": "which",
+         "help": "Print the lookup's cell and host for an org (the first cell if not placed).",
+         "metavar": "which"
         }
        ]
       }
@@ -14128,6 +14578,7 @@
     "erasure-re-verify": "loom erasure-re-verify",
     "reconcile": "loom reconcile",
     "router": "loom router",
+    "cell": "loom cell",
     "tracker-probe": "loom tracker-probe",
     "tracker-contract-check": "loom tracker-contract-check",
     "tracker-dupcheck-fit": "loom tracker-dupcheck-fit",
@@ -14371,6 +14822,11 @@
      "dest": "router",
      "help": "The router in front of a deployment's cells.",
      "metavar": "router"
+    },
+    {
+     "dest": "cell",
+     "help": "Operate a deployment's cells through the router's directory.",
+     "metavar": "cell"
     },
     {
      "dest": "tracker-probe",
