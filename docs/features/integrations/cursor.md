@@ -12,10 +12,10 @@ working memory; the [Claude Code](claude-code.md) and [Codex](codex.md) plugins 
 
 ## MCP tools
 
-Against a single-user server on the same machine, which takes MCP calls without a token,
+A single-user server on the same machine takes MCP calls without a token.
 [Add Loom to Cursor](https://cursor.com/en/install-mcp?name=loom&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0Ojc3NzcvbWNwP3Rvb2xzZXQ9Y29kaW5nIn0%3D)
-adds this entry under `mcpServers.loom` in Cursor's MCP settings, on the `coding` toolset
-the dashboard gives Cursor; the link's `config` is the entry, base64-encoded:
+adds this entry under `mcpServers.loom`, on the `coding` toolset the dashboard gives
+Cursor. The link's `config` is the entry, base64-encoded:
 
 ```json
 { "url": "http://localhost:7777/mcp?toolset=coding" }

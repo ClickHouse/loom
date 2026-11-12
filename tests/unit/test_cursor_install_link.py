@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from server.identity.app.token_clients import _coding_url
+from server.identity.app.token_clients import client_config
 
 ROOT = Path(__file__).resolve().parents[2]
 LINK = re.compile(r"https://cursor\.com/en/install-mcp\?[^)\s`]+")
@@ -34,5 +34,6 @@ def test_the_link_decodes_to_the_documented_local_entry() -> None:
     documented = json.loads(match.group(1))
     assert query["name"] == ["loom"]
     assert json.loads(base64.b64decode(query["config"][0])) == documented
-    # the entry the dashboard's Connect dialog gives Cursor for the same server
-    assert documented == {"url": _coding_url("http://localhost:7777/mcp")}
+    # the URL the dashboard's Connect dialog gives Cursor for the same server
+    dashboard = client_config("cursor", "http://localhost:7777/mcp", "-")
+    assert documented == {"url": dashboard["config"]["mcpServers"]["loom"]["url"]}
