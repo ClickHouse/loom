@@ -61,8 +61,9 @@ to a block and `working_memory.render(run_id=RUN)` reads the blocks back.
 ## Over MCP
 
 `working_memory.set` is listed (`loom_working_memory_set`) on the `coding`, `atomic` and
-`all` toolsets; on `core` it runs through `loom_op`. `working_memory.get` is not listed on
-any toolset, including `all`; call it through `loom_op` with `{"op": "working_memory.get", "arguments": {...}}`. An agent:
+`all` toolsets, and runs through `loom_op` on every other toolset except `readonly` and
+`assistant`. `working_memory.get` is not listed on any toolset, including `all`; call it
+through `loom_op` with `{"op": "working_memory.get", "arguments": {...}}`. An agent:
 
 1. calls `working_memory.set` with `run_id` and `block_key="checkpoint"` after each step;
 2. calls `working_memory.get` with the same `run_id` and `block_key` at start-up.

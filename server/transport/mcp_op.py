@@ -37,8 +37,8 @@ _CATALOG_LIMIT = 15
 DESCRIPTOR: dict[str, Any] = {
     "name": LOOM_OP_TOOL_NAME,
     "description": (
-        "Run an op this list doesn't show: a tracker, task or graph op, one "
-        "such as memory.related, or one a doc calls callable by name. "
+        "Run an op this list doesn't show, such as memory.related, or one a doc "
+        "calls callable by name. "
         '`op` is the dotted name, `arguments` its arguments; op="help" with '
         "an optional `query` lists matching ops and their args. "
         "Prefer a listed tool when one fits."
@@ -141,8 +141,8 @@ def catalog(
 _INSTEAD: dict[str, str] = {
     "memory.bulk_set": "call loom_memory_set once per fact; a batch saves no round trip here",
     "memory.bulk_get": (
-        "call loom_memory_get per key, or memory.list (via loom_op where it is not listed) "
-        "with a key prefix"
+        "call memory.get per key, or memory.list with a key prefix (via loom_op where "
+        "either is not listed)"
     ),
     "memory.keys": (
         "call memory.list (via loom_op where it is not listed), which pages the namespace"
