@@ -7,6 +7,11 @@ import { needsRole, type NamespaceRole, type NamespaceRoleRead } from "./namespa
 
 export const ROLE_LOADING = "Your role on this namespace is still loading.";
 
+/** Why grants that are not read yet say nothing: still loading, or list_mine failed. */
+export function unreadLine(loading: boolean, namespace: string): string {
+  return loading ? ROLE_LOADING : `Couldn't check your access to ${namespace}.`;
+}
+
 const serverDecides = (namespace: string) =>
   `The server decides this token's access to ${namespace}; it does not show here.`;
 
@@ -36,7 +41,7 @@ export function roleGap(read: NamespaceRoleRead, whoami: WhoAmI | null, namespac
   if (read.loading || !whoami) return ROLE_LOADING;
   if (read.rows?.some((m) => m.namespace === namespace && m.status === "pending"))
     return `Your request to join ${namespace} is waiting for an admin.`;
-  if (read.rows === null) return `Couldn't check your access to ${namespace}.`;
+  if (read.rows === null) return unreadLine(false, namespace);
   if (starOnly(whoami, namespace)) return serverDecides(namespace);
   return null;
 }

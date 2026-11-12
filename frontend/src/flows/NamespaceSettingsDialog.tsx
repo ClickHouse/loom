@@ -13,10 +13,11 @@ import {
   type NamespaceRegisterFields,
 } from "../api";
 import { useStore } from "../lib/state";
-import { canUpdateNamespace, hasAdminClaim, isNamespaceAdmin } from "../lib/role";
+import { hasAdminClaim, isNamespaceAdmin } from "../lib/role";
+import { canUpdateNamespace, restrictedMisses } from "../lib/namespaceUpdate";
 import { needsRole } from "../lib/namespaceRole";
 import { sharedMine } from "../lib/sharedReads";
-import { needsMaintainer, roleGap } from "../lib/callReason";
+import { needsMaintainer, unreadLine } from "../lib/callReason";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { useAbortableEffect } from "../lib/hooks";
@@ -108,36 +109,35 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
   // The settings round-trip namespace.register, whose update path also admits the owner of an
   // auto-registered row (and on a restricted row only a named, directly granted admin);
   // namespace.delete needs ADMIN on the namespace.
-  const canManage = canUpdateNamespace(whoami, rows, namespace, ns);
+  const canManage = canUpdateNamespace(whoami, rows, { org, namespace }, ns);
   const canDelete = isNamespaceAdmin(whoami, rows, namespace);
 
   // Repository mode: a code index shows only what applies to read-only source —
   // description, the join rule, danger zone.
   const isRepo = ns?.kind === "code";
-  // A repository's admins are its maintainers.
-  const needsAdmin = isRepo ? needsMaintainer(label ?? namespace) : needsRole("admin", namespace);
+  // A repository's admins are its maintainers, and it is named by its label.
+  const name = isRepo ? (label ?? namespace) : namespace;
+  const adminWord = isRepo ? "maintainer" : "admin";
+  const needsAdmin = isRepo ? needsMaintainer(name) : needsRole("admin", namespace);
 
-  // Why the fields are locked. A restricted namespace wants a direct admin grant (not one
-  // inherited through a creator) and a token of its org (never `*`) that names it and carries
-  // an admin claim (`canUpdateNamespace`): the line names only what is missing, and while
-  // the grants are unread, why.
-  const grant = rows?.find((m) => m.namespace === namespace);
-  const tokenMisses = [
-    whoami?.org === org ? null : `be of ${org}`,
-    whoami?.namespaces?.includes(namespace) ? null : `name ${namespace}`,
-    hasAdminClaim(whoami) ? null : "carry an admin claim",
-  ].filter((p): p is string => p !== null);
-  const directAdmin = grant?.role === "admin" && grant.status !== "pending" && !grant.inherited;
-  const adminRole = hasAdminClaim(whoami) || grant?.role === "admin";
+  // Why the fields are locked. On a restricted row, from what its gate finds missing
+  // (`restrictedMisses`, the same list `canUpdateNamespace` admits on), and while the grants
+  // are unread, why.
   let lockedReason = needsAdmin;
   if (ns?.classification === "restricted") {
-    if (rows === null)
-      lockedReason = roleGap({ role: null, loading: mineLoading, rows }, whoami, namespace) ?? needsAdmin;
-    else if (directAdmin && tokenMisses.length > 0)
+    const misses = restrictedMisses(whoami, rows, { org, namespace });
+    const grant = rows?.find((m) => m.namespace === namespace);
+    const tokenMisses = [
+      misses.includes("org") ? `be of ${org}` : null,
+      misses.includes("name") ? `name ${name}` : null,
+      misses.includes("claim") ? "carry an admin claim" : null,
+    ].filter((p): p is string => p !== null);
+    if (rows === null) lockedReason = unreadLine(mineLoading, namespace);
+    else if (!misses.includes("grant") && tokenMisses.length > 0)
       lockedReason = `To change its settings, your token must ${andList(tokenMisses)}.`;
     // An admin by claim, or by an inherited or pending grant, still lacks the direct grant.
-    else if (adminRole && !directAdmin)
-      lockedReason = `Changing its settings needs a direct admin grant on ${namespace}.`;
+    else if (misses.includes("grant") && (hasAdminClaim(whoami) || grant?.role === "admin"))
+      lockedReason = `Changing its settings needs a direct ${adminWord} grant on ${name}.`;
   }
 
   const save = async (patch: Partial<NamespaceRegisterFields>) => {

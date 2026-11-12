@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import {
-  canUpdateNamespace,
-  hasAdminClaim,
-  hasOrgAdminClaim,
-  hasPlatformAdminClaim,
-  holdsAdminGrant,
-  isNamespaceAdmin,
-} from "./role";
+import { hasAdminClaim, hasOrgAdminClaim, hasPlatformAdminClaim, holdsAdminGrant, isNamespaceAdmin } from "./role";
+import { canUpdateNamespace, restrictedMisses } from "./namespaceUpdate";
 
 // Who sees the Admin drawer and who may call /v1/admin/*.
 
@@ -130,22 +124,38 @@ describe("canUpdateNamespace (namespace.register's update path)", () => {
   const autoRow = { owner_email: "v@example.com", tags: ["auto-registered"] };
 
   it("admits the owner of an auto-registered row, who holds no grant", () => {
-    expect(canUpdateNamespace(writerJwt, [], "team-a", autoRow)).toBe(true);
+    expect(canUpdateNamespace(writerJwt, [], { org: "dev", namespace: "team-a" }, autoRow)).toBe(true);
     expect(isNamespaceAdmin(writerJwt, [], "team-a")).toBe(false);
   });
 
   it("needs both the tag and the owner match", () => {
-    expect(canUpdateNamespace(writerJwt, [], "team-a", { ...autoRow, tags: [] })).toBe(false);
-    expect(canUpdateNamespace(writerJwt, [], "team-a", { ...autoRow, owner_email: "other@example.com" })).toBe(false);
-    expect(canUpdateNamespace(writerJwt, [], "team-a", null)).toBe(false);
+    expect(canUpdateNamespace(writerJwt, [], { org: "dev", namespace: "team-a" }, { ...autoRow, tags: [] })).toBe(
+      false,
+    );
     expect(
-      canUpdateNamespace({ ...writerJwt, subject: undefined }, [], "team-a", { ...autoRow, owner_email: "" }),
+      canUpdateNamespace(
+        writerJwt,
+        [],
+        { org: "dev", namespace: "team-a" },
+        { ...autoRow, owner_email: "other@example.com" },
+      ),
+    ).toBe(false);
+    expect(canUpdateNamespace(writerJwt, [], { org: "dev", namespace: "team-a" }, null)).toBe(false);
+    expect(
+      canUpdateNamespace(
+        { ...writerJwt, subject: undefined },
+        [],
+        { org: "dev", namespace: "team-a" },
+        { ...autoRow, owner_email: "" },
+      ),
     ).toBe(false);
   });
 
   it("is true for a namespace admin whatever the row says", () => {
-    expect(canUpdateNamespace(writerJwt, [row("team-a", "admin")], "team-a", null)).toBe(true);
-    expect(canUpdateNamespace(authOff, null, "local", null)).toBe(true);
+    expect(canUpdateNamespace(writerJwt, [row("team-a", "admin")], { org: "dev", namespace: "team-a" }, null)).toBe(
+      true,
+    );
+    expect(canUpdateNamespace(authOff, null, { org: "dev", namespace: "local" }, null)).toBe(true);
   });
 });
 
@@ -154,35 +164,94 @@ describe("canUpdateNamespace on a restricted row (the two-factor gate)", () => {
   const namedAdmin: WhoAmI = { ...adminJwt, namespaces: ["team-a"] };
 
   it("admits a token that names the namespace, carries ADMIN and holds a direct admin grant", () => {
-    expect(canUpdateNamespace(namedAdmin, [row("team-a", "admin")], "team-a", restricted)).toBe(true);
-    expect(canUpdateNamespace(authOff, null, "local", { ...restricted, owner_email: "" })).toBe(true);
+    expect(
+      canUpdateNamespace(namedAdmin, [row("team-a", "admin")], { org: "dev", namespace: "team-a" }, restricted),
+    ).toBe(true);
+    expect(
+      canUpdateNamespace(authOff, null, { org: "dev", namespace: "local" }, { ...restricted, owner_email: "" }),
+    ).toBe(true);
   });
 
   it("refuses the flat admin claim on a wildcard token, whatever the grants", () => {
     const wildcard: WhoAmI = { ...adminJwt, namespaces: ["*"] };
-    expect(canUpdateNamespace(wildcard, [row("team-a", "admin")], "team-a", restricted)).toBe(false);
-    expect(canUpdateNamespace({ ...namedAdmin, org: "*" }, [row("team-a", "admin")], "team-a", restricted)).toBe(false);
-    expect(canUpdateNamespace(platform, [], "team-a", restricted)).toBe(false);
+    expect(
+      canUpdateNamespace(wildcard, [row("team-a", "admin")], { org: "dev", namespace: "team-a" }, restricted),
+    ).toBe(false);
+    expect(
+      canUpdateNamespace(
+        { ...namedAdmin, org: "*" },
+        [row("team-a", "admin")],
+        { org: "dev", namespace: "team-a" },
+        restricted,
+      ),
+    ).toBe(false);
+    expect(canUpdateNamespace(platform, [], { org: "dev", namespace: "team-a" }, restricted)).toBe(false);
   });
 
   it("refuses the auto-registered owner and an admin grant under a lower token role", () => {
-    expect(canUpdateNamespace(writerJwt, [], "team-a", restricted)).toBe(false);
-    expect(canUpdateNamespace(writerJwt, [row("team-a", "admin")], "team-a", restricted)).toBe(false);
-    expect(canUpdateNamespace(namedAdmin, [row("team-a", "viewer")], "team-a", restricted)).toBe(false);
+    expect(canUpdateNamespace(writerJwt, [], { org: "dev", namespace: "team-a" }, restricted)).toBe(false);
+    expect(
+      canUpdateNamespace(writerJwt, [row("team-a", "admin")], { org: "dev", namespace: "team-a" }, restricted),
+    ).toBe(false);
+    expect(
+      canUpdateNamespace(namedAdmin, [row("team-a", "viewer")], { org: "dev", namespace: "team-a" }, restricted),
+    ).toBe(false);
+  });
+
+  it("refuses a token of another org, and names each part the gate misses", () => {
+    expect(
+      canUpdateNamespace(
+        { ...namedAdmin, org: "acme" },
+        [row("team-a", "admin")],
+        { org: "dev", namespace: "team-a" },
+        restricted,
+      ),
+    ).toBe(false);
+    expect(
+      restrictedMisses({ ...namedAdmin, org: "acme" }, [row("team-a", "admin")], { org: "dev", namespace: "team-a" }),
+    ).toEqual(["org"]);
+    expect(restrictedMisses(writerJwt, [], { org: "dev", namespace: "team-b" })).toEqual(["name", "claim", "grant"]);
+    expect(restrictedMisses(namedAdmin, [row("team-a", "admin")], { org: "dev", namespace: "team-a" })).toEqual([]);
   });
 
   it("refuses an inherited, pending or unknown grant", () => {
-    expect(canUpdateNamespace(namedAdmin, [{ ...row("team-a", "admin"), inherited: true }], "team-a", restricted)).toBe(
-      false,
-    );
-    expect(canUpdateNamespace(namedAdmin, [row("team-a", "admin", "pending")], "team-a", restricted)).toBe(false);
-    expect(canUpdateNamespace(namedAdmin, null, "team-a", restricted)).toBe(false);
-    expect(canUpdateNamespace(null, null, "team-a", restricted)).toBe(false);
+    expect(
+      canUpdateNamespace(
+        namedAdmin,
+        [{ ...row("team-a", "admin"), inherited: true }],
+        { org: "dev", namespace: "team-a" },
+        restricted,
+      ),
+    ).toBe(false);
+    expect(
+      canUpdateNamespace(
+        namedAdmin,
+        [row("team-a", "admin", "pending")],
+        { org: "dev", namespace: "team-a" },
+        restricted,
+      ),
+    ).toBe(false);
+    expect(canUpdateNamespace(namedAdmin, null, { org: "dev", namespace: "team-a" }, restricted)).toBe(false);
+    expect(canUpdateNamespace(null, null, { org: "dev", namespace: "team-a" }, restricted)).toBe(false);
   });
 
   it("leaves a standard or unclassified row on the ordinary rule", () => {
     const wildcard: WhoAmI = { ...adminJwt, namespaces: ["*"] };
-    expect(canUpdateNamespace(wildcard, [], "team-a", { ...restricted, classification: "standard" })).toBe(true);
-    expect(canUpdateNamespace(wildcard, [], "team-a", { ...restricted, classification: undefined })).toBe(true);
+    expect(
+      canUpdateNamespace(
+        wildcard,
+        [],
+        { org: "dev", namespace: "team-a" },
+        { ...restricted, classification: "standard" },
+      ),
+    ).toBe(true);
+    expect(
+      canUpdateNamespace(
+        wildcard,
+        [],
+        { org: "dev", namespace: "team-a" },
+        { ...restricted, classification: undefined },
+      ),
+    ).toBe(true);
   });
 });

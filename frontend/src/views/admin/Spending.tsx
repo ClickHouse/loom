@@ -17,7 +17,8 @@ import {
   type NamespaceInfo,
 } from "../../api";
 import { useStore, useIdentity } from "../../lib/state";
-import { canUpdateNamespace, hasOrgAdminClaim } from "../../lib/role";
+import { hasOrgAdminClaim } from "../../lib/role";
+import { canUpdateNamespace } from "../../lib/namespaceUpdate";
 import { invalidateShared, sharedBudgetStatus } from "../../lib/sharedReads";
 import { Skeleton } from "../../components/Skeleton";
 import { ListState } from "../../components/ui/ListState";
@@ -95,7 +96,7 @@ export function Spending() {
     },
     [identity.org, identity.namespace],
   );
-  const canEditCap = canUpdateNamespace(whoami, myNamespaces, identity.namespace, nsRow);
+  const canEditCap = canUpdateNamespace(whoami, myNamespaces, identity, nsRow);
 
   // Rows re-fetch when the pivot changes; the budget bars don't. Another namespace starts
   // from the skeleton, during render, so its usage never paints under the new badge.

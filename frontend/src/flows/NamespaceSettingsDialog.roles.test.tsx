@@ -177,3 +177,23 @@ describe("NamespaceSettingsDialog for a repository", () => {
     expect(screen.getByRole("button", { name: "Delete namespace" })).toHaveAccessibleDescription(line);
   });
 });
+
+describe("NamespaceSettingsDialog on a restricted repository", () => {
+  it.each([
+    [["ADMIN"], ["*"], [grant("admin")], "To change its settings, your token must name acme/api @ main."],
+    [["ORG_ADMIN"], ["team"], [], "Changing its settings needs a direct maintainer grant on acme/api @ main."],
+  ])("names the repository and its maintainer: %j %j", async (roles, namespaces, myNamespaces, line) => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles, namespaces },
+      myNamespaces,
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue({
+      ...info,
+      kind: "code",
+      classification: "restricted",
+    } as NamespaceInfo);
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" label="acme/api @ main" />);
+    await act(async () => undefined);
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
+  });
+});
