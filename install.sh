@@ -397,7 +397,7 @@ main() {
   # ClickHouse start, with Docker's bind error: say so before either. The probes
   # bypass any proxy the shell names, which would otherwise answer for the port.
   # This install's own server, running or restarting, may hold the port: `up`
-  # recreates it, so it is not probed when it is published on this port.
+  # keeps or recreates it, so it is not probed when it is published on this port.
   own=$(compose ps -q --status running --status restarting loom 2>/dev/null) || own=
   own_ports=
   [ -z "$own" ] || own_ports=$(docker inspect -f \

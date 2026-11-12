@@ -997,9 +997,9 @@ def test_a_timeout_with_no_connect_time_names_both_causes(
     """Zero as curl prints it now and as old releases print it, also for a fast
     connect: a silent listener and an unreachable address are both named."""
     run, _ = install
-    _start_stubs(installer_env, probe_exit=28, connect_time=connect_time)
+    _, docker_log = _start_stubs(installer_env, probe_exit=28, connect_time=connect_time)
     result = run(LOOM_SKIP_START="0")
-    assert result.returncode == 1
+    assert result.returncode == 1 and not _started(docker_log)
     assert "port 7777 on 127.0.0.1 does not answer:" in result.stderr
     assert "a program may hold it" in result.stderr and "firewall" in result.stderr
 
@@ -1032,9 +1032,9 @@ def test_a_probe_curl_cannot_make_is_not_called_in_use(
 ) -> None:
     """Curl's 6 (the host does not resolve) says nothing about a listener."""
     run, _ = install
-    _start_stubs(installer_env, probe_exit=6)
+    _, docker_log = _start_stubs(installer_env, probe_exit=6)
     result = run(LOOM_SKIP_START="0")
-    assert result.returncode == 1
+    assert result.returncode == 1 and not _started(docker_log)
     assert "could not check port 7777 on 127.0.0.1 (curl exit 6)" in result.stderr
     assert "in use" not in result.stderr
 
