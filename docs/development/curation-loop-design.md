@@ -5,13 +5,12 @@ an organization stands behind; none of it is built yet. Searches that find nothi
 knowledge gaps. A gap, or a query a team runs often on its own ClickHouse, becomes a
 drafted definition in the learnings queue. A definition an admin promotes into the shared
 layer is governed: when a query names its term, `memory.search` serves it above every
-other hit, a derived aggregate's count aside. The parts
-land in this order: knowledge gaps (recording, grouping and the list), governed
-definitions (the shared-layer changes and the term leg), then `knowledge.gaps.draft` and
-query history, which queue definition drafts and so need the review path the second part
-builds. None of its ops, tables or settings are served until the pull request that builds
-each part lands; that pull request moves its part into `docs/architecture/`, written as
-what Loom does, and removes it here.
+other hit, a derived aggregate's count aside. The parts land in this order: knowledge gaps
+(recording, grouping and the list), governed definitions (the shared-layer changes and the
+term leg), then `knowledge.gaps.draft` and query history, which queue definition drafts
+and so need the review path the second part builds. None of its ops, tables or settings
+are served until the pull request that builds each part lands; that pull request moves its
+part into `docs/architecture/`, written as what Loom does, and removes it here.
 
 ```mermaid
 flowchart LR
@@ -28,7 +27,9 @@ flowchart LR
 A definition is a memory row with `memory_type = 'definition'` under the key
 `definition/<slug>`, so `C++` and `C#` get two keys. The slug is computed in four steps:
 
-1. The term is normalised to NFKC and case-folded (`str.casefold`).
+1. The term is normalised to NFKC, trimmed, every run of whitespace made one space, and
+   case-folded (`str.casefold`). This folded form is the term's name everywhere a name is
+   compared.
 2. Every run of characters other than letters and digits becomes one `-`, and a `-` at
    either end is dropped.
 3. A `-` is appended.
@@ -90,10 +91,10 @@ promotion holds one of its names as `shadowed`, naming the row that wins. A chan
 is promoted again. On N no automatic verdict retires or marks a definition's source (the
 exemptions below, and the negative-outcome quarantine of `memory.outcome`, which skips a
 definition's namespace-wide row as it skips a locked one; `memory.outcome_run` records
-harm events and quarantines nothing), so a source that is no longer
-`active` was rejected by a writer, or left that way by N-1 or before this design. The
-sensitivity sweep can still relabel a source, which lapses it as a relabel does. The admin
-brings it back by the way it lapsed:
+harm events and quarantines nothing), so a source that is no longer `active` was rejected
+by a writer, or left that way by N-1 or before this design. The sensitivity sweep can
+still relabel a source, which lapses it as a relabel does. The admin brings it back by the
+way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
@@ -102,8 +103,8 @@ brings it back by the way it lapsed:
 - rejected with `memory.reject`, or replaced by a writer's `memory.copy_to` (which resets
   the row's pin and lock), a writer's explicit act like an edit: written again;
 - past its `expires_at` or `valid_to` (a row written before this design, or by a writer):
-  written again with `clear_expiry` and no `valid_to`, or by a review, which treats such a
-  head as no head.
+  written again with `clear_expiry` and no `valid_to`, or by reviewing a pending draft of
+  the term, which treats such a head as no head.
 
 It is governed again when its text is the approved one, and is promoted again otherwise.
 
@@ -123,9 +124,9 @@ reader:
     embedding retired, which a redact does not reach today;
   - every `knowledge_gap` and `query_history` candidate whose drafted value has that hash,
     or that the version's `candidate-id:` tag names, promoted or not: its text is blanked,
-    since `learnings.list` shows it to admins, and a blanked candidate is not promoted (`learnings.review` answers it
-    not found, as it does a blanked `assistant_turn` candidate today); the pull request
-    that adds those candidate kinds adds this part;
+    since `learnings.list` shows it to admins, and a blanked candidate is not promoted
+    (`learnings.review` answers it not found, as it does a blanked `assistant_turn`
+    candidate today); the pull request that adds those candidate kinds adds this part;
   - nothing else: no other draft of the term, and neither the shared copy nor the drafts
     when the live head still holds the redacted text (an edit reverted byte for byte), as
     `memory.redact` leaves a live copy of a text it scrubs from history.
@@ -163,8 +164,8 @@ reader:
   (an alias lives inside its definition's value, so no key finds it), which the ceiling
   below keeps bounded, and refuses a promotion that adds a key when it finds the ceiling
   reached; a revision of a key already governed replaces its row and is never refused by
-  the ceiling. Names are compared case-folded (the form the key's hash reads), so `SAT`
-  and `Sat` are one name.
+  the ceiling. Names are compared in the slug's folded form (the form the key's hash
+  reads), so `SAT`, `Sat` and `sat ` are one name.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row, whose source key is not the slug key of
   its `term` (`definition/<slug>`), or whose `target_key` differs from that key, so a
@@ -185,8 +186,9 @@ each break.
 - It refuses one that adds a key past the namespace's `memory_term_leg_max_definitions`.
 - It ignores a definition's `promoted_from_candidate_id`.
 - `learnings.review` refuses, with `VALIDATION_FAILED`, a `definition` candidate that is
-  not a `knowledge_gap` or `query_history` draft. Today `memory_supporters`,
-  `conversation_seeder` and `assistant_turn` candidates of that type are all promoted.
+  not a `knowledge_gap` or `query_history` draft. Today `memory_supporters` and
+  `conversation_seeder` candidates of that type are promoted; callers write both to the
+  queue with any type.
 - On both ops, `approver` no longer names a definition's promoter, reviewer or audit
   subject, and the response names it in `ignored_args`.
 
@@ -249,11 +251,11 @@ over. It serves no definition whose source is labelled or graded `medium` or `hi
 read-time check above). A namespace holds at most `memory_term_leg_max_definitions`
 definitions: a promotion that adds a key past that ceiling is refused (a revision is not),
 `memory.definitions.list` shows the count against it, and an admin demotes a definition to
-make room, so the leg reads every one. It reads only each row's key, `term` and `aliases`
-(extracted from `value_json` in the query), `promoted_at` and `promotion_event` to match,
-and then the full value, the hash and the source of the matched rows only, so a long
-`rests_on` costs nothing on a search that names no term. A read that still finds more (a race, or rows
-promoted through an older build) reads the most recently promoted (by `promoted_at`) and
+make room, so the leg reads every one. `loom.shared` stores a value as one string, so the
+leg reads every definition's full `value`, `rests_on` included, to match its `term` and
+`aliases`; the ceiling is what bounds that read. It computes the served hash and reads the
+source for the matched rows only. A read that still finds more (a race, or rows promoted
+through an older build) reads the most recently promoted (by `promoted_at`) and
 reports `term_leg` `capped`, which also keeps a `memory.search` from recording a miss. It
 runs concurrently with the other legs under its own time bound
 (`memory_term_leg_timeout_ms`), which never shortens theirs; a leg past its bound adds
@@ -704,16 +706,18 @@ candidate stays pending. For a revision, the old definition stops being served a
 since the source no longer holds the shared copy's text. `memory.definitions.list` shows
 it lapsed because its text changed, and `learnings.list` still shows the pending
 candidate. Reviewing the candidate again promotes the head without a write (the first
-case above). Rejecting it leaves the row as it is, and the admin writes the previous text
-back from the row's history, which governs the old definition again.
+case above). Rejecting it leaves the row as it is. For a revision, the admin writes the
+previous text back from the row's history, which governs the old definition again. For a
+new term, the row is an ordinary namespace-wide `definition` row that the ordinary legs
+serve; the admin deletes it (`memory.delete` with `if_match_sha256`) or keeps it as a
+plain row.
 
 `learnings.review` promotes a definition only from a `knowledge_gap` or `query_history`
 candidate, and refuses a candidate of another kind whose type is `definition` with
 `VALIDATION_FAILED`, naming `memory.promote` of the namespace-wide row as the way to
 govern it. A `memory_supporters` candidate promotes a writer's own row, which the
-namespace-wide rule refuses. A `conversation_seeder` or `assistant_turn` candidate goes
-through `memory.set` from text an LLM drew from a conversation, which the queue shows to
-every viewer and no slug or hash check covers.
+namespace-wide rule refuses. A `conversation_seeder` candidate goes through `memory.set`
+from text drawn from a conversation, which no slug or hash check covers.
 
 ## Erasure and audit
 
@@ -808,11 +812,11 @@ the op budgets before they ship it.
   (`knowledge_query_history_read_timeout_s`), separate from the tracker's
   live-read budget, and a timeout counts against the source's breaker like any tracker
   read.
-- The term leg is one bounded read of the names of the namespace's shared definitions per
-  search (key, `term` and `aliases`, at most `memory_term_leg_max_definitions`), one read
-  of the matched definitions' full values and source rows, and a grading of each matched
-  source's value,
-  on every `memory.search`, every `context.pack` turn and every `memory.ask` sub-search.
+- The term leg is one bounded read of the namespace's shared definitions per search
+  (their full values, `rests_on` included, at most `memory_term_leg_max_definitions`), one
+  read of the matched definitions' source rows, and a grading of each matched source's
+  value, on every `memory.search`, every `context.pack` turn and every `memory.ask`
+  sub-search.
 - A definition's promotion reads the namespace's definition rows, at most
   `memory_term_leg_max_definitions`, to check its term and aliases.
   `memory.definitions.list` reads one page of them, with a limit and a cursor, and reads
@@ -829,8 +833,8 @@ writes or reads a new table (`knowledge.gaps.*`, `knowledge.query_history.*`) an
 while any live replica's schema is below N, and also when no heartbeat in
 `loom.instances` can be read, as `namespace.guide_set` does (the namespace-guide rule of
 [rolling upgrades](../architecture/rolling-upgrades.md)). The gate fails closed: on an
-unreadable heartbeat, recording also stores no miss. The gaps
-pass and the query-history turn write nothing then, and no miss is recorded.
+unreadable heartbeat, recording stores no miss, and the gaps pass and the query-history
+turn write nothing.
 `memory.definitions.list` reads only `loom.shared` and the source rows, which N-1 knows,
 so the N replicas serve it throughout and it shows the lapses N-1 causes; a call that
 lands on an N-1 replica is answered as an unknown op. The operator turns
@@ -864,8 +868,8 @@ each is recovered and promoted again:
 - a source it marked `conflicted`: `conflicts.resolve`; one marked `duplicate`:
   `memory.dedup_resolve`;
 - a write it merged: never stored, so written again;
-- a source its negative-outcome quarantine of `memory.outcome` rejected (`memory.outcome_run`
-  quarantines nothing): written again;
+- a source its negative-outcome quarantine of `memory.outcome` rejected
+  (`memory.outcome_run` quarantines nothing): written again;
 - a source its `memory.consolidate` tombstoned: `memory.restore` within 14 days; past
   them, the definition is written again from its shared copy's text.
 
