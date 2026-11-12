@@ -120,11 +120,14 @@ reader:
   revision of a term always lands on the governed row's key. The read-time check above is
   what the term leg relies on; this refusal keeps such rows from being made.
 
-The changes to `memory.promote` break existing callers: a `definition` promotion without
-the approved hash, from a row that is not namespace-wide, or under a key that is not its
-term's slug is refused, and `approver` no longer names a definition's promoter (the
-response names it in `ignored_args`); the SDKs and the MCP schema carry the hash field,
-and the implementing pull request names the break.
+The changes break existing callers of two ops. `memory.promote` refuses a `definition`
+promotion without the approved hash, from a row that is not namespace-wide, or under a key
+that is not its term's slug. `learnings.review` refuses a `definition` candidate that is
+not a `knowledge_gap` or `query_history` draft (a `memory_supporters` one is promoted
+today) with `VALIDATION_FAILED`. On both, `approver` no longer names a definition's
+promoter, reviewer or audit subject (the response names it in `ignored_args`). The SDKs
+and the MCP schema carry the hash field, and the implementing pull request names each
+break.
 
 Should two shared rows match one name despite that refusal (two promotions racing, or one
 promoted through a build without the check), the term leg serves the one promoted last, by
@@ -164,22 +167,23 @@ governed hit covers those ops' stages too. A stored `memory.ask` answer (its pre
 path) is reused only while the namespace's write mark has not moved, and that mark does
 not cover `loom.shared` today, so every write of a definition's shared row (promote,
 demote, a scrub, an embedding retired) moves the namespace's memory write mark, and no
-answer from before a promotion or demotion is reused after it. It reads the addressed
-namespace's live `loom.shared` rows of type `definition` under a `definition/` key (only
-that namespace, whatever `namespace_scope` fans out over), matches the query against each
-one's term and aliases, and places the matched rows at the top of the served list with
-`governed = true` on the hit, removing any other hit under the same key in the addressed
-namespace, so an edited private copy is not served beside the governed text. A term or
-alias matches where it appears in the query with no character next to it that continues
-its edge: next to a Latin letter (accented ones included), digit, `_`, `+` or `#`, another
-of those; next to a letter of another script written with spaces (Cyrillic, Greek), a
-letter or digit that is not Latin; next to Hangul, whose particles attach to the word
-before them, or a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or
-punctuation, nothing. So `рост` does not match inside "простой" and `café` not inside
-"cafés", while `MRR` matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". One
-written all in capitals, or with a capital after its first letter, matches only as
-written, so `IT` does not match "what is it" and `GitHub` stays exact; any other matches
-case-folded, so `Churn rate` matches "what is our churn rate".
+answer from before a promotion or demotion on N is reused after it (rolling upgrades below
+covers N-1's). It reads the addressed namespace's live `loom.shared` rows of type
+`definition` under a `definition/` key (only that namespace, whatever `namespace_scope`
+fans out over), matches the query against each one's term and aliases, and places the
+matched rows at the top of the served list with `governed = true` on the hit, removing any
+other hit under the same key in the addressed namespace, so an edited private copy is not
+served beside the governed text. A term or alias matches where it appears in the query
+with no character next to it that continues its edge: next to a Latin letter (accented
+ones included), digit, `_`, `+` or `#`, another of those; next to a letter of another
+script written with spaces (Cyrillic, Greek), a letter or digit that is not Latin; next to
+Hangul, whose particles attach to the word before them, or a script written without spaces
+(Han, Kana, Thai, Lao, Khmer, Myanmar) or punctuation, nothing. So `рост` does not match
+inside "простой" and `café` not inside "cafés", while `MRR` matches in "什么是MRR", `ARR` in
+"ARR은" and `매출` in "매출은 얼마야". One written all in capitals, or with a capital after its
+first letter, matches only as written, so `IT` does not match "what is it" and `GitHub`
+stays exact; any other matches case-folded, so `Churn rate` matches "what is our churn
+rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -256,7 +260,10 @@ invoked, never by a search another op runs on its behalf:
   `server/knowledge/app/knowledge_search.py`), no exact-key hit and, in `lexical` mode, no
   hit at all, when no field removed candidates (for example `tags`, `uri_prefix`,
   `since_seconds`, `session_ids`, `source_classes`, `formats` or `block_types` away from
-  its default); documents are the namespace's under any read scope;
+  its default); documents are the namespace's under any read scope today, and once a
+  document can be hidden from some readers (the `mirrored` access of [document
+  sources](document-sources.md)), a search that left out a document its reader may not see
+  records no miss;
 - `loom_search` (`search.query`) whose every section (memory, knowledge, profile,
   conversations) came back empty, with no leg failed, no hit withheld (`withheld`), no
   tracker verdict, no namespace skipped (`namespaces_skipped`) and no `tags`, under a read
@@ -558,7 +565,10 @@ over a live row; the review path that sends it answers 503 while N-1 serves, and
 caller relies on it only once no N-1 replica serves. Once none does, an admin promotes
 again every definition promoted before then, through N-1 or before this design
 (`loom.shared` rows of type `definition` by promotion time), since none of those carried
-the hash check or a token-stamped `promoted_by`. N-1, which does not know `definition` as
+the hash check or a token-stamped `promoted_by`; that promotion on N also moves the write
+mark, which N-1's promotions and demotions never move, so a stored `memory.ask` answer
+from the rollout is not reused past it (until then such an answer lives at most
+`memory_ask_precedents_fast_max_age_hours`). N-1, which does not know `definition` as
 key-identified, can merge, supersede or retire one definition's source while writing
 another; the rows it retired are listed by `memory.auto_retirements` (reasons
 `conflict_resolver`, `newest_wins_contradiction`, `value_update` and
