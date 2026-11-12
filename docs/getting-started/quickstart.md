@@ -50,19 +50,18 @@ its dependencies installed automatically. Both images support Linux `amd64` and 
 including Docker Desktop on Apple Silicon.
 
 Once Loom answers, a new install saves and reads back a first memory, `loom/welcome`,
-which says the server is personal and where its dashboard is; a rerun after it read back,
+which says the server runs without sign-in and where its dashboard is; a rerun after it read back,
 an upgrade, or an install whose ClickHouse already holds one writes none. On a terminal,
 the installer then offers to connect each coding agent it finds: Claude Code and Codex
-through their plugins, and VS Code through `code --add-mcp` (asked on every run, since VS
-Code lists no servers to check). `LOOM_CONNECT` answers for it, for a run without a
-terminal too: a comma list of `claude-code`, `codex` and `vscode`, `all`, or `none` (any
-other name stops the install); without a terminal and without `LOOM_CONNECT`, no agent's
-settings change. A plugin installed before is left as it is: when Claude Code's points at
-another server, the installer prints the command that points it at this one, and on a port
-other than 7777, Codex, whose plugin always uses `http://localhost:7777`, gets a link to
-its setup page. Last, on a desktop, it opens the dashboard; `LOOM_NO_OPEN=1` skips that.
-With sign-in on, it connects no agent and says where tokens come from. Ctrl-C stops the
-run at any step.
+through their plugins, and VS Code through `code --add-mcp`. `LOOM_CONNECT` answers for
+it, for a run without a terminal too: a comma list of `claude-code`, `codex` and `vscode`,
+`all`, or `none` (any other name stops the install); without a terminal and without
+`LOOM_CONNECT`, no agent's settings change. A plugin or MCP server set up before is left
+as it is, with the server it was set up for; for Claude Code the installer prints the
+command that points it at this install. On a port other than 7777, Codex, whose plugin
+always uses `http://localhost:7777`, gets a link to its setup page instead. Last, on a
+desktop, it opens the dashboard; `LOOM_NO_OPEN=1` skips that. With sign-in on, it connects
+no agent and says where tokens come from. Ctrl-C stops the run at any step.
 
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
 self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its

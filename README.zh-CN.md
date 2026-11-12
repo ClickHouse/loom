@@ -64,7 +64,7 @@ Loom 不是供单个智能体在进程内使用的短期记忆库，也不是智
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
 ```
 
-请在主目录或其他只有你有写权限的目录中运行：在共享目录中，他人可能在运行前替换 `loom-install.sh`。安装程序会启动 Loom 和 ClickHouse、执行迁移并打印控制台地址：**http://localhost:7777/**。
+请在主目录或其他只有你有写权限的目录中运行：在共享目录中，他人可能在运行前替换 `loom-install.sh`。安装程序会启动 Loom 和 ClickHouse、执行迁移、保存第一条记忆并打印控制台地址：**http://localhost:7777/**；在终端中运行时，它还会提议接入找到的编程智能体（Claude Code、Codex、VS Code），并打开控制台。
 
 单用户模式请保持仅本机访问；需要共享访问时，按照[团队部署指南](./docs/operations/deployment.md#identity-modes)配置，包括 TLS。
 
@@ -78,7 +78,7 @@ docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
 
 只填写密钥不会切换已固定的模型（本地嵌入模型和 fake LLM），还需设置提供商与模型；控制台中保存的设置优先于 `.env`。
 
-在运行个人安装的机器上，插件无需 token：
+如果安装程序已接入你的智能体，可跳过下面的命令。在运行个人安装的机器上，插件无需 token：
 
 ```bash
 # Claude Code
