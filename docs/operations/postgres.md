@@ -89,12 +89,13 @@ synchronous_standby_names = 'FIRST 1 (loom_standby)'
 
 ## What the boot checks
 
-| Check      | Refuses to start when                                                                                                                        |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connection | `LOOM_PG_DSN` is empty or Postgres does not answer                                                                                           |
-| Migrations | an applied file of `schemas/pg_migrations/` was edited, or one this build lacks is older than its last                                       |
-| Durability | with `LOOM_PG_DURABILITY=synchronous`, `synchronous_standby_names` is empty; under any value, the role may not run `pg_logical_emit_message` |
-| Authority  | the deployment recorded the ClickHouse authority, this ClickHouse holds memory under it, or this Postgres belongs to another deployment      |
+| Check      | Refuses to start when                                                                                                                                                                                                                                                                           |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection | `LOOM_PG_DSN` is empty or Postgres does not answer                                                                                                                                                                                                                                              |
+| Migrations | an applied file of `schemas/pg_migrations/` was edited, or one this build lacks is older than its last                                                                                                                                                                                          |
+| Durability | with `LOOM_PG_DURABILITY=synchronous`, `synchronous_standby_names` is empty; under any value, the role may not run `pg_logical_emit_message`                                                                                                                                                    |
+| Authority  | the deployment recorded the ClickHouse authority, this ClickHouse holds memory under it, or this Postgres belongs to another deployment                                                                                                                                                         |
+| Cell state | the first read of the cell state rows (`loom.cell_first`, `loom.tenancy_mode`, `loom.cell_self`, `loom.tenancy`) fails; with Postgres migrations pending the process boots gated and unready until a read lands ([troubleshooting](troubleshooting.md#a-process-with-loom_cell-unset-is-gated)) |
 
 A migration waits at most 5 s for a table lock and is tried five times; a boot that
 logs `Postgres migration <file> waited too long for a lock` four times and then fails

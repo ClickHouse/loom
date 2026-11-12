@@ -1340,7 +1340,10 @@ epoch. A replica refuses to start when:
 - it is configured for ClickHouse and the record says Postgres, or the reverse;
 - it is configured for Postgres and this ClickHouse already holds memory under the
   ClickHouse authority;
-- its Postgres records another deployment, or none while ClickHouse records Postgres.
+- its Postgres records another deployment, or none while ClickHouse records Postgres;
+- its first read of the cell state rows fails, with no Postgres migration pending
+  ([cells](cells.md#the-tenancy-check-and-placement),
+  [troubleshooting](../operations/troubleshooting.md#a-process-with-loom_cell-unset-is-gated)).
 
 A process with `LOOM_BOOT_MIGRATE=0` applies no migration of either store and writes no
 record: it checks the record there is. A ClickHouse one serves without the table when

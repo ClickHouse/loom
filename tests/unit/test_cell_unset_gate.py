@@ -89,7 +89,7 @@ def test_the_unset_gate_opens_only_in_open_and_recording(
 def test_partial_names_the_rows_present(monkeypatch: pytest.MonkeyPatch) -> None:
     _rows(monkeypatch, "partial", mode="enforced")
     reason = cell.gate_reason()
-    assert "loom.tenancy_mode, loom.tenancy present" in reason
+    assert "loom.tenancy_mode, loom.tenancy present;" in reason
     assert not cell.readiness_check().ok
 
 
@@ -458,3 +458,31 @@ def test_an_unset_on_process_runs_the_leaders_boot_duties_when_its_gate_opens(
     assert asyncio.run(_run(False)) == ["loom-retention-overrides"]
     assert "loom-tracker-namespaces" in asyncio.run(_run(True))
     assert started == [True, True] and published == [True, True]
+
+
+def test_the_troubleshooting_link_names_a_section_that_exists() -> None:
+    from pathlib import Path
+
+    from tests.unit.markdown_links import anchors
+
+    page, _, anchor = cell.TROUBLESHOOTING.partition("#")
+    root = Path(boot.__file__).resolve().parents[1]
+    assert anchor in anchors(root / page)
+
+
+def test_an_unread_state_answers_503_while_postgres_migrations_are_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.transport.model_maintenance import ModelMaintenanceMiddleware
+
+    monkeypatch.setattr(cell, "_server_reads", True)
+    monkeypatch.setattr(cell, "_view", cell._View(error="relation does not exist"))
+    app, send = AsyncMock(), AsyncMock()
+    asyncio.run(
+        ModelMaintenanceMiddleware(app)(
+            {"type": "http", "method": "POST", "path": "/v1/memory.set"}, AsyncMock(), send
+        )
+    )
+    app.assert_not_awaited()
+    body = send.await_args_list[1].args[0]["body"]
+    assert b"cell state is not read yet (relation does not exist)" in body

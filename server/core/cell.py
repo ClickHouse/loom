@@ -324,8 +324,8 @@ def _unset_reason(view: _View) -> str:
         return ""
     if found == "enforced":
         return (
-            "this deployment is a cell in enforced mode and LOOM_CELL is unset; "
-            f"see {TROUBLESHOOTING}"
+            "this deployment is a cell in enforced mode and LOOM_CELL is unset "
+            f"(see {TROUBLESHOOTING})"
         )
     present = [
         name
@@ -338,8 +338,8 @@ def _unset_reason(view: _View) -> str:
         if here
     ]
     return (
-        f"this deployment holds a partial cell state ({', '.join(present)} present); "
-        f"see {TROUBLESHOOTING}"
+        f"this deployment holds a partial cell state ({', '.join(present)} present; "
+        f"see {TROUBLESHOOTING})"
     )
 
 
