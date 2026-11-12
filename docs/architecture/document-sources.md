@@ -80,27 +80,27 @@ an item swap whose new files are listed before the old copies retire, or a lower
 setting) holds back new documents only: it finishes its listing, rewrites changed lists,
 retires, and lands its listing row, so its copies drain back under the bound and no list
 goes stale; `inspect` and `loom doctor` show `too_many_documents` meanwhile, with the
-count, for a `namespace` source; for a mirrored source, only its connected owner and a
-platform admin see the code, without the count. The read of a source's stored copies
-goes in pages by `source_uri`, so it never cuts one off. A listing asks the store about
-at most 50 parent folders per query (not a setting), so a source of many folders lists
-in several queries; a recursive folder's subfolders are walked on every full listing,
-and a file in a new subfolder arrives with the next one. A probe checks a bounded
-sample: every item while there are at most 20, otherwise the 20 items added last, and
-the answer says `sampled: true` with the number checked (on a mirrored source, for a
-connected source's owner and a platform admin only, below). A mirrored source's probe
-answers reachability, the items checked and codes, never a count, a sample of titles or
-a summary that names a file, since it lists as the owner or as crawled people. Every
-mirrored source's probe and status, to anyone but a connected source's owner and a
-platform admin, answer only source-level codes (whether the credential and its scopes
-work, `rate_limited`, `owner_inactive`): an item refusal, a per-file or per-item code
-(`item <n>: http_404`, `meet_recordings: not found`, `too_large`,
-`extraction_failed:<code>`) and the oldest listing start are not answered there, since
-each depends on what a person can read. A refused item of the sample refuses `add` or
-`update` only on a `namespace` source and on a connected source probed by its owner; on
-any other mirrored probe, a platform admin's included, items never refuse, and only the
-source-level codes do. The next sync turn reports a refused item as `item <n>: http_404`
-and goes on with the rest.
+count, for a `namespace` source; for a mirrored source, its connected owner sees the
+code without the count, and a platform admin sees both (exception 4). The read of a
+source's stored copies goes in pages by `source_uri`, so it never cuts one off. A
+listing asks the store about at most 50 parent folders per query (not a setting), so a
+source of many folders lists in several queries; a recursive folder's subfolders are
+walked on every full listing, and a file in a new subfolder arrives with the next one. A
+probe checks a bounded sample: every item while there are at most 20, otherwise the 20
+items added last, and the answer says `sampled: true` with the number checked (on a
+mirrored source, for a connected source's owner and a platform admin only, below). A
+mirrored source's probe answers reachability, the items checked and codes, never a
+count, a sample of titles or a summary that names a file, since it lists as the owner or
+as crawled people. Every mirrored source's probe and status, to anyone but a connected
+source's owner and a platform admin, answer only source-level codes (whether the
+credential and its scopes work, `rate_limited`, `owner_inactive`): an item refusal, a
+per-file or per-item code (`item <n>: http_404`, `meet_recordings: not found`,
+`too_large`, `extraction_failed:<code>`) and the oldest listing start are not answered
+there, since each depends on what a person can read. A refused item of the sample
+refuses `add` or `update` only on a `namespace` source and on a connected source probed
+by its owner; on any other mirrored probe, a platform admin's included, items never
+refuse, and only the source-level codes do. The next sync turn reports a refused item as
+`item <n>: http_404` and goes on with the rest.
 
 ### The link parser
 
@@ -336,10 +336,11 @@ address, and a code that depends on the mirror's rows (a residue failure) reads 
 same code for any cause. The exceptions are these:
 
 1. A checked leg's answer to its reader.
-2. The model and embedding tokens and the cost of what a request was admitted, counted
-   in its namespace's totals and against its `daily_cost_cap_usd`; the request's per-row
-   values go only to its own caller and a platform admin. Its ClickHouse work figures
-   (statements, rows and bytes read, chunks injected) go to a platform admin only.
+2. The model and embedding tokens and the cost of the mirrored items a request was
+   admitted to, counted in its namespace's totals and against its `daily_cost_cap_usd`;
+   the request's per-row values go only to its own caller and a platform admin. Its
+   ClickHouse work figures (statements, rows and bytes read, chunks injected) go to a
+   platform admin only.
 3. A connected source's per-item status and `too_many_documents`, to its owner, and its
    listing age, to its owner as a code (fresh or stale).
 4. A platform admin's view of a mirror's sources (every mirrored source's status, the
@@ -349,10 +350,11 @@ same code for any cause. The exceptions are these:
    `acl-` name is not found for anyone else.
 
 A deployment with auth off (`LOOM_AUTH_REQUIRED=false`) has no reader identity to check.
-It refuses to add a mirrored source (`AUTH_REQUIRED`), and when auth is switched off
-after mirrors exist, the gate still refuses every mirror name, the mirror legs answer
-nothing, and the sync skips mirrored sources, apart from the cleanup of a stopped one,
-which only deletes.
+It refuses to add a mirrored source (`AUTH_REQUIRED`), as every deployment does until
+`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set (`MIRRORED_SOURCES_OFF`), and when auth
+is switched off after mirrors exist, the gate still refuses every mirror name, the
+mirror legs answer nothing, and the sync skips mirrored sources, apart from the cleanup
+of a stopped one, which only deletes.
 
 ### The mirror
 
@@ -394,28 +396,30 @@ missed path leaks.
   since a decision row is a memory every reader of the namespace reads and a dataset is
   read by `knowledge.query` without the check.
 - **A request that touches a mirror is marked.** A request that runs a mirror leg or
-  writes a mirror row (a `remove` or a namespace's retirement included) is marked, and
-  nothing it writes outside the mirror depends on what the mirror holds: no cache shared
-  across readers (the repository-docs listing cache, `memory.ask`'s precedents, the
-  provider response and embedding caches) is read or written with text a mirror leg
-  gave, and no field or row of its `agent_events`, trace, exposure, metric or span
-  records, nor a generation's captured text, depends on the mirror. An answer any part
-  of which comes from an admitted mirrored item carries `mirrored: true`; a mirror leg
-  answers nothing to a client that does not declare it honours the flag. Loom's plugins,
-  CLI and SDKs declare it; so do the dashboard, which shows the document, and the
-  assistant, which writes nothing from that turn into anything it shares. Once a session
-  has seen the flag, no Loom hook sends anything from that session, and in an org with a
-  mirror the transcript-capture ops accept nothing from a hook build that does not
-  honour it, whatever the versions of the session's other clients. Each pull request
-  that adds a mirror leg, writer, client or hook lists what it writes and tests each
-  against the mark. The mark's costs are accepted: `knowledge.reads` names no address on
-  a namespace with a mirror, and the assistant's support check reads a marked call as
-  unknown.
+  writes a mirror row is marked, and nothing it writes outside the mirror depends on
+  what the mirror holds, except as exception 2 allows: no cache shared across readers
+  (the repository-docs listing cache, `memory.ask`'s precedents, the provider response
+  and embedding caches) is read or written with text a mirror leg gave, and no field or
+  row of its `agent_events`, trace, exposure, metric or span records, nor a generation's
+  captured text, depends on the mirror. An answer any part of which comes from an
+  admitted mirrored item carries `mirrored: true`; a mirror leg answers nothing to a
+  client that does not declare it honours the flag. Loom's plugins, CLI and SDKs declare
+  it; so do the dashboard, which shows the document, and the assistant, which writes
+  nothing from that turn into anything it shares. Once a session has seen the flag, no
+  Loom hook or client sends anything from that session through any op, and a client that
+  relays a capture (the CLI's `ingest-transcript`) refuses a transcript that carries the
+  marker. Mirrored sources are off for a deployment until an operator turns them on
+  (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`), after every Loom client and hook that
+  sends session content honours the flag; that gate holds across orgs and whatever mix
+  of clients a session runs. Each pull request that adds a mirror leg, writer, client or
+  hook lists what it writes and tests each against the mark. The mark's costs are
+  accepted: `knowledge.reads` names no address on a namespace with a mirror, and the
+  assistant's support check reads a marked call as unknown.
 - **The sync and the workers write nothing outside the mirror.** A mirrored source's
   sync state, audit rows, error text and per-file wait state are filed under the
   mirror's namespace and go with it when it is erased; whatever of a mirror leaves it (a
   source's status, a worker's pass notes, logs, spans and metrics, the extractor
-  service's logs and traces) carries codes only (exception 4 apart).
+  service's logs and traces) carries codes only (exceptions 3 and 4 apart).
 - **No scope reaches a mirror.** Every statement that reads a table holding mirror rows
   other than by a namespace the caller names leaves out the `acl-[0-9a-f]{24}` form.
   `resolve_org_scope`, ahead of its auth-off return, `every_namespace_scope` and
@@ -431,10 +435,13 @@ missed path leaks.
 A mirrored source's documents are never kept past it: `remove` retires every one it owns
 (`delete_documents` is implied), and so do a disconnect, a SCIM deactivation, the owner
 check and every retirement of a namespace's sources. Each of them marks the source
-inactive in the request and leaves the deleting to the sync worker, so no request's work
-depends on how much the mirror holds. In a mirror, ownership and every per-source
-document read go by the `source-id:<id>` tag, not by name. The retention overrides give
-each mirror its namespace's `retention_days` and `warm_days`.
+inactive (in the request, or in the turn for the owner check) and leaves the deleting to
+the sync worker, so no request's work depends on how much the mirror holds. The worker
+retires a stopped source's documents by its `source-id:` tag outside the content bound,
+with a per-pass bound of its own, so a large removal does not stall other sources'
+content. In a mirror, ownership and every per-source document read go by the
+`source-id:<id>` tag, not by name. The retention overrides give each mirror its
+namespace's `retention_days` and `warm_days`.
 
 A namespace source and a mirrored source that reach the same file own two documents, one
 in the namespace and one in its mirror. The namespace copy is readable by every reader,
@@ -502,10 +509,12 @@ person's own session token reads with that person's emails. Another token reads 
 creator's emails only when it was minted for that person alone and says so (a
 `reads_as_creator` claim, which only the person's own signed-in session can mint,
 through the dashboard's flow that connects their own agent, which the coding-agent
-plugins and the assistant use; delegation never copies it); a service account made for
-tools, CI or a team, a bot and an end-user token have none, whatever their `creator`, so
-they see only `anyone` documents. A request sent on behalf of another person
-(`X-Loom-On-Behalf-Of`) reads with no emails.
+plugins use; delegation never copies it). The assistant's answer token, delegated from
+the caller's for that answer alone, reads with the caller's emails, and no token
+delegated from it does; the conversation the assistant's front end stores is the
+reader's own record; a service account made for tools, CI or a team, a bot and an
+end-user token have none, whatever their `creator`, so they see only `anyone` documents.
+A request sent on behalf of another person (`X-Loom-On-Behalf-Of`) reads with no emails.
 
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
 a link-only permission, a permission the store marks deleted or pending (its address may
@@ -647,12 +656,12 @@ requests. That design has to answer what this page found:
   `connection.list` and `connection.disconnect` are new (a connection starts in the
   dashboard, `POST /v1/connect/<kind>/start`); `list` and `inspect` show items, modes
   and, through the check, the documents each owns. A mirrored source shows its document
-  counts to nobody, and a connected source's items only to its owner (an admin can still
-  remove the source). To a viewer who is neither the owner nor an admin, a mirrored
-  source shows its kind, its owner as "a connected account" for a connected one, its
-  item count and its last sync's status, not its items, `config` or `created_by`; its
-  error text carries codes only, for every viewer. Python and TypeScript SDKs are
-  regenerated.
+  counts to nobody but a platform admin (exception 4), and a connected source's items
+  only to its owner (an admin can still remove the source). To a viewer who is neither
+  the owner nor an admin, a mirrored source shows its kind, its owner as "a connected
+  account" for a connected one, its item count and its last sync's status, not its
+  items, `config` or `created_by`; its error text carries codes only, for every viewer.
+  Python and TypeScript SDKs are regenerated.
 - **CLI.** `loom knowledge source add|update|list --namespace <ns> --link <url>...`
   (`--credential-file`, `--connected`), `loom connect gdrive|notion|linear`, `loom
 connection list|disconnect`, `loom knowledge mirror erase --all` ([restores and
@@ -731,10 +740,9 @@ statements and census keys against these, and its tests pin each one:
 ## Rolling upgrades
 
 - **Clients.** A client built before `mirrored: true` declares nothing, so a mirror leg
-  answers it nothing until it is upgraded, and in an org with a mirror the
-  transcript-capture ops accept nothing from a hook build that does not honour the flag;
-  the plugins, CLI, SDKs and dashboard that declare it ship with the first build that
-  adds a mirror leg.
+  answers it nothing until it is upgraded. Mirrored sources stay off
+  (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`) until the operator has rolled out the
+  plugins, CLI, SDKs and hooks that honour the flag.
 - **N-1 cannot operate on a source it must not.** N-1 reads `kind`, unseals
   `credential_enc` and reads `config_json`, and knows none of the new columns. A source
   stored with `kind` empty is one N-1 cannot use: its `check`, `rotate` and sync turn
@@ -765,8 +773,8 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 
 ## Breaks
 
-- In an org with a mirror, the transcript-capture ops accept nothing from a coding-agent
-  hook build that does not honour `mirrored: true`.
+- Mirrored sources need `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`, which an operator
+  sets once every Loom client and hook honours `mirrored: true`.
 - The source ops no longer answer `NOT_A_CODE_NAMESPACE`; `add` answers
   `NAMESPACE_INACTIVE` for an inactive namespace, `PERSONAL_NAMESPACE` for a person's
   own place and `ERASURE_PENDING` while an erasure of the namespace is unfinished.
@@ -786,6 +794,7 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 | `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`                | 50000   | a source's stored documents plus new files; past it a turn holds back new documents                        |
 | `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_PERSON`    | 8       | a person's connected sources in one namespace                                                              |
 | `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_NAMESPACE` | 64      | a namespace's connected sources                                                                            |
+| `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`            | false   | mirrored sources may be added; set once every Loom client and hook honours `mirrored: true`                |
 | `LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS`    | 40      | documents a pass fetches, writes and retires for mirrored sources, apart from the namespace sources' bound |
 | `LOOM_CONNECT_GDRIVE_CLIENT_ID`, `_SECRET`           | unset   | the shared-folder store's OAuth client; unset, those connections are off                                   |
 | `LOOM_CONNECT_NOTION_CLIENT_ID`, `_SECRET`           | unset   | the page store's public integration                                                                        |
@@ -923,16 +932,18 @@ Each implementing pull request lists its own; these pin the model:
     user, admitting nobody; `loom` CLI output holding an admitted mirrored item, and a
     subagent's mirror read, not captured into the parent session; a `loom` CLI run
     through a shell and a prompt-recall injection carrying `mirrored: true` stopping
-    every hook of the session; a query whose only match is a hidden mirrored document
-    and one that matches nothing leaving the same work figures on the caller's row; a
-    non-owner admin's `remove` of mirrored sources of 10 and 10,000 documents leaving
-    the same request-side figures; a session with a current CLI and an older plugin
-    capturing nothing; the dashboard's `knowledge.get` and the assistant's `memory.ask`
-    of an admitted mirrored document answered with `mirrored: true`; a follow-up query a
-    mirror leg shaped leaving the embedding cache untouched; a viewer's cost or insights
-    read showing no per-request token spend of another person's marked request.
+    every hook of the session; no reader but a platform admin reading the work figures
+    on a marked row; a non-owner admin's `remove` of mirrored sources of 10 and 10,000
+    documents leaving the same request-side figures; the CLI's `ingest-transcript`
+    refusing a transcript that carries the marker; a large removal leaving another
+    mirrored source's content fetches unchanged; the assistant's answer token admitted
+    and a token delegated from it refused; the dashboard's `knowledge.get` and the
+    assistant's `memory.ask` of an admitted mirrored document answered with `mirrored:
+true`; a follow-up query a mirror leg shaped leaving the embedding cache untouched;
+    a viewer's cost or insights read showing no per-request token spend of another
+    person's marked request.
   - `row_reach`, `row_in_scope` and `namespace_for_id` opening nothing of a mirror with
-    auth off; a mirrored source's document counts shown to nobody.
+    auth off; a mirrored source's document counts shown to nobody but a platform admin.
   - A turn that finds a narrowed list rewriting the row without rebuilding a chunk, and
     one that finds the same list writing nothing; a listing row landing only after its
     changed lists.
