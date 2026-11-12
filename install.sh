@@ -408,17 +408,17 @@ main() {
     *)
       # Curl's exit says what listens: 7 is a refused connection, so the port is
       # free; 0 (an answer), 1 and 8 (a reply that is not HTTP), 52 (an empty
-      # reply) and 56 (a reset) come only from a listener, and so does a timeout
-      # after a connect time above zero. A timeout with none is either a
-      # listener that never answers (curl before 7.61 may print a fast connect
-      # as 0.000) or an address that does not reach this host.
+      # reply) and 56 (a reset) come only from a listener, and so does any exit
+      # after a connect time above zero. A timeout with none is either a listener
+      # that never answers (curl 7.29 prints a fast connect as 0.000) or an
+      # address that does not reach this host.
       probe=0
       connected=$(LC_ALL=C curl -s --noproxy '*' -o /dev/null -w '%{time_connect}' \
         --connect-timeout 3 --max-time 5 "http://$host:$port/" 2>/dev/null) || probe=$?
       case $probe,$connected in
         7,*) ;;
         28,0.000 | 28,0.000000 | 28,) fail "port $port on $host does not answer within 5 seconds: a program may hold it without answering, or LOOM_BIND_HOST, LOOM_PORT or a firewall keeps this host from reaching it" ;;
-        0,* | 1,* | 8,* | 28,* | 52,* | 56,*)
+        0,* | 1,* | 8,* | 52,* | 56,* | *,*[1-9]*)
           other_port=$((port + 1))
           [ "$port" -lt 65535 ] || other_port=7778
           holder="another program"

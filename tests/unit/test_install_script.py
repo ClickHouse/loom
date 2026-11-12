@@ -976,13 +976,13 @@ def test_a_listener_that_never_answers_holds_the_port(
     assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
 
 
-@pytest.mark.parametrize("code", [52, 56, 1, 8])
+@pytest.mark.parametrize("code", [52, 56, 1, 8, 18])
 def test_a_listener_that_resets_or_answers_nothing_holds_the_port(
     install, installer_env: dict[str, str], code: int
 ) -> None:
     """Any exit after a connection is a listener: 52 (an empty reply), 56 (a reset),
-    1 (a non-HTTP reply, such as an SSH or TLS server's) and 8 (a status line curl
-    cannot read)."""
+    1 (a non-HTTP reply, such as an SSH or TLS server's), 8 (a status line curl
+    cannot read) and 18 (a body cut short)."""
     run, _ = install
     _start_stubs(installer_env, probe_exit=code, connect_time="0.000150")
     result = run(LOOM_SKIP_START="0")
@@ -1017,11 +1017,14 @@ def test_a_listener_is_named_by_curls_exit_alone(
     assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
 
 
-def test_the_suggested_port_is_the_next_one(install, installer_env: dict[str, str]) -> None:
+@pytest.mark.parametrize(("port", "suggested"), [("7779", "7780"), ("65535", "7778")])
+def test_the_suggested_port_is_the_next_one(
+    install, installer_env: dict[str, str], port: str, suggested: str
+) -> None:
     run, _ = install
     _start_stubs(installer_env, probe_exit=0, connect_time="0.000100")
-    result = run(LOOM_SKIP_START="0", LOOM_PORT="7779")
-    assert "LOOM_PORT=7780 in front of sh" in result.stderr
+    result = run(LOOM_SKIP_START="0", LOOM_PORT=port)
+    assert f"LOOM_PORT={suggested} in front of sh" in result.stderr
 
 
 def test_a_probe_curl_cannot_make_is_not_called_in_use(
