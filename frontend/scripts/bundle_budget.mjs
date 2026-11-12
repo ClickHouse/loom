@@ -23,7 +23,7 @@ const FORBIDDEN_IN_INDEX = [/^flows\/.*Dialog\.tsx$/, /^components\/HeaderSearch
 const out = path.resolve("dist-budget");
 fs.rmSync(out, { recursive: true, force: true });
 // Vite's API reads vite.config.ts as its CLI does, and no shell parses the output path.
-await build({ build: { sourcemap: true, outDir: out, emptyOutDir: true } });
+await build({ build: { sourcemap: true, outDir: out } });
 const assets = path.join(out, "assets");
 // The entry is the module script index.html loads, not the first index-*.js on disk: other
 // modules named index (a Radix package's) become chunks with the same prefix.
