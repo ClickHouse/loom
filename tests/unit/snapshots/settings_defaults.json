@@ -160,6 +160,7 @@
  "code_crossref_interval_seconds": 1800,
  "code_describe_concurrency": 8,
  "code_egress_connect_timeout_s": 15.0,
+ "code_egress_half_close_timeout_s": 10.0,
  "code_egress_idle_timeout_s": 300.0,
  "code_egress_slot_wait_s": 5.0,
  "code_embed_max_attempts": 8,

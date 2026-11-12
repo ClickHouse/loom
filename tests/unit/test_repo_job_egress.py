@@ -253,3 +253,39 @@ async def test_a_tunnel_with_no_bytes_either_way_is_closed(
     finally:
         await proxy.close()
         server.close()
+
+
+async def test_a_tunnel_whose_client_sent_eof_closes_when_the_server_goes_quiet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A registry need not close a connection its client has finished with; the
+    tunnel would otherwise hold its slot for the whole idle timeout."""
+
+    async def never_closes(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read()
+        writer.write(b"bye")
+        await asyncio.sleep(60)
+
+    server = await asyncio.start_server(never_closes, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    real_open = asyncio.open_connection
+
+    async def open_connection(_host: str, _port: int, **kw: Any) -> Any:
+        return await real_open("127.0.0.1", port, **kw)
+
+    monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
+    monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.2)
+    sock = str(tmp_path / "p.sock")
+    proxy = await egress.start_proxy(sock, None)
+    try:
+        reader, writer = await asyncio.open_unix_connection(sock)
+        writer.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
+        assert head.startswith(b"HTTP/1.1 200")
+        writer.write_eof()
+        # the server's last bytes still arrive, then the proxy hangs up
+        assert await asyncio.wait_for(reader.read(), timeout=5) == b"bye"
+        writer.close()
+    finally:
+        await proxy.close()
+        server.close()

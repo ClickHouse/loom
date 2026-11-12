@@ -14,8 +14,10 @@ or a package download gets the same answer:
 
 Anything that is not CONNECT (plain http) is refused. One job holds at most
 `MAX_TUNNELS` connections at a time; one more waits up to `code_egress_slot_wait_s` for a
-free slot and is then refused (503), and a tunnel with no bytes either way for
-`code_egress_idle_timeout_s` is closed.
+free slot and is then refused (503, logged), and a tunnel with no bytes either way for
+`code_egress_idle_timeout_s` is closed, or for `code_egress_half_close_timeout_s` once
+the client has sent EOF. The relay inside the sandbox bridges at most `MAX_TUNNELS`
+connections at a time, so a client that opens hundreds waits in its listen backlog.
 """
 
 from __future__ import annotations
@@ -81,6 +83,18 @@ async def _splice(
         pass
 
 
+async def _until_server_done(server_side: asyncio.Task[None], last_active: list[float]) -> None:
+    """Once the client has sent EOF, the server's direction runs while bytes still
+    come, and stops after `code_egress_half_close_timeout_s` without one: a server
+    need not close a connection its client has finished with, and the tunnel would
+    hold its slot for the whole idle timeout."""
+    last_active[0] = time.monotonic()
+    while not server_side.done():
+        await asyncio.wait({server_side}, timeout=settings.code_egress_half_close_timeout_s)
+        if time.monotonic() - last_active[0] >= settings.code_egress_half_close_timeout_s:
+            server_side.cancel()
+
+
 class EgressProxy:
     """One job's proxy. `close()` stops it and drops every open tunnel."""
 
@@ -89,6 +103,7 @@ class EgressProxy:
         self.server: asyncio.Server | None = None
         self._tunnels: set[asyncio.Task[None]] = set()
         self._slots = asyncio.Semaphore(MAX_TUNNELS)
+        self.refused = 0
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
@@ -100,6 +115,9 @@ class EgressProxy:
                     self._slots.acquire(), timeout=settings.code_egress_slot_wait_s
                 )
             except TimeoutError:
+                self.refused += 1
+                if self.refused == 1:
+                    logger.warning("egress refused a tunnel: all %d are open", MAX_TUNNELS)
                 writer.write(b"HTTP/1.1 503 Refused\r\n\r\ntoo many open tunnels\n")
                 return
             try:
@@ -135,14 +153,18 @@ class EgressProxy:
             return
         writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
         last_active = [time.monotonic()]
+        server_side = asyncio.create_task(_splice(up_reader, writer, last_active))
         try:
-            await asyncio.gather(
-                _splice(reader, up_writer, last_active), _splice(up_reader, writer, last_active)
-            )
+            await _splice(reader, up_writer, last_active)
+            await _until_server_done(server_side, last_active)
         finally:
+            server_side.cancel()
+            await asyncio.gather(server_side, return_exceptions=True)
             up_writer.close()
 
     async def close(self) -> None:
+        if self.refused:
+            logger.warning("egress refused %d tunnels at the cap of %d", self.refused, MAX_TUNNELS)
         tunnels = list(self._tunnels)
         if self.server is not None:
             self.server.close()

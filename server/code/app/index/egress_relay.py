@@ -3,8 +3,10 @@
 The sandbox has no network. Its one way out is the egress proxy's unix socket,
 mounted in; this script bridges to it so ordinary clients can use it:
 
-  serve PORT SOCKET -- ARGV...  listen on 127.0.0.1:PORT (git, go and npm use
-                                it as their https proxy), then exec ARGV
+  serve PORT SOCKET MAX -- ARGV...
+                                listen on 127.0.0.1:PORT (git, go and npm use
+                                it as their https proxy), then exec ARGV; at
+                                most MAX connections are bridged at a time
   connect HOST PORT SOCKET      ssh's ProxyCommand: ask the proxy for HOST:PORT
                                 and pipe stdin/stdout through the tunnel
 
@@ -15,6 +17,7 @@ import os
 import socket
 import sys
 import threading
+import time
 
 
 def _pipe(src: socket.socket, dst: socket.socket) -> None:
@@ -30,30 +33,55 @@ def _pipe(src: socket.socket, dst: socket.socket) -> None:
             pass
 
 
-def _bridge(conn: socket.socket, path: str) -> None:
+def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
     upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         upstream.connect(path)
-    except OSError:
+        back = threading.Thread(target=_pipe, args=(upstream, conn), daemon=True)
+        back.start()
+        _pipe(conn, upstream)
+        back.join()
+    except (OSError, RuntimeError):  # RuntimeError: the job's task limit refused a thread
+        pass
+    finally:
         conn.close()
-        return
-    threading.Thread(target=_pipe, args=(upstream, conn), daemon=True).start()
-    _pipe(conn, upstream)
+        upstream.close()
+        slots.release()
 
 
-def serve(port: int, path: str, argv: list[str]) -> None:
+def accept_loop(listener: socket.socket, path: str, slots: threading.Semaphore) -> None:
+    """Bridge each connection in its own two threads, at most `slots` at a time. A
+    connection past that waits in the listen backlog, costing no thread: a client
+    opening hundreds at once would otherwise reach the job's task limit, and a
+    thread that cannot start must not end the loop."""
+    while True:
+        slots.acquire()
+        try:
+            conn, _ = listener.accept()
+        except OSError:  # out of file descriptors, or the listener is closed
+            slots.release()
+            if listener.fileno() == -1:
+                return
+            time.sleep(0.1)
+            continue
+        try:
+            threading.Thread(target=_bridge, args=(conn, path, slots), daemon=True).start()
+        except RuntimeError:
+            conn.close()
+            slots.release()
+
+
+def serve(port: int, path: str, max_bridges: int, argv: list[str]) -> None:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", port))
-    listener.listen(64)
+    listener.listen(4096)  # the kernel caps it at net.core.somaxconn
     child = os.fork()
     if child == 0:
         # The relay is a grandchild handed to the sandbox's init, so ARGV has no
         # stray child; it dies with the sandbox's pid namespace.
         if os.fork() == 0:
-            while True:
-                conn, _ = listener.accept()
-                threading.Thread(target=_bridge, args=(conn, path), daemon=True).start()
+            accept_loop(listener, path, threading.Semaphore(max_bridges))
         os._exit(0)
     os.waitpid(child, 0)
     listener.close()
@@ -97,11 +125,13 @@ def _copy_stdin(dst: socket.socket) -> None:
 
 
 def main(args: list[str]) -> int:
-    if len(args) >= 5 and args[0] == "serve" and args[3] == "--":
-        serve(int(args[1]), args[2], args[4:])
+    if len(args) >= 6 and args[0] == "serve" and args[4] == "--":
+        serve(int(args[1]), args[2], int(args[3]), args[5:])
     if len(args) == 4 and args[0] == "connect":
         return connect(args[1], args[2], args[3])
-    sys.stderr.write("usage: egress_relay.py serve PORT SOCKET -- ARGV | connect HOST PORT SOCK\n")
+    sys.stderr.write(
+        "usage: egress_relay.py serve PORT SOCKET MAX -- ARGV | connect HOST PORT SOCK\n"
+    )
     return 2
 
 
