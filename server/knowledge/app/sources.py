@@ -286,13 +286,15 @@ def _sources_lease_name(org: str, namespace: str) -> str:
 
 
 @contextlib.asynccontextmanager
-async def sources_lease(org: str, namespace: str) -> AsyncIterator[None]:
+async def sources_lease(org: str, namespace: str, *, wait_s: float = 5.0) -> AsyncIterator[None]:
     """Hold the lease that serializes every write of a namespace's sources. Busy
-    past the wait: OVERLOADED, retry; a lease store that cannot answer refuses
+    past `wait_s`: OVERLOADED, retry; a lease store that cannot answer refuses
     (LeaseUnavailable), never writes unlocked."""
     # The TTL outlives the few reads and inserts of one write with room to spare (a
-    # holder that dies is taken over after it); a second write waits up to 5 s.
-    async with leases.holding(_sources_lease_name(org, namespace), ttl_s=60.0, wait_s=5.0) as held:
+    # holder that dies is taken over after it).
+    async with leases.holding(
+        _sources_lease_name(org, namespace), ttl_s=60.0, wait_s=wait_s
+    ) as held:
         if not held:
             raise OverloadedError(
                 f"another change to the document sources of {namespace!r} is running; retry"
@@ -520,7 +522,8 @@ async def retire_sources_of(org: str, namespaces: list[str], *, wait_s: float) -
     waits = set(found)
     retired = 0
     for namespace in sorted({ns for ns, _ in found}):
-        async with sources_lease(org, namespace):
+        # The lease wait counts against the step's one deadline too.
+        async with sources_lease(org, namespace, wait_s=max(0.0, deadline - time.monotonic())):
             names = await deactivate_namespace_sources(org, namespace)
         retired += len(names)
         waits.update((namespace, name) for name in names)

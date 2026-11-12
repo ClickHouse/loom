@@ -123,10 +123,12 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
 
     monkeypatch.setattr(source_probes, "probe", _probe)
     leases_taken: list[str] = []
+    lease_waits: list[float] = []
 
     @contextlib.asynccontextmanager
     async def _holding(name: str, **kw: Any) -> AsyncIterator[bool]:
         leases_taken.append(name)
+        lease_waits.append(kw["wait_s"])
         yield True
 
     watched: list[str] = []
@@ -148,6 +150,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
     fake.erasures = erasures  # type: ignore[attr-defined]
     fake.probes = probes  # type: ignore[attr-defined]
     fake.leases = leases_taken  # type: ignore[attr-defined]
+    fake.lease_waits = lease_waits  # type: ignore[attr-defined]
     fake.watched = watched  # type: ignore[attr-defined]
     return fake
 
@@ -1212,3 +1215,14 @@ def test_the_erasure_step_waits_while_an_add_holds_the_sources_lease(
     busy[held] = clock.t + 0.5
     assert asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=1.0)) == 1
     assert fake.sequential == [True]
+
+
+def test_the_erasure_step_s_lease_wait_counts_against_its_deadline(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-a")))
+    fake.lease_waits.clear()  # type: ignore[attr-defined]
+    # Another change holds the lease for 10 s of the step's 30: the retirement waits 20.
+    _clocked(monkeypatch, {f"knowledge-source:{ORG}:team-a": 110.0})
+    asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=30.0))
+    assert fake.lease_waits == [20.0]  # type: ignore[attr-defined]

@@ -2,9 +2,9 @@
 
 A document source pulls files from a document store (a shared-folder store, a page
 store, a project tracker, a meeting store) into a namespace's documents and keeps them
-in step. This page is the design of sources on any namespace, sources of many items
-given as pasted links, per-user connected accounts, an org-wide crawl, and access that
-follows the store's own permissions. The caller's view of today's sources is in
+in step, on any shared namespace or collection. This page is the design of sources of
+many items given as pasted links, per-user connected accounts, an org-wide crawl, and
+access that follows the store's own permissions. The caller's view of today's sources is in
 [knowledge: document sources](../features/knowledge.md#document-sources); parsing is in
 [document extraction](document-extraction.md).
 
@@ -12,7 +12,6 @@ follows the store's own permissions. The caller's view of today's sources is in
 
 | Today                                                                                                  | With this design                                                                                                                                                                                                |
 | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A source lives only on a repository's trunk code namespace (`NOT_A_CODE_NAMESPACE`).                   | A source lives on any namespace ([any namespace](#any-namespace)).                                                                                                                                              |
 | A source holds 1 to 20 folders, projects, pages or databases, and no op changes its `config`.          | A source holds up to 300 items of mixed types, given as links or ids, and `knowledge.source.update` adds and removes them ([items](#items-and-links)).                                                          |
 | One shared credential per source, typed by an admin.                                                   | A shared credential, a person's own connected account, or a delegated service account that reads many people's drives ([credentials](#credentials)).                                                            |
 | Every reader of the namespace reads every synced document.                                             | A source's `access` is `namespace` or `mirrored`; a mirrored document is shown only to a reader the store says may read it ([access](#access-follows-the-source)).                                              |
@@ -22,10 +21,9 @@ follows the store's own permissions. The caller's view of today's sources is in
 ## Any namespace
 
 A source can be registered on any active shared namespace or collection; who may
-register which kind is in [credentials](#credentials). The refusal
-`NOT_A_CODE_NAMESPACE` goes; `add` on an inactive namespace answers
-`NAMESPACE_INACTIVE`, and `add` and `update` on a namespace an unfinished erasure names
-answer `ERASURE_PENDING` (409, retryable), so no source writes into a mirror the erasure
+register which kind is in [credentials](#credentials). `add` on an inactive namespace
+answers `NAMESPACE_INACTIVE`, and `add` and `update` on a namespace an erasure that will
+still run names answer `ERASURE_RUNNING` (409, retryable), so no source writes into a mirror the erasure
 is clearing. A source on a repository's trunk code namespace still tags each document
 `repo:<id>`, so the repository's `code.context` and `loom_search` legs read them as
 today; on any other namespace, a branch namespace included, it does not. A person's own
@@ -935,9 +933,6 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
   `namespace.validate`), refuses a client that does not declare `mirrored: true` in
   every org: an SDK app that has not opted in, and a third-party MCP client, which
   cannot.
-- The source ops no longer answer `NOT_A_CODE_NAMESPACE`; `add` answers
-  `NAMESPACE_INACTIVE` for an inactive namespace, `PERSONAL_NAMESPACE` for a person's
-  own place and `ERASURE_PENDING` while an erasure of the namespace is unfinished.
 - `recording` sources lose the `meet` provider.
 - A source whose stored documents plus new files pass
   `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` (default 50,000) writes no new document and
@@ -1040,7 +1035,7 @@ Each implementing pull request lists its own; these pin the model:
     - A non-owner admin's `remove` of mirrored sources of 10 and 10,000 documents
       leaving the same request-side figures.
     - `add` of a removed mirrored source's name answering as for a fresh name.
-    - A mirrored `add` during an open namespace erasure refused with `ERASURE_PENDING`.
+    - A mirrored `add` during an open namespace erasure refused with `ERASURE_RUNNING`.
     - The mixed-version refusal, and N-1's `check`, `rotate`, `remove` and sync turn
       over a row N wrote with `kind` empty.
     - A crawl `update` by an `admin` with an org-wide role who is not the registrant,
