@@ -47,6 +47,9 @@ def installer_env(tmp_path: Path) -> dict[str, str]:
         "LOOM_INSTALL_BUNDLE": str(archive),
         "LOOM_INSTALL_CHECKSUM": str(checksum),
         "LOOM_SKIP_START": "1",
+        # No agent on the machine running the tests is touched, nor a browser opened.
+        "LOOM_CONNECT": "none",
+        "LOOM_NO_OPEN": "1",
     }
 
 
@@ -924,15 +927,24 @@ def _start_stubs(
     probe_exit: int = 7,
     connect_time: str = "0.000000",
     health: str = '{"status":"ok"}',
+    memory_status: int = 200,
+    found: bool = True,
 ) -> tuple[Path, Path]:
     """Stubs for a started install: a curl whose port probe prints `connect_time` and
-    exits `probe_exit`, and whose /v1/health calls print `health`; a docker that runs
-    `docker_body`. Both log their arguments; returns (curl log, docker log)."""
+    exits `probe_exit`, whose /v1/health calls print `health`, and whose memory calls
+    answer `memory_status` (memory.get with `found`), the body to its -o file; a
+    docker that runs `docker_body`. Both log their arguments; returns (curl log,
+    docker log)."""
     bin_dir = Path(installer_env["PATH"].split(":")[0])
     curl_log, docker_log = bin_dir / "curl.log", bin_dir / "docker.log"
+    got = '{"found":' + ("true" if found else "false") + "}"
     (bin_dir / "curl").write_text(
         f'#!/bin/sh\necho "$*" >> {curl_log}\n'
-        f"case \"$*\" in *v1/health*) echo '{health}'; exit 0 ;; esac\n"
+        'out=; prev=\nfor a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; done\n'
+        f"case \"$*\" in *v1/health*) echo '{health}'; exit 0 ;;\n"
+        f"  *v1/memory.get*) echo '{got}' > \"$out\"; printf {memory_status}; exit 0 ;;\n"
+        f"  *v1/memory.*) echo '{{}}' > \"$out\"; printf {memory_status}; exit 0 ;;\n"
+        "esac\n"
         f"printf %s {connect_time}\nexit {probe_exit}\n"
     )
     (bin_dir / "docker").write_text(
@@ -1058,7 +1070,7 @@ def test_a_rerun_over_its_own_running_server_skips_the_port_check(
     )
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 0, result.stderr
-    assert all("v1/health" in c for c in curl_log.read_text().splitlines())
+    assert not any(c.endswith(":7777/") for c in curl_log.read_text().splitlines())
     assert any(" up -d" in c for c in docker_log.read_text().splitlines())
 
 
@@ -1118,3 +1130,118 @@ def test_a_failed_pull_names_dockers_proxy_settings(install, installer_env: dict
     assert "could not pull the Loom images" in result.stderr
     assert "docs.docker.com/engine/daemon/proxy" in result.stderr
     assert not any(" up " in c for c in docker_log.read_text().splitlines())
+
+
+def _agent_cli(installer_env: dict[str, str], name: str, listing: str = "") -> Path:
+    """A stub agent CLI that logs its arguments and prints `listing` for `plugin list`
+    and `mcp list`; returns its log."""
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    log = bin_dir / f"{name}.log"
+    cli = bin_dir / name
+    cli.write_text(
+        f'#!/bin/sh\necho "$*" >> {log}\n'
+        f'case "$*" in "plugin list"|"mcp list") printf \'%s\\n\' "{listing}" ;; esac\nexit 0\n'
+    )
+    cli.chmod(0o755)
+    log.write_text("")
+    return log
+
+
+def test_a_new_install_saves_and_reads_back_a_first_memory(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, target = install
+    curl_log, _ = _start_stubs(installer_env)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "Saved and read back a first memory, loom/welcome" in result.stdout
+    assert not (target / ".welcome-pending").exists()
+    sets = [c for c in curl_log.read_text().splitlines() if "memory.set" in c]
+    assert len(sets) == 1 and '"org":"dev","namespace":"local","agent":"installer"' in sets[0]
+    assert all("--noproxy *" in c for c in curl_log.read_text().splitlines())
+
+
+def test_a_rerun_writes_no_memory_again(install, installer_env: dict[str, str]) -> None:
+    """The marker is gone once the memory read back: a deleted or edited welcome
+    memory stays as the user left it."""
+    run, _ = install
+    curl_log, _ = _start_stubs(installer_env)
+    assert run(LOOM_SKIP_START="0").returncode == 0
+    curl_log.write_text("")
+    _start_stubs(installer_env, found=False)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "first memory" not in result.stdout
+    assert not any("memory.set" in c for c in curl_log.read_text().splitlines())
+
+
+def test_an_upgrade_from_before_writes_no_memory(install, installer_env: dict[str, str]) -> None:
+    """An install whose .env came before this release has data of its own."""
+    run, target = install
+    assert run().returncode == 0  # files only
+    (target / ".welcome-pending").unlink()
+    curl_log, _ = _start_stubs(installer_env)
+    assert run(LOOM_SKIP_START="0").returncode == 0
+    assert not any("memory.set" in c for c in curl_log.read_text().splitlines())
+
+
+def test_sign_in_on_connects_no_agent(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env, memory_status=401)
+    claude = _agent_cli(installer_env, "claude")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
+    assert result.returncode == 0, result.stderr
+    assert "Sign-in is on" in result.stdout
+    assert claude.read_text() == ""
+
+
+def test_loom_connect_installs_the_claude_code_plugin(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude", "plugin:loom:loom: http://x - ✔ Connected")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", LOOM_PORT="28977")
+    assert result.returncode == 0, result.stderr
+    calls = claude.read_text().splitlines()
+    assert "plugin marketplace add ClickHouse/loom" in calls
+    assert "plugin install loom@loom --config server_url=http://localhost:28977" in calls
+    assert "Claude Code: connected" in result.stdout
+    assert "Connected: Claude Code." in result.stdout
+
+
+def test_an_agent_already_connected_is_left_alone(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude", "  ❯ loom@loom")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]
+    assert "Connected: Claude Code." in result.stdout
+
+
+def test_without_a_terminal_or_loom_connect_no_agent_is_changed(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    codex = _agent_cli(installer_env, "codex")
+    env = {k: v for k, v in installer_env.items() if k != "LOOM_CONNECT"}
+    installer_env.clear()
+    installer_env.update(env)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]
+    assert codex.read_text().splitlines() == ["plugin list"]
+    assert "Connect an agent:" in result.stdout
+
+
+def test_loom_connect_adds_the_codex_plugin(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
+    assert result.returncode == 0, result.stderr
+    assert "plugin add loom@loom" in codex.read_text().splitlines()
+    assert "approve the plugin's hooks" in result.stdout

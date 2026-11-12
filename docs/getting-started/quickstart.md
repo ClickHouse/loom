@@ -49,6 +49,16 @@ indexers are included and enabled. A repository indexed with the TypeScript inde
 its dependencies installed automatically. Both images support Linux `amd64` and `arm64`,
 including Docker Desktop on Apple Silicon.
 
+Once Loom answers, a new install saves and reads back a first memory, `loom/welcome`,
+which says the server is personal and where its dashboard is; a rerun or an upgrade
+writes none. On a terminal, the installer then offers to connect each coding agent it
+finds: Claude Code and Codex through their plugins, and VS Code through `code --add-mcp`.
+`LOOM_CONNECT` answers for it, for a run without a terminal too: a comma list of
+`claude-code`, `codex` and `vscode`, `all`, or `none`; without a terminal and without
+`LOOM_CONNECT`, no agent's settings change. An agent connected before is left as it is.
+Last, on a desktop, it opens the dashboard; `LOOM_NO_OPEN=1` skips that. With sign-in on,
+it connects no agent and says where tokens come from.
+
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
 self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its
 URL; the installer asks for the password when the URL has none, creates the `loom`

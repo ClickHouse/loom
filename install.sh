@@ -317,6 +317,8 @@ main() {
       -e "s/__LOOM_DOCUMENT_EXTRACTOR_TOKEN__/$extractor_token/" \
       "$bundle/env.example" >"$INSTALL_DIR/.env"
     printf 'Created %s/.env\n' "$INSTALL_DIR"
+    # A new install gets a first memory once it is up (below); an upgrade does not.
+    : >"$INSTALL_DIR/.welcome-pending"
   else
     printf 'Preserved existing %s/.env\n' "$INSTALL_DIR"
     had_env=1
@@ -455,22 +457,160 @@ main() {
 
   health="http://$host:$port/v1/health"
   attempt=0
-  while [ "$attempt" -lt 90 ]; do
-    if curl -fsS --noproxy '*' "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
-      printf '\nLoom is ready.\n'
-      printf 'Dashboard: http://%s:%s/\n' "$host" "$port"
-      printf 'Files:     %s\n' "$INSTALL_DIR"
-      printf 'Logs:      docker compose --project-directory %s logs -f loom\n' "$INSTALL_DIR"
-      # --profile bundled also stops a bundled server left from before a switch.
-      printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"
-      exit 0
-    fi
+  until curl -fsS --noproxy '*' "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; do
     attempt=$((attempt + 1))
+    if [ "$attempt" -ge 90 ]; then
+      compose logs --tail 60 loom >&2 || true
+      fail "Loom did not become healthy at $health within 180 seconds"
+    fi
     sleep 2
   done
 
-  compose logs --tail 60 loom >&2 || true
-  fail "Loom did not become healthy at $health within 180 seconds"
+  dashboard="http://$host:$port/"
+  printf '\nLoom is ready.\n'
+  printf 'Dashboard: %s\n' "$dashboard"
+  printf 'Files:     %s\n' "$INSTALL_DIR"
+  printf 'Logs:      docker compose --project-directory %s logs -f loom\n' "$INSTALL_DIR"
+  # --profile bundled also stops a bundled server left from before a switch.
+  printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"
+
+  # The first memory: proof that a write and a read work with no token, which
+  # is also how this run learns that sign-in is off. Only a new install writes
+  # it, once: the marker its .env came with is removed when the memory reads
+  # back, so a rerun never brings back a memory the user deleted or edited.
+  org=$(get_env LOOM_SELF_SIGNUP_ORG)
+  org=${org:-dev}
+  namespace=$(get_env LOOM_DEFAULT_NAMESPACE)
+  namespace=${namespace:-local}
+  # Both go into a JSON body as they are.
+  case $org$namespace in *[!A-Za-z0-9._-]*) namespace= ;; esac
+  # api OP BODY: POST to the server, the body to $tmp_dir/api.out; prints the status.
+  api() {
+    curl -s --noproxy '*' --max-time 20 -o "$tmp_dir/api.out" -w '%{http_code}' -X POST \
+      -H 'Content-Type: application/json' -d "$2" "http://$host:$port/v1/$1" || true
+  }
+  memory="\"org\":\"$org\",\"namespace\":\"$namespace\",\"agent\":\"installer\",\"memory_key\":\"loom/welcome\""
+  signed_in=
+  if [ -n "$namespace" ] && [ -f "$INSTALL_DIR/.welcome-pending" ]; then
+    value="This Loom server is personal: single-user, on this machine only. Save facts with loom_memory_set and find them with loom_search; the dashboard is $dashboard"
+    api memory.set "{$memory,\"value\":\"$value\"}" >/dev/null
+  fi
+  status=000
+  [ -z "$namespace" ] || status=$(api memory.get "{$memory}")
+  case $status in
+    200)
+      if [ -f "$INSTALL_DIR/.welcome-pending" ] \
+        && grep -q '"found"[[:space:]]*:[[:space:]]*true' "$tmp_dir/api.out"; then
+        rm -f "$INSTALL_DIR/.welcome-pending"
+        printf '\nSaved and read back a first memory, loom/welcome: %smemories\n' "$dashboard"
+      fi
+      ;;
+    401 | 403)
+      signed_in=1
+      printf '\nSign-in is on: agents connect with a token from Settings → Tokens in the dashboard.\n'
+      ;;
+    *)
+      signed_in=1
+      what="read memories"
+      [ ! -f "$INSTALL_DIR/.welcome-pending" ] || what="save a first memory"
+      printf '\nCould not %s (HTTP %s); `docker compose --project-directory %s logs loom` says why.\n' "$what" "$status" "$INSTALL_DIR"
+      ;;
+  esac
+
+  # bounded CMD...: CMD, stopped after 60 seconds (macOS has no `timeout`).
+  bounded() {
+    "$@" &
+    cmd_pid=$!
+    (sleep 60 && kill "$cmd_pid" 2>/dev/null) >/dev/null 2>&1 &
+    dog_pid=$!
+    cmd_status=0
+    wait "$cmd_pid" || cmd_status=$?
+    kill "$dog_pid" 2>/dev/null || true
+    return "$cmd_status"
+  }
+  # wants CLIENT NAME: whether to connect CLIENT. LOOM_CONNECT (a comma list of
+  # clients, `all` or `none`) decides; otherwise a terminal asks, and a run
+  # without one, such as CI, changes no agent's settings.
+  wants() {
+    case ",${LOOM_CONNECT:-}," in
+      *,none,*) return 1 ;;
+      *,all,* | *",$1,"*) return 0 ;;
+    esac
+    [ -z "${LOOM_CONNECT:-}" ] && [ -t 0 ] && [ -t 1 ] || return 1
+    printf 'Connect %s to Loom? [Y/n] ' "$2"
+    read -r answer || return 1
+    case $answer in '' | [Yy]*) return 0 ;; *) return 1 ;; esac
+  }
+
+  # Agents on this machine, connected the way the README does it, with no token:
+  # only a server without sign-in takes that.
+  connected=
+  # LOOM_CONNECT=none leaves every agent alone, and looks for none.
+  if [ -z "$signed_in" ] && [ "${LOOM_CONNECT:-}" != none ]; then
+    server_url=http://localhost:$port
+    [ "$host" = 127.0.0.1 ] || server_url=http://$host:$port
+    if command -v claude >/dev/null 2>&1; then
+      if bounded claude plugin list 2>/dev/null | grep -q 'loom@loom'; then
+        connected="$connected Claude Code"
+      elif wants claude-code "Claude Code"; then
+        set --
+        [ "$server_url" = http://localhost:7777 ] || set -- --config "server_url=$server_url"
+        # A marketplace added before is no error: the install below says what fails.
+        bounded claude plugin marketplace add ClickHouse/loom >/dev/null 2>&1 || true
+        if bounded claude plugin install loom@loom "$@" >/dev/null; then
+          if bounded claude mcp list 2>/dev/null | grep -q '^plugin:loom:loom:.*Connected'; then
+            printf 'Claude Code: connected (the plugin'"'"'s other settings are optional)\n'
+          else
+            printf 'Claude Code: the plugin is installed; `claude mcp list` shows whether it reaches Loom\n'
+          fi
+          connected="$connected Claude Code"
+        else
+          printf 'Claude Code: could not install the plugin (above); the README has the two commands\n'
+        fi
+      fi
+      command -v node >/dev/null 2>&1 \
+        || printf 'Claude Code: install Node.js 18 or later so the plugin'"'"'s session hooks run; its tools work without it\n'
+    fi
+    if command -v codex >/dev/null 2>&1; then
+      if bounded codex plugin list 2>/dev/null | grep -q '^loom@loom[[:space:]][[:space:]]*installed'; then
+        connected="$connected Codex"
+      elif wants codex Codex; then
+        bounded codex plugin marketplace add ClickHouse/loom >/dev/null 2>&1 || true
+        if bounded codex plugin add loom@loom >/dev/null; then
+          printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
+          connected="$connected Codex"
+        else
+          printf 'Codex: could not add the plugin (above); the README has the two commands\n'
+        fi
+      fi
+    fi
+    # VS Code's own CLI adds an MCP server; inside a remote session `code` is
+    # the remote's, so it is not offered there.
+    if command -v code >/dev/null 2>&1 && [ -z "${REMOTE_CONTAINERS:-}${CODESPACES:-}${SSH_CONNECTION:-}" ] \
+      && wants vscode "VS Code"; then
+      if bounded code --add-mcp "{\"name\":\"loom\",\"type\":\"http\",\"url\":\"$server_url/mcp?toolset=coding\"}" >/dev/null; then
+        printf 'VS Code: added the loom MCP server\n'
+        connected="$connected VS Code"
+      fi
+    fi
+    if [ -n "$connected" ]; then
+      printf '\nConnected:%s. Start a new session and say "Remember that I deploy only on Tuesdays";\n' "$connected"
+      printf 'in the next session, ask "When do I deploy?"\n'
+    else
+      printf '\nConnect an agent: https://github.com/%s/blob/main/docs/getting-started/connect-a-coding-agent.md\n' "$REPOSITORY"
+    fi
+  fi
+
+  # The dashboard, on a desktop: a terminal, no SSH session and a way to open a
+  # browser there.
+  if [ "${LOOM_NO_OPEN:-0}" != 1 ] && [ -t 1 ] && [ -z "${SSH_CONNECTION:-}" ]; then
+    if [ "$(uname -s)" = Darwin ] && command -v open >/dev/null 2>&1; then
+      open "$dashboard" >/dev/null 2>&1 || true
+    elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "$dashboard" >/dev/null 2>&1 &
+    fi
+  fi
+  exit 0
 }
 
 { main "$@"; }
