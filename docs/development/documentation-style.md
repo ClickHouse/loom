@@ -6,15 +6,15 @@ How to place a new page in the right section, write it in the house style, and p
 
 A page does one kind of writing. When it starts doing a second, split it and link.
 
-| Kind              | Answers                                      | Lives in                           | Voice                                                                                                                                            |
-| ----------------- | -------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Use case          | "Does Loom do X for me?"                     | `docs/use-cases/`                  | The need answered in the first sentence, a required switch in the second; quotes published results from `docs/benchmarks/results.md` with a link |
-| Tutorial          | "Show me, start to finish."                  | `docs/getting-started/`            | Numbered steps that always work on the stock stack                                                                                               |
-| How-to guide      | "How do I get X done?"                       | `docs/guides/`, `docs/operations/` | Goal-first steps; assumes the concepts                                                                                                           |
-| Concept / feature | "What is it, why does it work so?"           | `docs/concepts/`, `docs/features/` | Explanation, trade-offs, links to reference                                                                                                      |
-| Architecture      | "How is it built inside?"                    | `docs/architecture/`               | Components, data flow, invariants, code paths                                                                                                    |
-| Reference         | "What exactly are the options?"              | `docs/reference/`                  | Exhaustive, terse, preferably generated                                                                                                          |
-| Benchmark         | "How well does it work, and how do we know?" | `docs/benchmarks/`                 | Methodology first, numbers only with a reproduction command                                                                                      |
+| Kind              | Answers                                      | Lives in                           | Voice                                                                                                           |
+| ----------------- | -------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Use case          | "Does Loom do X for me?"                     | `docs/use-cases/`                  | The need answered in the first sentence; quotes published results from `docs/benchmarks/results.md` with a link |
+| Tutorial          | "Show me, start to finish."                  | `docs/getting-started/`            | Numbered steps that always work on the stock stack                                                              |
+| How-to guide      | "How do I get X done?"                       | `docs/guides/`, `docs/operations/` | Goal-first steps; assumes the concepts                                                                          |
+| Concept / feature | "What is it, why does it work so?"           | `docs/concepts/`, `docs/features/` | Explanation, trade-offs, links to reference                                                                     |
+| Architecture      | "How is it built inside?"                    | `docs/architecture/`               | Components, data flow, invariants, code paths                                                                   |
+| Reference         | "What exactly are the options?"              | `docs/reference/`                  | Exhaustive, terse, preferably generated                                                                         |
+| Benchmark         | "How well does it work, and how do we know?" | `docs/benchmarks/`                 | Methodology first, numbers only with a reproduction command                                                     |
 
 - `docs/concepts/` explains the model a user holds in their head (identity, memory, ranking).
 - `docs/features/` explains one capability from the caller's side: what it does, the operations, an example, the settings, the limits.
@@ -37,7 +37,7 @@ which settings move it.
 
 ## Prerequisites
 
-When a feature needs an operator switch or an external system, say so in the page's first sentence: "Needs `LOOM_X=true`." Add no maturity or status banners: link the generated [status page](../reference/status.md), which says whether an op is stable and a switch is on by default, and the [operations reference](../reference/operations.md), which carries what the MCP listing depends on.
+When a feature needs an operator switch or an external system, say so in the page's first sentence: "Needs `LOOM_X=true`." A use-case page is the exception: its first sentence answers the need, and the switch follows. Add no maturity or status banners: link the generated [status page](../reference/status.md), which says whether an op is stable and a switch is on by default, and the [operations reference](../reference/operations.md), which carries what the MCP listing depends on.
 
 ## Writing rules
 

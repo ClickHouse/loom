@@ -2,11 +2,11 @@
 
 Loom records the work coding agents do, as runs and searchable session conversations, and
 connects it to your code history; conversation recording, PR history and the tracker are
-each off until turned on. Runs carry goals, outcomes and, when the session's turns are
-recorded, model costs; the history covers merged pull requests, review comments, GitHub
-issues (with a GitHub token) and, with a tracker source, incidents and CI runs. An agent
-or a person can then ask what was tried before, what was decided and which change
-introduced a regression.
+each off until turned on. Runs carry goals, outcomes and, when a coding-agent plugin
+reports the session's turn usage (on by default), model costs; the history covers merged
+pull requests, review comments, GitHub issues (with a GitHub token) and, with a tracker
+source, incidents and CI runs. An agent or a person can then ask what was tried before,
+what was decided and which change introduced a regression.
 
 ## What you get
 
