@@ -79,10 +79,10 @@ leg, because the term leg serves shared rows to every reader:
   check above is what the term leg relies on; this refusal keeps such rows from being
   made.
 
-No two governed definitions share a term or an alias, compared case-folded as the key is
-built, so `SAT` and `Sat` are one name: promoting a definition whose term or alias is
-already another governed definition's is refused, by `memory.promote` itself (the change
-above). Should two shared rows still match one name (two promotions racing, or one
+No two governed definitions share a term or an alias, compared case-folded (the form the
+key's hash reads), so `SAT` and `Sat` are one name: promoting a definition whose term or
+alias is already another governed definition's is refused, by `memory.promote` itself (the
+change above). Should two shared rows still match one name (two promotions racing, or one
 promoted through a build without the check), the term leg serves the one promoted last.
 
 A caller may already write rows of type `definition`; they are governed only once an admin
@@ -206,18 +206,19 @@ per query text with its sessions, not its people, and only for memory searches.
 ### Grouping
 
 The `knowledge_gaps` worker runs once a day for each namespace with misses or a live
-build. It reads the namespace's misses of the last 7 days and groups them by normalised
-query. **Privacy threshold:** a group with fewer than `knowledge_gaps_min_askers` distinct
-askers (default three, never below three, one value for the deployment) is dropped before
-anything else, so every query a gap shows was asked in that form by at least that many
-askers. The threshold is as strong as the principals behind it: it does not bind whoever
-holds the signing key (`loom mint-token` mints any subject), an end-user issuer or a
-trusted caller (each names its own users), or a deployment where principals can be
-self-created (`LOOM_SELF_SIGNUP=open`, unclaimed agent sign-ups), where an admin could ask
-from accounts of their own. There it limits what one ordinary caller reveals, not what an
-admin can learn. The worker embeds the remaining groups' queries (at most
-`knowledge_gaps_max_groups`), merges groups whose vectors are at least
-`knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
+build. It re-reads the namespace's capture consent, failing closed, and writes an empty
+build for one that now refuses capture; otherwise it reads the namespace's misses of the
+last 7 days and groups them by normalised query. **Privacy threshold:** a group with fewer
+than `knowledge_gaps_min_askers` distinct askers (default three, never below three, one
+value for the deployment) is dropped before anything else, so every query a gap shows was
+asked in that form by at least that many askers. The threshold is as strong as the
+principals behind it: it does not bind whoever holds the signing key (`loom mint-token`
+mints any subject), an end-user issuer or a trusted caller (each names its own users), or
+a deployment where principals can be self-created (`LOOM_SELF_SIGNUP=open`, unclaimed
+agent sign-ups), where an admin could ask from accounts of their own. There it limits what
+one ordinary caller reveals, not what an admin can learn. The worker embeds the remaining
+groups' queries (at most `knowledge_gaps_max_groups`), merges groups whose vectors are at
+least `knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
 namespace in `loom.knowledge_gaps`:
 
 | Column            | Meaning                                                         |
@@ -269,11 +270,12 @@ breaker on every read ([tracker plane](../features/tracker/overview.md)). The re
 names the team that owns its definitions. Each turn:
 
 1. reads finished `SELECT` queries of the source's window, from every replica when the
-   registration names the cluster (`clusterAllReplicas`) and from the node it connects to
-   otherwise, grouped by `normalized_query_hash`, ranked by distinct users and then by
-   recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
-   ran. Only the normalised text is read (`normalizeQuery`, which replaces literals), so
-   no user's literal values reach the LLM or the draft;
+   registration names the cluster (`clusterAllReplicas`, which needs the `REMOTE` grant: a
+   cluster registration accepts it beside the tracker's read-only list) and from the node
+   it connects to otherwise, grouped by `normalized_query_hash`, ranked by distinct users
+   and then by recency, and drops a group that fewer than `knowledge_gaps_min_askers`
+   distinct users ran. Only the normalised text is read (`normalizeQuery`, which replaces
+   literals), so no user's literal values reach the LLM or the draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition for at most a setting's number of groups, and
    queues each (`source_kind = 'query_history'`): the metric's name is the `term`, its
@@ -308,9 +310,10 @@ retried review, idempotent by key, completes it.
   namespace erasure, history, audit. A user erasure tombstones a shared row whose
   provenance names the user (`shared.tombstone`); a definition promoted from the
   namespace-wide row names none, so erasing the admin who promoted it leaves it governed.
-- A redact of a definition reaches its memory and shared rows and the candidate it was
-  promoted from (the change above), not the gap it came from, which holds only normalised
-  queries enough askers asked and expires after 7 days.
+- A redact of a definition reaches its memory and shared rows and every `knowledge_gap`
+  and `query_history` candidate drafted for its key (the change above), not the gap it
+  came from, which holds only normalised queries enough askers asked and expires after 7
+  days.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
   `user_id` is the user (a token subject spelled as the user's id goes too, which costs
   only a trace row), and a census row; an end user's asker is stored as their id, the form
@@ -362,10 +365,11 @@ approved-hash check and takes `promoted_by` from the body, which no read-time ch
 tell; once no N-1 replica serves, an admin promotes again the definitions promoted during
 the rollout (`loom.shared` rows of type `definition` by promotion time). N-1, which does
 not know `definition` as key-identified, can merge, supersede or retire one definition's
-source while writing another; the rows its conflict resolver retired are listed by
-`memory.auto_retirements` (reason `conflict_resolver`), restored with its Undo, and
-promoted again. N-1's redact and namespace erasure do not reach the shared row's text, as
-today: one run during the rollout or after a rollback is run again once N serves.
+source while writing another; the rows it retired are listed by `memory.auto_retirements`
+(reasons `conflict_resolver` and `newest_wins_contradiction`), restored with its Undo, and
+promoted again; a write it merged was never stored and is written again. N-1's redact and
+namespace erasure do not reach the shared row's text, as today: one run during the rollout
+or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
