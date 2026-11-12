@@ -28,11 +28,7 @@ from clickhouse_connect.driver.asyncclient import AsyncClient
 from clickhouse_connect.driver.binding import quote_identifier
 from clickhouse_connect.driver.external import ExternalData
 
-from server.core.ch_class_settings import (
-    LEADING_COMMENTS,
-    is_read_statement,
-    traffic_class_settings,
-)
+from server.core.ch_class_settings import is_read_statement, traffic_class_settings
 from server.core.ch_errors import (
     QUANTIZED_SETTING,
     WIDTH_MISMATCH_CODE,
@@ -51,6 +47,7 @@ from server.core.ch_statement_text import capture_statement, statement_digest, s
 from server.core.ch_target import connection_kwargs
 from server.core.ch_writes import dedup_settings, insert_dedup_token
 from server.core.errors import OverloadedError
+from server.core.sql_comments import LEADING_COMMENTS
 from server.core.sql_literal import sql_string
 from server.core.traffic_context import traffic_class_var
 from server.settings import settings
