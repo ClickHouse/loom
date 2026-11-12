@@ -271,7 +271,8 @@ def test_listing_budget_chars_over_four():
     assert _tok({"tools": _listing("core", False)}) <= 5_800
     assert _tok({"tools": _listing("coding", False)}) <= 8_850
     assert _tok({"tools": _listing("atomic", False)}) <= 4_500
-    for t in _listing("core", True):
+    # every listed tool, on the widest listing (it carries everything core lists)
+    for t in _listing("all", True):
         assert len(t["description"]) // 4 <= 480, f"{t['name']} description is over budget"
 
 
