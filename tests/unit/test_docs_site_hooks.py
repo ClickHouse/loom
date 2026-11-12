@@ -1,4 +1,4 @@
-"""The documentation site's MkDocs hooks: meta description and links that leave docs/."""
+"""The documentation site's MkDocs hook: meta description and links that leave docs/."""
 
 from __future__ import annotations
 
@@ -49,6 +49,8 @@ def test_links_outside_docs_point_at_github_and_others_stay(tmp_path: Path) -> N
         "```\n[g](../../server/w.py)\n```\n"
         "[`schema.sql`](../../schemas/schema.sql)\n"
         "- item\n\n  ```\n  [h](../../server/v.py)\n  ```\n"
+        "~~~\n[i](../../server/u.py)\n~~~\n"
+        "[![badge](../../frontend/b.svg)](https://example.com/z)\n"
     )
     out = hooks.on_page_markdown(markdown, _page(src, "features/runs.md"), None, None)
     assert "[a](https://github.com/ClickHouse/loom/blob/main/server/x.py#L1)" in out
@@ -60,10 +62,8 @@ def test_links_outside_docs_point_at_github_and_others_stay(tmp_path: Path) -> N
     assert "[g](../../server/w.py)" in out
     assert "[`schema.sql`](https://github.com/ClickHouse/loom/blob/main/schemas/schema.sql)" in out
     assert "  [h](../../server/v.py)" in out
-
-
-def test_robots_txt_allows_crawlers_and_names_the_sitemap(tmp_path: Path) -> None:
-    hooks.on_post_build({"site_dir": str(tmp_path), "site_url": "https://example.com/docs/"})
-    robots = (tmp_path / "robots.txt").read_text()
-    assert "User-agent: *\nAllow: /" in robots
-    assert "Sitemap: https://example.com/docs/sitemap.xml" in robots
+    assert "[i](../../server/u.py)" in out
+    assert (
+        "[![badge](https://raw.githubusercontent.com/ClickHouse/loom/main/frontend/b.svg)](https://example.com/z)"
+        in out
+    )

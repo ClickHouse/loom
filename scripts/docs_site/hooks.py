@@ -4,8 +4,7 @@ Each page's meta description is its first sentence, the line llms.txt lists for 
 search result shows the answer the page opens with. An inline Markdown link or image that
 leaves docs/ (source files, the README, llms.txt) points at the file on GitHub instead of
 a missing page; links in code blocks and code spans are left as written, and
-reference-style links are not rewritten (the docs use inline links). robots.txt is
-written beside the sitemap.
+reference-style links are not rewritten (the docs use inline links).
 """
 
 from __future__ import annotations
@@ -24,10 +23,11 @@ from scripts.codegen.page_summary import page_summary  # noqa: E402
 BLOB = "https://github.com/ClickHouse/loom/blob/main/"
 RAW = "https://raw.githubusercontent.com/ClickHouse/loom/main/"
 # Scanned left to right: a fenced block (indented ones too) or a code span is kept as
-# written, an inline link or image may be rewritten. A link's text may hold code spans.
+# written, an inline link or image may be rewritten. A link's text may hold code spans;
+# an image inside a link is matched as the image.
 _TOKEN = re.compile(
     r"(?P<fence>^[ \t]*(?P<mark>```|~~~)[^\n]*\n.*?^[ \t]*(?P=mark)[^\n]*$)"
-    r"|(?P<link>(?P<bang>!?)(?P<text>\[(?:`[^`\n]*`|[^\]`])*\]\()"
+    r"|(?P<link>(?P<bang>!?)(?P<text>\[(?:`[^`\n]*`|!(?!\[)|[^\]`!])*\]\()"
     r"(?P<target>[^)\s#]+)(?P<anchor>#[^)\s]*)?(?P<tail>(?:\s+\"[^\"]*\")?\)))"
     r"|(?P<code>`[^`\n]+`)",
     re.DOTALL | re.MULTILINE,
@@ -56,9 +56,3 @@ def on_page_markdown(markdown, page, config, files):
         return f"{m.group('bang')}{m.group('text')}{base}{resolved}{anchor}{m.group('tail')}"
 
     return _TOKEN.sub(rewrite, markdown)
-
-
-def on_post_build(config):
-    site = Path(config["site_dir"])
-    url = config["site_url"].rstrip("/")
-    (site / "robots.txt").write_text(f"User-agent: *\nAllow: /\n\nSitemap: {url}/sitemap.xml\n")

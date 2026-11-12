@@ -15,6 +15,9 @@ markdown_extensions:
   - tables
   - admonition
   - attr_list
+  - mdx_truly_sane_lists:
+      nested_indent: 2
+  - pymdownx.tasklist
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

@@ -104,6 +104,6 @@ The SDK op tables (`sdk/python/loom/ops.py`, `sdk/typescript/src/generated/ops.t
 make format                                   # Prettier formats the Markdown, ruff its Python blocks
 uv run pytest tests/unit/test_doc_links.py tests/unit/test_public_copy.py -q
 python scripts/codegen/docs_reference.py --check
-pip install --require-hashes --no-deps -r scripts/docs_site/requirements.txt  # once, in a virtualenv
+pip install --require-hashes --no-deps --only-binary=:all: -r scripts/docs_site/requirements.txt  # once, in a virtualenv
 mkdocs build --strict                         # the docs site build CI runs
 ```
