@@ -1,7 +1,16 @@
 #!/bin/sh
 # Installs the latest Loom release in a codespace, as a user would, and connects
-# Claude Code to it. Run once, when the codespace is created.
+# Claude Code to it. Run when the container is created; after a rebuild it finds
+# the install in LOOM_INSTALL_DIR (devcontainer.json) and keeps it.
 set -eu
+
+: "${LOOM_INSTALL_DIR:=$HOME/.loom}"
+export LOOM_INSTALL_DIR
+# The dev container's user may not own a directory under /workspaces yet.
+if ! mkdir -p "$LOOM_INSTALL_DIR" 2>/dev/null || [ ! -w "$LOOM_INSTALL_DIR" ]; then
+  sudo mkdir -p "$LOOM_INSTALL_DIR"
+  sudo chown "$(id -u):$(id -g)" "$LOOM_INSTALL_DIR"
+fi
 
 installer=$(mktemp)
 trap 'rm -f "$installer"' EXIT
@@ -14,7 +23,7 @@ LOOM_SKIP_START=1 sh "$installer"
 # server without sign-in answers only when it is its public URL; desktop VS Code
 # forwards to the laptop's localhost instead, whose page then sends that Origin.
 if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]; then
-  env_file=$HOME/.loom/.env
+  env_file=$LOOM_INSTALL_DIR/.env
   grep -q '^LOOM_PUBLIC_BASE_URL=' "$env_file" \
     || printf 'LOOM_PUBLIC_BASE_URL=https://%s-7777.%s\n' "$CODESPACE_NAME" "$GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN" >>"$env_file"
   grep -q '^LOOM_CORS_ORIGINS=' "$env_file" || printf 'LOOM_CORS_ORIGINS=http://localhost:7777\n' >>"$env_file"
@@ -24,7 +33,8 @@ fi
 sh "$installer"
 
 npm install --global --silent @anthropic-ai/claude-code
-claude plugin marketplace add ClickHouse/loom
+# A marketplace added before (a rebuilt container keeps no home, so rarely) is no error.
+claude plugin marketplace add ClickHouse/loom || true
 claude plugin install loom@loom
 
 cat <<'TEXT'

@@ -121,9 +121,13 @@ the dashboard from the **Ports** tab (port 7777). In the codespace's terminal, r
 `claude`, sign in, and say "Remember that I deploy only on Tuesdays"; in a new `claude`
 session, ask "When do I deploy?".
 
-Port 7777 is forwarded privately: only your GitHub account reaches it. The try-out runs
-single-user, with no sign-in, so do not make the port public. An agent on your own machine
-cannot reach a private forwarded port; install Loom locally for that.
+The try-out runs single-user, with no sign-in. In the browser, port 7777 is forwarded
+privately: its address answers only your GitHub account, so do not make the port public.
+Agents inside the codespace, such as its `claude`, use `http://localhost:7777`; the
+dashboard's connection lines name the forwarded address instead, which they cannot pass.
+Opened in desktop VS Code, the codespace also forwards the port to your laptop's
+`localhost:7777`, where it is as open as a local install to every program on the laptop.
+The install lives in `/workspaces/.loom`, so a rebuilt codespace keeps it and its data.
 
 ### Start in multi-user mode
 

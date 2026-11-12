@@ -113,7 +113,7 @@ grant new accounts access to the existing namespaces.
 To try it with nothing installed, open it in a codespace:
 
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ClickHouse/loom?quickstart=1)
-([what it runs](./docs/getting-started/quickstart.md#try-it-in-github-codespaces))
+([what it runs and who can reach it](./docs/getting-started/quickstart.md#try-it-in-github-codespaces))
 
 For the default personal installation, with Docker installed:
 
