@@ -302,6 +302,20 @@ async def tombstone_embeddings_by_namespace(
     )
 
 
+async def tombstone_shared_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """The namespace's promoted rows: a row promoted from the namespace-wide row names no
+    user, so the user step's provenance match never reaches it. Their search rows are the
+    namespace's `scope = 'shared'` embeddings, which `memory_embeddings.tombstone` takes."""
+    return await tombstone_scoped(
+        "loom.shared", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
 async def tombstone_working_memory_by_namespace(
     org: str,
     namespace: str | Sequence[str],

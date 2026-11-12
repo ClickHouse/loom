@@ -135,7 +135,7 @@ def test_census_covers_every_substrate_and_uses_final_on_soft_deleted_tables() -
     out = asyncio.run(erasure_census.residue_census("o", "namespace", "ns", ch=ch))
     assert set(out) == set(erasure_census.census_tables("namespace"))
     # every namespace-scoped substrate, entity, cache, chunk-link and code table
-    assert len(out) == 68 and sum(out.values()) == 0
+    assert len(out) == 69 and sum(out.values()) == 0
     by_table = {sql.split("FROM ")[1].split()[0]: sql for sql, _ in ch.query_one_calls}
     assert (
         " FINAL" in by_table["loom.memory"] and "tombstoned_at IS NULL" in by_table["loom.memory"]

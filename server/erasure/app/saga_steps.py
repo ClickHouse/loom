@@ -311,6 +311,7 @@ NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     ("pg_knowledge.delete", pg_steps.delete_pg_knowledge_by_namespace),
     ("memory.tombstone", memory_steps.tombstone_memory_by_namespace),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_namespace),
+    ("shared.tombstone", memory_steps.tombstone_shared_by_namespace),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_namespace),
     ("code_links.delete", _step_delete_code_links_by_ns),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_namespace),
