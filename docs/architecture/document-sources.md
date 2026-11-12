@@ -109,11 +109,12 @@ written in it, else `{}`.
 `knowledge.source.update` takes `add_items`, `remove_items` (each also as links) and a
 new `include`, probes what it adds with the stored credential (the same sample rule),
 and writes the source at its next version under the namespace's source lease. Its audit
-row names the namespace, the name and the items added and removed. Removing every item
-is refused (`BAD_CONFIG`); `remove` ends a source. Changing `access` is a new source.
-For a `crawl`, `update` also takes `subjects` (the new list, probed like added items)
-and `readmit` (emails whose pseudonyms leave `excluded`, for a person who comes back),
-under the same roles as `add`.
+row names the namespace, the name and the items added and removed, with a `filter`'s
+`owner` email and a crawl's `subjects` and `readmit` emails as keyed hashes (below).
+Removing every item is refused (`BAD_CONFIG`); `remove` ends a source. Changing `access`
+is a new source. For a `crawl`, `update` also takes `subjects` (the new list, probed
+like added items) and `readmit` (emails whose pseudonyms leave `excluded`, for a person
+who comes back), under the same roles as `add`.
 
 ### One document, many holders
 
@@ -243,9 +244,10 @@ for each of the three scopes, which must be granted, and for
 `admin.directory.group`, which the store must refuse; a credential the store grants any
 of them is refused (`CREDENTIAL_REFUSED`). It cannot prove the delegation grants nothing
 else (a mail scope, say), and the page says so to the admin who registers it. The audit
-rows of `add`, `update` and `rotate` record the configured subjects as the same UUIDv5
-pseudonyms `excluded` uses, the scopes granted and the number of members resolved, so
-the audit trail, which outlives erasure, keeps no crawled person's address.
+rows of `add`, `update` and `rotate` record the configured subjects as keyed hashes (an
+HMAC under the root secret, as SCIM's audit rows hash a subject, so a list of the org's
+addresses does not reverse them), the scopes granted and the number of members resolved:
+the audit trail outlives erasure and keeps no crawled person's address.
 
 ## Access follows the source
 
@@ -354,16 +356,18 @@ Four tables under the mirror say who may read, each written as new versions with
   merges away); the implementing pull request measures it.
 - `loom.knowledge_document_readers`, one row per mirrored address, source and reading
   account: the connection (its kind and store account id) for a connected source, or the
-  person a crawl listed it as. Listing a file proves that account reads it. It is
-  written when the account first lists the file, and written `deleted` when a complete
-  listing by that account no longer has it, so an unchanged file costs no write. A
-  `shared` mirrored source writes none: its service account's listing proves no person
-  reads anything.
-- `loom.knowledge_source_listings`, one row per source and reading account (a connected
-  source's connection, each person a crawl reads, and `shared:<source id>` for a
-  `shared` source): when that account's last complete listing started. A listing that
-  spans several passes counts from its start, the earliest moment it can have seen a
-  file.
+  person a crawl listed it as. The `account` column holds a pseudonym of that account,
+  never an address: a UUIDv5 of `<kind>:<account id>`, or of the person's lower-cased
+  email (the form `excluded` uses), which a reader's own connections and verified emails
+  are mapped to before the check compares them. Listing a file proves that account reads
+  it. It is written when the account first lists the file, and written `deleted` when a
+  complete listing by that account no longer has it, so an unchanged file costs no
+  write. A `shared` mirrored source writes none: its service account's listing proves no
+  person reads anything.
+- `loom.knowledge_source_listings`, one row per source and reading account, keyed by the
+  same pseudonym (and `shared:<source id>` for a `shared` source): when that account's
+  last complete listing started. A listing that spans several passes counts from its
+  start, the earliest moment it can have seen a file.
 - `loom.knowledge_group_members`, one row per source and group: the members of a group
   the crawl's directory read listed, and `read_at`. A group is stored once, not on every
   file shared with it.
@@ -372,14 +376,20 @@ A stopped source's rows go on one trigger, whichever path stopped it (an N-1 `re
 included): an inactive source that still has any hold, readers, listing or group-members
 row. The sync writes `deleted` its readers, listing and group-members rows and then
 drops its holds, retiring the documents no other source holds. So no row of a source
-that no longer lists can admit anyone, and none keeps a crawled person's email, even for
-a source that never reached a file. A document's rows are written `deleted` when the
-document is retired.
+that no longer lists can admit anyone, and none names an account in any form other than
+its pseudonym, even for a source that never reached a file. A document's rows are
+written `deleted` when the document is retired. A pass finds such sources with one
+bounded read per mirror: the distinct `source_id`s of the four tables under the mirror
+(a key prefix), `LIMIT 100`, compared with the namespace's active sources; a pass cleans
+at most that many.
 
 A person a crawl no longer reads (gone from a group it expands, taken out of `subjects`,
-or excluded) is treated the same way: the turn whose expansion no longer has them writes
-`deleted` their readers and listing rows, and a document only their rows held counts as
-no longer reached by the source.
+or excluded) is treated the same way, on positive evidence only, as today's sync retires
+a file: the turn whose complete, successful directory read no longer lists them writes
+`deleted` their readers and listing rows and drops their cursor, and a document only
+their rows held counts as no longer reached by the source. A directory read that fails
+or is cut short keeps the previous expansion and drops nobody, and an expansion past the
+cap of 2000 people fails the turn and drops nobody.
 
 When an account's complete listing ends, the sync first writes `deleted` the readers
 rows of the files it no longer had, and writes the listing row's new start only once
@@ -432,21 +442,23 @@ Mirrored sources list every file on every turn, metadata only (id, revision,
 permissions). They are full listings because the store does not change a file's
 modification time when its sharing changes, so an incremental listing would miss a
 permission removed. A pass runs those listings first, rotating across the mirrored
-sources from where the previous pass's listings stopped, by a listings cursor of its
-own, kept in a `loom.code_index_state` row of the worker (`knowledge_source_listings`)
-beside the content cursor the pass keeps today. Listings stop at half of the pass
+sources from where the previous pass's listings stopped, by a listings position of its
+own, kept with the content position in the one resume cursor the pass already stores on
+its `loom.worker_status` row (`pass_context`). Listings take at most a third of the pass
 deadline (`knowledge_source_sync_max_pass_seconds`) and sit outside the pass's document
-bound, which counts fetches and writes of content; content keeps today's bound of
-starting no new source after three quarters of the deadline, and decision mining keeps
-the rest. A content backlog therefore never keeps a source's permissions from being
-re-read, and listings never take content's share. Content is still fetched only for a
-file whose revision changed: a listing records each file's revision against the stored
-copy's, and the files it finds changed wait in the source's sync state for the content
-phase of this or a later pass. Groups are expanded on every turn, once per group per
-turn. A listing that does not finish in a pass keeps one cursor per account in the sync
-state (the item it reached and the page token) and goes on from it in the next pass;
-until it completes, that account's listing row keeps its older start, so every file it
-alone proves ages together, and a file whose list it alone reads keeps its older
+bound, which counts fetches and writes of content. Content's start bound, today three
+quarters of the deadline from the pass start, is measured from where the listings ended,
+over the time left; decision mining keeps the tail it has today. When listings use their
+third, content keeps half of the deadline instead of three quarters: that slower drain
+of a content backlog is the accepted cost of keeping every mirrored source's permissions
+fresh. Content is still fetched only for a file whose revision changed: a listing
+records each file's revision against the stored copy's, and the files it finds changed
+wait in the source's sync state for the content phase of this or a later pass. Groups
+are expanded on every turn, once per group per turn. A listing that does not finish in a
+pass keeps one cursor per account in the source's sync state, keyed by the account's
+pseudonym (the item it reached and the page token), and goes on from it in the next
+pass; until it completes, that account's listing row keeps its older start, so every
+file it alone proves ages together, and a file whose list it alone reads keeps its older
 `read_at`. A large mirrored source therefore needs a stale bound longer than the time to
 list it all; `inspect` and `loom doctor` report the oldest listing start and the oldest
 `read_at` each source has. The cost per turn is the listing pages (1000 files each), one
@@ -615,17 +627,19 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   says.
 - A user erasure (`user_id`) reaches the connections of every subject that spelling maps
   to (`server/auth/aliases.py` `spellings`, `user:<id>` included). Its step reads those
-  connections first, then writes `deleted` the readers and listing rows keyed by them
-  (`<kind>:<account id>`), retires their connected sources with their mirrored
-  documents, and deletes the `loom.connected_accounts` rows last. It also takes the
-  person's verified emails out of every crawl of the org: out of `subjects`, and into
-  the crawl's `excluded` list as pseudonyms, which group expansion skips, so no address
-  of the person stays in `loom.knowledge_sources` and the census counts none. It writes
-  `deleted` every crawl readers and listing row whose `account` is one of the person's
-  verified emails, since no listing by them runs again to do it. Documents only that
-  person's listing held are retired. A crawl's documents are the org's, so a document
-  someone else's listing still holds stays. Disconnect and SCIM deactivation clear the
-  credential.
+  connections first, then deletes outright (a `DELETE`, every version, as the user steps
+  delete a grant row of the user) the readers and listing rows keyed by their
+  pseudonyms, retires their connected sources with their mirrored documents, and deletes
+  the `loom.connected_accounts` rows last. It also takes the person's verified emails
+  out of every crawl of the org: out of `subjects`, and into the crawl's `excluded` list
+  as pseudonyms, which group expansion skips, so no address of the person stays in
+  `loom.knowledge_sources` and the census counts none. It deletes outright every crawl
+  readers and listing row, and every crawl cursor, keyed by the pseudonym of one of the
+  person's verified emails, since no listing by them runs again to do it; those
+  `DELETE`s are in `_EXPECTED_MUTATIONS`, and the census counts these tables without
+  `FINAL` or the `deleted` filter. Documents only that person's listing held are
+  retired. A crawl's documents are the org's, so a document someone else's listing still
+  holds stays. Disconnect and SCIM deactivation clear the credential.
 - Every new table is classified in `server/erasure/store/census.py`.
 - `erasure.request` and `erasure.export` refuse an `acl-` scope in every auth mode:
   their handlers check it before the auth-on checks, since with auth off those do not
@@ -671,7 +685,9 @@ knowledge mirror erase --all`, a server CLI command that reads
   retire it on its own source's evidence though another source holds it. N's next turn
   of the other holder writes it again. The cost is a document missing for up to one
   interval.
-- **State.** Unchanged: `loom.code_index_state`.
+- **State.** Sync state stays in `loom.code_index_state`; N-1 ignores the per-account
+  cursors N keeps in it and the listings position in the pass cursor (its own turns
+  merge into the state and leave them).
 - **`meet`.** N-1 still syncs a stored `meet` source on its turns; N skips it.
 - **Erasure.** N-1's erasure misses the mirror and the new tables (rule 14): run again
   with N every erasure completed while an N-1 replica served.
@@ -759,9 +775,11 @@ The redirect URI to register with each store is
   the steps for a source added mid-saga; the deleted readers rows landing before a
   listing row's new start, with the sync killed between them; a stopped crawl, with or
   without holds, leaving no listing or group-members row; a person dropped from a
-  crawl's expansion leaving no readers or listing row; `erasure.request` refusing an
-  `acl-` scope for an org admin and a namespace admin and admitting a platform admin; a
-  user erasure leaving no address of the person in `loom.knowledge_sources`, nor a crawl
+  crawl's expansion leaving no readers or listing row; a directory read that fails
+  mid-group, or returns over the cap, dropping nobody; a user erasure leaving no row, of
+  any version, keyed by the person's pseudonyms; `erasure.request` refusing an `acl-`
+  scope for an org admin and a namespace admin and admitting a platform admin; a user
+  erasure leaving no address of the person in `loom.knowledge_sources`, nor a crawl
   readers or listing row naming them; `erasure.request` and `erasure.export` refusing an
   `acl-` scope with auth off; the mirror cache after an erasure followed by a new
   mirrored `add`; a connected `notion` page shown to its owner only; a consent callback
