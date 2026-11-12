@@ -377,7 +377,8 @@ def test_the_health_check_polls_where_loom_is_published(
         'echo \'{"status":"ok"}\'\n'
     )
     curl.chmod(0o755)
-    # Every compose call (pull, up) succeeds; only the version is asked for its output.
+    # Every docker call succeeds and prints nothing, so no own server is found; only the
+    # version is asked for its output.
     docker = curl.with_name("docker")
     docker.write_text(
         '#!/bin/sh\n[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1\nexit 0\n'
