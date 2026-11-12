@@ -345,6 +345,12 @@ class AuthSettings(BaseModel):
     # Org lookups one client address may make in a minute, counted by each router
     # replica (`GET /cells/lookup`).
     router_lookups_per_minute: int = Field(default=60, ge=1)
+    # The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4,
+    # beside the first cell's own host and aliases; "" = only those, once it is registered.
+    router_shared_host: str = ""
+    # The address the router forwards the shared host to before a first cell is
+    # registered (the deployment it was put in front of); "" = none: those answer 503.
+    router_upstream_url: str = ""
 
     def jwt_secret_is_dev_default(self) -> bool:
         """Whether the root secret is the checked-in dev default — the value

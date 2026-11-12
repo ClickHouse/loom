@@ -23,6 +23,11 @@ def _refusal() -> str:
     if settings.router_pg_dsn == settings.pg_dsn:
         # `loom router migrate` also refuses a database holding a memory authority.
         return "LOOM_ROUTER_PG_DSN is LOOM_PG_DSN: give the directory a database of its own"
+    from server.router.routing import usable_upstream
+
+    upstream = settings.router_upstream_url
+    if upstream and not usable_upstream(upstream):
+        return "LOOM_ROUTER_UPSTREAM_URL is no http(s)://host[:port] with no path"
     return ""
 
 
@@ -69,7 +74,8 @@ def _add_router_parser(sub: Any) -> None:
     p = sub.add_parser("router", help="The router in front of a deployment's cells.")
     rsub = p.add_subparsers(dest="router_cmd", required=True)
     serve = rsub.add_parser(
-        "serve", help="Serve the placement API and org lookups from the directory."
+        "serve",
+        help="Serve the placement API and org lookups, and route every other request to a cell.",
     )
     serve.add_argument("--host", default="127.0.0.1", help="Address to listen on")
     serve.add_argument("--port", type=int, default=7780, help="Port to listen on")

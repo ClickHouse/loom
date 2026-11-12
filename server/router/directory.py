@@ -186,6 +186,18 @@ def _cell(row: Any) -> Cell:
     return Cell(**dict(row))
 
 
+async def routing() -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
+    """What routing reads (`server.router.routing.build`): every cell's name, host,
+    state, first mark, issuers and upstream address, and every host alias."""
+    async with _reading(), _connection() as conn:
+        cells = await conn.fetch(
+            "SELECT cell, host, state, is_first, issuers, upstream_url FROM loom_router.cells "
+            "ORDER BY cell"
+        )
+        aliases = await conn.fetch("SELECT host, cell FROM loom_router.hosts")
+    return [dict(r) for r in cells], [(str(r["host"]), str(r["cell"])) for r in aliases]
+
+
 async def credentials() -> dict[str, str]:
     """Every cell's credential hash, by cell name."""
     async with _reading(), _connection() as conn:

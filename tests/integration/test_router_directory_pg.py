@@ -122,6 +122,10 @@ async def test_the_directory_places_once_and_holds_the_quota(dsn: str) -> None:
         with pytest.raises(directory.PlacementRefused, match="closed"):
             await directory.place(f"new-{a}", a, lambda _r: "closed")
         assert await directory.lookup(f"new-{a}") is None
+        # Routing reads every cell with its upstream address ('' until attach writes it).
+        cells, _aliases = await directory.routing()
+        routed = {c["cell"]: c for c in cells}
+        assert routed[a]["upstream_url"] == "" and routed[a]["host"] == f"{a}.example.test"
         # The state read answers only the first cell: none of these, until one is marked.
         assert await directory.first_cell_named(a) is None
         earlier = await conn.fetchval("SELECT cell FROM loom_router.cells WHERE is_first")
