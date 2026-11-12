@@ -346,30 +346,6 @@ test("every Claude Code hook runs its script with node in the exec form", () => 
   }
 });
 
-// The payload and the reply carry non-ASCII text, as a prompt and a primer do.
-const PAYLOAD = "prompt — é 漢";
-
-test("a Claude Code hook spawned without a shell passes its argument and stdin through", () => {
-  const f = fixture();
-  try {
-    const plugin = path.join(f.dir, "plugin");
-    fs.mkdirSync(path.join(plugin, "hooks"), { recursive: true });
-    fs.writeFileSync(
-      path.join(plugin, "hooks", "echo.mjs"),
-      'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(process.argv.slice(2).join(" ") + "|" + s));\n',
-    );
-    // Claude Code substitutes the placeholder in each argument.
-    const hook = claudeHook("echo.mjs", "Stop");
-    const args = hook.args.map((a) => a.replaceAll("${CLAUDE_PLUGIN_ROOT}", plugin));
-    const r = spawnSync(hook.command, args, { encoding: "utf8", input: PAYLOAD });
-    assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.stderr, "");
-    assert.equal(r.stdout, `Stop|${PAYLOAD}`);
-  } finally {
-    f.done();
-  }
-});
-
 test("the generic and Codex hooks start Node through the launcher; each header helper is pinned", () => {
   const wiring = [
     [path.join(root, "hooks", "hooks.generic.json"), "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/"],

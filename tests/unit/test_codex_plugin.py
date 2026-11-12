@@ -276,6 +276,12 @@ def test_plugins_carry_nothing_the_plugin_directory_warns_about() -> None:
             assert "allowed-tools:" not in frontmatter, skill
     claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
     assert "minServerVersion" not in claude
+    # A plugin's own server's tools are mcp__plugin_<plugin>_<server>__<tool>.
+    matchers = [
+        g.get("matcher", "") for g in _hooks(CLAUDE / "hooks" / "hooks.json")["PostToolUse"]
+    ]
+    assert "mcp__plugin_loom_loom__.*" in matchers
+    assert not any("mcp__loom__" in m for m in matchers), matchers
 
 
 def test_listing_icons_are_files_the_plugins_ship() -> None:

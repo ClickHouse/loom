@@ -71,8 +71,9 @@ SETTINGS
   env -i "$@" /bin/sh "$0" --path-node >/dev/null 2>&1
 }
 
-# Claude Code does not export CLAUDE_PLUGIN_ROOT to its Bash tool, so the
-# script's own path decides; on Windows that path may use backslashes.
+# CLAUDE_PLUGIN_ROOT decides when a caller exports it. Claude Code's Bash tool
+# does not, so there the script's own path decides; on Windows that path may
+# use backslashes.
 claude_code() {
   [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && return 0
   case $0 in */.claude/plugins/* | *'\.claude\plugins\'*) return 0 ;; esac
