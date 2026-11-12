@@ -122,12 +122,13 @@ row names the namespace, the name and the items added and removed, with a `filte
 `knowledge.crawl.readmit`'s audit row records the readmitted emails the same way.
 Removing every item is refused (`BAD_CONFIG`); `remove` ends a source. Changing `access`
 is a new source. For a `crawl`, `update` also takes `subjects` (the new list, probed
-like added items) and `directory_subject`, under the same roles as `add`, so a namespace
-admin without an org-wide role cannot change whose drives a crawl reads. Readmitting a
-person a user erasure excluded is an org admin's op of its own,
-`knowledge.crawl.readmit` (`org_admin` or `platform_admin`, in admin Users): it writes
-the person's exclusion rows `deleted`, for every crawl of the org, and works with no
-crawl registered.
+like added items) and `directory_subject`. Every `update` and `rotate` of a crawl needs
+the same roles as `add`, since its credential reads every listed person's drive: a
+namespace admin without an org-wide role cannot change whose drives it reads, what it
+reads of them (items, `include`) or the key it reads with. Readmitting a person a user
+erasure excluded is an org admin's op of its own, `knowledge.crawl.readmit` (`org_admin`
+or `platform_admin`, in admin Users): it writes the person's exclusion rows `deleted`,
+so every crawl of the org reads the person again, and it works with no crawl registered.
 
 ### One document, one owner
 
@@ -240,17 +241,18 @@ the redirect URI registered with the store is built from it, never from a reques
 - Connecting again with another store account replaces the connection and stops the
   sources that used the old one, as a disconnect does: their items were chosen for the
   old account.
-- Every path that ends a connection (`connection.disconnect`, a SCIM deactivation for
-  every subject it revokes, a user erasure, the restore command's `--connections`) ends
-  it in one order: it unseals the credential into memory, clears the sealed credential
-  and marks every source that uses it inactive (the part that fails closed), and only
-  then revokes at the store with the token in memory, best effort, under a short timeout
-  and outside any lease or claim, as SCIM revokes tokens past its leases; a revoke that
-  hangs or fails leaves the credential cleared. The sync worker then retires those
-  sources' mirrored documents. A turn also checks the owner: a source whose owner
-  subject is revoked, deactivated, or no longer holds `writer` on the source's namespace
-  is stopped (written inactive under the source lease, `status: owner_inactive`) and
-  goes as a removed source does, so a missed hook fails closed.
+- Every path that ends a connection (`connection.disconnect`, connecting again with
+  another store account, a SCIM deactivation for every subject it revokes, a user
+  erasure, the restore command's `--connections`) ends it in one order: it unseals the
+  credential into memory, clears the sealed credential and marks every source that uses
+  it inactive (the part that fails closed), and only then revokes at the store with the
+  token in memory, best effort, under a short timeout and outside any lease or claim, as
+  SCIM revokes tokens past its leases; a revoke that hangs or fails leaves the
+  credential cleared. The sync worker then retires those sources' mirrored documents. A
+  turn also checks the owner: a source whose owner subject is revoked, deactivated, or
+  no longer holds `writer` on the source's namespace is stopped (written inactive under
+  the source lease, `status: owner_inactive`) and goes as a removed source does, so a
+  missed hook fails closed.
 
 A connected source reads the person's own files, the files and folders shared with them,
 their recordings folder, and the pages and projects they can read. It reads no
@@ -669,23 +671,28 @@ read.
 
 The implementing pull request adds `loom knowledge mirror erase --all`, which the
 rollback (below) and every restore run. It finds every `acl-` namespace in the tables
-the namespace steps and the census cover (the census tables and the step-only tables,
-not the `NO_MEMORY_CONTENT` ledgers such as `loom.audit_log` and `loom.worker_status`,
-whose rows outlive an erasure by design), plus `loom.knowledge_mirrors` and, under the
-Postgres authority, the heads and deliveries, with one `namespace LIKE 'acl-%'` read per
-table on its sort-key prefix (the implementing pull request measures it, since it adds
-to restore downtime). It runs a platform-admin purging erasure of each name, so no
-tombstone keeps content or a list, each to completion in process as `loom reconcile`
+the namespace steps and the census cover (`census.namespace_tables()`, the set
+`namespace_census.in_use` reads, plus the step-only tables a namespace step erases; not
+the `NO_MEMORY_CONTENT` ledgers such as `loom.audit_log` and `loom.worker_status`, nor
+`loom.agent_events`, which no namespace step erases and whose mirror rows age out with
+the namespace's retention as every namespace's do), plus `loom.knowledge_mirrors.mirror`
+and, under the Postgres authority, the heads and deliveries. It reads the distinct
+`acl-` names per table and org (the implementing pull request measures that read, since
+it adds to restore downtime). It runs a platform-admin purging erasure of each name, so
+no tombstone keeps content or a list, each to completion in process as `loom reconcile`
 runs its work; it is done when every name it found has a purge completed by this run,
-and it exits non-zero until then (run it again until it exits 0; a second run after a
-completed one finds only names whose rows the purges removed, so none). It connects with
-`org_free` and a reason, as `loom reconcile` does, and checks each org it finds is the
-cell's before it writes; and it stops every mirrored source, `shared` mirrored ones
-included. With `--connections` it also ends every connection, in the order every such
-path uses (above). A connection made after the point is gone from the restored copy and
-Loom cannot revoke it; that gap is accepted, and the restore procedure's notice to users
-tells owners to revoke at the store any connection they made after the restore point.
-Rollback runs the command without `--connections`; a restore runs it with.
+and it exits non-zero until then (run it again until it exits 0).
+`loom.knowledge_mirrors` is never deleted, so a second run after a completed one finds
+every mirror again and purges each once more, a pass that finds no row and completes at
+once, and exits 0. It connects with `org_free` and a reason, as `loom reconcile` does,
+and calls `check_orgs` on the orgs it finds; an org the cell does not hold is named and
+left to the cell that holds it, and does not keep the command from exiting 0; and it
+stops every mirrored source, `shared` mirrored ones included. With `--connections` it
+also ends every connection, in the order every such path uses (above). A connection made
+after the point is gone from the restored copy and Loom cannot revoke it; that gap is
+accepted, and the restore procedure's notice to users tells owners to revoke at the
+store any connection they made after the restore point. Rollback runs the command
+without `--connections`; a restore runs it with.
 
 The implementing pull request adds the step to the restore procedures ([backup and
 recovery](../operations/backup-and-recovery.md)), including a ClickHouse-authority
@@ -695,13 +702,13 @@ command, start. Under the Postgres authority the command runs after `loom reconc
 among what it erases, and before the deployment starts. Under the ClickHouse authority a
 user erasure completed after the point rolls back with its ledger and audit rows and
 leaves no trace in the store, so it is lost and is requested again from the requester's
-own record (or from an audit export kept off the service). The command takes those user
-ids (`--user-erasures <file>`) and runs their erasures before it exits, so their
-exclusion rows exist before the deployment starts and before any crawl can be added
-again. `loom reconcile` leaves `acl-` names out of the sources it names for `loom
-rechunk`. Owners connect again and add their sources again, and crawl admins add theirs:
-that loss of every mirrored document and source is the accepted cost of a ClickHouse
-restore.
+own record (or from an audit export kept off the service). The command takes those
+erasures as a file of `org,user_id` lines (`--user-erasures <file>`), checks their orgs
+as above and runs them before it exits, so their exclusion rows exist before the
+deployment starts and before any crawl can be added again. `loom reconcile` leaves
+`acl-` names out of the sources it names for `loom rechunk`. Owners connect again and
+add their sources again, and crawl admins add theirs: that loss of every mirrored
+document and source is the accepted cost of a ClickHouse restore.
 
 #### Published rows
 
@@ -846,14 +853,17 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   namespace inactive, so a source can still be added after it, and the step therefore
   runs again on every resume, never skipped as completed. The saga then reads the
   namespace's mirror from `loom.knowledge_mirrors`, which is never deleted, and every
-  namespace-keyed step and census entry runs over the mirror's name too, so a step added
-  later covers it by the same rule. A superseded mirror row would keep its text and its
-  list, so the mirror's names are purged whether or not the namespace's erasure purges:
-  after the namespace's own pass, the saga runs the namespace steps and the census a
-  second time over the mirror's names inside `purge_scope(True)`, so their steps
-  hard-delete and the census counts every row for them; the step signatures and the
-  ledger's `purge` column stay as they are. A census that finds a live source or a
-  mirrored document added after those steps reopens them (`steps_to_reopen`).
+  namespace-keyed step and census entry covers the mirror by the pass below, so a step
+  added later covers it by the same rule. A superseded mirror row would keep its text
+  and its list, so the mirror is erased only in a purging pass of its own: after the
+  namespace's own pass (which leaves the mirror's names out), the saga runs the
+  namespace steps and the census over the mirror's names inside `purge_scope(True)`,
+  under checkpoint names of their own (`mirror:<step>`, `mirror:verify.residue`), so a
+  step done for the namespace is not skipped for the mirror and a resumed saga knows
+  which pass a checkpoint belongs to; the step signatures and the ledger's `purge`
+  column stay as they are, and the registry test that holds step names to `_CENSUS`
+  owners learns the `mirror:` prefix. A census that finds a live source or a mirrored
+  document added after those steps reopens them (`steps_to_reopen`).
 - `loom.knowledge_sources` moves from `NO_MEMORY_CONTENT` into the namespace steps: it
   holds a connected source's owner, a crawl's subjects and a filter's `owner` email, so
   `knowledge_sources.retire` clears a retired row's credentials, owner, options and
@@ -874,8 +884,10 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   to (`server/auth/aliases.py` `spellings`, `user:<id>` included). Its step reads those
   connections first, then deletes outright (a `DELETE`, every version, as the user steps
   delete a grant row of the user) the readers and listing rows keyed by their
-  pseudonyms, retires their connected sources with their mirrored documents, and deletes
-  the `loom.connected_accounts` rows last.
+  pseudonyms, retires their connected sources with their mirrored documents, ends each
+  connection in the order every such path uses ([connected
+  accounts](#connected-accounts): clear, then revoke at the store), and deletes the
+  `loom.connected_accounts` rows last.
 - A user erasure's crawl part runs in this order. First it writes the person's exclusion
   rows (one per verified email) and, under each crawl's source lease, takes the emails
   out of every crawl's `subjects`, so no address of the person stays in
@@ -893,8 +905,7 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   1 still decides who reads it; those `DELETE`s are in `_EXPECTED_MUTATIONS`, and the
   census counts these tables without `FINAL` or the `deleted` filter. A crawl's
   documents are the org's, so a document someone else's listing still reaches stays.
-  Disconnect, SCIM deactivation and a user erasure end a connection in the order above:
-  clear, then revoke at the store.
+
 - Every new table is classified in `server/erasure/store/census.py`.
 - `erasure.request` and `erasure.export` refuse an `acl-` scope in every auth mode:
   their handlers check it before the auth-on checks, since with auth off those do not
@@ -1085,10 +1096,11 @@ The redirect URI to register with each store is
   - The same command stopping every mirrored source, `shared` ones included, and with
     `--connections` ending every connection.
   - The same command purging, so no tombstone keeps content or a list.
-  - The same command finding a mirror named only in `loom.chunks` or
-    `loom.agent_events`, and ignoring names found only in `loom.audit_log` or
-    `loom.worker_status`.
-  - A second run of the command after a completed one finding nothing and exiting 0.
+  - The same command finding a mirror named only in `loom.chunks`, and ignoring names
+    found only in `loom.audit_log`, `loom.worker_status` or `loom.agent_events`.
+  - A second run of the command after a completed one purging each mirror again as a
+    no-op and exiting 0, and an org the cell does not hold named without blocking the
+    exit.
   - Under the Postgres authority, the command running after `loom reconcile --apply`.
   - Under the ClickHouse authority, `--user-erasures` writing the lost erasures'
     exclusion rows before the command exits, so a crawl added again does not read the
@@ -1101,11 +1113,13 @@ The redirect URI to register with each store is
     the store's group, leaving them out.
   - A disconnect and a SCIM deactivation whose store revoke hangs or fails still leaving
     the credential cleared and the sources inactive.
-  - A crawl's `subjects` or `directory_subject` update by a namespace admin without an
-    org-wide role refused.
-  - `knowledge.crawl.readmit` readmitting the person for every crawl of the org, with no
-    crawl registered too, and refused without an org-wide role.
+  - Every `update` and `rotate` of a crawl (its `subjects`, `directory_subject`, items
+    or `include`) by a namespace admin without an org-wide role refused.
+  - `knowledge.crawl.readmit` making every crawl of the org read the person again, with
+    no crawl registered too, and refused without an org-wide role.
   - `loom reconcile` naming no `acl-` source.
+  - A namespace erasure's mirror pass running after the namespace pass in the same saga
+    under `mirror:` checkpoints, and a saga resumed midway through it.
   - A retired mirror document's tombstone carrying no `access_json`.
   - A crawl that lost every account's listing row still found by the anti-join through
     its source row.
