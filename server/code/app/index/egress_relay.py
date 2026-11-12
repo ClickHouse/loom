@@ -18,6 +18,7 @@ import socket
 import sys
 import threading
 import time
+from collections.abc import Callable
 
 
 def _pipe(src: socket.socket, dst: socket.socket) -> None:
@@ -33,15 +34,26 @@ def _pipe(src: socket.socket, dst: socket.socket) -> None:
             pass
 
 
+def _start(target: Callable[..., None], *args: object) -> threading.Thread:
+    """Start a daemon thread, waiting while the job is at its task limit."""
+    while True:
+        # a new Thread each try: one whose start failed cannot be started again
+        thread = threading.Thread(target=target, args=args, daemon=True)
+        try:
+            thread.start()
+            return thread
+        except RuntimeError:
+            time.sleep(0.1)
+
+
 def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
             upstream.connect(path)
-            back = threading.Thread(target=_pipe, args=(upstream, conn), daemon=True)
-            back.start()
+            back = _start(_pipe, upstream, conn)
             _pipe(conn, upstream)
             back.join()
-    except (OSError, RuntimeError):  # RuntimeError: the job's task limit refused a thread
+    except OSError:
         pass
     finally:
         conn.close()
@@ -55,19 +67,11 @@ def accept_loop(listener: socket.socket, path: str, slots: threading.Semaphore) 
         slots.acquire()
         try:
             conn, _ = listener.accept()
-        except OSError:  # ENFILE, ECONNABORTED and the like: retried
+        except OSError:  # ENFILE, ECONNABORTED and the like
             slots.release()
-            if listener.fileno() == -1:  # the listener was closed: how the tests stop it
-                return
             time.sleep(0.1)
             continue
-        while True:
-            # a new Thread each try: one whose start failed cannot be started again
-            try:
-                threading.Thread(target=_bridge, args=(conn, path, slots), daemon=True).start()
-                break
-            except RuntimeError:  # the job is at its task limit: wait, as the backlog does
-                time.sleep(0.1)
+        _start(_bridge, conn, path, slots)
 
 
 def serve(port: int, path: str, max_bridges: int, argv: list[str]) -> None:

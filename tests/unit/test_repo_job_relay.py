@@ -1,8 +1,8 @@
 """The relay inside a repository-job sandbox bridges at most a fixed number of
-connections at a time. A thread it cannot start, a socket it cannot open or a
-failed accept costs at most one connection, never the relay: a client opening
-hundreds at once (pnpm's metadata check) would otherwise reach the job's task
-limit and leave the job with no route out."""
+connections at a time. A thread it cannot start waits for the job's task limit,
+and a socket it cannot open or a failed accept costs at most one connection,
+never the relay: a client opening hundreds at once (pnpm's metadata check) would
+otherwise reach the job's task limit and leave the job with no route out."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import errno
 import socket
 import threading
 import types
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +25,7 @@ class _Upstream:
     open and counts them."""
 
     def __init__(self, path: str) -> None:
+        self.path = path
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(path)
         self.server.listen(128)
@@ -56,63 +57,62 @@ def upstream(sock_dir: Path) -> Iterator[_Upstream]:
     proxy.close()
 
 
-class _FlakyListener:
-    """A listener whose first accept fails as if the job were out of descriptors."""
+class _Stopped(Exception):
+    pass
 
-    def __init__(self, listener: socket.socket) -> None:
-        self.listener = listener
-        self.calls = 0
 
-    def accept(self) -> tuple[socket.socket, object]:
-        self.calls += 1
-        if self.calls == 1:
-            raise OSError(errno.EMFILE, "Too many open files")
-        return self.listener.accept()
+class _Listener:
+    """The relay's listener as the tests drive it: `stop` ends the accept loop, and
+    with `fail_first` the first accept fails as it does when the host is out of
+    descriptors."""
 
-    def fileno(self) -> int:
-        return self.listener.fileno()
+    def __init__(self, fail_first: bool = False) -> None:
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(128)
+        self.sock.settimeout(0.05)
+        self.port = self.sock.getsockname()[1]
+        self.stop = threading.Event()
+        self.fail_first = fail_first
+
+    def accept(self) -> tuple[socket.socket, Any]:
+        if self.fail_first:
+            self.fail_first = False
+            raise OSError(errno.ENFILE, "Too many open files in system")
+        while not self.stop.is_set():
+            with contextlib.suppress(TimeoutError):
+                conn, address = self.sock.accept()
+                conn.settimeout(None)
+                return conn, address
+        raise _Stopped
 
 
 @contextlib.contextmanager
-def _relay(
-    path: str, slots: int, accept_on: Callable[[socket.socket], Any] = lambda listener: listener
-) -> Iterator[int]:
-    """Run the relay's accept loop on a free port; yields the port."""
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    listener.bind(("127.0.0.1", 0))
-    listener.listen(128)
-    loop = threading.Thread(
-        target=egress_relay.accept_loop,
-        args=(accept_on(listener), path, threading.BoundedSemaphore(slots)),
-        daemon=True,
-    )
+def _relay(upstream: _Upstream, slots: int, listener: _Listener | None = None) -> Iterator[int]:
+    """Run the relay's accept loop to `upstream`; yields its port. On the way out the
+    upstream closes, which ends every bridge, and the loop is joined."""
+    listener = listener or _Listener()
+    slots_left = threading.BoundedSemaphore(slots)
+
+    def run() -> None:
+        with contextlib.suppress(_Stopped):
+            egress_relay.accept_loop(listener, upstream.path, slots_left)
+
+    loop = threading.Thread(target=run, daemon=True)
     loop.start()
     try:
-        yield listener.getsockname()[1]
+        yield listener.port
     finally:
-        with contextlib.suppress(OSError):
-            listener.shutdown(socket.SHUT_RDWR)  # wakes the blocked accept
-        listener.close()
-
-
-def test_connections_past_the_cap_wait_until_a_bridge_ends(upstream: _Upstream) -> None:
-    with _relay(upstream.server.getsockname(), 2) as port:
-        clients = [socket.create_connection(("127.0.0.1", port)) for _ in range(5)]
-        try:
-            assert upstream.arrived.acquire(timeout=5) and upstream.arrived.acquire(timeout=5)
-            assert not upstream.arrived.acquire(timeout=0.3)  # three wait in the backlog
-            for conn in [*clients[:2], *upstream.held[:2]]:  # both bridged connections end
-                conn.close()
-            assert upstream.arrived.acquire(timeout=5) and upstream.arrived.acquire(timeout=5)
-            assert not upstream.arrived.acquire(timeout=0.3)  # still two at a time
-        finally:
-            for client in clients:
-                client.close()
+        listener.stop.set()
+        upstream.close()
+        loop.join(timeout=5)
+        listener.sock.close()
+    assert not loop.is_alive()
 
 
 def _thread_failing_on(start: int) -> types.SimpleNamespace:
     """A stand-in for the relay's `threading` whose `start`-th thread start fails.
-    As in CPython 3.13 and later, a Thread whose start failed cannot be started again."""
+    The relay must not reuse a Thread whose start failed, so this one refuses."""
     starts = 0
 
     class Thread(threading.Thread):
@@ -146,45 +146,54 @@ def _socket_failing_once() -> types.SimpleNamespace:
     return types.SimpleNamespace(socket=make, **{n: getattr(socket, n) for n in names})
 
 
-def test_a_bridge_thread_that_cannot_start_is_retried(
-    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch
+def test_connections_past_the_cap_wait_until_a_bridge_ends(upstream: _Upstream) -> None:
+    with _relay(upstream, 2) as port:
+        clients = [socket.create_connection(("127.0.0.1", port)) for _ in range(5)]
+        try:
+            assert upstream.arrived.acquire(timeout=5) and upstream.arrived.acquire(timeout=5)
+            assert not upstream.arrived.acquire(timeout=0.3)  # three wait in the backlog
+            for conn in [*clients[:2], *upstream.held[:2]]:  # both bridged connections end
+                conn.close()
+            assert upstream.arrived.acquire(timeout=5) and upstream.arrived.acquire(timeout=5)
+            assert not upstream.arrived.acquire(timeout=0.3)  # still two at a time
+        finally:
+            for client in clients:
+                client.close()
+
+
+@pytest.mark.parametrize("failing_start", [1, 2], ids=["the bridge", "its second pipe"])
+def test_a_thread_that_cannot_start_is_started_again(
+    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch, failing_start: int
 ) -> None:
-    monkeypatch.setattr(egress_relay, "threading", _thread_failing_on(1))
-    with _relay(upstream.server.getsockname(), 1) as port:
-        client = socket.create_connection(("127.0.0.1", port))
+    monkeypatch.setattr(egress_relay, "threading", _thread_failing_on(failing_start))
+    with _relay(upstream, 1) as port:
+        client = socket.create_connection(("127.0.0.1", port), timeout=5)
         assert upstream.arrived.acquire(timeout=5)
+        upstream.held[0].sendall(b"hi")
+        assert client.recv(2) == b"hi"  # both directions run
         client.close()
-
-
-def _assert_first_closed_and_slot_back(port: int, upstream: _Upstream, reached: bool) -> None:
-    first = socket.create_connection(("127.0.0.1", port), timeout=5)
-    assert first.recv(1) == b""  # closed
-    first.close()
-    if reached:  # its bridge had connected to the proxy
-        assert upstream.arrived.acquire(timeout=5)
-    second = socket.create_connection(("127.0.0.1", port))
-    assert upstream.arrived.acquire(timeout=5)  # its slot came back
-    second.close()
-
-
-def test_a_second_pipe_thread_that_cannot_start_costs_its_connection_only(
-    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(egress_relay, "threading", _thread_failing_on(2))
-    with _relay(upstream.server.getsockname(), 1) as port:
-        _assert_first_closed_and_slot_back(port, upstream, reached=True)
 
 
 def test_an_upstream_socket_that_cannot_open_costs_its_connection_only(
     upstream: _Upstream, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(egress_relay, "socket", _socket_failing_once())
-    with _relay(upstream.server.getsockname(), 1) as port:
-        _assert_first_closed_and_slot_back(port, upstream, reached=False)
+    with _relay(upstream, 1) as port:
+        first = socket.create_connection(("127.0.0.1", port), timeout=5)
+        assert first.recv(1) == b""  # closed
+        first.close()
+        second = socket.create_connection(("127.0.0.1", port))
+        assert upstream.arrived.acquire(timeout=5)  # its slot came back
+        second.close()
 
 
 def test_an_accept_that_fails_is_retried(upstream: _Upstream) -> None:
-    with _relay(upstream.server.getsockname(), 1, _FlakyListener) as port:
+    with _relay(upstream, 1, _Listener(fail_first=True)) as port:
         client = socket.create_connection(("127.0.0.1", port))
         assert upstream.arrived.acquire(timeout=5)
         client.close()
+
+
+def test_serve_without_the_bridge_cap_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
+    assert egress_relay.main(["serve", "3128", "/run/loom-egress/proxy.sock", "--", "true"]) == 2
+    assert "serve PORT SOCKET MAX -- ARGV" in capsys.readouterr().err

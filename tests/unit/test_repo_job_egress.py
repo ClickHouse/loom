@@ -266,10 +266,15 @@ async def _tunnel_to(
     monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
     sock = str(sock_dir / "p.sock")
     proxy = await egress.start_proxy(sock, None)
-    reader, writer = await asyncio.open_unix_connection(sock)
-    writer.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
-    head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
-    assert head.startswith(b"HTTP/1.1 200")
+    try:
+        reader, writer = await asyncio.open_unix_connection(sock)
+        writer.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
+        assert head.startswith(b"HTTP/1.1 200")
+    except BaseException:
+        await proxy.close()
+        server.close()
+        raise
     return proxy, server, reader, writer
 
 
