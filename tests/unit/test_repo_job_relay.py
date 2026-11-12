@@ -33,7 +33,8 @@ class _Upstream:
         self.server.listen(128)
         self.held: list[socket.socket] = []
         self.arrived = threading.Semaphore(0)
-        threading.Thread(target=self._accept, daemon=True).start()
+        self.accepting = threading.Thread(target=self._accept, daemon=True)
+        self.accepting.start()
 
     def _accept(self) -> None:
         while True:
@@ -46,8 +47,9 @@ class _Upstream:
 
     def close(self) -> None:
         with contextlib.suppress(OSError):
-            self.server.shutdown(socket.SHUT_RDWR)
+            self.server.shutdown(socket.SHUT_RDWR)  # wakes the blocked accept
         self.server.close()
+        self.accepting.join(timeout=5)
         for conn in self.held:
             conn.close()
 
@@ -94,8 +96,10 @@ def _relay(
     slots_left = threading.BoundedSemaphore(slots)
 
     def run() -> None:
-        with contextlib.suppress(_Stopped):
+        try:
             egress_relay.accept_loop(listener, upstream.path, slots_left)
+        except _Stopped:
+            slots_left.release()  # the one it took for that accept
 
     loop = threading.Thread(target=run, daemon=True)
     loop.start()
@@ -106,13 +110,15 @@ def _relay(
         upstream.close()
         loop.join(timeout=5)
         listener.sock.close()
-    assert not loop.is_alive()
+        # every bridge has ended once each slot is back
+        bridges_done = all(slots_left.acquire(timeout=5) for _ in range(slots))
+    assert not loop.is_alive() and not upstream.accepting.is_alive() and bridges_done
 
 
 def _thread_failing_on(start: int) -> types.SimpleNamespace:
     """A stand-in for the relay's `threading` whose `start`-th thread start fails.
-    The relay must not count on restarting a Thread whose start failed (Python 3.13
-    refuses it), so this one refuses too."""
+    The relay must not count on restarting a Thread whose start failed, so this one
+    refuses too."""
     starts = 0
 
     class Thread(threading.Thread):

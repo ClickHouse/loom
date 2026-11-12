@@ -87,13 +87,16 @@ async def _until_server_quiet(
     server_side: asyncio.Task[None], last_active: list[float], to_client: asyncio.StreamWriter
 ) -> None:
     """Wait for the server's direction until `code_egress_half_close_timeout_s` passes
-    with no byte: a server need not close a connection its client has finished with.
-    Bytes still on their way to a slow client are not silence."""
+    with no byte either way: a server need not close a connection its client has
+    finished with. Bytes still on their way to a slow client are not silence, up to
+    `code_egress_idle_timeout_s`."""
     while not server_side.done():
         timeout = settings.code_egress_half_close_timeout_s
-        left = timeout - (time.monotonic() - last_active[0])
+        quiet = time.monotonic() - last_active[0]
+        left = timeout - quiet
         if left <= 0:
-            if not to_client.transport.get_write_buffer_size():
+            buffered = to_client.transport.get_write_buffer_size()
+            if not buffered or quiet >= settings.code_egress_idle_timeout_s:
                 return
             left = timeout
         await asyncio.wait({server_side}, timeout=left)
