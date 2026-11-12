@@ -58,28 +58,28 @@ layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-share
 `memory.promote` and `memory.demote` need `admin`, the shared row records its source
 (`promoted_from`) and the candidate it came from (`promoted_from_candidate_id`),
 `memory.lineage` walks it back, and every build knows it. So governance needs no table or
-state of its own. An edit, a relabel to `high` or a tombstone of the source, by any writer
-or worker on any build, ends governance while the source differs from what the admin
-approved; a copy that keeps the text (the entity pass, a touch) keeps it, and a source
-that returns to the approved state (a restore, an edit reverted byte for byte) is governed
-again with no new promotion. A relabel back from `high` does not bring back the shared
-embedding it retired: the term leg serves the definition again, and an admin promotes it
-again to restore the copy's search row. `memory.demote` ends governance. Only
-`memory.promote` promotes into `loom.shared` (the op and `learnings.review`'s path through
-it; demote, erasure, a redact and a relabel to `high` only retire or scrub there, as the
-changes below say); no worker promotes on its own. An admin read,
-`memory.definitions.list`, lists the namespace's shared definitions with the read-time
-check's verdict on each and the reason a lapsed one lapsed (its text changed, it is
-`medium` or `high`, gone, expired, past its `valid_to`, under a key that is not its term's
-slug, promoted from a row that is not the namespace-wide one, or no longer `active`), and
-lists a definition that passes the check but is not served because a later promotion holds
-one of its names as `shadowed`, naming the row that wins. A changed text is promoted
-again. On N no automatic verdict retires or marks a definition's source (the exemptions
-below, and the negative-outcome quarantine of `memory.outcome`, which skips a definition's
-namespace-wide row as it skips a locked one), so a source that is no longer `active` was
-rejected by a writer, or left that way by N-1 or before this design. The sensitivity sweep
-can still relabel a source, which lapses it as a relabel does. The admin brings it back by
-the way it lapsed:
+state of its own. An edit, a relabel to `medium` or `high` or a tombstone of the source,
+by any writer or worker on any build, ends governance while the source differs from what
+the admin approved; a copy that keeps the text (the entity pass, a touch) keeps it, and a
+source that returns to the approved state (a restore, an edit reverted byte for byte) is
+governed again with no new promotion. A relabel back from `medium` or `high` does not
+bring back the shared embedding it retired: the term leg serves the definition again, and
+an admin promotes it again to restore the copy's search row. `memory.demote` ends
+governance. Only `memory.promote` promotes into `loom.shared` (the op and
+`learnings.review`'s path through it; demote, erasure, a redact and a relabel to `medium`
+or `high` only retire or scrub there, as the changes below say); no worker promotes on its
+own. An admin read, `memory.definitions.list`, lists the namespace's shared definitions
+with the read-time check's verdict on each and the reason a lapsed one lapsed (its text
+changed, it is `medium` or `high`, gone, expired, past its `valid_to`, under a key that is
+not its term's slug, promoted from a row that is not the namespace-wide one, or no longer
+`active`), and lists a definition that passes the check but is not served because a later
+promotion holds one of its names as `shadowed`, naming the row that wins. A changed text
+is promoted again. On N no automatic verdict retires or marks a definition's source (the
+exemptions below, and the negative-outcome quarantine of `memory.outcome`, which skips a
+definition's namespace-wide row as it skips a locked one), so a source that is no longer
+`active` was rejected by a writer, or left that way by N-1 or before this design. The
+sensitivity sweep can still relabel a source, which lapses it as a relabel does. The admin
+brings it back by the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
@@ -138,11 +138,11 @@ reader:
 - **`memory.promote` refuses a definition whose term or alias** is already another
   definition's, governed or lapsed (every live shared row of type `definition`), on every
   promotion path, so a lapsed definition that returns to its approved state never shares a
-  name with one promoted meanwhile. The check reads the namespace's definition rows within
-  the term leg's bound, since an alias lives inside its definition's value and no key
-  finds it, and refuses the promotion when that read is capped, so it never passes on a
-  partial read. Names are compared case-folded (the form the key's hash reads), so `SAT`
-  and `Sat` are one name.
+  name with one promoted meanwhile. The check reads every definition row of the namespace
+  (an alias lives inside its definition's value, so no key finds it), which the ceiling
+  below keeps bounded, and refuses the promotion when it finds the ceiling reached. Names
+  are compared case-folded (the form the key's hash reads), so `SAT` and `Sat` are one
+  name.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row, whose source key is not the slug key of
   its `term` (`definition/<slug>`), or whose `target_key` differs from that key, so a
@@ -188,8 +188,8 @@ a write of a `definition/` key by another identity (a user's own copy) does not 
 namespace-wide row of that key, as same-key supersession does today for every unpinned row
 the writer reads: only a write of the namespace-wide row itself revises it, so no writer
 ends an admin's definition by writing a private copy, which the term leg then keeps out of
-the served list. This narrows the `newest_wins` rule that a write for a key retires every
-older live row with that key, whoever wrote it ([conflicts and
+the served list. This is an exception to the `newest_wins` rule that a write for a key
+retires every older live row with that key, whoever wrote it ([conflicts and
 refusal](../features/memory/conflicts-and-refusal.md)), for a definition's namespace-wide
 row only; the pinned-peer exemption above is the one `decision` already has as a
 key-identified type. The implementing pull request updates the policy table of that page,
@@ -213,10 +213,12 @@ fields, which the SDKs and the MCP schema carry.
 **What it reads.** The addressed namespace's live `loom.shared` rows of type `definition`
 under a `definition/` key, from that namespace only, whatever `namespace_scope` fans out
 over. It serves no definition whose source is labelled or graded `medium` or `high` (the
-read-time check above). Its read is bounded by `memory_term_leg_max_definitions`; past the
-bound (`term_leg` `capped`, which also keeps a `memory.search` from recording a miss, and
-which `memory.definitions.list` reports for a namespace over the bound), the most recently
-promoted definitions (by `promoted_at`) are read. It runs concurrently with the other legs
+read-time check above). A namespace holds at most `memory_term_leg_max_definitions`
+definitions: a promotion past that ceiling is refused, `memory.definitions.list` shows the
+count against it, and an admin demotes a definition to make room, so the leg reads every
+one. A read that still finds more (a race, or rows promoted through an older build) reads
+the most recently promoted (by `promoted_at`) and reports `term_leg` `capped`, which also
+keeps a `memory.search` from recording a miss. It runs concurrently with the other legs
 under its own time bound (`memory_term_leg_timeout_ms`), which never shortens theirs; a
 leg past its bound adds nothing. Its latency is measured against the op's budget
 (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull request that adds it.
@@ -281,19 +283,19 @@ definition; `capped` or `timed_out` past its bounds; `failed` when any of its re
 
 **Read scope.** Governed definitions are served through this leg under any read scope: an
 admin published them for every reader of the namespace, and a user-bounded reader who
-could not see one would read the term as undefined. This narrows the read-scope rule that
-a bounded read serves no namespace-wide row ([read scope inside a
+could not see one would read the term as undefined. This is an exception to the read-scope
+rule that a bounded read serves no namespace-wide row ([read scope inside a
 namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
 governed definitions through this leg only. The implementing pull request updates that
 page, and in `server/identity/domain/read_scope.py` the module docstring and the comment
 on `SCOPED_OPS`, which say every memory read of those ops carries the read scope.
 
 **Memory scope.** The leg also serves shared rows to a search with `scope = "private"`,
-the default, which today reads the per-agent layer and leaves the shared layer to
-`scope = "shared"`: a governed definition answers every search that names its term. This
-is a second narrowing, for governed definitions through this leg only. The implementing
-pull request updates the `scope` field's description in
-`server/memory/api/models_search.py`, the shared-layer section of [identities and
+the default, which today reads the per-agent layer and leaves the shared layer to `scope =
+"shared"`: a governed definition answers every search that names its term. This is a
+second exception, for governed definitions through this leg only. The implementing pull
+request updates the `scope` field's description in `server/memory/api/models_search.py`,
+the shared-layer section of [identities and
 namespaces](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)
 and the generated operations reference.
 
@@ -514,12 +516,15 @@ days; the threshold does not hide that.
 
 ### Ops and dashboard
 
-| Op                                                | Role  | What it does                                                                                                                                             |
-| ------------------------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`                             | admin | The namespace's gaps, most askers first.                                                                                                                 |
-| `knowledge.gaps.draft`                            | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`).                                    |
-| `memory.definitions.list`                         | admin | The namespace's shared definitions, a page at a time (a limit and a cursor), each with the read-time check's verdict and the reason a lapsed one lapsed. |
-| `knowledge.query_history.add`, `.list`, `.remove` | admin | Register, list and remove a query-history source on the namespace.                                                                                       |
+The parts land in the order the opening section gives: 1 knowledge gaps, 2 governed
+definitions, 3 `knowledge.gaps.draft` and query history.
+
+| Op                                                | Part | Role  | What it does                                                                                                                                             |
+| ------------------------------------------------- | ---- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`                             | 1    | admin | The namespace's gaps, most askers first.                                                                                                                 |
+| `memory.definitions.list`                         | 2    | admin | The namespace's shared definitions, a page at a time (a limit and a cursor), each with the read-time check's verdict and the reason a lapsed one lapsed. |
+| `knowledge.gaps.draft`                            | 3    | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`).                                    |
+| `knowledge.query_history.add`, `.list`, `.remove` | 3    | admin | Register, list and remove a query-history source on the namespace.                                                                                       |
 
 The `knowledge.gaps.` ops list what users asked and the `knowledge.query_history.` ops
 manage a source, not documents, so none honours a read-narrowed token: the check that
@@ -556,14 +561,15 @@ cluster drafts only from its team's own tables. Each turn:
    (`clusterAllReplicas`) and from the node it connects to otherwise, grouped by
    `normalized_query_hash`, counting initial queries only (`is_initial_query = 1`) by
    `initial_user`, ranked by distinct users and then by recency, and drops a group that
-   fewer than `knowledge_gaps_min_askers` distinct users ran. A user here is a ClickHouse
-   account, not a person: the threshold holds only where each person queries under their
-   own account, and a shared account (a BI tool's, a service's) counts as one asker
-   however many people stand behind it, while one person with several accounts counts once
-   per account. The threshold is a floor against drafting from one account's queries, not
-   an anonymity guarantee. Only the normalised text is read, with comments removed and
-   literals replaced (`normalizeQuery`), so no user's literal values reach the LLM or the
-   draft;
+   fewer than `knowledge_query_history_min_users` distinct users ran (a setting of its
+   own, never below three, since it counts accounts, not people). A user here is a
+   ClickHouse account, not a person: the threshold holds only where each person queries
+   under their own account, and a shared account (a BI tool's, a service's) counts as one
+   asker however many people stand behind it, while one person with several accounts
+   counts once per account. The threshold is a floor against drafting from one account's
+   queries, not an anonymity guarantee. Only the normalised text is read, with comments
+   removed and literals replaced (`normalizeQuery`), so no user's literal values reach the
+   LLM or the draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition for at most
    `knowledge_query_history_max_drafts` groups, and queues each (`source_kind =
@@ -650,19 +656,20 @@ govern it.
   its text, and the `knowledge_gap` and `query_history` candidates whose draft is that
   text or named by its `candidate-id:` tag (the change above), not the gap it came from,
   which holds only normalised queries enough askers asked and expires after 7 days.
-- `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
-  `user_id` is the user, matching every spelling the directory ties to the named subject
-  (`spellings` in `server/auth/aliases.py`, unverified ties included, as a revocation
-  does), compared lower-cased on both sides (`lower(asker)` and `lower(user_id)` against
-  the lower-cased spellings), since the tie may have changed since the miss was recorded
-  and a subject such as `ASmith` is stored as given; a directory that cannot be read fails
-  the step closed (a token subject spelled as the user's id goes too, which costs only a
-  trace row), and a census row counting the step's own predicate, over the asker and
-  `user_id` under every spelling it deletes, so a miss the step left fails the saga's
-  verify; today a census row binds only the user's id (`{uid:String}`), so the
-  implementing pull request passes the spellings the step resolved to the census, which
-  compares them lower-cased and fails closed when the directory cannot be read; an end
-  user's asker is stored as their id, the form the erasure names.
+- `loom.search_misses`: a namespace step, a user step deleting every miss whose asker,
+  `user_id` or `actor` is the user, matching every spelling the directory ties to the
+  named subject (`spellings` in `server/auth/aliases.py`, unverified ties included, as a
+  revocation does), compared lower-cased on both sides (`lower(asker)` and
+  `lower(user_id)` against the lower-cased spellings), since the tie may have changed
+  since the miss was recorded and a subject such as `ASmith` is stored as given; a
+  directory that cannot be read fails the step closed (a token subject spelled as the
+  user's id goes too, which costs only a trace row), and a census row counting the step's
+  own predicate, over the asker and `user_id` under every spelling it deletes, so a miss
+  the step left fails the saga's verify; today a census row binds only the user's id
+  (`{uid:String}`), so the implementing pull request passes the spellings the step
+  resolved to the census, which compares them lower-cased and fails closed when the
+  directory cannot be read; an end user's asker is stored as their id, the form the
+  erasure names.
 - `loom.knowledge_gaps` keeps counts, not askers, so no op or page names who asked: a
   namespace step, and, inside the user's miss step before it deletes the misses, a read of
   the namespaces the user has misses in and a delete of those namespaces' builds (derived
@@ -707,9 +714,10 @@ govern it.
   read.
 - The term leg is one bounded read of the namespace's shared definitions per search, and
   one read of the matched definitions' source rows.
-- A definition's promotion reads the namespace's definition rows, within the term leg's
-  bound, to check its term and aliases. `memory.definitions.list` reads one page of them,
-  with a limit and a cursor, and reads each listed definition's source row.
+- A definition's promotion reads the namespace's definition rows, at most
+  `memory_term_leg_max_definitions`, to check its term and aliases.
+  `memory.definitions.list` reads one page of them, with a limit and a cursor, and reads
+  each listed definition's source row.
 
 ## Rolling upgrades
 
@@ -751,10 +759,11 @@ promoted again:
 - a source its `memory.consolidate` tombstoned: `memory.restore` within 14 days; past
   them, the definition is written again from its shared copy's text.
 
-An N-1 relabel of a definition's source to `high` leaves its shared copy's embedding
-served by the ordinary legs: once N serves, the operator runs the retirement N's relabel
-performs (the shared embedding retired, the row kept) over every definition the admin read
-lists as lapsed for `high`, an operator step the implementing pull request's rollout
+An N-1 relabel of a definition's source to `medium` or `high`, or an N-1 promotion of a
+`medium` source, which N-1 does not refuse, leaves its shared copy's embedding served by
+the ordinary legs: once N serves, the operator runs the retirement N's relabel performs
+(the shared embedding retired, the row kept) over every definition the admin read lists as
+lapsed for `medium` or `high`, an operator step the implementing pull request's rollout
 section names, so a relabel back governs it again as on N. N-1's redact does not reach the
 shared row's text, as today: one run during the rollout or after a rollback is run again
 once N serves. A namespace erasure an older build without the shared step ran is cleared
@@ -774,7 +783,7 @@ once more then, for what N wrote in between.
 
 - A gap shows only queries that at least `knowledge_gaps_min_askers` askers asked in that
   form; a draft is written from nothing but such queries, or, for query history, the
-  normalised text of queries that many users ran.
+  normalised text of queries `knowledge_query_history_min_users` accounts ran.
 - A miss is recorded only when the operator opted in and the namespace's capture level is
   not `off`; its asker comes from the token, never the body.
 - A definition is governed only while an admin's promotion of its namespace-wide row into
