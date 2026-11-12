@@ -192,9 +192,9 @@ instead. They stay reachable over HTTP and the SDKs. On the `assistant` toolset
 other hidden op answers `UNKNOWN_OP`. The rule for hiding an op: would a typical end
 user, not an operator, reach for it in chat? A namespace-wide view can be hidden
 while a variant bounded to the caller stays on MCP: `namespace.list` is hidden and
-`namespace.list_mine` listed; `memory.extraction_status` (every batch queued in the
-namespace) is hidden and `memory.extraction_status_mine` (the batches the caller
-queued, by `queue_id`, at most 20 a call) is callable by name or through `loom_op`
+`namespace.list_mine` callable (listed on `all`, through `loom_op` elsewhere);
+`memory.extraction_status` (every batch queued in the namespace) is hidden and
+`memory.extraction_status_mine` (the batches the caller queued, by `queue_id`, at most 20 a call) is callable by name or through `loom_op`
 on every toolset except `assistant` (`readonly` included). Its write twin,
 `memory.extraction_retry_mine`, replays the caller's failed batches once more;
 `loom_op` routes it on every toolset but `readonly` and `assistant`.

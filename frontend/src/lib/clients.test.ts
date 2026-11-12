@@ -56,7 +56,7 @@ describe("formatMcpConfig — Claude Code", () => {
 });
 
 describe("formatMcpConfig — Cursor", () => {
-  it("carries ?toolset=coding so the listing stays under the 40-tool cap", () => {
+  it("carries ?toolset=coding for a coding client", () => {
     const cfg = formatMcpConfig({ client: "cursor", token: T, mcpUrl: URL });
     const loom = rec(rec(cfg.block.mcpServers).loom);
     expect(loom.url).toBe(`${URL}?toolset=coding`);

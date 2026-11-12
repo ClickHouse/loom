@@ -61,12 +61,7 @@ def test_core_surface_is_small_and_focused():
         "loom_context_pack",
     ):
         assert expected in names, expected
-    # The listing carries the chat loop, not the
-    # whole product surface — every slot is a per-turn tax. These moved to
-    # callable-by-name: render (context.pack already loads the profile),
-    # get_by_id (conflict-resolution flow), namespace membership ops
-    # (onboarding-time actions), and the inventory, profile, namespace and
-    # erasure ops a chat loop reaches for rarely.
+    # Every op off the memory loop is callable by name, not listed.
     for demoted in (
         "loom_profile_render",
         "loom_profile_set",
@@ -83,8 +78,7 @@ def test_core_surface_is_small_and_focused():
         "loom_namespace_browse",
     ):
         assert demoted not in names, demoted
-    # Thirteen at most: every listed tool is read on every turn. Documents,
-    # the scratchpad and conversation capture run through loom_op.
+    # Thirteen at most: every listed tool is read on every turn.
     assert len(names) <= 13, f"core surface too large: {len(names)}"
     # The Refuse verb must be reachable in-band ("never remember X").
     assert "loom_blacklist_add" in names

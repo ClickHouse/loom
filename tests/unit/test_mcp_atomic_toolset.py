@@ -74,5 +74,4 @@ def test_atomic_descriptions_are_the_policy_text() -> None:
 
 
 def test_other_toolsets_are_unchanged() -> None:
-    assert len(_descriptors("core")) >= 20
     assert len(_descriptors("all")) > len(_descriptors("core")) > len(_descriptors("atomic"))

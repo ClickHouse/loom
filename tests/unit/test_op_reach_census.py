@@ -187,7 +187,7 @@ def test_manifest_finds_the_known_reach_paths():
 
 
 def test_agent_controlled_verbs_are_on_the_core_tier():
-    """The standing-memory and forgetting verbs an agent should control: pin,
+    """The standing-memory, refusal and lock verbs an agent controls: pin,
     refuse, lock. The scratchpad is on the coding and atomic tiers."""
     for name in ("memory.pin", "blacklist.add", "memory.lock"):
         assert name in _MCP_CORE_OPS and name not in _MCP_HIDDEN_OPS, name
