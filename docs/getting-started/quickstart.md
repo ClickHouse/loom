@@ -117,9 +117,10 @@ Add `--volumes` only for an intentional, irreversible reset.
 The repository's dev container runs the latest release in a codespace, with nothing on
 your machine: it installs Loom with the installer above, starts it, and connects Claude
 Code to it. The first start downloads about 3 GB of images and takes a few minutes. Open
-the dashboard at the address the creation log prints,
-`https://<codespace name>-7777.app.github.dev` (the **Ports** tab's forwarded address for
-port 7777). In the codespace's terminal, run
+the dashboard at the address the creation log's last lines print (`Loom is running in the
+codespace. Dashboard: https://<codespace name>-7777.app.github.dev`, the **Ports** tab's
+forwarded address for port 7777); the installer's `http://127.0.0.1:7777/` above it is the
+codespace's own address. In the codespace's terminal, run
 `cd ~ && claude` (outside the checkout, whose instructions are for working on Loom
 itself), sign in, and say "Remember that I deploy only on Tuesdays"; in a new `claude`
 session, ask "When do I deploy?".
@@ -137,10 +138,10 @@ browser address: from the laptop's `localhost:7777` the page opens, but the serv
 its requests, so it shows no data; only the forwarded address is this server's own page.
 
 The install lives in `/workspaces/.loom`, so a rebuilt codespace keeps its `.env` and
-Compose project; a rebuild also runs the latest release's installer over it, which moves it
+Compose project, though its memories live in Docker volumes a rebuild may not keep; a rebuild also runs the latest release's installer over it, which moves it
 to that release. Wherever these docs name `~/.loom` or `"$HOME/.loom"`, a codespace uses
 `/workspaces/.loom`. Codespaces offers to open port 7777 as soon as it listens; the
-dashboard answers once the creation log prints "Loom is running". If the log ends with an
+dashboard answers once the creation log prints "Loom is running in the codespace". If the log ends with an
 error instead, run `sh .devcontainer/start-loom.sh` in the codespace's terminal: it keeps
 what the first run set up.
 

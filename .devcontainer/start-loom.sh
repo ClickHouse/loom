@@ -32,10 +32,11 @@ LOOM_SKIP_START=1 sh "$installer"
 
 # In a codespace the dashboard is served from the forwarded address, which a
 # server without sign-in answers only when it is its public URL.
+codespace_url=
 if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]; then
-  env_file=$LOOM_INSTALL_DIR/.env
-  grep -q '^LOOM_PUBLIC_BASE_URL=' "$env_file" \
-    || printf 'LOOM_PUBLIC_BASE_URL=https://%s-7777.%s\n' "$CODESPACE_NAME" "$GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN" >>"$env_file"
+  codespace_url=https://$CODESPACE_NAME-7777.$GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN
+  grep -q '^LOOM_PUBLIC_BASE_URL=' "$LOOM_INSTALL_DIR/.env" \
+    || printf 'LOOM_PUBLIC_BASE_URL=%s\n' "$codespace_url" >>"$LOOM_INSTALL_DIR/.env"
 fi
 
 # The install again keeps .env, then starts the stack and waits for it.
@@ -46,11 +47,8 @@ claude plugin marketplace list 2>/dev/null | grep -Eq '[[:space:]]loom$' \
   || claude plugin marketplace add ClickHouse/loom
 claude plugin install loom@loom
 
-dashboard="the forwarded port 7777 (Ports tab)"
-if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]; then
-  dashboard="https://$CODESPACE_NAME-7777.$GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN"
-fi
-printf '\nLoom is running. Dashboard: %s\n' "$dashboard"
+# The installer printed the dashboard at 127.0.0.1, the codespace's own address.
+printf '\nLoom is running in the codespace. Dashboard: %s\n' "${codespace_url:-the forwarded port 7777 (Ports tab)}"
 cat <<'TEXT'
 Try it: run `cd ~ && claude`, sign in, and say "Remember that I deploy only on
 Tuesdays". In a new `claude` session, ask "When do I deploy?".
