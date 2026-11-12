@@ -3,7 +3,7 @@
   "name": "io.github.ClickHouse/loom",
   "title": "ClickHouse Loom",
   "description": "Shared long-term memory, document search and a code index for AI agents, self-hosted on ClickHouse.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "websiteUrl": "https://github.com/ClickHouse/loom",
   "repository": {
     "url": "https://github.com/ClickHouse/loom",
