@@ -7,7 +7,7 @@ import { CopyButton } from "../../../components/CopyButton";
 import { toast, toastError } from "../../../components/Toast";
 import { Unavailable } from "../../../components/ui";
 import { GuideDialog } from "../../../flows/GuideDialog";
-import { canWrite, needsRole, useNamespaceRoleRead } from "../../../lib/namespaceRole";
+import { canWrite, useNamespaceRoleRead } from "../../../lib/namespaceRole";
 import { callReason } from "../../../lib/callReason";
 import { useStore } from "../../../lib/state";
 import { ReviewChanges } from "../ReviewChanges";
@@ -69,7 +69,7 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
       );
     if (op && a.op === "namespace.guide_set")
       return (
-        <Unavailable reason={stale ?? (canWrite(role) ? null : needsRole("writer", tune.namespace))}>
+        <Unavailable reason={stale ?? callReason("namespace.guide_set", roleRead, whoami, tune.namespace)}>
           <Button type="secondary" htmlType="button" onClick={() => setGuideDraft(p)}>
             Review in the guide editor
           </Button>

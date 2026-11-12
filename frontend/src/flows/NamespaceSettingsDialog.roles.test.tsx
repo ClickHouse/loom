@@ -208,6 +208,52 @@ describe("NamespaceSettingsDialog for a repository", () => {
   });
 });
 
+describe("NamespaceSettingsDialog while the grants are unread", () => {
+  const openUnread = async () => {
+    // No whoami yet, so nothing settles the role without the grants.
+    useStore.setState({
+      whoami: null,
+      identity: { org: "dev", namespace: "team", agent: "loom-ui" },
+      myNamespaces: null,
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue(info);
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await act(async () => undefined);
+  };
+
+  it("says the role is still loading, on the line and on Delete, never the role it needs", async () => {
+    vi.mocked(api.listMine).mockReturnValue(new Promise(() => {}));
+    await openUnread();
+    const line = "Your role on this namespace is still loading.";
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
+    expect(screen.getByRole("button", { name: "Delete namespace" })).toHaveAccessibleDescription(line);
+    expect(screen.queryByText(/^Needs admin/)).toBeNull();
+  });
+
+  it("says list_mine failed, on the line and on Delete", async () => {
+    vi.mocked(api.listMine).mockRejectedValue(new Error("down"));
+    await openUnread();
+    await act(async () => undefined);
+    const line = "Couldn't check your access to team.";
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
+    expect(screen.getByRole("button", { name: "Delete namespace" })).toHaveAccessibleDescription(line);
+  });
+
+  it("leaves a signed-in caller's fields open while unread: an unknown grant list is unknown, not no access", async () => {
+    vi.mocked(api.listMine).mockReturnValue(new Promise(() => {}));
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: ["WRITER"] },
+      identity: { org: "dev", namespace: "team", agent: "loom-ui" },
+      myNamespaces: null,
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue(info);
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await act(async () => undefined);
+    expect(screen.queryByTestId("settings-locked")).toBeNull();
+    expect(screen.queryByText(/^Needs admin/)).toBeNull();
+  });
+});
+
 describe("NamespaceSettingsDialog Delete on a restricted namespace", () => {
   it("is unavailable to an admin by grant whose token the gate refuses, with the same line", async () => {
     useStore.setState({

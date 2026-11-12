@@ -56,8 +56,8 @@ function starReaches(whoami: WhoAmI, namespace: string, min: NamespaceRole): boo
  * being read (or whoami is), the caller's request to join waits for an admin, list_mine
  * could not be read, or the server decides: a `*` claim that does not name it (list_mine
  * answers no row for one) or a token scoped per namespace with no direct grant row there
- * (`scopedUnseen`). A null role with
- * list_mine read, flat roles on the token and none of these is no grant at all.
+ * (`scopedUnseen`). A null role with list_mine read, flat roles on the token and none of
+ * these is no grant at all.
  */
 export function roleGap(read: NamespaceRoleRead, whoami: WhoAmI | null, namespace: string): string | null {
   if (read.role !== null) return null;

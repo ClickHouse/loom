@@ -135,22 +135,22 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
   // Why the fields are locked. On a restricted row, from what its gate finds missing
   // (`restrictedMisses`, the same list `canUpdateNamespace` admits on), and while the grants
   // are unread, why.
-  let lockedReason = needsAdmin;
+  // Grants not read yet (or a failed read): say so, never a role the caller may well hold.
+  let lockedReason = rows === null ? unreadLine(mineLoading, namespace) : needsAdmin;
   const restricted = ns?.classification === "restricted";
   // namespace.delete passes the restricted gate too, which an admin grant alone does not.
   const canDelete = restricted
     ? restrictedMisses(whoami, rows, { org, namespace }).length === 0
     : isNamespaceAdmin(whoami, rows, namespace);
-  if (restricted) {
+  if (restricted && rows !== null) {
     const misses = restrictedMisses(whoami, rows, { org, namespace });
-    const grant = rows?.find((m) => m.namespace === namespace);
+    const grant = rows.find((m) => m.namespace === namespace);
     const tokenMisses = [
       misses.includes("org") ? `be of ${org}` : null,
       misses.includes("name") ? `name ${namespace}` : null,
       misses.includes("claim") ? "carry an admin claim" : null,
     ].filter((p): p is string => p !== null);
-    if (rows === null) lockedReason = unreadLine(mineLoading, namespace);
-    else if (!misses.includes("grant") && tokenMisses.length > 0)
+    if (!misses.includes("grant") && tokenMisses.length > 0)
       lockedReason = `To change its settings, your token must ${andList(tokenMisses)}.`;
     // A token scoped per namespace: its role there is the server's to read.
     else if (!misses.includes("grant") && misses.includes("unseen")) lockedReason = serverDecides(name);
@@ -417,7 +417,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                   Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run an
                   erasure.request separately.
                 </p>
-                <Unavailable reason={canDelete ? null : restricted ? lockedReason : needsAdmin}>
+                <Unavailable reason={canDelete ? null : restricted || rows === null ? lockedReason : needsAdmin}>
                   <Button
                     type="danger"
                     htmlType="button"

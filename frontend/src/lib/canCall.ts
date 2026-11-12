@@ -161,6 +161,8 @@ export const OP_MIN_ROLE = {
   "profile_schema.clear": ADMIN,
   "namespace.register_ontology": ADMIN,
   "namespace.register_category": WRITER,
+  // The assistant's draft of a namespace guide opens the guide editor.
+  "namespace.guide_set": WRITER,
   // The task inbox plane. The header bell polls `task.counts` only for a known role; the
   // Tasks view offers each action to a role that reaches it (the handler still authorizes
   // against the inbox's owner namespace).
