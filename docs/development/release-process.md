@@ -160,7 +160,7 @@ in seconds, before any build, and names the fix for each one it finds missing:
 | `ghcr.io/clickhouse/loom` and `loom-extractor` give this repository Write access | `preflight` (an upload session it opens and cancels) |
 | Both packages are public, since an install pulls without signing in              | `preflight` (an anonymous pull token)                |
 | A `pypi` environment and a PyPI trusted publisher for `release.yml`              | the `pypi` job                                       |
-| An `npm` environment, and npm trusted publishing or an `NPM_TOKEN` secret        | the `npm` job                                        |
+| An `npm` environment and an npm trusted publisher for `release.yml`              | the `npm` job                                        |
 | An `mcp-registry` environment with the same protection rules as `pypi` and `npm` | the `mcp-registry` job                               |
 | The repository's artifact retention is at least 30 days (Settings > Actions)     | nothing                                              |
 | `release/**` branches protected like `main` (required checks, no direct pushes)  | nothing                                              |
@@ -273,7 +273,7 @@ three publish jobs run:
 | Job            | Publishes                                                        | How                                                                                                                                                                                                                                   |
 | -------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pypi`         | `clickhouse-loom` (the Python SDK only) to PyPI                  | the verified wheel and sdist; trusted publishing (OIDC); files PyPI already has are skipped                                                                                                                                           |
-| `npm`          | `@clickhouse/loom` to npm with provenance                        | the verified tarball; a published version is skipped; `latest` only for the highest final, a prerelease to `next`, a patch to an older line to `release-X.Y`; `NPM_TOKEN` as fallback                                                 |
+| `npm`          | `@clickhouse/loom` to npm with provenance                        | the verified tarball; a published version is skipped; `latest` only for the highest final, a prerelease to `next`, a patch to an older line to `release-X.Y`; trusted publishing (OIDC)                                               |
 | `mcp-registry` | `server.json` to the MCP Registry as `io.github.ClickHouse/loom` | the committed file, whose version the `version` job checks against the tag; GitHub OIDC login with a pinned `mcp-publisher`; a listed version and a prerelease are skipped; `preflight` refuses a private repository before any build |
 
 The images are already published by the tag run: a dispatch on a tag whose images carry the
