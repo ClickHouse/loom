@@ -71,14 +71,18 @@ check's verdict on each and the reason a lapsed one lapsed (its text changed, it
 slug, promoted from a row that is not the namespace-wide one, or no longer `active`), and
 lists a definition that passes the check but is not served because a later promotion holds
 one of its names as `shadowed`, naming the row that wins. A changed text is promoted
-again. On N no write-time verdict retires or marks a definition's source (the exemptions
-below), so a source that is no longer `active` was left that way by N-1 or before this
-design. The admin brings it back by the way it lapsed:
+again. On N no automatic verdict retires or marks a definition's source (the exemptions
+below, and the negative-outcome quarantine of `memory.outcome`, which skips a definition's
+namespace-wide row as it skips a pinned one), so a source that is no longer `active` was
+rejected by a writer, or left that way by N-1 or before this design. The admin brings it
+back by the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
 - marked `conflicted`: `conflicts.resolve`;
-- marked `duplicate`: `memory.dedup_resolve`.
+- marked `duplicate`: `memory.dedup_resolve`;
+- rejected with `memory.reject`, a writer's explicit verdict like an edit: written again
+  and promoted.
 
 It is governed again when its text is the approved one, and is promoted again otherwise.
 
@@ -130,9 +134,11 @@ reader:
   copy, never reaches a governed definition.
 - **`memory.promote` refuses a definition whose term or alias** is already another
   definition's, governed or lapsed (every live shared row of type `definition`), on every
-  promotion path, looked up by name, not by a scan, so a lapsed definition that returns to
-  its approved state never shares a name with one promoted meanwhile. Names are compared
-  case-folded (the form the key's hash reads), so `SAT` and `Sat` are one name.
+  promotion path, read from the namespace's definition rows within the term leg's bound
+  (an alias lives inside its definition's value, so no key finds it), so a lapsed
+  definition that returns to its approved state never shares a name with one promoted
+  meanwhile. Names are compared case-folded (the form the key's hash reads), so `SAT` and
+  `Sat` are one name.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row, whose source key is not the slug key of
   its `term` (`definition/<slug>`), or whose `target_key` differs from that key, so a
@@ -247,10 +253,11 @@ governed hits last: when more match than fit, the later ones in query order are 
 served. A budget may shorten a body but never reorders the hits.
 
 **Scores.** A governed hit's `similarity` and `distance` are its shared embedding's to the
-query, `0` when it has none (both stay numbers, and `governed` marks the hit), and its
-`rank_score` is above the pool's; its `below_threshold` flag is never set. A response that
-serves a governed hit has `abstain` false and no `abstain_code`; `retrieval_confidence`
-and `retrieval_risk` describe the hits that are not governed.
+query; when it has none, `similarity` is `0` and `distance` is `1`, since similarity is
+one minus distance, and `governed` marks the hit; and its `rank_score` is above the
+pool's; its `below_threshold` flag is never set. A response that serves a governed hit has
+`abstain` false and no `abstain_code`; `retrieval_confidence` and `retrieval_risk`
+describe the hits that are not governed.
 
 **Pages and fields.** The leg runs only on a search's first page. The list a search parks
 for its later pages is the merged one, governed hits first, so the next page starts after
@@ -296,8 +303,8 @@ before a promotion or demotion on N is reused after it; rolling upgrades below c
 N-1's. A lapse with no write, a source passing its `expires_at` or `valid_to`, does not
 move the mark, and the precedent path's evidence check compares each cited row's live hash
 (catching a tombstone, a redaction or an edit), not its status or validity. An answer that
-quoted such a definition is reused for up to `memory_ask_precedents_fast_max_age_hours`,
-as for any row that expires today.
+quoted such a definition is reused for up to `memory_ask_precedents_fast_max_age_hours`
+(with no bound when it is 0), as for any row that expires today.
 
 **Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
 served list is exactly what it was before. The memory-plane rule asks for a paired
@@ -338,8 +345,8 @@ search another op runs on its behalf:
   be recorded as a gap meanwhile; the term leg ends that), when it read the namespace-wide
   rows under a read scope of the whole namespace and no field removed candidates (for
   example a user, session, run, agent, type, filtering tag or category, scope, time, body
-  length, `exclude_keys` or `min_similarity` away from its default; a soft tag or category
-  and `entity_filter` only boost rows);
+  length, `exclude_keys` or `min_similarity` the caller set, a namespace's retrieval
+  defaults not counting; a soft tag or category and `entity_filter` only boost rows);
 - `knowledge.search` with no hit as close as the close-hit threshold (`_close` in
   `server/knowledge/app/knowledge_search.py`), no exact-key hit and, in `lexical` mode, no
   hit at all, when no field removed candidates (for example `tags`, `uri_prefix`,
@@ -466,8 +473,9 @@ askers. The threshold is as strong as the principals behind it:
 `knowledge_gaps_max_groups` of them: those with the most distinct askers, then asks, then
 the latest ask, so the cut is the same for the same questions. It merges groups whose
 vectors are at least `knowledge_gaps_merge_similarity` alike, counting a merged gap's
-askers as the union of the distinct askers each group's query returns (`groupUniqArray`),
-held in memory for the pass and never stored. It writes the result as a new build of the
+askers as the union of the distinct askers each group's query returns (`groupUniqArray`,
+capped at a setting's number per group, beyond which a gap's count reads as the cap), held
+in memory for the pass and never stored. It writes the result as a new build of the
 namespace in `loom.knowledge_gaps`:
 
 | Column            | Meaning                                                         |
@@ -593,8 +601,11 @@ the candidate pending and the namespace-wide row written, which no term leg serv
 its text is promoted; for a revision, the old definition lapses meanwhile and the admin
 read lists it.
 
-Every attempt, the first and each retry, decides from the head it reads and keeps no state
-of its own, checking these in order, the first that matches deciding:
+Every attempt, the first and each retry, compares against the reviewed hash the first
+attempt recorded on the candidate; a retry that names a different `owner` is refused with
+`VALIDATION_FAILED`, since that would be another value to approve (the admin rejects the
+draft and drafts again). Each attempt decides from the head it reads, checking these in
+order, the first that matches deciding:
 
 - a head that is live and `active`, carries no `expires_at` and whose text hashes to the
   reviewed value is promoted without a write;
@@ -688,9 +699,9 @@ govern it.
   budget, and a timeout counts against the source's breaker like any tracker read.
 - The term leg is one bounded read of the namespace's shared definitions per search, and
   one read of the matched definitions' source rows.
-- A definition's promotion makes one lookup of its term and aliases among the namespace's
-  shared definitions, by name. `memory.definitions.list` reads one page of them, with a
-  limit and a cursor, and reads each listed definition's source row.
+- A definition's promotion reads the namespace's definition rows, within the term leg's
+  bound, to check its term and aliases. `memory.definitions.list` reads one page of them,
+  with a limit and a cursor, and reads each listed definition's source row.
 
 ## Rolling upgrades
 
