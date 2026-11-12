@@ -71,12 +71,12 @@ For Cursor against a single-user server on the same machine, no token is needed:
 open **Settings → Tokens**, fill in the **New token** form (press **New token** first if a
 token exists) and press **Create token**, then choose your client (Cursor, VS Code, Cline,
 Windsurf, Zed or Claude Desktop) under **Connect**: the dialog shows the entry for its
-config file, with the token in it. For any other MCP client, copy the entry from [MCP
-clients](../features/integrations/mcp-clients.md). With the `loom` CLI installed (`pip
-install -e .` from a clone of the repository), one command writes the entry instead:
+config file, with the token in it. For any other MCP client, copy the entry from
+[MCP clients](../features/integrations/mcp-clients.md). With the `loom` CLI installed
+(`pip install -e .` from a clone of the repository), one command writes the entry instead:
 
 ```bash
-loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"
+loom install --client cursor --toolset coding --server-url https://loom.example.com --token "$LOOM_API_KEY"
 ```
 
 Restart the client afterwards. `--client` also takes `claude-desktop`, `vscode`, `cline`,
