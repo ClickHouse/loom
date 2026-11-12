@@ -103,7 +103,11 @@ GUI_FIX='set PATH in the env block of '"$CLAUDE_SETTINGS"' to the whole search p
 if [ "${1:-}" = '--check' ]; then
   if claude_code; then
     path_node || {
-      echo 'loom: no Node.js 18+ as `node` on this PATH; Claude Code'"'"'s hooks run that one.' >&2
+      if n=$(command -v node 2>/dev/null); then
+        echo "loom: the first \`node\` on this PATH, $n ($("$n" --version 2>/dev/null || echo 'no version')), is not Node.js 18+; Claude Code's hooks run that one." >&2
+      else
+        echo 'loom: no `node` on this PATH; Claude Code'"'"'s hooks run the first one there.' >&2
+      fi
       exit 1
     }
   else

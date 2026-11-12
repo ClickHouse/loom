@@ -188,7 +188,10 @@ test("loom-status Node check under Claude Code judges the node on PATH, not the 
     f.env.CLAUDE_PLUGIN_ROOT = path.join(f.dir, "plugin");
     const r = f.run("--check");
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /^loom: no Node\.js 18\+ as `node` on this PATH; Claude Code's hooks run that one\.\n$/);
+    assert.match(
+      r.stderr,
+      /^loom: the first `node` on this PATH, .*node \(v16\.20\.2\), is not Node\.js 18\+; Claude Code's hooks run that one\.\n$/,
+    );
     // The installer does not take the launcher's pick as done either.
     f.put("id", "echo 1000");
     const install = f.run();
@@ -335,7 +338,7 @@ nodeTest(
         env: { ...env(noNode), LOOM_NODE: process.execPath },
       });
       assert.equal(claude.status, 1, claude.stdout);
-      assert.match(claude.stderr, /no Node\.js 18\+ as `node` on this PATH/);
+      assert.match(claude.stderr, /^loom: no `node` on this PATH; Claude Code's hooks run the first one there\.\n$/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
