@@ -127,25 +127,27 @@ source already wrote at the listed revision writes its hold and fetches nothing;
 reads the document again, and when another source's cleanup retired it in between,
 fetches and writes it as a changed file. A retirement that lands after that re-read is
 caught by the holder's next turn, mirrored or not: every turn first reads the source's
-live holds against the stored copies (one read of the holds and `source_revisions`,
-under `sequential_reads()`) and puts a held address with no stored copy at the front of
-its content queue, so a held address stays retired until that source's next content
-phase. Every write of a mirrored address with no stored copy, on either path, also
-writes the readers rows of the connected or crawl accounts that listed it, and its
-access row when the list was read. A document's `source:<name>` tags are its holders'
-names: when the set of holders changes without a new revision, the sync rewrites the
-tags with `knowledge.update_metadata`, which fetches nothing. A document another writer
-(a person, an agent) holds is never overwritten or retired by any source, as today. A
-retirement reads the address's holds, access row and readers rows under
-`sequential_reads()`, as today's retirement reads its writer check, so two sources
-dropping their holds at once cannot each see the other's; it retires only when no hold
-is left, then writes `deleted` the address's one access row and every readers row it
-read. Each `deleted` row carries the `version` of the row it replaces, and a readers row
-is written at a `version` of its write time, so a readers row that lands later is
-strictly newer and wins. An access row's `version` is its list's read time, so one
-written from a read older than the row the retirement replaced loses to the `deleted`
-row and waits for the next read of the list; the heal therefore writes the access row
-only from a list read in that same turn.
+live holds against the stored copies (one read of the holds and of the live documents at
+those addresses, by address and not by the source's tag, under `sequential_reads()`) and
+puts a held address with no stored copy at the front of its content queue, so a held
+address stays retired until that source's next content phase. Every write of a mirrored
+address with no stored copy, on either path, also writes the readers rows of the
+connected or crawl accounts that listed it, and its access row when the list was read. A
+document's `source:<name>` tags are its holders' names: whenever a turn finds a held
+address whose document's `source:*` tags differ from its holders (a set of holders that
+changed, or a rewrite a crash cut short), the sync rewrites the tags with
+`knowledge.update_metadata`, which fetches nothing. A document another writer (a person,
+an agent) holds is never overwritten or retired by any source, as today. A retirement
+reads the address's holds, access row and readers rows under `sequential_reads()`, as
+today's retirement reads its writer check, and each source writes its dropped hold
+before that read, so of two sources dropping their holds at once at least one sees no
+hold left; it retires only when no hold is left, then writes `deleted` the address's one
+access row and every readers row it read. Each `deleted` row carries the `version` of
+the row it replaces, and a readers row is written at a `version` of its write time, so a
+readers row that lands later is strictly newer and wins. An access row's `version` is
+its list's read time, so one written from a read older than the row the retirement
+replaced loses to the `deleted` row and waits for the next read of the list; the heal
+therefore writes the access row only from a list read in that same turn.
 
 `remove` drops the source's holds. With `delete_documents`, a document left with no hold
 is retired; without it, such a document stays as a kept document, as today
@@ -850,23 +852,25 @@ The redirect URI to register with each store is
   mirrored and for a `namespace` holder, whose owner and listed readers both read it
   again; a readers row written between a retirement's read and its write surviving it,
   and an access row from an older read waiting for the next; two holders dropping one
-  address at once on lagging replicas, which still retires it; an anti-join over a
-  mirrored source N-1 removed, whose lease key and re-check use the source's namespace;
-  no access row left by a turn that starts after a cleanup; a `remove` without
-  `delete_documents` on a `namespace` source keeping its documents through the cleanup;
-  a source whose registry row a lagging replica does not show yet left alone; a person
-  dropped from a crawl's expansion leaving no readers or listing row; a directory read
-  that fails mid-group, or returns over the cap, dropping nobody; a user erasure leaving
-  no row, of any version, keyed by the person's pseudonyms; `erasure.request` refusing
-  an `acl-` scope for an org admin and a namespace admin and admitting a platform admin;
-  a user erasure leaving no address of the person in `loom.knowledge_sources`, nor a
-  crawl readers or listing row naming them; `erasure.request` and `erasure.export`
-  refusing an `acl-` scope with auth off; the mirror cache after an erasure followed by
-  a new mirrored `add`; a connected `notion` page shown to its owner only; a consent
-  callback without the starting browser's cookie, or in another subject's session,
-  storing nothing; an admin's `update` adding items to someone else's connected source
-  refused; scope refusals on the connect callback and a crawl's probe; today's `check`,
-  `rotate`, `remove` and turn over a row N wrote with `kind` empty.
+  address at once on lagging replicas, which still retires it; a sync killed between a
+  hold write and its tag rewrite, whose next turn fetches nothing and restores the tag;
+  an anti-join over a mirrored source N-1 removed, whose lease key and re-check use the
+  source's namespace; no access row left by a turn that starts after a cleanup; a
+  `remove` without `delete_documents` on a `namespace` source keeping its documents
+  through the cleanup; a source whose registry row a lagging replica does not show yet
+  left alone; a person dropped from a crawl's expansion leaving no readers or listing
+  row; a directory read that fails mid-group, or returns over the cap, dropping nobody;
+  a user erasure leaving no row, of any version, keyed by the person's pseudonyms;
+  `erasure.request` refusing an `acl-` scope for an org admin and a namespace admin and
+  admitting a platform admin; a user erasure leaving no address of the person in
+  `loom.knowledge_sources`, nor a crawl readers or listing row naming them;
+  `erasure.request` and `erasure.export` refusing an `acl-` scope with auth off; the
+  mirror cache after an erasure followed by a new mirrored `add`; a connected `notion`
+  page shown to its owner only; a consent callback without the starting browser's
+  cookie, or in another subject's session, storing nothing; an admin's `update` adding
+  items to someone else's connected source refused; scope refusals on the connect
+  callback and a crawl's probe; today's `check`, `rotate`, `remove` and turn over a row
+  N wrote with `kind` empty.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`, seeds mirrored documents with canary text and reads
   every knowledge read op, `knowledge.reads`, `knowledge.query` and
