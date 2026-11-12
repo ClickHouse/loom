@@ -242,14 +242,16 @@ checkout.
     GROUP BY s.org, s.namespace, s.memory_key
     ```
 
-    Demote each listed row that is still live (`live = 1`) with `memory.demote`, whatever
-    `purged` says, with an org-admin token. A demotion keeps the row's text, so then, for a
-    namespace whose erasure purged (`purged = 1`): if nobody has written to it since (for
-    example one that `collection.delete` or the namespace sweep removed), request a one-name
-    `namespace_list` erasure with `{"namespaces": ["<namespace>"], "purge": true}`, which
-    deletes its promoted rows, demoted ones included (a `namespace` scope never purges);
-    if it is in use again, delete the listed keys alone, so nothing else in the namespace
-    goes:
+    For a namespace whose erasure did not purge (`purged = 0`), demote each live listed row
+    (`live = 1`) with `memory.demote`, with a token that holds `admin` on the namespace (a
+    grant on it, or a platform admin's token for a collection, which an org admin's role
+    does not open). For one whose erasure purged (`purged = 1`), delete the rows instead,
+    live and demoted alike, since a demotion keeps the text: if nobody has written to the
+    namespace since (for example one that `collection.delete` or the namespace sweep
+    removed), request a one-name `namespace_list` erasure with
+    `{"namespaces": ["<namespace>"], "purge": true}`, which an org admin may request for any
+    namespace of the org (a `namespace` scope never purges); if it is in use again, delete
+    the listed keys alone, so nothing else in the namespace goes:
 
     ```sql
     ALTER TABLE loom.shared DELETE
