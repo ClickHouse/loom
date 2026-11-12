@@ -46,14 +46,16 @@ key, which is the slug of the value's `term` (`user_id`, `agent` and `session_id
 `'-'`); and that source is live (`status = 'active'`, not tombstoned, superseded, or past
 its `expires_at` or `valid_to`), neither labelled nor graded `medium` or `high` (the value
 itself is graded, since some write paths store the label empty), and holds the same text
-as the shared copy: the source's `content_sha256` equals the canonical-JSON hash of the
-shared `value` (the hash the approved-content check below uses), so a store that orders an
-object's keys differently is not a change. The source is read from the memory authority
-(Postgres when it holds live memory, [storage authority](storage-authority.md)), and a
-source whose head cannot be read fails closed: the definition is not served. A read-time
-check covers every path into that state that it can see, rows promoted before this design
-and through N-1 included; what it cannot see is named under rolling upgrades. The shared
-layer already is the namespace's admin-approved copy of a fact ([the shared
+as the shared copy: the hash of the source's value as read equals the hash of the shared
+`value`, both the canonical-JSON hash every read and precondition compares
+(`served_content_sha256` in `server/core/hashing.py`, which the approved-content check
+below uses too), so a store that orders an object's keys differently is not a change. The
+source is read from the memory authority (Postgres when it holds live memory, [storage
+authority](storage-authority.md)), and a source whose head cannot be read fails closed:
+the definition is not served. A read-time check covers every path into that state that it
+can see, rows promoted before this design and through N-1 included; what it cannot see is
+named under rolling upgrades. The shared layer already is the namespace's admin-approved
+copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records its source
 (`promoted_from`) and the candidate it came from (`promoted_from_candidate_id`),
@@ -99,19 +101,19 @@ leg except where a change names another, because the term leg serves shared rows
 reader:
 
 - **A redact** of a version of a definition's source (a past version: `memory.redact`
-  refuses the live head) scrubs the shared row whose `value` hashes (canonical JSON) to
-  that version's `content_sha256`, which the redact keeps, so a redact run again after an
-  older build scrubbed the version's text still finds it, and that row's embedding, which
-  a redact does not reach today, and blanks the text of every `knowledge_gap` and
-  `query_history` candidate whose drafted value hashes (canonical JSON) to that version's
-  `content_sha256`, or that the version's `candidate-id:` tag names, promoted or not,
-  which `learnings.list` shows (a `knowledge_gap` draft to viewers, a `query_history` one
-  to admins), and no other draft of the term; the pull request that adds those candidate
-  kinds adds that part. When the live head still holds the redacted text (an edit reverted
-  byte for byte), the shared copy and the drafts are left, as `memory.redact` leaves a
-  live copy of a text it scrubs from history. A blanked candidate is not promoted:
-  `learnings.review` answers it not found, as it does a blanked `assistant_turn` candidate
-  today.
+  refuses the live head) scrubs the shared row whose `value`'s served hash is the
+  version's: the served hash of the version's value, read before the scrub, or, when an
+  older build already scrubbed it, the `content_sha256` the redact keeps, so a redact run
+  again still finds it, and that row's embedding, which a redact does not reach today, and
+  blanks the text of every `knowledge_gap` and `query_history` candidate whose drafted
+  value hashes (canonical JSON) to that version's `content_sha256`, or that the version's
+  `candidate-id:` tag names, promoted or not, which `learnings.list` shows (a
+  `knowledge_gap` draft to viewers, a `query_history` one to admins), and no other draft
+  of the term; the pull request that adds those candidate kinds adds that part. When the
+  live head still holds the redacted text (an edit reverted byte for byte), the shared
+  copy and the drafts are left, as `memory.redact` leaves a live copy of a text it scrubs
+  from history. A blanked candidate is not promoted: `learnings.review` answers it not
+  found, as it does a blanked `assistant_turn` candidate today.
 - **A relabel to `medium` or `high`** of a promoted definition's source, by a writer or
   the sensitivity sweep, retires that row's shared embedding, keeping the row:
   `loom.shared` has no sensitivity of its own, so the ordinary legs would otherwise keep
@@ -134,7 +136,7 @@ reader:
 - **`memory.promote` refuses a definition whose value is labelled or graded `medium`**, as
   it refuses `high` today, grading the value itself (`value_reads_high` and the grader the
   write path uses) rather than trusting the stored label, which an import or a restore
-  leaves empty. A definition is the organisation's vocabulary, served to every reader, so
+  leaves empty. A definition is the organization's vocabulary, served to every reader, so
   the sensitive-retention window, which would anonymize a `medium` source but not its
   shared copy, never reaches a governed definition.
 - **`memory.promote` refuses a definition whose term or alias** is already another
@@ -154,12 +156,14 @@ reader:
 The changes break existing callers of two ops. `memory.promote` refuses a `definition`
 promotion without the approved hash, from a row that is not namespace-wide, or under a key
 that is not its term's slug, and one whose term or alias another live shared definition
-already holds, where today only an embedding-close shared row refuses it. `memory.promote`
-also ignores a definition's `promoted_from_candidate_id`. `learnings.review` refuses a
-`definition` candidate that is not a `knowledge_gap` or `query_history` draft (a
-`memory_supporters` one is promoted today) with `VALIDATION_FAILED`. On both, `approver`
-no longer names a definition's promoter, reviewer or audit subject (the response names it
-in `ignored_args`). The SDKs and the MCP schema carry the hash field, and the implementing
+already holds, where today only an embedding-close shared row refuses it, one whose value
+is labelled or graded `medium` (today only a `high` label refuses), and one past the
+namespace's `memory_term_leg_max_definitions` ceiling. `memory.promote` also ignores a
+definition's `promoted_from_candidate_id`. `learnings.review` refuses a `definition`
+candidate that is not a `knowledge_gap` or `query_history` draft (a `memory_supporters`
+one is promoted today) with `VALIDATION_FAILED`. On both, `approver` no longer names a
+definition's promoter, reviewer or audit subject (the response names it in
+`ignored_args`). The SDKs and the MCP schema carry the hash field, and the implementing
 pull request names each break.
 
 Should two shared rows match one name despite that refusal (two promotions racing, or one
@@ -232,8 +236,10 @@ to it that continues its edge:
   those;
 - next to a letter of another script written with spaces (Cyrillic, Greek): any letter of
   a script other than Latin, or any decimal digit;
-- next to Hangul, whose particles attach to the word before them, a script written without
-  spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or punctuation: nothing.
+- before Hangul, a Hangul syllable, so `매출` does not match inside "판매출고"; after it,
+  nothing, since Korean particles attach to the word before them;
+- next to a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or
+  punctuation: nothing.
 
 So `рост` does not match inside "простой" and `café` not inside "cafés", while `MRR`
 matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". Case is decided per word of
@@ -623,6 +629,9 @@ order, the first that matches deciding:
 
 - a head that is live and `active`, carries no `expires_at` and whose text hashes to the
   draft's is promoted without a write, pinned or locked or not, since nothing changes;
+- such a head that carries an `expires_at` is written again with `clear_expiry` and
+  `if_match_sha256` against it, unless pinned or locked (the next case), so an expiry
+  never keeps a definition from being governed;
 - a pinned or locked head refuses the review, as a pinned key or a lock refuses a changed
   value; the admin unpins or unlocks it (`memory.unpin`, `memory.unlock`) and reviews
   again;
@@ -632,8 +641,8 @@ order, the first that matches deciding:
   to `memory.set` that refuses the write when a live row holds the key, so a writer who
   creates the row first is never overwritten;
 - a live row with no governed shared copy, demoted or never promoted (a caller may write
-  `definition` rows), refuses it; the admin edits that row to the draft's text and reviews
-  again, which the no-write case then promotes;
+  `definition` rows), refuses it; the admin edits that row to the draft's text, with
+  `clear_expiry`, and reviews again, which the no-write case then promotes;
 - any other head is a writer's edit, or a head the read-time check would not serve
   (`conflicted`, `duplicate`, expired), and the review is refused rather than overwrite or
   promote it.
