@@ -332,8 +332,9 @@ operator access and [TLS](../operations/deployment.md#proxy-and-tls).
 
 In single-user mode a token is optional. Minting one anyway keeps your scripts working
 when auth is turned on, as long as they name their `namespace` and `agent`: a call that
-sends a token, as the SDK does when it finds one in `LOOM_API_KEY` or `~/.loom/token`,
-gets neither filled in (a blank `org` is the token's own).
+sends a credential, as the SDK does when it finds any ([Python SDK →
+Credentials](../reference/python-sdk.md#credentials)), gets neither filled in (a blank
+`org` is the token's own).
 
 - **Dashboard:** **Settings → Tokens → New token**. By default the token reads every
   namespace and repository you belong to (a restricted repository only when you add it),
@@ -426,7 +427,7 @@ async def main():
         namespace="local",
         agent="quickstart",  # names the writer in the audit log
         base_url="http://localhost:7777",
-    ) as a:  # reads LOOM_API_KEY or ~/.loom/token; none needed in single-user mode
+    ) as a:  # sends a credential it finds; none needed in single-user mode
         await a.memory.set("standup_time", "Daily standup is at 9:30.")
         row = await a.memory.get("standup_time")  # None when the key is unset
         print(row["value"] if row else "unset")

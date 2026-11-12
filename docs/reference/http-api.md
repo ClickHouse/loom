@@ -171,9 +171,9 @@ curl -sX POST "$LOOM/v1/memory.set" \
   `memory.history` that names a `user_id` or `session_id` names its agent too. An op
   whose agent is optional and left out acts across every agent: a search reads every
   agent's rows, and `memory.update` finds the key in the whole namespace. Every other
-  op names its own namespace and agent, and so does a call with a token (one the SDK
-  finds in `LOOM_API_KEY` or `~/.loom/token` included) and every call in another
-  identity mode.
+  op names its own namespace and agent, and so does a call with a token (one the
+  Python SDK finds by itself included: [Credentials](python-sdk.md#credentials)) and
+  every call in another identity mode.
 - **`consumer`.** Any body may carry `consumer`, a short tag for the product or
   module calling; it is stored on the request and audit ledgers. A token minted
   with a consumer overrides it. See

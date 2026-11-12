@@ -65,3 +65,13 @@ def test_an_upload_or_download_needs_the_identity_named() -> None:
             await agent.close()
 
     asyncio.run(go())
+
+
+def test_only_an_empty_top_level_namespace_is_left_out() -> None:
+    from loom.transport import Transport
+
+    assert Transport.without_empty_namespace({"namespace": "", "k": 1}) == {"k": 1}
+    named = {"namespace": "support", "k": 1}
+    assert Transport.without_empty_namespace(named) is named
+    nested = {"entries": [{"namespace": ""}]}
+    assert Transport.without_empty_namespace(nested) is nested

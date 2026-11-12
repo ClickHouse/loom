@@ -95,17 +95,19 @@ Agent(org="", namespace="", agent=None, *, base_url=None, api_key=None, timeout_
 
 ### Identity defaults
 
-`org` and `namespace` may be left empty for a single-user server and a call with no
-token: the server fills them in, `org` on every op but `code.*` and `tracker.*` (which keep
-their plane's), `namespace` on the everyday memory and search ops
-([which ops](http-api.md#request)). An empty `namespace` is left out of the body, so any
-other server, or any other op that requires one, answers `VALIDATION_FAILED` naming it
-rather than reading `""` as a namespace. The SDK sends a token it finds in `LOOM_API_KEY`
-or `~/.loom/token`, and a call with a token gets no namespace filled in. `auto_run`,
-`run_scope()` and `session()` need the namespace named (their `run.begin`,
-`context.pack` and `conversation.append` are not on the list; an ambient run that cannot
-begin is skipped), and so do `knowledge.upload` and `knowledge.download`, which the SDK
-refuses without both. An `agent` not given is `sdk-python:<script>`.
+`org` and `namespace` may be left empty for a single-user server and a call with no token:
+the server fills them in, `org` on every op but `code.*` and `tracker.*` (which keep their
+plane's), `namespace` on the everyday memory and search ops ([which
+ops](http-api.md#request)). An empty `namespace` is left out of the body, so any other
+server, or any other op that requires one, answers `VALIDATION_FAILED` naming it rather
+than reading `""` as a namespace. The SDK sends any credential it finds
+([Credentials](#credentials)): `api_key=`, `LOOM_API_KEY`, a bot's `LOOM_CLIENT_ID`, a
+`loom login` session for that server, or `~/.loom/token`; a call with one gets no
+namespace filled in. `auto_run`, `run_scope()` and `session()` need the namespace named
+(their `run.begin`, `context.pack` and `conversation.append` are not on the list; an
+ambient run that cannot begin is skipped), and so do `knowledge.upload` and
+`knowledge.download`, which the SDK refuses without both. An `agent` not given is
+`sdk-python:<script>`.
 
 An `agent` of `""`, `"-"` or `"*"` is replaced with `sdk-python:<script>` and a
 warning: an anonymous agent is indistinguishable from every other anonymous

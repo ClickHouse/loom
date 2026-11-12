@@ -206,9 +206,10 @@ def _stamp_timing(response: Response, elapsed_ms: int) -> None:
 
 @dataclass(slots=True)
 class _HttpCall:
-    """What one request's phases hand each other: its id, the parsed body,
-    the verified token (None when anonymous) and the tenant triple read from
-    the body (authorization fills in the code/tracker plane's defaults)."""
+    """What one request's phases hand each other: its id, the body as admitted
+    (parsed, plus the single-user fill), the verified token (None when
+    anonymous) and the tenant triple read from the body (authorization fills in
+    the code/tracker plane's defaults)."""
 
     request_id: str
     raw_body: dict[str, Any] = field(default_factory=dict)
