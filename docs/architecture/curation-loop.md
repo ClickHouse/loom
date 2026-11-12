@@ -75,8 +75,8 @@ N no write-time verdict retires or marks a definition's source (the exemptions b
 a source that is no longer `active` was left that way by N-1 or before this design. The
 admin brings it back by the way it lapsed:
 
-- retired within the last 30 days: Undo in `memory.auto_retirements`;
-- retired earlier: `memory.restore`;
+- retired automatically: `memory.restore` (`memory.auto_retirements` lists such
+  retirements);
 - marked `conflicted`: `conflicts.resolve`;
 - marked `duplicate`: `memory.dedup_resolve`;
 - anonymized by the sensitive-retention window: written again and promoted, since its text
@@ -96,11 +96,12 @@ reader:
 - **A redact** of a version of a definition's source (a past version: `memory.redact`
   refuses the live head) scrubs the shared row whose text is that version's, and that
   row's embedding, which a redact does not reach today, and blanks the text of every
-  `knowledge_gap` and `query_history` candidate whose drafted value hashes (canonical
-  JSON) to that version's `content_sha256`, promoted or not, which `learnings.list` shows
-  (a `knowledge_gap` draft to viewers, a `query_history` one to admins), and no other
-  draft of the term; the pull request that adds those candidate kinds adds that part. When
-  the live head still holds the redacted text (an edit reverted byte for byte), the shared
+  `knowledge_gap` and `query_history` candidate whose reviewed value (the hash recorded on
+  the candidate, below) is that version's `content_sha256`, or that the version's
+  `candidate-id:` tag names, promoted or not, which `learnings.list` shows (a
+  `knowledge_gap` draft to viewers, a `query_history` one to admins), and no other draft
+  of the term; the pull request that adds those candidate kinds adds that part. When the
+  live head still holds the redacted text (an edit reverted byte for byte), the shared
   copy and the drafts are left, as `memory.redact` leaves a live copy of a text it scrubs
   from history. A blanked candidate is not promoted: `learnings.review` answers it not
   found, as it does a blanked `assistant_turn` candidate today.
@@ -108,11 +109,12 @@ reader:
   embedding, keeping the row: `loom.shared` has no sensitivity of its own, so the ordinary
   legs would otherwise keep serving the copy, and no sweep removes a durable row its
   writer did not ask to remove.
-- **A promotion of a definition carries the content hash it approves**, the hash of the
-  candidate's drafted value on the review path, or one the caller must pass to
-  `memory.promote` (a definition promotion without one is refused), and is refused when
-  the source's text no longer has it, so a writer's change between the write and the
-  promotion is never signed off as the admin's.
+- **A promotion of a definition carries the content hash it approves**, on the review path
+  the canonical-JSON hash of the reviewed value (the draft with the reviewer's `owner`
+  merged in), which the review records on the candidate so every retry compares against
+  the same value, or one the caller must pass to `memory.promote` (a definition promotion
+  without one is refused), and is refused when the source's text no longer has it, so a
+  writer's change between the write and the promotion is never signed off as the admin's.
 - **`promoted_from_candidate_id`** of a definition is set only by the review path, which
   passes the candidate's id to the promotion as an internal argument the wire model does
   not expose; the wire op `memory.promote` ignores the field for a definition and names it
@@ -563,7 +565,7 @@ the namespace's admins only, where it shows other learnings to every viewer.
 
 `learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate first
 checks the term and aliases against every other live shared row of type `definition` (the
-set `memory.promote` refuses on) and the draft for a credential-shaped value
+set `memory.promote` refuses on) and the reviewed value for a credential-shaped value
 (`value_reads_high`), and the rollout gate, so a promotion these refuse writes nothing.
 Then it writes the definition through `memory.set` for the whole namespace (today's seeder
 path writes under the approver's `user_id`; the implementing pull request writes the
@@ -591,7 +593,7 @@ read lists it.
 Every attempt, the first and each retry, decides from the head it reads and keeps no state
 of its own, checking these in order, the first that matches deciding:
 
-- a head that is live and `active` and whose text hashes to the draft's is promoted
+- a head that is live and `active` and whose text hashes to the reviewed value is promoted
   without a write;
 - a head holding the governed shared copy's text is written with `if_match_sha256` against
   that head;
@@ -601,7 +603,7 @@ of its own, checking these in order, the first that matches deciding:
 - a pinned head refuses the review, as a pinned key refuses a changed value; the admin
   unpins it with `memory.unpin` and reviews again;
 - a demoted term's live row refuses it, since no shared copy is governed; the admin edits
-  that row to the draft's text and reviews again, which the first case then promotes;
+  that row to the reviewed value and reviews again, which the first case then promotes;
 - any other head is a writer's edit, or a head the read-time check would not serve
   (`conflicted`, `duplicate`, expired), and the review is refused rather than overwrite or
   promote it.
@@ -625,9 +627,9 @@ govern it.
   governed, and an admin's name in its `owner`, like `promoted_by` on the shared row
   today, stays until an admin edits the definition.
 - A redact of a past version of a definition reaches that version, the shared row holding
-  its text, and the `knowledge_gap` and `query_history` candidates whose draft is that
-  text (the change above), not the gap it came from, which holds only normalised queries
-  enough askers asked and expires after 7 days.
+  its text, and the `knowledge_gap` and `query_history` candidates reviewed to that text
+  or named by its `candidate-id:` tag (the change above), not the gap it came from, which
+  holds only normalised queries enough askers asked and expires after 7 days.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
   `user_id` is the user, matching every spelling the directory ties to the named subject
   (`spellings` in `server/auth/aliases.py`, unverified ties included, as a revocation
@@ -715,8 +717,8 @@ one definition's source while writing another. Once N serves, each is recovered 
 promoted again:
 
 - a source it retired (`memory.auto_retirements` reasons `conflict_resolver`,
-  `newest_wins_contradiction`, `value_update` and `same_key_newest_wins`): Undo within 30
-  days, `memory.restore` after;
+  `newest_wins_contradiction`, `value_update` and `same_key_newest_wins`):
+  `memory.restore`;
 - a source it marked `conflicted`: `conflicts.resolve`; one marked `duplicate`:
   `memory.dedup_resolve`;
 - a write it merged: never stored, so written again;
