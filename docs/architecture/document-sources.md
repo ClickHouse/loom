@@ -38,8 +38,10 @@ its source lease, clearing their credentials, as `code.repo.remove` does today, 
 source outlives its namespace with a sealed credential or writes back what an erasure
 took.
 
-Sync state stays in `loom.code_index_state` under `knowledge_source:<name>`, keyed by
-the source's namespace, which the namespace's erasure already covers.
+Sync state stays in `loom.code_index_state`, keyed by the source's namespace, which the
+namespace's erasure already covers: under `knowledge_source:<name>` for a `namespace`
+source, as today, and under `knowledge_source:<source id>` for a mirrored one, so a
+later source of the same name resumes none of an earlier one's listing.
 
 On the dashboard, the Library shows a Sources section for the namespace or collection in
 view; the repository card keeps its own.
@@ -151,10 +153,12 @@ listing, a `namespace` source at its next full listing
 `delete_documents` left) is skipped by every source until `knowledge.delete` removes it,
 as today.
 
-So a file that two sources reach is written once and read through one document. Between
-the owner's retirement and the other source's next listing of the file, the document is
-missing; that gap is the cost of keeping one owner per address instead of recording
-every source that reaches it.
+So a file that two sources reach is written once and read through one document, with the
+owner's list: in a mirror, a file whose list neither source can read admits only the
+people the owner's listing found, so the other source's reader does not see it while the
+first owns it, which fails closed. Between the owner's retirement and the other source's
+next listing of the file, the document is missing; those gaps are the cost of keeping
+one owner per address instead of recording every source that reaches it.
 
 `remove` with `delete_documents` retires the source's documents, as today, and without
 it they stay as kept documents, which `add` of the same name refuses to take over
@@ -335,7 +339,11 @@ missed path leaks.
   read by `knowledge.query` without the check.
 - **Reads recorded under the mirror:** a mirror leg's `agent_events` row is filed under
   the mirror's namespace, so `knowledge.reads` on the namespace names no mirrored
-  address, and the SQL surface's usage views leave `acl-` names out.
+  address, and `sql_v1_agent_events`, `sql_v1_usage_daily` (replaced by a migration) and
+  the analytics export's usage entity leave `acl-` names out.
+- **No id reaches a mirror:** the id-addressed checks (`row_reach`, `row_in_scope`,
+  `id_namespace.namespace_for_id`) address memory rows, which no mirror holds, so their
+  auth-off shortcut opens nothing of one.
 
 A mirrored source's documents are never kept past it: `remove` retires every one it owns
 (`delete_documents` is implied), and so do a disconnect, a SCIM deactivation, the owner
@@ -356,7 +364,8 @@ no Postgres migration), written by the turn of the source that owns the document
 - `emails`: the people the store grants any role, lower-cased, and, for a file whose
   list the source cannot read (a view-only file, a page store that shows an integration
   no permissions), the people whose own account listed the file in that turn: the owner
-  of a connected source, the person a crawl listed it as.
+  of a connected source, the person a crawl listed it as. A `shared` mirrored source's
+  service account is no reader, so its unreadable lists are `unread`.
 - `groups`: group emails, which a crawl's directory read expands into
   `loom.knowledge_group_members` (one row per source and group, with its members and
   `read_at`). A connected source reads no directory and expands no group.
@@ -379,15 +388,17 @@ A reader sees a mirrored document when all of these hold:
    `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` (default 3600) of now, read from its row in
    `loom.knowledge_source_listings`, and the list is not `unread`.
 3. One of the reader's verified emails is in the list's `emails`, or in the members of
-   one of its `groups` from an equally fresh members row, or that email's domain is in
-   its `domains`, or its `anyone` is set.
+   one of its `groups` from an equally fresh members row of the document's owning source
+   (by its `source-id` tag), or that email's domain is in its `domains`, or its `anyone`
+   is set.
 
-The reader's verified emails are the emails `verified_spellings`
-(`server/auth/aliases.py`) gives its subject: the directory email when
-`VERIFIED_EMAIL_SQL` admits it (an SSO account or a linked one); a domain matches only
-through them. A connection's store email is never one of them. A delegated token (an
-agent's, the assistant's: a service account with a `creator`) reads with its creator's
-emails. Every other service account, bot and end-user token has none, so it sees only
+The reader's verified emails are its subject's directory emails that
+`VERIFIED_EMAIL_SQL` admits (an SSO account's or a linked one's,
+`server/core/grant_sql.py`), and nothing else: a subject that merely spells an address
+is not one, and neither is a connection's store email. A domain matches only through
+them. A delegated token (an agent's, the assistant's: one carrying `AuthInfo.creator`)
+reads with its creator's emails. Every other token, a service account that inherits its
+creator's grants, a bot and an end-user token included, has none, so it sees only
 `anyone` documents.
 
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
@@ -409,10 +420,13 @@ permissions): the store does not change a file's modification time when its shar
 changes, so an incremental listing would miss a permission removed. A listing that reads
 a list unlike the stored one rewrites the document's row with the same content and the
 new list, as `knowledge.update_metadata` without `reindex` does, so no chunk or
-embedding is rebuilt; an unchanged list costs no write. A file the complete listing no
-longer has is retired, on positive evidence, as today. The listing row's start lands
-only once every changed list of that listing is written, so a row is never newer than
-the lists it vouches for. Content is fetched only for a file whose revision changed.
+embedding is rebuilt; an unchanged list costs no write. A stored document the complete
+listing no longer has is rewritten `unread`, then retired on positive evidence, as
+today. The listing row's start lands only once every changed list and every such
+`unread` rewrite of that listing is written, so a row is never newer than the lists it
+vouches for. These rewrites are outside the pass's document cap, bounded only by the
+listings' share of the deadline. Content is fetched only for a file whose revision
+changed.
 
 A pass runs the listings first, rotating across the mirrored sources, and gives them at
 most a third of the pass deadline (`knowledge_source_sync_max_pass_seconds`); a listing
@@ -449,8 +463,9 @@ admits someone the store no longer names.
 | A caller injects store query syntax through a filter                     | Filters are fields with patterns, escaped and built by the server; no raw query is taken.                                                                                                                      | `server/clients/gdrive.py`                                             |
 | A stolen connected credential changes the store                          | Only read scopes are accepted; the credential is sealed and never returned.                                                                                                                                    | the connect callback; `server/core/secrets_at_rest.py`                 |
 
-Out of scope: a reader who already saw a document and kept its text; the store itself
-reporting a wrong permission list.
+Out of scope: a reader who already saw a document and kept its text, their own agent's
+or conversation's record of an answer included, which is that reader's write; the store
+itself reporting a wrong permission list.
 
 ## Meetings through the shared-folder store
 
@@ -466,9 +481,11 @@ The sync recognises a transcript Doc (one in a recordings folder whose exported 
 the store's transcript shape: a title line, then speaker turns under time stamps) and
 writes it with `server/knowledge/domain/transcripts.py`'s timed sections,
 `ingested_format: transcript`, as a `recording` source writes one, so a citation names
-the minute. A meeting-notes Doc is written as any Doc. Its permission list (the
-organiser and the invited participants) makes a mirrored source show each meeting to the
-people invited.
+the minute. A meeting-notes Doc is written as any Doc. When the listing account can read
+its permission list (the organiser's account, or a crawl listing as the organiser), the
+list (the organiser and the invited participants) makes a mirrored source show each
+meeting to the people invited; a participant's connected source cannot read it, so its
+copy shows to that participant alone.
 
 The `meet` provider of the `recording` kind is removed; `recording` keeps `zoom`, whose
 cloud recordings do not land in the shared-folder store. This is a break: a stored
@@ -504,9 +521,10 @@ requests. That design has to answer what this page found:
   `connection.list` and `connection.disconnect` are new (a connection starts in the
   dashboard, `POST /v1/connect/<kind>/start`); `list` and `inspect` show items, modes
   and the documents each owns. To a viewer who is neither the owner nor an admin, a
-  `connected` source shows its kind, its owner as "a connected account", its item count
-  and its last sync's status and counts, not its items, `config`, `created_by` or the
-  error text, which can name an item. Python and TypeScript SDKs are regenerated.
+  mirrored source shows its kind, its owner as "a connected account" for a connected
+  one, its item count and its last sync's status, not its items, `config`, `created_by`,
+  its document counts or the error text, which can name an item. Python and TypeScript
+  SDKs are regenerated.
 - **CLI.** `loom knowledge source add|update|list --namespace <ns> --link <url>...`
   (`--credential-file`, `--connected`), `loom connect gdrive|notion|linear`, `loom
 connection list|disconnect`, `loom knowledge mirror erase --all` ([restores and
@@ -691,6 +709,13 @@ Each implementing pull request lists its own; these pin the model:
     for a platform admin on a read op; `namespace.register` and `restore` refusing the
     form; `erasure.request` and `erasure.export` refusing an `acl-` scope with auth on
     and off.
+  - A document missing from a complete listing admitting nobody once its listing row
+    lands; an email-shaped subject with no verified directory email, and an inheriting
+    service account, seeing no `emails` document; a group matched only through the
+    owning source's members row.
+  - `row_reach`, `row_in_scope` and `namespace_for_id` opening nothing of a mirror with
+    auth off; a mirrored source's document counts hidden from a viewer who is neither
+    its owner nor an admin.
   - A turn that finds a narrowed list rewriting the row without rebuilding a chunk, and
     one that finds the same list writing nothing; a listing row landing only after its
     changed lists.
