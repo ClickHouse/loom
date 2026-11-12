@@ -42,7 +42,7 @@ const grant = (role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
 
 async function open(role: MyNamespaceEntry["role"]) {
   useStore.setState({
-    whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: [] },
+    whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: ["USER"] },
     myNamespaces: [grant(role)],
   });
   vi.mocked(api.getNamespace).mockResolvedValue(info);
@@ -65,6 +65,19 @@ describe("NamespaceSettingsDialog roles", () => {
     expect(del).toHaveAccessibleDescription(NEEDS);
     fireEvent.click(del);
     expect(confirmAction).not.toHaveBeenCalled();
+  });
+
+  it("says the server decides for a token scoped per namespace, whose role does not show here", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: [], namespaces: ["team"] },
+      myNamespaces: [grant("writer")],
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue(info);
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await act(async () => undefined);
+    const line = "The server decides this token's access to team; it does not show here.";
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
+    expect(screen.getByRole("button", { name: "Delete namespace" })).toHaveAccessibleDescription(line);
   });
 
   it("lets an admin edit and asks before a delete", async () => {
@@ -172,7 +185,7 @@ describe("NamespaceSettingsDialog on a restricted namespace, before and beside t
 describe("NamespaceSettingsDialog for a repository", () => {
   it("says a change needs a maintainer, naming the repository", async () => {
     useStore.setState({
-      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: [] },
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: ["USER"] },
       myNamespaces: [grant("viewer")],
     });
     vi.mocked(api.getNamespace).mockResolvedValue({ ...info, kind: "code" } as NamespaceInfo);

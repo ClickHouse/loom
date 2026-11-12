@@ -65,6 +65,17 @@ describe("MembersDialog for a member who is not an admin", () => {
   });
 });
 
+describe("MembersDialog for a token scoped per namespace", () => {
+  it("says the server decides, rather than the role it needs", async () => {
+    signIn("viewer-me", []);
+    render(<MembersDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await screen.findByRole("button", { name: "Approve as viewer" });
+    expect(screen.getByRole("button", { name: "Add member" })).toHaveAccessibleDescription(
+      "The server decides this token's access to team; it does not show here.",
+    );
+  });
+});
+
 describe("MembersDialog for a repository", () => {
   it("tells a reader each control needs a maintainer, naming the repository", async () => {
     signIn("viewer-me", ["VIEWER"]);

@@ -16,7 +16,7 @@ import {
 import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
 import { needsRole } from "../lib/namespaceRole";
-import { needsMaintainer } from "../lib/callReason";
+import { needsMaintainer, rolesUnseen, serverDecides } from "../lib/callReason";
 import { toast, toastError, toastErrorLine } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
@@ -136,8 +136,15 @@ export function MembersDialog({
     );
   // What a member who is not an admin here sees on each control an admin uses: the control,
   // unavailable, with the role it needs. Null while the grants are unread.
+  // A token scoped per namespace may be an admin here the client cannot see: the server decides.
   const manageReason =
-    canManage || rows === null ? null : isCode ? needsMaintainer(label ?? namespace) : needsRole("admin", namespace);
+    canManage || rows === null
+      ? null
+      : rolesUnseen(whoami)
+        ? serverDecides(namespace)
+        : isCode
+          ? needsMaintainer(label ?? namespace)
+          : needsRole("admin", namespace);
 
   const onAdd = async () => {
     const subj = newSubject.trim();

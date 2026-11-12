@@ -1,5 +1,6 @@
 import type { MyNamespaceEntry, NamespaceInfo, WhoAmI } from "../api";
 import { hasAdminClaim, isNamespaceAdmin } from "./role";
+import { rolesUnseen } from "./callReason";
 
 // Apart from role.ts, which the boot chunk holds: only the settings dialog and Spending ask.
 
@@ -22,7 +23,7 @@ export function restrictedMisses(
   const misses: RestrictedMiss[] = [];
   if (whoami?.org !== org) misses.push("org");
   if (!whoami?.namespaces?.includes(namespace)) misses.push("name");
-  if (whoami && (whoami.roles ?? []).length === 0) misses.push("unseen");
+  if (rolesUnseen(whoami)) misses.push("unseen");
   else if (!hasAdminClaim(whoami)) misses.push("claim");
   if (!(grant?.role === "admin" && grant.status !== "pending" && !grant.inherited)) misses.push("grant");
   return misses;

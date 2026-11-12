@@ -44,8 +44,22 @@ describe("roleGap", () => {
 describe("callReason", () => {
   it("names the role a known role lacks", () => {
     expect(
-      callReason("memory.pin", { role: "viewer", loading: false, rows: [row("viewer")] }, token([], []), "team"),
+      callReason("memory.pin", { role: "viewer", loading: false, rows: [row("viewer")] }, token(["USER"], []), "team"),
     ).toBe("Needs writer on team. An admin of it can grant that.");
+  });
+
+  it("leaves it to the server for a token scoped per namespace, whose role does not show in whoami", () => {
+    const scoped = token([], ["team"]);
+    // No row: no role the client can see.
+    expect(callReason("memory.pin", { role: null, loading: false, rows: [] }, scoped, "team")).toBe(SERVER);
+    // A grant row below the op: ns_roles may reach it.
+    expect(callReason("memory.pin", { role: "viewer", loading: false, rows: [row("viewer")] }, scoped, "team")).toBe(
+      SERVER,
+    );
+    // The same with a flat role: the row is all there is.
+    expect(
+      callReason("memory.pin", { role: null, loading: false, rows: [] }, token(["USER"], ["team"]), "team"),
+    ).toMatch(/^Needs writer/);
   });
 
   it("leaves it to the server when a `*` claim's flat role reaches the op over a lower grant row", () => {

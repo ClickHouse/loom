@@ -17,7 +17,7 @@ import { hasAdminClaim, isNamespaceAdmin } from "../lib/role";
 import { canUpdateNamespace, restrictedMisses } from "../lib/namespaceUpdate";
 import { needsRole } from "../lib/namespaceRole";
 import { sharedMine } from "../lib/sharedReads";
-import { needsMaintainer, serverDecides, unreadLine } from "../lib/callReason";
+import { needsMaintainer, rolesUnseen, serverDecides, unreadLine } from "../lib/callReason";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { useAbortableEffect } from "../lib/hooks";
@@ -118,7 +118,12 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
   // A repository's admins are its maintainers, and it is named by its label.
   const name = isRepo ? (label ?? namespace) : namespace;
   const adminWord = isRepo ? "maintainer" : "admin";
-  const needsAdmin = isRepo ? needsMaintainer(name) : needsRole("admin", namespace);
+  // A token scoped per namespace may be an admin here the client cannot see.
+  const needsAdmin = rolesUnseen(whoami)
+    ? serverDecides(namespace)
+    : isRepo
+      ? needsMaintainer(name)
+      : needsRole("admin", namespace);
 
   // Why the fields are locked. On a restricted row, from what its gate finds missing
   // (`restrictedMisses`, the same list `canUpdateNamespace` admits on), and while the grants

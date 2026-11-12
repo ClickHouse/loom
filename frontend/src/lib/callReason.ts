@@ -15,6 +15,12 @@ export function unreadLine(loading: boolean, namespace: string): string {
 export const serverDecides = (namespace: string) =>
   `The server decides this token's access to ${namespace}; it does not show here.`;
 
+/** A signed-in token with no flat roles: one scoped per namespace (`ns_roles`), which whoami
+ *  does not carry, so its role on a namespace is the server's to read (`_scoped_role`). */
+export function rolesUnseen(whoami: WhoAmI | null): boolean {
+  return !!whoami?.authenticated && (whoami.roles ?? []).length === 0;
+}
+
 /** The token claims `*` without naming `namespace`. */
 function starOnly(whoami: WhoAmI, namespace: string): boolean {
   const named = whoami.namespaces ?? [];
@@ -33,8 +39,9 @@ function starReaches(whoami: WhoAmI, namespace: string, min: NamespaceRole): boo
 /**
  * Why the caller's role on `namespace` is not known, or null when it is: list_mine is still
  * being read (or whoami is), the caller's request to join waits for an admin, list_mine
- * could not be read, or a `*` claim that does not name it, which list_mine answers no row
- * for, leaves it to the server. A null role with list_mine read and none of these is no grant at all.
+ * could not be read, or the server decides: a `*` claim that does not name it (list_mine
+ * answers no row for one) or a token scoped per namespace (`rolesUnseen`). A null role with
+ * list_mine read, flat roles on the token and none of these is no grant at all.
  */
 export function roleGap(read: NamespaceRoleRead, whoami: WhoAmI | null, namespace: string): string | null {
   if (read.role !== null) return null;
@@ -42,7 +49,7 @@ export function roleGap(read: NamespaceRoleRead, whoami: WhoAmI | null, namespac
   if (read.rows?.some((m) => m.namespace === namespace && m.status === "pending"))
     return `Your request to join ${namespace} is waiting for an admin.`;
   if (read.rows === null) return unreadLine(false, namespace);
-  if (starOnly(whoami, namespace)) return serverDecides(namespace);
+  if (starOnly(whoami, namespace) || rolesUnseen(whoami)) return serverDecides(namespace);
   return null;
 }
 
@@ -55,8 +62,9 @@ export function needsMaintainer(repository: string): string {
  * Why the caller cannot call a namespace-gated `op` on `namespace`, or null when `canCall`
  * allows it: the reason an in-page control shows through `ui/Unavailable` instead of
  * disappearing. A role not known yet says why (`roleGap`); a known role, or none at all once
- * list_mine is read, says the role the op needs (`needsRole`), except under a `*` claim whose
- * flat role reaches it, where the server decides.
+ * list_mine is read, says the role the op needs (`needsRole`), except where the server
+ * decides: a `*` claim whose flat role reaches it, or a token scoped per namespace, whose
+ * role there may be above its grant row.
  */
 export function callReason(
   op: GatedOp,
@@ -68,5 +76,6 @@ export function callReason(
   const min = OP_MIN_ROLE[op].min;
   const gap = roleGap(read, whoami, namespace);
   if (gap) return gap;
-  return whoami && starReaches(whoami, namespace, min) ? serverDecides(namespace) : needsRole(min, namespace);
+  if (whoami && (starReaches(whoami, namespace, min) || rolesUnseen(whoami))) return serverDecides(namespace);
+  return needsRole(min, namespace);
 }
