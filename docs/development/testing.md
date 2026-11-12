@@ -192,11 +192,11 @@ between files.
 
 ## The CI workflow
 
-`.github/workflows/ci.yml` runs on every pull request into `main` and on pushes to
-`main`, with Python 3.12 (`sdk-python-package` adds other versions) and Node 22. A newer
-push to a pull request cancels that pull request's running workflow; every push to `main`
-runs to completion in its own concurrency group, so a failure on one merge commit is never
-hidden by the next. Every action is pinned to a full commit SHA (its version in a
+`.github/workflows/ci.yml` runs on every pull request into `main` or a `release/X.Y` line
+and on pushes to either, with Python 3.12 (`sdk-python-package` adds other versions) and
+Node 22. A newer push to a pull request cancels that pull request's running workflow; every
+push to `main` or a line runs to completion in its own concurrency group, so a failure on
+one merge commit is never hidden by the next. Every action is pinned to a full commit SHA (its version in a
 comment), and the workflow grants its jobs read-only repository access
 (`permissions: contents: read`).
 
