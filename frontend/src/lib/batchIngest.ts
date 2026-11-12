@@ -55,6 +55,8 @@ export interface BatchRow {
   file: File;
   /** Where it goes: the place shown, or, once its folder's collection is made, that. */
   target: Pick<Identity, "org" | "namespace">;
+  /** That collection's name on screen, once its folder's collection is known. */
+  place?: string;
   /** That collection was made a moment ago: other replicas may not know it yet. */
   fresh?: boolean;
   /** The folder whose collection it goes into; "" for the place shown. */

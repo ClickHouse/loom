@@ -53,7 +53,7 @@ interface Props {
 }
 
 /** Whether this browser offers a folder to the file input. */
-const canPickFolder = typeof document !== "undefined" && "webkitdirectory" in document.createElement("input");
+const canPickFolder = "webkitdirectory" in document.createElement("input");
 
 /** What a job the dialog stops following does: it goes on, and a reload shows it (a
  *  replaced document shows its new revision). */

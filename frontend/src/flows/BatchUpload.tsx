@@ -288,32 +288,8 @@ export function BatchUpload({
   // Set by the first Upload: a run that only skipped files has started all the same.
   const [started, setStarted] = useState(false);
   const [choice, setChoice] = useState<Choice>("replace");
-  // The twins the last render found, for a re-plan that runs before this render's.
-  const twinsSeen = useRef<ReadonlySet<number>>(new Set());
   // The person's own Replace or Skip, which a later check does not undo.
   const chosen = useRef<Choice | null>(null);
-  // The formats may arrive after the pick: what is left out is decided again then, while
-  // nothing has been sent, each file keeping what the check found of it.
-  if (formats !== plannedWith && !started) {
-    setPlannedWith(formats);
-    const nowNest = nestPicked.current ? nest : nestFor(formats);
-    if (nowNest !== nest) setNest(nowNest);
-    const nowFolders = plan(true, formats).some((r) => r.folder && r.state !== "skipped");
-    const mode = !!tree && nowFolders && (nestable || nowNest === "collections");
-    // By row: in a folder upload two folders' files may share a source URI. A switch between
-    // collections and paths changes where each file goes: its marks are checked again.
-    const found = new Map(rows.map((r) => [r.id, r]));
-    const switched = mode !== asCollections;
-    const replanned = plan(mode, formats).map((r) => {
-      const was = found.get(r.id);
-      return was && !switched ? { ...r, replaces: was.replaces, kept: was.kept } : r;
-    });
-    if (switched) setChecks((n) => n + 1);
-    // Twins as the last render found them: a row keeps its id across a re-plan.
-    const use = chosen.current ?? firstChoice(replanned, twinsSeen.current);
-    setChoice(use);
-    setRows(capBatch(replanned, use === "skip"));
-  }
   const [page, setPage] = useState(1);
   const [tagsInput, setTagsInput] = useState(tags);
   const [allowPartial, setAllowPartial] = useState(partial);
@@ -328,8 +304,6 @@ export function BatchUpload({
   const foldersSent = useRef(false);
   // What the check read of each collection it read whole, for the upload to start from.
   const checkedSources = useRef(new Map<string, Map<string, KeptFields>>());
-  // Where each folder's file goes, once its collection is known.
-  const placeNames = useRef(new Map<number, string>());
   const leave = () => {
     const first = madeHere.current[0];
     if (first || foldersSent.current) tree?.onMade(first ?? "");
@@ -370,6 +344,27 @@ export function BatchUpload({
   // The place itself, or the collections the folders' files go to.
   const checkedWhere = targetKey === namespace ? `in ${place}` : "there";
   const where = (r: BatchRow) => (r.folder ? (planOf(r.folder)?.existing ?? "") : namespace);
+  // The formats may arrive after the pick: what is left out is decided again then, while
+  // nothing has been sent, each file keeping what the check found of it.
+  if (formats !== plannedWith && !started) {
+    setPlannedWith(formats);
+    const nowNest = nestPicked.current ? nest : nestFor(formats);
+    if (nowNest !== nest) setNest(nowNest);
+    const nowFolders = plan(true, formats).some((r) => r.folder && r.state !== "skipped");
+    const mode = !!tree && nowFolders && (nestable || nowNest === "collections");
+    // By row: in a folder upload two folders' files may share a source URI. A switch between
+    // collections and paths changes where each file goes: its marks are checked again.
+    const found = new Map(rows.map((r) => [r.id, r]));
+    const switched = mode !== asCollections;
+    const replanned = plan(mode, formats).map((r) => {
+      const was = found.get(r.id);
+      return was && !switched ? { ...r, replaces: was.replaces, kept: was.kept } : r;
+    });
+    if (switched) setChecks((n) => n + 1);
+    const use = chosen.current ?? firstChoice(replanned, twinIds(replanned, where));
+    setChoice(use);
+    setRows(capBatch(replanned, use === "skip"));
+  }
   // Each change of `checks` (Check again) or of the collections to read reads again; never
   // once files are sent.
   const startedRef = useRef(started);
@@ -451,7 +446,6 @@ export function BatchUpload({
   const held = rows.filter((r) => r.state === "next").length;
   // `where` reads the plan, which follows the rows' pick.
   const twins = useMemo(() => twinIds(rows, where), [rows, plans]);
-  twinsSeen.current = twins;
   const existing = rows.filter(
     (r) => r.replaces && (r.state === "waiting" || r.state === "next") && !twins.has(r.id),
   ).length;
@@ -515,14 +509,13 @@ export function BatchUpload({
       const cutHere = new Set<string>();
       for (const p of placed) {
         if (!p.placed) continue;
-        placeNames.current.set(p.row.id, p.where);
         placedIds.add(p.row.id);
         if (readCut.has(p.row.target.namespace)) cutHere.add(p.where);
       }
       if (cutHere.size) setLateCut((was) => [...new Set([...was, ...cutHere])]);
       const sending = new Set(start.filter((r) => r.state === "waiting").map((r) => r.id));
       start = afterPlacing(
-        placed.map((p) => p.row),
+        placed.map((p) => (p.placed ? { ...p.row, place: p.where } : p.row)),
         placedIds,
         sending,
         where,
@@ -786,12 +779,7 @@ export function BatchUpload({
         className="max-h-80 divide-y divide-border overflow-y-auto rounded-md border border-border"
       >
         {rows.map((r) => (
-          <FileRow
-            key={r.id}
-            row={r}
-            place={placeNames.current.get(r.id) ?? (r.folder ? folderPlace(r.folder) : place)}
-            choice={choice}
-          />
+          <FileRow key={r.id} row={r} place={r.place ?? (r.folder ? folderPlace(r.folder) : place)} choice={choice} />
         ))}
       </ul>
       <ModalFooter>
