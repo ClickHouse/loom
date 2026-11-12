@@ -37,7 +37,7 @@ def _pipe(src: socket.socket, dst: socket.socket) -> None:
 def _start(target: Callable[..., None], *args: object) -> threading.Thread:
     """Start a daemon thread, waiting while the job is at its task limit."""
     while True:
-        # a new Thread each try: one whose start failed cannot be started again
+        # a new Thread each try: one whose start failed may not start again
         thread = threading.Thread(target=target, args=args, daemon=True)
         try:
             thread.start()
@@ -53,6 +53,10 @@ def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
             back = _start(_pipe, upstream, conn)
             _pipe(conn, upstream)
             back.join()
+            # the proxy frees its slot before it closes: hold ours until then, or the
+            # next connection could reach a proxy that is still full
+            while upstream.recv(65536):
+                pass
     except OSError:
         pass
     finally:

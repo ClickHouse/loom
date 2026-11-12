@@ -9,7 +9,9 @@ from __future__ import annotations
 import contextlib
 import errno
 import socket
+import struct
 import threading
+import time
 import types
 from collections.abc import Iterator
 from pathlib import Path
@@ -50,13 +52,6 @@ class _Upstream:
             conn.close()
 
 
-@pytest.fixture
-def upstream(sock_dir: Path) -> Iterator[_Upstream]:
-    proxy = _Upstream(str(sock_dir / "p.sock"))
-    yield proxy
-    proxy.close()
-
-
 class _Stopped(Exception):
     pass
 
@@ -88,9 +83,13 @@ class _Listener:
 
 
 @contextlib.contextmanager
-def _relay(upstream: _Upstream, slots: int, listener: _Listener | None = None) -> Iterator[int]:
-    """Run the relay's accept loop to `upstream`; yields its port. On the way out the
-    upstream closes, which ends every bridge, and the loop is joined."""
+def _relay(
+    sock_dir: Path, slots: int, listener: _Listener | None = None
+) -> Iterator[tuple[int, _Upstream]]:
+    """Run the relay's accept loop to a stand-in proxy; yields the relay's port and
+    the proxy. On the way out the proxy closes, which ends every bridge, and the loop
+    is joined."""
+    upstream = _Upstream(str(sock_dir / "p.sock"))
     listener = listener or _Listener()
     slots_left = threading.BoundedSemaphore(slots)
 
@@ -101,7 +100,7 @@ def _relay(upstream: _Upstream, slots: int, listener: _Listener | None = None) -
     loop = threading.Thread(target=run, daemon=True)
     loop.start()
     try:
-        yield listener.port
+        yield listener.port, upstream
     finally:
         listener.stop.set()
         upstream.close()
@@ -112,7 +111,8 @@ def _relay(upstream: _Upstream, slots: int, listener: _Listener | None = None) -
 
 def _thread_failing_on(start: int) -> types.SimpleNamespace:
     """A stand-in for the relay's `threading` whose `start`-th thread start fails.
-    The relay must not reuse a Thread whose start failed, so this one refuses."""
+    The relay must not count on restarting a Thread whose start failed (Python 3.13
+    refuses it), so this one refuses too."""
     starts = 0
 
     class Thread(threading.Thread):
@@ -146,8 +146,8 @@ def _socket_failing_once() -> types.SimpleNamespace:
     return types.SimpleNamespace(socket=make, **{n: getattr(socket, n) for n in names})
 
 
-def test_connections_past_the_cap_wait_until_a_bridge_ends(upstream: _Upstream) -> None:
-    with _relay(upstream, 2) as port:
+def test_connections_past_the_cap_wait_until_a_bridge_ends(sock_dir: Path) -> None:
+    with _relay(sock_dir, 2) as (port, upstream):
         clients = [socket.create_connection(("127.0.0.1", port)) for _ in range(5)]
         try:
             assert upstream.arrived.acquire(timeout=5) and upstream.arrived.acquire(timeout=5)
@@ -163,10 +163,10 @@ def test_connections_past_the_cap_wait_until_a_bridge_ends(upstream: _Upstream) 
 
 @pytest.mark.parametrize("failing_start", [1, 2], ids=["the bridge", "its second pipe"])
 def test_a_thread_that_cannot_start_is_started_again(
-    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch, failing_start: int
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch, failing_start: int
 ) -> None:
     monkeypatch.setattr(egress_relay, "threading", _thread_failing_on(failing_start))
-    with _relay(upstream, 1) as port:
+    with _relay(sock_dir, 1) as (port, upstream):
         client = socket.create_connection(("127.0.0.1", port), timeout=5)
         assert upstream.arrived.acquire(timeout=5)
         upstream.held[0].sendall(b"hi")
@@ -174,11 +174,31 @@ def test_a_thread_that_cannot_start_is_started_again(
         client.close()
 
 
+def test_a_bridge_keeps_its_slot_until_the_proxy_closes(sock_dir: Path) -> None:
+    """A client that resets while the proxy still sends ends both pipes, but the
+    proxy holds its slot until it closes; a relay slot freed sooner would send the
+    next connection to a full proxy, to be refused."""
+    with _relay(sock_dir, 1) as (port, upstream):
+        first = socket.create_connection(("127.0.0.1", port))
+        assert upstream.arrived.acquire(timeout=5)
+        first.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        first.close()  # a reset
+        with contextlib.suppress(OSError):
+            for _ in range(20):
+                upstream.held[0].sendall(b"x" * 65536)
+                time.sleep(0.01)
+        second = socket.create_connection(("127.0.0.1", port))
+        assert not upstream.arrived.acquire(timeout=0.5)
+        upstream.held[0].close()  # the proxy frees its slot
+        assert upstream.arrived.acquire(timeout=5)
+        second.close()
+
+
 def test_an_upstream_socket_that_cannot_open_costs_its_connection_only(
-    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(egress_relay, "socket", _socket_failing_once())
-    with _relay(upstream, 1) as port:
+    with _relay(sock_dir, 1) as (port, upstream):
         first = socket.create_connection(("127.0.0.1", port), timeout=5)
         assert first.recv(1) == b""  # closed
         first.close()
@@ -187,8 +207,8 @@ def test_an_upstream_socket_that_cannot_open_costs_its_connection_only(
         second.close()
 
 
-def test_an_accept_that_fails_is_retried(upstream: _Upstream) -> None:
-    with _relay(upstream, 1, _Listener(fail_first=True)) as port:
+def test_an_accept_that_fails_is_retried(sock_dir: Path) -> None:
+    with _relay(sock_dir, 1, _Listener(fail_first=True)) as (port, upstream):
         client = socket.create_connection(("127.0.0.1", port))
         assert upstream.arrived.acquire(timeout=5)
         client.close()

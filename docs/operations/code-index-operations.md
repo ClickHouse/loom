@@ -535,9 +535,9 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   until one of the relay's connections ends. Any other connection over the cap at the
   proxy is refused after 5 seconds, and so is a relay connection while ssh tunnels hold
   some of the slots. The proxy logs the first refusal, and the total when the job ends
-  if there was more than one. A tunnel idle for 5 minutes is closed;
-  once its client has finished, it is closed after 10 seconds without a byte from the
-  server (`LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S`).
+  if there was more than one. A tunnel idle for 5 minutes is closed; once its client has
+  finished, it is closed after `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` (10 s by default)
+  without a byte from the server.
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are
