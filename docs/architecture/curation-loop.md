@@ -145,8 +145,9 @@ pull request names each break.
 
 Should two shared rows match one name despite that refusal (two promotions racing, or one
 promoted through a build without the check), the term leg serves, among the rows the
-read-time check passes, the latest promotion (`promoted_at`, a tie by `promotion_event`);
-a rewrite of a shared row that is not a promotion, such as a scrub, does not count.
+read-time check passes, the one with the latest `promoted_at`, a tie within its second
+settled by `promotion_event`: one fixed winner, not necessarily the later of the two. A
+rewrite of a shared row that is not a promotion, such as a scrub, does not count.
 
 A caller may already write rows of type `definition`; they are governed only once an admin
 promotes them, but their write-time verdicts change with this design: `definition` joins
@@ -207,8 +208,8 @@ to it that continues its edge:
 
 - next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
   those;
-- next to a letter of another script written with spaces (Cyrillic, Greek): a letter or
-  digit that is not Latin;
+- next to a letter of another script written with spaces (Cyrillic, Greek): any letter of
+  a script other than Latin, or any decimal digit;
 - next to Hangul, whose particles attach to the word before them, a script written without
   spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or punctuation: nothing.
 
@@ -220,8 +221,8 @@ matches only as written, and any other word matches case-folded. So `IT` does no
 and `ARR growth` matches "ARR Growth" but not "arr growth".
 
 **Placement.** Matched rows go to the top of the served list with `governed = true`, in
-the order their names first appear in the query; a tie goes to the latest promotion
-(`promoted_at`, then `promotion_event`). Any other hit under the same key in the addressed
+the order their names first appear in the query; a tie goes to the latest `promoted_at`,
+then `promotion_event`, as for one name. Any other hit under the same key in the addressed
 namespace is removed, so an edited private copy is not served beside the governed text. A
 derived aggregate's synthetic row (`derived_aggregate`, an exact count over the
 namespace's rows) stays first, above the governed hits, as the response documents it. No
@@ -267,6 +268,15 @@ namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespac
 governed definitions through this leg only. The implementing pull request updates that
 page, and in `server/identity/domain/read_scope.py` the module docstring and the comment
 on `SCOPED_OPS`, which say every memory read of those ops carries the read scope.
+
+**Memory scope.** The leg also serves shared rows to a search with `scope = "private"`,
+the default, which today reads the per-agent layer and leaves the shared layer to
+`scope = "shared"`: a governed definition answers every search that names its term. This
+is a second narrowing, for governed definitions through this leg only. The implementing
+pull request updates the `scope` field's description in
+`server/memory/api/models_search.py`, the shared-layer section of [identities and
+namespaces](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)
+and the generated operations reference.
 
 **Stored answers.** `memory.ask`'s ordinary precedent path reruns retrieval and reuses an
 answer only when its synthesis window is the same, so a governed hit entering or leaving
@@ -347,49 +357,63 @@ anything but `complete` or `empty`, so `off` too: a field that turns the leg off
 `recent_first`, also keeps the search from recording a miss), so a defined term is never
 recorded as a gap because its leg was cut.
 
-The **asker** is the person the token stands for, never a body field: the end user of an
-end-user token; else the token's `creator` claim, the person at the root of a delegated
-token or service account ([tokens and grants](../guides/tokens-and-grants.md)); else, for
-a service account's token minted without the claim, the first subject that is not a
-service account in its creator chain as the registry records it (`created_by` and its
-lineage, `server/auth/service_accounts.py`; `sa_creator` there answers None alike for a
-failed read and for no creator, and ignores `lineage`, so the implementing pull request
-adds a lookup that raises on a failed read and walks `lineage`), and no miss when the
-chain has none; else the token's subject. An agent of a bot (`sa:<bot>:<agent>`) and an
-agent sign-up's service account (whose `created_by` names a namespace, not a person) stand
-for no person and record no miss. Tokens a person mints for themselves therefore count as
-that person. An asker that cannot be resolved (the registry unreadable, or a service
-account with no creator) records no miss: an unknown principal is never counted as a
-separate person. The asker is stored in the form a user erasure names: an end user as
-their id, without the `user:` prefix, and an email lower-cased and folded onto the login
-handle (`owner_email`) of the account the directory ties it to by a verified email,
-whether that handle is an email or not, so one person's two spellings count once.
-`canonical_subject` in `server/auth/aliases.py` keeps an email whose handle is also an
-email unchanged, so the implementing pull request adds a helper beside it that returns the
-handle; a spelling tied to two accounts, or a tie that cannot be read, records no miss.
-Each miss writes one row to `loom.search_misses` under the namespace the search was
-addressed to: the identity tuple, the asker, `actor`, the plane and the query's normalised
-form (case-folded, with every run of characters other than letters, digits, `_`, `+` and
-`#` made one space, so `C++`, `C#` and `arr_v2` stay apart as the term leg keeps them).
-That form is still the query's words, kept as the trace of a question under the request's
-capture level; only the threshold below decides what an admin sees. A query that reads as
-`high` (`reads_high` in `server/memory/domain/sensitivity.py`, the rule namespace-wide
-listings apply) records no miss, so a pasted credential never becomes a gap head, an
-embedding or an LLM prompt. No memory key or document URI is kept: one naming another
-user's row or document would outlive that user's erasure, or the document's delete, in
-someone else's miss. A miss is inserted after the response, so a user erasure could run
+**The asker** is the person the token stands for, never a body field:
+
+- the end user of an end-user token;
+- else the token's `creator` claim, the person at the root of a delegated token or service
+  account ([tokens and grants](../guides/tokens-and-grants.md));
+- else, for a service account's token minted without the claim, the first subject in its
+  creator chain that is not a service account, as the registry records it (`created_by`
+  and its `lineage`, `server/auth/service_accounts.py`); no miss when the chain has none.
+  `sa_creator` there answers None alike for a failed read and for no creator, and ignores
+  `lineage`, so the implementing pull request adds a lookup that raises on a failed read
+  and walks `lineage`;
+- else the token's subject.
+
+So tokens a person mints for themselves count as that person. An agent of a bot
+(`sa:<bot>:<agent>`) and an agent sign-up's service account (whose `created_by` names a
+namespace, not a person) stand for no person and record no miss. An asker that cannot be
+resolved (the registry unreadable, or a service account with no creator) records no miss:
+an unknown principal is never counted as a separate person.
+
+The asker is stored in the form a user erasure names. An end user is stored as their id,
+without the `user:` prefix. An email is lower-cased and folded onto the login handle
+(`owner_email`) of the account the directory ties it to by a verified email, whether that
+handle is an email or not, so one person's two spellings count once. `canonical_subject`
+in `server/auth/aliases.py` keeps an email whose handle is also an email unchanged, so the
+implementing pull request adds a helper beside it that returns the handle. A spelling tied
+to two accounts, or a tie that cannot be read, records no miss.
+
+**The stored row.** Each miss writes one row to `loom.search_misses` under the namespace
+the search was addressed to: the identity tuple, the asker, `actor`, the plane and the
+query's normalised form. That form is case-folded, with every run of characters other than
+letters, digits, `_`, `+` and `#` made one space, so `C++`, `C#` and `arr_v2` stay apart
+as the term leg keeps them. It is still the query's words, kept as the trace of a question
+under the request's capture level; only the threshold below decides what an admin sees. A
+query that reads as `high` (`reads_high` in `server/memory/domain/sensitivity.py`, the
+rule namespace-wide listings apply) records no miss, so a pasted credential never becomes
+a gap head, an embedding or an LLM prompt. No memory key or document URI is kept: one
+naming another user's row or document would outlive that user's erasure, or the document's
+delete, in someone else's miss.
+
+**The erasure fence.** A miss is inserted after the response, so a user erasure could run
 between the search and the insert. An erasure reaches a miss when it is the namespace's
-(or a list naming it) or a user erasure one of whose spellings (`aliases.spellings`, as
-the user step matches them) is the miss's asker or `user_id`. The recording reads
-`ledger_reads.unfinished_reaching` before the insert and records nothing when such an
-erasure was unfinished when the search began or has finished since; it then inserts the
-miss under an id of its own, waits until the row is visible, and reads the ledger again,
-deleting the row when one now reaches it, as other erasure fences check after storing. An
-unreadable ledger or directory counts as reaching. An erasure that begins after that read
-finds the row and deletes it itself. The table has a 16-day TTL: it is a trace, not
-memory. A pass reads the last 7 days and a build lives 7 days from its write, with two
-days to spare, so a miss outlives every build that counted it and a user erasure always
-finds the namespaces it must clear.
+(or a list naming it), or a user erasure one of whose spellings (`aliases.spellings`, as
+the user step matches them) is the miss's asker or `user_id`.
+
+1. Before the insert, the recording reads `ledger_reads.unfinished_reaching` and records
+   nothing when such an erasure was unfinished when the search began or has finished
+   since.
+2. It inserts the miss under an id of its own and waits until the row is visible.
+3. It reads the ledger again and deletes the row when an erasure now reaches it, as other
+   erasure fences check after storing.
+
+An unreadable ledger or directory counts as reaching. An erasure that begins after the
+second read finds the row and deletes it itself.
+
+**Lifetime.** The table has a 16-day TTL: it is a trace, not memory. A pass reads the last
+7 days and a build lives 7 days from its write, with two days to spare, so a miss outlives
+every build that counted it and a user erasure always finds the namespaces it must clear.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
 misses, its `actor` is the token's principal, not the person resolved as below (an end
@@ -399,33 +423,44 @@ per query text with its sessions, not its people, and only for memory searches.
 ### Grouping
 
 The `knowledge_gaps` worker runs once a day for each namespace with misses or a live
-build. It re-reads the namespace's capture level through an uncached read that raises when
-the consent cannot be read; `capture_consent.resolve` is not that read, since it caches
-and reads an unreadable consent as `off`. A namespace whose level is now `off` gets an
-empty build, and its earlier builds and stored misses are deleted (a user erasure finds a
-namespace through the user's misses, so the builds go with them), so a later consent does
-not count them again; a level that cannot be read skips the namespace's pass, with no
-build and no delete, so a failed read never deletes misses; otherwise it reads the
-namespace's misses of the last 7 days and groups them by normalised query. **Privacy
-threshold:** a group with fewer than `knowledge_gaps_min_askers` distinct askers (default
-three, never below three, one value for the deployment) is dropped before anything else,
-so every query a gap shows was asked in that form by at least that many askers. The
-threshold is as strong as the principals behind it: it does not bind whoever holds the
-signing key (`loom mint-token` mints any subject), an end-user issuer or a trusted caller
-(each names its own users), or a deployment where principals can be self-created
-(`LOOM_SELF_SIGNUP=open`), where an admin could ask from accounts of their own. There it
-limits what one ordinary caller reveals, not what an admin can learn. On any deployment,
-an admin who compares two daily builds can tell that one more asker reached a query that
-day, and in a small namespace that may say who; the threshold bounds what one build shows,
-not what a series of builds implies. The reading admin's own asks count toward it too, so
-an admin who asked a query learns from its gap that at least `knowledge_gaps_min_askers`
-minus one others did, which in a small namespace narrows who. The worker embeds the
-remaining groups' queries (at most `knowledge_gaps_max_groups`, those with the most
-distinct askers, then asks, then the latest ask, so the cut is the same for the same
-questions), merges groups whose vectors are at least `knowledge_gaps_merge_similarity`
-alike, counting a merged gap's askers as the union of the distinct askers each group's
-query returns (`groupUniqArray`), held in memory for the pass and never stored, and writes
-the result as a new build of the namespace in `loom.knowledge_gaps`:
+build.
+
+**Consent first.** It re-reads the namespace's capture level through an uncached read
+that raises when the consent cannot be read; `capture_consent.resolve` is not that read,
+since it caches and reads an unreadable consent as `off`.
+
+- A level that cannot be read skips the namespace's pass, with no build and no delete, so
+  a failed read never deletes misses.
+- A level that is now `off` gets an empty build, and the namespace's earlier builds and
+  stored misses are deleted, so a later consent does not count them again. The builds go
+  with the misses because a user erasure finds a namespace through the user's misses.
+- Otherwise the pass reads the namespace's misses of the last 7 days and groups them by
+  normalised query.
+
+**Privacy threshold.** A group with fewer than `knowledge_gaps_min_askers` distinct askers
+(default three, never below three, one value for the deployment) is dropped before
+anything else, so every query a gap shows was asked in that form by at least that many
+askers. The threshold is as strong as the principals behind it:
+
+- It does not bind whoever holds the signing key (`loom mint-token` mints any subject), an
+  end-user issuer or a trusted caller (each names its own users), or a deployment where
+  principals can be self-created (`LOOM_SELF_SIGNUP=open`), where an admin could ask from
+  accounts of their own. There it limits what one ordinary caller reveals, not what an
+  admin can learn.
+- An admin who compares two daily builds can tell that one more asker reached a query that
+  day, and in a small namespace that may say who: the threshold bounds what one build
+  shows, not what a series of builds implies.
+- The reading admin's own asks count toward it, so an admin who asked a query learns from
+  its gap that at least `knowledge_gaps_min_askers` minus one others did, which in a small
+  namespace narrows who.
+
+**Merging.** The worker embeds the remaining groups' queries, at most
+`knowledge_gaps_max_groups` of them: those with the most distinct askers, then asks, then
+the latest ask, so the cut is the same for the same questions. It merges groups whose
+vectors are at least `knowledge_gaps_merge_similarity` alike, counting a merged gap's
+askers as the union of the distinct askers each group's query returns (`groupUniqArray`),
+held in memory for the pass and never stored. It writes the result as a new build of the
+namespace in `loom.knowledge_gaps`:
 
 | Column            | Meaning                                                         |
 | ----------------- | --------------------------------------------------------------- |
@@ -434,22 +469,24 @@ the result as a new build of the namespace in `loom.knowledge_gaps`:
 | `askers`, `asks`  | How many distinct askers, and how many times.                   |
 | `last_at`         | The day it was last asked.                                      |
 
-Every build writes its gaps, then a marker row, and readers take the latest build that has
-its marker, so a build with no gap left, or one whose gaps an erasure deleted, still
-replaces the last one. Builds expire after 7 days, and a namespace left with no misses in
-the window gets an empty build, and `knowledge.gaps.list` ignores a build whose marker is
-older than 7 days, so an old one is never served past its window even when passes stop
-(the TTL only frees the disk). A pass whose read raced an erasure's delete could write
-erased rows back, so after writing its gaps, and before the marker, the worker deletes
-them and writes no marker when an erasure that reaches a miss it read (matched as for a
-recording) was unfinished when the pass read or has finished since
-(`ledger_reads.unfinished_reaching`, as the [erasure
-saga](memory-architecture.md#erasure-saga) fences other writers); an erasure that begins
-after that check deletes the gaps itself. The list then serves the previous build, or none
-once the erasure deleted it. A failed erasure holds this fence, as it holds every
-writer's, until it is run again and completes. An admin who sees a namespace's gaps go
-when a user's erasure deletes its builds learns that the user asked there in the last 7
-days; the threshold does not hide that.
+**Builds.** Every build writes its gaps, then a marker row, and readers take the latest
+build that has its marker, so a build with no gap left, or one whose gaps an erasure
+deleted, still replaces the last one. Builds expire after 7 days, a namespace left with no
+misses in the window gets an empty build, and `knowledge.gaps.list` ignores a build whose
+marker is older than 7 days, so an old one is never served past its window even when
+passes stop (the TTL only frees the disk).
+
+**The pass's erasure fence.** A pass whose read raced an erasure's delete could write
+erased rows back. So after writing its gaps, and before the marker, the worker reads
+`ledger_reads.unfinished_reaching`, as the [erasure saga](memory-architecture.md#erasure-saga)
+fences other writers. When an erasure that reaches a miss it read (matched as for a
+recording) was unfinished when the pass read or has finished since, it deletes the gaps and
+writes no marker; the list then serves the previous build, or none once the erasure
+deleted it. An erasure that begins after that check deletes the gaps itself. A failed
+erasure holds this fence, as it holds every writer's, until it is run again and
+completes. An admin who sees a namespace's gaps go when a user's erasure deletes its
+builds learns that the user asked there in the last 7 days; the threshold does not hide
+that.
 
 ### Ops and dashboard
 
@@ -512,10 +549,12 @@ tables. Each turn:
 `clusterAllReplicas` is a table function: a cluster registration accepts the `REMOTE`
 grant it needs beside the tracker's read-only list, which already allows `CREATE TEMPORARY
 TABLE`, and the read runs under `readonly = 2`, as the tracker's `remoteSecure` reads do.
-Nothing reaches search until an admin promotes a draft. A `query_history` draft holds the
-team's normalised SQL and the tables and columns it reads, which the asker threshold does
-not cover, so `learnings.list` shows those candidates to the namespace's admins only,
-where it shows other learnings to every viewer.
+Nothing reaches search until an admin promotes a draft. Promotion publishes the whole
+value, `rests_on` and its normalised SQL included, to every reader of the namespace,
+read-bounded tokens too, so the reviewing admin approves that text for all of them. A
+`query_history` draft holds the team's normalised SQL and the tables and columns it reads,
+which the asker threshold does not cover, so `learnings.list` shows those candidates to
+the namespace's admins only, where it shows other learnings to every viewer.
 
 ## Promotion
 
@@ -703,8 +742,8 @@ between.
 - A definition is governed only while an admin's promotion of its namespace-wide row into
   the shared layer is live and the source still holds that text under its term's slug,
   active, live, within its validity and unlabelled `high`; the term leg serves at most one
-  definition per name, the last one promoted; only governed definitions are placed above
-  the served list.
+  definition per name, chosen by the rule above; only governed definitions are placed
+  above the served list.
 - A query naming no governed term is served exactly as without the term leg.
 
 ## Source entry points
