@@ -21,17 +21,7 @@ import type { MyNamespaceEntry, WhoAmI } from "../api";
  *   carries WRITER but who owns the namespace is still its admin.
  *   `holdsAdminGrant` is the same rule for a screen that read the namespace's
  *   own grant list (`grants.list`) rather than `namespace.list_mine`.
- * - `canUpdateNamespace` (`lib/namespaceUpdate.ts`): `namespace.register`'s update path. Namespace admin,
- *   or the owner named on a row the first-write hook auto-registered
- *   (`_is_auto_registered_owner`: the row carries the `auto-registered` tag
- *   and its `owner_email` is the caller). That owner holds no grant, so
- *   `namespace.delete` and `grants.*` stay on `isNamespaceAdmin`. A row
- *   `namespace.get` calls restricted takes none of that: the server's two-factor
- *   gate (`_require_admin_of_existing` → `restricted_allows`) wants a token of the
- *   namespace's org that names it (no `*`), a role claim reaching ADMIN and a
- *   direct, active admin grant (not one inherited through a creator). Unknown grants
- *   do not count there. This is a mirror to hide controls the server would refuse,
- *   not the authority.
+ * - `canUpdateNamespace` and the restricted gate's misses live in `lib/namespaceUpdate.ts`.
  *
  * `LOOM_AUTH_REQUIRED=false` (whoami says `authenticated: false` for the
  * synthesised local identity) means the operator is the user: admin.

@@ -17,7 +17,7 @@ import { hasAdminClaim, isNamespaceAdmin } from "../lib/role";
 import { canUpdateNamespace, restrictedMisses } from "../lib/namespaceUpdate";
 import { needsRole } from "../lib/namespaceRole";
 import { sharedMine } from "../lib/sharedReads";
-import { needsMaintainer, unreadLine } from "../lib/callReason";
+import { needsMaintainer, serverDecides, unreadLine } from "../lib/callReason";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { useAbortableEffect } from "../lib/hooks";
@@ -129,12 +129,14 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
     const grant = rows?.find((m) => m.namespace === namespace);
     const tokenMisses = [
       misses.includes("org") ? `be of ${org}` : null,
-      misses.includes("name") ? `name ${name}` : null,
+      misses.includes("name") ? `name ${namespace}` : null,
       misses.includes("claim") ? "carry an admin claim" : null,
     ].filter((p): p is string => p !== null);
     if (rows === null) lockedReason = unreadLine(mineLoading, namespace);
     else if (!misses.includes("grant") && tokenMisses.length > 0)
       lockedReason = `To change its settings, your token must ${andList(tokenMisses)}.`;
+    // A token scoped per namespace: its role there is the server's to read.
+    else if (!misses.includes("grant") && misses.includes("unseen")) lockedReason = serverDecides(namespace);
     // An admin by claim, or by an inherited or pending grant, still lacks the direct grant.
     else if (misses.includes("grant") && (hasAdminClaim(whoami) || grant?.role === "admin"))
       lockedReason = `Changing its settings needs a direct ${adminWord} grant on ${name}.`;

@@ -12,7 +12,7 @@ export function unreadLine(loading: boolean, namespace: string): string {
   return loading ? ROLE_LOADING : `Couldn't check your access to ${namespace}.`;
 }
 
-const serverDecides = (namespace: string) =>
+export const serverDecides = (namespace: string) =>
   `The server decides this token's access to ${namespace}; it does not show here.`;
 
 /** The token claims `*` without naming `namespace`. */

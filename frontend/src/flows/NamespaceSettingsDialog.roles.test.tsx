@@ -82,14 +82,20 @@ describe("NamespaceSettingsDialog roles", () => {
 describe("NamespaceSettingsDialog on a restricted namespace", () => {
   it.each([
     [
-      { org: "dev", namespaces: ["*"], roles: [] },
+      { org: "dev", namespaces: ["*"], roles: ["WRITER"] },
       "To change its settings, your token must name team and carry an admin claim.",
     ],
     [{ org: "*", namespaces: ["team"], roles: ["ADMIN"] }, "To change its settings, your token must be of dev."],
     [
-      { org: "*", namespaces: ["*"], roles: [] },
+      { org: "*", namespaces: ["*"], roles: ["VIEWER"] },
       "To change its settings, your token must be of dev, name team and carry an admin claim.",
     ],
+    // A token scoped per namespace (no flat roles): its role there does not show here.
+    [
+      { org: "dev", namespaces: ["team"], roles: [] },
+      "The server decides this token's access to team; it does not show here.",
+    ],
+    [{ org: "dev", namespaces: ["*"], roles: [] }, "To change its settings, your token must name team."],
   ])("tells an admin by grant what the token misses: %j", async (token, line) => {
     useStore.setState({
       whoami: { authenticated: true, subject: "me@example.com", ...token },
@@ -180,7 +186,7 @@ describe("NamespaceSettingsDialog for a repository", () => {
 
 describe("NamespaceSettingsDialog on a restricted repository", () => {
   it.each([
-    [["ADMIN"], ["*"], [grant("admin")], "To change its settings, your token must name acme/api @ main."],
+    [["ADMIN"], ["*"], [grant("admin")], "To change its settings, your token must name team."],
     [["ORG_ADMIN"], ["team"], [], "Changing its settings needs a direct maintainer grant on acme/api @ main."],
   ])("names the repository and its maintainer: %j %j", async (roles, namespaces, myNamespaces, line) => {
     useStore.setState({

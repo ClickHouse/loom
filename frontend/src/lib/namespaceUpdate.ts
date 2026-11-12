@@ -6,8 +6,11 @@ import { hasAdminClaim, isNamespaceAdmin } from "./role";
 /** What a restricted namespace's admin gate (`server/auth/authz.py::_check_restricted`)
  *  finds missing for the caller: a token of the namespace's own org (`*` is no org), a token
  *  that names the namespace (`*` does not), an admin claim, and a direct, active admin grant
- *  (not one inherited through a creator). Empty when the gate admits; auth off admits all. */
-export type RestrictedMiss = "org" | "name" | "claim" | "grant";
+ *  (not one inherited through a creator). Empty when the gate admits; auth off admits all.
+ *  whoami does not carry a token's `ns_roles`, `ns_write` or its creator's grant: a token with
+ *  no flat roles (one scoped per namespace) has a role here the client cannot see, so it is
+ *  `unseen`, never `claim`, and the gate stays shut on the client. */
+export type RestrictedMiss = "org" | "name" | "claim" | "unseen" | "grant";
 
 export function restrictedMisses(
   whoami: WhoAmI | null,
@@ -19,7 +22,8 @@ export function restrictedMisses(
   const misses: RestrictedMiss[] = [];
   if (whoami?.org !== org) misses.push("org");
   if (!whoami?.namespaces?.includes(namespace)) misses.push("name");
-  if (!hasAdminClaim(whoami)) misses.push("claim");
+  if (whoami && (whoami.roles ?? []).length === 0) misses.push("unseen");
+  else if (!hasAdminClaim(whoami)) misses.push("claim");
   if (!(grant?.role === "admin" && grant.status !== "pending" && !grant.inherited)) misses.push("grant");
   return misses;
 }
