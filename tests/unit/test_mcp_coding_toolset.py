@@ -66,6 +66,12 @@ def _names(tools: list[dict]) -> set[str]:
     return {t["name"] for t in tools}
 
 
+def _shown(listed: dict[str, dict], toolset: str, name: str, source: str) -> bool:
+    """Whether tool ``name`` carries ``source`` as this listing renders it."""
+    text = mt.name_ops_for_listing(source, set(listed), toolset)
+    return listed[name]["description"] == text
+
+
 # ---------------------------------------------------------------- membership
 
 
@@ -183,6 +189,9 @@ def test_coding_descriptions_derive_from_the_core_texts():
     # derived: every replace took effect and the rest of the text is the core text
     assert "native memory" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
     assert "native memory" in TOOL_DESCRIPTIONS["memory.set"]
+    # the coding tier lists none of the write tools the core text picks among
+    assert "Other writes" in TOOL_DESCRIPTIONS["memory.set"]
+    assert "Other writes" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
     for must in (
         "Call this proactively",
         "Don't search before saving",
@@ -196,13 +205,13 @@ def test_coding_descriptions_derive_from_the_core_texts():
     ):
         assert must in CODING_TOOL_DESCRIPTIONS["memory.set"], must
     listed = {t["name"]: t for t in _listing("coding", False)}
-    assert listed["loom_memory_set"]["description"] == CODING_TOOL_DESCRIPTIONS["memory.set"]
+    assert _shown(listed, "coding", "loom_memory_set", CODING_TOOL_DESCRIPTIONS["memory.set"])
     assert "loom_memory_pin" not in listed
-    assert listed["loom_memory_update"]["description"] == TOOL_DESCRIPTIONS["memory.update"]
+    assert _shown(listed, "coding", "loom_memory_update", TOOL_DESCRIPTIONS["memory.update"])
     # the core tier does not see the coding texts
     core = {t["name"]: t for t in _listing("core", True)}
-    assert core["loom_memory_set"]["description"] == TOOL_DESCRIPTIONS["memory.set"]
-    assert core["loom_memory_pin"]["description"] == TOOL_DESCRIPTIONS["memory.pin"]
+    assert _shown(core, "core", "loom_memory_set", TOOL_DESCRIPTIONS["memory.set"])
+    assert _shown(core, "core", "loom_memory_pin", TOOL_DESCRIPTIONS["memory.pin"])
 
 
 def test_activation_triggers_are_one_list_on_both_tiers():
@@ -347,11 +356,14 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
     } <= names
     # the first part drives tier texts: coding's memory.set and activation texts
     listed = {t["name"]: t for t in tools}
-    assert listed["loom_memory_set"]["description"] == CODING_TOOL_DESCRIPTIONS["memory.set"]
-    assert listed["loom_code_impact"]["description"] == CODING_TOOL_DESCRIPTIONS["code.impact"]
+    union_ts = "coding+tracker"
+    assert _shown(listed, union_ts, "loom_memory_set", CODING_TOOL_DESCRIPTIONS["memory.set"])
+    assert _shown(listed, union_ts, "loom_code_impact", CODING_TOOL_DESCRIPTIONS["code.impact"])
     # a `qa`-first union still finds the coding texts (qa has no tier of its own)
     tracker_first = {t["name"]: t for t in _listing("core", True, requested="tracker+coding")}
-    assert tracker_first["loom_memory_set"]["description"] == CODING_TOOL_DESCRIPTIONS["memory.set"]
+    assert _shown(
+        tracker_first, "tracker+coding", "loom_memory_set", CODING_TOOL_DESCRIPTIONS["memory.set"]
+    )
 
 
 def test_the_core_code_tools_ask_to_be_loaded_up_front() -> None:

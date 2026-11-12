@@ -195,8 +195,8 @@ def test_agent_controlled_verbs_are_on_the_core_tier():
     names = {t["name"] for t in _listing("core", False)}
     assert {"loom_memory_pin", "loom_blacklist_add", "loom_memory_lock"} <= names
     pin = next(t for t in _listing("core", False) if t["name"] == "loom_memory_pin")
-    # a curated description that names memory.set as the default save
-    assert "memory.set" in pin["description"] and "WHEN NOT" in pin["description"]
+    # a curated description that names loom_memory_set as the default save
+    assert "loom_memory_set" in pin["description"] and "WHEN NOT" in pin["description"]
     assert len(pin["description"]) // 4 <= 480
 
 

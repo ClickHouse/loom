@@ -39,6 +39,14 @@ ACTIVATION_TRIGGERS: tuple[str, ...] = (
 )
 
 
+# When to pick memory.set over the other write tools; the coding tier, which
+# lists none of them, drops it.
+_WHICH_WRITE = (
+    "**Other writes:** memory.pin keeps a fact against later conflicting "
+    "writes, memory.lock stops it changing, memory.apply changes many.\n\n"
+)
+
+
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "memory.set": (
         "Save a fact to Loom — shared across every AI tool the user runs; "
@@ -49,8 +57,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "'I prefer X over Y', 'we decided X', 'we're at X', 'I deploy on X' — "
         "one call per fact.\n\n"
         "**Don't search before saving.** A stated fact is a write, not a "
-        "recall; the server dedups. " + revision_policy("memory.update") + "\n\n"
-        "**Auto-tag from scope words**: 'for billing, X is Y' → "
+        "recall; the server dedups. "
+        + revision_policy("memory.update")
+        + "\n\n"
+        + _WHICH_WRITE
+        + "**Auto-tag from scope words**: 'for billing, X is Y' → "
         "`tags=['billing']`; same for person / topic mentions.\n\n"
         "Do NOT save: questions, code help, world knowledge, acknowledgements, "
         "hypotheticals, echoes of your own words.\n\n"
@@ -60,8 +71,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`tags` for classification. Cite the response's `namespace` and "
         "`memory_key` in your confirmation; `conflict_verdict`, `peers` and "
         "`next` say what the store held (`dry_run=true` checks without "
-        "writing). `value` is stored verbatim — never base64 (kills search; "
-        "see `advisories`).\n\n"
+        "writing). `value` is stored verbatim — never base64, which "
+        "kills search.\n\n"
         "**A fact with a natural lifetime gets one at write time.** A "
         "deadline, a temporary state ('on call this week'), a rotating value: "
         "pass `ttl_seconds` AND `on_expire` (tombstone | demote | anonymize) "
@@ -74,7 +85,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "when the user asks 'how many X', 'total Y by Z', 'average', "
         "etc. — questions that loom_search can't answer because they "
         "need exact counts / sums, not similarity ranking. Pairs with "
-        "memory.set_from_messages(record_schema=...) — those writes "
+        "memory.set_from_messages given a `record_schema` — those writes "
         "land typed records this op aggregates over. Free-text "
         "memories are silently excluded from numeric aggregates."
     ),
@@ -86,7 +97,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "returns in ~50 ms and extracts in the background (search/ask "
         "report `pending_extraction` until it lands). Poll its `queue_id` with "
         "memory.extraction_status_mine and replay a failed one with "
-        "memory.extraction_retry_mine, via loom_op. `recalled_keys`: keys "
+        "memory.extraction_retry_mine. `recalled_keys`: keys "
         "your reads served this session; restating one is an echo, skipped."
     ),
     "memory.get": (
@@ -188,8 +199,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "found across every agent and session in the namespace; "
         "`found: false` = no live row — `tombstoned: false` is never success.\n"
         "WHEN: Explicit user request — 'forget that I…', 'delete X in Loom'.\n"
-        "WHEN NOT: Not as cleanup or on inferred intent; to fix a wrong memory, "
-        "memory.update it with the corrected value.\n"
+        "WHEN NOT: Not as cleanup or on inferred intent; a wrong value is "
+        "corrected with memory.update.\n"
+        "WHICH REMOVAL: one key is this tool; many saved memories by filter or "
+        "search is memory.apply with action=delete; refusing later writes on a "
+        "topic is blacklist.add; every memory of an agent or user is "
+        "memory.clear, for an admin; a user's request to erase all their data is "
+        "erasure.request.\n"
         "ARGS: memory_key. Server fills identity."
     ),
     "memory.promote": (
@@ -511,10 +527,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "explicitly: 'always remember X', 'never forget this', 'pin this', a "
         "hard constraint stated as standing ('I am allergic to penicillin', "
         "'deploys freeze on Fridays', 'the prod DB is read-only').\n"
-        "WHEN NOT: An ordinary fact, preference or state — that is memory.set, "
-        "the default for almost every save; a fact that must not change or "
-        "be deleted at all (memory.lock); a topic that must not be remembered "
-        "(blacklist.add, refused to a token bounded to one user).\n"
+        "WHEN NOT: An ordinary fact, preference or state is memory.set, the "
+        "default for almost every save; a fact that must not change or be "
+        "deleted at all is memory.lock.\n"
         "ARGS: memory_key, value; optional tags, ttl_seconds, on_expire. "
         "Server fills identity."
     ),
@@ -526,15 +541,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: 'make sure this never changes', 'freeze the deploy window', "
         "'this must not be deleted / forgotten', 'protect this fact', "
         "'legal hold on X', 'keep this exactly as is'.\n"
-        "WHEN NOT: To keep a fact ahead of later conflicting writes (that is "
-        "memory.pin) or to share it (memory.promote, via loom_op). Never lock on "
-        "inferred intent.\n"
+        "WHEN NOT: Keeping a fact ahead of later conflicting writes is "
+        "memory.pin; sharing it is memory.promote. Never lock on inferred "
+        "intent.\n"
         "ARGS: memory_key, mode (read_only | no_delete), reason (required), "
         "optional until / ttl_seconds. Server fills identity."
     ),
     "memory.apply": (
         "WHAT: One change over many EXISTING memories, previewed first; it "
-        "never creates one (save facts with loom_memory_set, one per fact). target names "
+        "never creates one (save facts with memory.set, one per fact). target names "
         "exactly one of keys | filter (tags_any/tags_all, memory_type, "
         "key_prefix, created_before/after, confidence_lte, source_trace) | "
         "search {query}; limit is required for filter/search; action is "
@@ -549,10 +564,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "everything about the Q3 migration', 'these are getting stale, lower "
         "their confidence', 'tag every runbook as ops', 'lock everything I "
         "saved about the incident', 'expire the meeting notes in 30 days'.\n"
-        "WHEN NOT: One key (memory.delete / memory.set / memory.lock). A whole "
-        "agent or user (memory.clear, admin, via loom_op); a user's request to "
-        "delete all their data is erasure.request (via loom_op where it is not "
-        "listed). Never skip the dry run when the user has not seen the list."
+        "WHEN NOT: One key is memory.delete, memory.update or memory.lock; "
+        "every memory of an agent or user is memory.clear. Never skip the dry "
+        "run when the user has not seen the list."
     ),
     "memory.unlock": (
         "Lift a memory.lock (admin). Returns the previous mode. Locking only "
@@ -577,12 +591,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "AMBIGUOUS_KEY lists them). updated=false with reason=not_found means "
         "the key has no live row — save it with memory.set instead. Pass "
         "if_match_sha256 from the read for a no-clobber update. Given a "
-        "memory_id rather than a key, call memory.update_by_id (via loom_op where "
-        "it is not listed)."
+        "memory_id rather than a key, call memory.update_by_id."
     ),
     "memory.update_by_id": (
         "Update a memory by UUID with an optimistic concurrency check. "
-        "Use after memory.get_by_id (via loom_op) when you need to amend a specific "
+        "Use after memory.get_by_id when you need to amend a specific "
         "version of a memory without racing concurrent writers."
     ),
     "memory.bulk_set": (
@@ -695,7 +708,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "strongest neighbours and the walk stops at max_nodes.\n"
         "WHEN: Multi-hop reasoning — 'what's connected to X', "
         "'who works on the same projects as Y', 'walk the relationships "
-        "of entity Z'. Distinct from facts.related (single-hop only). "
+        "of entity Z'. facts.related is single-hop only. "
         "Heavier than facts.related; use when single-hop isn't enough.\n"
         "ARGS: `seed_entity` is required. `max_hops` (default 2, max 4) "
         "controls walk depth. `top_k_per_hop` (default 20) caps the "
@@ -1041,8 +1054,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN NOT: Rewriting the block is working_memory.set; durable facts "
         "are memory.set; never append long transcripts.\n"
         "The response carries `fill_ratio` (length / char_limit) and "
-        "`char_limit`: above ~0.7, read the block with working_memory.get (via "
-        "loom_op), then rewrite it shorter with working_memory.set, passing that "
+        "`char_limit`: above ~0.7, read the block with working_memory.get, "
+        "then rewrite it shorter with working_memory.set, passing that "
         "`char_limit`, before an append fails at 1.0."
     ),
     "working_memory.replace": (
@@ -1077,7 +1090,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: loom_search returned a document hit, or the user named a "
         "document, and the task needs its full text.\n"
         "WHEN NOT: Finding documents by topic is loom_search. For a long "
-        "document, call knowledge.outline (via loom_op) for its sections, then "
+        "document, call knowledge.outline for its sections, then "
         "call knowledge.outline again with the `section_path` you need."
     ),
     "knowledge.synthesize": (
@@ -1148,7 +1161,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "it for every turn; the thread need not exist first. Call "
         "for every user message and reply; a missed turn is missing from "
         "the transcript. If the user disables logging, call "
-        "conversation.set_logging (via loom_op) with `enabled=false` — "
+        "conversation.set_logging with `enabled=false` — "
         "don't silently skip appends. The response "
         "says whether the turn was kept: `stored=false` with "
         "`reason=logging_disabled` means this namespace is not recording "
@@ -1180,8 +1193,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "prompt-sized bundle. "
         "`include_runs=true` adds a manifest of your recent sessions and runs "
         "(goal, outcome, tool calls, files) — shortlist there "
-        "before opening one with memory.evidence or memory.digests (callable "
-        "by name). For one fact, prefer loom_search; for activation only, "
+        "before opening one with memory.evidence or memory.digests. For one "
+        "fact, prefer loom_search; for activation only, "
         "loom_activate."
     ),
     "memory.outline": (
@@ -1244,7 +1257,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "already saved: it tombstones the matching rows up to the sweep cap, "
         "other writers' too. `swept_truncated: true` or a non-empty `sweep_error` means it did "
         "not finish: tell the user, and do not add the pattern again.\n"
-        "WHEN NOT: Forgetting one saved fact is memory.delete.\n"
+        "WHEN NOT: Forgetting one saved fact is memory.delete; many, "
+        "memory.apply with action=delete.\n"
         "ARGS: pattern; optional pattern_type (substring | regex); scope: "
         "namespace (default), org (needs org admin) or global (needs platform "
         "admin); reason; sweep."
@@ -1362,7 +1376,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "contain this string' in ONE call: per namespace present / absent / "
         "unknown with files_total and the first matching file, plus a "
         "summary — instead of one grep per branch. To find a FILE by name (a "
-        "test number, a glob) use code.files (via loom_op) — grep "
+        "test number, a glob) use code.files — grep "
         "matches content, not paths. For your UNCOMMITTED working tree, "
         "still use shell grep — this index only knows merged code."
     ),
@@ -1530,7 +1544,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "compiler-resolved where available; `edge_kinds: ['inherits']` narrows "
         "the walk to what implements or extends a type. Use before editing "
         "shared code; pair "
-        "with loom_code_impact (via loom_op) for tests + co-change "
+        "with code.impact for tests + co-change "
         "history. Edges carry tier: 'scip' is compiler truth, 'treesitter' "
         "is name-resolved with a confidence score."
         " `unresolved_calls` / `ambiguous_calls` size the floor: call sites "
@@ -1763,8 +1777,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # The task inbox plane: one durable queue per agent, listed on the
     # `tasks` toolset. Agents push their writes and pull their work; nothing
-    # here pushes a task. An op outside that roster is marked
-    # callable by name.
+    # here pushes a task. The listing names an op outside that roster as one
+    # loom_op reaches.
     "task.pull": (
         "WHAT: Claim the next task(s) waiting in an inbox you own, under a lease "
         "with a fence token; with wait_seconds it long-polls until one arrives. "
@@ -1784,8 +1798,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: You found work that belongs to another agent you cannot write "
         "for directly (a private finding, an upstream gap), or you schedule "
         "your own later step.\n"
-        "WHEN NOT: A fact to remember — memory.set (via loom_op). A note "
-        "to yourself within this run — working_memory.set (via loom_op)."
+        "WHEN NOT: A fact to remember — memory.set. A note "
+        "to yourself within this run — working_memory.set."
     ),
     "task.complete": (
         "WHAT: Finish a task you claimed: pass the fence from task.pull and an "
@@ -1842,7 +1856,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: The task needs something that arrives later (a build, a review, "
         "a window).\n"
         "WHEN NOT: Waiting on a person or an external event with no date — "
-        "task.block (via loom_op)."
+        "task.block."
     ),
     "inbox.list": (
         "WHAT: The inboxes in an org you can see: owner agent and namespace, "
@@ -1850,7 +1864,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: Before task.create, to find the inbox that owns the work and "
         "whether your disclosure level is accepted; at session start to learn "
         "which inbox is yours.\n"
-        "WHEN NOT: To register one — inbox.register (via loom_op) needs "
+        "WHEN NOT: To register one — inbox.register needs "
         "admin on the owner namespace."
     ),
     # Every listed tool says what it does — the bare "Loom operation `x`
@@ -2093,7 +2107,7 @@ TOOL_DESCRIPTIONS["tracker.links"] = (
     "`verdict` none means a list was computed and nothing scored — never "
     "that no fix exists; `not_computed` means the pass has not covered the "
     "number. Use before filing a backport for an issue with no linked PR, or "
-    "to find the issue a fix silently closed; `code.backport_gap` (via loom_op) and "
+    "to find the issue a fix silently closed; `code.backport_gap` and "
     "`code.bisect_candidates` consume the top candidate themselves when the "
     "record has no edge."
 )
@@ -2109,8 +2123,7 @@ TOOL_DESCRIPTIONS["tracker.duplicate_check"] = (
     "reaches the related threshold — attach as see-also), or `none` with NO "
     "items (file it); `undecided` flags a gray-band top candidate in the "
     "same component. Every item carries `confidence` (a probability from "
-    "the namespace's stored fit over the fused legs of `tracker.similar` (callable by "
-    "name)), `relation`, "
+    "the namespace's stored fit over the fused legs of `tracker.similar`), `relation`, "
     "`relation_recorded` (the tracker graph's edge to `issue_number` — a recorded "
     "related_to is never promoted to duplicate), `evidence` lines, `why` "
     "(e.g. `fix_path`: a fix PR touched the draft's paths) and `features`; "
@@ -2170,7 +2183,7 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
     "working_memory.set": (
         "WHAT: Write your SCRATCHPAD for this run: current goal, what you have "
         "concluded so far, what is still open. Re-read automatically by "
-        "context.pack (via loom_op) and by memory.ask calls that carry "
+        "context.pack and by memory.ask calls that carry "
         "your run_id.\n"
         "WHEN: Every step that changes the task state. Overwrite, do not accumulate.\n"
         "WHEN NOT: Facts that should outlive the task — those are loom_memory_set."
@@ -2181,7 +2194,7 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "run.begin": (
         "WHAT: Open the run ledger entry for this task (goal, request, optional budget_seconds; "
-        "run.get via loom_op reports `over_budget`). "
+        "run.get reports `over_budget`). "
         "Returns run_id; pass it on writes (memory.set) so they join this run. Your reads "
         "are labelled with the session's own run, so credit what you relied on in "
         "run.complete memories_used.\n"
@@ -2223,7 +2236,9 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`conflict_verdict`, `peers` and `next` say",
         "The response's `conflict_verdict`, `peers` and `next` say",
         1,
-    ),
+    )
+    # the coding tier lists none of the other write tools this line picks among
+    .replace(_WHICH_WRITE, "", 1),
     # The search tool's four stores stay (the fan-out is server-side and the
     # same); the parentheticals explaining profile and knowledge go — the
     # coding tier lists no write to either. Built from the core text below,

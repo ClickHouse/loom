@@ -37,17 +37,23 @@ _CATALOG_LIMIT = 15
 DESCRIPTOR: dict[str, Any] = {
     "name": LOOM_OP_TOOL_NAME,
     "description": (
-        "Run an op this list doesn't show (such as memory.related, callable by name). "
-        '`op` is the dotted name, `arguments` its arguments; op="help" with '
-        "an optional `query` lists matching ops and their args. "
-        "Prefer a listed tool when one fits."
+        "Run any Loom op by its dotted name: the way to an op this list does "
+        "not show as a tool (on the default list: memory.clear, erasure.request, "
+        "memory.related, memory.evidence, memory.digests); a description's "
+        '"(via loom_op)" means this tool. '
+        "Prefer a listed tool when one fits.\n"
+        'FIND: {"op": "help", "query": "<words>"} lists up to 15 matching ops, '
+        "each with its required and optional arguments and a one-line purpose; "
+        "an unknown op answers with the nearest ones.\n"
+        'CALL: {"op": "memory.related", "arguments": {"memory_key": "deploy_day"}}. '
+        "Identity and namespace default as for a listed tool."
     ),
     "inputSchema": {
         "type": "object",
         "properties": {
-            "op": {"type": "string"},
-            "arguments": {"type": "object"},
-            "query": {"type": "string"},
+            "op": {"type": "string", "description": 'A dotted op name, or "help".'},
+            "arguments": {"type": "object", "description": "The op's own arguments."},
+            "query": {"type": "string", "description": "help: words to match."},
         },
         "required": ["op"],
     },
