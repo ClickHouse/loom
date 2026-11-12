@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.ClickHouse/loom",
-  "title": "Loom",
+  "title": "ClickHouse Loom",
   "description": "Shared long-term memory, document search and a code index for AI agents, self-hosted on ClickHouse.",
   "version": "1.1.0",
   "websiteUrl": "https://github.com/ClickHouse/loom",
@@ -11,9 +11,9 @@
   },
   "icons": [
     {
-      "src": "https://raw.githubusercontent.com/ClickHouse/loom/main/frontend/public/favicon.svg",
-      "mimeType": "image/svg+xml",
-      "sizes": ["any"]
+      "src": "https://raw.githubusercontent.com/ClickHouse/loom/main/integrations/claude-code-plugin/assets/icon.png",
+      "mimeType": "image/png",
+      "sizes": ["1024x1024"]
     }
   ],
   "remotes": [
