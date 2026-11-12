@@ -465,9 +465,10 @@ def _curl_snippet(base_url: str, org: str, namespace: str, *, with_token: bool) 
 def _claude_mcp_add_line(base_url: str, token: str) -> str:
     """The `claude mcp add` registration line `loom install --client
     claude-code` runs, with the coding toolset on the URL."""
-    from server.cli.install import _CLAUDE_CODE_DEFAULT_TOOLSET, _install_mcp_url, _shell_words
+    from server.cli.install import _install_mcp_url, _shell_words
+    from server.identity.app.token_clients import CODING_TOOLSET
 
-    mcp_url = _install_mcp_url(base_url, _CLAUDE_CODE_DEFAULT_TOOLSET)
+    mcp_url = _install_mcp_url(base_url, CODING_TOOLSET)
     argv = ["claude", "mcp", "add", "--transport", "http", "loom", mcp_url]
     if token:
         argv += ["-H", f"Authorization: Bearer {token}"]

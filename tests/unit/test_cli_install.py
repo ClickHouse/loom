@@ -8,6 +8,7 @@ import json
 import pytest
 
 import server.cli.install as cli
+from server.identity.app.token_clients import MCP_CLIENTS, client_config
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +31,8 @@ def test_install_one_url_form_preserves_keys(tmp_path, monkeypatch: pytest.Monke
 
     assert cli._install_one("cursor", token="T", server_url="https://h", name="loom", dry_run=False)
     d = json.loads(cfg.read_text())
-    assert d["mcpServers"]["loom"]["url"] == "https://h/mcp"
+    # Cursor is a coding agent: the coding listing, as the dashboard gives it
+    assert d["mcpServers"]["loom"]["url"] == "https://h/mcp?toolset=coding"
     assert d["mcpServers"]["loom"]["headers"]["Authorization"] == "Bearer T"
     assert d["other"] == 1 and "keep" in d["mcpServers"]  # unrelated keys preserved
 
@@ -87,12 +89,12 @@ def test_claude_code_capture_writes_env_preserving_settings(
 
 def test_install_one_toolset_rides_the_url(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`--toolset coding` selects the coding listing per request
-    (`?toolset=` on the MCP URL) so one deployment serves both archetypes; the
-    default leaves the URL bare and the server's default applies."""
-    cfg = tmp_path / "cursor" / "mcp.json"
+    (`?toolset=` on the MCP URL) so one deployment serves both archetypes, and a
+    named toolset wins over a client's default."""
+    cfg = tmp_path / "mcp.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
     assert cli._install_one(
-        "cursor",
+        "windsurf",
         token="T",
         server_url="https://h/",
         name="loom",
@@ -101,8 +103,12 @@ def test_install_one_toolset_rides_the_url(tmp_path, monkeypatch: pytest.MonkeyP
     )
     d = json.loads(cfg.read_text())
     assert d["mcpServers"]["loom"]["url"] == "https://h/mcp?toolset=coding"
-    assert cli._install_one("cursor", token="T", server_url="https://h", name="loom", dry_run=False)
-    assert json.loads(cfg.read_text())["mcpServers"]["loom"]["url"] == "https://h/mcp"
+    assert cli._install_one(
+        "cursor", token="T", server_url="https://h", name="loom", dry_run=False, toolset="tracker"
+    )
+    assert (
+        json.loads(cfg.read_text())["mcpServers"]["loom"]["url"] == "https://h/mcp?toolset=tracker"
+    )
     # the stdio bridge form carries the same URL
     cfg2 = tmp_path / "cd" / "c.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg2)
@@ -189,7 +195,7 @@ def test_claude_code_install_prints_command_and_project_block_when_claude_missin
     monkeypatch.setenv("HOME", str(tmp_path))
     _no_claude_binary(monkeypatch)
     assert cli._install_claude_code_mcp(
-        server_url="https://h/", name="loom", dry_run=False, toolset=""
+        server_url="https://h/", name="loom", dry_run=False, toolset="coding"
     )
     out = capsys.readouterr().out
     assert "not on PATH" in out
@@ -259,7 +265,9 @@ def test_claude_code_install_reports_claude_mcp_add_failure(
 
     monkeypatch.setattr(subprocess, "run", lambda argv, **kw: _Failed())
     assert (
-        cli._install_claude_code_mcp(server_url="https://h", name="loom", dry_run=False, toolset="")
+        cli._install_claude_code_mcp(
+            server_url="https://h", name="loom", dry_run=False, toolset="coding"
+        )
         is False
     )
     err = capsys.readouterr().err
@@ -279,7 +287,7 @@ def test_claude_code_install_dry_run_runs_nothing(
 
     monkeypatch.setattr(subprocess, "run", _boom)
     assert cli._install_claude_code_mcp(
-        server_url="https://h", name="loom", dry_run=True, toolset=""
+        server_url="https://h", name="loom", dry_run=True, toolset="coding"
     )
     out = capsys.readouterr().out
     assert out.startswith("would run: " + _CC_CMD)
@@ -291,7 +299,9 @@ def test_claude_code_toolset_flag_overrides_the_coding_default(
     """Claude Code is a coding agent, so the URL carries `?toolset=coding`
     unless --toolset names another tier."""
     _no_claude_binary(monkeypatch)
-    cli._install_claude_code_mcp(server_url="https://h", name="mem", dry_run=True, toolset="core")
+    cli._install_one(
+        "claude-code", token="T", server_url="https://h", name="mem", dry_run=True, toolset="core"
+    )
     out = capsys.readouterr().out
     assert 'mem "https://h/mcp?toolset=core"' in out
     assert "toolset=coding" not in out
@@ -320,11 +330,11 @@ def test_claude_code_install_skips_the_user_scope_entry_when_the_plugin_mounts_i
         lambda argv, check=False: ran.append(argv) or type("R", (), {"returncode": 0})(),
     )
     assert cli._install_claude_code_mcp(
-        server_url="https://h", name="loom", dry_run=False, toolset=""
+        server_url="https://h", name="loom", dry_run=False, toolset="coding"
     )
     assert ran == [] and "mounts the server itself" in capsys.readouterr().out
     assert cli._install_claude_code_mcp(
-        server_url="https://h", name="loom", dry_run=False, toolset="", force=True
+        server_url="https://h", name="loom", dry_run=False, toolset="coding", force=True
     )
     assert ran and ran[0][:3] == ["claude", "mcp", "add"]
 
@@ -373,7 +383,7 @@ def test_install_reads_the_saved_token_and_the_shared_base_url(
     assert cli._cmd_install(args) == 0
     entry = json.loads(cfg.read_text())["mcpServers"]["loom"]
     assert entry == {
-        "url": "https://hosted.example/mcp",
+        "url": "https://hosted.example/mcp?toolset=coding",
         "headers": {"Authorization": "Bearer SAVED"},
     }
 
@@ -405,7 +415,21 @@ def test_dry_run_previews_only_the_keys_it_sets_and_masks_the_token(
     for secret in (tok, "OTHER-SECRET", "sk-ENV-SECRET", "OLD-SECRET"):
         assert secret not in out
     assert out.count("<token>") == 3
-    assert '"url": "https://h/mcp"' in out and '"LOOM_BASE_URL": "https://h"' in out
+    assert '"url": "https://h/mcp?toolset=coding"' in out and '"LOOM_BASE_URL": "https://h"' in out
     # nothing was written
     assert json.loads(cfg.read_text()) == other
     assert json.loads(lcfg.read_text()) == {"token": "OLD-SECRET", "note": "kept"}
+
+
+@pytest.mark.parametrize("client", sorted(set(MCP_CLIENTS) - {"claude-code", "codex"}))
+def test_install_gives_each_client_the_toolset_the_server_setup_gives(
+    client: str, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty --toolset writes the URL the dashboard's and the token setup's
+    entry for the client carries: `coding` for a coding agent, else bare."""
+    cfg = tmp_path / client / "config.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
+    assert cli._install_one(client, token="T", server_url="https://h", name="loom", dry_run=False)
+    setup = client_config(client, "https://h/mcp", "T")
+    key = setup["config_key"]
+    assert json.loads(cfg.read_text())[key] == setup["config"][key]
