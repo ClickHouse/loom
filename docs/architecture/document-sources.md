@@ -400,8 +400,9 @@ because an admin registered a source that makes it so; search answers the addres
 ### Who the store says may read
 
 A mirrored document's own row and three tables under the mirror say who may read; the
-tables are written as new versions with a `deleted` flag; only a user erasure deletes
-rows ([below](#erasure-and-audit)):
+tables are written as new versions, with a `deleted` flag for a dropped account or
+group; a stopped source's cleanup and the erasures delete rows outright
+([below](#erasure-and-audit)):
 
 - The document's permission list, in an `access_json` column of the document row
   (`loom.documents`; under the Postgres authority it rides in the head's `row` jsonb
@@ -476,8 +477,9 @@ rows ([below](#erasure-and-audit)):
   So no older list outlives the listing.
 - The source row: one more `loom.knowledge_source_listings` row per mirrored source,
   account `source:<source id>`, written before the source's first account listing row or
-  document and written `deleted` only by its cleanup. Rule 2 does not read it; it keeps
-  the source visible to the anti-join after every account's rows are gone.
+  document, carrying the source's owner for a connected source, and deleted only by its
+  cleanup. Rule 2 does not read it; it keeps the source visible to the anti-join after
+  every account's rows are gone.
 - `loom.knowledge_group_members`, one row per source and group: the members of a group
   the crawl's directory read listed, and `read_at`. A group is stored once, not on every
   file shared with it.
@@ -497,15 +499,18 @@ in flight finishes, or stops at its next write's check, before the cleanup start
 batch of document, readers, listing and group-members writes first checks the source's
 registration (`require_current`, one read per batch), so a turn that starts after the
 cleanup writes nothing either, and no such row lands after it. For each batch of up to
-100 it removes the sources' readers, listing and group-members rows with one lightweight
-`DELETE FROM` per table over the batch's source ids, a knowledge-store statement named
-in `_EXPECTED_MUTATIONS` (no awaited part rewrite on the worker's loop), so no row keyed
-by an account's pseudonym outlives a stopped source, then retires the mirror's documents
-carrying its `source-id:<id>` tag, re-checking that tag on each document before its
-retirement, so a document another source wrote is never retired. It then marks the
-cleanup done; a run cut short is run again from its open row and finds the documents
-still tagged. So no row of a stopped source can admit anyone, and none names an account
-in any form other than its pseudonym, even for a source that never reached a file.
+100, having taken and released each source's turn lease (which waits out a turn in
+flight; `require_current` stops a later one), it removes the sources' readers, listing
+and group-members rows with one lightweight `DELETE FROM` per table, keyed `(org,
+namespace, source_id) IN (…)`, run synchronously (`lightweight_deletes_sync`), a wait
+bounded by the pass deadline that is the accepted cost; a delete that does not finish
+leaves the cleanup open for the next pass. So no row keyed by an account's pseudonym
+outlives a stopped source, then retires the mirror's documents carrying its
+`source-id:<id>` tag, re-checking that tag on each document before its retirement, so a
+document another source wrote is never retired. It then marks the cleanup done; a run
+cut short is run again from its open row and finds the documents still tagged. So no row
+of a stopped source can admit anyone, and none names an account in any form other than
+its pseudonym, even for a source that never reached a file.
 
 The anti-join finds what no stop of N recorded: a mirrored source N-1 stopped (its row
 inactive, with its `source_id`), and one whose name an N-1 `add` has since reused (its
@@ -840,17 +845,17 @@ base>/settings/connected-accounts?kind=<kind>` to hand back.
 
 ClickHouse, additive migrations:
 
-| Table                              | Key                                                | Holds                                                                                                                                                                                                                  |
-| ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom.knowledge_sources` (columns) | `(org, namespace, name)`                           | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject` and `subjects`), `secret_enc`                        |
-| `loom.knowledge_mirrors`           | `(org, namespace)`                                 | `mirror`, `created_at`                                                                                                                                                                                                 |
-| `loom.documents` (column)          | as today                                           | `access_json`: a mirrored document's permission list (`emails`, `groups`, `domains`, `anyone`, `changed_at`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration |
-| `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `name`, `deleted`, `version`; `namespace` is the mirror; `account` is the UUIDv5 pseudonym of `<kind>:<account id>` or of the lower-cased email                                                                        |
-| `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `name`, `started_at`, `deleted`, `version`; `account` is the pseudonym, `shared:<source id>`, or `source:<source id>` (the source row); the start of the account's last complete listing; `namespace` is the mirror    |
-| `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`               | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                                          |
-| `loom.knowledge_crawl_exclusions`  | `(org, account)`                                   | `deleted`, `version`; `account` is the UUIDv5 pseudonym of a lower-cased email a user erasure took out of every crawl                                                                                                  |
-| `loom.knowledge_source_cleanups`   | `(org, namespace, source_id)`                      | `name`, `mirror`, `done`, `erasure_id` (empty for a stop no erasure made), `version`; a stopped mirrored source whose documents and rows wait to be cleaned                                                            |
-| `loom.connected_accounts`          | `(org, subject, kind)`                             | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                                      |
+| Table                              | Key                                                | Holds                                                                                                                                                                                                                                                                  |
+| ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.knowledge_sources` (columns) | `(org, namespace, name)`                           | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject` and `subjects`), `secret_enc`                                                                        |
+| `loom.knowledge_mirrors`           | `(org, namespace)`                                 | `mirror`, `created_at`                                                                                                                                                                                                                                                 |
+| `loom.documents` (column)          | as today                                           | `access_json`: a mirrored document's permission list (`emails`, `groups`, `domains`, `anyone`, `changed_at`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration                                                 |
+| `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `name`, `deleted`, `version`; `namespace` is the mirror; `account` is the UUIDv5 pseudonym of `<kind>:<account id>` or of the lower-cased email                                                                                                                        |
+| `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `name`, `started_at`, `owner` (on the source row of a connected source), `deleted`, `version`; `account` is the pseudonym, `shared:<source id>`, or `source:<source id>` (the source row); the start of the account's last complete listing; `namespace` is the mirror |
+| `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`               | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                                                                                          |
+| `loom.knowledge_crawl_exclusions`  | `(org, account)`                                   | `deleted`, `version`; `account` is the UUIDv5 pseudonym of a lower-cased email a user erasure took out of every crawl                                                                                                                                                  |
+| `loom.knowledge_source_cleanups`   | `(org, namespace, source_id)`                      | `name`, `mirror`, `done`, `owner` (a connected source's owner subject), `erasure_id` (empty for a stop no erasure made), `version`; a stopped mirrored source whose documents and rows wait to be cleaned                                                              |
+| `loom.connected_accounts`          | `(org, subject, kind)`                             | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                                                                                      |
 
 A source N-1 can operate on (`shared`, `access: namespace`, with items today's config
 can express) keeps today's columns as they are: `kind`, its credential in
@@ -963,10 +968,10 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   namespace and its mirror, counting every row, and a document's list goes with its row.
   The lists and `loom.knowledge_group_members` hold people's emails copied from the
   store's permission lists and directory, people who are not Loom users among them; a
-  list goes with its document and a members row is written `deleted` when its source
-  stops or no longer reads that person, and otherwise mirror the store's current lists,
-  so an erasure by `user_id` does not select them; the crawl rows that name an erased
-  person go as the next bullet says.
+  list goes with its document and a members row is deleted when its source stops or no
+  longer reads that person, and otherwise mirror the store's current lists, so an
+  erasure by `user_id` does not select them; the crawl rows that name an erased person
+  go as the next bullet says.
 - A user erasure (`user_id`) runs two steps of its own in `USER_STEPS`, right after
   `pg_knowledge.delete` and before `memory.tombstone`, `connections.forget_user` first,
   since the other clears the `owner_subject` the first finds the person's sources by.
@@ -979,42 +984,49 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   census match the same way, and raise when the directory cannot be read.
 - `connections.forget_user` owns `loom.connected_accounts` and the person's connected
   sources:
-  1. Under each namespace's source lease it stops every connected source whose
-     `owner_subject` matches in any version (read without `FINAL`, inactive rows
-     included, so a source stopped earlier, or one an N-1 `remove` reset, is found),
-     writing its cleanup row with this erasure's id (an `erasure_id` column of
-     `loom.knowledge_source_cleanups`). Every write of a cleanup row carries a non-empty
-     `erasure_id` forward (the worker marking it done, `knowledge_sources.retire`), so a
-     resume finds the sources again by `owner_subject`, which this step leaves, and by
-     any version of a row carrying the id, and a sub-step cut short loses nothing.
-  2. It runs each of those cleanups itself, whatever its `done` says, under the source's
-     turn lease, held and renewed for its whole length (the turn-lease acquisitions
-     share 30 seconds in all; a timeout fails the step, and `erasure_recovery` resumes
-     it). Under the Postgres authority it first selects, from Postgres, the mirror's
-     heads and deliveries whose `row->'tags'` hold the source's `source-id:<id>`, under
-     the mirror's `KNOWLEDGE_LOCK_KEY`, keeps `loom.erased_documents` evidence for every
-     ClickHouse version, deletes them and finishes the publisher wait, as
-     `pg_knowledge.delete` does for the person's own, and only then touches ClickHouse,
-     so a delivery committed and not yet published, or parked, cannot land a row after
-     it: it retires the source's mirror documents by their `source-id:<id>` tag and
-     erases their originals, or under a purge deletes every version of them (tombstones
-     included), their chunks and originals, as a purge's document steps do, in pages of
-     `pg_erasure_evidence_page_rows` documents (a step cut by its deadline fails and
-     resumes, finding the rest by the tagged rows); it deletes outright, every version,
-     through `delete_scoped`, the readers and listing rows keyed by that `source_id`
-     (not by pseudonym alone: two subjects can connect one store account, so the other's
-     rows stay); and it marks the cleanup done.
+  1. It finds the person's connected sources by their cleanup rows, which carry the
+     owner (an `owner` column of `loom.knowledge_source_cleanups`, written at every stop
+     of a connected source and copied by the anti-join from the `source:<source id>`
+     listing row, which carries it too; N-1 writes neither table and no merge collapses
+     them across sources), and by the active registry rows' `owner_subject`. Under each
+     namespace's source lease it stops the active ones, writing their cleanup rows, and
+     it stamps every cleanup row it found with this erasure's id (an `erasure_id`
+     column). Every later write of a cleanup row carries a non-empty `erasure_id`
+     forward (the worker marking it done, `knowledge_sources.retire`), so a resume finds
+     the same rows, and a sub-step cut short loses nothing.
+  2. For each source, it waits for the turn lease, outside the source lease (the
+     acquisitions share 30 seconds in all; a timeout fails the step, and
+     `erasure_recovery` resumes it), and holds and renews it through the sub-steps
+     below, whatever the cleanup row's `done` says:
+     1. Under the Postgres authority, it selects from Postgres the mirror's heads and
+        deliveries whose `row->'tags'` hold the source's `source-id:<id>`, under the
+        mirror's `KNOWLEDGE_LOCK_KEY`, keeps `loom.erased_documents` evidence for every
+        ClickHouse version, deletes them and finishes the publisher wait, as
+        `pg_knowledge.delete` does for the person's own, so a delivery committed and not
+        yet published, or parked, cannot land a row after the next sub-step.
+     2. It retires the source's mirror documents by their `source-id:<id>` tag and
+        erases their originals, or under a purge deletes every version of them
+        (tombstones included), their chunks and originals, as a purge's document steps
+        do. It works through the evidence pages (`pg_erasure_evidence_page_rows`
+        documents each: one page read, its evidence kept, then retired); a step cut by
+        its deadline fails and resumes, finding the rest by the tagged rows.
+     3. It deletes outright, every version, through `delete_scoped`, the readers and
+        listing rows keyed by that `source_id` (not by pseudonym alone: two subjects can
+        connect one store account, so the other's rows stay), and marks the cleanup done
+        with its `owner` cleared.
   3. It ends each connection in the order every such path uses ([connected
      accounts](#connected-accounts): clear, then revoke at the store) and deletes the
      `loom.connected_accounts` rows last.
 
   Its census has a residue key of its own (as `OBJECT_RESIDUE` has for originals), so no
   table gets a second owner: over every version of a cleanup row carrying this erasure's
-  id, those sources' mirror documents under `FINAL` and the documents live condition,
-  their live chunks (every chunk under a purge), their originals in the catalog, under a
-  purge every version of their documents, under the Postgres authority their heads and
-  deliveries in the mirror by the same Postgres predicate, and their readers and listing
-  rows without `FINAL`; and the connection rows the step matches.
+  id (and the `owner` column of those rows, which the census counts as the person's
+  until the step clears it), those sources' mirror documents under `FINAL` and the
+  documents live condition, their live chunks (every chunk under a purge), their
+  originals in the catalog, under a purge every version of their documents, under the
+  Postgres authority their heads and deliveries in the mirror by the same Postgres
+  predicate, and their readers and listing rows without `FINAL`; and the connection rows
+  the step matches.
 
 - `knowledge_sources.forget_user` owns `loom.knowledge_sources` and the crawl rows that
   name the person:
@@ -1376,6 +1388,10 @@ The redirect URI to register with each store is
     `knowledge_sources.retire` between the step's sub-steps still found by the census; a
     connected source retired by `namespace.delete` before its owner's erasure leaving no
     row keyed by the owner's pseudonym.
+  - The owner lookup after an `OPTIMIZE … FINAL` of `loom.knowledge_sources` between an
+    N-1 `remove` (or a same-name `add`) and the user erasure, still finding the source
+    by its cleanup row; a worker cleanup whose lightweight delete has not finished
+    leaving the row open.
   - A connected source with a parked delivery at erasure time leaving no mirror row
     afterwards; the step killed between its Postgres delete and the publisher wait and
     resumed, with no delivery landing a row after the ClickHouse rows are retired; a
