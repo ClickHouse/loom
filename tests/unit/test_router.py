@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from contextlib import asynccontextmanager
 from typing import Any
 
+import httpx
 import pytest
 from starlette.testclient import TestClient
 
+from server.cli import router as router_cli
 from server.core import cell
 from server.router import app as router_app
 from server.router import directory
@@ -382,9 +386,6 @@ async def test_a_lookup_flood_leaves_placements_a_connection(
     bounded: a placement still gets one while lookups queue, a lookup past the bound
     answers the directory unavailable, and every slot comes back, a failed connection's
     included."""
-    import asyncio
-    from contextlib import asynccontextmanager
-
     held: list[str] = []
     failing: list[bool] = []
 
@@ -466,7 +467,8 @@ def test_a_lookup_answers_the_orgs_cell_or_the_first(fake: _Directory) -> None:
         "cell": "us-1",
         "host": "us-1.example.test",
     }
-    assert client.get("/cells/lookup", params={"org": "new"}).status_code == 503  # no first yet
+    none_yet = client.get("/cells/lookup", params={"org": "new"})
+    assert none_yet.status_code == 503 and none_yet.json()["code"] == "NO_CELL"
     fake.cells["eu-1"] = _row(is_first=True)
     assert client.get("/cells/lookup", params={"org": "new"}).json()["cell"] == "eu-1"
     assert client.get("/cells/lookup").status_code == 400
@@ -516,8 +518,6 @@ def test_the_limiter_says_when_a_key_is_admitted_again() -> None:
 def test_the_router_runs_only_against_a_directory_of_its_own(
     monkeypatch: pytest.MonkeyPatch, dsn: str, memory: str, refused: str
 ) -> None:
-    from server.cli import router as router_cli
-
     monkeypatch.setattr(settings, "router_pg_dsn", dsn)
     monkeypatch.setattr(settings, "pg_dsn", memory)
     assert (refused in router_cli._refusal()) if refused else router_cli._refusal() == ""
@@ -591,3 +591,133 @@ def test_a_state_read_with_its_credential_cached_answers_503_when_the_directory_
     assert r.status_code == 503
     assert r.json()["error"] == "the directory could not be read: OSError"
     assert fake.credential_reads == 1  # the credential came from the cache
+
+
+def _lookup(client: TestClient, org: str) -> Any:
+    return client.get("/cells/lookup", params={"org": org})
+
+
+def test_a_placed_orgs_lookup_is_answered_from_the_cache_while_the_directory_is_down(
+    fake: _Directory,
+) -> None:
+    """A placement never changes: a looked-up org keeps its answer through an outage,
+    and an org not looked up yet answers 503 without `NO_CELL`."""
+    fake.placements["acme"] = "us-1"
+    clock = ManualClock()
+    client = _client(clock)
+    assert _lookup(client, "acme").json()["cell"] == "us-1"
+    fake.down = True
+    clock.advance(settings.router_directory_cache_s * 10)
+    assert _lookup(client, "acme").json() == {
+        "org": "acme",
+        "cell": "us-1",
+        "host": "us-1.example.test",
+    }
+    uncached = _lookup(client, "beta")
+    assert uncached.status_code == 503 and "code" not in uncached.json()
+
+
+def test_a_cached_lookup_is_read_again_once_the_window_passes(
+    fake: _Directory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The answer is read again each window, so a cell's new host reaches the lookup."""
+    fake.placements["acme"] = "us-1"
+    reads: list[str] = []
+    real = fake.lookup
+
+    async def _counted(org: str) -> Any:
+        reads.append(org)
+        return await real(org)
+
+    monkeypatch.setattr(directory, "lookup", _counted)
+    clock = ManualClock()
+    client = _client(clock)
+    assert _lookup(client, "acme").status_code == 200
+    assert _lookup(client, "acme").status_code == 200
+    assert reads == ["acme"]
+    fake.cells["us-1"] = _row(cell="us-1", host="us-1b.example.test", deployment_id="dep-us-1")
+    clock.advance(settings.router_directory_cache_s)
+    assert _lookup(client, "acme").json()["host"] == "us-1b.example.test"
+    assert reads == ["acme", "acme"]
+
+
+def test_an_org_with_no_placement_is_not_cached(fake: _Directory) -> None:
+    """It answers the first cell now, and its own cell once placed."""
+    fake.cells["eu-1"] = _row(is_first=True)
+    client = _client()
+    assert _lookup(client, "new").json()["cell"] == "eu-1"
+    fake.placements["new"] = "us-1"
+    assert _lookup(client, "new").json()["cell"] == "us-1"
+
+
+def test_the_lookup_cache_forgets_the_oldest_past_its_bound(
+    fake: _Directory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(router_app, "MAX_KEYS", 2)
+    for org in ("a1", "a2", "a3"):
+        fake.placements[org] = "us-1"
+    client = _client()
+    for org in ("a1", "a2", "a3"):
+        assert _lookup(client, org).status_code == 200
+    fake.down = True  # only the cache answers now
+    assert _lookup(client, "a1").status_code == 503
+    assert [_lookup(client, o).json()["cell"] for o in ("a2", "a3")] == ["us-1", "us-1"]
+
+
+def test_a_down_directory_is_read_at_most_once_a_window_per_cached_org(
+    fake: _Directory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale answer is stamped again, so an outage does not cost a directory read
+    (and its timeout) on every lookup of a cached org."""
+    fake.placements["acme"] = "us-1"
+    reads: list[str] = []
+    real = fake.lookup
+
+    async def _counted(org: str) -> Any:
+        reads.append(org)
+        return await real(org)
+
+    monkeypatch.setattr(directory, "lookup", _counted)
+    clock = ManualClock()
+    client = _client(clock)
+    assert _lookup(client, "acme").status_code == 200
+    fake.down = True
+    clock.advance(settings.router_directory_cache_s)
+    assert [_lookup(client, "acme").status_code for _ in range(3)] == [200] * 3
+    assert reads == ["acme", "acme"]
+    clock.advance(settings.router_directory_cache_s)
+    assert _lookup(client, "acme").status_code == 200 and reads == ["acme"] * 3
+
+
+def test_lookups_arriving_together_during_an_outage_make_one_directory_read(
+    fake: _Directory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stale entry is stamped before its read, so lookups arriving while a slow,
+    failing read runs get the cached answer instead of paying its timeout too."""
+    fake.placements["acme"] = "us-1"
+    reads: list[str] = []
+    real = fake.lookup
+
+    async def _slow(org: str) -> Any:
+        reads.append(org)
+        if fake.down:
+            await asyncio.sleep(0.05)
+        return await real(org)
+
+    monkeypatch.setattr(directory, "lookup", _slow)
+    clock = ManualClock()
+    app = router_app.build_app(router_app.Router(clock=clock))
+
+    async def _run() -> list[int]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://r") as c:
+            assert (await c.get("/cells/lookup", params={"org": "acme"})).status_code == 200
+            fake.down = True
+            clock.advance(settings.router_directory_cache_s)
+            answers = await asyncio.gather(
+                *(c.get("/cells/lookup", params={"org": "acme"}) for _ in range(4))
+            )
+        return [r.status_code for r in answers]
+
+    assert asyncio.run(_run()) == [200] * 4
+    assert reads == ["acme", "acme"]

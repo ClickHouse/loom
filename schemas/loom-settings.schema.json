@@ -5862,7 +5862,7 @@
           "default": 5.0,
           "minimum": 1.0,
           "type": "number",
-          "description": "Seconds (at least 1) a router replica keeps the cells' credential hashes before reading them from the directory again; a cell's new credential works within this."
+          "description": "Seconds (at least 1) a router replica keeps the cells' credential hashes and a placed org's lookup answer before reading again; a new credential or host works within this."
         },
         "router_lookups_per_minute": {
           "default": 60,

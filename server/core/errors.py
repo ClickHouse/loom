@@ -479,6 +479,8 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     "INTEGRATION_NOT_CONFIGURED": ("configuration", False),
     "MODEL_CALLS_DISABLED": ("configuration", False),
     "NO_SIGNING_KEY": ("configuration", False),
+    # The router's lookup before any cell is registered: a settled answer, not an outage.
+    "NO_CELL": ("configuration", False),
     # Listed, not left to the status: the MCP screen's refusals carry none.
     "RATE_LIMITED": ("capacity", True),
     "AUTH_INVALID": ("auth", False),

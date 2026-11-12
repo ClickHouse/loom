@@ -649,6 +649,10 @@ Raised in `server/code/app/repo_admin.py`.
 
 Raised in `server/identity/app/me_service_accounts.py`, `server/knowledge/app/download_routes.py`, `server/knowledge/app/writes.py`, `server/memory/app/blacklist.py`.
 
+#### `NO_CELL`
+
+Raised in `server/router/app.py`. Category `configuration`, retryable: no.
+
 #### `NO_FIELDS_PROVIDED`
 
 Raised in `server/knowledge/app/conversations.py`.
