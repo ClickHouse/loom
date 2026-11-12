@@ -3,22 +3,24 @@
 Loom runs on your own infrastructure, with Docker or on Kubernetes with its Helm chart, and
 stores agent memory, documents, conversations and code indexes as tables in ClickHouse. A
 deployment can choose Postgres at first boot for live memory and knowledge state. Data is
-stored only in your stores (hosted model providers you configure receive the text they
-process), and what your agents know is queryable with SQL.
+stored only in your stores (the hosted model providers and trace sinks you configure
+receive what they process), and what your agents know is queryable with SQL.
 
 ## What you get
 
 - **Docker or Kubernetes.** The one-line installer starts the local stack; the Helm chart
   runs N identical replicas behind one URL. [Deployment](../operations/deployment.md) ·
   [Kubernetes](../operations/kubernetes.md) · [Running N replicas](../operations/replicas.md)
-- **ClickHouse OSS or ClickHouse Cloud.** [ClickHouse Cloud and Managed Postgres](../operations/clickhouse-cloud.md)
+- **ClickHouse OSS or ClickHouse Cloud.** [Choosing the ClickHouse](../operations/deployment.md#choosing-the-clickhouse) ·
+  [ClickHouse Cloud and Managed Postgres](../operations/clickhouse-cloud.md)
 - **One store for vectors, text and audit.** Under the default ClickHouse authority,
   vector, lexical and graph search, filters, audit and erasure are SQL over the same rows. [Storage authority](../architecture/storage-authority.md)
 - **Multi-user.** Orgs, namespaces, roles, tokens and single sign-on.
   [Identities and namespaces](../concepts/identities-and-namespaces.md) ·
   [Single sign-on](../operations/sso.md)
-- **Local models.** The released stack embeds on CPU with a bundled local model, and the
-  providers accept an OpenAI-compatible base URL.
+- **Local models.** The released stack embeds on CPU with a bundled local model, the
+  embedding provider accepts an OpenAI-compatible endpoint, and chat and embedding calls
+  can go through a gateway (`LOOM_OPENAI_BASE_URL`).
   [Models and API keys](../getting-started/models-and-keys.md)
 
 ## Start

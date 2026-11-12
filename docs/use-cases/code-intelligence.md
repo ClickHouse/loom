@@ -2,8 +2,8 @@
 
 Loom gives coding agents a shared index of your git repositories, served over MCP, so an
 agent asks a structure question and gets the lines that answer it instead of reading whole
-files. How the index is built and kept fresh is in
-[the code index overview](../features/code-index/overview.md).
+files. It needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`; how the index is
+built and kept fresh is in [the code index overview](../features/code-index/overview.md).
 
 ## What you get
 
@@ -14,7 +14,8 @@ files. How the index is built and kept fresh is in
   `code.grep` finds an exact message or identifier.
 - **History and pull requests.** Merged-PR history with review comments, a pre-PR
   duplicate check and bisect candidates for a regression. Needs
-  `LOOM_CODE_PR_HISTORY_ENABLED=true`; review comments also need `LOOM_CODE_GITHUB_TOKEN`.
+  `LOOM_CODE_PR_HISTORY_ENABLED=true`; review comments also need a
+  GitHub token (`LOOM_CODE_GITHUB_TOKEN` or the repository entry's `github_token`).
   [History, PRs and releases](../features/code-index/history-and-prs.md)
 - **Freshness you can see.** The index trails the branch by merged commits, and a stale
   answer says so. [Freshness](../features/code-index/freshness.md)

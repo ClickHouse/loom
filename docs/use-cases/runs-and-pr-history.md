@@ -16,8 +16,9 @@ which change introduced a regression.
   on with `conversation.set_logging(enabled=true)`. [Conversations and sessions](../features/conversations-and-sessions.md) ·
   [Trace and resume long agent runs](../guides/trace-and-resume.md)
 - **PR history.** History of a symbol, path or line, review briefs, a pre-PR duplicate
-  check and bisect candidates. Needs `LOOM_CODE_PR_HISTORY_ENABLED=true`; review comments also need
-  `LOOM_CODE_GITHUB_TOKEN`. [History, PRs and releases](../features/code-index/history-and-prs.md)
+  check and bisect candidates. Needs `LOOM_CODE_PR_HISTORY_ENABLED=true`; review comments
+  also need a GitHub token (`LOOM_CODE_GITHUB_TOKEN` or the repository entry's
+  `github_token`). [History, PRs and releases](../features/code-index/history-and-prs.md)
 - **Tracker records.** Duplicate issue checks, issue-to-PR links and flaky tests, read live
   from the team's own ClickHouse. [Tracker plane](../features/tracker/overview.md)
 - **Traces and cost.** Loom emits OpenTelemetry and records its own model spend per
@@ -29,4 +30,4 @@ which change introduced a regression.
 
 [Connect a coding agent](../getting-started/connect-a-coding-agent.md) installs the
 plugins that capture sessions once recording is on; the [code index](code-intelligence.md)
-needs a repository added.
+needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`.

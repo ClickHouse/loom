@@ -38,15 +38,15 @@ state. The dashboard brings memories, repositories, tasks and runs into one plac
   at session start and capture the session as it runs.
   [Agent memory](./docs/use-cases/agent-memory.md) ·
   [Connect a coding agent](./docs/getting-started/connect-a-coding-agent.md)
-- **Long-term memory for an agent application**, per user, from the Python or TypeScript
+- **Memory for an agent application**, per user, from the Python or TypeScript
   SDK. [Your first agent](./docs/getting-started/first-agent.md)
 - **A multi-user MCP memory server** with namespaces, roles and tokens.
   [Multi-user mode](./docs/getting-started/quickstart.md#start-in-multi-user-mode) ·
   [Namespaces and sharing](./docs/features/namespaces-and-sharing.md)
 - **A code index of your repositories** that coding agents query for definitions,
   callers and change impact. [Code index](./docs/use-cases/code-intelligence.md)
-- **Lower model cost for coding agents**: 6% to 21% lower model cost across
-  the measured Claude Code sets. [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
+- **Lower model cost for coding agents**: up to 21% less across the measured Claude
+  Code sets on the ClickHouse codebase. [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
 - **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
   extractor service converts. [Document search](./docs/use-cases/document-search.md)
 - **Shared context for multi-agent workflows**: shared memory, task inboxes and

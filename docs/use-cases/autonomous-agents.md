@@ -1,9 +1,8 @@
 # Memory, recall, audit and erasure for autonomous agents
 
-Loom gives autonomous agents memory they can trust without a person watching: facts they
-recall later, an audit record of who wrote what, and erasure of a scope everywhere Loom
-keeps it. These are server operations, stored in ClickHouse (or Postgres for live memory
-state).
+Loom gives autonomous agents memory they recall later, an audit record of who wrote what,
+and erasure of a scope everywhere Loom keeps it. These are server operations, stored in
+ClickHouse (or Postgres for live memory state).
 
 ## What you get
 

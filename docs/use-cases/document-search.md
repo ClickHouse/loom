@@ -13,8 +13,8 @@ model writes the answer from the passages Loom returns.
 - **Citations.** A hit names its document's `source_uri` and passage, so an agent can quote
   and link the source.
 - **One search across memory, documents and conversations.** `loom_search` runs the memory,
-  knowledge, profile and conversation searches in one call, across the namespaces the
-  caller may read. [Unified search](../features/unified-search.md)
+  knowledge, profile and conversation searches in one call, across the caller's memory
+  namespaces. [Unified search](../features/unified-search.md)
 - **A similarity floor.** `loom_search` drops knowledge hits below a similarity floor
   instead of handing the model a weak passage. [`loom_search`](../features/unified-search.md#loom_search)
 - **Access control on every passage.** Documents live in namespaces with viewer, writer and
