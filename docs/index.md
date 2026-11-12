@@ -157,7 +157,6 @@ client sees one the server no longer reads.
 [LLM and embeddings](architecture/llm-architecture.md) ·
 [Security](architecture/security.md) ·
 [Assistant design](architecture/assistant.md) ·
-[Curation loop](architecture/curation-loop.md) ·
 [Failure and recovery](architecture/failure-and-recovery.md) ·
 [Rolling upgrades](architecture/rolling-upgrades.md)
 
@@ -176,6 +175,7 @@ For contributors: [repository guide](development/repository-guide.md) ·
 [migrations](development/migrations.md) ·
 [release process](development/release-process.md) ·
 [documentation style](development/documentation-style.md) ·
+[curation loop design](development/curation-loop-design.md) ·
 [extending Loom](development/extending-loom.md) ·
 [add an operation](development/adding-an-operation.md) ·
 [add a worker](development/adding-a-worker.md) ·
