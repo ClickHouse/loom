@@ -84,10 +84,9 @@ leg, because the term leg serves shared rows to every reader:
   `learnings.list` shows to viewers; the pull request that adds those candidate kinds adds
   that part.
 - **A relabel to `high`** of a promoted definition's source retires that row's shared
-  embedding, keeping the row, as a `high` row in `loom.memory` keeps its row and loses its
-  embedding: `loom.shared` has no sensitivity of its own, so the ordinary legs would
-  otherwise keep serving the copy, and no sweep removes a durable row its writer did not
-  ask to remove.
+  embedding, keeping the row: `loom.shared` has no sensitivity of its own, so the ordinary
+  legs would otherwise keep serving the copy, and no sweep removes a durable row its
+  writer did not ask to remove.
 - **A promotion of a definition carries the content hash it approves**, the hash of the
   candidate's drafted value on the review path, or one the caller must pass to
   `memory.promote` (a definition promotion without one is refused), and is refused when
@@ -154,13 +153,14 @@ on the hit, removing any other hit under the same key in the addressed namespace
 edited private copy is not served beside the governed text. A term or alias matches where
 it appears in the query with no character next to it that continues its edge: next to a
 Latin letter (accented ones included), digit, `_`, `+` or `#`, another of those; next to a
-letter of another script written with spaces (Cyrillic, Greek, Hangul), a letter or digit
-that is not Latin; next to a script written without spaces (Han, Kana, Thai, Lao, Khmer,
-Myanmar) or punctuation, nothing. So `рост` does not match inside "простой" and `café` not
-inside "cafés", while `MRR` matches in "什么是MRR" and `ARR` in "ARR은", where a Korean
-particle follows the word. One written all in capitals, or with a capital after its first
-letter, matches only as written, so `IT` does not match "what is it" and `GitHub` stays
-exact; any other matches case-folded, so `Churn rate` matches "what is our churn rate".
+letter of another script written with spaces (Cyrillic, Greek), a letter or digit that is
+not Latin; next to Hangul, whose particles attach to the word before them, or a script
+written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or punctuation, nothing. So
+`рост` does not match inside "простой" and `café` not inside "cafés", while `MRR` matches
+in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". One written all in capitals, or with a
+capital after its first letter, matches only as written, so `IT` does not match "what is
+it" and `GitHub` stays exact; any other matches case-folded, so `Churn rate` matches "what
+is our churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -169,16 +169,17 @@ serves no namespace-wide row ([read scope inside a
 namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
 governed definitions through this leg only. The leg runs only on a search's first page
 (the governed keys it served there stay out of every later page of that search), and is
-off when a field asks for other rows (a `memory_type` other than `definition`; `tags`;
-`category`; an explicit `agent`, `run_id` or `session_ids`; `as_of`; a body `user_id` or
-`session_id` under a whole-namespace read; `entity_filter`; `min_body_chars`). A `user_id`
-or `session_id` the read scope pins, `scope`, `exclude_keys` and `min_similarity` keep it
-on; it drops any key in `exclude_keys`. It serves no definition whose source is
-`sensitivity = 'high'` (the read-time check above). Its read is bounded by a setting; past
-the bound, the most recently promoted definitions (by `version`) are read and the response
-says the leg was cut. It runs concurrently with the other legs under its own time bound,
-which never shortens theirs (a leg past its bound adds nothing, and the response says so),
-and its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
+off when a field asks for other rows (a `memory_type` other than `definition`, which the
+pull request adds to the field's values; `tags`; `category`; an explicit `agent`, `run_id`
+or `session_ids`; `as_of`; a body `user_id` or `session_id` under a whole-namespace read;
+`entity_filter`; `min_body_chars`). A `user_id` or `session_id` the read scope pins,
+`scope`, `exclude_keys` and `min_similarity` keep it on; it drops any key in
+`exclude_keys`. It serves no definition whose source is `sensitivity = 'high'` (the
+read-time check above). Its read is bounded by a setting; past the bound, the most
+recently promoted definitions (by `version`) are read. It runs concurrently with the other
+legs under its own time bound, which never shortens theirs (a leg past its bound adds
+nothing); an added output field, `term_leg` (`complete`, `capped` or `timed_out`), says
+which, and its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
 `server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
 output field: the SDKs and the MCP schema carry it.
 
@@ -228,10 +229,9 @@ invoked, never by a search another op runs on its behalf:
   `exclude_keys` or `min_similarity` away from its default);
 - `knowledge.search` with no hit as close as the noise filter's threshold (`_close` in
   `server/knowledge/app/knowledge_search.py`), no exact-key hit and, in `lexical` mode, no
-  hit at all, when no field removed candidates (for example `namespaces`, `tags`,
-  `uri_prefix`, `since_seconds`, `session_ids`, `source_classes`, `formats` or
-  `block_types` away from its default); documents are the namespace's under any read
-  scope;
+  hit at all, when no field removed candidates (for example `tags`, `uri_prefix`,
+  `since_seconds`, `session_ids`, `source_classes`, `formats` or `block_types` away from
+  its default); documents are the namespace's under any read scope;
 - `loom_search` (`search.query`) whose every section (memory, knowledge, profile,
   conversations) came back empty, with no leg failed, no hit withheld (`withheld`), no
   tracker verdict, no namespace skipped (`namespaces_skipped`) and no `tags`, under a read
@@ -273,15 +273,17 @@ miss, so a pasted credential never becomes a gap head, an embedding or an LLM pr
 memory key or document URI is kept: one naming another user's row or document would
 outlive that user's erasure, or the document's delete, in someone else's miss. A miss is
 inserted after the response, so a user erasure could run between the search and the
-insert. The recording therefore fences after storing, as other erasure fences do: it
-inserts the miss, under an id of its own, waiting until the row is visible, then reads
-`ledger_reads.unfinished_reaching` with every user scope (`user_id=None`) and deletes the
-row when an erasure of the namespace, or any user erasure in the org, was unfinished when
-the search began or has finished since, or when the ledger cannot be read. An erasure that
-begins after that read finds the row and deletes it itself. The table has a 16-day TTL: it
-is a trace, not memory. A pass reads the last 7 days and a build lives 7 days from its
-write, with two days to spare, so a miss outlives every build that counted it and a user
-erasure always finds the namespaces it must clear.
+insert. An erasure reaches a miss when it is the namespace's (or a list naming it) or a
+user erasure one of whose spellings (`aliases.spellings`, as the user step matches them)
+is the miss's asker or `user_id`. The recording reads `ledger_reads.unfinished_reaching`
+before the insert and records nothing when such an erasure was unfinished when the search
+began or has finished since; it then inserts the miss under an id of its own, waits until
+the row is visible, and reads the ledger again, deleting the row when one now reaches it,
+as other erasure fences check after storing. An unreadable ledger or directory counts as
+reaching. An erasure that begins after that read finds the row and deletes it itself. The
+table has a 16-day TTL: it is a trace, not memory. A pass reads the last 7 days and a
+build lives 7 days from its write, with two days to spare, so a miss outlives every build
+that counted it and a user erasure always finds the namespaces it must clear.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
 misses, its `actor` is the token's principal, not the person resolved as below (an end
@@ -331,13 +333,15 @@ the window gets an empty build, and `knowledge.gaps.list` ignores a build whose 
 older than 7 days, so an old one is never served past its window even when passes stop
 (the TTL only frees the disk). A pass whose read raced an erasure's delete could write
 erased rows back, so after writing its gaps, and before the marker, the worker deletes
-them and writes no marker when an erasure that may reach what it read (the namespace's, or
-any user erasure in the org, so the hold says nothing about who asked here) was unfinished
-when the pass read or has finished since (`ledger_reads.unfinished_reaching`, as the
-[erasure saga](memory-architecture.md#erasure-saga) fences other writers); an erasure that
-begins after that check deletes the gaps itself. A failed erasure keeps that fence until
-it completes: `knowledge.gaps.list` then says the list is held and names the erasure to
-finish by its id, which `erasure.status` authorizes per row, never by its user.
+them and writes no marker when an erasure that reaches a miss it read (matched as for a
+recording) was unfinished when the pass read or has finished since
+(`ledger_reads.unfinished_reaching`, as the [erasure
+saga](memory-architecture.md#erasure-saga) fences other writers); an erasure that begins
+after that check deletes the gaps itself. The list then serves the previous build, or none
+once the erasure deleted it. A failed erasure holds this fence, as it holds every
+writer's, until it is run again and completes. An admin who sees a namespace's gaps go
+when a user's erasure deletes its builds learns that the user asked there in the last 7
+days; the threshold does not hide that.
 
 ### Ops and dashboard
 
@@ -416,14 +420,15 @@ queue row. A promotion refused after the write (a racing edit, a racing term, or
 the candidate pending and the namespace-wide row written, which no term leg serves until
 its text is promoted; for a revision, the old definition lapses meanwhile and the admin
 read lists it. Every attempt, the first and each retry, decides from the head it reads and
-keeps no state of its own: a head whose text hashes to the draft's is promoted without a
-write; a head holding the governed shared copy's text is written with `if_match_sha256`
-against that head; no head is written with `if_absent`, a precondition the implementing
-pull request adds to `memory.set` that refuses the write when a live row holds the key, so
-a writer who creates the row first is never overwritten; any other head is a writer's
-edit, and the review is refused rather than overwrite it. A retry so completes the
-promotion; rejecting the draft instead leaves the written row, which the admin restores
-from the row's history or promotes.
+keeps no state of its own: a head that is live and `active` and whose text hashes to the
+draft's is promoted without a write; a head holding the governed shared copy's text is
+written with `if_match_sha256` against that head; no head is written with `if_absent`, a
+precondition the implementing pull request adds to `memory.set` that refuses the write
+when a live row holds the key, so a writer who creates the row first is never overwritten;
+any other head is a writer's edit, or a head the read-time check would not serve
+(`conflicted`, `duplicate`, expired), and the review is refused rather than overwrite or
+promote it. A retry so completes the promotion; rejecting the draft instead leaves the
+written row, which the admin restores from the row's history or promotes.
 
 ## Erasure and audit
 
@@ -465,9 +470,10 @@ from the row's history or promotes.
 - Recording a miss is one insert and the asker's resolution, run after the response and
   off the request's path: the rollout gate's read of the live replicas, a registry read
   per hop of a service account's creator chain, a directory read for an email-shaped
-  subject, and, after the insert, one read of the erasure ledger (and a delete when it
-  fences the row). The recordings in flight are bounded by a setting; past it a miss is
-  dropped and counted. A hit records nothing.
+  subject, and a read of the erasure ledger before and after the insert, with the
+  spellings of any user erasure it finds (a delete only when an erasure began in between).
+  The recordings in flight are bounded by a setting; past it a miss is dropped and
+  counted. A hit records nothing.
 - The gaps worker's grouping and its threshold run in ClickHouse (`GROUP BY` the
   normalised query, `HAVING` enough distinct askers), so at most
   `knowledge_gaps_max_groups` groups leave the store, and it embeds at most that many
@@ -500,19 +506,21 @@ by the read-time check: a promotion from another source, or an edit, relabel or 
 the source, leaves a row the term leg does not serve, and the term leg's last-promoted
 rule covers a promotion that skipped the term check. A promotion on N-1 also skips the
 approved-hash check and takes `promoted_by` from the body, which no read-time check can
-tell; once no N-1 replica serves, an admin promotes again the definitions promoted during
-the rollout (`loom.shared` rows of type `definition` by promotion time). N-1, which does
-not know `definition` as key-identified, can merge, supersede or retire one definition's
-source while writing another; the rows it retired are listed by `memory.auto_retirements`
-(reasons `conflict_resolver`, `newest_wins_contradiction`, `value_update` and
-`same_key_newest_wins`), restored with its Undo, and promoted again; a source it marked
-`conflicted` is cleared with `conflicts.resolve`, one it marked `duplicate` with
-`memory.dedup_resolve`, and promoted again; a write it merged was never stored and is
-written again. An N-1 relabel of a definition's source to `high` leaves its shared copy
-served by the ordinary legs: once N serves, an admin demotes every definition the admin
-read lists as lapsed for `high`. N-1's redact and namespace erasure do not reach the
-shared row's text, as today: one run during the rollout or after a rollback is run again
-once N serves.
+tell, and an N-1 `memory.set` ignores `if_absent`, a field it does not know, and writes
+over a live row; the review path that sends it answers 503 while N-1 serves, and a direct
+caller relies on it only once no N-1 replica serves. Once none does, an admin promotes
+again the definitions promoted during the rollout (`loom.shared` rows of type `definition`
+by promotion time). N-1, which does not know `definition` as key-identified, can merge,
+supersede or retire one definition's source while writing another; the rows it retired are
+listed by `memory.auto_retirements` (reasons `conflict_resolver`,
+`newest_wins_contradiction`, `value_update` and `same_key_newest_wins`), restored with its
+Undo, and promoted again; a source it marked `conflicted` is cleared with
+`conflicts.resolve`, one it marked `duplicate` with `memory.dedup_resolve`, and promoted
+again; a write it merged was never stored and is written again. An N-1 relabel of a
+definition's source to `high` leaves its shared copy served by the ordinary legs: once N
+serves, an admin demotes every definition the admin read lists as lapsed for `high`. N-1's
+redact and namespace erasure do not reach the shared row's text, as today: one run during
+the rollout or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
