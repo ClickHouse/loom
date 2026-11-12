@@ -45,8 +45,10 @@ main() {
   # Ctrl-C stops the run, and an agent CLI it started (a job of this shell, which
   # ignores the signal) with it.
   cmd_pid=
+  dog_pid=
   on_interrupt() {
     [ -z "$cmd_pid" ] || kill "$cmd_pid" 2>/dev/null || true
+    [ -z "$dog_pid" ] || kill "$dog_pid" 2>/dev/null || true
     printf '\n' >&2
     exit 130
   }
@@ -503,18 +505,18 @@ main() {
   }
   pending="$INSTALL_DIR/.welcome-pending"
   memory="\"org\":\"$org\",\"namespace\":\"$namespace\",\"agent\":\"installer\",\"memory_key\":\"loom/welcome\""
-  signed_in=
+  skip_agents=
   case $org$namespace in
     # Both go into a JSON body as they are.
     *[!A-Za-z0-9._-]*)
-      signed_in=1
+      skip_agents=1
       printf '\nSkipped the first memory and the agent setup: LOOM_SELF_SIGNUP_ORG or LOOM_DEFAULT_NAMESPACE in .env holds a character other than letters, digits and . _ -\n'
       ;;
     *)
       http_status=$(api memory.get "{$memory}")
       saved=
       if [ "$http_status" = 200 ] && [ -f "$pending" ] && ! found; then
-        value="This Loom server is personal: single-user, on this machine only. Save facts with loom_memory_set and find them with loom_search; the dashboard is $dashboard"
+        value="This Loom server runs without sign-in (single-user). Save facts with loom_memory_set and find them with loom_search; the dashboard is $dashboard"
         api memory.set "{$memory,\"value\":\"$value\"}" >/dev/null
         saved=1
         http_status=$(api memory.get "{$memory}")
@@ -531,18 +533,19 @@ main() {
           fi
           ;;
         401 | 403)
-          signed_in=1
+          skip_agents=1
           printf '\nSign-in is on: agents connect with a token from Settings → Tokens in the dashboard.\n'
           ;;
         *)
-          signed_in=1
+          skip_agents=1
           printf '\nCould not read memories (HTTP %s); `docker compose --project-directory %s logs loom` says why.\n' "$http_status" "$INSTALL_DIR"
           ;;
       esac
       ;;
   esac
 
-  # bounded CMD...: CMD, stopped after 60 seconds (macOS has no `timeout`).
+  # bounded CMD...: CMD, stopped after 60 seconds (macOS has no `timeout`). Run in
+  # this shell, not in a pipeline or $(...), so that Ctrl-C reaches what it started.
   bounded() {
     "$@" &
     cmd_pid=$!
@@ -552,6 +555,7 @@ main() {
     wait "$cmd_pid" || cmd_status=$?
     cmd_pid=
     kill "$dog_pid" 2>/dev/null || true
+    dog_pid=
     return "$cmd_status"
   }
   # wants CLIENT NAME: whether to connect CLIENT. LOOM_CONNECT (a comma list of
@@ -571,22 +575,24 @@ main() {
   # Agents on this machine, connected the way the README does it, with no token:
   # only a server without sign-in takes that. LOOM_CONNECT=none looks for none.
   agents=
-  if [ -z "$signed_in" ] && [ "${LOOM_CONNECT:-}" != none ]; then
+  if [ -z "$skip_agents" ] && [ "${LOOM_CONNECT:-}" != none ]; then
     server_url=http://localhost:$port
     [ "$host" = 127.0.0.1 ] || server_url=http://$host:$port
     # The plugins' own server URL, which a plugin installed before keeps.
     default_url=http://localhost:7777
     if command -v claude >/dev/null 2>&1; then
       # The block `claude plugin list` prints for loom@loom, up to its Status line.
-      claude_loom=$(bounded claude plugin list 2>/dev/null \
-        | awk '/(^|[[:space:]])loom@loom$/ { on = 1 } on { print } on && /Status:/ { exit }') || claude_loom=
+      bounded claude plugin list >"$tmp_dir/claude.plugins" 2>/dev/null || true
+      claude_loom=$(awk '/(^|[[:space:]])loom@loom$/ { on = 1 } on { print } on && /Status:/ { exit }' \
+        "$tmp_dir/claude.plugins")
       if [ -n "$claude_loom" ]; then
+        bounded claude mcp list >"$tmp_dir/claude.mcp" 2>/dev/null || true
         if printf '%s' "$claude_loom" | grep -q 'disabled'; then
           printf 'Claude Code: the Loom plugin is disabled; `claude plugin enable loom@loom` turns it on\n'
-        elif [ "$server_url" != "$default_url" ]; then
-          printf 'Claude Code: the Loom plugin installed before keeps its server URL; for this install: claude plugin install loom@loom --config server_url=%s\n' "$server_url"
-        else
+        elif grep -q "^plugin:loom:loom: $server_url/mcp" "$tmp_dir/claude.mcp"; then
           agents="$agents Claude Code"
+        else
+          printf 'Claude Code: the Loom plugin installed before points at another server; for this one: claude plugin install loom@loom --config server_url=%s\n' "$server_url"
         fi
       elif wants claude-code "Claude Code"; then
         set --
@@ -594,7 +600,8 @@ main() {
         # A marketplace added before is no error: the install below says what fails.
         bounded claude plugin marketplace add ClickHouse/loom >/dev/null 2>&1 || true
         if bounded claude plugin install loom@loom "$@" >/dev/null; then
-          if bounded claude mcp list 2>/dev/null | grep -q '^plugin:loom:loom:.*Connected'; then
+          bounded claude mcp list >"$tmp_dir/claude.mcp" 2>/dev/null || true
+          if grep -q '^plugin:loom:loom:.*Connected' "$tmp_dir/claude.mcp"; then
             printf 'Claude Code: connected (the plugin'"'"'s other settings are optional)\n'
           else
             printf 'Claude Code: the plugin is installed; `claude mcp list` shows whether it reaches Loom\n'
@@ -612,7 +619,8 @@ main() {
       esac
     fi
     if command -v codex >/dev/null 2>&1; then
-      codex_loom=$(bounded codex plugin list 2>/dev/null | grep '^loom@loom[[:space:]]') || codex_loom=
+      bounded codex plugin list >"$tmp_dir/codex.plugins" 2>/dev/null || true
+      codex_loom=$(grep '^loom@loom[[:space:]]' "$tmp_dir/codex.plugins") || codex_loom=
       if [ "$server_url" != "$default_url" ]; then
         # Codex plugins take no install options: the URL is fixed in the plugin.
         # Said when Codex has the plugin or the run asked for Codex.

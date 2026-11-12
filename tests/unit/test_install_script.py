@@ -1144,19 +1144,24 @@ def test_a_failed_pull_names_dockers_proxy_settings(install, installer_env: dict
     assert not any(" up " in c for c in docker_log.read_text().splitlines())
 
 
-def _agent_cli(installer_env: dict[str, str], name: str, listing: str = "") -> Path:
-    """A stub agent CLI that logs its arguments and prints `listing` for `plugin list`
-    and `mcp list`; returns its log."""
+def _agent_cli(installer_env: dict[str, str], name: str, plugins: str = "", mcp: str = "") -> Path:
+    """A stub agent CLI that logs its arguments and prints `plugins` for `plugin list`
+    and `mcp` for `mcp list` (escapes read by printf %b); returns its log."""
     bin_dir = Path(installer_env["PATH"].split(":")[0])
     log = bin_dir / f"{name}.log"
     cli = bin_dir / name
     cli.write_text(
         f'#!/bin/sh\necho "$*" >> {log}\n'
-        f'case "$*" in "plugin list"|"mcp list") printf \'%b\\n\' "{listing}" ;; esac\nexit 0\n'
+        f'case "$*" in "plugin list") printf \'%b\\n\' "{plugins}" ;;\n'
+        f'  "mcp list") printf \'%b\\n\' "{mcp}" ;; esac\nexit 0\n'
     )
     cli.chmod(0o755)
     log.write_text("")
     return log
+
+
+def _mcp_line(url: str) -> str:
+    return f"plugin:loom:loom: {url}/mcp?toolset=coding#/ (HTTP) - ✔ Connected"
 
 
 def test_a_new_install_saves_and_reads_back_a_first_memory(
@@ -1212,7 +1217,7 @@ def test_loom_connect_installs_the_claude_code_plugin(
 ) -> None:
     run, _ = install
     _start_stubs(installer_env)
-    claude = _agent_cli(installer_env, "claude", "plugin:loom:loom: http://x - ✔ Connected")
+    claude = _agent_cli(installer_env, "claude", mcp=_mcp_line("http://localhost:28977"))
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", LOOM_PORT="28977")
     assert result.returncode == 0, result.stderr
     calls = claude.read_text().splitlines()
@@ -1225,10 +1230,12 @@ def test_loom_connect_installs_the_claude_code_plugin(
 def test_an_agent_already_connected_is_left_alone(install, installer_env: dict[str, str]) -> None:
     run, _ = install
     _start_stubs(installer_env)
-    claude = _agent_cli(installer_env, "claude", "  ❯ loom@loom")
+    claude = _agent_cli(
+        installer_env, "claude", "  ❯ loom@loom", _mcp_line("http://localhost:7777")
+    )
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
     assert result.returncode == 0, result.stderr
-    assert claude.read_text().splitlines() == ["plugin list"]
+    assert claude.read_text().splitlines() == ["plugin list", "mcp list"]
     assert "Connected: Claude Code." in result.stdout
 
 
@@ -1308,16 +1315,19 @@ def test_codex_on_another_port_is_pointed_at_its_docs(
     assert "Connected:" not in result.stdout
 
 
-def test_a_claude_plugin_from_before_is_not_counted_for_another_port(
-    install, installer_env: dict[str, str]
+@pytest.mark.parametrize(("port", "points_at"), [("28977", "7777"), ("7777", "7778")])
+def test_a_claude_plugin_pointing_elsewhere_is_not_counted(
+    install, installer_env: dict[str, str], port: str, points_at: str
 ) -> None:
+    """A plugin installed before keeps its server URL: counted only when `claude mcp
+    list` shows this install's."""
     run, _ = install
     _start_stubs(installer_env)
-    _agent_cli(installer_env, "claude", "  ❯ loom@loom")
-    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", LOOM_PORT="28977")
+    _agent_cli(installer_env, "claude", "  ❯ loom@loom", _mcp_line(f"http://localhost:{points_at}"))
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", LOOM_PORT=port)
     assert result.returncode == 0, result.stderr
-    assert "keeps its server URL" in result.stdout
-    assert "--config server_url=http://localhost:28977" in result.stdout
+    assert "points at another server" in result.stdout
+    assert f"--config server_url=http://localhost:{port}" in result.stdout
     assert "Connected:" not in result.stdout
 
 
@@ -1329,3 +1339,118 @@ def test_a_disabled_claude_plugin_is_not_counted(install, installer_env: dict[st
     assert result.returncode == 0, result.stderr
     assert "claude plugin enable loom@loom" in result.stdout
     assert "Connected:" not in result.stdout
+
+
+def test_loom_connect_vscode_adds_the_mcp_server(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    code = _agent_cli(installer_env, "code")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode")
+    assert result.returncode == 0, result.stderr
+    assert code.read_text().splitlines() == [
+        '--add-mcp {"name":"loom","type":"http","url":"http://localhost:7777/mcp?toolset=coding"}'
+    ]
+    assert "Connected: VS Code." in result.stdout
+
+
+@pytest.mark.parametrize("remote", ["CODESPACES", "REMOTE_CONTAINERS", "SSH_CONNECTION"])
+def test_vscode_inside_a_remote_is_not_offered(
+    install, installer_env: dict[str, str], remote: str
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    code = _agent_cli(installer_env, "code")
+    assert run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", **{remote: "1"}).returncode == 0
+    assert code.read_text() == ""
+
+
+def test_loom_connect_all_connects_every_client(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    codex = _agent_cli(installer_env, "codex")
+    code = _agent_cli(installer_env, "code")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="all")
+    assert result.returncode == 0, result.stderr
+    assert "plugin install loom@loom" in claude.read_text().splitlines()
+    assert "plugin add loom@loom" in codex.read_text().splitlines()
+    assert any(c.startswith("--add-mcp ") for c in code.read_text().splitlines())
+    assert "Connected: Claude Code Codex VS Code." in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("listing", "counted"),
+    [
+        ("loom@loom  installed, enabled  1.0.0  /x", True),
+        ("loom@loom  installed  1.0.0  /x", False),
+    ],
+)
+def test_a_codex_plugin_from_before_is_counted_only_when_enabled(
+    install, installer_env: dict[str, str], listing: str, counted: bool
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex", listing)
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
+    assert result.returncode == 0, result.stderr
+    assert codex.read_text().splitlines() == ["plugin list"]
+    assert ("Connected: Codex." in result.stdout) == counted
+    assert ("installed but not enabled" in result.stdout) == (not counted)
+
+
+def test_a_server_error_connects_no_agent(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env, memory_status=500)
+    claude = _agent_cli(installer_env, "claude")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
+    assert result.returncode == 0, result.stderr
+    assert "Could not read memories (HTTP 500)" in result.stdout
+    assert claude.read_text() == ""
+
+
+def _answer_connect_prompts(env: dict[str, str], answer: bytes) -> bytes:
+    """Run a started install on a pseudo-terminal and answer every "[Y/n]" prompt
+    with `answer`; returns what the terminal showed."""
+    import pty
+    import select
+    import signal
+    import time
+
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvpe("sh", ["sh", str(ROOT / "install.sh")], env)
+    deadline = time.monotonic() + 60
+    seen, answered, status = b"", 0, None
+    try:
+        while status is None and time.monotonic() < deadline:
+            if select.select([fd], [], [], 0.2)[0]:
+                try:
+                    seen += os.read(fd, 1024)
+                except OSError:  # the child closed the terminal
+                    pass
+            if seen.count(b"[Y/n]") > answered:
+                os.write(fd, answer)
+                answered += 1
+            done, code = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status = code
+    finally:
+        if status is None:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        os.close(fd)
+    assert status is not None and os.waitstatus_to_exitcode(status) == 0, seen
+    return seen
+
+
+@pytest.mark.parametrize(("answer", "installs"), [(b"\n", True), (b"n\n", False)])
+def test_a_terminal_is_asked_before_an_agent_is_connected(
+    install, installer_env: dict[str, str], answer: bytes, installs: bool
+) -> None:
+    """Enter means yes; anything starting with n means no."""
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    env = {k: v for k, v in installer_env.items() if k != "LOOM_CONNECT"}
+    seen = _answer_connect_prompts({**env, "LOOM_SKIP_START": "0"}, answer)
+    assert b"Connect Claude Code to Loom? [Y/n]" in seen
+    assert ("plugin install loom@loom" in claude.read_text().splitlines()) == installs
