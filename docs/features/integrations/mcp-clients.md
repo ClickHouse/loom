@@ -1,10 +1,11 @@
 # Connecting an MCP client
 
-Loom serves its operations as MCP tools at `<loom>/mcp`. A streamable-HTTP client
-connects with a URL and a bearer token (none on a single-user server; Cursor and VS Code have
-install links for that case: [Cursor](cursor.md#mcp-tools), [VS Code](vscode.md)); a
-stdio-only client goes through the `mcp-remote` bridge. A tool call runs the same auth, rate limit, audit and idempotency path
-as `POST /v1/<op>`. The protocol is in the [MCP reference](../../reference/mcp.md).
+Loom serves its operations as MCP tools at `<loom>/mcp`. A streamable-HTTP client connects
+with a URL and a bearer token (none on a single-user server; Cursor and VS Code have
+install links for that case: [Cursor](cursor.md#mcp-tools),
+[VS Code](vscode.md#local-single-user-server)); a stdio-only client goes through the
+`mcp-remote` bridge. A tool call runs the same auth, rate limit, audit and idempotency
+path as `POST /v1/<op>`. The protocol is in the [MCP reference](../../reference/mcp.md).
 
 ## Plugin or plain MCP
 
@@ -156,26 +157,26 @@ Two more URL parameters shape a connection:
 
 ## Other editors and agents
 
-VS Code, Windsurf, Zed, Cline and Claude Desktop are covered by
-[`loom install`](#wire-a-client-with-loom-install); VS Code also has
-[install links](vscode.md). Each client below reaches `<loom>/mcp` with its own config. In
-the entries, `URL` is `http://localhost:7777/mcp` for a single-user server on the same
-machine (no header needed) or `https://loom.example.com/mcp` with a token; add
-`?toolset=coding` for a coding agent that uses the code index
-([choosing a toolset](#choosing-a-toolset)). Restart or reload the client afterwards.
+[`loom install`](#what-it-writes-per-client) covers the clients in its table; VS Code also
+has [install links](vscode.md#local-single-user-server). Each client below reaches
+`<loom>/mcp` with its own config. In the entries, `URL` is `http://localhost:7777/mcp` for
+a single-user server on the same machine (no header needed) or
+`https://loom.example.com/mcp` with a token; add `?toolset=coding` for a coding agent that
+uses the code index ([choosing a toolset](#choosing-a-toolset)). Restart or reload the
+client afterwards.
 
-| Client                                                              | Where                                                                | Entry                                                                                                                                                       |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JetBrains AI Assistant (IntelliJ IDEA, PyCharm, WebStorm, GoLand)   | Settings → Tools → AI Assistant → Model Context Protocol (MCP) → Add | `{"mcpServers": {"loom": {"url": "URL"}}}` (no header field is documented: use a single-user server or [browser sign-in](#clients-that-sign-in-by-browser)) |
-| JetBrains Junie                                                     | `~/.junie/mcp/mcp.json`, or `.junie/mcp/mcp.json` in the project     | `{"mcpServers": {"loom": {"url": "URL", "headers": {…}}}}`                                                                                                  |
-| Visual Studio (Copilot agent mode)                                  | `%USERPROFILE%\.mcp.json`, or `.mcp.json` in the solution            | `"servers": {"loom": {"type": "http", "url": "URL", "headers": {…}}}` (Visual Studio also reads `.vscode/mcp.json`)                                         |
-| Roo Code                                                            | global `mcp_settings.json`, or `.roo/mcp.json`                       | `{"mcpServers": {"loom": {"type": "streamable-http", "url": "URL", "headers": {…}}}}`                                                                       |
-| Continue                                                            | `config.yaml`, or a file in `.continue/mcpServers/`                  | `mcpServers: [{name: loom, type: streamable-http, url: URL, requestOptions: {headers: {…}}}]`                                                               |
-| Kiro                                                                | `~/.kiro/settings/mcp.json`, or `.kiro/settings/mcp.json`            | `{"mcpServers": {"loom": {"url": "URL", "headers": {…}}}}`                                                                                                  |
-| Gemini CLI                                                          | `~/.gemini/settings.json`, or `.gemini/settings.json`                | `{"mcpServers": {"loom": {"httpUrl": "URL", "headers": {…}}}}`, or `gemini mcp add --transport http loom URL`                                               |
-| GitHub Copilot CLI                                                  | `~/.copilot/mcp-config.json`                                         | `{"mcpServers": {"loom": {"type": "http", "url": "URL", "headers": {…}, "tools": ["*"]}}}`                                                                  |
-| Neovim with mcphub.nvim (also serves avante.nvim and CodeCompanion) | `~/.config/mcphub/servers.json`                                      | `{"mcpServers": {"loom": {"url": "URL", "headers": {…}}}}`                                                                                                  |
-| Emacs with mcp.el and gptel                                         | `mcp-hub-servers` in your init file, then `gptel-mcp-connect`        | `(setq mcp-hub-servers '(("loom" . (:url "URL"))))` (no header field is documented: use a single-user server or browser sign-in)                            |
+| Client                                                              | Where                                                                | Entry                                                                                                                                                                                           |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JetBrains AI Assistant (IntelliJ IDEA, PyCharm, WebStorm, GoLand)   | Settings → Tools → AI Assistant → Model Context Protocol (MCP) → Add | `{"mcpServers": {"loom": {"url": "URL"}}}` (single-user server only: no header field or sign-in is documented)                                                                                  |
+| JetBrains Junie                                                     | `~/.junie/mcp/mcp.json`, or `.junie/mcp/mcp.json` in the project     | `{"mcpServers": {"loom": {"url": "URL", "headers": {…}}}}`                                                                                                                                      |
+| Visual Studio (Copilot agent mode)                                  | `%USERPROFILE%\.mcp.json`, or `.mcp.json` in the solution            | `{"servers": {"loom": {"type": "http", "url": "URL", "headers": {…}}}}` (Visual Studio also reads `.vscode/mcp.json`)                                                                           |
+| Roo Code                                                            | global `mcp_settings.json`, or `.roo/mcp.json`                       | `{"mcpServers": {"loom": {"type": "streamable-http", "url": "URL", "headers": {…}}}}`                                                                                                           |
+| Continue                                                            | `config.yaml`, or a file in `.continue/mcpServers/`                  | `mcpServers: [{name: loom, type: streamable-http, url: URL, requestOptions: {headers: {…}}}]`                                                                                                   |
+| Kiro                                                                | `~/.kiro/settings/mcp.json`, or `.kiro/settings/mcp.json`            | `{"mcpServers": {"loom": {"url": "URL", "headers": {…}}}}`                                                                                                                                      |
+| Gemini CLI                                                          | `~/.gemini/settings.json`, or `.gemini/settings.json`                | `{"mcpServers": {"loom": {"httpUrl": "URL", "headers": {…}}}}`, or `gemini mcp add --transport http --header "Authorization: Bearer <JWT>" loom URL` (drop `--header` for a single-user server) |
+| GitHub Copilot CLI                                                  | `~/.copilot/mcp-config.json`                                         | `{"mcpServers": {"loom": {"type": "http", "url": "URL", "headers": {…}, "tools": ["*"]}}}`                                                                                                      |
+| Neovim with mcphub.nvim (also serves avante.nvim and CodeCompanion) | `~/.config/mcphub/servers.json`                                      | `{"mcpServers": {"loom": {"url": "URL", "headers": {…}}}}`                                                                                                                                      |
+| Emacs with mcp.el and gptel                                         | `mcp-hub-servers` in your init file, then `gptel-mcp-connect`        | `(setq mcp-hub-servers '(("loom" . (:url "URL"))))` (single-user server only: no header field is documented)                                                                                    |
 
 `{…}` is `{"Authorization": "Bearer <JWT>"}`; leave it out for a single-user server.
 Claude Desktop's custom connectors (Settings → Connectors) reach the server from the

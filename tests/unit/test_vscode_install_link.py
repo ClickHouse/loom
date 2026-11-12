@@ -1,4 +1,5 @@
-"""The README's Add to VS Code links install the entry the VS Code page documents."""
+"""The README's Add to VS Code links and the page's `code --add-mcp` command install the
+entry the VS Code page documents."""
 
 from __future__ import annotations
 
@@ -39,5 +40,7 @@ def test_the_links_install_the_documented_entry_the_server_gives_vs_code() -> No
     assert all(entry == documented for entry in _entries(page))
     server = client_config("vscode", "http://localhost:7777/mcp", "-")
     server_entry = server["config"]["servers"]["loom"]
-    assert documented["url"] == server_entry["url"]
-    assert documented["type"] == server_entry["type"]
+    assert documented == {"name": "loom", "type": server_entry["type"], "url": server_entry["url"]}
+    add_mcp = re.search(r"code --add-mcp '(\{[^']*\})'", page)
+    assert add_mcp, "no code --add-mcp command on the VS Code page"
+    assert json.loads(add_mcp.group(1)) == documented

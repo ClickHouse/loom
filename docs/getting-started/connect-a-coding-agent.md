@@ -21,7 +21,7 @@ Loom with your coding agent](agent-setup.md)).
 - **A writer token for your namespace**, except against a single-user server on the same
   machine: there the plugins and the install links for
   [Cursor](../features/integrations/cursor.md#mcp-tools) and
-  [VS Code](../features/integrations/vscode.md) connect without one.
+  [VS Code](../features/integrations/vscode.md#local-single-user-server) connect without one.
   Create one in the dashboard at
   `<server>/settings` → **Tokens**, or ask an operator to run
   `loom mint-token --subject you --org <org> --namespaces <namespace> --roles writer`.
@@ -71,7 +71,7 @@ the plugin installed: an entry with the same name replaces the plugin's.
 
 For Cursor or VS Code against a single-user server on the same machine, no token is needed:
 use the [Cursor](../features/integrations/cursor.md#mcp-tools) or
-[VS Code](../features/integrations/vscode.md) install link. Otherwise, in the dashboard,
+[VS Code](../features/integrations/vscode.md#local-single-user-server) install link. Otherwise, in the dashboard,
 open **Settings → Tokens**, fill in the **New token** form (press **New token** first if a
 token exists) and press **Create token**, then choose your client (Cursor, VS Code, Cline,
 Windsurf, Zed or Claude Desktop) under **Connect**: the dialog shows the entry for its

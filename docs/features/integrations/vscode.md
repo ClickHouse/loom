@@ -52,3 +52,9 @@ of the file, write the entry by hand with an input VS Code prompts for once and 
 
 Open the agent mode chat and check that the `loom_*` tools are listed;
 [checking the connection](mcp-clients.md#checking-the-connection) covers a `401`.
+
+## Related
+
+- [Connecting an MCP client](mcp-clients.md): `loom install`, toolsets and the other editors.
+- [MCP reference](../../reference/mcp.md): endpoint, auth modes and the tool list.
+- [Integrations](index.md): everything Loom connects to.
