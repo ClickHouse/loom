@@ -407,24 +407,31 @@ main() {
     *" $port "*) ;;
     *)
       # Curl's exit 7 is a refused connection: nothing listens there. A timeout
-      # after a connection (connect time above zero) is a listener that does not
-      # answer, which holds the port as much as one that does.
+      # with no connection made (a zero connect time, printed in the C locale)
+      # says nothing about the port; one after a connection is a listener that
+      # does not answer. An answer (0, or 22 for an HTTP error), an empty reply
+      # (52) and a reset (56) all come from a listener too.
       probe=0
-      connected=$(curl -s --noproxy '*' -o /dev/null -w '%{time_connect}' --connect-timeout 3 \
-        --max-time 5 "http://$host:$port/" 2>/dev/null) || probe=$?
-      other_port=7778
-      [ "$port" != 7778 ] || other_port=7779
+      connected=$(LC_ALL=C curl -s --noproxy '*' -o /dev/null -w '%{time_connect}' \
+        --connect-timeout 3 --max-time 5 "http://$host:$port/" 2>/dev/null) || probe=$?
       case $probe,$connected in
-        7,*) ;;
-        28,0.000000) fail "cannot reach $host:$port within 3 seconds: check LOOM_BIND_HOST and LOOM_PORT, or a firewall on this host" ;;
-        *)
+        28,0.000 | 28,0.000000 | 28,) probe=unreachable ;;
+        0,* | 22,* | 28,* | 52,* | 56,*) probe=held ;;
+      esac
+      case $probe in
+        7) ;;
+        unreachable) fail "cannot reach $host:$port within 3 seconds: check LOOM_BIND_HOST and LOOM_PORT, or a firewall on this host" ;;
+        held)
+          other_port=7778
+          [ "$port" != 7778 ] || other_port=7779
           holder="another program"
           # A Loom answers health with its schema version, 503 included.
-          curl -sS --noproxy '*' --max-time 3 "http://$host:$port/v1/health" 2>/dev/null \
+          curl -s --noproxy '*' --max-time 3 "http://$host:$port/v1/health" 2>/dev/null \
             | grep -q '"schema_version"' \
             && holder="another Loom server (another install, or one started from a checkout)"
           fail "port $port on $host is in use by $holder: stop it, or choose a free port by running the saved installer again as LOOM_PORT=$other_port sh loom-install.sh"
           ;;
+        *) fail "could not check port $port on $host (curl exit $probe): check LOOM_BIND_HOST and LOOM_PORT" ;;
       esac
       ;;
   esac

@@ -988,14 +988,28 @@ def test_a_listener_that_resets_or_answers_nothing_holds_the_port(
         assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
 
 
+@pytest.mark.parametrize("connect_time", ["0.000000", "0.000"])
 def test_a_port_that_does_not_connect_in_time_is_not_called_in_use(
-    install, installer_env: dict[str, str]
+    install, installer_env: dict[str, str], connect_time: str
 ) -> None:
+    """Zero as curl prints it now and as releases before 7.61 printed it."""
     run, _ = install
-    _start_stubs(installer_env, probe_exit=28)
+    _start_stubs(installer_env, probe_exit=28, connect_time=connect_time)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 1
     assert "cannot reach 127.0.0.1:7777 within 3 seconds" in result.stderr
+    assert "in use" not in result.stderr
+
+
+def test_a_probe_curl_cannot_make_is_not_called_in_use(
+    install, installer_env: dict[str, str]
+) -> None:
+    """Curl's 6 (the host does not resolve) says nothing about a listener."""
+    run, _ = install
+    _start_stubs(installer_env, probe_exit=6)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "could not check port 7777 on 127.0.0.1 (curl exit 6)" in result.stderr
     assert "in use" not in result.stderr
 
 
@@ -1003,7 +1017,8 @@ def test_a_port_that_does_not_connect_in_time_is_not_called_in_use(
 def test_a_port_another_loom_holds_is_named_as_loom(
     install, installer_env: dict[str, str], status: str
 ) -> None:
-    """Named from its health body, also when that Loom's ClickHouse is down (503)."""
+    """Named from its health body, also the `degraded` one a Loom whose ClickHouse
+    is down answers with a 503, which curl without `-f` passes through."""
     run, _ = install
     health = f'{{"status":"{status}","schema_version":"1"}}'
     _start_stubs(installer_env, probe_exit=0, connect_time="0.000120", health=health)
