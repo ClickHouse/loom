@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from server.auth.jwt import mint_token
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.settings import settings
-from server.transport.gates import SINGLE_USER_DEFAULT_AGENT
+from server.transport.gates import SINGLE_USER_FILLED_OPS
 from tests.unit.ch_fake import RecordingCH
 
 Seen = list[tuple[str, str, str, str | None]]
@@ -133,7 +133,7 @@ def test_any_other_op_still_names_its_identity(
 def test_every_filled_op_takes_the_fields_it_fills() -> None:
     """Each op on the list takes org and namespace, and an agent of `http` or `*` only
     where it requires one."""
-    for name, agent in SINGLE_USER_DEFAULT_AGENT.items():
+    for name, agent in SINGLE_USER_FILLED_OPS.items():
         fields = OPERATIONS_BY_NAME[name].input_model.model_fields
         assert {"org", "namespace"} <= set(fields), name
         required_agent = "agent" in fields and fields["agent"].is_required()
@@ -191,7 +191,7 @@ def test_the_http_reference_names_every_filled_op() -> None:
 
     page = (Path(__file__).resolve().parents[2] / "docs/reference/http-api.md").read_text()
     identity = page[page.index("- **Identity.**") : page.index("- **`consumer`.**")]
-    assert [op for op in SINGLE_USER_DEFAULT_AGENT if f"`{op}`" not in identity] == []
+    assert [op for op in SINGLE_USER_FILLED_OPS if f"`{op}`" not in identity] == []
 
 
 def test_an_org_wide_op_runs_in_the_installs_org(seen: Seen) -> None:
