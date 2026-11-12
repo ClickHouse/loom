@@ -60,6 +60,7 @@ from server.code.domain.extract.lang_sql_dialect import detect_dialect
 from server.code.domain.extract.lang_sql_model import Facet, Header, Statement
 from server.code.domain.extract.lang_sql_objects import object_symbols, reference_facets
 from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
+from server.core.sql_comments import LEADING_COMMENTS
 
 # method name (the last attribute segment of the callee) → dialect, or '' when
 # the client is generic and the text decides
@@ -183,7 +184,7 @@ def _holes(text: str) -> tuple[str, bool]:
     return out, bool(n1 or n2)
 
 
-_LEADING_COMMENTS_RE = re.compile(r"^(?:\s*(?:--[^\n]*\n|/\*.*?\*/))*\s*", re.S)
+_LEADING_COMMENTS_RE = re.compile(LEADING_COMMENTS)
 
 
 def _sql_head(text: str) -> str:

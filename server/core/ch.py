@@ -47,6 +47,7 @@ from server.core.ch_statement_text import capture_statement, statement_digest, s
 from server.core.ch_target import connection_kwargs
 from server.core.ch_writes import dedup_settings, insert_dedup_token
 from server.core.errors import OverloadedError
+from server.core.sql_comments import LEADING_COMMENTS
 from server.core.sql_literal import sql_string
 from server.core.traffic_context import traffic_class_var
 from server.settings import settings
@@ -348,7 +349,7 @@ _DDL_LEADS = (
     "DELETE",  # DELETE FROM is a lightweight mutation
 )
 _WRITE_LEADS = ("INSERT", "UPDATE")
-_LEAD_RE = re.compile(r"^\s*(?:--[^\n]*\n\s*|/\*.*?\*/\s*)*([A-Za-z]+)", re.S)
+_LEAD_RE = re.compile(LEADING_COMMENTS + r"([A-Za-z]+)")
 
 # A block that knows it runs long (a CLI mutation that waits on
 # `mutations_sync = 2`, a backfill) raises the bound for every statement it

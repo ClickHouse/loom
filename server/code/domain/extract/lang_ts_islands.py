@@ -63,6 +63,7 @@ from server.code.domain.extract.lang_sql_model import Facet, Header, Statement
 from server.code.domain.extract.lang_sql_objects import prefix_parts, reference_facets, sql_edges
 from server.code.domain.extract.tokenize import code_tokens
 from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
+from server.core.sql_comments import LEADING_COMMENTS
 
 # the call (or tag) around a literal names the client, the client names the dialect
 TS_SQL_CLIENTS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -86,10 +87,10 @@ _FILE_DIALECT_CUES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"sqlite", re.I), "sqlite"),
 )
 _SQL_HEAD_RE = re.compile(
-    r"^\s*(?:--[^\n]*\n\s*|/\*.*?\*/\s*)*"
-    r"(SELECT|INSERT|CREATE|DROP|ALTER|WITH|UPDATE|DELETE|OPTIMIZE|SYSTEM|TRUNCATE|EXPLAIN|"
+    LEADING_COMMENTS
+    + r"(SELECT|INSERT|CREATE|DROP|ALTER|WITH|UPDATE|DELETE|OPTIMIZE|SYSTEM|TRUNCATE|EXPLAIN|"
     r"SHOW|DESCRIBE|GRANT|REVOKE|ATTACH|DETACH|COPY|ANALYZE|VACUUM|PRAGMA)\b",
-    re.I | re.S,
+    re.I,
 )
 # The keywords that follow a verb in a statement and never in a UI string: `Delete ${n}
 # items?` and `Show ${n} more` open with a verb too (105 of langfuse's 489 verb-headed
