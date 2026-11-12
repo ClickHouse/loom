@@ -21,7 +21,8 @@ the entry, base64-encoded:
 { "url": "http://localhost:7777/mcp" }
 ```
 
-For any other server, write the entry with its token:
+The entry points at the default port 7777; on another port, edit `url` in
+`~/.cursor/mcp.json`. For any other server, write the entry with its token:
 
 ```bash
 loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"

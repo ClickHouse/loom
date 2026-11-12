@@ -182,11 +182,12 @@ point Codex at it as described in
 tokens in **Settings → Tokens**. Cursor and other MCP clients, and
 [the SDK](./docs/getting-started/first-agent.md), are covered there too.
 
-For Cursor on the machine running a personal installation, this link adds the
-[local MCP entry](./docs/features/integrations/cursor.md#mcp-tools), which needs no token.
-For a team server, use `loom install --client cursor` as that page describes.
+For Cursor on the machine running a personal installation, the button below adds the
+[local MCP entry](./docs/features/integrations/cursor.md#mcp-tools), which needs no token:
 
 [![Add Loom to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=loom&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0Ojc3NzcvbWNwIn0%3D)
+
+For a team server, use `loom install --client cursor` as that page describes.
 
 ## Why Loom
 
