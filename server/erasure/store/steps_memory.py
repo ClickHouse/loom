@@ -308,10 +308,8 @@ async def tombstone_shared_by_namespace(
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """Every promoted row of the namespace, whatever its source names: the namespace saga
-    has no other step for `loom.shared`, and the user step's provenance match runs in a
-    user erasure only. Their search rows are the namespace's `scope = 'shared'`
-    embeddings, which `memory_embeddings.tombstone` takes."""
+    """Every promoted row of the namespace; its `scope = 'shared'` search rows go in
+    `memory_embeddings.tombstone`."""
     return await tombstone_scoped(
         "loom.shared", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )

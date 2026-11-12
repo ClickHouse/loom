@@ -219,18 +219,20 @@ checkout.
     build's namespace erasure left ([rolling upgrades](../architecture/rolling-upgrades.md),
     rule 45). The query below lists each namespace that a `namespace` or `namespace_list`
     erasure in the ledger (kept 90 days) reached and that holds a promoted row, with the
-    last completion without a purge (`erased_at`) and with one (`purged_at`). Running the
-    statements below over an erasure the newer build finished changes nothing, as its step
-    already left no row promoted before it.
+    time the last one without a purge (`erased_at`) and with one (`purged_at`) ran its
+    census. Running the statements below over an erasure the newer build finished changes
+    nothing, as its step left no row promoted before its census.
     Only a `namespace_list` purges, and an older build's `namespace` row may hold the flag
     it was asked for.
 
     ```sql
     SELECT org, namespace,
-           maxIf(completed_at, NOT purged) AS erased_at,
-           maxIf(completed_at, purged) AS purged_at
+           maxIf(counted_at, NOT purged) AS erased_at,
+           maxIf(counted_at, purged) AS purged_at
     FROM (
-        SELECT org, completed_at, scope_type = 'namespace_list' AND purge AS purged,
+        -- The census's time: a row promoted after it was never in the erasure's reach.
+        SELECT org, ifNull(verified_at, completed_at) AS counted_at,
+               scope_type = 'namespace_list' AND purge AS purged,
                arrayJoin(if(scope_type = 'namespace', [scope_value],
                             if(JSONType(scope_value) = 'Array',
                                JSONExtract(scope_value, 'Array(String)'),
