@@ -103,8 +103,10 @@ leg, because the term leg serves shared rows to every reader:
 - **`check_against_shared`**, the promotion's conflict check, skips `definition` (only),
   so promoting `MRR` is not refused as a conflict with `ARR`; decisions keep the check.
 - **`memory.promote` refuses a definition whose term or alias** is already another
-  governed definition's, on every promotion path. Names are compared case-folded (the form
-  the key's hash reads), so `SAT` and `Sat` are one name.
+  definition's, governed or lapsed (every live shared row of type `definition`), on every
+  promotion path, so a lapsed definition that returns to its approved state never shares a
+  name with one promoted meanwhile. Names are compared case-folded (the form the key's
+  hash reads), so `SAT` and `Sat` are one name.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row, whose source key is not the slug key of
   its `term` (`definition/<slug>`), or whose `target_key` differs from that key, so a
@@ -170,22 +172,24 @@ them for every reader of the namespace, and a user-bounded reader who could not 
 would read the term as undefined. This narrows the read-scope rule that a bounded read
 serves no namespace-wide row ([read scope inside a
 namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
-governed definitions through this leg only. The leg runs only on a search's first page
-(the governed keys it served there stay out of every later page of that search), and is
-off when a field asks for other rows (a `memory_type` other than `definition`, which the
-pull request adds to the field's values; `tags` or `category` filtering, not with
-`tags_soft` or `category_soft`; an explicit `agent`, `run_id` or `session_ids`; `as_of`; a
-body `user_id` or `session_id` under a whole-namespace read; `min_body_chars`). A
-`user_id` or `session_id` the read scope pins, `scope`, `exclude_keys`, `min_similarity`,
-a soft tag or category and `entity_filter`, which only boost rows, keep it on; it drops
-any key in `exclude_keys`. It serves no definition whose source is `sensitivity = 'high'`
-(the read-time check above). Its read is bounded by a setting; past the bound, the most
-recently promoted definitions (by `version`) are read. It runs concurrently with the other
-legs under its own time bound, which never shortens theirs (a leg past its bound adds
-nothing); an added output field, `term_leg` (`complete`, `capped` or `timed_out`), says
-which, and its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
-`server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
-output field: the SDKs and the MCP schema carry it.
+governed definitions through this leg only; the implementing pull request updates that
+page and the comment on `SCOPED_OPS` in `server/identity/domain/read_scope.py`, which says
+every memory read of those ops carries the read scope. The leg runs only on a search's
+first page (the governed keys it served there stay out of every later page of that
+search), and is off when a field asks for other rows (a `memory_type` other than
+`definition`, which the pull request adds to the field's values; `tags` or `category`
+filtering, not with `tags_soft` or `category_soft`; an explicit `agent`, `run_id` or
+`session_ids`; `as_of`; a body `user_id` or `session_id` under a whole-namespace read;
+`min_body_chars`). A `user_id` or `session_id` the read scope pins, `scope`,
+`exclude_keys`, `min_similarity`, a soft tag or category and `entity_filter`, which only
+boost rows, keep it on; it drops any key in `exclude_keys`. It serves no definition whose
+source is `sensitivity = 'high'` (the read-time check above). Its read is bounded by a
+setting; past the bound, the most recently promoted definitions (by `version`) are read.
+It runs concurrently with the other legs under its own time bound, which never shortens
+theirs (a leg past its bound adds nothing); an added output field, `term_leg` (`complete`,
+`capped` or `timed_out`), says which, and its latency is measured against the op's budget
+(`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull request that adds it.
+`governed` is an added output field: the SDKs and the MCP schema carry it.
 
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
@@ -381,15 +385,18 @@ tracker org. It reuses the tracker's connection checks: the host vetting, a read
 (granted `SELECT` on `system.query_log`), the credential encrypted, a time budget and a
 breaker on every read ([tracker plane](../features/tracker/overview.md)), through
 `knowledge.query_history.add`, `.list` and `.remove`, as `tracker.source.*` registers a
-tracker source. The registration names the team that owns its definitions. Each turn:
+tracker source. The registration names the team that owns its definitions and the
+databases it covers, so a source on a shared cluster drafts only from its team's own
+tables. Each turn:
 
-1. reads finished `SELECT` queries of the source's window, from every replica when the
-   registration names the cluster (`clusterAllReplicas`) and from the node it connects to
-   otherwise, grouped by `normalized_query_hash`, counting initial queries only
-   (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and then by
-   recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
-   ran. A user here is a ClickHouse account, not a person: the threshold holds only where
-   each person queries under their own account, and a shared account (a BI tool's, a
+1. reads finished `SELECT` queries of the source's window whose `databases` all lie within
+   the registration's (a query touching any other database is not read), from every
+   replica when the registration names the cluster (`clusterAllReplicas`) and from the
+   node it connects to otherwise, grouped by `normalized_query_hash`, counting initial
+   queries only (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and
+   then by recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct
+   users ran. A user here is a ClickHouse account, not a person: the threshold holds only
+   where each person queries under their own account, and a shared account (a BI tool's, a
    service's) counts as one asker however many people stand behind it, while one person
    with several accounts counts once per account. The threshold is a floor against
    drafting from one account's queries, not an anonymity guarantee. Only the normalised
@@ -435,8 +442,11 @@ precondition the implementing pull request adds to `memory.set` that refuses the
 when a live row holds the key, so a writer who creates the row first is never overwritten;
 any other head is a writer's edit, or a head the read-time check would not serve
 (`conflicted`, `duplicate`, expired), and the review is refused rather than overwrite or
-promote it. A retry so completes the promotion; rejecting the draft instead leaves the
-written row, which the admin restores from the row's history or promotes.
+promote it; a demoted term's live row is such a head too, since no shared copy is
+governed, and the admin edits that row to the draft's text and promotes it with
+`memory.promote` and its hash instead. A retry so completes the promotion; rejecting the
+draft instead leaves the written row, which the admin restores from the row's history or
+promotes.
 
 ## Erasure and audit
 
@@ -454,12 +464,13 @@ written row, which the admin restores from the row's history or promotes.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
   `user_id` is the user, matching every spelling the directory ties to the named subject
   (`spellings` in `server/auth/aliases.py`, unverified ties included, as a revocation
-  does), each lower-cased, since the tie may have changed since the miss was recorded; a
-  directory that cannot be read fails the step closed (a token subject spelled as the
-  user's id goes too, which costs only a trace row), and a census row counting the step's
-  own predicate, over the asker and `user_id` under every spelling it deletes, so a miss
-  the step left fails the saga's verify; an end user's asker is stored as their id, the
-  form the erasure names.
+  does), compared lower-cased on both sides (`lower(asker)` and `lower(user_id)` against
+  the lower-cased spellings), since the tie may have changed since the miss was recorded
+  and a subject such as `ASmith` is stored as given; a directory that cannot be read fails
+  the step closed (a token subject spelled as the user's id goes too, which costs only a
+  trace row), and a census row counting the step's own predicate, over the asker and
+  `user_id` under every spelling it deletes, so a miss the step left fails the saga's
+  verify; an end user's asker is stored as their id, the form the erasure names.
 - `loom.knowledge_gaps` keeps counts, not askers, so no op or page names who asked: a
   namespace step, and, inside the user's miss step before it deletes the misses, a read of
   the namespaces the user has misses in and a delete of those namespaces' builds (derived
