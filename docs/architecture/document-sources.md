@@ -132,19 +132,20 @@ the call with each reason, `BAD_LINK`), and still takes `config`, which it turns
 items (`folder_ids` into `folder` items, and so on), so an N-1 client keeps working.
 `list` and `inspect` answer `items`, and `config` in today's form when the items can be
 written in it, else `{}`; a mirrored source answers `config` `{}` to everyone, and its
-audit rows carry items only as keyed hashes (below).
+audit rows carry every item id, and a filter's `owner` and a crawl's `subjects`, only as
+keyed hashes (below).
 
 `knowledge.source.update` takes `add_items`, `remove_items` (each also as links) and a
 new `include`, probes what it adds with the stored credential (the same sample rule),
 and writes the source at its next version under the namespace's source lease. Its audit
 row, and `add`'s, names the namespace, the name and the items added and removed, with a
-`filter`'s `owner` email, a crawl's `subjects` and a connected source's item ids as
-keyed hashes (below). Removing every item is refused (`BAD_CONFIG`); `remove` ends a
-source. Changing `access` is a new source. For a `crawl`, `update` also takes `subjects`
-(the new list, probed like added items) and `directory_subject`. Every `update` and
-`rotate` of a crawl needs the same roles as `add`, since its credential reads every
-listed person's drive: a namespace admin without an org-wide role cannot change whose
-drives it reads, what it reads of them (items, `include`) or the key it reads with.
+`filter`'s `owner` email, a crawl's `subjects` and a mirrored source's item ids as keyed
+hashes (below). Removing every item is refused (`BAD_CONFIG`); `remove` ends a source.
+Changing `access` is a new source. For a `crawl`, `update` also takes `subjects` (the
+new list, probed like added items) and `directory_subject`. Every `update` and `rotate`
+of a crawl needs the same roles as `add`, since its credential reads every listed
+person's drive: a namespace admin without an org-wide role cannot change whose drives it
+reads, what it reads of them (items, `include`) or the key it reads with.
 
 ### One document, one owner
 
@@ -336,11 +337,12 @@ same code for any cause. The exceptions are these:
 1. A checked leg's answer to its reader.
 2. The request's spend (`input_tokens`, `output_tokens`, `embedding_tokens`,
    `upstream_cost_usd` of its `agent_events` row), which counts against the namespace's
-   `daily_cost_cap_usd`.
+   `daily_cost_cap_usd`; a marked request's per-row values go only to its own caller and
+   a platform admin, and every other reader sees them only in totals.
 3. A source's per-item status and the code `too_many_documents`, to a connected source's
    owner and a platform admin, and the source's listing age, to its owner as a code
-   (fresh or stale) and to a platform admin, since how fast one mirror lists depends on
-   the others sharing the pass.
+   (fresh or stale) and to a platform admin. Each mirrored source lists within a bounded
+   share of the listings' time, so its freshness depends on its own size only.
 4. A namespace erasure's mirror step and census counts, kept in a separate part of its
    ledger row that `erasure.status` and `erasure.list` show only to a platform admin; a
    saga scoped to an `acl-` name is not found for anyone else.
@@ -406,25 +408,28 @@ missed path leaks.
   `capture_generation_io` says. Nor does the response pipeline after the handler: the
   search metrics labelled by namespace, the sampled relevance judge and the span
   attributes sent to the tracing backend depend on no mirror leg. Apart from that mark,
-  an answer that holds an admitted mirrored item carries `mirrored: true`, and Loom's
-  own hooks that send transcript text (the coding-agent plugins' conversation,
-  session-memory, session-brief and working-memory capture) send none for the rest of
-  that session. They see the flag on Loom's own tool results; text that reaches a
-  session another way (the `loom` CLI's output in a shell, a script's call, a subagent's
-  summary) falls under the reader's own write, out of scope below. The plugins send
-  their version, and the transcript-capture ops refuse a build older than the one that
-  honours the flag. The mark has costs, accepted for not marking per copy: on a
-  namespace with a mirror every request is marked, so `knowledge.reads` names no address
-  there, and the assistant's support check reads a marked call as unknown, not found.
-  Each pull request that adds a mirror leg lists the writes its request makes and tests
-  each against the flag.
+  an answer any part of which comes from an admitted mirrored item, a generated one
+  included, carries `mirrored: true`, and the `loom` CLI prints the same marker with
+  such output; and Loom's own hooks that send transcript text (the coding-agent plugins'
+  conversation, session-memory, session-brief and working-memory capture) send none for
+  the rest of that session. The hooks honour the marker in any tool output, and key what
+  they have seen by the parent session, so a subagent's mirror read stops the parent's
+  capture too; a script's own call is the reader's write, out of scope below. In an org
+  with a `loom.knowledge_mirrors` row, the transcript-capture ops refuse a plugin build
+  that sends no version or one older than the build that honours the marker
+  ([breaks](#breaks)). The mark has costs, accepted for not marking per copy: every
+  request that runs a mirror leg (every knowledge read of a namespace with a mirror) is
+  marked, so `knowledge.reads` names no address there, and the assistant's support check
+  reads a marked call as unknown, not found. Each pull request that adds a mirror leg
+  lists the writes its request makes and tests each against the flag.
 - **The sync and the workers write nothing outside the mirror.** A mirrored source's
   sync state, audit rows, error text and per-file wait state are filed under the
   mirror's namespace; what of them leaves it (a source's status, the worker's pass
-  notes, log lines) carries codes only: no file id, name, address or count. Every other
-  worker that touches mirror rows (retention and tier moves, the blob sweep, a reindex
-  or provider rebuild) reports nothing of a mirror outside it except to a platform
-  admin. The sync's audit rows go with the mirror's rows when it is erased.
+  notes, log lines, the sync's spans and metrics, and the extractor service's own logs
+  and traces for a mirrored file) carries codes only: no file id, name, address or
+  count. Every other worker that touches mirror rows (retention and tier moves, the blob
+  sweep, a reindex or provider rebuild) reports nothing of a mirror outside it except to
+  a platform admin. The sync's audit rows go with the mirror's rows when it is erased.
 - **No scope reaches a mirror.** Every statement that reads a table holding mirror rows
   other than by a namespace the caller names leaves out the `acl-[0-9a-f]{24}` form.
   `resolve_org_scope`, ahead of its auth-off return, `every_namespace_scope` and
@@ -459,10 +464,10 @@ no Postgres migration), written by the turn of the source that owns the document
   source whose account listed the file in that turn, whether or not its list could be
   read, named by the owner subject's verified directory emails at that turn (never the
   connection's store email), since the owner chose the item and can open it; and a
-  person a crawl listed it as, only when the file came from a search of that person's
-  own or shared-with-me files, never from a read by an item or folder id, which the
-  store answers for a link-only share too. A `shared` mirrored source's service account
-  is no reader, so its unreadable lists are `unread`.
+  person a crawl listed it as, only when they own the file or the permissions read as
+  them name them, never from a read by an item or folder id or from a shared-with-me
+  entry, which the store also gives a link-only share someone opened. A `shared`
+  mirrored source's service account is no reader, so its unreadable lists are `unread`.
 - `groups`: group emails, which a crawl's directory read expands into
   `loom.knowledge_group_members` (one row per source and group, with its members and
   `read_at`). A connected or `shared` mirrored source reads no directory and expands no
@@ -512,7 +517,8 @@ they see only `anyone` documents. A request sent on behalf of another person
 (`X-Loom-On-Behalf-Of`) reads with no emails.
 
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
-a link-only permission and a permission type the sync does not know admit nobody. A
+a link-only permission, a permission the store marks deleted or pending (its address may
+now belong to someone else) and a permission type the sync does not know admit nobody. A
 missing registry or listing row admits nobody. A leg whose per-request reads of the
 mirror (the statements it issues whatever matched) fail shows no mirrored document and
 marks the answer `degraded: mirror_unread`; a read it issues only for candidates (the
@@ -534,14 +540,14 @@ storage authorities and puts the figures here.
 
 ### Every turn reads the lists again
 
-A mirrored source lists every file on every turn, metadata only (id, revision,
-permissions): the store does not change a file's modification time when its sharing
-changes, so an incremental listing would miss a permission removed. A listing that reads
-a list unlike the stored one rewrites the document's row with the same content and the
-new list, as `knowledge.update_metadata` without `reindex` does, so no chunk or
-embedding is rebuilt; an unchanged list costs no write. A stored document the complete
-listing no longer has is rewritten `unread`, then retired on positive evidence, as
-today. The listing row's start lands only once every changed list and every such
+Every complete listing of a mirrored source reads every file, metadata only (id,
+revision, permissions): the store does not change a file's modification time when its
+sharing changes, so an incremental listing would miss a permission removed. A listing
+that reads a list unlike the stored one rewrites the document's row with the same
+content and the new list, as `knowledge.update_metadata` without `reindex` does, so no
+chunk or embedding is rebuilt; an unchanged list costs no write. A stored document the
+complete listing no longer has is rewritten `unread`, then retired on positive evidence,
+as today. The listing row's start lands only once every changed list and every such
 `unread` rewrite of that listing is written, so a row is never newer than the lists it
 vouches for. These rewrites are outside the pass's document cap, bounded only by the
 listings' share of the deadline. Content is fetched only for a file whose revision
@@ -730,9 +736,9 @@ statements and census keys against these, and its tests pin each one:
 
 ## Rolling upgrades
 
-- **Plugins.** The coding-agent plugins ship apart from the server: the
-  transcript-capture ops refuse a plugin build older than the one that honours
-  `mirrored: true`, so the plugins are rolled out before the first mirrored source.
+- **Plugins.** The coding-agent plugins ship apart from the server: in an org with a
+  mirror the transcript-capture ops refuse a plugin build that sends no version or an
+  older one, so an org rolls the plugins out before its first mirrored source.
 
 - **N-1 cannot operate on a source it must not.** N-1 reads `kind`, unseals
   `credential_enc` and reads `config_json`, and knows none of the new columns. A source
@@ -764,6 +770,8 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 
 ## Breaks
 
+- In an org with a mirror, the transcript-capture ops refuse a coding-agent plugin build
+  that sends no version or one older than the build that honours `mirrored: true`.
 - The source ops no longer answer `NOT_A_CODE_NAMESPACE`; `add` answers
   `NAMESPACE_INACTIVE` for an inactive namespace, `PERSONAL_NAMESPACE` for a person's
   own place and `ERASURE_PENDING` while an erasure of the namespace is unfinished.
@@ -820,7 +828,8 @@ The redirect URI to register with each store is
 - Every `crawl` and `connected` source is mirrored.
 - A stale, unexpanded or link-only permission, an `unread` list and a permission type
   the sync does not know admit nobody.
-- Every turn of a mirrored source reads every file's list again.
+- Every complete listing of a mirrored source reads every file's list again, and only a
+  complete listing's start vouches for the lists.
 - No caller-supplied host or query string reaches a store.
 - A connected source stops when its owner disconnects, is deactivated, or loses `writer`
   on the namespace, and its mirrored documents go with it.
@@ -902,26 +911,33 @@ Each implementing pull request lists its own; these pin the model:
     no source's next turn writing a list or members row that names them; a namespace
     source's per-pass progress unchanged by a mirror's size; an erased namespace's name
     registered again with a new mirror.
-    - Against an `emails` document: a person's own session token and a
-      `reads_as_creator` agent token admitted, a Settings-made service-account token
-      (with `creator`), a delegated child of a `reads_as_creator` token and a request on
-      behalf of another person not; a crawl `file` item of a link-only file admitting no
-      crawled person; a verified email at a domain without the identity provider's
-      domain claim refused a `domains` document; a non-owner admin's `list` and
-      `inspect` of a connected source showing `config` `{}`; a later turn of a session
-      that saw `mirrored: true` not captured, and an older plugin build refused by the
-      capture ops; the `degraded` marker for a failed list, members and heads read, with
-      no candidate and with one hidden candidate; a mirrored `add` during an open
-      namespace erasure refused with `ERASURE_PENDING`; a plugin session over a
-      collection with a mirrored source and no admitted hit still captured.
+  - Against an `emails` document: a person's own session token and a `reads_as_creator`
+    agent token admitted, a Settings-made service-account token (with `creator`), a
+    delegated child of a `reads_as_creator` token and a request on behalf of another
+    person not; a crawl `file` item of a link-only file admitting no crawled person; a
+    verified email at a domain without the identity provider's domain claim refused a
+    `domains` document; a non-owner admin's `list` and `inspect` of a connected source
+    showing `config` `{}`; a later turn of a session that saw `mirrored: true` not
+    captured, and an older plugin build refused by the capture ops; the `degraded`
+    marker for a failed list, members and heads read, with no candidate and with one
+    hidden candidate; a mirrored `add` during an open namespace erasure refused with
+    `ERASURE_PENDING`; a plugin session over a collection with a mirrored source and no
+    admitted hit still captured.
+  - A crawled person who opened a link-only file only through its link not admitted; a
+    permission the store marks deleted, whose address now belongs to another verified
+    user, admitting nobody; `loom` CLI output holding an admitted mirrored item, and a
+    subagent's mirror read, not captured into the parent session; a plugin build that
+    sends no version refused in an org with a mirror and accepted in one without; a
+    viewer's cost or insights read showing no per-request token spend of another
+    person's marked request.
   - `row_reach`, `row_in_scope` and `namespace_for_id` opening nothing of a mirror with
     auth off; a mirrored source's document counts shown to nobody.
   - A turn that finds a narrowed list rewriting the row without rebuilding a chunk, and
     one that finds the same list writing nothing; a listing row landing only after its
     changed lists.
-    - A leg that cannot read the listing row or the owning source's registry row showing
-      no mirrored document, marked `degraded: mirror_unread`; one that cannot read the
-      lists, the members rows or the heads dropping mirrored results without the marker.
+  - A leg that cannot read the listing row or the owning source's registry row showing
+    no mirrored document, marked `degraded: mirror_unread`; one that cannot read the
+    lists, the members rows or the heads dropping mirrored results without the marker.
   - The mixed-version refusal, and N-1's `check`, `rotate`, `remove` and sync turn over
     a row N wrote with `kind` empty.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
