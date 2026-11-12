@@ -301,8 +301,8 @@ def _byname(op: str) -> str:
     return op
 
 
-def clip(text: str) -> str:
-    return text if len(text) <= HINT_CHARS else text[: HINT_CHARS - 1].rstrip() + "…"
+def clip(text: str, limit: int = HINT_CHARS) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 @dataclass
@@ -339,9 +339,7 @@ class _Ctx:
     ) -> None:
         note = _unlisted(ops)
         # The body is clipped, never the note: it says how to reach the op.
-        body = text.rstrip(".") + "."
-        if len(body) + len(note) > HINT_CHARS:
-            body = body[: HINT_CHARS - len(note) - 1].rstrip() + "…"
+        body = clip(text.rstrip(".") + ".", HINT_CHARS - len(note))
         self.hints.append(
             Hint(
                 code=code,

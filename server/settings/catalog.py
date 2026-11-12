@@ -2380,7 +2380,7 @@ class McpSettings(BaseModel):
 
     # Which tools `tools/list` shows when a connection names no `?toolset=` (a request that
     # names one gets that one instead). Rosters are the frozensets in
-    # server/operations/toolsets.py plus loom_search and loom_activate; on every toolset
+    # server/operations/toolsets.py plus loom_search, loom_activate and loom_op; on every toolset
     # but "assistant" this is visibility only and every op stays callable by name over MCP
     # and /v1/*.
     #   "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
@@ -2394,8 +2394,8 @@ class McpSettings(BaseModel):
     #   "assistant" — MCP_ASSISTANT_OPS only, and only those are callable on a connection
     #                 that resolves to it. Not a server-wide read-only switch: a request
     #                 naming another toolset gets it, and the token is the boundary.
-    #   "all"       — every op except _MCP_HIDDEN_OPS and the experimental ones
-    #                 no curated tier lists (they stay callable by name).
+    #   "all"       — the stable ops plus the experimental ops the core or atomic
+    #                 roster lists, never _MCP_HIDDEN_OPS (the rest stay callable by name).
     # An unknown value is "core".
     mcp_toolset: str = "core"
     # tools/list schema profile: "standard" (curated prose + inputSchema),
