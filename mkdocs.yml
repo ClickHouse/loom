@@ -10,7 +10,7 @@ docs_dir: docs
 theme:
   name: material
   custom_dir: scripts/docs_site/overrides
-  features: [navigation.sections, search.suggest, content.code.copy]
+  features: [navigation.sections, search.suggest, content.code.copy, content.action.edit]
 markdown_extensions:
   - tables
   - admonition
