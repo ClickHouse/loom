@@ -24,7 +24,7 @@ from server.operations.dashboard import (
 )
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import _MCP_HIDDEN_OPS
-from server.transport import mcp_op, mcp_tools
+from server.transport import mcp_op
 
 # The reasons that say only an agent calls the op.
 AGENT_ONLY = {AGENT_STEP, CODE_QUESTION, TRACKER_QUESTION}
@@ -50,7 +50,7 @@ def test_mcp_reaches_every_op_it_does_not_keep_for_people(monkeypatch: pytest.Mo
             assert answer["result"]["structuredContent"]["code"] == "OP_NOT_ON_MCP", op.name
         else:
             assert answer is None, op.name
-            assert mcp_tools.TOOLS_BY_NAME[req["params"]["name"]] is op, op.name
+            assert mcp_op.TOOLS_BY_NAME[req["params"]["name"]] is op, op.name
         _, readonly_answer = _loom_op(op.name, "readonly")
         assert (readonly_answer is None) == (op.read_only and op.name not in _MCP_HIDDEN_OPS), (
             op.name
@@ -133,6 +133,6 @@ def test_an_op_a_refusal_sends_the_agent_to_is_on_mcp():
     """Every op and MCP tool a refusal names is one the agent can call."""
     for name, instead in mcp_op._INSTEAD.items():
         for tool in re.findall(r"\bloom_[a-z_]+\b", instead):
-            assert tool in mcp_tools.TOOLS_BY_NAME or tool == mcp_op.LOOM_OP_TOOL_NAME, (name, tool)
+            assert tool in mcp_op.TOOLS_BY_NAME or tool == mcp_op.LOOM_OP_TOOL_NAME, (name, tool)
         for other in re.findall(r"[a-z_]+(?:\.[a-z_]+)+", instead):
             assert other in OPERATIONS_BY_NAME and other not in _MCP_HIDDEN_OPS, (name, other)

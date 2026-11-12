@@ -69,9 +69,6 @@ log = logging.getLogger(__name__)
 # Tool descriptors (from operation registry)
 # ============================================================
 
-# Tool name → op: how a `tools/call` resolves its op, and its refusal rows name it.
-TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
-
 
 def _name_ops_in_fields(schema: Any, listed: Set[str], toolset: str | None) -> Any:
     """A copy of ``schema`` with every field description rendered for the listing."""
@@ -388,7 +385,7 @@ def listed_tool_names(toolset: str | None) -> set[str]:
 
     names = {op.mcp_tool_name for op in listed_ops(toolset)}
     if not is_assistant(resolve_toolset(toolset, settings.mcp_toolset)):
-        names |= {d["name"] for d in _synthetic_tool_descriptors_core()}
+        names |= {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}
     return names
 
 
@@ -493,7 +490,7 @@ async def _tools_descriptor(
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset))
-    listed = listed_tool_names(toolset)
+    listed = {d["name"] for d in descriptors}
     for d in descriptors:
         if d["name"] == LOOM_OP_TOOL_NAME:  # its text is about dotted op names
             d["description"] = loom_op_description(listed, toolset)

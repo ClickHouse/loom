@@ -480,8 +480,7 @@ def _model_fields(model: Any, out: set[str], seen: set[Any]) -> set[str]:
 
 def test_every_field_an_assistant_description_names_is_served() -> None:
     from server.transport.mcp_descriptions import ASSISTANT_TOOL_DESCRIPTIONS
-    from server.transport.mcp_op import OP_MENTION
-    from server.transport.mcp_tools import TOOLS_BY_NAME
+    from server.transport.mcp_op import OP_MENTION, TOOLS_BY_NAME
 
     for name, text in ASSISTANT_TOOL_DESCRIPTIONS.items():
         # The op's own fields, and those of an op the text sends the model to,

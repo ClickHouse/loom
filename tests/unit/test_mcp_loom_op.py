@@ -206,3 +206,9 @@ def test_the_example_op_is_unlisted_wherever_loom_op_is(
         assert OPERATIONS_BY_NAME[op].mcp_tool_name not in names, (toolset, op)
         assert mcp_op.reachable(OPERATIONS_BY_NAME[op], toolset), (toolset, op)
     assert ("read-only" in text) == (toolset == "readonly")
+    # the reads among the examples are listed on `all` and `readonly`; erasure.request
+    # is listed on `all` and a write readonly does not route
+    expected = {"all": set(), "readonly": set()}.get(
+        toolset, {"memory.evidence", "memory.digests", "erasure.request"}
+    )
+    assert named - {"memory.related"} == expected, toolset

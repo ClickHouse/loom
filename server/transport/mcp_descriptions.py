@@ -2269,7 +2269,7 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
     # The answer's citation check matches the statement itself, not a digest the answer
     # writes (server/assistant/app/citations.py).
     "insights.query": (
-        "Run one read-only SQL SELECT (or WITH) over the tables insights_catalog lists, "
+        "Run one read-only SQL SELECT (or WITH) over the tables insights.catalog lists, "
         "for questions no other read answers: counts, rankings and trends over memories, "
         "conflicts, usage, documents and the request ledger. It reads only this namespace's "
         "rows, deleted and replaced versions excluded (FINAL is applied for you), and "

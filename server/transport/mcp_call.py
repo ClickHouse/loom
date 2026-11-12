@@ -49,7 +49,7 @@ from server.transport.mcp_config import (
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
 from server.transport.mcp_ledger import batch_allows_row, emit_token_refusal
-from server.transport.mcp_op import UNKNOWN_OP
+from server.transport.mcp_op import TOOLS_BY_NAME, UNKNOWN_OP
 from server.transport.mcp_outcome import (
     _emit_success,
     _handler_failed,
@@ -59,7 +59,7 @@ from server.transport.mcp_outcome import (
 )
 from server.transport.mcp_primer import _render_primer_and_emit
 from server.transport.mcp_refusals import refusal_result
-from server.transport.mcp_tools import TOOLS_BY_NAME, _emit_mcp_event, assistant_connection
+from server.transport.mcp_tools import _emit_mcp_event, assistant_connection
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope

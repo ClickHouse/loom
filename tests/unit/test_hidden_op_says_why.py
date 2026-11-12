@@ -94,3 +94,16 @@ def test_apply_says_it_never_creates_a_memory() -> None:
     from server.transport.mcp_descriptions import TOOL_DESCRIPTIONS
 
     assert "never creates one" in TOOL_DESCRIPTIONS["memory.apply"]
+
+
+def test_a_direct_call_to_a_hidden_tool_names_ops_for_its_toolset() -> None:
+    """tools/call of a hidden tool by name refuses with the same rendered text."""
+    import asyncio
+
+    from server.transport import mcp_call
+
+    resp = asyncio.run(mcp_call._resolve_tool(9, "loom_memory_bulk_get", None, None, "coding"))
+    body = resp["result"]["structuredContent"]
+    assert body["code"] == "OP_NOT_ON_MCP" and body["tool"] == "loom_memory_bulk_get"
+    assert body["instead"] == mcp_op.hidden_refusal("memory.bulk_get", "coding")["instead"]
+    assert body["instead"].startswith("call loom_memory_get per key")
