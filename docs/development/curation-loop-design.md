@@ -129,7 +129,8 @@ reader:
   definition the wire op `memory.promote` ignores it and names it in `ignored_args`, and
   the review path sets it internally, so only a review records a candidate, and
   `memory.lineage` makes no match by key and time window for a `definition` promoted
-  without one, so it never names a rejected draft as a definition's origin.
+  without one, which could name another promoted draft of the same key, such as an earlier
+  revision's.
 - **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
   through `memory.promote` or `learnings.review`, and so are the queue row's `decided_by`
   and the audit subject on such a review, never taken from the body's `approver`, which
@@ -432,11 +433,12 @@ normalised form. That form is case-folded, with every run of characters other th
 letters, digits, `_`, `+` and `#` made one space, so `C++`, `C#` and `arr_v2` stay apart
 as the term leg keeps them. It is still the query's words, kept as the trace of a question
 under the request's capture level; only the threshold below decides what an admin sees. A
-query that reads as `high` (`reads_high` in `server/memory/domain/sensitivity.py`, the
-rule namespace-wide listings apply) records no miss, so a pasted credential never becomes
-a gap head, an embedding or an LLM prompt. No memory key or document URI is kept: one
-naming another user's row or document would outlive that user's erasure, or the document's
-delete, in someone else's miss.
+query that reads or grades as `medium` or `high` (`reads_high` and the grader in
+`server/memory/domain/sensitivity.py`, as a definition's promotion grades its value)
+records no miss, so a pasted credential or an email never becomes a gap head, an
+embedding, an LLM prompt or a draft that viewers see and no promotion could accept. No
+memory key or document URI is kept: one naming another user's row or document would
+outlive that user's erasure, or the document's delete, in someone else's miss.
 
 **The erasure fence.** A miss is inserted after the response, so a user erasure could run
 between the search and the insert. An erasure reaches a miss when it is the namespace's
@@ -654,8 +656,8 @@ order, the first that matches deciding:
 - a pinned or locked head refuses the review, as a pinned key or a lock refuses a changed
   value; the admin unpins or unlocks it (`memory.unpin`, `memory.unlock`) and reviews
   again;
-- a head holding the governed shared copy's text is written with `if_match_sha256` against
-  that head;
+- a live, `active` head holding the governed shared copy's text is written with
+  `if_match_sha256` against that head;
 - no head is written with `if_absent`, a precondition the implementing pull request adds
   to `memory.set` that refuses the write when a live row holds the key, so a writer who
   creates the row first is never overwritten;
@@ -723,6 +725,13 @@ govern it.
 
 ## Cost bounds
 
+The new settings and their defaults: `memory_term_leg_max_definitions` 500,
+`memory_term_leg_timeout_ms` 50, `knowledge_gaps_max_groups` 200,
+`knowledge_gaps_merge_similarity` 0.85, `knowledge_gaps_max_askers_per_group` 10000,
+`knowledge_gaps_max_in_flight` 256, `knowledge_query_history_max_drafts` 20 per turn and
+`knowledge_query_history_window_days` 7; the implementing pull requests measure each
+against the op budgets before they ship it.
+
 - Recording a miss is one insert and the asker's resolution, run after the response and
   off the request's path: the rollout gate's read of the live replicas, a registry read
   per hop of a service account's creator chain, a directory read for an email-shaped
@@ -744,8 +753,10 @@ govern it.
   `knowledge_query_history_window_days`) and time limit, separate from the tracker's
   live-read budget, and a timeout counts against the source's breaker like any tracker
   read.
-- The term leg is one bounded read of the namespace's shared definitions per search, and
-  one read of the matched definitions' source rows.
+- The term leg is one bounded read of the namespace's shared definitions per search (their
+  full values, `rests_on` included, at most `memory_term_leg_max_definitions`), one read
+  of the matched definitions' source rows, and a grading of each matched source's value,
+  on every `memory.search`, every `context.pack` turn and every `memory.ask` sub-search.
 - A definition's promotion reads the namespace's definition rows, at most
   `memory_term_leg_max_definitions`, to check its term and aliases.
   `memory.definitions.list` reads one page of them, with a limit and a cursor, and reads
@@ -767,23 +778,27 @@ so the N replicas serve it throughout and it shows the lapses N-1 causes; a call
 lands on an N-1 replica is answered as an unknown op. The operator turns
 `knowledge_gaps_enabled` on only once no N-1 replica serves, as the assistant-turn
 learnings rule does for `memory_extract_agent_learnings`. Governed definitions are memory
-and shared rows, which N-1 knows: it serves them as plain rows with no term leg. What N-1
-does to them is caught by the read-time check: a promotion from another source, or an
-edit, relabel or tombstone of the source, leaves a row the term leg does not serve, and
-the term leg's last-promoted rule covers a promotion that skipped the term check. A
-promotion on N-1 also skips the approved-hash check and takes `promoted_by` from the body,
-which no read-time check can tell, and an N-1 `memory.set` ignores `if_absent`, and an N-1
-`memory.delete` ignores `if_match_sha256`, fields they do not know, so they write over or
-delete a live row; the review path that sends them answers 503 while N-1 serves, and a
-direct caller relies on them only once no N-1 replica serves. Once none does, an admin
-promotes again every definition promoted before then, through N-1 or before this design
-(`loom.shared` rows of type `definition` by promotion time), since none of those carried
-the hash check or a token-stamped `promoted_by`; that promotion on N also moves the write
-mark, which N-1's promotions and demotions never move, so a stored `memory.ask` answer
-from the rollout is not reused past it (until then such an answer lives at most
-`memory_ask_precedents_fast_max_age_hours`, with no bound when it is 0). N-1, which does
-not know `definition` as key-identified, can merge, supersede or retire one definition's
-source while writing another. Once N serves, each is recovered and promoted again:
+and shared rows, which N-1 knows: it serves them as plain rows with no term leg. The
+read-time check grades the source's value on every read, so a later build whose detector
+grades differently changes which definitions are governed, and two builds serving side by
+side may disagree on one row until the older one stops; the build that changes the
+detector names this in its rollout notes. What N-1 does to them is caught by the read-time
+check: a promotion from another source, or an edit, relabel or tombstone of the source,
+leaves a row the term leg does not serve, and the term leg's last-promoted rule covers a
+promotion that skipped the term check. A promotion on N-1 also skips the approved-hash
+check and takes `promoted_by` from the body, which no read-time check can tell, and an N-1
+`memory.set` ignores `if_absent`, and an N-1 `memory.delete` ignores `if_match_sha256`,
+fields they do not know, so they write over or delete a live row; the review path that
+sends them answers 503 while N-1 serves, and a direct caller relies on them only once no
+N-1 replica serves. Once none does, an admin promotes again every definition promoted
+before then, through N-1 or before this design (`loom.shared` rows of type `definition` by
+promotion time), since none of those carried the hash check or a token-stamped
+`promoted_by`; that promotion on N also moves the write mark, which N-1's promotions and
+demotions never move, so a stored `memory.ask` answer from the rollout is not reused past
+it (until then such an answer lives at most `memory_ask_precedents_fast_max_age_hours`,
+with no bound when it is 0). N-1, which does not know `definition` as key-identified, can
+merge, supersede or retire one definition's source while writing another. Once N serves,
+each is recovered and promoted again:
 
 - a source it retired (`memory.auto_retirements` reasons `conflict_resolver`,
   `newest_wins_contradiction`, `value_update` and `same_key_newest_wins`):
