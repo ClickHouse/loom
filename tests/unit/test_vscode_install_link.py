@@ -1,4 +1,5 @@
-"""The README's Add to VS Code links install the entry the VS Code page documents."""
+"""The README's Add to VS Code links and the page's `code --add-mcp` command install the
+entry the VS Code page documents."""
 
 from __future__ import annotations
 

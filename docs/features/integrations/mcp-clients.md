@@ -1,10 +1,11 @@
 # Connecting an MCP client
 
-Loom serves its operations as MCP tools at `<loom>/mcp`. A streamable-HTTP client
-connects with a URL and a bearer token (none on a single-user server; Cursor and VS Code have
-install links for that case: [Cursor](cursor.md#mcp-tools), [VS Code](vscode.md#local-single-user-server)); a
-stdio-only client goes through the `mcp-remote` bridge. A tool call runs the same auth, rate limit, audit and idempotency path
-as `POST /v1/<op>`. The protocol is in the [MCP reference](../../reference/mcp.md).
+Loom serves its operations as MCP tools at `<loom>/mcp`. A streamable-HTTP client connects
+with a URL and a bearer token (none on a single-user server; Cursor and VS Code have
+install links for that case: [Cursor](cursor.md#mcp-tools), [VS
+Code](vscode.md#local-single-user-server)); a stdio-only client goes through the
+`mcp-remote` bridge. A tool call runs the same auth, rate limit, audit and idempotency
+path as `POST /v1/<op>`. The protocol is in the [MCP reference](../../reference/mcp.md).
 
 ## Plugin or plain MCP
 
@@ -156,12 +157,13 @@ Two more URL parameters shape a connection:
 
 ## Other editors and agents
 
-The clients in [`loom install`](#wire-a-client-with-loom-install)'s table are covered there;
-VS Code also has [install links](vscode.md#local-single-user-server). Each client below reaches `<loom>/mcp` with its own config. In
-the entries, `URL` is `http://localhost:7777/mcp` for a single-user server on the same
-machine (no header needed) or `https://loom.example.com/mcp` with a token; add
-`?toolset=coding` for a coding agent that uses the code index
-([choosing a toolset](#choosing-a-toolset)). Restart or reload the client afterwards.
+[`loom install`](#what-it-writes-per-client) covers the clients in its table; VS Code also
+has [install links](vscode.md#local-single-user-server). Each client below reaches
+`<loom>/mcp` with its own config. In the entries, `URL` is `http://localhost:7777/mcp` for
+a single-user server on the same machine (no header needed) or
+`https://loom.example.com/mcp` with a token; add `?toolset=coding` for a coding agent that
+uses the code index ([choosing a toolset](#choosing-a-toolset)). Restart or reload the
+client afterwards.
 
 | Client                                                              | Where                                                                | Entry                                                                                                                                                                                           |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
