@@ -100,7 +100,9 @@ Pick the tool listing with `?toolset=`; the toolsets are listed in
 [MCP toolsets](../reference/mcp.md#toolsets).
 
 If the Loom plugin is installed for the user running `claude -p`, its hooks run too
-([Claude Code plugin](../features/integrations/claude-code.md)).
+([Claude Code plugin](../features/integrations/claude-code.md)). Its mentor hints follow only
+the plugin's own server's tools (`mcp__plugin_loom_loom__*`), not a `loom` entry from
+`--mcp-config`.
 
 ### Codex `codex exec`
 
