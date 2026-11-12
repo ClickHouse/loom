@@ -27,21 +27,23 @@ flowchart LR
 A definition is a memory row with `memory_type = 'definition'` under the key
 `definition/<slug>`, so `C++` and `C#` get two keys. The slug is computed in four steps:
 
-1. The term goes through `canonical_document_text` (`server/core/hashing.py`: NFKC,
-   trimmed, every run of whitespace made one space) and is case-folded (`str.casefold`).
-   This folded form is the term's name wherever two names are compared (the key, the
-   promotion's name check); matching against a query keeps the case rule below.
-2. Every run of characters other than letters and digits becomes one `-`, and a `-` at
-   either end is dropped.
+1. The term is folded: it goes through `canonical_document_text`
+   (`server/core/hashing.py`: NFKC, trimmed, every run of whitespace made one space),
+   loses its format characters (Unicode category Cf, such as a pasted byte-order mark) and
+   is case-folded (`str.casefold`). This folded form is the term's name wherever two names
+   are compared (the key, the promotion's name check); matching against a query keeps the
+   case rule below.
+2. Every run of characters other than letters, marks and digits (Unicode categories L, M
+   and N) becomes one `-`, and a `-` at either end is dropped.
 3. A `-` is appended.
 4. The first 12 hex characters of the SHA-256 of the folded term's UTF-8 bytes are
    appended.
 
-One helper in `server/memory/domain/definitions.py` computes it. The SDKs and the
-dashboard port it and test against the same table of terms and keys, among them a
-full-width term, one with a doubled space, one whose case fold differs from lower-casing
-(`Straße`, a Greek final sigma) and ones holding whitespace that Python and JavaScript
-split differently (U+0085, U+FEFF), and a refused promotion names the key it expected. Its
+One helper in `server/memory/domain/definitions.py` folds a name and computes the key.
+The SDKs and the dashboard port it, follow the Unicode version of the server's
+`unicodedata`, and test against one table of terms and keys that covers each step where a
+port can differ from Python: NFKC, a case fold that is not lower-casing, whitespace and
+format characters, and combining marks. A refused promotion names the key it expected. Its
 value is a JSON object, which `memory.set` stores whole in `value` and in `value_json`
 (the embedding reads its excerpt, as for any row):
 
@@ -267,10 +269,11 @@ which never shortens theirs; a leg past its bound adds nothing. Its latency is m
 against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
 request that adds it.
 
-**Matching.** The query goes through `canonical_document_text`, as a name does, so `MRR`
-matches the full-width `什么是ＭＲＲ` and `churn rate` matches a query that puts two spaces
-between the words; only case follows the per-word rule below. A term or alias matches
-where it appears in the query with no character next to it that continues its edge:
+**Matching.** The query goes through `canonical_document_text` and loses its format
+characters, as a name does, so `MRR` matches the full-width `什么是ＭＲＲ` and `churn rate`
+matches a query that puts two spaces between the words; only case follows the per-word
+rule below. A term or alias matches where it appears in the query with no character next
+to it that continues its edge:
 
 - next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
   those;
@@ -462,14 +465,14 @@ to two accounts, or a tie that cannot be read, records no miss.
 
 **The stored row.** Each miss writes one row to `loom.search_misses` under the namespace
 the search was addressed to: the identity tuple, the asker, the plane and the query's
-normalised form. That form is the query through `canonical_document_text` (as the term leg
-reads it), then case-folded, with every run of characters other than letters, digits, `_`,
-`+` and `#` made one space and a space at either end dropped, so `C++`, `C#` and `arr_v2`
-stay apart as the term leg keeps them. It is still the query's words, kept as the trace of
-a question under the request's capture level; only the threshold below decides what an
-admin sees. A query that reads or grades as `medium` or `high` (`reads_high` and the
-grader in `server/memory/domain/sensitivity.py`, as a definition's promotion grades its
-value) records no miss, so a pasted credential or an email never becomes a gap head, an
+normalised form. That form is the query folded as a name is, with every run of characters
+other than letters, marks, digits, `_`, `+` and `#` made one space and a space at either
+end dropped, so `C++`, `C#` and `arr_v2` stay apart as the term leg keeps them. It is
+still the query's words, kept as the trace of a question under the request's capture
+level; only the threshold below decides what an admin sees. A query that reads or grades
+as `medium` or `high` (`reads_high` and the grader in
+`server/memory/domain/sensitivity.py`, as a definition's promotion grades its value)
+records no miss, so a pasted credential or an email never becomes a gap head, an
 embedding, an LLM prompt or a draft no promotion could accept. No memory key or document
 URI is kept: one naming another user's row or document would outlive that user's erasure,
 or the document's delete, in someone else's miss.
@@ -588,7 +591,11 @@ admits the `knowledge.` group to such a token (`honours_read_scope` in
 gap holds the drafted definition and the gap's id. The LLM drafts it from nothing but the
 gap's queries, each asked in that form by at least `knowledge_gaps_min_askers` askers. Its
 words are the model's, but nothing else reached the model, which is why it outlives a user
-erasure. The model may repeat a query word for word, so `learnings.list` shows a
+erasure. The queries reach it case-folded, so the model chooses the term's capitals, and
+they decide how the term leg matches it (`IT` only as written, `it` case-folded); the
+reviewing admin checks them, and when they are wrong rejects the draft and writes and
+promotes the definition directly (`memory.set` of the namespace-wide row, then
+`memory.promote`). The model may repeat a query word for word, so `learnings.list` shows a
 `knowledge_gap` draft to the namespace's admins only, the readers of the gaps list. A
 gap's id has at most one draft: the candidate's id derives from the gap's id, and the
 draft claims that id before its LLM call (a claim row, as `run.begin` claims a run), so a
