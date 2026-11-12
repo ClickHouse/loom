@@ -2195,9 +2195,7 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 
 # Descriptions for the coding toolset (a trimmed roster). The tier shares
 # TOOL_DESCRIPTIONS; memory.set's text is the core text with the chat-only sentences
-# removed and every `core`-only op it names marked "callable by name" — the sanctioned
-# way for a listed description to point at an unlisted op. Derived, not copied, so the
-# prose cannot drift from the core tier.
+# removed. Derived, not copied, so the prose cannot drift from the core tier.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.
@@ -2212,7 +2210,7 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "abstain. Pass `pr_number` for an open PR to seed from its own range."
     ),
     # The chat client's routing sentence between two memories goes: on the
-    # coding tier the scratchpad is the listed working_memory pair. Every
+    # coding tier the scratchpad is the listed working_memory.set. Every
     # save / don't-save / revision / TTL sentence is the core text.
     "memory.set": TOOL_DESCRIPTIONS["memory.set"]
     .replace("; native memory is the Claude-only scratchpad", "", 1)

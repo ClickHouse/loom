@@ -2395,7 +2395,8 @@ class McpSettings(BaseModel):
     #                 that resolves to it. Not a server-wide read-only switch: a request
     #                 naming another toolset gets it, and the token is the boundary.
     #   "all"       — the stable ops plus the experimental ops the core or atomic
-    #                 roster lists, never _MCP_HIDDEN_OPS (the rest stay callable by name).
+    #                 roster lists; the other experimental ops stay callable by name,
+    #                 and _MCP_HIDDEN_OPS are never listed.
     # An unknown value is "core".
     mcp_toolset: str = "core"
     # tools/list schema profile: "standard" (curated prose + inputSchema),
