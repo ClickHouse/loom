@@ -138,8 +138,9 @@ that namespace, whatever `namespace_scope` fans out over), matches the query aga
 one's term and aliases, and places the matched rows at the top of the served list with
 `governed = true` on the hit, removing any other hit under the same key in the addressed
 namespace, so an edited private copy is not served beside the governed text. A term or
-alias matches where it appears in the query with no letter, digit, `+` or `#` next to it.
-One written all in capitals, or with a capital after its first letter, matches only as
+alias matches where it appears in the query with no Latin letter, digit, `+` or `#` next
+to it, so a term inside text written without spaces (Chinese, Japanese) still matches. One
+written all in capitals, or with a capital after its first letter, matches only as
 written, so `IT` does not match "what is it" and `GitHub` stays exact; any other matches
 case-folded, so `Churn rate` matches "what is our churn rate".
 
@@ -278,15 +279,17 @@ namespace in `loom.knowledge_gaps`:
 Every build writes its gaps, then a marker row, and readers take the latest build that has
 its marker, so a build with no gap left, or one whose gaps an erasure deleted, still
 replaces the last one. Builds expire after 7 days, and a namespace left with no misses in
-the window gets an empty build, so an old one is never served past its window. A pass
-whose read raced an erasure's delete could write erased rows back, so after writing its
-gaps, and before the marker, the worker deletes them and writes no marker when an erasure
-that may reach what it read (the namespace's, or a user's whose misses the pass read) was
-unfinished when the pass read or has finished since (`ledger_reads.unfinished_reaching`,
-as the [erasure saga](memory-architecture.md#erasure-saga) fences other writers); an
-erasure that begins after that check deletes the gaps itself. A failed erasure keeps that
-fence until it completes: `knowledge.gaps.list` then says the list is held and names the
-erasure to finish by its id, which `erasure.status` authorizes per row, never by its user.
+the window gets an empty build, and `knowledge.gaps.list` ignores a build whose marker is
+older than 7 days, so an old one is never served past its window even when passes stop
+(the TTL only frees the disk). A pass whose read raced an erasure's delete could write
+erased rows back, so after writing its gaps, and before the marker, the worker deletes
+them and writes no marker when an erasure that may reach what it read (the namespace's, or
+a user's whose misses the pass read) was unfinished when the pass read or has finished
+since (`ledger_reads.unfinished_reaching`, as the [erasure
+saga](memory-architecture.md#erasure-saga) fences other writers); an erasure that begins
+after that check deletes the gaps itself. A failed erasure keeps that fence until it
+completes: `knowledge.gaps.list` then says the list is held and names the erasure to
+finish by its id, which `erasure.status` authorizes per row, never by its user.
 
 ### Ops and dashboard
 
@@ -392,9 +395,11 @@ which the admin restores from the row's history or promotes.
 
 ## Cost bounds
 
-- Recording a miss is one asynchronous insert, and the asker's resolution (the creator
-  chain, the directory's spelling tie, the consent read) runs with it after the response,
-  off the request's path; a hit records nothing.
+- Recording a miss is one asynchronous insert and the asker's resolution, run after the
+  response and off the request's path: up to a consent read, a registry read per hop of a
+  service account's creator chain, and a directory read for an email-shaped subject. The
+  recordings in flight are bounded by a setting; past it a miss is dropped and counted. A
+  hit records nothing.
 - The gaps worker's grouping and its threshold run in ClickHouse (`GROUP BY` the
   normalised query, `HAVING` enough distinct askers), so at most
   `knowledge_gaps_max_groups` groups leave the store, and it embeds at most that many
