@@ -176,18 +176,16 @@ Start a new session; the first one connects to `http://localhost:7777`. In Codex
 `codex` interactively once and approve the plugin's hooks; until then only the tools
 work. Tell the agent something worth keeping, then ask about it in the next session.
 
+For Cursor on the machine running a personal installation, the button below adds the
+[local MCP entry](./docs/features/integrations/cursor.md#mcp-tools), which needs no token:
+
+[![Add Loom to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=loom&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0Ojc3NzcvbWNwP3Rvb2xzZXQ9Y29kaW5nIn0%3D)
+
 For a team server, pass `--config server_url=… --config token=…` to Claude Code, or
 point Codex at it as described in
 [connect a coding agent](./docs/getting-started/connect-a-coding-agent.md). Create
 tokens in **Settings → Tokens**. Cursor and other MCP clients, and
 [the SDK](./docs/getting-started/first-agent.md), are covered there too.
-
-For Cursor on the machine running a personal installation, the button below adds the
-[local MCP entry](./docs/features/integrations/cursor.md#mcp-tools), which needs no token:
-
-[![Add Loom to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=loom&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0Ojc3NzcvbWNwIn0%3D)
-
-For a team server, use `loom install --client cursor` as that page describes.
 
 ## Why Loom
 
