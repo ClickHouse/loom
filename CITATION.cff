@@ -8,7 +8,7 @@ type: software
 authors:
   - name: "ClickHouse, Inc."
 repository-code: "https://github.com/ClickHouse/loom"
-url: "https://github.com/ClickHouse/loom"
+url: "https://github.com/ClickHouse/loom/blob/main/docs/index.md"
 license: Apache-2.0
 keywords:
   - agent memory
