@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { PAGE_OP_MIN_ROLE, ROLE_LOADING, callReason, needsLine, roleGap } from "./callReason";
+import { PAGE_OP_MIN_ROLE, ROLE_LOADING, callReason, codeMember, needsLine, roleGap } from "./callReason";
 
 const row = (role: MyNamespaceEntry["role"], status: MyNamespaceEntry["status"] = "active"): MyNamespaceEntry => ({
   namespace: "team",
@@ -117,5 +117,19 @@ describe("PAGE_OP_MIN_ROLE", () => {
       const m = new RegExp(`\\{ name: "${op.replace(".", "\\.")}",[^\\n]*? role: "([a-z_]+)"`).exec(text);
       expect(m?.[1], `${op} minimum role drifted from the registry`).toBe(min);
     }
+  });
+});
+
+describe("codeMember", () => {
+  it("counts a live grant on a code namespace, never a claim-only or pending row", () => {
+    const code = (role: MyNamespaceEntry["role"], status: MyNamespaceEntry["status"] = "active") => ({
+      ...row(role, status),
+      kind: "code" as const,
+    });
+    const read = (r: MyNamespaceEntry) => ({ role: null, loading: false, rows: [r] });
+    expect(codeMember(read(code("viewer")), "team")).toBe(true);
+    expect(codeMember(read(code("jwt")), "team")).toBe(false);
+    expect(codeMember(read(code("viewer", "pending")), "team")).toBe(false);
+    expect(codeMember(read(row("viewer")), "team")).toBe(false);
   });
 });

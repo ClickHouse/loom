@@ -172,5 +172,8 @@ export function needsLine(
  *  memory.set and its memory.delete of its own rows there (`server/code/app/member_writes.py`),
  *  whatever the role, so those are left to the server. */
 export function codeMember(read: NamespaceRoleRead, namespace: string): boolean {
-  return !!read.rows?.some((m) => m.namespace === namespace && m.kind === "code" && m.status !== "pending");
+  // A claim-only row (`jwt`) is no grant: the member rule wants a live one.
+  return !!read.rows?.some(
+    (m) => m.namespace === namespace && m.kind === "code" && m.status !== "pending" && m.role !== "jwt",
+  );
 }

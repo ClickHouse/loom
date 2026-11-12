@@ -127,18 +127,20 @@ writes on a memory namespace, which stay available and let the server decide. A 
 selection, which holds only its bulk writes, shows only where they are available: the
 Library's for a role that writes or is the server's to decide, the others' for a role that
 writes. This holds on every page, with these exceptions, offered only where the dashboard
-can tell the token may use them: on Repositories a repository's Docs and Sources facets
-and a tracker's record sources; a repository card's maintainer controls (its Settings, a
-branch's Re-index and Remove branch, and Add branch); and a tracker's Edit mapping, Rotate
-and Retire. The repository's Access tab shows a reader its access controls with their
-reasons. A restricted namespace's own gate (a token of its org that names it, and a direct
-grant) is checked by its settings, its budget cap, a repository's Access tab and Refresh
-now; its other controls follow the role, and the server refuses a token that gate does not
-admit. The header's New menu follows the role the dashboard knows, and the server decides
-the rest. On a repository's namespace, a member's memory writes (add, and edit or delete a
-row) stay available whatever its role, and the server checks that the row is the member's. Only what is for the org or the platform rather than a namespace is left out: the
-platform pages, Health's Workers, Operation mix and Projection failures tabs, Settings ›
-Models & keys and the admin drawer's navigation.
+can tell the token may use them: the Library's Sources section; on Repositories a
+repository's Docs and Sources facets and a tracker's record sources; a repository card's
+maintainer controls (its Settings, a branch's Re-index and Remove branch, and Add branch);
+and a tracker's Edit mapping, Rotate and Retire. The repository's Access tab shows a
+reader its access controls with their reasons. A restricted namespace's own gate (a token
+of its org that names it, and a direct grant) is checked by its settings, its budget cap,
+a repository's Access tab and Refresh now; its other controls follow the role, and the
+server refuses a token that gate does not admit. The header's New menu follows the role
+the dashboard knows, and the server decides the rest. On a repository's namespace, a
+member's memory writes (add, and edit or delete a row) stay available whatever its role,
+and the server checks that the row is the member's. Only what is for the org or the
+platform rather than a namespace is left out: the platform pages, Health's Workers,
+Operation mix and Projection failures tabs, Settings › Models & keys and the admin
+drawer's navigation.
 
 ### The assistant panel
 
