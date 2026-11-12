@@ -53,25 +53,28 @@ Once Loom answers, the installer:
 
 1. **Checks a memory.** A new install saves a test memory, reads it back and deletes it,
    which shows that writes and reads work and leaves no live memory (its deleted version
-   shows under Recently deleted). A rerun after that check passed, or an upgrade, skips it.
+   shows under Recently deleted). A rerun after that check passed, or an upgrade, skips
+   it.
 2. **Learns whether sign-in is on.** With sign-in on, it connects no agent and says where
    tokens come from.
 3. **Offers to connect your coding agents.** On a terminal it asks, for each one it finds:
    Claude Code and Codex through their plugins, VS Code through `code --add-mcp`.
-   `LOOM_CONNECT` answers instead, for a run without a terminal too, and only the clients it names are looked at: a comma list of
-   `claude-code`, `codex` and `vscode`, `all`, or `none` alone; any other value stops the
-   install. Without a terminal and without `LOOM_CONNECT`, no agent is looked at or
-   changed. A plugin or MCP server set up before (by the plugin, `claude mcp add`,
-   `codex mcp add` or `loom install`) is left as it is; for Claude Code the installer
-   prints the command that points it at this install. Both plugins run on Node.js 18 or
-   later, which their launcher also finds through nvm and the like; when `node` on PATH is
-   missing or older, the installer prints the `claude mcp add` or `codex mcp add` line
-   for the MCP server alone. Codex's plugin always uses `http://localhost:7777`, so for an
-   install elsewhere it gets a link to its setup page instead. VS Code is not offered in a
-   remote session or WSL. A client `LOOM_CONNECT` names that is not on PATH is named.
+   `LOOM_CONNECT` answers instead, for a run without a terminal too, and only the clients
+   it names are looked at: a comma list of `claude-code`, `codex` and `vscode`, `all`, or
+   `none` alone; any other value stops the install. Without a terminal and without
+   `LOOM_CONNECT`, no agent is looked at or changed. A plugin or MCP server set up before
+   (by the plugin, `claude mcp add`, `codex mcp add` or `loom install`) is left as it is;
+   for a Claude Code plugin the installer prints the command that points it at this
+   install. Both plugins run on Node.js 18 or later, which their launcher also finds
+   through nvm and the like; when `node` on PATH is missing or older, the installer prints
+   the `claude mcp add` or `codex mcp add` line for the MCP server alone. Codex's plugin
+   always uses `http://localhost:7777`, so for an install elsewhere it gets a link to its
+   setup page instead. VS Code is not offered in a remote session or WSL. A client
+   `LOOM_CONNECT` names that is not on PATH is named.
 4. **Opens the dashboard** on a desktop; `LOOM_NO_OPEN=1` skips that.
 
-Ctrl-C stops the run at any step; a clone an agent CLI started for its plugin may still finish in the background.
+Ctrl-C stops the run at any step; a clone an agent CLI started for its plugin may still
+finish in the background.
 
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
 self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its

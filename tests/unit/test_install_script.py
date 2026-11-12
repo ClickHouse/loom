@@ -942,6 +942,7 @@ def _start_stubs(
     set_saves: bool = True,
     delete_status: int = 200,
     set_status: int | None = None,
+    misses: int = 0,
 ) -> tuple[Path, Path]:
     """Stubs for a started install: a curl whose port probe prints `connect_time` and
     exits `probe_exit`, whose /v1/health calls print `health`, and whose memory calls
@@ -954,12 +955,17 @@ def _start_stubs(
     saved.unlink(missing_ok=True)
     if found:
         saved.touch()
+    # `misses` reads after the save answer not found, as a replica that lags would.
+    lag = bin_dir / "memory.lag"
+    lag.write_text("x" * misses)
     on_set = f"touch {saved}; " if set_saves else ""
     (bin_dir / "curl").write_text(
         f'#!/bin/sh\necho "$*" >> {curl_log}\n'
         'out=; prev=\nfor a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; done\n'
         f"case \"$*\" in *v1/health*) echo '{health}'; exit 0 ;;\n"
-        f"  *v1/memory.get*) if [ -f {saved} ]; then echo '{{\"found\":true}}'; "
+        f"  *v1/memory.get*) if [ -f {saved} ] && [ -s {saved} -o ! -s {lag} ]; then "
+        f"echo '{{\"found\":true}}'; elif [ -f {saved} ]; then "
+        f'l=$(cat {lag}); printf %s "${{l#x}}" > {lag}; echo \'{{"found":false}}\'; '
         f'else echo \'{{"found":false}}\'; fi > "$out"; printf {memory_status}; exit 0 ;;\n'
         f"  *v1/memory.set*) {on_set}echo '{{}}' > \"$out\"; "
         f"printf {set_status if set_status is not None else memory_status}; exit 0 ;;\n"
@@ -1716,3 +1722,16 @@ def test_xdg_config_home_holds_the_vscode_mcp_json(
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", XDG_CONFIG_HOME=str(tmp_path / "xdg"))
     assert result.returncode == 0, result.stderr
     assert code.read_text() == ""
+
+
+def test_a_read_a_lagging_replica_misses_is_tried_again(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, target = install
+    curl_log, _ = _start_stubs(installer_env, misses=2)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "Saved, read back and deleted a test memory" in result.stdout
+    assert not (target / ".memory-check-pending").exists()
+    gets = [c for c in curl_log.read_text().splitlines() if "memory.get" in c]
+    assert len(gets) == 4  # the sign-in read, then two misses and a hit

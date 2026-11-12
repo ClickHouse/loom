@@ -658,7 +658,7 @@ main() {
         printf 'Claude Code: the Loom plugin is installed already; `claude mcp list` shows the server it uses, and `claude plugin install loom@loom --config server_url=%s` points it here\n' "$server_url"
         kept=1
       elif grep -q '"loom"[[:space:]]*:' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" 2>/dev/null; then
-        printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s); the plugin would list its tools twice there, so it is left to you: claude plugin install loom@loom --config server_url=%s\n' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" "$server_url"
+        printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s), and is left as it is; to use the plugin instead: claude mcp remove loom, then claude plugin install loom@loom --config server_url=%s\n' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" "$server_url"
         kept=1
       elif wants claude-code "Claude Code"; then
         # A marketplace added before is no error: the install below says what fails.
