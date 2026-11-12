@@ -24,7 +24,7 @@ A definition is a memory row with `memory_type = 'definition'` under the key
 `definition/<slug>`, where the slug is the case-folded term with runs of characters other
 than letters and digits replaced by `-`, followed by a short hash of the case-folded term,
 so `C++` and `C#` get two keys. Its value is a JSON object, which `memory.set` stores whole
-in `value` and in `value_json`, so the embedding covers all of it:
+in `value` and in `value_json` (the embedding reads its excerpt, as for any row):
 
 | Field      | Meaning                                                             |
 | ---------- | ------------------------------------------------------------------- |
@@ -39,12 +39,24 @@ A definition is **governed** while its live row in the shared layer exists: a
 namespace-wide row (`user_id`, `agent` and `session_id` all `'-'`). The shared layer
 already is the namespace's admin-approved copy of a fact
 ([the shared layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
-`memory.promote` and `memory.demote` need `admin`, the shared row records who promoted it
-and from which candidate (`promoted_by`, `promoted_from_candidate_id`), `memory.lineage`
-walks it back, and erasure and every build already know it. So governance needs no table
-or state of its own. Edits to the private row do not change the shared copy: a revised
-definition is governed again only when an admin promotes it again, and `memory.demote`
-ends governance.
+`memory.promote` and `memory.demote` need `admin`, the shared row records the candidate it
+came from (`promoted_from_candidate_id`), `memory.lineage` walks it back, and every build
+knows it. So governance needs no table or state of its own. Edits to the private row do
+not change the shared copy: the governed text changes only when an admin promotes the
+revision, and `memory.demote` ends governance.
+
+The shared layer needs four changes for this, each in the pull request that adds the term
+leg, because the term leg serves shared rows to every reader:
+
+- **Namespace erasure** gains a step and a census row for `loom.shared`. Today only user
+  erasure reaches it, by provenance, and a definition promoted from the namespace-wide row
+  names no user.
+- **A redact** of a definition reaches its shared row and that row's embedding, which a
+  redact of the source does not reach today.
+- **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
+  `memory.promote` or `learnings.review`, never taken from the body's `approver`.
+- **`check_against_shared`**, the promotion's conflict check, skips `KEY_IDENTIFIED_TYPES`,
+  so promoting `MRR` is not refused as a conflict with `ARR`.
 
 No two governed definitions share a term or an alias, compared case-folded as the key is
 built, so `SAT` and `Sat` are one name: promoting a definition whose term or alias is
@@ -86,8 +98,9 @@ for governed definitions through this leg only. The leg runs only on a search's 
 page, and is off when a field asks for other rows (`memory_type`, which cannot name
 `definition`, `tags`, `category`, an explicit `agent`, `run_id` or `session_ids`,
 `as_of`). A `user_id` or `session_id` the read scope pins, `scope`, `exclude_keys` and
-`min_similarity` keep it on; it drops any key in `exclude_keys`. It never serves a
-`sensitivity = 'high'` row, as no other leg does. Its read is bounded by a setting; past
+`min_similarity` keep it on; it drops any key in `exclude_keys`. No `sensitivity = 'high'`
+row is in the shared layer, since `memory.promote` refuses one; a definition relabelled
+`high` after its promotion is demoted. Its read is bounded by a setting; past
 the bound, the most recently promoted definitions are read and the response says the leg
 was cut. It runs beside the others under the same time budget, and its latency is measured
 against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
@@ -182,7 +195,7 @@ user's, or the namespace's) was unfinished when the pass read or has finished si
 [erasure saga](memory-architecture.md#erasure-saga) fences other writers); an erasure that
 begins after that check deletes the gaps itself. A failed erasure keeps that fence until
 it completes: `knowledge.gaps.list` then says the list is held and names the erasure to
-finish.
+finish by its id, which `erasure.status` authorizes per row, never by its user.
 
 ### Ops and dashboard
 
@@ -241,11 +254,13 @@ these candidates. A rejected draft leaves nothing behind but its queue row.
 
 ## Erasure and audit
 
-- Definitions are memory and shared-layer rows and take every path those take: tombstone,
-  demote, redact, namespace erasure, history, audit. A user erasure tombstones a shared row
+- Definitions are memory and shared-layer rows and take every path those take, with the
+  shared layer's namespace erasure and redact added above: tombstone, demote, redact,
+  namespace erasure, history, audit. A user erasure tombstones a shared row
   whose provenance names the user (`shared.tombstone`); a definition promoted from the
   namespace-wide row names none, so erasing the admin who promoted it leaves it governed.
-- A redact of a definition reaches its memory and shared rows, not the text of the draft
+- A redact of a definition reaches its memory and shared rows (the change above), not the
+  text of the draft
   it was promoted from (in `loom.learnings_queue`) or of the gap it came from: those are
   threshold-protected and leave with their namespace or, for gaps, their 14-day expiry.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
@@ -257,8 +272,9 @@ these candidates. A rejected draft leaves nothing behind but its queue row.
   deleted first; the cost is a day without gaps), each with a census row.
 - A query-history registration holds a host and a sealed credential: a namespace step and
   a census row.
-- `learnings.review` and `memory.promote` write the audit rows of each promotion, and
-  `knowledge.gaps.draft` writes one naming the gap.
+- A direct `memory.promote` writes its audit row; a promotion through `learnings.review`
+  writes the review's row, which names the candidate, and the implementing pull request
+  adds the promotion's own row there. `knowledge.gaps.draft` writes one naming the gap.
 
 ## Cost bounds
 
@@ -285,7 +301,9 @@ gaps pass and the query-history turn write nothing then, and no miss is recorded
 operator turns `knowledge_gaps_enabled` on only once no N-1 replica serves, as rule 23 does
 for assistant-turn learnings. Governed definitions are memory and shared rows, which N-1
 knows: it serves them as plain rows with no term leg, and an admin's `memory.promote` of a
-definition on N-1 skips the term check, which the term leg's last-promoted rule covers.
+definition on N-1 skips the term check, which the term leg's last-promoted rule covers. A
+namespace erasure N-1 runs leaves the namespace's shared rows, definitions included, as it
+does today; one run during the rollout or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
