@@ -26,13 +26,13 @@ Every row carries five identity columns:
 (org, namespace, agent, user_id, session_id)
 ```
 
-| Part         | Meaning                                                                                      | Default                                      |
-| ------------ | -------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| `org`        | The tenant. Nothing crosses an org boundary except through a wildcard operator token.        | (required; single-user mode fills it, below) |
-| `namespace`  | The unit of isolation and sharing inside an org. Every read is scoped to `(org, namespace)`. | (required; single-user mode fills it, below) |
-| `agent`      | Who wrote the row (`support-bot`, `claude-code`). Authorship, not a read boundary.           | (required; single-user mode fills it, below) |
-| `user_id`    | The end user the row is about.                                                               | `-`                                          |
-| `session_id` | One conversation or run of a conversation.                                                   | `-`                                          |
+| Part         | Meaning                                                                                      | Default                                                                                               |
+| ------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `org`        | The tenant. Nothing crosses an org boundary except through a wildcard operator token.        | (required; single-user mode fills it, below)                                                          |
+| `namespace`  | The unit of isolation and sharing inside an org. Every read is scoped to `(org, namespace)`. | (required; single-user mode fills it, below)                                                          |
+| `agent`      | Who wrote the row (`support-bot`, `claude-code`). Authorship, not a read boundary.           | (required; single-user HTTP fills it on some ops, [HTTP reference](../reference/http-api.md#request)) |
+| `user_id`    | The end user the row is about.                                                               | `-`                                                                                                   |
+| `session_id` | One conversation or run of a conversation.                                                   | `-`                                                                                                   |
 
 Many operations also take `run_id` (default `-`) to scope a write or read to one task
 execution. The token fixes the org and the namespaces a caller may reach; the rest of the

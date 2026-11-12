@@ -99,14 +99,14 @@ Agent(org="", namespace="", agent=None, *, base_url=None, api_key=None, timeout_
 server fills the install's for a call with no token, on every op but `code.*` and
 `tracker.*` (which keep their plane's). `namespace` may be left empty only for a
 single-user server and a call with no token, on the everyday memory and search ops ([which
-ops](http-api.md#request)). An empty `namespace` is left out of the body, so any other
-server, or any other op that requires one, answers `VALIDATION_FAILED` naming it rather
-than reading `""` as a namespace. The SDK sends any credential it finds
-([Credentials](#credentials)): `api_key=`, `LOOM_API_KEY`, a bot's `LOOM_CLIENT_ID`, a
-`loom login` session for that server, or `~/.loom/token`; a call with one gets no
-namespace filled in. `auto_run`, `run_scope()` and `session()` need the namespace named
-(their `run.begin`, `context.pack` and `conversation.append` are not on the list; an
-ambient run that cannot begin is skipped), and so do `knowledge.upload` and
+ops](http-api.md#request)). An empty `namespace` is left out of the body: any other
+server, or any other op, that requires one answers `VALIDATION_FAILED` naming it rather
+than reading `""` as a namespace, and an op where it is optional runs without it. The SDK
+sends any credential it finds ([Credentials](#credentials)): `api_key=`, `LOOM_API_KEY`, a
+bot's `LOOM_CLIENT_ID`, a `loom login` session for that server, or `~/.loom/token`; a call
+with one gets no namespace filled in. `auto_run`, `run_scope()` and `session()` need the
+namespace named (their `run.begin`, `context.pack` and `conversation.append` are not on
+the list; an ambient run that cannot begin is skipped), and so do `knowledge.upload` and
 `knowledge.download`, which the SDK refuses without both. An `agent` not given is
 `sdk-python:<script>`.
 
