@@ -243,13 +243,22 @@ checkout.
     ```
 
     Demote each listed row that is still live (`live = 1`) with `memory.demote`, whatever
-    `purged` says. A demotion keeps the row's text, so then, for a namespace whose erasure
-    purged (`purged = 1`) and that nobody has written to since (for example one that
-    `collection.delete` or the namespace sweep removed), request a one-name `namespace_list`
-    erasure with `{"namespaces": ["<namespace>"], "purge": true}`, which deletes the rows,
-    demoted ones included (a `namespace` scope never purges). A namespace erasure requested
-    before the ledger's 90 days is not listed, and the promoted rows it left cannot be told
-    apart from a live namespace's; they stay as the older build left them.
+    `purged` says, with an org-admin token. A demotion keeps the row's text, so then, for a
+    namespace whose erasure purged (`purged = 1`): if nobody has written to it since (for
+    example one that `collection.delete` or the namespace sweep removed), request a one-name
+    `namespace_list` erasure with `{"namespaces": ["<namespace>"], "purge": true}`, which
+    deletes its promoted rows, demoted ones included (a `namespace` scope never purges);
+    if it is in use again, delete the listed keys alone, so nothing else in the namespace
+    goes:
+
+    ```sql
+    ALTER TABLE loom.shared DELETE
+    WHERE org = '<org>' AND namespace = '<namespace>' AND memory_key IN ('<key>', ...)
+    ```
+
+    A namespace erasure requested before the ledger's 90 days is not listed, and the
+    promoted rows it left cannot be told apart from a live namespace's; they stay as the
+    older build left them.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in

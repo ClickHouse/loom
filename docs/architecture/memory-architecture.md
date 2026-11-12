@@ -1327,7 +1327,7 @@ treat those summaries as the user's rows, and the census counts them the same wa
 A `src:` tag names a key, not its writer: where two users of a namespace hold the same
 key, erasing one also takes a summary built from the other's row, with its history,
 chunks, entity vectors and graph links, the graph rows only those links held, and the
-org-wide copies promoted from it, which nothing promotes again. A copy of a summary
+namespace-wide copies promoted from it, which nothing promotes again. A copy of a summary
 rebuilt without the user goes too, as its history still names the user: a copy does not
 record which version it took. The erasure takes every summary that may quote the user;
 the summary's current row is only tombstoned outside a purge, and consolidation rebuilds
