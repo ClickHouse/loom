@@ -78,7 +78,9 @@ admin brings it back by the way it lapsed:
 - retired within the last 30 days: Undo in `memory.auto_retirements`;
 - retired earlier: `memory.restore`;
 - marked `conflicted`: `conflicts.resolve`;
-- marked `duplicate`: `memory.dedup_resolve`.
+- marked `duplicate`: `memory.dedup_resolve`;
+- anonymized by the sensitive-retention window: written again and promoted, since its text
+  is gone.
 
 It is governed again when its text is the approved one, and is promoted again otherwise.
 
@@ -161,10 +163,11 @@ refusal](../features/memory/conflicts-and-refusal.md) applies to every other typ
 the conflict resolver ([conflicts and
 refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither flags
 nor retires it, and `memory.consolidate` leaves rows of type `definition` out of its
-clusters (today it groups every active, unpinned and unlocked row of one type by
-similarity and tombstones the merged keys), since a definition's key is its term and `MRR`
-is not a revision of `ARR`. Under `newest_wins`, the named-fact path, which closes an
-older single-valued fact and retires the rows behind it across keys and types
+clusters (today it clusters one identity's live, unpinned, unlocked rows of one type that
+are not `high`, which reaches a namespace-wide row when called under agent and user `'-'`,
+by similarity and tombstones the merged keys), since a definition's key is its term and
+`MRR` is not a revision of `ARR`. Under `newest_wins`, the named-fact path, which closes
+an older single-valued fact and retires the rows behind it across keys and types
 (`newest_wins_contradiction`), never retires a definition's namespace-wide row either. And
 a write of a `definition/` key by another identity (a user's own copy) does not retire the
 namespace-wide row of that key, as same-key supersession does today for every unpinned row
@@ -478,24 +481,24 @@ passes stop (the TTL only frees the disk).
 
 **The pass's erasure fence.** A pass whose read raced an erasure's delete could write
 erased rows back. So after writing its gaps, and before the marker, the worker reads
-`ledger_reads.unfinished_reaching`, as the [erasure saga](memory-architecture.md#erasure-saga)
-fences other writers. When an erasure that reaches a miss it read (matched as for a
-recording) was unfinished when the pass read or has finished since, it deletes the gaps and
-writes no marker; the list then serves the previous build, or none once the erasure
-deleted it. An erasure that begins after that check deletes the gaps itself. A failed
-erasure holds this fence, as it holds every writer's, until it is run again and
-completes. An admin who sees a namespace's gaps go when a user's erasure deletes its
-builds learns that the user asked there in the last 7 days; the threshold does not hide
-that.
+`ledger_reads.unfinished_reaching`, as the [erasure
+saga](memory-architecture.md#erasure-saga) fences other writers. When an erasure that
+reaches a miss it read (matched as for a recording) was unfinished when the pass read or
+has finished since, it deletes the gaps and writes no marker; the list then serves the
+previous build, or none once the erasure deleted it. An erasure that begins after that
+check deletes the gaps itself. A failed erasure holds this fence, as it holds every
+writer's, until it is run again and completes. An admin who sees a namespace's gaps go
+when a user's erasure deletes its builds learns that the user asked there in the last 7
+days; the threshold does not hide that.
 
 ### Ops and dashboard
 
-| Op                                                | Role  | What it does                                                                                                                                                                                                                                                                  |
-| ------------------------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`                             | admin | The namespace's gaps, most askers first.                                                                                                                                                                                                                                      |
-| `knowledge.gaps.draft`                            | admin | Drafts a definition for one gap with the LLM from its queries alone, with `owner` left empty (an admin sets it by editing the namespace-wide row after promotion and promoting it again with `memory.promote` and its hash), and queues it (`source_kind = 'knowledge_gap'`). |
-| `memory.definitions.list`                         | admin | The namespace's shared definitions, each with the read-time check's verdict and the reason a lapsed one lapsed.                                                                                                                                                               |
-| `knowledge.query_history.add`, `.list`, `.remove` | admin | Register, list and remove a query-history source on the namespace.                                                                                                                                                                                                            |
+| Op                                                | Role  | What it does                                                                                                                                                                                         |
+| ------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`                             | admin | The namespace's gaps, most askers first.                                                                                                                                                             |
+| `knowledge.gaps.draft`                            | admin | Drafts a definition for one gap with the LLM from its queries alone, with `owner` left empty (the reviewing admin sets it with `learnings.review`), and queues it (`source_kind = 'knowledge_gap'`). |
+| `memory.definitions.list`                         | admin | The namespace's shared definitions, each with the read-time check's verdict and the reason a lapsed one lapsed.                                                                                      |
+| `knowledge.query_history.add`, `.list`, `.remove` | admin | Register, list and remove a query-history source on the namespace.                                                                                                                                   |
 
 The `knowledge.gaps.` ops list what users asked and the `knowledge.query_history.` ops
 manage a source, not documents, so none honours a read-narrowed token: the check that
@@ -564,11 +567,16 @@ set `memory.promote` refuses on) and the draft for a credential-shaped value
 (`value_reads_high`), and the rollout gate, so a promotion these refuse writes nothing.
 Then it writes the definition through `memory.set` for the whole namespace (today's seeder
 path writes under the approver's `user_id`; the implementing pull request writes the
-namespace-wide row), declaring `source_class = derived`, the downgrade a caller may
-declare (an LLM drafted it; the admin's promotion is the approval, not its authorship), so
-the blacklist and the pinned-key check run as for any write, and promotes that row into
-the shared layer through `memory.promote`, with the reviewer's server-stamped actor as
-`promoted_by` and the candidate's id ([learnings review
+namespace-wide row), with the `owner` the reviewer gives (`learnings.review` takes one for
+these candidates, so no promotion after review is needed to set it) and no type retention:
+a definition stays until an admin demotes it. The sensitive-retention window still applies
+to a `medium` value, such as an owner written as an email, and a definition it anonymizes
+lapses as expired and is written again; an owner named as a team avoids that. The write
+declares `source_class = derived`, the downgrade a caller may declare (an LLM drafted it;
+the admin's promotion is the approval, not its authorship), so the blacklist and the
+pinned-key check run as for any write. Then the review promotes that row into the shared
+layer through `memory.promote`, with the reviewer's server-stamped actor as `promoted_by`
+and the candidate's id ([learnings review
 queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). The admin
 promoting a definition is the person standing behind it. A draft for a term already
 governed revises that definition: the promotion replaces its shared row. A definition
@@ -581,7 +589,7 @@ its text is promoted; for a revision, the old definition lapses meanwhile and th
 read lists it.
 
 Every attempt, the first and each retry, decides from the head it reads and keeps no state
-of its own:
+of its own, checking these in order, the first that matches deciding:
 
 - a head that is live and `active` and whose text hashes to the draft's is promoted
   without a write;
@@ -593,7 +601,7 @@ of its own:
 - a pinned head refuses the review, as a pinned key refuses a changed value; the admin
   unpins it with `memory.unpin` and reviews again;
 - a demoted term's live row refuses it, since no shared copy is governed; the admin edits
-  that row to the draft's text and promotes it with `memory.promote` and its hash instead;
+  that row to the draft's text and reviews again, which the first case then promotes;
 - any other head is a writer's edit, or a head the read-time check would not serve
   (`conflicted`, `duplicate`, expired), and the review is refused rather than overwrite or
   promote it.
