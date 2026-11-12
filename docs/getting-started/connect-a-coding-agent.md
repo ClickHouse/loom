@@ -19,7 +19,9 @@ Loom with your coding agent](agent-setup.md)).
 - **The server URL**, for example `https://loom.example.com`, or `http://localhost:7777`
   for a stack started with `loom up`.
 - **A writer token for your namespace**, except against a single-user server on the same
-  machine: there the plugins connect without one. Create one in the dashboard at
+  machine: there the plugins and Cursor's
+  [install link](../features/integrations/cursor.md#mcp-tools) connect without one.
+  Create one in the dashboard at
   `<server>/settings` → **Tokens**, or ask an operator to run
   `loom mint-token --subject you --org <org> --namespaces <namespace> --roles writer`.
   On a server with self-signup open, the Claude Code plugin can sign the machine up by
