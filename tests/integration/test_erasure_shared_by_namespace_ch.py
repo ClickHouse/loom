@@ -1,6 +1,6 @@
-"""A namespace erasure reaches the namespace's promoted rows on a real ClickHouse: a row
-promoted from the namespace-wide row names no user, so only the namespace step and its
-census row see it, and a row of another namespace stays. A purge deletes them, demoted
+"""A namespace erasure reaches every promoted row of the namespace on a real ClickHouse,
+one promoted from a user's memory or from the namespace-wide row, through the namespace
+step and its census row; a row of another namespace stays. A purge deletes them, demoted
 ones included."""
 
 from __future__ import annotations
@@ -55,11 +55,13 @@ async def _count_all(org: str, namespace: str) -> int:
 
 async def test_a_namespace_erasure_tombstones_the_namespaces_shared_rows() -> None:
     org = unique_org("erase-shared-ns")
-    await get_client().insert("loom.shared", [_shared(org, "team"), _shared(org, "other")])
+    # One copy of a user's memory, one of the namespace-wide row.
+    users = _shared(org, "team", "decision/a", promoted_from=[f"{org}/team/a/u1/s/decision/a"])
+    await get_client().insert("loom.shared", [users, _shared(org, "team"), _shared(org, "other")])
     before = await census.table_residue(org, "namespace", "team")
-    assert before["loom.shared"] == 1
+    assert before["loom.shared"] == 2
 
-    assert await steps_memory.tombstone_shared_by_namespace(org, "team") == 1
+    assert await steps_memory.tombstone_shared_by_namespace(org, "team") == 2
     after = await census.table_residue(org, "namespace", "team")
     assert after["loom.shared"] == 0
     other = await census.table_residue(org, "namespace", "other")

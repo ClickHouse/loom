@@ -117,7 +117,9 @@ def test_step_only_tables_are_not_census_tables() -> None:
         if step in ("consolidated.tombstone", "shared_embeddings.tombstone"):
             continue  # second passes over loom.memory / memory_embeddings under another identity
         if step == "shared.tombstone":
-            continue  # counted in the namespace scope; the user step matches by provenance
+            # Counted in the namespace scope; the user step matches by provenance.
+            assert set(tables) & census == {"loom.shared"}
+            continue
         assert not (set(tables) & census), (step, set(tables) & census)
 
 

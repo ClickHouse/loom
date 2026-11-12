@@ -255,7 +255,11 @@ checkout.
     ALTER TABLE loom.shared DELETE
     WHERE org = '<org>' AND namespace = '<namespace>' AND memory_key IN ('<key>', ...)
       AND promoted_at <= '<erased_at>'
+    SETTINGS mutations_sync = 2
     ```
+
+    The setting waits for the delete on every replica, so a second run of the listing shows
+    what is left.
 
     A namespace erasure requested before the ledger's 90 days is not listed, and the
     promoted rows it left cannot be told apart from a live namespace's; they stay as the
