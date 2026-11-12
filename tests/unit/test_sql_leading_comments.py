@@ -1,5 +1,5 @@
 """The three readers of a statement's first keyword skip leading `--` and
-`/* */` comments in time linear in the text: `looks_like_sql` reads string
+`/* */` comments in time linear in the text: `looks_like_sql` reads template
 literals from indexed repositories. A comment body that may hold `*/` makes a
 failed match backtrack exponentially in the number of `*/` runs."""
 
