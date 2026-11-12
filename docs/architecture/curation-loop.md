@@ -64,7 +64,7 @@ A changed text is promoted again; a source that is no longer `active` is first r
 later write of the same key under `newest_wins`) or cleared (`conflicts.resolve` for a
 `conflicted` or `duplicate` mark), then promoted again.
 
-The shared layer needs seven changes for this, each in the pull request that adds the term
+The shared layer needs eight changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
 
 - **Namespace erasure** gains a step and a census row for `loom.shared`. Today only user
@@ -74,6 +74,9 @@ leg, because the term leg serves shared rows to every reader:
   redact of the source does not reach today, and blanks the text of every `knowledge_gap`
   and `query_history` candidate drafted for its key, promoted or not, which
   `learnings.list` shows to viewers.
+- **A relabel to `high`** of a promoted definition's source retires its shared row and
+  that row's embedding, as `memory.promote` refuses a `high` row: `loom.shared` has no
+  sensitivity of its own, so the ordinary legs would keep serving the copy.
 - **A promotion of a definition carries the content hash it approves**, the hash of the
   candidate's drafted value on the review path, or one the caller passes to
   `memory.promote`, and is refused when the source's text no longer has it, so a writer's
@@ -134,7 +137,7 @@ serves no namespace-wide row ([read scope inside a
 namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
 governed definitions through this leg only. The leg runs only on a search's first page
 (the governed keys it served there stay out of every later page of that search), and is
-off when a field asks for other rows (any `memory_type`, whose filter cannot name
+off when a field asks for other rows (any `memory_type`, the filter's values not including
 `definition`; `tags`; `category`; an explicit `agent`, `run_id` or `session_ids`; `as_of`;
 a body `user_id` or `session_id` under a whole-namespace read; `entity_filter`;
 `min_body_chars`). A `user_id` or `session_id` the read scope pins, `scope`,
@@ -294,10 +297,7 @@ breaker on every read ([tracker plane](../features/tracker/overview.md)). The re
 names the team that owns its definitions. Each turn:
 
 1. reads finished `SELECT` queries of the source's window, from every replica when the
-   registration names the cluster (`clusterAllReplicas`, a table function: a cluster
-   registration accepts the `REMOTE` grant it needs beside the tracker's read-only list
-   (which already allows `CREATE TEMPORARY TABLE`), and the read runs under `readonly =
-2`, as the tracker's `remoteSecure` reads do) and from the node it connects to
+   registration names the cluster (`clusterAllReplicas`) and from the node it connects to
    otherwise, grouped by `normalized_query_hash`, counting initial queries only
    (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and then by
    recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
@@ -309,6 +309,9 @@ names the team that owns its definitions. Each turn:
    meaning the `body`, the normalised SQL and the tables and columns it reads go in
    `rests_on`, and the registration's team is the `owner`.
 
+`clusterAllReplicas` is a table function: a cluster registration accepts the `REMOTE`
+grant it needs beside the tracker's read-only list, which already allows `CREATE TEMPORARY
+TABLE`, and the read runs under `readonly = 2`, as the tracker's `remoteSecure` reads do.
 Nothing reaches search until an admin promotes a draft.
 
 ## Promotion
@@ -327,13 +330,14 @@ queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). 
 promoting a definition is the person standing behind it. A draft for a term already
 governed revises that definition: the promotion replaces its shared row. A definition
 promotes to memory only; a `destination` of `knowledge` or `both` is refused for these
-candidates. A rejected draft leaves nothing behind but its queue row. A promotion refused
-after the write (a racing edit, a racing term, or `memory.set` answering
-`PUBLICATION_PENDING`, which today's review path swallows) leaves the candidate pending
-and the namespace-wide row written, which no term leg serves until its text is promoted;
-for a revision, the old definition lapses meanwhile and the admin read lists it. A retried
-review, idempotent by key, completes it; rejecting the draft instead leaves the written
-row, which the admin restores from the row's history or promotes.
+candidates. A draft rejected before any promotion attempt leaves nothing behind but its
+queue row. A promotion refused after the write (a racing edit, a racing term, or
+`memory.set` answering `PUBLICATION_PENDING`, which today's review path swallows) leaves
+the candidate pending and the namespace-wide row written, which no term leg serves until
+its text is promoted; for a revision, the old definition lapses meanwhile and the admin
+read lists it. A retried review, idempotent by key, completes it; rejecting the draft
+instead leaves the written row, which the admin restores from the row's history or
+promotes.
 
 ## Erasure and audit
 
@@ -343,7 +347,8 @@ row, which the admin restores from the row's history or promotes.
   provenance names the user (`shared.tombstone`); a definition promoted from the
   namespace-wide row names none, so erasing the admin who promoted it leaves it governed,
   and an admin's name in its `owner`, like `promoted_by` on the shared row today, stays
-  until an admin edits the definition.
+  until an admin edits the definition; so does the drafting admin's name in a queued or
+  rejected draft, which leaves with its namespace.
 - A redact of a definition reaches its memory and shared rows and every `knowledge_gap`
   and `query_history` candidate drafted for its key (the change above), not the gap it
   came from, which holds only normalised queries enough askers asked and expires after 7
