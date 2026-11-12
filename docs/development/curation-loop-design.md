@@ -28,8 +28,9 @@ A definition is a memory row with `memory_type = 'definition'` under the key
 `definition/<slug>`, so `C++` and `C#` get two keys. The slug is computed in four steps:
 
 1. The term is normalised to NFKC, trimmed, every run of whitespace made one space, and
-   case-folded (`str.casefold`). This folded form is the term's name everywhere a name is
-   compared.
+   case-folded (`str.casefold`). This folded form is the term's name wherever two names
+   are compared (the key, the promotion's name check); matching against a query keeps
+   the case rule below.
 2. Every run of characters other than letters and digits becomes one `-`, and a `-` at
    either end is dropped.
 3. A `-` is appended.
@@ -229,9 +230,9 @@ refusal](../features/memory/conflicts-and-refusal.md)), for a definition's names
 row only; the pinned-peer exemption above is the one `decision` already has as a
 key-identified type. The implementing pull request updates the policy table of that page,
 the memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check and
-consolidation in [memory architecture](../architecture/memory-architecture.md) and [conflicts and
-refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the old verdicts
-during a rollout. Conflict surfacing compares a row only with rows of its own
+consolidation in [memory architecture](../architecture/memory-architecture.md) and
+[conflicts and refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the
+old verdicts during a rollout. Conflict surfacing compares a row only with rows of its own
 `memory_type`, so a learned fact that contradicts a definition is not flagged against it.
 The term leg serves the governed definition above such a fact; a cross-type check would
 add a candidate read to every write, and is not part of this design.
@@ -240,10 +241,11 @@ add a candidate read to every write, and is not part of this design.
 
 `memory.search` gains one leg, which runs wherever `memory.search` runs, inside
 `memory.ask` and `context.pack` as well. It covers memory only: knowledge has its own
-exact-key leg for identifiers a document defines (`server/knowledge/domain/exact_keys.py`),
-and a definition's `rests_on` already points at the documents behind it. `loom_search`
-serves the leg through its memory section. `governed` and `term_leg` are added output
-fields, which the SDKs and the MCP schema carry.
+exact-key leg for identifiers a document defines
+(`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already points at
+the documents behind it. `loom_search` serves the leg through its memory section.
+`governed` and `term_leg` are added output fields, which the SDKs and the MCP schema
+carry.
 
 **What it reads.** The addressed namespace's live `loom.shared` rows of type `definition`
 under a `definition/` key, from that namespace only, whatever `namespace_scope` fans out
@@ -462,9 +464,9 @@ under the request's capture level; only the threshold below decides what an admi
 query that reads or grades as `medium` or `high` (`reads_high` and the grader in
 `server/memory/domain/sensitivity.py`, as a definition's promotion grades its value)
 records no miss, so a pasted credential or an email never becomes a gap head, an
-embedding, an LLM prompt or a draft no promotion could accept. No
-memory key or document URI is kept: one naming another user's row or document would
-outlive that user's erasure, or the document's delete, in someone else's miss.
+embedding, an LLM prompt or a draft no promotion could accept. No memory key or document
+URI is kept: one naming another user's row or document would outlive that user's
+erasure, or the document's delete, in someone else's miss.
 
 **The erasure fence.** A miss is inserted after the response, so a user erasure could run
 between the search and the insert. An erasure reaches a miss when it is the namespace's
@@ -552,13 +554,13 @@ passes stop (the TTL only frees the disk).
 **The pass's erasure fence.** A pass whose read raced an erasure's delete could write
 erased rows back. So after writing its gaps, and before the marker, the worker reads
 `ledger_reads.unfinished_reaching`, as the [erasure
-saga](../architecture/memory-architecture.md#erasure-saga) fences other writers. When an erasure that
-reaches a miss it read (matched as for a recording) was unfinished when the pass read or
-has finished since, it deletes the gaps and writes no marker; the list then serves the
-previous build, or none once the erasure deleted it. An erasure that begins after that
-check deletes the gaps itself. A failed erasure holds this fence, as it holds every
-writer's, until it is run again and completes. An admin who sees a namespace's gaps go
-when a user's erasure deletes its builds learns that the user asked there in the last 7
+saga](../architecture/memory-architecture.md#erasure-saga) fences other writers. When an
+erasure that reaches a miss it read (matched as for a recording) was unfinished when the
+pass read or has finished since, it deletes the gaps and writes no marker; the list then
+serves the previous build, or none once the erasure deleted it. An erasure that begins
+after that check deletes the gaps itself. A failed erasure holds this fence, as it holds
+every writer's, until it is run again and completes. An admin who sees a namespace's gaps
+go when a user's erasure deletes its builds learns that the user asked there in the last 7
 days; the threshold does not hide that.
 
 ### Ops and dashboard
@@ -623,9 +625,9 @@ cluster drafts only from its team's own tables. Each turn:
    LLM or the draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition for at most
-   `knowledge_query_history_max_drafts` groups, and queues each (`source_kind =
-'query_history'`): the metric's name is the `term`, its meaning the `body`, and the
-   normalised SQL and the tables and columns it reads go in `rests_on`.
+   `knowledge_query_history_max_drafts` groups, and queues each
+   (`source_kind = 'query_history'`): the metric's name is the `term`, its meaning the
+   `body`, and the normalised SQL and the tables and columns it reads go in `rests_on`.
 
 `clusterAllReplicas` is a table function: a cluster registration accepts the `REMOTE`
 grant it needs beside the tracker's read-only list, which already allows `CREATE TEMPORARY
@@ -830,14 +832,13 @@ know `loom.search_misses`, `loom.knowledge_gaps` or the query-history registrati
 none of them may hold rows while an N-1 replica serves. Every op the design adds that
 writes or reads a new table (`knowledge.gaps.*`, `knowledge.query_history.*`) and a
 `learnings.review` promotion of a `knowledge_gap` or `query_history` candidate answer 503
-while any live replica's schema is below N, and also when no heartbeat in
-`loom.instances` can be read, as `namespace.guide_set` does (the namespace-guide rule of
-[rolling upgrades](../architecture/rolling-upgrades.md)). The gate fails closed: on an
-unreadable heartbeat, recording stores no miss, and the gaps pass and the query-history
-turn write nothing.
-`memory.definitions.list` reads only `loom.shared` and the source rows, which N-1 knows,
-so the N replicas serve it throughout and it shows the lapses N-1 causes; a call that
-lands on an N-1 replica is answered as an unknown op. The operator turns
+while any live replica's schema is below N, and also when no heartbeat in `loom.instances`
+can be read, as `namespace.guide_set` does (the namespace-guide rule of [rolling
+upgrades](../architecture/rolling-upgrades.md)). The gate fails closed: on an unreadable
+heartbeat, recording stores no miss, and the gaps pass and the query-history turn write
+nothing. `memory.definitions.list` reads only `loom.shared` and the source rows, which N-1
+knows, so the N replicas serve it throughout and it shows the lapses N-1 causes; a call
+that lands on an N-1 replica is answered as an unknown op. The operator turns
 `knowledge_gaps_enabled` on only once no N-1 replica serves, as the assistant-turn
 learnings rule does for `memory_extract_agent_learnings`. Governed definitions are memory
 and shared rows, which N-1 knows: it serves them as plain rows with no term leg. The
