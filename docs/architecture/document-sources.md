@@ -375,22 +375,36 @@ Four tables under the mirror say who may read, each written as new versions with
   the crawl's directory read listed, and `read_at`. A group is stored once, not on every
   file shared with it.
 
-A stopped source's rows go on one trigger, whichever path stopped it (an N-1 `remove`
-included): an open row of `loom.knowledge_source_cleanups`. The sync writes `deleted`
-its readers, listing and group-members rows and then drops its holds, retiring the
-documents no other source holds. So no row of a source that no longer lists can admit
-anyone, and none names an account in any form other than its pseudonym, even for a
-source that never reached a file. A document's rows are written `deleted` when the
-document is retired. Every stop N makes writes, under the source lease, a row of
-`loom.knowledge_source_cleanups` (the source's id, namespace and mirror), so a source
-added later under the same name, which replaces the stopped row in the registry, cannot
-hide it. A pass cleans at most 100 open cleanup rows, oldest first: the source's holds
-wherever they live (the namespace or its mirror) and its rows, then marks the cleanup
-done. It also opens one for every `source_id` that a namespace's holds or its mirror's
-tables carry and no current registry row does: one anti-join against
-`loom.knowledge_sources FINAL`, which finds a source N-1 stopped and wrote no cleanup
-row for, even when an N-1 `add` has since reused its name. A source whose registry row a
-purge deleted went with its namespace's erasure, mirror included.
+A stopped source's rows go on one trigger, whichever path stopped it: an open row of
+`loom.knowledge_source_cleanups`, written by every stop N makes and by the anti-join
+below. Every stop writes it under the source lease, with the source's id, namespace and
+mirror, and `retire_documents`: true for a mirrored source, and the `remove`'s
+`delete_documents` for a `namespace` source (`false` by default). Because the row is
+keyed by the source's id, a source added later under the same name, which replaces the
+stopped row in the registry, cannot hide it.
+
+A pass cleans at most 100 open cleanup rows, oldest first. For each it writes `deleted`
+the source's readers, listing and group-members rows, then drops its holds wherever they
+live (the namespace or its mirror). With `retire_documents`, a document left with no
+hold is retired; without it, such a document stays as a kept document, as `remove`
+without `delete_documents` keeps one today. It then marks the cleanup done. So no row of
+a stopped source can admit anyone, and none names an account in any form other than its
+pseudonym, even for a source that never reached a file. A document's rows are written
+`deleted` when the document is retired.
+
+The anti-join finds what no stop of N recorded: a source N-1 stopped (its row inactive,
+with its `source_id`), and one whose name an N-1 `add` has since reused (its row gone
+from the registry under `FINAL`). It reads, with `FINAL` and live rows only (`held`, not
+`deleted`), the distinct `source_id`s of the holds, listing and group-members tables,
+under `sequential_reads()`, and opens a cleanup for each one no active registry row
+carries, at most 100 a pass; a readers row with no live listing row of its source admits
+nobody under rule 3 and goes with its source's cleanup. Before it cleans, the pass reads
+again under the source lease that no active registry row carries that `source_id`, and
+skips it if one does, so a replica's lag never retires a live source. A cleanup it opens
+for a `namespace` source keeps its documents (no `remove` asked otherwise); one in a
+mirror retires them. The implementing pull request measures the anti-join's cost per
+pass. A source whose registry row a purge deleted went with its namespace's erasure,
+mirror included.
 
 A person a crawl no longer reads (gone from a group it expands, taken out of `subjects`,
 or excluded) is treated the same way, on positive evidence only, as today's sync retires
@@ -600,7 +614,7 @@ ClickHouse, additive migrations:
 | `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `deleted`, `version`; `namespace` is the mirror; `account` is the UUIDv5 pseudonym of `<kind>:<account id>` or of the lower-cased email                                                                     |
 | `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `started_at`, `deleted`, `version`; `account` is the pseudonym, or `shared:<source id>`; the start of the account's last complete listing; `namespace` is the mirror                                        |
 | `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`               | `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                                       |
-| `loom.knowledge_source_cleanups`   | `(org, namespace, source_id)`                      | `mirror`, `done`, `version`; a stopped source whose holds and rows wait to be cleaned                                                                                                                       |
+| `loom.knowledge_source_cleanups`   | `(org, namespace, source_id)`                      | `mirror`, `retire_documents`, `done`, `version`; a stopped source whose holds and rows wait to be cleaned                                                                                                   |
 | `loom.connected_accounts`          | `(org, subject, kind)`                             | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                           |
 
 A source N-1 can operate on (`shared`, `access: namespace`, with items today's config
