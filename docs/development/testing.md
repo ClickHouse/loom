@@ -195,10 +195,10 @@ between files.
 `.github/workflows/ci.yml` runs on every pull request into `main` or a `release/X.Y` line
 and on pushes to either, with Python 3.12 (`sdk-python-package` adds other versions) and
 Node 22. A newer push to a pull request cancels that pull request's running workflow; every
-push to `main` or a line runs to completion in its own concurrency group, so a failure on
-one merge commit is never hidden by the next. Every action is pinned to a full commit SHA (its version in a
-comment), and the workflow grants its jobs read-only repository access
-(`permissions: contents: read`).
+push to `main` or a release line runs to completion in its own concurrency group, so a
+failure on one merge commit is never hidden by the next. Every action is pinned to a full
+commit SHA (its version in a comment), and the workflow grants its jobs read-only
+repository access (`permissions: contents: read`).
 
 | Job                    | Runs                                                                                                                                                                                                                                                                                                                          |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -216,7 +216,7 @@ comment), and the workflow grants its jobs read-only repository access
 | `frontend-e2e`         | Playwright, in parts on separate runners                                                                                                                                                                                                                                                                                      |
 | `integration`          | parts, each with its own ClickHouse, migrations, reference extractor and booted server (fake providers, workers off): the numbered parts split `pytest tests/integration` (`LOOM_TEST_SHARD`), the isolation gates part the provider staging tests, the auth-on gates and `pytest tests/analyzer`                             |
 | `integration-postgres` | the memory, knowledge, isolation, idempotency, erasure and restored-id suites and the auth-on gates against a server with `LOOM_STORAGE_AUTHORITY=postgres`, on Postgres 16 and 18 with a synchronous standby ([Postgres](../operations/postgres.md))                                                                         |
-| `mixed-version`        | `scripts/gates/mixed_version.py`: builds N-1 and N side by side on one ClickHouse, N-1 being `origin/main` on a pull request and the previous commit (`HEAD~1`) on `main`                                                                                                                                                     |
+| `mixed-version`        | `scripts/gates/mixed_version.py`: builds N-1 and N side by side on one ClickHouse, N-1 being the branch a pull request targets (`origin/main` or `origin/release/X.Y`) and the previous commit (`HEAD~1`) on a push                                                                                                           |
 | `sdk-typescript`       | `sdk_ts_gen.py --check`, `npm run check` (lint, types, version, README examples, tests), `npm run check:dist`                                                                                                                                                                                                                 |
 | `sdk-python-package`   | builds the SDK wheel with uv, installs it into a clean venv and runs `scripts/gates/sdk_wheel_smoke.py`, on Python 3.11, 3.12 and 3.14, plus 3.11 and 3.14 with every declared dependency at its lower bound                                                                                                                  |
 
@@ -228,15 +228,15 @@ plugin installed from the checkout (`tests/e2e/agent-session.mjs` under the Clau
 plugin: a local fake answers both the model API and Loom), also with `node` off the
 agent's `PATH` on the Ubuntu and macOS runners and without Git Bash on Windows.
 
-`.github/workflows/codeql.yml` runs CodeQL on pull requests into `main` or a `release/**`
+`.github/workflows/codeql.yml` runs CodeQL on pull requests into `main` or a `release/X.Y`
 line, on pushes to them, weekly and on demand: one `codeql (<language>)` check each for
 Python, JavaScript/TypeScript and the workflows. Its findings are code scanning alerts
 (the repository's Security tab), triaged by a maintainer; the checks block no merge. The
 paths it leaves out, and why, are in the workflow's header.
 
-A pull request stacked on another branch gets no checks until it is retargeted to `main`,
-and a pull request with a merge conflict gets none either: "no checks reported" after a
-push usually means one of the two.
+A pull request stacked on another branch gets no checks until it is retargeted to `main` or
+a `release/X.Y` line, and a pull request with a merge conflict gets none either: "no checks
+reported" after a push usually means one of the two.
 
 ## Related
 
