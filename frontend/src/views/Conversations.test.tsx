@@ -31,10 +31,12 @@ vi.mock("../api", async (importOriginal) => {
     listConversationMessages: (...args: unknown[]) => listConversationMessages(...args),
   };
 });
-const roleHere = vi.hoisted(() => ({ role: "admin" as "admin" | "writer" | "viewer" }));
+const roleHere = vi.hoisted(() => ({ role: "admin" as "admin" | "writer" | "viewer", loading: false }));
 vi.mock("../lib/namespaceRole", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/namespaceRole")>()),
   useNamespaceRole: () => roleHere.role,
+  useNamespaceRoleRead: () =>
+    roleHere.loading ? { role: null, loading: true, rows: null } : { role: roleHere.role, loading: false, rows: [] },
 }));
 vi.mock("../components/SessionBriefsSection", () => ({ SessionBriefsSection: () => null }));
 vi.mock("../components/SessionBriefPanel", () => ({ SessionBriefPanel: () => null }));
@@ -396,6 +398,22 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
   });
 
+  it("while the role loads, shows the Record switch locked and says the role is still loading", async () => {
+    roleHere.loading = true;
+    useStore.setState({
+      whoami: { authenticated: true, subject: "w@x", org: "dev", roles: ["WRITER"], namespaces: ["ns-a"] },
+    });
+    try {
+      await emptyWith(false);
+      const sw = await screen.findByRole("switch", { name: "Record conversations" });
+      expect(sw).toBeDisabled();
+      expect(sw).toHaveAccessibleDescription("Your role on this namespace is still loading.");
+      expect(setConversationLogging).not.toHaveBeenCalled();
+    } finally {
+      roleHere.loading = false;
+    }
+  });
+
   it("with recording off, tells whoever may not set it that an admin can, and offers no connect", async () => {
     roleHere.role = "writer";
     useStore.setState({
@@ -406,7 +424,12 @@ describe("Conversations: answers follow the current thread and namespace", () =>
       expect(
         await screen.findByText(/It is off here; an admin of this namespace can turn it on\./),
       ).toBeInTheDocument();
-      expect(screen.queryByRole("switch", { name: "Record conversations" })).toBeNull();
+      // The switch stays in view, off-limits, and its info button says what setting it needs.
+      const sw = screen.getByRole("switch", { name: "Record conversations" });
+      expect(sw).toBeDisabled();
+      expect(sw).toHaveAccessibleDescription("Needs admin on ns-a. An admin of it can grant that.");
+      fireEvent.click(sw);
+      expect(setConversationLogging).not.toHaveBeenCalled();
       expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
     } finally {
       roleHere.role = "admin";

@@ -54,7 +54,7 @@ describe("SessionBriefsSection", () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(getBrief).toHaveBeenCalledTimes(2));
     expect(getBrief.mock.calls.map((c) => c[1]).sort()).toEqual(["auto/loom/main", "handoff/billing"]);
-    fireEvent.click(await screen.findByRole("button", { name: /handoff\/billing/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^(?!Forget).*handoff\/billing/ }));
     expect(await screen.findByText("brief handoff/billing")).toBeInTheDocument();
     expect(screen.getByText("Restore the session brief handoff/billing.")).toBeInTheDocument();
   });
@@ -89,11 +89,14 @@ describe("SessionBriefsSection", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Forget brief Billing handoff" })).toBeNull());
   });
 
-  it("offers a viewer no Forget", async () => {
+  it("shows a viewer Forget unavailable, with the role it needs", async () => {
     as("viewer");
     briefs();
     render(<SessionBriefsSection org="o" namespace="ns" />);
-    expect(await screen.findByRole("button", { name: /handoff\/billing/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Forget brief Billing handoff" })).toBeNull();
+    const forget = await screen.findByRole("button", { name: "Forget brief Billing handoff" });
+    expect(forget).toHaveAttribute("aria-disabled", "true");
+    expect(forget).toHaveAccessibleDescription("Needs writer on ns. An admin of it can grant that.");
+    fireEvent.click(forget);
+    expect(deleteBrief).not.toHaveBeenCalled();
   });
 });

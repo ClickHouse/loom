@@ -90,6 +90,7 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
           org={scope.org}
           namespace={scope.namespace}
           canEdit={canCall("namespace.guide_set", roleRead.role, whoami)}
+          editReason={callReason("namespace.guide_set", roleRead, whoami, tune.namespace)}
           initialContent={String(guideDraft.apply.args.content ?? guideDraft.proposed)}
           baseRevision={
             typeof guideDraft.apply.args.expected_revision === "number"

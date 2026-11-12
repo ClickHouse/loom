@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { render, screen, fireEvent, waitFor } from "../test/rtl";
 import { NamespaceGuideButton } from "./NamespaceGuideButton";
 import * as api from "../api";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -13,7 +13,7 @@ vi.mock("../api", async (importOriginal) => {
 });
 vi.mock("../lib/namespaceRole", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/namespaceRole")>();
-  return { ...actual, useNamespaceRole: vi.fn() };
+  return { ...actual, useNamespaceRoleRead: vi.fn() };
 });
 
 const NONE: api.NamespaceGuide = {
@@ -40,13 +40,13 @@ const guideButton = () => screen.getByRole("button", { name: "Guide" });
 beforeEach(() => {
   vi.mocked(api.getNamespaceGuide).mockReset();
   vi.mocked(api.saveNamespaceGuide).mockReset();
-  vi.mocked(useNamespaceRole).mockReturnValue("writer");
+  vi.mocked(useNamespaceRoleRead).mockReturnValue({ role: "writer", loading: false, rows: [] });
 });
 
 describe("NamespaceGuideButton", () => {
   it("is described by the guide's revision and summary, and opens it", async () => {
     vi.mocked(api.getNamespaceGuide).mockResolvedValue(GUIDE);
-    vi.mocked(useNamespaceRole).mockReturnValue("viewer");
+    vi.mocked(useNamespaceRoleRead).mockReturnValue({ role: "viewer", loading: false, rows: [] });
     render(<NamespaceGuideButton identity={identity} />);
     await waitFor(() => expect(guideButton()).toHaveAccessibleDescription("Revision 3: Per-account plans"));
     fireEvent.click(guideButton());
@@ -65,15 +65,18 @@ describe("NamespaceGuideButton", () => {
     expect(api.saveNamespaceGuide).not.toHaveBeenCalled();
   });
 
-  it("tells a reader there is none, and opens no editor", async () => {
+  it("tells a reader there is none, and shows Write unavailable, opening no editor", async () => {
     vi.mocked(api.getNamespaceGuide).mockResolvedValue(NONE);
-    vi.mocked(useNamespaceRole).mockReturnValue("viewer");
+    vi.mocked(useNamespaceRoleRead).mockReturnValue({ role: "viewer", loading: false, rows: [] });
     render(<NamespaceGuideButton identity={identity} />);
     await waitFor(() => expect(guideButton()).toHaveAccessibleDescription("No guide yet"));
     fireEvent.click(guideButton());
     expect(await screen.findByText(/No guide yet\. Agents that write here/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Guide (Markdown)")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Write the guide" })).toBeNull();
+    const write = screen.getByRole("button", { name: "Write the guide" });
+    expect(write).toHaveAccessibleDescription("Needs writer on billing. An admin of it can grant that.");
+    fireEvent.click(write);
+    expect(screen.queryByLabelText("Guide (Markdown)")).toBeNull();
   });
 
   it("stays in place, and keeps its answer, while a save's re-read runs", async () => {
@@ -129,12 +132,16 @@ describe("NamespaceGuideButton", () => {
 
   it("offers no editor while the caller's role is unknown", async () => {
     vi.mocked(api.getNamespaceGuide).mockResolvedValue(NONE);
-    vi.mocked(useNamespaceRole).mockReturnValue(null);
+    vi.mocked(useNamespaceRoleRead).mockReturnValue({ role: null, loading: false, rows: [] });
     render(<NamespaceGuideButton identity={identity} />);
     await waitFor(() => expect(guideButton()).toHaveAccessibleDescription("No guide yet"));
     fireEvent.click(guideButton());
     expect(await screen.findByText(/No guide yet\. Agents that write here/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Guide (Markdown)")).toBeNull();
+    // Before whoami is read, Write says the role is still loading, not the role it needs.
+    expect(screen.getByRole("button", { name: "Write the guide" })).toHaveAccessibleDescription(
+      "Your role on this namespace is still loading.",
+    );
   });
 
   it("keeps the outline unsaved when only whitespace was added", async () => {

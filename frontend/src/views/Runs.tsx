@@ -47,8 +47,8 @@ import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { DraftSearch } from "../components/ui/DraftSearch";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { RunGrade } from "../flows/RunGrade";
-import { canCall } from "../lib/canCall";
-import { canWrite, useNamespaceRole } from "../lib/namespaceRole";
+import { canWrite, useNamespaceRoleRead } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
 import { focusViewHeading } from "../lib/place";
 
 // The ten fields a run row reads of the twenty a run carries; the replay reads the rest
@@ -534,9 +534,11 @@ interface Shown {
 
 export function Runs() {
   const identity = useIdentity();
-  const roleHere = useNamespaceRole(identity.namespace);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const roleHere = roleRead.role;
   const whoami = useStore((s) => s.whoami);
-  const canGrade = canCall("run.grade", roleHere, whoami);
+  // Grading stays in view for a role that cannot grade, with the role it needs.
+  const gradeReason = callReason("run.grade", roleRead, whoami, identity.namespace);
   // Below Tailwind's sm breakpoint the toolbar holds the search alone; below Click UI's
   // table breakpoint the runs are list rows.
   const phone = useMedia(PHONE_QUERY);
@@ -1190,9 +1192,9 @@ export function Runs() {
               <div className="text-sm whitespace-pre-wrap">{replayed.final_response}</div>
             </Section>
           )}
-          {fetched && fetched.status !== "active" && canGrade && (
+          {fetched && fetched.status !== "active" && (
             <Section title="Did it hold up?">
-              <RunGrade key={fetched.run_id} identity={identity} run={fetched} />
+              <RunGrade key={fetched.run_id} identity={identity} run={fetched} unavailable={gradeReason} />
             </Section>
           )}
           {open && Object.keys(open.metadata || {}).length > 0 && (

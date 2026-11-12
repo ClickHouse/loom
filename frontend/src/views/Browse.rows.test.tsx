@@ -80,7 +80,10 @@ vi.mock("../api", async (importOriginal) => {
     })),
   };
 });
-vi.mock("../lib/sharedReads", () => ({ sharedMine: () => Promise.resolve(mine) }));
+const mineRead = vi.hoisted(() => ({ fails: false }));
+vi.mock("../lib/sharedReads", () => ({
+  sharedMine: () => (mineRead.fails ? Promise.reject(new Error("down")) : Promise.resolve(mine)),
+}));
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 vi.mock("../components/Toast", () => ({ toast: vi.fn() }));
 vi.mock("../flows/NamespaceSettingsDialog", () => ({
@@ -220,7 +223,7 @@ describe("Spaces: the rows", () => {
     expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("a namespace a viewer token names without a grant offers its guide to read only", async () => {
+  it("a namespace a viewer token names without a grant offers its guide to read, Write unavailable", async () => {
     // `jwt`: the namespace is the token's, and its claim (viewer) is the role.
     useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: ["viewer"] } });
     browse.push({
@@ -249,10 +252,24 @@ describe("Spaces: the rows", () => {
       const menu = await screen.findByRole("menu", { name: "Actions for tokenonly" });
       await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
       expect(await screen.findByText(/No guide yet\. Agents that write here/)).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Write the guide" })).toBeNull();
+      const write = screen.getByRole("button", { name: "Write the guide" });
+      expect(write).toHaveAttribute("aria-disabled", "true");
+      expect(write).toHaveAccessibleDescription("Needs writer on tokenonly. An admin of it can grant that.");
     } finally {
       browse.pop();
       mine.pop();
+    }
+  });
+
+  it("lists the namespaces when list_mine fails, offering no guide it could not gate", async () => {
+    mineRead.fails = true;
+    try {
+      render(<Browse />);
+      expect((await screen.findAllByText("alpha")).length).toBeGreaterThan(0);
+      // Membership unread: no row is the caller's, so none offers its guide.
+      expect(screen.queryByRole("menuitem", { name: "Guide" })).toBeNull();
+    } finally {
+      mineRead.fails = false;
     }
   });
 

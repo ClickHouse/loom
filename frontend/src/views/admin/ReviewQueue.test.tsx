@@ -42,6 +42,7 @@ vi.mock("../../api", async (importOriginal) => {
     listMemoryDuplicates: vi.fn(async () => ({ clusters: [] })),
     listDocumentDuplicates: vi.fn(async () => ({ doc_clusters: [] })),
     listMemoryAgents: vi.fn(async () => []),
+    listMine: vi.fn(async () => []),
   };
 });
 // The page's yes/no probe is shared with the sidebar and lives in api/audit.
@@ -63,11 +64,15 @@ import {
   listAutoResolved,
   listConflicts,
   listLearnings,
+  listMemoryDuplicates,
+  listDocumentDuplicates,
   listProposals,
   listUnsuperseded,
   proposeRevision,
+  removeAllowlist,
   resolveConflict,
   restoreMemory,
+  reviewLearning,
 } from "../../api";
 
 const ORG = "dev";
@@ -203,29 +208,37 @@ describe("ReviewQueue", () => {
     useStore.setState({ whoami: null, myNamespaces: null });
   });
 
-  it("shows Duplicates to an admin only, Proposals to a reader, and reads none for an unknown role", async () => {
+  it("shows Duplicates to every role, read for an admin only; Proposals to a reader; none read for an unknown role", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
     seed("ns-a");
     render(<ReviewQueue />);
     await screen.findByText("value of city", {}, WAIT);
+    expect(screen.getByRole("tab", { name: /Duplicates/ })).toBeInTheDocument();
+    // Proposals stay for an unknown role too, saying why, with nothing read.
+    await userEvent.click(screen.getByRole("tab", { name: /Proposals/ }));
+    expect(await screen.findByText("Your role on this namespace is still loading.", {}, WAIT)).toBeVisible();
     expect(listProposals).not.toHaveBeenCalled();
-    expect(screen.queryByRole("tab", { name: /Duplicates/ })).toBeNull();
     cleanup();
 
     seed("ns-a", "writer");
+    const user = userEvent.setup();
     render(<ReviewQueue />);
     // Proposals are offered to a reader and read only when the tab opens.
     expect(await screen.findByRole("tab", { name: /Proposals/ }, WAIT)).toBeInTheDocument();
     expect(listProposals).not.toHaveBeenCalled();
-    expect(screen.queryByRole("tab", { name: /Duplicates/ })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: /Duplicates/ }));
+    expect(await screen.findByText("Needs admin on ns-a. An admin of it can grant that.", {}, WAIT)).toBeVisible();
+    expect(listMemoryDuplicates).not.toHaveBeenCalled();
+    expect(listDocumentDuplicates).not.toHaveBeenCalled();
     cleanup();
 
     seed("ns-a", "admin");
     render(<ReviewQueue />);
-    expect(await screen.findByRole("tab", { name: /Duplicates/ }, WAIT)).toBeInTheDocument();
+    await user.click(await screen.findByRole("tab", { name: /Duplicates/ }, WAIT));
+    await waitFor(() => expect(listMemoryDuplicates).toHaveBeenCalled(), WAIT);
   });
 
-  it("hands the page back to Conflicts when the open Duplicates tab loses its access", async () => {
+  it("keeps the open Duplicates tab when its access goes, and says what it needs", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
     seed("ns-a", "admin");
     const user = userEvent.setup();
@@ -236,9 +249,8 @@ describe("ReviewQueue", () => {
       useStore.setState({ myNamespaces: [member("ns-a", "writer"), member("ns-b", "writer")] });
     });
     resetNamespaceRoleCache();
-    await waitFor(() => expect(screen.queryByRole("tab", { name: /Duplicates/ })).toBeNull(), WAIT);
-    // No sub-tab is left, so the page is the conflict queue alone.
-    expect(screen.getByText("value of city")).toBeVisible();
+    expect(await screen.findByText("Needs admin on ns-a. An admin of it can grant that.", {}, WAIT)).toBeVisible();
+    expect(screen.getByRole("tab", { name: /Duplicates/ })).toHaveAttribute("aria-selected", "true");
   });
 
   it("offers no suggestion on a sensitive conflict", async () => {
@@ -301,7 +313,7 @@ describe("ReviewQueue", () => {
       found: true,
       suggestions: [{ decision: "contract", rationale: "a peer is pinned" }],
     });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of city", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: "Suggest a decision" }));
@@ -336,7 +348,7 @@ describe("ReviewQueue", () => {
         finishStale = resolve;
       });
     });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/key", {}, WAIT);
 
@@ -347,7 +359,7 @@ describe("ReviewQueue", () => {
       WAIT,
     );
 
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
     await act(async () => {
       finishStale({ rows: [conflict("a/stale")], next_before_version: null });
@@ -371,11 +383,11 @@ describe("ReviewQueue", () => {
     });
     let answer: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answer = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/key", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
     await screen.findByText(/Conflict 1 of 5/, {}, WAIT);
     // A's decision is still out, but B's queue is free to decide.
@@ -397,11 +409,11 @@ describe("ReviewQueue", () => {
     vi.mocked(resolveConflict)
       .mockImplementationOnce(() => new Promise((r) => (answerA = r)))
       .mockImplementationOnce(() => new Promise(() => {}));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/key", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Drop A/ }));
     expect(screen.getByRole("button", { name: /Keep A/ })).toBeDisabled();
@@ -422,13 +434,13 @@ describe("ReviewQueue", () => {
     vi.mocked(resolveConflict)
       .mockImplementationOnce(() => new Promise((r) => (answerFirst = r)))
       .mockImplementationOnce(() => new Promise(() => {}));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
-    seed("ns-a");
+    seed("ns-a", "admin");
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Drop A/ }));
     expect(screen.getByRole("button", { name: /Keep A/ })).toBeDisabled();
@@ -444,13 +456,13 @@ describe("ReviewQueue", () => {
     );
     let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
-    seed("ns-a");
+    seed("ns-a", "admin");
     // The queue read again still lists a/x: its decision has not answered yet.
     await screen.findByText("value of a/x", {}, WAIT);
     await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
@@ -467,13 +479,13 @@ describe("ReviewQueue", () => {
     );
     let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
-    seed("ns-a");
+    seed("ns-a", "admin");
     await screen.findByText("value of a/x", {}, WAIT);
     const table = screen.getByRole("table", { name: "Conflicts" });
     await userEvent.click(within(table).getByRole("button", { name: "a/y" }));
@@ -495,13 +507,13 @@ describe("ReviewQueue", () => {
     });
     let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
-    seed("ns-a");
+    seed("ns-a", "admin");
     await waitFor(() => expect(aReads).toBe(2), WAIT);
     await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
     // The server read its queue before the decision was visible: it still lists a/x.
@@ -520,15 +532,15 @@ describe("ReviewQueue", () => {
         : { rows: [{ ...conflict("a/x"), version: 2 }, conflict("a/y")], next_before_version: null };
     });
     vi.mocked(resolveConflict).mockResolvedValueOnce({ resolved: true, affected_memory_ids: [] });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
     const table = screen.getByRole("table", { name: "Conflicts" });
     await waitFor(() => expect(within(table).queryByRole("button", { name: "a/x" })).toBeNull(), WAIT);
     // A switch away and back reads the queue again: a/x is back at v2, a new conflict.
-    seed("ns-b");
-    seed("ns-a");
+    seed("ns-b", "admin");
+    seed("ns-a", "admin");
     await waitFor(
       () =>
         expect(
@@ -542,7 +554,7 @@ describe("ReviewQueue", () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("a/x")], next_before_version: null });
     vi.mocked(resolveConflict).mockResolvedValueOnce({ resolved: false, affected_memory_ids: [] });
     toast.mockClear();
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     const before = vi.mocked(listConflicts).mock.calls.length;
@@ -564,7 +576,7 @@ describe("ReviewQueue", () => {
       next_before_version: null,
     });
     vi.mocked(resolveConflict).mockResolvedValueOnce({ resolved: true, affected_memory_ids: ["id-a/peer"] });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await screen.findByText(/Conflict 1 of 3/, {}, WAIT);
@@ -587,13 +599,13 @@ describe("ReviewQueue", () => {
     });
     let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
-    seed("ns-a");
+    seed("ns-a", "admin");
     await screen.findByText("value of a/x", {}, WAIT);
     await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
     expect(await screen.findByText("value of a/next", {}, WAIT)).toBeInTheDocument();
@@ -617,13 +629,13 @@ describe("ReviewQueue", () => {
     vi.mocked(resolveConflict)
       .mockImplementationOnce(() => new Promise((r) => (answerFirst = r)))
       .mockImplementationOnce(() => new Promise((r) => (answerSecond = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
-    seed("ns-a");
+    seed("ns-a", "admin");
     await screen.findByText("value of a/x", {}, WAIT);
     const table = screen.getByRole("table", { name: "Conflicts" });
     await userEvent.click(within(table).getByRole("button", { name: "a/z" }));
@@ -648,13 +660,13 @@ describe("ReviewQueue", () => {
     );
     let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText(/Conflict 1 of 3/, {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
-    seed("ns-a");
+    seed("ns-a", "admin");
     await screen.findByText(/Conflict 1 of 3/, {}, WAIT);
     await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
     await screen.findByText(/Conflict 1 of 2/, {}, WAIT);
@@ -668,7 +680,7 @@ describe("ReviewQueue", () => {
         : { rows: [conflict("a/x"), conflict("a/y")], next_before_version: 7 },
     );
     vi.mocked(resolveConflict).mockResolvedValueOnce({ resolved: true, affected_memory_ids: ["id-a/peer"] });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: "Load more" }));
@@ -688,7 +700,7 @@ describe("ReviewQueue", () => {
         : { rows: [conflict("k/one"), conflict("k/two")], next_before_version: 7 },
     );
     vi.mocked(resolveConflict).mockResolvedValueOnce({ resolved: true, affected_memory_ids: [] });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of k/one", {}, WAIT);
     const table = screen.getByRole("table", { name: "Conflicts" });
@@ -713,13 +725,13 @@ describe("ReviewQueue", () => {
     });
     let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Allow both/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
-    seed("ns-a");
+    seed("ns-a", "admin");
     await waitFor(() => expect(aReads).toBe(2), WAIT);
     await act(async () => answerFirst({ resolved: true, affected_memory_ids: ["id-a/peer"] }));
     // Read before the resolve wrote: it lists the decided row and its peer.
@@ -750,13 +762,13 @@ describe("ReviewQueue", () => {
     );
     let answerFirst: (v: { resolved: boolean; affected_memory_ids: string[] }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answerFirst = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText(/Conflict 1 of 3/, {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText("value of b/key", {}, WAIT);
-    seed("ns-a");
+    seed("ns-a", "admin");
     await screen.findByText("value of a/x", {}, WAIT);
     await waitFor(() => expect(aCounts).toBe(2), WAIT);
     await act(async () => answerFirst({ resolved: true, affected_memory_ids: [] }));
@@ -772,7 +784,7 @@ describe("ReviewQueue", () => {
     });
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("a/x"), conflict("a/y")], next_before_version: 7 });
     vi.mocked(resolveConflict).mockResolvedValueOnce({ resolved: true, affected_memory_ids: [], total: 6 });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText(/Conflict 1 of 9/, {}, WAIT);
     expect(vi.mocked(countConflicts).mock.calls.at(-1)?.[1]).toMatchObject({ fresh: true });
@@ -798,13 +810,13 @@ describe("ReviewQueue", () => {
     });
     let answer: (v: { resolved: boolean; affected_memory_ids: string[]; total: number }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answer = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText(/Conflict 1 of 5/, {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
     // A switch away and back reads the count again; that read is still out.
-    seed("ns-b");
-    seed("ns-a");
+    seed("ns-b", "admin");
+    seed("ns-a", "admin");
     await waitFor(() => expect(aCounts).toBeGreaterThanOrEqual(2), WAIT);
     await act(async () => answer({ resolved: true, affected_memory_ids: [], total: 3 }));
     await screen.findByText(/of 3 · resolve in order/, {}, WAIT);
@@ -826,11 +838,11 @@ describe("ReviewQueue", () => {
     );
     let answer: (v: { resolved: boolean; affected_memory_ids: string[]; total: number }) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (answer = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of a/x", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
-    seed("ns-b");
+    seed("ns-b", "admin");
     await screen.findByText(/Conflict 1 of 4/, {}, WAIT);
     await act(async () => answer({ resolved: true, affected_memory_ids: [], total: 1 }));
     expect(screen.getByText(/Conflict 1 of 4/)).toBeInTheDocument();
@@ -952,9 +964,8 @@ describe("ReviewQueue", () => {
 
     seed("ns-b");
     await screen.findByText("No conflicts", {}, WAIT);
-    expect(screen.queryByRole("tab")).toBeNull();
-    // A lone Conflicts panel is the page, not a tab panel with no tabs.
-    expect(screen.queryByRole("tabpanel")).toBeNull();
+    expect(screen.queryByRole("tab", { name: /Learnings/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: /Conflicts/ })).toHaveAttribute("aria-selected", "true");
   });
 
   it("shows conflicts before the probes answer, and reads them once when a late probe reveals the Learnings tab", async () => {
@@ -964,7 +975,6 @@ describe("ReviewQueue", () => {
     seed("ns-a");
     render(<ReviewQueue />);
     await screen.findByText("value of a/key", {}, WAIT);
-    expect(screen.queryByRole("tabpanel")).toBeNull();
     await act(async () => reveal({ rows: [learning("a/learned")] }));
     await screen.findByRole("tab", { name: /Learnings/ }, WAIT);
     expect(screen.getByRole("tabpanel", { name: /Conflicts/ })).toHaveTextContent("value of a/key");
@@ -1064,10 +1074,80 @@ describe("ReviewQueue", () => {
     expect(within(table).getAllByRole("row")[1]).toHaveTextContent("k/a and k/b");
     expect(table).not.toHaveTextContent("↔");
   });
+
+  it("keeps every decision in view below admin, unavailable with why, and sends none", async () => {
+    vi.mocked(resolveConflict).mockClear();
+    vi.mocked(reviewLearning).mockClear();
+    vi.mocked(removeAllowlist).mockClear();
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(listLearnings).mockResolvedValue({ rows: [learning("k/pending")] });
+    vi.mocked(listAllowlist).mockResolvedValue({ rows: [exception("k/a", "k/b")] });
+    seed("ns-a", "writer");
+    const user = userEvent.setup();
+    render(<ReviewQueue />);
+    await screen.findByText("value of city", {}, WAIT);
+    const needs = "Needs admin on ns-a. An admin of it can grant that.";
+    for (const name of [/Allow both/, /Drop A/, /Keep A/]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription(needs);
+      await user.click(button);
+    }
+    expect(resolveConflict).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("tab", { name: /Learnings/ }));
+    for (const name of ["Reject", "Promote"]) {
+      const button = await screen.findByRole("button", { name }, WAIT);
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription(needs);
+      await user.click(button);
+    }
+    expect(reviewLearning).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("tab", { name: /Exceptions/ }));
+    const remove = await screen.findByRole("button", { name: "Remove exception k/a and k/b" }, WAIT);
+    expect(remove).toHaveAttribute("aria-disabled", "true");
+    await user.click(remove);
+    expect(removeAllowlist).not.toHaveBeenCalled();
+  });
+
+  it("sends an admin's decisions", async () => {
+    vi.mocked(resolveConflict).mockClear();
+    vi.mocked(removeAllowlist).mockClear();
+    vi.mocked(reviewLearning).mockClear();
+    vi.mocked(reviewLearning).mockResolvedValue({
+      candidate_id: "c",
+      new_status: "promoted",
+      promoted_to_shared: true,
+    } as Awaited<ReturnType<typeof reviewLearning>>);
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    vi.mocked(listAllowlist).mockResolvedValue({ rows: [exception("k/a", "k/b")] });
+    vi.mocked(listLearnings).mockResolvedValue({ rows: [learning("k/pending"), learning("k/other")] });
+    seed("ns-a", "admin");
+    const user = userEvent.setup();
+    render(<ReviewQueue />);
+    await screen.findByText("value of city", {}, WAIT);
+    await user.click(screen.getByRole("button", { name: /Allow both/ }));
+    await waitFor(() => expect(resolveConflict).toHaveBeenCalled(), WAIT);
+    await user.click(screen.getByRole("tab", { name: /Exceptions/ }));
+    await user.click(await screen.findByRole("button", { name: "Remove exception k/a and k/b" }, WAIT));
+    await waitFor(() => expect(removeAllowlist).toHaveBeenCalled(), WAIT);
+    await user.click(screen.getByRole("tab", { name: /Learnings/ }));
+    await user.click((await screen.findAllByRole("button", { name: "Reject" }, WAIT))[0]);
+    await waitFor(
+      () => expect(reviewLearning).toHaveBeenCalledWith(expect.anything(), expect.anything(), "reject", ""),
+      WAIT,
+    );
+    await user.click((await screen.findAllByRole("button", { name: "Promote" }, WAIT))[0]);
+    await waitFor(
+      () => expect(reviewLearning).toHaveBeenCalledWith(expect.anything(), expect.anything(), "promote", ""),
+      WAIT,
+    );
+  });
   it("keeps the exceptions on screen, marked busy, while the reload after a removal reads", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listAllowlist).mockResolvedValueOnce({ rows: [exception("k/a", "k/b"), exception("k/c", "k/d")] });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
     const remove = await screen.findByRole("button", { name: "Remove exception k/a and k/b" }, WAIT);
@@ -1324,7 +1404,7 @@ describe("ReviewQueue", () => {
     expect(screen.queryByText("Changed since")).toBeNull();
   });
 
-  it("shows a viewer the retirements without an Undo", async () => {
+  it("shows a viewer each retirement's Undo unavailable, with the role it needs", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
     seed("ns-a", "viewer");
@@ -1332,7 +1412,11 @@ describe("ReviewQueue", () => {
     await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
     await screen.findByText("user_city", {}, WAIT);
     await waitFor(() => expect(listUnsuperseded).toHaveBeenCalled(), WAIT);
-    expect(screen.queryByRole("button", { name: /Undo retirement/ })).toBeNull();
+    const undo = await screen.findByRole("button", { name: /Undo retirement/ }, WAIT);
+    expect(undo).toHaveAttribute("aria-disabled", "true");
+    expect(undo).toHaveAccessibleDescription("Needs writer on ns-a. An admin of it can grant that.");
+    await userEvent.click(undo);
+    expect(restoreMemory).not.toHaveBeenCalled();
   });
 
   it("pages older retirements with Load more", async () => {
@@ -1459,8 +1543,42 @@ describe("ReviewQueue", () => {
     seed("ns-a");
     render(<ReviewQueue />);
     await screen.findByText("No conflicts", {}, WAIT);
+    // No tab flashes while the role loads, and nothing is read for it.
     expect(listAutoResolved).not.toHaveBeenCalled();
     expect(screen.queryByRole("tab", { name: /Auto-resolved/ })).toBeNull();
+  });
+
+  it("shows a role known not to read it the Auto-resolved tab, what it needs, and reads nothing", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    act(() => {
+      useStore.setState({
+        identity: { org: ORG, namespace: "ns-a", agent: "loom-ui" },
+        whoami: person,
+        myNamespaces: [member("ns-b", "admin")],
+      });
+    });
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    expect(await screen.findByText(/^Needs viewer on ns-a\./, {}, WAIT)).toBeVisible();
+    expect(listAutoResolved).not.toHaveBeenCalled();
+  });
+
+  it("shows the Auto-resolved tab with the unread line when list_mine failed, and reads nothing", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    const api = await import("../../api");
+    vi.mocked(api.listMine).mockRejectedValueOnce(new Error("down"));
+    resetNamespaceRoleCache();
+    act(() => {
+      useStore.setState({
+        identity: { org: ORG, namespace: "ns-a", agent: "loom-ui" },
+        whoami: person,
+        myNamespaces: null,
+      });
+    });
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Auto-resolved/ }, WAIT));
+    expect(await screen.findByText("Couldn't check your access to ns-a.", {}, WAIT)).toBeVisible();
+    expect(listAutoResolved).not.toHaveBeenCalled();
   });
 
   it("hides the Auto-resolved tab when Loom retired nothing", async () => {
@@ -1532,7 +1650,7 @@ describe("ReviewQueue", () => {
     expect(await screen.findByText("user_city", {}, WAIT)).toBeTruthy();
   });
 
-  it("falls back to Conflicts when the audit log stops being readable on the Auto-resolved tab", async () => {
+  it("falls back to Conflicts when the role on the Auto-resolved tab is no longer known", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listAutoResolved).mockResolvedValue(page([retired("user_city")]));
     seed("ns-a", "writer");
@@ -1570,7 +1688,7 @@ describe("ReviewQueue", () => {
     vi.mocked(listLearnings).mockImplementation(async (_id, status) => ({
       rows: status === "pending" ? [learning("k/pending")] : [learning("k/promoted")],
     }));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of k/one", {}, WAIT);
 
@@ -1658,7 +1776,7 @@ describe("ReviewQueue", () => {
       rows: [conflict("k/one"), conflict("k/two")],
       next_before_version: null,
     });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of k/one", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
@@ -1676,7 +1794,7 @@ describe("ReviewQueue", () => {
         ? new Promise((r) => (answer = r))
         : { rows: [conflict("k/one"), conflict("k/two")], next_before_version: 7 },
     );
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of k/one", {}, WAIT);
     const table = screen.getByRole("table", { name: "Conflicts" });
@@ -1698,7 +1816,7 @@ describe("ReviewQueue", () => {
     );
     let decided: (v: never) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (decided = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of k/one", {}, WAIT);
     const table = screen.getByRole("table", { name: "Conflicts" });
@@ -1719,7 +1837,7 @@ describe("ReviewQueue", () => {
       if (reads === 1) return { rows: [conflict("k/one")], next_before_version: 7 };
       return new Promise(() => {});
     });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of k/one", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
@@ -1731,7 +1849,7 @@ describe("ReviewQueue", () => {
   it("deciding the only conflict, with none past it, says 'No conflicts' without reading again", async () => {
     vi.mocked(countConflicts).mockResolvedValue(1);
     vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("k/one")], next_before_version: null });
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of k/one", {}, WAIT);
     await userEvent.click(screen.getByRole("button", { name: /Keep A/ }));
@@ -1747,7 +1865,7 @@ describe("ReviewQueue", () => {
     });
     let decided: (v: never) => void = () => {};
     vi.mocked(resolveConflict).mockImplementationOnce(() => new Promise((r) => (decided = r)));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await screen.findByText("value of k/one", {}, WAIT);
     const table = screen.getByRole("table", { name: "Conflicts" });
@@ -1793,7 +1911,7 @@ describe("ReviewQueue", () => {
     vi.mocked(listAllowlist)
       .mockResolvedValueOnce({ rows: [exception("k/a", "k/b")] })
       .mockRejectedValueOnce(new ApiError({ status: 500, message: "boom" }));
-    seed("ns-a");
+    seed("ns-a", "admin");
     render(<ReviewQueue />);
     await userEvent.click(await screen.findByRole("tab", { name: /Exceptions/ }, WAIT));
     await userEvent.click(await screen.findByRole("button", { name: /Remove exception/ }, WAIT));

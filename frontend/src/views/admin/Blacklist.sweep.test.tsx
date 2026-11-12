@@ -19,6 +19,7 @@ vi.mock("../../api", async (importOriginal) => {
   return {
     ...actual,
     listBlacklist: vi.fn(),
+    removeBlacklist: vi.fn(async () => ({ removed: true })),
   };
 });
 vi.mock("../../api/guardrails", () => ({
@@ -109,20 +110,47 @@ describe("PrivacyFilters sweep", () => {
     expect(await screen.findByRole("heading", { name: "Model calls" })).toBeInTheDocument();
   });
 
-  it("offers a writer the sweep of a namespace pattern, not of an org or global one", async () => {
+  it("offers a writer the sweep of a namespace pattern, and an org or global one's unavailable", async () => {
     vi.mocked(api.listBlacklist).mockResolvedValue({
       rows: [row("p1", "namespace"), row("p2", "org"), row("p3", "global")],
     });
     signIn(["writer"]);
     render(<PrivacyFilters />);
     await sweepOf("secret-p1");
-    expect(screen.queryByRole("button", { name: "Actions for secret-p2" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Actions for secret-p3" })).toBeNull();
     await waitFor(() =>
       expect(guardrails.sweepBlacklistPattern).toHaveBeenCalledWith(
         expect.objectContaining({ namespace: "team" }),
         "p1",
       ),
+    );
+    for (const p of ["secret-p2", "secret-p3"]) {
+      await userEvent.click(screen.getByRole("button", { name: `Actions for ${p}` }));
+      const item = await screen.findByRole("menuitem", { name: "Delete matches" });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription("Deleting the matches of an org or global pattern needs an org admin.");
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    }
+    expect(guardrails.sweepBlacklistPattern).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives Remove each pattern's own scope's reason: org admin for an org one, platform admin for a global one", async () => {
+    vi.mocked(api.listBlacklist).mockResolvedValue({ rows: [row("p2", "org"), row("p3", "global")] });
+    signIn(["org_admin"]);
+    render(<PrivacyFilters />);
+    const org = await screen.findByRole("button", { name: "Remove pattern secret-p2" });
+    expect(org).not.toHaveAttribute("aria-disabled");
+    const global = screen.getByRole("button", { name: "Remove pattern secret-p3" });
+    expect(global).toHaveAttribute("aria-disabled", "true");
+    expect(global).toHaveAccessibleDescription("Removing a global pattern needs a platform admin.");
+    await userEvent.click(global);
+    expect(api.removeBlacklist).not.toHaveBeenCalled();
+    cleanup();
+
+    signIn(["writer"]);
+    render(<PrivacyFilters />);
+    expect(await screen.findByRole("button", { name: "Remove pattern secret-p2" })).toHaveAccessibleDescription(
+      "Removing an org pattern needs an org admin.",
     );
   });
 

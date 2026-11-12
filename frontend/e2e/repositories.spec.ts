@@ -262,7 +262,8 @@ test.describe("desktop 1360", () => {
     expect(unexpected).toEqual([]);
     expect(calls.join).toEqual([]);
     expect(calls.trackerSources).toBe(1);
-    await expect(page.getByRole("button", { name: /rotate|retire|remove|check now/i })).toHaveCount(0);
+    // Check now is a viewer read and stays; the admin verbs are not offered.
+    await expect(page.getByRole("button", { name: /rotate|retire|remove/i })).toHaveCount(0);
     await expect(page.locator("#main").getByText("Settings", { exact: true })).toHaveCount(0);
   });
 });

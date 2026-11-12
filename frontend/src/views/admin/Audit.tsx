@@ -10,8 +10,8 @@ import { ErasuresPanel } from "./Erasures";
 import { ExposurePanel } from "./Exposure";
 import { useStore, useIdentity } from "../../lib/state";
 import { hasOrgAdminClaim } from "../../lib/role";
-import { canCall } from "../../lib/canCall";
-import { useNamespaceRole } from "../../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../../lib/namespaceRole";
+import { callReason } from "../../lib/callReason";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
 import { ListToolbar } from "../../components/ui/ListToolbar";
@@ -229,11 +229,10 @@ export function Audit() {
   // namespace=undefined → handler self-scopes via resolve_org_scope, which
   // widens to the whole org only at ORG_ADMIN.
   const isPlatformAdmin = hasOrgAdminClaim(whoami);
-  // The tab reads on open, so only a role known to reach the op shows it.
-  const role = useNamespaceRole(identity.namespace);
-  const showExposure = canCall("memory.exposure_summary", role, whoami);
-  // Exposure goes with the role that reaches it: a namespace without it shows Events.
-  const shownTab = tab === "exposure" && !showExposure ? "events" : tab;
+  // Exposure is this namespace's, so it shows for every role: a role that cannot read it sees
+  // what it needs in the tab, and nothing is read for it.
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const exposureReason = callReason("memory.exposure_summary", roleRead, whoami, identity.namespace);
   const scope = isPlatformAdmin ? { org: identity.org } : { org: identity.org, namespace: identity.namespace };
   // The window the first page read; older pages keep to it.
   const since = useRef("");
@@ -371,7 +370,7 @@ export function Audit() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <PageHeader title="Activity" tab={ACTIVITY_TABS[shownTab]}>
+        <PageHeader title="Activity" tab={ACTIVITY_TABS[tab]}>
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </PageHeader>
         <div className="text-sm text-text-muted max-w-[72ch]">
@@ -387,7 +386,7 @@ export function Audit() {
         </div>
       </div>
 
-      <Tabs value={shownTab} onValueChange={(v) => setTab(v as ActivityTab)}>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as ActivityTab)}>
         <Tabs.TriggersList className="mb-5" aria-label="Activity">
           <TabTrigger value="events" icon="history">
             {ACTIVITY_TABS.events}
@@ -395,11 +394,9 @@ export function Audit() {
           <TabTrigger value="erasures" icon="trash">
             {ACTIVITY_TABS.erasures}
           </TabTrigger>
-          {showExposure && (
-            <TabTrigger value="exposure" icon="eye">
-              {ACTIVITY_TABS.exposure}
-            </TabTrigger>
-          )}
+          <TabTrigger value="exposure" icon="eye">
+            {ACTIVITY_TABS.exposure}
+          </TabTrigger>
         </Tabs.TriggersList>
         <Tabs.Content value="events">
           <ListToolbar
@@ -461,11 +458,9 @@ export function Audit() {
         <Tabs.Content value="erasures">
           <ErasuresPanel />
         </Tabs.Content>
-        {showExposure && (
-          <Tabs.Content value="exposure">
-            <ExposurePanel />
-          </Tabs.Content>
-        )}
+        <Tabs.Content value="exposure">
+          {exposureReason ? <p className="m-0 text-sm text-text-muted">{exposureReason}</p> : <ExposurePanel />}
+        </Tabs.Content>
       </Tabs>
     </PageContainer>
   );

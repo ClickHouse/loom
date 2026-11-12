@@ -198,24 +198,22 @@ describe("Audit exposure tab", () => {
       myNamespaces: [{ namespace: "ns1", role, status: "active" } as never],
     });
 
-  it("is a tab for the namespace's admin only", async () => {
+  it("shows a writer the tab with the role it needs, and reads nothing for it", async () => {
     signIn("writer");
     render(<Audit />);
-    await screen.findByRole("tab", { name: /Erasures/ });
-    expect(screen.queryByRole("tab", { name: /Exposure/ })).toBeNull();
-    cleanup();
-    signIn("admin");
-    render(<Audit />);
-    expect(await screen.findByRole("tab", { name: /Exposure/ })).toBeInTheDocument();
+    fireEvent.mouseDown(await screen.findByRole("tab", { name: /Exposure/ }));
+    expect(await screen.findByText("Needs admin on ns1. An admin of it can grant that.")).toBeInTheDocument();
+    expect(api.getExposureSummary).not.toHaveBeenCalled();
   });
 
-  it("falls back to Events when the role that shows Exposure goes", async () => {
+  it("keeps the open tab when the role that reads it goes, and says what it needs", async () => {
     signIn("admin");
     render(<Audit />);
     fireEvent.mouseDown(await screen.findByRole("tab", { name: /Exposure/ }));
     await waitFor(() => expect(screen.getByRole("tab", { name: /Exposure/ })).toHaveAttribute("aria-selected", "true"));
     act(() => signIn("writer"));
-    await waitFor(() => expect(screen.getByRole("tab", { name: /Events/ })).toHaveAttribute("aria-selected", "true"));
+    expect(await screen.findByText("Needs admin on ns1. An admin of it can grant that.")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Exposure/ })).toHaveAttribute("aria-selected", "true");
   });
 });
 

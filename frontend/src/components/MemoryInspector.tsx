@@ -72,9 +72,11 @@ import { absoluteTime, relativeTime, formatValue, parseChTime, SENTINEL_AGENTS }
 import { detectEncodedValue } from "../lib/encoded";
 import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
-import { callReason } from "../lib/callReason";
+import { ACCESS_LOADING, callReason, codeMember } from "../lib/callReason";
+import { hasWriterClaim } from "../lib/role";
 import { historyChange, previousVersion } from "../lib/historyChange";
 import { MenuTrigger } from "./ui/Menu";
+import { GatedItem, menuReasons } from "./ui/GatedItem";
 import { shortcutOff } from "../lib/shortcuts";
 
 type SectionId = "history" | "related" | "provenance" | "lineage" | "evidence" | "links";
@@ -492,6 +494,21 @@ export function MemoryInspector({
   const shareable = detail?.memory_type !== "profile" && detail?.sensitivity !== "high";
   const redactReason = why("memory.redact");
   const judgeReason = why("memory.outcome");
+  // The value, its tags and its expiry are memory.set; Delete and Verify their own ops. Copy to
+  // is checked without the namespace (memory.copy_to skips namespace authz): the transport wants
+  // the token's flat writer claim, which a token scoped per namespace never passes, and the
+  // handler the source readable and the target writable, which the dialog's targets are.
+  const copyReason = !whoami
+    ? ACCESS_LOADING
+    : hasWriterClaim(whoami)
+      ? null
+      : "Copying needs a token with a writer claim or above.";
+  // A repository's member may write and delete its own rows there: the server decides.
+  const member = codeMember(roleRead, identity.namespace);
+  const setReason = member ? null : why("memory.set");
+  const deleteReason = member ? null : why("memory.delete");
+  const verifyReason = why("memory.verify");
+  const tagsWhyId = useId();
   const menuId = useId();
   // Both lock modes refuse a delete; read_only also refuses a value or expiry change. No
   // lock gates tags (server/memory/domain/lock.py).
@@ -505,6 +522,22 @@ export function MemoryInspector({
     setEditing(false);
     setRenaming(false);
   }, [valueLocked, formOpen]);
+  // A reason that appears while a form or dialog is open closes it, as a lock does.
+  useEffect(() => {
+    if (setReason) setEditing(false);
+  }, [setReason]);
+  useEffect(() => {
+    if (moveReason) setRenaming(false);
+  }, [moveReason]);
+  useEffect(() => {
+    if (copyReason) setCopyOpen(false);
+  }, [copyReason]);
+  useEffect(() => {
+    if (redactReason) setRedacting(null);
+  }, [redactReason]);
+  useEffect(() => {
+    setReasonDialog((d) => ((d === "lock" && lockReason) || (d === "reject" && rejectReason) ? null : d));
+  }, [lockReason, rejectReason]);
   const deleteLocked = !!detail?.lock_mode;
   const linkCount = links ? links.in.length + links.out.length : 0;
   const verified = detail?.verification === "human" || detail?.verification === "process";
@@ -554,7 +587,7 @@ export function MemoryInspector({
   // the attestation to the current content hash; an edit afterwards flips
   // the state to "stale" on its own, so there is nothing to un-set here.
   const onVerify = async () => {
-    if (!detail) return;
+    if (!detail || verifyReason) return;
     const live = detail.verification === "human" || detail.verification === "process";
     try {
       const r = await verifyMemory(identity, memoryKey, {
@@ -707,7 +740,7 @@ export function MemoryInspector({
   };
 
   const onStartEdit = () => {
-    if (!detail) return;
+    if (!detail || setReason) return;
     formSession.current += 1;
     setDraft(formatValue(detail.value));
     setEditing(true);
@@ -734,13 +767,13 @@ export function MemoryInspector({
   };
 
   const onRemoveTag = (t: string) => {
-    if (!detail) return;
+    if (!detail || setReason) return;
     const next = (detail.tags || []).filter((x) => x !== t);
     void persistTags(next);
   };
 
   const onAddTag = (raw: string) => {
-    if (!detail) return;
+    if (!detail || setReason) return;
     const t = raw.trim().toLowerCase();
     if (!t) return;
     if ((detail.tags || []).includes(t)) return;
@@ -748,7 +781,7 @@ export function MemoryInspector({
   };
 
   const onChangeExpiry = async (ttlSeconds: number | null) => {
-    if (!detail) return;
+    if (!detail || setReason) return;
     try {
       await setMemory(rowIdentity(identity, detail), memoryKey, detail.value, {
         memoryType: detail.memory_type || "semantic",
@@ -767,7 +800,7 @@ export function MemoryInspector({
   };
 
   const onSaveEdit = async () => {
-    if (!detail) return;
+    if (!detail || setReason) return;
     const session = formSession.current;
     try {
       // Parse JSON if it looks like an object/array; else keep the string.
@@ -868,7 +901,7 @@ export function MemoryInspector({
   };
 
   const onDelete = async () => {
-    if (!detail) return;
+    if (!detail || deleteReason) return;
     if (
       !(await confirmAction({
         title: `Delete ${memoryKey}?`,
@@ -909,9 +942,10 @@ export function MemoryInspector({
         {
           label: detail.verification === "stale" ? "Re-verify" : verified ? "Remove verification" : "Verify",
           icon: detail.verification === "stale" ? "warning" : verified ? "check-in-circle" : "secure",
+          reason: verifyReason,
           onSelect: onVerify,
         },
-        { label: "Copy to…", icon: "folder-open", onSelect: handOff(() => setCopyOpen(true)) },
+        { label: "Copy to…", icon: "folder-open", reason: copyReason, onSelect: handOff(() => setCopyOpen(true)) },
         detail.lock_mode
           ? { label: "Unlock", icon: "lock", reason: lockReason, onSelect: onUnlock }
           : { label: "Lock…", icon: "lock", reason: lockReason, onSelect: handOff(() => setReasonDialog("lock")) },
@@ -946,8 +980,10 @@ export function MemoryInspector({
       ]
     : [];
   const moreItems = moreEntries.filter((i): i is MoreItem => !!i);
-  const menuReasons = [...new Set(moreItems.map((i) => i.reason).filter((r): r is string => !!r))];
-  const reasonId = (r: string) => `${menuId}-why-${menuReasons.indexOf(r)}`;
+  const moreReasons = menuReasons(
+    moreItems.map((i) => i.reason),
+    menuId,
+  );
 
   return (
     <Dialog.Root
@@ -1046,6 +1082,7 @@ export function MemoryInspector({
                         <Button type="secondary" htmlType="button" onClick={() => setEditing(false)}>
                           Cancel
                         </Button>
+                        {/* The edit closes when its reason appears; onSaveEdit guards the render before. */}
                         <Button type="primary" htmlType="button" iconLeft="disk" onClick={onSaveEdit}>
                           Save new version
                         </Button>
@@ -1107,7 +1144,11 @@ export function MemoryInspector({
                           "Never expires"
                         )
                       ) : (
-                        <ExpiryEditor expiresAt={detail.expires_at ?? null} onChange={onChangeExpiry} />
+                        <ExpiryEditor
+                          expiresAt={detail.expires_at ?? null}
+                          onChange={onChangeExpiry}
+                          unavailable={setReason}
+                        />
                       )}
                     </dd>
                     <TipRow label="Last recalled" tip={RECALLED_TIP} value={recalledLabel(detail)} />
@@ -1151,12 +1192,14 @@ export function MemoryInspector({
                         label={t}
                         tip={`Show all memories tagged ${t}`}
                         onClick={() => searchByTag(t)}
-                        onRemove={() => onRemoveTag(t)}
+                        onRemove={setReason ? undefined : () => onRemoveTag(t)}
                       />
                     ))}
                     <span className="w-36">
                       <TextField
                         aria-label="Add a tag"
+                        disabled={!!setReason}
+                        aria-describedby={setReason ? tagsWhyId : undefined}
                         placeholder={(detail.tags || []).length > 0 ? "Add tag" : "Add tags…"}
                         list="loom-inspector-tags"
                         value={tagDraft}
@@ -1184,6 +1227,13 @@ export function MemoryInspector({
                         }}
                       />
                     </span>
+                    {/* A chip has no unavailable state and a disabled field shows no tooltip, so a
+                        role that cannot set tags reads why below them. */}
+                    {setReason && (
+                      <p id={tagsWhyId} className="m-0 basis-full text-xs text-text-muted">
+                        {setReason}
+                      </p>
+                    )}
                     {namespaceTags.length > 0 && (
                       <datalist id="loom-inspector-tags">
                         {namespaceTags
@@ -1464,9 +1514,11 @@ export function MemoryInspector({
           {detail && detail.found && (
             <footer className="px-5 py-3 border-t border-border bg-surface flex flex-wrap items-center gap-2 shrink-0">
               {!editing && !renaming && !valueLocked && (
-                <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={onStartEdit}>
-                  Edit
-                </Button>
+                <Unavailable reason={setReason}>
+                  <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={onStartEdit}>
+                    Edit
+                  </Button>
+                </Unavailable>
               )}
               {/* Asking about a memory does not depend on editing it: it stays in view while
                   a form is open, unavailable until the form is saved or cancelled. */}
@@ -1504,17 +1556,13 @@ export function MemoryInspector({
                       key={item.label}
                       danger={item.danger}
                       reason={item.reason ?? null}
-                      describedBy={item.reason ? reasonId(item.reason) : undefined}
+                      describedBy={item.reason ? moreReasons.idOf(item.reason) : undefined}
                       onSelect={item.onSelect}
                     >
                       <MenuLabel icon={item.icon}>{item.label}</MenuLabel>
                     </GatedItem>
                   ))}
-                  {menuReasons.map((r) => (
-                    <p key={r} id={reasonId(r)} className="m-0 max-w-72 px-3 py-2 text-xs text-text-muted">
-                      {r}
-                    </p>
-                  ))}
+                  {moreReasons.lines}
                 </Dropdown.Content>
               </Dropdown>
               {/* Verify sits in More; who attested stays in view. */}
@@ -1536,9 +1584,11 @@ export function MemoryInspector({
               )}
               <div className="flex-1" />
               {!deleteLocked && (
-                <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
-                  Delete
-                </Button>
+                <Unavailable reason={deleteReason}>
+                  <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
+                    Delete
+                  </Button>
+                </Unavailable>
               )}
             </footer>
           )}
@@ -2019,23 +2069,41 @@ const EXPIRY_PRESETS: Array<{ label: string; ttl: number | null }> = [
 function ExpiryEditor({
   expiresAt,
   onChange,
+  unavailable,
 }: {
   expiresAt: string | null;
   onChange: (ttlSeconds: number | null) => void;
+  /** Why the caller cannot change it: Change stays in view, unavailable, with no menu. */
+  unavailable: string | null;
 }) {
   const current = expiresAt ? `Expires ${relativeTime(expiresAt)}` : "Never expires";
   const expiry = parseChTime(expiresAt);
   const isExpired = !!expiry && expiry.getTime() < Date.now();
+  const [open, setOpen] = useState(false);
+  // A reason that appears while the menu is open closes it, and it stays shut when one clears.
+  useEffect(() => {
+    if (unavailable) setOpen(false);
+  }, [unavailable]);
 
   return (
     <div className="inline-flex items-center gap-2">
       <span className={isExpired ? "text-danger" : "text-text"}>{isExpired ? "Expired" : current}</span>
-      <Dropdown modal={false}>
-        <MenuTrigger>
-          <Button type="empty" htmlType="button" iconRight="chevron-down">
-            Change
-          </Button>
-        </MenuTrigger>
+      {/* One tree whether or not a reason applies, so Change keeps its focus as one comes
+          and goes; while unavailable the menu does not open. */}
+      <Dropdown modal={false} open={open} onOpenChange={(o) => setOpen(o && !unavailable)}>
+        <Unavailable reason={unavailable}>
+          <MenuTrigger>
+            {/* Its own variant's disabled look: the trigger it sits in carries none. */}
+            <Button
+              type="empty"
+              htmlType="button"
+              iconRight="chevron-down"
+              {...(unavailable ? { "data-unavailable": "empty" } : {})}
+            >
+              Change
+            </Button>
+          </MenuTrigger>
+        </Unavailable>
         <Dropdown.Content align="end">
           {EXPIRY_PRESETS.map((opt) => (
             <Dropdown.Item key={opt.label} onSelect={() => onChange(opt.ttl)}>
@@ -2283,33 +2351,6 @@ interface MoreItem {
   onSelect: () => void;
   reason?: string | null;
   danger?: boolean;
-}
-
-/** A More-menu item. One a role cannot use is still listed, `aria-disabled` and described by
- *  its reason (the line below the items), and choosing it does nothing. Radix's own `disabled`
- *  would drop it from keyboard focus, so its reason would never be read. */
-function GatedItem({
-  reason,
-  describedBy,
-  onSelect,
-  danger = false,
-  children,
-}: {
-  reason: string | null;
-  describedBy: string | undefined;
-  onSelect: () => void;
-  danger?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Dropdown.Item
-      type={danger ? "danger" : "default"}
-      onSelect={reason ? (e: Event) => e.preventDefault() : onSelect}
-      {...(reason ? { "aria-disabled": true, "data-disabled": "", "aria-describedby": describedBy } : {})}
-    >
-      {children}
-    </Dropdown.Item>
-  );
 }
 
 /** A menu item's icon and label. Not Dropdown.Item's `icon`: Click UI names that svg

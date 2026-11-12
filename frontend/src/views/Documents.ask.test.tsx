@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   listCollections: vi.fn(),
   getKnowledge: vi.fn(),
   fetchKnowledgePreview: vi.fn(),
+  deleteKnowledge: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 
@@ -174,6 +175,87 @@ describe("Ask about this in the document preview", () => {
     const ask = screen.getByRole("button", { name: "Ask the assistant about this document" });
     expect(ask).toHaveAttribute("aria-disabled", "true");
     expect(ask).toHaveAccessibleDescription("The assistant answers about a memory namespace.");
+  });
+
+  it.each([
+    ["a `*` writer claim with no row", { roles: ["WRITER"], namespaces: ["*"] }, []],
+    ["a scoped token with no direct row", { roles: [], namespaces: ["team"] }, []],
+    [
+      "a `*` writer claim over a viewer grant",
+      { roles: ["WRITER"], namespaces: ["*"] },
+      [{ namespace: "team", role: "viewer", status: "active", kind: "memory" }],
+    ],
+  ])("keeps the writes and the selection for %s: the server decides", async (_label, token, rows) => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v", org: "acme", ...token },
+      myNamespaces: rows as never,
+    });
+    render(<Documents />);
+    await settle();
+    expect(screen.getByRole("button", { name: "Add document" })).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("checkbox", { name: "Select Billing notes" })).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for Billing notes" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    await settle();
+    for (const name of ["Replace content", "Edit details", "Delete"])
+      expect(screen.getByRole("menuitem", { name })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("while the role loads, an empty Library gives the writer's words with Add unavailable", async () => {
+    useStore.setState({ whoami: null });
+    api.listKnowledge.mockResolvedValue({ rows: [], total: 0, next_cursor: null });
+    render(<Documents />);
+    await settle();
+    expect(screen.queryByText(/Its members who write can add documents/)).toBeNull();
+    const adds = screen.getAllByRole("button", { name: "Add document" });
+    for (const add of adds) expect(add).toHaveAccessibleDescription("Your role on this namespace is still loading.");
+    fireEvent.click(adds[0]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("an empty Library shows a known viewer Add unavailable, with the role it needs", async () => {
+    api.listKnowledge.mockResolvedValue({ rows: [], total: 0, next_cursor: null });
+    render(<Documents />);
+    await settle();
+    expect(screen.getByText(/Its members who write can add documents/)).toBeInTheDocument();
+    const add = screen.getByRole("button", { name: "Add document" });
+    expect(add).toHaveAccessibleDescription("Needs writer on team. An admin of it can grant that.");
+    fireEvent.click(add);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("while the role loads, says so on the writes and holds the selection back", async () => {
+    useStore.setState({ whoami: null });
+    render(<Documents />);
+    await settle();
+    expect(screen.getByRole("button", { name: "Add document" })).toHaveAccessibleDescription(
+      "Your role on this namespace is still loading.",
+    );
+    expect(screen.queryByRole("checkbox", { name: "Select Billing notes" })).toBeNull();
+  });
+
+  it("shows a viewer of the namespace its row writes unavailable, no selection, and a click sends nothing", async () => {
+    render(<Documents />);
+    await settle();
+    const reason = "Needs writer on team. An admin of it can grant that.";
+    expect(screen.queryByRole("checkbox", { name: "Select Billing notes" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Add document" })).toHaveAccessibleDescription(reason);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for Billing notes" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    await settle();
+    for (const name of ["Replace content", "Edit details", "Delete"]) {
+      const item = screen.getByRole("menuitem", { name });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription(reason);
+    }
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    await settle();
+    expect(api.deleteKnowledge).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("shows a viewer of a collection its writes unavailable, with the role they need", async () => {

@@ -20,8 +20,6 @@ import { humanizeError } from "../lib/errorWords";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, termText, whyTerms } from "../lib/whyNote";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
-import { canCall } from "../lib/canCall";
-import { useNamespaceRole } from "../lib/namespaceRole";
 
 // One recorded search, expanded in place. A person reading "my agent answered badly an
 // hour ago" needs more than the top score and the first eight keys — they need every key
@@ -271,7 +269,8 @@ const NUMERIC = "block w-full text-right [@media(max-width:768px)]:text-left tab
 // past the card.
 const CARD = "[@media(max-width:768px)]:min-w-0 [@media(max-width:768px)]:basis-1/2";
 const CARD_WIDE = "[@media(max-width:768px)]:min-w-0 [@media(max-width:768px)]:basis-full";
-const SCORE_HEADERS = [
+// Shown to everyone: each row's "Ask", unavailable with why to a role the assistant does not admit.
+const ASK_HEADERS = [
   { label: <span className={NUMERIC}>#</span>, width: "48px" },
   { label: "Key", width: "24%" },
   { label: "Value" },
@@ -279,20 +278,13 @@ const SCORE_HEADERS = [
   { label: "Score", width: "160px" },
   { label: <span className={NUMERIC}>Entity</span>, width: "80px" },
   { label: "Type", width: "140px" },
+  { label: <span className="sr-only">Assistant</span>, width: "96px" },
 ];
-// Shown to whoever may ask the assistant: each row's "Ask".
-const ASK_HEADERS = [...SCORE_HEADERS, { label: <span className="sr-only">Assistant</span>, width: "96px" }];
 
 /** One scored row: the key opens the memory (a button, so the keyboard reaches it), the
  *  score draws Click UI's table bar against the top ranked hit, and the last cell asks the
  *  assistant about the result (its click, even an unavailable one, opens nothing). */
-function scoreRow(
-  row: RecallRow,
-  i: number,
-  top: number,
-  open: (key: string) => void,
-  query: string | null,
-): TableRowType {
+function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) => void, query: string): TableRowType {
   const hit = row.hit;
   const terms = whyTerms(hit?.score_components);
   const entity = terms.find((t) => t.label === ENTITY);
@@ -370,23 +362,19 @@ function scoreRow(
           </span>
         ),
       },
-      ...(query === null
-        ? []
-        : [
-            {
-              className: CARD,
-              label: (
-                <AskAboutThis
-                  what="result"
-                  short
-                  item={{
-                    chip: `result ${row.key}`,
-                    line: `result ${i + 1}, memory ${exact(row.key)}, for the query ${quoted(query)}`,
-                  }}
-                />
-              ),
-            },
-          ]),
+      {
+        className: CARD,
+        label: (
+          <AskAboutThis
+            what="result"
+            short
+            item={{
+              chip: `result ${row.key}`,
+              line: `result ${i + 1}, memory ${exact(row.key)}, for the query ${quoted(query)}`,
+            }}
+          />
+        ),
+      },
     ],
   };
 }
@@ -416,8 +404,6 @@ export function RecallLab() {
   // Bumped by Retry: the same query is asked again.
   const [attempt, setAttempt] = useState(0);
   const inspect = useStore((s) => s.inspect);
-  const whoami = useStore((s) => s.whoami);
-  const askable = canCall("assistant.ask", useNamespaceRole(identity.namespace), whoami);
   const open = useCallback((key: string) => inspect(key, { agent: "*" }), [inspect]);
   // The ranked search failed while keyword rows stood: those still show, with this said.
   const [rankedError, setRankedError] = useState<string | null>(null);
@@ -602,8 +588,10 @@ export function RecallLab() {
                   aria-label="Recall scores"
                   aria-busy={loading || undefined}
                   size="sm"
-                  headers={askable ? ASK_HEADERS : SCORE_HEADERS}
-                  rows={rows.map((row, i) => scoreRow(row, i, topScore, open, askable ? rowsQuery : null))}
+                  // Ask about this on every row; a role the assistant's route does not admit sees
+                  // it unavailable, with the role it needs.
+                  headers={ASK_HEADERS}
+                  rows={rows.map((row, i) => scoreRow(row, i, topScore, open, rowsQuery))}
                 />
               )}
             </>

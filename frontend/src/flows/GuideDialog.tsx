@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -24,6 +24,9 @@ interface Props {
   namespace: string;
   /** A writer or admin edits; everyone else reads. */
   canEdit: boolean;
+  /** Why the caller's role cannot edit, when that is known: Edit stays in view, unavailable,
+   *  with it. */
+  editReason?: string | null;
   /** Open on the editor when the guide's read finds none and the caller can edit (the
    *  Memories header); otherwise on the read view. */
   startEditing?: boolean;
@@ -63,6 +66,7 @@ export function GuideDialog({
   org,
   namespace,
   canEdit,
+  editReason = null,
   startEditing,
   initialContent,
   baseRevision,
@@ -114,8 +118,13 @@ export function GuideDialog({
   // The outline as given, give or take whitespace anywhere, is not a guide yet.
   const untouched = content.replace(/\s+/g, "") === STARTER.replace(/\s+/g, "");
 
+  // A reason that appears while the editor is open closes it, and its save sends nothing.
+  useEffect(() => {
+    if (!canEdit || editReason) setEditing(false);
+  }, [canEdit, editReason]);
+
   const save = async () => {
-    if (!base || untouched) return;
+    if (!base || untouched || !canEdit || editReason) return;
     setBusy(true);
     try {
       // A summary left as the saved one is not sent, so the server keeps whatever
@@ -179,10 +188,12 @@ export function GuideDialog({
             <Button type="secondary" htmlType="button" onClick={() => close(false)}>
               Close
             </Button>
-            {canEdit && (
-              <Button type="primary" htmlType="button" onClick={() => startEdit(guide)}>
-                {guide.found ? "Edit" : "Write the guide"}
-              </Button>
+            {(canEdit || editReason) && (
+              <Unavailable reason={canEdit ? null : editReason}>
+                <Button type="primary" htmlType="button" onClick={() => startEdit(guide)}>
+                  {guide.found ? "Edit" : "Write the guide"}
+                </Button>
+              </Unavailable>
             )}
           </ModalFooter>
         </div>

@@ -4,7 +4,7 @@ import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { listBlacklist, addBlacklist, removeBlacklist, type BlacklistRow, type BlacklistScope } from "../../api";
 import { sweepBlacklistPattern } from "../../api/guardrails";
-import { hasOrgAdminClaim } from "../../lib/role";
+import { hasOrgAdminClaim, hasPlatformAdminClaim } from "../../lib/role";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { OrgGuardrails } from "./OrgGuardrails";
 import { RowMenu } from "../../components/ui/RowMenu";
@@ -15,23 +15,28 @@ import { toast, toastError } from "../../components/Toast";
 import { parseChTime, relativeTime } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { canCall } from "../../lib/canCall";
-import { useNamespaceRole } from "../../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../../lib/namespaceRole";
+import { callReason, needsLine } from "../../lib/callReason";
 import { PageContainer } from "../../layout/PageContainer";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { oneOf } from "../../lib/oneOf";
-import { IconButton } from "../../components/IconButton";
-import { Chip, ListTime, LoadingSkeleton, PageHeader } from "../../components/ui";
+import { GatedIconButton } from "../../components/ui/GatedIconButton";
+import { Chip, ListTime, LoadingSkeleton, PageHeader, Unavailable } from "../../components/ui";
 import { ListState } from "../../components/ui/ListState";
 
-/** What a visitor who cannot list the patterns reads instead of a request: the token's
- * role here is unknown, so the panel says who manages the
- *  patterns and asks the server nothing. */
+/** With no namespace to name: who manages the patterns. */
 export const PRIVACY_FILTERS_MANAGED_BY_ADMIN = "Refusal patterns are managed by an admin of this space.";
 /** A viewer who may list but not add. */
 export const PRIVACY_FILTERS_READ_ONLY =
   "You can see the patterns here but not change them: a writer adds patterns and deletes a namespace pattern's stored matches; an admin removes patterns.";
 
 const SCOPES: readonly BlacklistScope[] = ["namespace", "org", "global"];
+
+/** The scopes Add may write (`_require_scope_authority`): an org pattern wants an org admin,
+ *  a global one a platform admin, so the form offers only the ones the token reaches. */
+export function addScopes(orgAdmin: boolean, platformAdmin: boolean): BlacklistScope[] {
+  return SCOPES.filter((s) => s === "namespace" || (s === "org" ? orgAdmin : platformAdmin));
+}
 const SCOPE_LABELS: Record<BlacklistScope, string> = { namespace: "Namespace", org: "Org", global: "Global" };
 
 /**
@@ -80,17 +85,35 @@ export function PrivacyFilters({
 
   // `blacklist.list` is a namespace-scoped VIEWER op (server/memory/api/ops_blacklist.py); a
   // token with no standing on this namespace would draw AUTH_INSUFFICIENT on every Setup
-  // load. The read runs only when the role here is known; the add form and the remove
-  // buttons appear only for a role that reaches `blacklist.add` (WRITER) /
-  // `blacklist.remove` (ADMIN).
-  const role = useNamespaceRole(identity.namespace);
+  // load. The read runs only when the role here is known. The add form is for a writer;
+  // Add, Remove and Delete matches each show the reason for its own gate to a role below it.
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const role = roleRead.role;
   const canList = canCall("blacklist.list", role, whoami);
   const canAdd = canCall("blacklist.add", role, whoami);
-  const canRemove = canCall("blacklist.remove", role, whoami);
-  // Who may sweep which pattern: `handle_blacklist_sweep`.
-  const canSweepNamespace = canCall("blacklist.sweep", role, whoami);
+  const addReason = callReason("blacklist.add", roleRead, whoami, identity.namespace);
+  // Each pattern's scope decides who removes it (`handle_blacklist_remove`): admin on the
+  // namespace, an org admin for an org pattern, a platform admin for a global one.
+  const platformAdmin = hasPlatformAdminClaim(whoami);
   const orgAdmin = hasOrgAdminClaim(whoami);
-  const canSweep = (r: BlacklistRow) => (r.scope === "namespace" ? canSweepNamespace : orgAdmin);
+  const scopes = addScopes(orgAdmin, platformAdmin);
+  const removeReason = (r: BlacklistRow) =>
+    r.scope === "namespace"
+      ? callReason("blacklist.remove", roleRead, whoami, identity.namespace)
+      : r.scope === "org"
+        ? orgAdmin
+          ? null
+          : "Removing an org pattern needs an org admin."
+        : platformAdmin
+          ? null
+          : "Removing a global pattern needs a platform admin.";
+  // Who may sweep which pattern: `handle_blacklist_sweep`.
+  const sweepReason = (r: BlacklistRow) =>
+    r.scope === "namespace"
+      ? callReason("blacklist.sweep", roleRead, whoami, identity.namespace)
+      : orgAdmin
+        ? null
+        : "Deleting the matches of an org or global pattern needs an org admin.";
 
   // A reload after an add or a remove keeps the patterns on screen, marked busy. It runs
   // through the read effect, so an answer for a namespace the page has left is dropped.
@@ -122,7 +145,7 @@ export function PrivacyFilters({
   );
 
   const add = async () => {
-    if (!pattern.trim()) return;
+    if (!canAdd || !pattern.trim() || !scopes.includes(scope)) return;
     try {
       await addBlacklist({ org: identity.org, namespace: identity.namespace }, pattern.trim(), {
         pattern_type: "substring",
@@ -180,81 +203,96 @@ export function PrivacyFilters({
     }
   };
 
+  // A role that cannot list them reads nothing, and the note says why: still loading, the
+  // server's to decide, or the role it needs. With no namespace there is nothing to name.
   if (!canList) {
     return (
       <p role="note" className="text-sm text-text-muted max-w-2xl leading-relaxed">
-        {PRIVACY_FILTERS_MANAGED_BY_ADMIN}
+        {identity.namespace
+          ? callReason("blacklist.list", roleRead, whoami, identity.namespace)
+          : PRIVACY_FILTERS_MANAGED_BY_ADMIN}
       </p>
     );
   }
 
   return (
     <>
-      {!canAdd && (
-        <p role="note" className="text-xs text-text-muted mb-3 max-w-2xl leading-relaxed">
+      {/* Only for a role known to fall short: one the server decides gets Add's own line. */}
+      {needsLine("blacklist.add", roleRead, whoami, identity.namespace) && (
+        <p role="note" className="mb-3 text-xs text-text-muted max-w-2xl leading-relaxed">
           {PRIVACY_FILTERS_READ_ONLY}
         </p>
       )}
-      {canAdd && (
-        <div className={compact ? "mb-3" : "rounded-xl border border-border bg-surface p-4 mb-4"}>
-          {!compact && <div className="text-xs font-medium text-text-muted mb-2">Add pattern</div>}
-          {!compact && (
-            <div className="text-xs text-text-muted mb-3">
-              Values matching any pattern below will be silently dropped before they're written. Use it for secrets,
-              PII, or anything you don't want the agent to remember.
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="min-w-0 flex-1 basis-full sm:basis-0">
-              <TextField
-                aria-label="Substring to block"
-                value={pattern}
-                onChange={setPattern}
-                placeholder="Substring to block…"
-              />
-            </div>
-            <div className="w-36">
-              <Select
-                triggerProps={{ "aria-label": "Blocklist scope" }}
-                value={scope}
-                onSelect={(value) => {
-                  const v = oneOf(SCOPES, value);
-                  if (v !== null) setScope(v);
-                }}
-              >
-                {SCOPES.map((s) => (
-                  <Select.Item key={s} value={s}>
-                    {SCOPE_LABELS[s]}
-                  </Select.Item>
-                ))}
-              </Select>
-            </div>
+      {/* One form for every role, so its Add keeps its focus as the role resolves: below
+          writer its fields are disabled and Add says what it needs. */}
+      <div className={compact ? "mb-3" : "rounded-xl border border-border bg-surface p-4 mb-4"}>
+        {!compact && <div className="text-xs font-medium text-text-muted mb-2">Add pattern</div>}
+        {!compact && (
+          <div className="text-xs text-text-muted mb-3">
+            Values matching any pattern below will be silently dropped before they're written. Use it for secrets, PII,
+            or anything you don't want the agent to remember.
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1 basis-full sm:basis-0">
+            <TextField
+              aria-label="Substring to block"
+              value={pattern}
+              onChange={setPattern}
+              placeholder="Substring to block…"
+              disabled={!canAdd}
+            />
+          </div>
+          <div className="w-36">
+            <Select
+              triggerProps={{ "aria-label": "Blocklist scope" }}
+              disabled={!canAdd}
+              value={scope}
+              onSelect={(value) => {
+                const v = oneOf(SCOPES, value);
+                if (v !== null) setScope(v);
+              }}
+            >
+              {scopes.map((s) => (
+                <Select.Item key={s} value={s}>
+                  {SCOPE_LABELS[s]}
+                </Select.Item>
+              ))}
+            </Select>
+          </div>
+          <Unavailable reason={addReason}>
             <Button type="primary" htmlType="button" iconLeft="plus" onClick={add}>
               Add
             </Button>
-          </div>
-          <div className="mt-2">
-            <TextField aria-label="Reason" value={reason} onChange={setReason} placeholder="Optional reason…" />
-          </div>
-          {starters.length > 0 && (
-            // A starter fills the form; it never copies to the clipboard.
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-text-muted">
-              <span>Suggested:</span>
-              {starters.map((st) => (
-                <Chip
-                  key={st.pattern}
-                  label={st.label}
-                  tip={st.pattern}
-                  onClick={() => {
-                    setPattern(st.pattern);
-                    setReason(st.label);
-                  }}
-                />
-              ))}
-            </div>
-          )}
+          </Unavailable>
         </div>
-      )}
+        <div className="mt-2">
+          <TextField
+            aria-label="Reason"
+            value={reason}
+            onChange={setReason}
+            placeholder="Optional reason…"
+            disabled={!canAdd}
+          />
+        </div>
+        {canAdd && starters.length > 0 && (
+          // A starter fills the form; it never copies to the clipboard.
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-text-muted">
+            <span>Suggested:</span>
+            {starters.map((st) => (
+              <Chip
+                key={st.pattern}
+                label={st.label}
+                tip={st.pattern}
+                onClick={() => {
+                  setPattern(st.pattern);
+                  setReason(st.label);
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Mounted before the read answers, so the count is announced when it lands. */}
       {!compact && (
@@ -321,29 +359,27 @@ export function PrivacyFilters({
                     )}
                   </div>
                 </div>
-                {canSweep(r) && (
-                  <RowMenu
-                    name={r.pattern}
-                    items={[
-                      {
-                        label: sweeping === r.pattern_id ? "Deleting matches…" : "Delete matches",
-                        danger: true,
-                        disabled: sweeping !== null,
-                        onSelect: () => void sweep(r),
-                      },
-                    ]}
-                  />
-                )}
-                {canRemove && (
-                  <IconButton
-                    icon="cross"
-                    type="danger"
-                    size="sm"
-                    label={`Remove pattern ${r.pattern}`}
-                    tooltip="Remove"
-                    onClick={() => remove(r.pattern_id)}
-                  />
-                )}
+                <RowMenu
+                  name={r.pattern}
+                  items={[
+                    {
+                      label: sweeping === r.pattern_id ? "Deleting matches…" : "Delete matches",
+                      danger: true,
+                      disabled: sweeping !== null,
+                      reason: sweepReason(r),
+                      onSelect: () => void sweep(r),
+                    },
+                  ]}
+                />
+                <GatedIconButton
+                  icon="cross"
+                  type="danger"
+                  size="sm"
+                  label={`Remove pattern ${r.pattern}`}
+                  tooltip="Remove"
+                  reason={removeReason(r)}
+                  onClick={() => remove(r.pattern_id)}
+                />
               </div>
             ))}
           </div>

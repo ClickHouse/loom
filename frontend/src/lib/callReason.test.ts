@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { ROLE_LOADING, callReason, roleGap } from "./callReason";
+import { PAGE_OP_MIN_ROLE, ROLE_LOADING, callReason, codeMember, needsLine, roleGap } from "./callReason";
 
 const row = (role: MyNamespaceEntry["role"], status: MyNamespaceEntry["status"] = "active"): MyNamespaceEntry => ({
   namespace: "team",
@@ -78,5 +78,58 @@ describe("callReason", () => {
     expect(callReason("memory.pin", read, token(["VIEWER"], ["*"]), "team")).toMatch(/^Needs writer/);
     expect(callReason("memory.pin", read, token(["WRITER"], ["*", "team"]), "team")).toMatch(/^Needs writer/);
     expect(callReason("memory.unpin", read, token(["WRITER"], ["*"]), "team")).toMatch(/^Needs admin/);
+  });
+});
+
+describe("needsLine", () => {
+  it("names the role only when it is known to fall short", () => {
+    const viewer = { role: "viewer" as const, loading: false, rows: [row("viewer")] };
+    expect(needsLine("knowledge.delete", viewer, token(["USER"], []), "team")).toBe(
+      "Needs writer on team. An admin of it can grant that.",
+    );
+    // A `*` writer claim is never capped by a grant row: the server decides.
+    expect(needsLine("knowledge.delete", viewer, token(["WRITER"], ["*"]), "team")).toBeNull();
+    // Not known yet, or allowed: no line.
+    expect(
+      needsLine("knowledge.delete", { role: null, loading: true, rows: null }, token(["USER"], []), "team"),
+    ).toBeNull();
+    expect(
+      needsLine(
+        "knowledge.delete",
+        { role: "writer", loading: false, rows: [row("writer")] },
+        token(["USER"], []),
+        "team",
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("PAGE_OP_MIN_ROLE", () => {
+  // The page writes' roles, mirrored from the registry the transport gates on, as canCall.ts's are.
+  const generated = new URL("../../../sdk/typescript/src/generated/ops.ts", import.meta.url).pathname;
+
+  it("every entry matches sdk/typescript/src/generated/ops.ts", async () => {
+    type Fs = { existsSync(p: string): boolean; readFileSync(p: string, enc: "utf8"): string };
+    const fs = (await import(/* @vite-ignore */ "node:" + "fs")) as Fs;
+    if (!fs.existsSync(generated)) return; // a frontend-only checkout has no SDK tree
+    const text = fs.readFileSync(generated, "utf8");
+    for (const [op, min] of Object.entries(PAGE_OP_MIN_ROLE)) {
+      const m = new RegExp(`\\{ name: "${op.replace(".", "\\.")}",[^\\n]*? role: "([a-z_]+)"`).exec(text);
+      expect(m?.[1], `${op} minimum role drifted from the registry`).toBe(min);
+    }
+  });
+});
+
+describe("codeMember", () => {
+  it("counts a live grant on a code namespace, never a claim-only or pending row", () => {
+    const code = (role: MyNamespaceEntry["role"], status: MyNamespaceEntry["status"] = "active") => ({
+      ...row(role, status),
+      kind: "code" as const,
+    });
+    const read = (r: MyNamespaceEntry) => ({ role: null, loading: false, rows: [r] });
+    expect(codeMember(read(code("viewer")), "team")).toBe(true);
+    expect(codeMember(read(code("jwt")), "team")).toBe(false);
+    expect(codeMember(read(code("viewer", "pending")), "team")).toBe(false);
+    expect(codeMember(read(row("viewer")), "team")).toBe(false);
   });
 });

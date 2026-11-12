@@ -69,7 +69,7 @@ describe("Recall Lab: the scores table", () => {
     useStore.setState({ identity: null, inspectedMemoryKey: null });
   });
 
-  it("draws one row per result under the seven columns", async () => {
+  it("draws one row per result under the seven columns and the assistant's", async () => {
     searchMemory.mockResolvedValue({
       results: [hit("deploy_note", 0.9), hit("rollback_runbook", 0.45, { score_components: { semantic: 0.4 } })],
       embedding_model: "text-embedding-3-small",
@@ -79,7 +79,7 @@ describe("Recall Lab: the scores table", () => {
     const heads = within(table)
       .getAllByRole("columnheader")
       .map((h) => h.textContent);
-    expect(heads).toEqual(["#", "Key", "Value", "Similarity", "Score", "Entity", "Type"]);
+    expect(heads).toEqual(["#", "Key", "Value", "Similarity", "Score", "Entity", "Type", "Assistant"]);
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(2);
     const first = within(rows[0]);

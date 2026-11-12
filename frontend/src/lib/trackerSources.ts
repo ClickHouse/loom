@@ -124,10 +124,10 @@ export function operatorOwned(source: Pick<TrackerSource, "origin">): boolean {
   return source.origin !== "registry";
 }
 
-/** Whether the caller may see the source's admin verbs (a request the token cannot make
- *  is never offered): a registry source the caller maintains, once the write ops
- *  (`tracker.source.add/check/rotate/remove`) are listed by `ops.capabilities`. Which of
- *  them it may use is `trackerVerbs`. */
+/** Whether the caller may see the source's admin verbs, Edit mapping, Rotate and Retire
+ *  (a request the token cannot make is never offered): a registry source the caller
+ *  maintains, once the deployment's tracker listing reports self-service on. Which of them
+ *  it may use is `trackerVerbs`. */
 export function canAdminister(source: Pick<TrackerSource, "namespaces" | "origin">, opsPresent: boolean): boolean {
   return opsPresent && source.origin === "registry" && source.namespaces.some((n) => n.member_role === "admin");
 }

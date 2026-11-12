@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAbortableEffect } from "../../lib/hooks";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
 import { Table } from "@clickhouse/click-ui/Table";
 import { useStore } from "../../lib/state";
-import { canCall } from "../../lib/canCall";
-import { useNamespaceRole } from "../../lib/namespaceRole";
+import { callReason } from "../../lib/callReason";
+import { useNamespaceRoleRead } from "../../lib/namespaceRole";
 import { ForgetMemoriesDialog } from "../../flows/ForgetMemoriesDialog";
 import { RowMenu } from "../../components/ui/RowMenu";
 import { listConnectedAgents, type ConnectedAgentRow } from "../../api";
@@ -59,10 +59,15 @@ export function Agents() {
   // as loading.
   const [refreshing, setRefreshing] = useState(false);
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity?.namespace);
-  const canForget = canCall("memory.clear", role, whoami);
+  const roleRead = useNamespaceRoleRead(identity?.namespace);
+  // Forget stays in each row's menu for a role that cannot call it, with the role it needs.
+  const forgetReason = identity ? callReason("memory.clear", roleRead, whoami, identity.namespace) : null;
   const [forget, setForget] = useState<string | null>(null);
-  const headers = canForget ? [...HEADERS, ACTIONS_HEADER] : HEADERS;
+  // A reason that appears while the dialog is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (forgetReason) setForget(null);
+  }, [forgetReason]);
+  const headers = [...HEADERS, ACTIONS_HEADER];
 
   // Refresh and Retry read again through the effect, so a newer read drops an older one.
   const [reads, setReads] = useState(0);
@@ -182,25 +187,22 @@ export function Agents() {
                     ),
                   },
                   // `-` is no agent: memory.clear refuses it as a confirmation anyone can type.
-                  ...(canForget
-                    ? [
-                        {
-                          label: r.agent !== "-" && (
-                            <RowMenu
-                              name={r.agent}
-                              items={[
-                                {
-                                  label: `Forget its memories in ${identity.namespace}`,
-                                  icon: "trash",
-                                  danger: true,
-                                  onSelect: () => setForget(r.agent),
-                                },
-                              ]}
-                            />
-                          ),
-                        },
-                      ]
-                    : []),
+                  {
+                    label: r.agent !== "-" && (
+                      <RowMenu
+                        name={r.agent}
+                        items={[
+                          {
+                            label: `Forget its memories in ${identity.namespace}`,
+                            icon: "trash",
+                            danger: true,
+                            reason: forgetReason,
+                            onSelect: () => setForget(r.agent),
+                          },
+                        ]}
+                      />
+                    ),
+                  },
                 ],
               };
             })}

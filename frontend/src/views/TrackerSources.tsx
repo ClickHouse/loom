@@ -12,10 +12,9 @@
  * picker on that namespace and the Graph view in Patterns mode), and the diagnostics a
  * maintainer reads in the card's Details disclosure.
  *
- * The write ops (`tracker.source.add/check/rotate/remove`) reach the page — Register from
- * a repository card's maintainer panel, and Check / Rotate / Retire in the Details
- * disclosure for an admin of a registry source (`canAdminister`). The dialogs load on
- * first open.
+ * The tracker ops reach the page — Register from a repository card's maintainer panel, and
+ * in the Trackers list Check now for any caller of a registry source and Edit mapping /
+ * Rotate / Retire for its admin (`canAdminister`). The dialogs load on first open.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "@clickhouse/click-ui/Icon";
@@ -234,8 +233,9 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
 
 /**
  * A tracker's diagnostics in the card's Details disclosure: name, host, database, origin
- * and its state in plain words. Its admin verbs (Check now / Rotate / Retire) live in one
- * place — the Trackers list on the same page — and Details links there.
+ * and its state in plain words. Its verbs (Check now, and for its admin Edit mapping /
+ * Rotate / Retire) live in one place — the Trackers list on the same page — and Details
+ * links there.
  */
 export function RecordSourceDetails({
   source: s,

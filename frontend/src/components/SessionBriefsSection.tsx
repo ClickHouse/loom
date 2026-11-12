@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { deleteBrief, listBriefs, type BriefSummary } from "../api/briefs";
-import { canCall } from "../lib/canCall";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { useStore } from "../lib/state";
 import { confirmAction } from "./ConfirmDialog";
-import { IconButton } from "./IconButton";
+import { GatedIconButton } from "./ui/GatedIconButton";
 import { toastError } from "./Toast";
 import { useFold } from "../lib/folds";
 import { Panel, SectionHeading } from "./ui";
@@ -20,9 +20,10 @@ import { SessionBriefPanel } from "./SessionBriefPanel";
 export function SessionBriefsSection({ org, namespace }: { org: string; namespace: string }) {
   const [briefs, setBriefs] = useState<BriefSummary[]>([]);
   const [shown, toggleShown] = useFold("session-briefs");
-  const roleHere = useNamespaceRole(namespace);
+  const roleRead = useNamespaceRoleRead(namespace);
   const whoami = useStore((s) => s.whoami);
-  const canDelete = canCall("session.brief_delete", roleHere, whoami);
+  // Forget stays in view for a role that cannot call it, unavailable with the role it needs.
+  const deleteReason = callReason("session.brief_delete", roleRead, whoami, namespace);
   const remove = async (b: BriefSummary) => {
     const ok = await confirmAction({
       title: `Forget the brief "${b.goal || b.brief_key}"?`,
@@ -72,16 +73,15 @@ export function SessionBriefsSection({ org, namespace }: { org: string; namespac
               <div className="min-w-0 flex-1">
                 <SessionBriefPanel org={org} namespace={namespace} briefKey={b.brief_key} />
               </div>
-              {canDelete && (
-                <IconButton
-                  icon="trash"
-                  type="danger"
-                  size="sm"
-                  label={`Forget brief ${b.goal || b.brief_key}`}
-                  tooltip="Forget"
-                  onClick={() => void remove(b)}
-                />
-              )}
+              <GatedIconButton
+                icon="trash"
+                type="danger"
+                size="sm"
+                label={`Forget brief ${b.goal || b.brief_key}`}
+                tooltip="Forget"
+                reason={deleteReason}
+                onClick={() => void remove(b)}
+              />
             </div>
           ))}
       </div>

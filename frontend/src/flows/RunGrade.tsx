@@ -4,12 +4,22 @@ import { TextField } from "@clickhouse/click-ui/TextField";
 import { gradeRun, type Identity, type RunRow } from "../api";
 import { useStore } from "../lib/state";
 import { toast, toastError } from "../components/Toast";
+import { Unavailable } from "../components/ui/Unavailable";
 
 const VERDICT: Record<string, string> = { pass: "held up", fail: "did not hold" };
 
 /** A closed run's verdict (run.grade): it held up, or it did not, once a person knows. A
- *  run already graded shows its verdict, and a new one replaces it. */
-export function RunGrade({ identity, run }: { identity: Pick<Identity, "org" | "namespace">; run: RunRow }) {
+ *  run already graded shows its verdict, and a new one replaces it. `unavailable` is why the
+ *  caller's role cannot grade: the buttons stay in view, unavailable, with it. */
+export function RunGrade({
+  identity,
+  run,
+  unavailable = null,
+}: {
+  identity: Pick<Identity, "org" | "namespace">;
+  run: RunRow;
+  unavailable?: string | null;
+}) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [current, setCurrent] = useState({ grade: run.grade, source: run.grade_source, reason: run.grade_reason });
@@ -44,13 +54,24 @@ export function RunGrade({ identity, run }: { identity: Pick<Identity, "org" | "
         </p>
       )}
       <div className="flex flex-wrap items-end gap-2">
-        <TextField id="run-grade-reason" label="Why (optional)" value={reason} onChange={setReason} maxLength={2000} />
-        <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void grade("fail")}>
-          {current.grade ? "Regrade: did not hold" : "Did not hold"}
-        </Button>
-        <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void grade("pass")}>
-          {current.grade ? "Regrade: held up" : "Held up"}
-        </Button>
+        <TextField
+          id="run-grade-reason"
+          label="Why (optional)"
+          value={reason}
+          onChange={setReason}
+          maxLength={2000}
+          disabled={!!unavailable}
+        />
+        <Unavailable reason={unavailable}>
+          <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void grade("fail")}>
+            {current.grade ? "Regrade: did not hold" : "Did not hold"}
+          </Button>
+        </Unavailable>
+        <Unavailable reason={unavailable}>
+          <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void grade("pass")}>
+            {current.grade ? "Regrade: held up" : "Held up"}
+          </Button>
+        </Unavailable>
       </div>
     </div>
   );

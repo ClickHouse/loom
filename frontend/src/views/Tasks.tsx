@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -21,8 +21,8 @@ import {
   type TaskRow,
 } from "../api/tasks";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
-import { canCall } from "../lib/canCall";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { useVisiblePoll } from "../lib/hooks";
 import { humanizeError } from "../lib/errorWords";
 import {
@@ -45,7 +45,8 @@ import {
   type TaskAction,
 } from "../lib/tasks";
 import { SkeletonCard } from "../components/Skeleton";
-import { LoadingSkeleton, PageHeader } from "../components/ui";
+import { LoadingSkeleton, PageHeader, Unavailable } from "../components/ui";
+import { GatedItem, menuReasons } from "../components/ui/GatedItem";
 import { MenuTrigger } from "../components/ui/Menu";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
@@ -199,13 +200,16 @@ export function Tasks() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
   const openHelp = useStore((s) => s.openHelp);
-  const role = useNamespaceRole(identity.namespace);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
   const caller = useMemo(
     () => ({ org: identity.org, namespace: identity.namespace }),
     [identity.org, identity.namespace],
   );
-  const mayWrite = canCall("task.create", role, whoami);
-  const mayAdmin = canCall("inbox.register", role, whoami);
+  // Each action stays in view for a role that cannot take it, with the role it needs.
+  const writeReason = callReason("task.create", roleRead, whoami, identity.namespace);
+  const adminReason = callReason("inbox.register", roleRead, whoami, identity.namespace);
+  const mayWrite = writeReason === null;
+  const optionsId = useId();
 
   const [inboxes, setInboxes] = useState<Inbox[] | null>(null);
   const [inboxError, setInboxError] = useState<unknown>(null);
@@ -252,6 +256,15 @@ export function Tasks() {
   } | null>(null);
   const dialogDone = useRef(false);
   const [editing, setEditing] = useState<TaskRow | null>(null);
+  // A reason that appears while a dialog is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (writeReason) {
+      setCreating(false);
+      setDialog(null);
+      setEditing(null);
+    }
+    if (adminReason) setSettings(null);
+  }, [writeReason, adminReason]);
   const [now, setNow] = useState(() => Date.now());
   const narrowMain = useNarrowMain();
   const sheetLayout = useMedia(SHEET_QUERY) || narrowMain;
@@ -621,16 +634,17 @@ export function Tasks() {
 
   const menuFor = useCallback(
     (r: TaskListRow): RowMenuItem[] => {
-      const offered = mayWrite ? actionsFor(r.status) : [];
+      const offered = actionsFor(r.status);
       const items: RowMenuItem[] = ROW_MENU.filter((a) => offered.includes(a)).map((a) => ({
         label: menuLabel(a),
         onSelect: () => void onAction(a, r, "list"),
         danger: a === "cancel",
+        reason: writeReason,
       }));
       items.push({ label: "Copy id", onSelect: () => copyTaskId(r.task_id) });
       return items;
     },
-    [mayWrite, onAction],
+    [writeReason, onAction],
   );
 
   const ctx: RowContext = useMemo(
@@ -640,7 +654,7 @@ export function Tasks() {
       leaseSecondsOf,
       progressNotes,
       selectedId,
-      canWrite: mayWrite,
+      writeReason,
       onOpen: openTask,
       onSelect: selectRow,
       onAccept: (r) => {
@@ -652,11 +666,21 @@ export function Tasks() {
         if (a) void onAction(a, r, "list");
       },
     }),
-    [now, ownerAgentOf, leaseSecondsOf, progressNotes, selectedId, mayWrite, openTask, selectRow, onAction, menuFor],
+    [now, ownerAgentOf, leaseSecondsOf, progressNotes, selectedId, writeReason, openTask, selectRow, onAction, menuFor],
   );
 
   const createInbox = inbox?.inbox ?? inboxes?.[0]?.inbox ?? null;
-  const newTask = mayWrite && createInbox ? () => setCreating(true) : null;
+  const newTask = createInbox ? () => setCreating(true) : null;
+  // New task, unavailable with the role it needs for whoever cannot post.
+  const newTaskButton = () =>
+    newTask && (
+      <Unavailable reason={writeReason}>
+        <Button type="primary" htmlType="button" iconLeft="plus" onClick={newTask}>
+          New task
+        </Button>
+      </Unavailable>
+    );
+  const options = menuReasons([adminReason], optionsId);
   // The empty inbox's own New task is the page's one primary while it shows.
   const emptyInbox = loaded && rows?.length === 0;
   const openCount = visible.length - groups.closed.length;
@@ -680,7 +704,7 @@ export function Tasks() {
       identity={caller}
       row={task}
       inboxes={inboxes ?? []}
-      canWrite={mayWrite}
+      writeReason={writeReason}
       sheet={sheet}
       now={now}
       reloadKey={reloadKey}
@@ -756,18 +780,27 @@ export function Tasks() {
                 <IconButton icon="dots-horizontal" label="Page options" />
               </MenuTrigger>
               <Dropdown.Content align="end" aria-label="Page options" aria-labelledby={undefined}>
-                {mayAdmin && inbox && (
-                  <Dropdown.Item onSelect={() => setSettings("edit")}>Inbox settings…</Dropdown.Item>
+                {inbox && (
+                  <GatedItem
+                    reason={adminReason}
+                    describedBy={adminReason ? options.idOf(adminReason) : undefined}
+                    onSelect={() => setSettings("edit")}
+                  >
+                    Inbox settings…
+                  </GatedItem>
                 )}
-                {mayAdmin && <Dropdown.Item onSelect={() => setSettings("register")}>Register inbox…</Dropdown.Item>}
+                <GatedItem
+                  reason={adminReason}
+                  describedBy={adminReason ? options.idOf(adminReason) : undefined}
+                  onSelect={() => setSettings("register")}
+                >
+                  Register inbox…
+                </GatedItem>
                 <Dropdown.Item onSelect={() => openHelp(true)}>Keyboard shortcuts</Dropdown.Item>
+                {options.lines}
               </Dropdown.Content>
             </Dropdown>
-            {newTask && !emptyInbox && (
-              <Button type="primary" htmlType="button" iconLeft="plus" onClick={newTask}>
-                New task
-              </Button>
-            )}
+            {!emptyInbox && newTaskButton()}
           </>
         }
       >
@@ -793,7 +826,13 @@ export function Tasks() {
           icon="email"
           title="No inbox here yet"
           description={`An inbox is one agent's queue, owned by ${identity.namespace}. An admin of this namespace registers it; writers then pull from it and the trust table says who else may post.`}
-          action={mayAdmin ? { label: "Register inbox", onClick: () => setSettings("register") } : undefined}
+          actions={
+            <Unavailable reason={adminReason}>
+              <Button type="primary" htmlType="button" onClick={() => setSettings("register")}>
+                Register inbox
+              </Button>
+            </Unavailable>
+          }
           details={
             <>
               Registering an inbox names its owner agent, the agents allowed to post into it without reading it and the
@@ -868,9 +907,11 @@ export function Tasks() {
                   icon="email"
                   title={inbox ? `No tasks in ${inbox.inbox} yet` : "No tasks in these inboxes yet"}
                   description={
-                    newTask ? "Agents post tasks here; people use New task." : "Agents and people post tasks here."
+                    newTask && mayWrite
+                      ? "Agents post tasks here; people use New task."
+                      : "Agents and people post tasks here."
                   }
-                  action={newTask ? { label: "New task", onClick: newTask } : undefined}
+                  actions={newTaskButton() || undefined}
                 />
               )}
               {loaded && !emptyInbox && visible.length === 0 && (

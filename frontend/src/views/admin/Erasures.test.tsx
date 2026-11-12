@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "../../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
@@ -71,11 +71,28 @@ afterEach(() => {
 });
 
 describe("ErasuresPanel", () => {
-  it("offers no erase or export to a caller who is not admin", async () => {
+  it("shows a caller who is not admin Erase and Export unavailable, with what each needs", async () => {
     render(<ErasuresPanel />);
     expect(await screen.findByText("No erasures yet")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Erase data" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Export data" })).toBeNull();
+    const erase = screen.getByRole("button", { name: "Erase data" });
+    expect(erase).toHaveAttribute("aria-disabled", "true");
+    expect(erase).toHaveAccessibleDescription("Needs admin on ns1. An admin of it can grant that.");
+    const exp = screen.getByRole("button", { name: "Export data" });
+    expect(exp).toHaveAttribute("aria-disabled", "true");
+    expect(exp).toHaveAccessibleDescription("Exporting data needs a token with an admin claim.");
+    await userEvent.click(erase);
+    await userEvent.click(exp);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("closes an open Erase when the role falls below admin, and erases nothing", async () => {
+    signIn(["writer"], "admin");
+    render(<ErasuresPanel />);
+    await userEvent.click(await screen.findByRole("button", { name: "Erase data" }));
+    expect(await screen.findByRole("dialog", { name: "Erase data" })).toBeInTheDocument();
+    act(() => signIn(["writer"], "writer"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Erase data" })).toBeNull());
+    expect(api.requestErasure).not.toHaveBeenCalled();
   });
 
   it("erases the current namespace for its admin, after a confirmation, and reloads the list", async () => {
@@ -101,20 +118,61 @@ describe("ErasuresPanel", () => {
     expect(screen.queryByRole("dialog", { name: "Erase data" })).toBeNull();
   });
 
-  it("offers no erase to an admin by grant whose token claims less than writer", async () => {
+  it("tells an admin by grant whose token claims less than writer what erasing needs", async () => {
     // erasure.request is authorized for the org at WRITER before the handler reads the grant.
     signIn(["viewer"], "admin");
     render(<ErasuresPanel />);
     expect(await screen.findByText("No erasures yet")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Erase data" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Erase data" })).toHaveAccessibleDescription(
+      "Erasing data needs a token with a writer claim or above.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Erase data" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.requestErasure).not.toHaveBeenCalled();
   });
 
-  it("offers an admin by grant the erase of the namespace, not its export", async () => {
+  it("says the access is still loading before whoami is read, on Erase and Export", async () => {
+    useStore.setState({ whoami: null });
+    render(<ErasuresPanel />);
+    expect(await screen.findByText("No erasures yet")).toBeInTheDocument();
+    for (const name of ["Erase data", "Export data"])
+      expect(screen.getByRole("button", { name })).toHaveAccessibleDescription("Your access is still loading.");
+  });
+
+  it("names both what a caller lacks when it is neither admin here nor holds a writer claim", async () => {
+    signIn(["viewer"], "writer");
+    render(<ErasuresPanel />);
+    expect(await screen.findByText("No erasures yet")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Erase data" })).toHaveAccessibleDescription(
+      "Erasing data needs admin on ns1 and a token with a writer claim or above.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Erase data" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.requestErasure).not.toHaveBeenCalled();
+  });
+
+  it("tells a token scoped per namespace that erasing needs a writer claim, the server's own refusal", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "alice", org: "dev", roles: [], namespaces: ["ns1"] },
+      myNamespaces: [],
+    });
+    render(<ErasuresPanel />);
+    expect(await screen.findByText("No erasures yet")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Erase data" })).toHaveAccessibleDescription(
+      "Erasing data needs a token with a writer claim or above.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Erase data" }));
+    expect(api.requestErasure).not.toHaveBeenCalled();
+  });
+
+  it("offers an admin by grant the erase of the namespace, and its export unavailable", async () => {
     // Export is authorized for the org, where only a claim reaches; erase reads the grant.
     signIn(["writer"], "admin");
     render(<ErasuresPanel />);
-    expect(await screen.findByRole("button", { name: "Erase data" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Export data" })).toBeNull();
+    expect(await screen.findByRole("button", { name: "Erase data" })).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("button", { name: "Export data" })).toHaveAccessibleDescription(
+      "Exporting data needs a token with an admin claim.",
+    );
   });
 
   it("lets an org admin erase one user, and refuses a user id that names no one", async () => {

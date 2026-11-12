@@ -1,4 +1,6 @@
+import { useId } from "react";
 import { Dropdown } from "@clickhouse/click-ui/Dropdown";
+import { GatedItem, menuReasons } from "./GatedItem";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../IconButton";
 import { MenuTrigger } from "./Menu";
@@ -10,6 +12,10 @@ export interface RowMenuItem {
   /** A destructive action: Click UI's danger item. */
   danger?: boolean;
   disabled?: boolean;
+  /** Why the caller's role cannot use it: the item stays listed, `aria-disabled` and
+   *  described by this reason (said once below the items), and choosing it does nothing.
+   *  Radix's own `disabled` would drop it from keyboard focus, so its reason would go unread. */
+  reason?: string | null;
 }
 
 export interface RowMenuProps {
@@ -30,6 +36,11 @@ export interface RowMenuProps {
  */
 export function RowMenu({ name, items, tabIndex }: RowMenuProps) {
   const label = `Actions for ${name}`;
+  const prefix = useId();
+  const { idOf, lines } = menuReasons(
+    items.map((i) => i.reason),
+    prefix,
+  );
   return (
     <Dropdown modal={false}>
       <MenuTrigger>
@@ -45,10 +56,12 @@ export function RowMenu({ name, items, tabIndex }: RowMenuProps) {
       {/* Radix names the menu after its trigger; the label names it instead. */}
       <Dropdown.Content align="end" aria-label={label} aria-labelledby={undefined}>
         {items.map((item) => (
-          <Dropdown.Item
+          <GatedItem
             key={item.label}
-            type={item.danger ? "danger" : "default"}
+            danger={item.danger}
             disabled={item.disabled}
+            reason={item.reason}
+            describedBy={item.reason ? idOf(item.reason) : undefined}
             onSelect={item.onSelect}
           >
             {/* Not Dropdown.Item's `icon`: Click UI names that svg after the icon, so the
@@ -57,8 +70,9 @@ export function RowMenu({ name, items, tabIndex }: RowMenuProps) {
               {item.icon && <Icon name={item.icon} size="sm" aria-hidden="true" />}
               {item.label}
             </span>
-          </Dropdown.Item>
+          </GatedItem>
         ))}
+        {lines}
       </Dropdown.Content>
     </Dropdown>
   );

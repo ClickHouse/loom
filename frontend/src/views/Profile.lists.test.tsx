@@ -4,6 +4,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../lib/errors";
 import { useStore } from "../lib/state";
 import { Profile } from "./Profile";
+import type { MyNamespaceEntry, WhoAmI } from "../api";
+import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+
+// The caller's own grant on each namespace the tests use: the role its writes need.
+const grant = (namespace: string, role: MyNamespaceEntry["role"] = "writer"): MyNamespaceEntry => ({
+  namespace,
+  role,
+  status: "active",
+  visibility: "private",
+  description: "",
+  joined_at: null,
+  is_new: false,
+});
+const person: WhoAmI = {
+  authenticated: true,
+  subject: "p@example.com",
+  org: "dev",
+  roles: ["USER"],
+  namespaces: ["ns"],
+};
 
 // The profile's sections as a list: rows on ListRow, the one inline
 // action (Edit) and a More menu for the rest, the toolbar in every state with its count
@@ -45,11 +65,18 @@ describe("Profile sections list", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.listProfile.mockResolvedValue({ entries: SECTIONS });
-    useStore.setState({ authed: true, identity: { org: "dev", namespace: "ns", agent: "loom-ui" }, view: "profile" });
+    resetNamespaceRoleCache();
+    useStore.setState({
+      authed: true,
+      whoami: person,
+      myNamespaces: [grant("ns")],
+      identity: { org: "dev", namespace: "ns", agent: "loom-ui" },
+      view: "profile",
+    });
   });
   afterEach(() => {
     cleanup();
-    useStore.setState({ identity: null });
+    useStore.setState({ identity: null, whoami: null, myNamespaces: null });
   });
 
   it("draws each section as a list row: label, size, who and when, Edit inline, the rest in More", async () => {
@@ -70,6 +97,42 @@ describe("Profile sections list", () => {
     // A section at 95% of its cap says so with a warning badge.
     const full = screen.getByText("tools").closest(".list-row") as HTMLElement;
     expect(within(full).getByText("Near limit")).toBeInTheDocument();
+  });
+
+  it("shows a viewer New section, Edit and Delete unavailable with why, no selection, and sends nothing", async () => {
+    useStore.setState({ myNamespaces: [grant("ns", "viewer")] });
+    const user = userEvent.setup();
+    render(<Profile />);
+    await screen.findByText("about-me");
+    const needs = "Needs writer on ns. An admin of it can grant that.";
+    for (const name of ["New section", "Edit about-me"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription(needs);
+      await user.click(button);
+    }
+    expect(screen.queryByRole("textbox", { name: "Section text" })).toBeNull();
+    // The selection holds only Delete.
+    expect(screen.queryByRole("checkbox", { name: "Select section about-me" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Actions for about-me" }));
+    const menu = await screen.findByRole("menu", { name: "Actions for about-me" });
+    const remove = within(menu).getByRole("menuitem", { name: "Delete" });
+    expect(remove).toHaveAttribute("aria-disabled", "true");
+    expect(remove).toHaveAccessibleDescription(needs);
+    await user.click(remove);
+    expect(api.deleteProfileSection).not.toHaveBeenCalled();
+  });
+
+  it("keeps a viewer's personas in view on an empty profile, unavailable with why", async () => {
+    useStore.setState({ myNamespaces: [grant("ns", "viewer")] });
+    api.listProfile.mockResolvedValue({ entries: [] });
+    render(<Profile />);
+    await screen.findByRole("heading", { name: "Start with a persona" });
+    const persona = document.querySelector<HTMLElement>(".persona-card") as HTMLElement;
+    expect(persona).toHaveAttribute("aria-disabled", "true");
+    expect(persona).toHaveAccessibleDescription("Needs writer on ns. An admin of it can grant that.");
+    await userEvent.click(persona);
+    expect(screen.queryByRole("textbox", { name: "Section text" })).toBeNull();
   });
 
   it("opens a section from its row", async () => {

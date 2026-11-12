@@ -4,8 +4,8 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Table } from "@clickhouse/click-ui/Table";
 import { decideProposals, listProposals, type MemoryProposal } from "../../api";
 import { useIdentity, useStore } from "../../lib/state";
-import { useNamespaceRole } from "../../lib/namespaceRole";
-import { canCall } from "../../lib/canCall";
+import { useNamespaceRoleRead } from "../../lib/namespaceRole";
+import { callReason } from "../../lib/callReason";
 import { useAbortableEffect } from "../../lib/hooks";
 import { toast, toastError } from "../../components/Toast";
 import { AgentBadge } from "../../components/AgentBadge";
@@ -38,8 +38,9 @@ export function ProposalsPanel() {
   const [reload, setReload] = useState(0);
   const [busy, setBusy] = useState(false);
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity.namespace);
-  const canDecide = canCall("memory.proposal_decide", role, whoami);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  // Accept and Reject stay in view for a role that cannot decide, with the role it needs.
+  const decideReason = callReason("memory.proposal_decide", roleRead, whoami, identity.namespace);
 
   // A decision holds every row until the list is read again.
   const [reading, setReading] = useState(false);
@@ -135,9 +136,9 @@ export function ProposalsPanel() {
                   },
                   { label: <ListTime time={p.created_at} quiet /> },
                   {
-                    label: canDecide && (
+                    label: (
                       <span className="inline-flex items-center gap-2">
-                        <Unavailable reason={lone ? null : SHARED_KEY}>
+                        <Unavailable reason={decideReason ?? (lone ? null : SHARED_KEY)}>
                           <Button
                             type="secondary"
                             htmlType="button"
@@ -156,6 +157,7 @@ export function ProposalsPanel() {
                                 label: "Reject",
                                 danger: true,
                                 disabled: held,
+                                reason: decideReason,
                                 onSelect: () => void decide(p.memory_key, "reject"),
                               },
                             ]}

@@ -65,9 +65,9 @@ export const OP_MIN_ROLE = {
   // not list the blacklist for every visitor — that is one AUTH_INSUFFICIENT per page
   // load from a viewer token with no memory namespace. The blacklist ops are
   // namespace-scoped (`server/memory/api/ops_blacklist.py`: list VIEWER, add and sweep
-  // WRITER, remove ADMIN); the panel reads only when the role is known, and shows the add
-  // form and remove buttons only to a role that reaches them. Setup's `memory.list` total
-  // for the checklist is gated the same way.
+  // WRITER, remove ADMIN); the panel reads only when the role is known; its add form shows
+  // for every role, disabled below writer, and each control says what it needs.
+  // Setup's `memory.list` total for the checklist is gated the same way.
   "blacklist.list": VIEWER,
   "blacklist.add": WRITER,
   "blacklist.remove": ADMIN,
@@ -75,8 +75,7 @@ export const OP_MIN_ROLE = {
   "memory.auto_retirements": VIEWER,
   "memory.list": VIEWER,
   // The Memories view's "Usage audit" panel offers the button only to a role that reaches
-  // `namespace.audit` (VIEWER); the inspector's "Rename (keep redirect)" only to one that
-  // reaches `memory.move` (WRITER).
+  // `namespace.audit` (VIEWER); the inspector's Rename says what `memory.move` (WRITER) needs.
   "namespace.audit": VIEWER,
   // The mentor brief reads the ledger for one agent; a viewer of the namespace may ask.
   "mentor.brief": VIEWER,
@@ -89,7 +88,7 @@ export const OP_MIN_ROLE = {
   "assistant.ask": VIEWER,
   "memory.move": WRITER,
   "memory.pin": WRITER,
-  // The inspector's Restore on a superseded row and the Review queue's Auto-resolved Undo.
+  // The inspector's and the Memories list's Restore, and the Review queue's Auto-resolved Undo.
   "memory.restore": WRITER,
   "memory.unpin": ADMIN,
   // The inspector's lifecycle actions.
@@ -108,7 +107,8 @@ export const OP_MIN_ROLE = {
   "conversation.update": WRITER,
   "conversation.delete": ADMIN,
   // A repository card's Docs and Sources facets (`canCallOn`): Add a document and Remove,
-  // and every verb on a document source; the Library's Sources section (`canCall`).
+  // and every verb on a document source; the Library's Sources section (`canCall`) and its
+  // writes (`needsLine`).
   "knowledge.add": WRITER,
   "knowledge.delete": WRITER,
   "knowledge.source.add": ADMIN,
@@ -144,7 +144,8 @@ export const OP_MIN_ROLE = {
   "learnings.list": VIEWER,
   "policy.decisions": VIEWER,
   "consolidations.list": VIEWER,
-  // Health's Namespace tab reads on open; its Repairs tab is shown to an admin.
+  // Health's Namespace tab reads on open for a role that reaches it; its Repairs tab shows
+  // every role the repairs, unavailable to one below admin.
   "memory.health": VIEWER,
   "memory.sweep_expired": ADMIN,
   "conflicts.allowlist_list": VIEWER,
@@ -165,8 +166,8 @@ export const OP_MIN_ROLE = {
   // The assistant's draft of a namespace guide opens the guide editor.
   "namespace.guide_set": WRITER,
   // The task inbox plane. The header bell polls `task.counts` only for a known role; the
-  // Tasks view offers each action to a role that reaches it (the handler still authorizes
-  // against the inbox's owner namespace).
+  // Tasks view shows each action, unavailable to a role that does not reach it (the handler
+  // still authorizes against the inbox's owner namespace).
   "task.get": VIEWER,
   "task.list": VIEWER,
   "task.counts": VIEWER,

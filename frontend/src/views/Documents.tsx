@@ -37,7 +37,6 @@ import {
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { collectionTitle } from "../lib/collections";
-import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
@@ -47,7 +46,8 @@ import { isPublicationPending } from "../lib/errors";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip, Unavailable } from "../components/ui";
-import { needsRole } from "../lib/namespaceRole";
+import { needsRole, useNamespaceRoleRead } from "../lib/namespaceRole";
+import { ROLE_LOADING, needsLine } from "../lib/callReason";
 import { BusyButton } from "../components/ui/BusyButton";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
@@ -209,14 +209,25 @@ export function Documents() {
     if (!collection && opensFirst) pickCollection(opensFirst.namespace);
   }, [collection, opensFirst, pickCollection]);
   const identity = useMemo(() => (shown ? { ...picked, namespace: shown.namespace } : picked), [picked, shown]);
-  const readOnly = shown?.role === "viewer";
-  // A viewer of the collection sees each write, unavailable, with the role it needs.
-  const writeReason = readOnly && shown ? needsRole("writer", collectionTitle(shown)) : null;
+  // Each write stays in view for a role known to be below writer, with what it needs: a viewer
+  // of the collection shown, or a role on the namespace that falls short of knowledge.add and
+  // knowledge.delete (WRITER). While the role loads the writes say so and the selection waits,
+  // so nothing flips from available to locked; a role the dashboard cannot know once read
+  // (unread, a `*` claim over a lower grant, a scoped token with no row) keeps the writes and
+  // the server decides.
+  const roleRead = useNamespaceRoleRead(picked.namespace);
   const whoami = useStore((s) => s.whoami);
-  const headerRole = useNamespaceRole(picked.namespace);
+  const viewerOfShown = shown && shown.role === "viewer" ? needsRole("writer", collectionTitle(shown)) : null;
+  const roleLoading = !shown && (roleRead.loading || !whoami);
+  const viewerHere = roleLoading ? ROLE_LOADING : needsLine("knowledge.delete", roleRead, whoami, picked.namespace);
+  const writeReason = shown ? viewerOfShown : viewerHere;
+  // A role that cannot write, or not yet known to, gets no selection for a bulk delete.
+  const readOnly = writeReason !== null;
+  // Known to be below writer, rather than not known yet: the empty state's viewer words.
+  const knownReadOnly = readOnly && !roleLoading;
   // The place's admins manage its sources. An admin claim reaches no collection, so there
   // only the collection's own role decides.
-  const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.add", headerRole, whoami);
+  const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.add", roleRead.role, whoami);
   const [sourcesPanel, setSourcesPanel] = useState<HTMLDivElement | null>(null);
   const phone = useMedia(PHONE_QUERY);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
@@ -253,6 +264,11 @@ export function Documents() {
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
+  // A reason that appears while Edit details is open closes it. Add and Replace stay: they
+  // hold an upload in flight, which the server refuses if the role no longer reaches it.
+  useEffect(() => {
+    if (writeReason) setEditEntry(null);
+  }, [writeReason]);
 
   // `nextCursor` is the server's continuation, null once the namespace is fully loaded.
   // `scopeRef` stamps each first-page load so a "Load more" that resolves after the scope
@@ -851,13 +867,14 @@ export function Documents() {
     () => ({
       open: (r) => void handlers.current.onOpen(r),
       download: (r) => void handlers.current.onDownload(r),
-      ...(readOnly
-        ? {}
-        : { replace: setReplaceEntry, edit: setEditEntry, remove: (uri) => void handlers.current.onDelete(uri) }),
+      replace: setReplaceEntry,
+      edit: setEditEntry,
+      remove: (uri) => void handlers.current.onDelete(uri),
+      writeReason,
       ...(readOnly ? {} : { toggle: toggleRow }),
       tag: (t) => setQuery((cur) => toggleQueryToken(cur, `tag:${t}`)),
     }),
-    [toggleRow, readOnly],
+    [toggleRow, readOnly, writeReason],
   );
 
   // Below the documents, so they start where the list rules want them; on a phone the
@@ -1169,13 +1186,21 @@ export function Documents() {
           icon="document"
           title={shown ? "This collection is empty" : "Your library is empty"}
           description={
-            readOnly
+            knownReadOnly
               ? "Nothing has been added yet. Its members who write can add documents."
               : folderTree
                 ? "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file, or a folder of them: the server extracts each, your agents search them, and you can download the originals back any time."
                 : "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file: the server extracts it, your agents search it, and you can download the original back any time."
           }
-          action={readOnly ? undefined : { label: "Add document", onClick: () => setAddOpen(true) }}
+          // One Add, unavailable with why to a role that cannot add or is still loading, so it
+          // keeps its focus as the role resolves.
+          actions={
+            <Unavailable reason={writeReason}>
+              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+                Add document
+              </Button>
+            </Unavailable>
+          }
         />
       )}
 
@@ -1455,11 +1480,15 @@ function hasOriginalFile(r: KnowledgeEntry): boolean {
 interface DocRowActions {
   open: (r: KnowledgeEntry) => void;
   download: (r: KnowledgeEntry) => void;
-  /** The writes; absent where the caller only reads (a collection it views). */
-  replace?: (r: KnowledgeEntry) => void;
-  edit?: (r: KnowledgeEntry) => void;
-  remove?: (sourceUri: string) => void;
-  /** Selection, for the bulk delete; absent where the caller only reads. */
+  /** The writes. */
+  replace: (r: KnowledgeEntry) => void;
+  edit: (r: KnowledgeEntry) => void;
+  remove: (sourceUri: string) => void;
+  /** Why the writes are unavailable, or null: a viewer of the collection shown, a role on
+   *  the namespace known to be below writer, or the role still loading. The writes stay in
+   *  the menu, unavailable, with it. */
+  writeReason: string | null;
+  /** Selection, for the bulk delete; absent where the caller cannot write, or before its role is known. */
   toggle?: (sourceUri: string, range?: boolean) => void;
   tag: (tag: string) => void;
 }
@@ -1479,13 +1508,13 @@ interface DocRowProps {
 const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, activeTags, actions }: DocRowProps) {
   const name = r.title || r.original_filename || r.source_uri;
   const file = r.title ? r.original_filename || r.source_uri : "";
-  const { replace, edit, remove, toggle } = actions;
+  const { replace, edit, remove, toggle, writeReason } = actions;
   const menu: RowMenuItem[] = [
     { label: "Preview", icon: "eye", onSelect: () => actions.open(r) },
     { label: downloadLabel(r), icon: "download", onSelect: () => actions.download(r) },
     // Uploading a file into a text-only document is the same replace flow.
-    ...(replace ? [{ label: "Replace content", icon: "refresh" as const, onSelect: () => replace(r) }] : []),
-    ...(edit ? [{ label: "Edit details", icon: "pencil" as const, onSelect: () => edit(r) }] : []),
+    { label: "Replace content", icon: "refresh", reason: writeReason, onSelect: () => replace(r) },
+    { label: "Edit details", icon: "pencil", reason: writeReason, onSelect: () => edit(r) },
     {
       label: "Copy URI",
       icon: "copy",
@@ -1496,9 +1525,7 @@ const DocRow = memo(function DocRow({ entry: r, active, checked, selecting, acti
         );
       },
     },
-    ...(remove
-      ? [{ label: "Delete", icon: "trash" as const, danger: true, onSelect: () => remove(r.source_uri) }]
-      : []),
+    { label: "Delete", icon: "trash", danger: true, reason: writeReason, onSelect: () => remove(r.source_uri) },
   ];
   return (
     <ListRow

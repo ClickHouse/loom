@@ -46,7 +46,8 @@ import { MemoryTabs } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { NamespaceGuideButton } from "../components/NamespaceGuideButton";
 import { Unavailable } from "../components/ui";
-import { canWrite, needsRole, useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
+import { type GatedNamespaceOp, callReason, codeMember, needsLine } from "../lib/callReason";
 import { canCall } from "../lib/canCall";
 import { parseSearchQuery, type SearchQuery, takePendingSearch, toggleQueryToken } from "../lib/memoriesSearch";
 import { oneOf } from "../lib/oneOf";
@@ -114,10 +115,22 @@ function InsightsButton() {
 
 function MemoryList() {
   const identity = useIdentity();
-  // Viewers see the page read-only — the write CTAs are disabled with the reason, not
-  // offered and then refused by the server.
-  const role = useNamespaceRole(identity.namespace);
-  const readOnly = !canWrite(role);
+  // Add memory stays in view for a role that cannot write, unavailable with why. A role known
+  // to fall short (`needsLine`) reads the viewer's empty state. The checklist, which adds a
+  // memory itself, shows only where Add memory is available, so it never shows and then goes.
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const role = roleRead.role;
+  const whoami = useStore((s) => s.whoami);
+  const why = (op: GatedNamespaceOp) => callReason(op, roleRead, whoami, identity.namespace);
+  // A repository's member may add there whatever its role (`codeMember`): the server decides.
+  const addReason = codeMember(roleRead, identity.namespace) ? null : why("memory.set");
+  const readOnly = addReason !== null && needsLine("memory.set", roleRead, whoami, identity.namespace) !== null;
+  // Restore stays in view for a role that cannot call it, unavailable with why; Pin and Delete
+  // live in the selection, which waits for a role that can.
+  const pinReason = why("memory.pin");
+  const deleteReason = why("memory.delete");
+  const restoreReason = why("memory.restore");
+  const selectable = !pinReason && !deleteReason;
   const inspectedKey = useStore((s) => s.inspectedMemoryKey);
   const inspect = useStore((s) => s.inspect);
   // Bumped on memory writes from any surface so we re-fetch immediately
@@ -150,6 +163,10 @@ function MemoryList() {
   const [pageSize, setPageSize] = usePageSize("memories");
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
+  // A reason that appears while it is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (addReason) setAddOpen(false);
+  }, [addReason]);
   const [membersOpen, setMembersOpen] = useState(false);
   const [query, setQuery] = useState("");
   // Another namespace's conflict keys and agents are not this one's: they go during render,
@@ -297,7 +314,6 @@ function MemoryList() {
   // this list's one read: the unfiltered, live first page, read in this namespace for the
   // filter in force. Right after a namespace switch or a filter change the rows on screen
   // are still the last read's, and count for nothing.
-  const whoami = useStore((s) => s.whoami);
   const mine = useStore((s) => s.myNamespaces);
   const authOff = isAuthDisabled();
   const onboarding = useOnboarding(whoami?.subject ?? (authOff ? "local" : ""), namespaceKey);
@@ -320,7 +336,7 @@ function MemoryList() {
     if (isNew) start();
   }, [isNew, start]);
   const checklist =
-    !readOnly &&
+    !addReason &&
     entries !== null &&
     listedIn === namespaceKey &&
     !onboarding.state.dismissed &&
@@ -459,7 +475,7 @@ function MemoryList() {
     rowAgent && !SENTINEL_AGENTS.has(rowAgent) ? { ...identity, agent: rowAgent } : identity;
 
   const bulkPin = async () => {
-    if (selected.size === 0 || busy) return;
+    if (selected.size === 0 || busy || pinReason) return;
     setBusy(true);
     const keys = Array.from(selected);
     let ok = 0,
@@ -508,7 +524,7 @@ function MemoryList() {
   };
 
   const bulkDelete = async () => {
-    if (selected.size === 0 || busy) return;
+    if (selected.size === 0 || busy || deleteReason) return;
     if (
       !(await confirmAction({
         title: `Delete ${selected.size} ${selected.size === 1 ? "memory" : "memories"}?`,
@@ -555,10 +571,11 @@ function MemoryList() {
   const pageKeys = useMemo(() => pageList.map((e) => e.memory_key), [pageList]);
   // Checkboxes: one row, a Shift-click range, every row on the page; Escape clears them
   // while the drawer is closed (it owns Escape while open).
-  const selection = useRowSelection(pageKeys, { enabled: !inspectedKey });
+  const selection = useRowSelection(pageKeys, { enabled: !inspectedKey && selectable });
   const { selected, toggle: toggleSelect } = selection;
   // One callback for every card, so the memoised cards skip a render when it is not theirs.
-  const selecting = selected.size > 0;
+  // A selection made before the role fell short is not acted on: the bar goes with the boxes.
+  const selecting = selectable && selected.size > 0;
   const openCard = useCallback(
     (e: MemoryListEntry) => (selecting ? toggleSelect(e.memory_key) : inspect(e.memory_key, { agent: e.agent })),
     [selecting, toggleSelect, inspect],
@@ -684,6 +701,16 @@ function MemoryList() {
       </Select>
     );
 
+  // The empty page's Add memory, one element for a viewer, a writer and a role still loading,
+  // so it keeps its focus as the role resolves while the empty state stays (a writer's
+  // Getting started checklist takes the empty state's place).
+  const emptyAdd = (
+    <Unavailable reason={addReason}>
+      <Button type="primary" htmlType="button" onClick={() => setAddOpen(true)}>
+        Add memory
+      </Button>
+    </Unavailable>
+  );
   return (
     <PageContainer className="pb-24">
       <PageHeader
@@ -697,7 +724,7 @@ function MemoryList() {
             <NamespaceGuideButton identity={identity} compact={phone} />
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyNamespace && (
-              <Unavailable reason={readOnly ? needsRole("writer", identity.namespace) : null}>
+              <Unavailable reason={addReason}>
                 <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
                   Add memory
                 </Button>
@@ -717,6 +744,7 @@ function MemoryList() {
         open={addOpen}
         onOpenChange={setAddOpen}
         identity={identity}
+        reason={addReason}
         onAdded={() => bumpMemoriesVersion()}
       />
 
@@ -854,9 +882,12 @@ function MemoryList() {
             ? {
                 description: "Memories appear here when someone with writer access saves one.",
                 actions: (
-                  <Button type="secondary" htmlType="button" onClick={() => setMembersOpen(true)}>
-                    See who the admins are
-                  </Button>
+                  <>
+                    {emptyAdd}
+                    <Button type="secondary" htmlType="button" onClick={() => setMembersOpen(true)}>
+                      See who the admins are
+                    </Button>
+                  </>
                 ),
                 children: (
                   <p className="mt-2 max-w-md text-sm text-text-muted">
@@ -866,7 +897,7 @@ function MemoryList() {
               }
             : {
                 description: "Memories appear here when your agent saves one. Connect an agent, or add one yourself.",
-                action: { label: "Add memory", onClick: () => setAddOpen(true) },
+                actions: <>{emptyAdd}</>,
                 connect: "secondary" as const,
               })}
         />
@@ -941,15 +972,17 @@ function MemoryList() {
                     deleted={isTombstoned}
                     className={isNew ? "animate-fade-in" : ""}
                     leading={
-                      <Checkbox
-                        checked={isSelected}
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          toggleSelect(e.memory_key, ev.shiftKey);
-                        }}
-                        aria-label={`Select ${e.memory_key}`}
-                        className="list-row-control"
-                      />
+                      selectable && (
+                        <Checkbox
+                          checked={isSelected}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            toggleSelect(e.memory_key, ev.shiftKey);
+                          }}
+                          aria-label={`Select ${e.memory_key}`}
+                          className="list-row-control"
+                        />
+                      )
                     }
                   >
                     <MemoryCard
@@ -970,30 +1003,32 @@ function MemoryList() {
                         <span>
                           Deleted <ListTime time={e.tombstoned_at} quiet /> · {restoreText(e.tombstoned_at)}
                         </span>
-                        <Button
-                          type="empty"
-                          htmlType="button"
-                          className="list-row-control"
-                          onClick={async (ev) => {
-                            ev.stopPropagation();
-                            // Identity carries only (org, namespace, agent);
-                            // pass user_id/session_id alongside the key.
-                            const r = await restoreMemory({ ...identity, agent: e.agent || "-" }, e.memory_key, {
-                              user_id: e.user_id || "-",
-                              session_id: e.session_id || "-",
-                            });
-                            if (r.restored) {
-                              toast(`Restored ${e.memory_key}`, "ok");
-                              bumpMemoriesVersion();
-                            } else if (r.expired) {
-                              toast("Outside the 14-day grace window — can't restore", "error");
-                            } else {
-                              toast("Nothing to restore", "info");
-                            }
-                          }}
-                        >
-                          Restore
-                        </Button>
+                        <Unavailable reason={restoreReason}>
+                          <Button
+                            type="empty"
+                            htmlType="button"
+                            className="list-row-control"
+                            onClick={async (ev) => {
+                              ev.stopPropagation();
+                              // Identity carries only (org, namespace, agent);
+                              // pass user_id/session_id alongside the key.
+                              const r = await restoreMemory({ ...identity, agent: e.agent || "-" }, e.memory_key, {
+                                user_id: e.user_id || "-",
+                                session_id: e.session_id || "-",
+                              });
+                              if (r.restored) {
+                                toast(`Restored ${e.memory_key}`, "ok");
+                                bumpMemoriesVersion();
+                              } else if (r.expired) {
+                                toast("Outside the 14-day grace window — can't restore", "error");
+                              } else {
+                                toast("Nothing to restore", "info");
+                              }
+                            }}
+                          >
+                            Restore
+                          </Button>
+                        </Unavailable>
                       </div>
                     )}
                   </ListRow>

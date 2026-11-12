@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -24,31 +24,43 @@ import { toast, toastError } from "../components/Toast";
 import { RowMenu } from "../components/ui/RowMenu";
 import { ListState } from "../components/ui/ListState";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { Alert, ListTime, Loading } from "../components/ui";
+import { Alert, ListTime, Loading, Unavailable } from "../components/ui";
 
 /**
  * The namespace's memory webhooks: a URL told of every memory write, revision, delete,
  * restore, redaction and erasure, signed with a secret the server reads from an
- * environment variable. Shown to the namespace's admin (the webhook ops are ADMIN), and
- * keyed by its namespace where it is mounted, so a switch starts a fresh section.
+ * environment variable. The webhook ops are ADMIN: for any other role `unavailable` says
+ * why, and the section shows it with Add webhook unavailable and reads nothing. Keyed by its
+ * namespace where it is mounted, so a switch starts a fresh section.
  */
-export function WebhooksSection() {
+export function WebhooksSection({ unavailable = null }: { unavailable?: string | null }) {
   const identity = useIdentity();
   const [hooks, setHooks] = useState<Webhook[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
   const [adding, setAdding] = useState(false);
   const [deliveries, setDeliveries] = useState<Webhook | null>(null);
+  // A reason that appears while either dialog is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (!unavailable) return;
+    setAdding(false);
+    setDeliveries(null);
+  }, [unavailable]);
   const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set());
 
   useAbortableEffect(
     (signal, live) => {
       setError(null);
+      // A role that drops below the gate keeps none of the rows read for the one before.
+      if (unavailable) {
+        setHooks(null);
+        return;
+      }
       listWebhooks(identity, { signal })
         .then((r) => live() && setHooks(r.webhooks))
         .catch((e) => live() && setError(e));
     },
-    [reload],
+    [reload, unavailable],
   );
   const refresh = () => setReload((n) => n + 1);
 
@@ -84,13 +96,16 @@ export function WebhooksSection() {
             A URL Loom tells when a memory here is written, changed or deleted.
           </p>
         </div>
-        <Button type="secondary" htmlType="button" iconLeft="plus" onClick={() => setAdding(true)}>
-          Add webhook
-        </Button>
+        <Unavailable reason={unavailable}>
+          <Button type="secondary" htmlType="button" iconLeft="plus" onClick={() => setAdding(true)}>
+            Add webhook
+          </Button>
+        </Unavailable>
       </div>
       <div className="mt-3">
+        {unavailable && <p className="m-0 text-sm text-text-muted">{unavailable}</p>}
         {!!error && <ListState kind="error" things="webhooks" error={error} onRetry={refresh} />}
-        {!error && hooks === null && <Loading label="Loading webhooks" />}
+        {!unavailable && !error && hooks === null && <Loading label="Loading webhooks" />}
         {!error && hooks?.length === 0 && <p className="text-sm text-text-muted">No webhook yet.</p>}
         {!error && !!hooks?.length && (
           <ul className="divide-y divide-border">

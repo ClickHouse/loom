@@ -33,9 +33,8 @@ import {
 import { DuplicatesPanel } from "./Duplicates";
 import { ProposalsPanel } from "./Proposals";
 import { useIdentity, useStore } from "../../lib/state";
-import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
-import { LoadingSkeleton, PageHeader, SectionHeading, TabTrigger } from "../../components/ui";
+import { LoadingSkeleton, PageHeader, SectionHeading, TabTrigger, Unavailable } from "../../components/ui";
 import { Skeleton, TableSkeleton } from "../../components/Skeleton";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
@@ -46,7 +45,10 @@ import { toast, toastError } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { formatValue, truncate, SENSITIVE_READ_BY_KEY } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
-import { useNamespaceRole } from "../../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../../lib/namespaceRole";
+import { callReason } from "../../lib/callReason";
+import { useOpReason } from "../../lib/useOpReason";
+import { GatedIconButton } from "../../components/ui/GatedIconButton";
 import { canCall } from "../../lib/canCall";
 import { sharedHasAutoResolved } from "../../lib/sharedReads";
 import { useRowNav } from "../../lib/useRowNav";
@@ -61,10 +63,8 @@ import { PageContainer } from "../../layout/PageContainer";
  *   - Exceptions:  allowlist of pairs we've explicitly said may coexist
  *   - Proposals:   facts on trial, accepted or rejected by hand
  *   - Duplicates:  the dedup worker's pairs, memories and documents, and the repairs
- *                  (admin only)
+ *                  (admin only; every other role sees what it needs)
  */
-// Radix's tab panel attributes, cleared while Conflicts is the only panel.
-const LONE_PANEL = { role: undefined, "aria-labelledby": undefined, tabIndex: undefined };
 
 type QueueTab = "conflicts" | "learnings" | "auto" | "exceptions" | "proposals" | "duplicates";
 // One name per tab, for its trigger and the document title.
@@ -101,25 +101,36 @@ export function ReviewQueue() {
   // The tab lists retirements and reads their Undo records (audit.list): asked only by a
   // role known to reach both.
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity.namespace);
+  const queueRole = useNamespaceRoleRead(identity.namespace);
+  const { role } = queueRole;
   const autoReadable = canCall("memory.auto_retirements", role, whoami) && canCall("audit.list", role, whoami);
-  // The duplicate lists are ADMIN; the tab is there for an admin whether or not a pair waits,
-  // since its repairs run over the whole namespace.
-  const hasDuplicates = canCall("memory.dedup_list", role, whoami) && canCall("knowledge.dedup_list", role, whoami);
-  // Proposals are offered to a role that reads them, with no probe: the tab reads when it
-  // opens, so the page costs no read for them.
-  const hasProposals = canCall("memory.proposals", role, whoami);
-  const tabbed = hasLearnings || hasExceptions || hasAuto || hasProposals || hasDuplicates;
+  // A role known not to read it sees the tab and what it needs, with no probe: whether any
+  // retirement waits is the read it cannot make. While the role loads nothing is shown; a
+  // failed list_mine shows the tab with that, as Proposals and Duplicates do.
+  const autoReason =
+    callReason("memory.auto_retirements", queueRole, whoami, identity.namespace) ??
+    callReason("audit.list", queueRole, whoami, identity.namespace);
+  const roleKnown = !!whoami && !queueRole.loading;
+  const showAuto = hasAuto || (autoReason !== null && roleKnown);
+  // The duplicate lists are ADMIN; the tab is there whether or not a pair waits, since its
+  // repairs run over the whole namespace. Shown to every role: one below admin sees what it
+  // needs there, and nothing is read for it, so the page is always tabbed.
+  const duplicatesReason =
+    callReason("memory.dedup_list", queueRole, whoami, identity.namespace) ??
+    callReason("knowledge.dedup_list", queueRole, whoami, identity.namespace);
+  // Shown to every role; one that cannot read them sees what it needs, and nothing is read.
+  // No probe: the tab reads when it opens, so the page costs no read for them.
+  const proposalsReason = callReason("memory.proposals", queueRole, whoami, identity.namespace);
   const [tab, setTab] = useState<QueueTab>("conflicts");
   // A tab that is no longer offered (its probe found nothing, or its access went) hands the
   // page back to Conflicts.
   const offered: Record<QueueTab, boolean> = {
     conflicts: true,
     learnings: hasLearnings,
-    auto: hasAuto,
+    auto: showAuto,
     exceptions: hasExceptions,
-    proposals: hasProposals,
-    duplicates: hasDuplicates,
+    proposals: true,
+    duplicates: true,
   };
   const tabOffered = offered[tab];
   useEffect(() => {
@@ -174,7 +185,7 @@ export function ReviewQueue() {
 
   return (
     <PageContainer>
-      <PageHeader title="Review queue" tab={tabbed ? QUEUE_TABS[tab] : undefined}>
+      <PageHeader title="Review queue" tab={QUEUE_TABS[tab]}>
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-2xl">
@@ -191,39 +202,33 @@ export function ReviewQueue() {
           if (t === "auto") setAutoOpened(true);
         }}
       >
-        {tabbed && (
-          <Tabs.TriggersList className="mb-5" aria-label="Review queue">
-            <TabTrigger value="conflicts" icon="warning">
-              {QUEUE_TABS.conflicts}
+        <Tabs.TriggersList className="mb-5" aria-label="Review queue">
+          <TabTrigger value="conflicts" icon="warning">
+            {QUEUE_TABS.conflicts}
+          </TabTrigger>
+          {hasLearnings && (
+            <TabTrigger value="learnings" icon="sparkle">
+              {QUEUE_TABS.learnings}
             </TabTrigger>
-            {hasLearnings && (
-              <TabTrigger value="learnings" icon="sparkle">
-                {QUEUE_TABS.learnings}
-              </TabTrigger>
-            )}
-            {hasAuto && (
-              <TabTrigger value="auto" icon="flash">
-                {QUEUE_TABS.auto}
-              </TabTrigger>
-            )}
-            {hasExceptions && (
-              <TabTrigger value="exceptions" icon="line-in-circle">
-                {QUEUE_TABS.exceptions}
-              </TabTrigger>
-            )}
-            {hasProposals && (
-              <TabTrigger value="proposals" icon="question">
-                {QUEUE_TABS.proposals}
-              </TabTrigger>
-            )}
-            {hasDuplicates && (
-              <TabTrigger value="duplicates" icon="copy">
-                {QUEUE_TABS.duplicates}
-              </TabTrigger>
-            )}
-          </Tabs.TriggersList>
-        )}
-        <Tabs.Content value="conflicts" {...(!tabbed && LONE_PANEL)}>
+          )}
+          {showAuto && (
+            <TabTrigger value="auto" icon="flash">
+              {QUEUE_TABS.auto}
+            </TabTrigger>
+          )}
+          {hasExceptions && (
+            <TabTrigger value="exceptions" icon="line-in-circle">
+              {QUEUE_TABS.exceptions}
+            </TabTrigger>
+          )}
+          <TabTrigger value="proposals" icon="question">
+            {QUEUE_TABS.proposals}
+          </TabTrigger>
+          <TabTrigger value="duplicates" icon="copy">
+            {QUEUE_TABS.duplicates}
+          </TabTrigger>
+        </Tabs.TriggersList>
+        <Tabs.Content value="conflicts">
           <ConflictsPanel />
         </Tabs.Content>
         {hasLearnings && (
@@ -234,7 +239,12 @@ export function ReviewQueue() {
             />
           </Tabs.Content>
         )}
-        {hasAuto && autoOpened && (
+        {autoReason && roleKnown && (
+          <Tabs.Content value="auto">
+            <p className="m-0 text-sm text-text-muted">{autoReason}</p>
+          </Tabs.Content>
+        )}
+        {!autoReason && hasAuto && autoOpened && (
           // Kept mounted once opened, so its loaded pages and Undo outcomes survive a tab
           // switch; a namespace switch drops it with the probe.
           <Tabs.Content value="auto" forceMount className="data-[state=inactive]:hidden">
@@ -250,17 +260,17 @@ export function ReviewQueue() {
             />
           </Tabs.Content>
         )}
-        {hasProposals && (
-          <Tabs.Content value="proposals">
-            {/* Keyed by namespace: another namespace's proposals are a new panel. */}
+        <Tabs.Content value="proposals">
+          {/* Keyed by namespace: another namespace's proposals are a new panel. */}
+          {proposalsReason ? (
+            <p className="m-0 text-sm text-text-muted">{proposalsReason}</p>
+          ) : (
             <ProposalsPanel key={scopeKey} />
-          </Tabs.Content>
-        )}
-        {hasDuplicates && (
-          <Tabs.Content value="duplicates">
-            <DuplicatesPanel />
-          </Tabs.Content>
-        )}
+          )}
+        </Tabs.Content>
+        <Tabs.Content value="duplicates">
+          {duplicatesReason ? <p className="m-0 text-sm text-text-muted">{duplicatesReason}</p> : <DuplicatesPanel />}
+        </Tabs.Content>
       </Tabs>
     </PageContainer>
   );
@@ -272,6 +282,8 @@ const CONFLICT_PAGE = 50;
 
 function ConflictsPanel() {
   const identity = useIdentity();
+  // Each decision stays in view for a role that cannot resolve, with what it needs.
+  const resolveReason = useOpReason("conflicts.resolve", identity.namespace);
   const [rows, setRows] = useState<ConflictRow[] | null>(null);
   // The next older page (conflicts.list is keyed by version), and how many the namespace
   // holds in all.
@@ -440,6 +452,7 @@ function ConflictsPanel() {
   const held = total === null ? null : Math.max(total, rows.length);
 
   const decide = async (decision: ResolveDecision) => {
+    if (resolveReason) return;
     const myVisit = visit.current;
     const myQueue = queueKey;
     setBusy(true);
@@ -541,21 +554,27 @@ function ConflictsPanel() {
           >
             Skip
           </Button>
-          <Button type="secondary" htmlType="button" onClick={() => decide("allow")} disabled={busy}>
-            Allow both
-          </Button>
-          <Button
-            type="secondary"
-            htmlType="button"
-            iconLeft="cross"
-            onClick={() => decide("contract")}
-            disabled={busy}
-          >
-            Drop A
-          </Button>
-          <Button type="primary" htmlType="button" iconLeft="check" onClick={() => decide("revise")} disabled={busy}>
-            Keep A
-          </Button>
+          <Unavailable reason={resolveReason}>
+            <Button type="secondary" htmlType="button" onClick={() => decide("allow")} disabled={busy}>
+              Allow both
+            </Button>
+          </Unavailable>
+          <Unavailable reason={resolveReason}>
+            <Button
+              type="secondary"
+              htmlType="button"
+              iconLeft="cross"
+              onClick={() => decide("contract")}
+              disabled={busy}
+            >
+              Drop A
+            </Button>
+          </Unavailable>
+          <Unavailable reason={resolveReason}>
+            <Button type="primary" htmlType="button" iconLeft="check" onClick={() => decide("revise")} disabled={busy}>
+              Keep A
+            </Button>
+          </Unavailable>
         </div>
       </Panel>
 
@@ -749,6 +768,7 @@ function LearningsPanel({
   onSeedUsed: () => void;
 }) {
   const identity = useIdentity();
+  const reviewReason = useOpReason("learnings.review", identity.namespace);
   const [status, setStatus] = useState<LearningStatus>("pending");
   const [rows, setRows] = useState<LearningEntry[] | null>(initialPending ?? null);
   const [reason, setReason] = useState<Record<string, string>>({});
@@ -793,6 +813,7 @@ function LearningsPanel({
   );
 
   const decide = async (id: string, decision: "promote" | "reject") => {
+    if (reviewReason) return;
     try {
       await reviewLearning({ org: identity.org, namespace: identity.namespace }, id, decision, reason[id] || "");
       toast(decision === "promote" ? "Promoted" : "Rejected", "ok");
@@ -876,22 +897,26 @@ function LearningsPanel({
                     rows={2}
                   />
                   <div className="mt-2 flex items-center justify-end gap-2">
-                    <Button
-                      type="secondary"
-                      htmlType="button"
-                      iconLeft="cross"
-                      onClick={() => decide(r.candidate_id, "reject")}
-                    >
-                      Reject
-                    </Button>
-                    <Button
-                      type="secondary"
-                      htmlType="button"
-                      iconLeft="check"
-                      onClick={() => decide(r.candidate_id, "promote")}
-                    >
-                      Promote
-                    </Button>
+                    <Unavailable reason={reviewReason}>
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        iconLeft="cross"
+                        onClick={() => decide(r.candidate_id, "reject")}
+                      >
+                        Reject
+                      </Button>
+                    </Unavailable>
+                    <Unavailable reason={reviewReason}>
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        iconLeft="check"
+                        onClick={() => decide(r.candidate_id, "promote")}
+                      >
+                        Promote
+                      </Button>
+                    </Unavailable>
                   </div>
                 </>
               )}
@@ -940,8 +965,9 @@ function mergeUndone(a: Map<string, string>, b: Map<string, string>): Map<string
 function AutoResolvedPanel() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity.namespace);
-  const canRestore = canCall("memory.restore", role, whoami);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  // Undo stays in view for a role that cannot restore, with the role it needs.
+  const restoreReason = callReason("memory.restore", roleRead, whoami, identity.namespace);
   const [rows, setRows] = useState<AutoResolvedRow[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
   // The tab showed because a row exists, so a failed read must not look like an empty list.
@@ -1096,21 +1122,23 @@ function AutoResolvedPanel() {
       );
     }
     // Without the row it retired behind, an Undo could only be an unguarded restore.
-    if (!canRestore || !r.superseded_by) return null;
+    if (!r.superseded_by) return null;
     if (!known(r)) {
       return <span className="text-sm text-text-muted">Checking…</span>;
     }
     return (
-      <Button
-        type="secondary"
-        htmlType="button"
-        iconLeft="history"
-        onClick={() => undo(r)}
-        disabled={busy.has(entryKey(r))}
-        aria-label={`Undo retirement of ${r.memory_key}`}
-      >
-        Undo
-      </Button>
+      <Unavailable reason={restoreReason}>
+        <Button
+          type="secondary"
+          htmlType="button"
+          iconLeft="history"
+          onClick={() => undo(r)}
+          disabled={busy.has(entryKey(r))}
+          aria-label={`Undo retirement of ${r.memory_key}`}
+        >
+          Undo
+        </Button>
+      </Unavailable>
     );
   };
 
@@ -1199,6 +1227,7 @@ function AutoResolvedPanel() {
 
 function AllowlistPanel({ initial, onSeedUsed }: { initial?: AllowlistRow[] | null; onSeedUsed: () => void }) {
   const identity = useIdentity();
+  const removeReason = useOpReason("conflicts.allowlist_remove", identity.namespace);
   const [rows, setRows] = useState<AllowlistRow[] | null>(initial ?? null);
   const seeded = useRef(initial != null);
   const [reload, setReload] = useState(0);
@@ -1240,6 +1269,7 @@ function AllowlistPanel({ initial, onSeedUsed }: { initial?: AllowlistRow[] | nu
   );
 
   const remove = async (a: string, b: string) => {
+    if (removeReason) return;
     if (
       !(await confirmAction({
         title: "Remove this allowlist entry?",
@@ -1311,11 +1341,12 @@ function AllowlistPanel({ initial, onSeedUsed }: { initial?: AllowlistRow[] | nu
             },
             {
               label: (
-                <IconButton
+                <GatedIconButton
                   icon="cross"
                   type="danger"
                   size="sm"
                   label={`Remove exception ${r.memory_key_a} and ${r.memory_key_b}`}
+                  reason={removeReason}
                   onClick={() => remove(r.memory_key_a, r.memory_key_b)}
                 />
               ),

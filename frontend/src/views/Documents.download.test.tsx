@@ -58,12 +58,16 @@ const failure = () => new ApiError({ status: 500, code: "INTERNAL", message: "bo
 describe("Library download", () => {
   beforeEach(() => {
     api.listKnowledge.mockResolvedValue({ rows: ROWS, total: ROWS.length, next_cursor: null });
-    useStore.setState({ identity: { org: ORG, namespace: NS, agent: "loom-ui" }, view: "knowledge" });
+    useStore.setState({
+      identity: { org: ORG, namespace: NS, agent: "loom-ui" },
+      view: "knowledge",
+      whoami: { authenticated: false },
+    });
   });
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
-    useStore.setState({ identity: null });
+    useStore.setState({ identity: null, whoami: null });
   });
 
   it("downloads under the viewer's scope with the original filename, else the Markdown name", async () => {
@@ -138,12 +142,16 @@ describe("Library preview", () => {
   beforeEach(() => {
     api.listKnowledge.mockResolvedValue({ rows: ROWS, total: ROWS.length, next_cursor: null });
     api.getKnowledge.mockResolvedValue({ found: true, content: "text", source_uri: "docs/handbook.pdf" });
-    useStore.setState({ identity: { org: ORG, namespace: NS, agent: "loom-ui" }, view: "knowledge" });
+    useStore.setState({
+      identity: { org: ORG, namespace: NS, agent: "loom-ui" },
+      view: "knowledge",
+      whoami: { authenticated: false },
+    });
   });
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
-    useStore.setState({ identity: null });
+    useStore.setState({ identity: null, whoami: null });
   });
 
   async function open(preview: unknown) {

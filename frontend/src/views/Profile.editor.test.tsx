@@ -3,6 +3,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../lib/state";
 import { ConfirmViewport } from "../components/ConfirmDialog";
 import { Profile } from "./Profile";
+import type { MyNamespaceEntry, WhoAmI } from "../api";
+import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+
+// The caller's own grant on each namespace the tests use: the role its writes need.
+const grant = (namespace: string, role: MyNamespaceEntry["role"] = "writer"): MyNamespaceEntry => ({
+  namespace,
+  role,
+  status: "active",
+  visibility: "private",
+  description: "",
+  joined_at: null,
+  is_new: false,
+});
+const person: WhoAmI = {
+  authenticated: true,
+  subject: "p@example.com",
+  org: "dev",
+  roles: ["USER"],
+  namespaces: ["ns", "other"],
+};
 
 // The section editor: Escape drops nothing typed without asking, Tab reaches the text
 // before the buttons that save it, and an empty name is an error on its field.
@@ -10,6 +30,7 @@ import { Profile } from "./Profile";
 const listProfile = vi.fn();
 const getProfileActivity = vi.fn();
 const setProfileSection = vi.fn();
+const listMine = vi.fn(async (): Promise<MyNamespaceEntry[]> => []);
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
@@ -17,6 +38,7 @@ vi.mock("../api", async (importOriginal) => {
     listProfile: (...args: unknown[]) => listProfile(...args),
     getProfileActivity: (...args: unknown[]) => getProfileActivity(...args),
     setProfileSection: (...args: unknown[]) => setProfileSection(...args),
+    listMine: () => listMine(),
     isAuthDisabled: () => false,
   };
 });
@@ -40,15 +62,46 @@ describe("Profile: the section editor", () => {
     vi.clearAllMocks();
     listProfile.mockResolvedValue({ entries: [{ label: "persona", value: "Terse.", char_limit: 8192 }] });
     getProfileActivity.mockResolvedValue({ entries: [] });
+    resetNamespaceRoleCache();
     useStore.setState({
       authed: true,
+      whoami: person,
+      myNamespaces: [grant("ns"), grant("other")],
       identity: { org: "dev", namespace: "ns", agent: "loom-ui" },
       view: "profile",
     });
   });
   afterEach(() => {
     cleanup();
-    useStore.setState({ identity: null });
+    useStore.setState({ identity: null, whoami: null, myNamespaces: null });
+  });
+
+  it("holds a request to edit while the role loads, and opens the editor for a writer", async () => {
+    useStore.setState({ whoami: null, pendingEditProfileLabel: "persona" });
+    render(<Profile />);
+    await screen.findByText("persona");
+    expect(screen.queryByRole("textbox", { name: "Section text" })).toBeNull();
+    expect(useStore.getState().pendingEditProfileLabel).toBe("persona");
+    act(() => useStore.setState({ whoami: person }));
+    expect(await screen.findByRole("textbox", { name: "Section text" })).toHaveValue("Terse.");
+    expect(useStore.getState().pendingEditProfileLabel).toBeNull();
+  });
+
+  it("spends a request to edit when list_mine could not be read, without opening the editor", async () => {
+    listMine.mockRejectedValueOnce(new Error("down"));
+    useStore.setState({ myNamespaces: null, pendingEditProfileLabel: "persona" });
+    render(<Profile />);
+    await screen.findByText("persona");
+    await waitFor(() => expect(useStore.getState().pendingEditProfileLabel).toBeNull());
+    expect(screen.queryByRole("textbox", { name: "Section text" })).toBeNull();
+  });
+
+  it("spends a request to edit on a viewer without opening the editor", async () => {
+    useStore.setState({ myNamespaces: [grant("ns", "viewer")], pendingEditProfileLabel: "persona" });
+    render(<Profile />);
+    await screen.findByText("persona");
+    await waitFor(() => expect(useStore.getState().pendingEditProfileLabel).toBeNull());
+    expect(screen.queryByRole("textbox", { name: "Section text" })).toBeNull();
   });
 
   it("does not reopen an editor from the namespace left on a section of the same name", async () => {

@@ -24,6 +24,28 @@ describe("RowMenu", () => {
     expect(onRename).toHaveBeenCalled();
   });
 
+  it("keeps an item with a reason focusable, even one also disabled, and runs nothing", async () => {
+    const onEdit = vi.fn();
+    const reason = "Needs writer on team. An admin of it can grant that.";
+    render(
+      <RowMenu
+        name="row"
+        items={[
+          { label: "Open", onSelect: vi.fn() },
+          { label: "Edit", onSelect: onEdit, disabled: true, reason },
+        ]}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Actions for row" }));
+    const edit = await screen.findByRole("menuitem", { name: "Edit" });
+    expect(edit).toHaveAccessibleDescription(reason);
+    // Radix skips a disabled item; one with a reason is reached by the arrows.
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}");
+    await waitFor(() => expect(edit).toHaveFocus());
+    await userEvent.keyboard("{Enter}");
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
   it("marks a disabled item and draws a danger item as Click UI's danger", async () => {
     render(<RowMenu name="row" items={items()} />);
     await userEvent.click(screen.getByRole("button", { name: "Actions for row" }));

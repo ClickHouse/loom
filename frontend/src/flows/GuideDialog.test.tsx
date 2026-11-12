@@ -60,6 +60,25 @@ describe("GuideDialog", () => {
     });
   });
 
+  it("closes an open editor when a reason appears, and saves nothing", async () => {
+    const view = open(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    expect(screen.getByLabelText("Guide (Markdown)")).toBeInTheDocument();
+    view.rerender(
+      <GuideDialog
+        open
+        onOpenChange={() => {}}
+        org="o"
+        namespace="billing"
+        canEdit={false}
+        editReason="Needs writer on billing. An admin of it can grant that."
+        onSaved={() => {}}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByLabelText("Guide (Markdown)")).toBeNull());
+    expect(api.saveNamespaceGuide).not.toHaveBeenCalled();
+  });
+
   it("on a conflict keeps the draft, shows the newer text and saves on top of it", async () => {
     const newer = {
       ...GUIDE,
