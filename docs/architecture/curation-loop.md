@@ -60,9 +60,9 @@ leg, because the term leg serves shared rows to every reader:
   erasure reaches it, by provenance, and a definition promoted from the namespace-wide row
   names no user.
 - **A redact** of a definition reaches its shared row and that row's embedding, which a
-  redact of the source does not reach today, and blanks the text of the learnings
-  candidate it was promoted from (`promoted_from_candidate_id`), which `learnings.list`
-  shows to viewers.
+  redact of the source does not reach today, and blanks the text of every `knowledge_gap`
+  and `query_history` candidate drafted for its key, promoted or not, which
+  `learnings.list` shows to viewers.
 - **A promotion of a definition carries the content hash it approves**, the hash of the
   candidate's drafted value on the review path, or one the caller passes to
   `memory.promote`, and is refused when the source's text no longer has it, so a writer's
@@ -120,13 +120,14 @@ namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespac
 governed definitions through this leg only. The leg runs only on a search's first page
 (the governed keys it served there stay out of every later page of that search), and is
 off when a field asks for other rows (any `memory_type`, whose filter cannot name
-`definition`; `tags`; `category`; an explicit `agent`, `run_id` or `session_ids`;
-`as_of`). A `user_id` or `session_id` the read scope pins, `scope`, `exclude_keys` and
-`min_similarity` keep it on; it drops any key in `exclude_keys`. It serves no definition
-whose source is `sensitivity = 'high'` (the read-time check above). Its read is bounded by
-a setting; past the bound, the most recently promoted definitions are read and the
-response says the leg was cut. It runs beside the others under the same time budget, and
-its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
+`definition`; `tags`; `category`; an explicit `agent`, `run_id` or `session_ids`; `as_of`;
+a body `user_id` or `session_id` under a whole-namespace read; `entity_filter`;
+`min_body_chars`). A `user_id` or `session_id` the read scope pins, `scope`,
+`exclude_keys` and `min_similarity` keep it on; it drops any key in `exclude_keys`. It
+serves no definition whose source is `sensitivity = 'high'` (the read-time check above).
+Its read is bounded by a setting; past the bound, the most recently promoted definitions
+are read and the response says the leg was cut. It runs beside the others under the same
+time budget, and its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
 `server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
 output field: the SDKs and the MCP schema carry it.
 
@@ -183,14 +184,20 @@ end-user token; else the token's `creator` claim, the person at the root of a de
 token or service account ([tokens and grants](../guides/tokens-and-grants.md)); else, for
 a service account's token minted without the claim, its creator as the registry records it
 (`sa_creator` in `server/auth/service_accounts.py`); else the token's subject. Tokens a
-person mints for themselves therefore count as that person. Each miss writes one row to
-`loom.search_misses` under the namespace the search was addressed to: the identity tuple,
-the asker, `actor`, the plane and the query's normalised form, never the raw text: nothing
-reads it, and it is one asker's words below the threshold. No memory key or document URI
-is kept: one naming another user's row or document would outlive that user's erasure, or
-the document's delete, in someone else's miss. The table has a 14-day TTL: it is a trace,
-not memory. A pass reads the last 7 days, and a build lives 7 days, so a miss outlives
-every build that counted it and a user erasure always finds the namespaces it must clear.
+person mints for themselves therefore count as that person. An asker that cannot be
+resolved (the registry unreadable, or a service account with no creator) records no miss:
+an unknown principal is never counted as a separate person. The asker is stored in the
+form a user erasure names: an end user as their id, without the `user:` prefix. Each miss
+writes one row to `loom.search_misses` under the namespace the search was addressed to:
+the identity tuple, the asker, `actor`, the plane and the query's normalised form
+(case-folded, with every run of characters other than letters and digits made one space).
+That form is still the query's words, kept as the trace of a question under the
+namespace's consent; only the threshold below decides what an admin sees. No memory key or
+document URI is kept: one naming another user's row or document would outlive that user's
+erasure, or the document's delete, in someone else's miss. The table has a 14-day TTL: it
+is a trace, not memory. A pass reads the last 7 days, and a build lives 7 days, so a miss
+outlives every build that counted it and a user erasure always finds the namespaces it
+must clear.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
 misses and has no `user_id` to count askers or erase by. `loom.query_nodes` keeps one row
@@ -203,9 +210,12 @@ build. It reads the namespace's misses of the last 7 days and groups them by nor
 query. **Privacy threshold:** a group with fewer than `knowledge_gaps_min_askers` distinct
 askers (default three, never below three, one value for the deployment) is dropped before
 anything else, so every query a gap shows was asked in that form by at least that many
-askers. The threshold binds callers whose askers Loom resolves; it does not bind an org
-admin, who can mint tokens for any subject, or a trusted backend that names its own end
-users. The worker embeds the remaining groups' queries (at most
+askers. The threshold is as strong as the principals behind it: it does not bind whoever
+holds the signing key (`loom mint-token` mints any subject), an end-user issuer or a
+trusted caller (each names its own users), or a deployment where principals can be
+self-created (`LOOM_SELF_SIGNUP=open`, unclaimed agent sign-ups), where an admin could ask
+from accounts of their own. There it limits what one ordinary caller reveals, not what an
+admin can learn. The worker embeds the remaining groups' queries (at most
 `knowledge_gaps_max_groups`), merges groups whose vectors are at least
 `knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
 namespace in `loom.knowledge_gaps`:
@@ -258,11 +268,12 @@ tracker org. It reuses the tracker's connection checks: the host vetting, a read
 breaker on every read ([tracker plane](../features/tracker/overview.md)). The registration
 names the team that owns its definitions. Each turn:
 
-1. reads finished `SELECT` queries of the source's window, grouped by
-   `normalized_query_hash`, ranked by distinct users and then by recency, and drops a
-   group that fewer than `knowledge_gaps_min_askers` distinct users ran. Only the
-   normalised text is read (`normalizeQuery`, which replaces literals), so no user's
-   literal values reach the LLM or the draft;
+1. reads finished `SELECT` queries of the source's window, from every replica when the
+   registration names the cluster (`clusterAllReplicas`) and from the node it connects to
+   otherwise, grouped by `normalized_query_hash`, ranked by distinct users and then by
+   recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
+   ran. Only the normalised text is read (`normalizeQuery`, which replaces literals), so
+   no user's literal values reach the LLM or the draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition for at most a setting's number of groups, and
    queues each (`source_kind = 'query_history'`): the metric's name is the `term`, its
@@ -302,7 +313,8 @@ retried review, idempotent by key, completes it.
   queries enough askers asked and expires after 7 days.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
   `user_id` is the user (a token subject spelled as the user's id goes too, which costs
-  only a trace row), and a census row.
+  only a trace row), and a census row; an end user's asker is stored as their id, the form
+  the erasure names.
 - `loom.knowledge_gaps` keeps counts, not askers, so no op or page can say who asked: a
   namespace step, and a user step that reads the namespaces the user has misses in, before
   the miss step deletes them, and deletes those namespaces' builds (derived rows the next
