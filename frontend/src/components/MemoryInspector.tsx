@@ -898,7 +898,7 @@ export function MemoryInspector({
     menuHandsOff.current = true;
     open();
   };
-  const moreItems: MoreItem[] = detail
+  const moreEntries: (MoreItem | false)[] = detail
     ? [
         {
           label: detail.pinned ? "Unpin" : "Pin",
@@ -915,42 +915,37 @@ export function MemoryInspector({
         detail.lock_mode
           ? { label: "Unlock", icon: "lock", reason: lockReason, onSelect: onUnlock }
           : { label: "Lock…", icon: "lock", reason: lockReason, onSelect: handOff(() => setReasonDialog("lock")) },
-        ...(shareable
-          ? ([
-              { label: "Share with every agent", icon: "users", reason: shareReason, onSelect: () => void onShare() },
-            ] satisfies MoreItem[])
-          : []),
+        shareable && {
+          label: "Share with every agent",
+          icon: "users",
+          reason: shareReason,
+          onSelect: () => void onShare(),
+        },
         { label: "Stop sharing", icon: "user", reason: unshareReason, onSelect: () => void onUnshare() },
-        ...(!editing && !valueLocked
-          ? ([
-              {
-                label: "Rename",
-                icon: "arrow-right",
-                reason: moveReason,
-                onSelect: handOff(() => {
-                  formSession.current += 1;
-                  setRenameSession(formSession.current);
-                  setRenaming(true);
-                }),
-              },
-            ] satisfies MoreItem[])
-          : []),
+        !editing &&
+          !valueLocked && {
+            label: "Rename",
+            icon: "arrow-right",
+            reason: moveReason,
+            onSelect: handOff(() => {
+              formSession.current += 1;
+              setRenameSession(formSession.current);
+              setRenaming(true);
+            }),
+          },
         { label: "Copy", icon: "copy", onSelect: onCopyAll },
         { label: "This helped", icon: "check", reason: judgeReason, onSelect: () => void onOutcome("positive") },
         { label: "This misled", icon: "warning", reason: judgeReason, onSelect: () => void onOutcome("negative") },
-        ...(!detail.lock_mode
-          ? ([
-              {
-                label: "Mark as wrong…",
-                icon: "cross",
-                reason: rejectReason,
-                danger: true,
-                onSelect: handOff(() => setReasonDialog("reject")),
-              },
-            ] satisfies MoreItem[])
-          : []),
+        !detail.lock_mode && {
+          label: "Mark as wrong…",
+          icon: "cross",
+          reason: rejectReason,
+          danger: true,
+          onSelect: handOff(() => setReasonDialog("reject")),
+        },
       ]
     : [];
+  const moreItems = moreEntries.filter((i): i is MoreItem => !!i);
   const menuReasons = [...new Set(moreItems.map((i) => i.reason).filter((r): r is string => !!r))];
   const reasonId = (r: string) => `${menuId}-why-${menuReasons.indexOf(r)}`;
 
