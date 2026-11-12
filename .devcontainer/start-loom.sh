@@ -31,8 +31,7 @@ curl -fsSL --retry 3 https://github.com/ClickHouse/loom/releases/latest/download
 LOOM_SKIP_START=1 sh "$installer"
 
 # In a codespace the dashboard is served from the forwarded address, which a
-# server without sign-in answers only when it is its public URL. No other origin
-# is trusted: a page the laptop serves on localhost is not this codespace's.
+# server without sign-in answers only when it is its public URL.
 if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]; then
   env_file=$LOOM_INSTALL_DIR/.env
   grep -q '^LOOM_PUBLIC_BASE_URL=' "$env_file" \

@@ -131,11 +131,12 @@ sign-in that agents in the codespace do not have. Opened in desktop VS Code, the
 also forwards the port to your laptop's `localhost:7777`, where it is as open as a local
 install to every program on the laptop, and agents on the laptop can reach it there; the
 forward needs that local port free, so stop a local Loom first. Use the dashboard from the
-browser address: from the laptop's `localhost:7777` it opens, but the server refuses its
-changes, since only the forwarded address is this server's own page.
+browser address: from the laptop's `localhost:7777` the page opens, but the server refuses
+its requests, so it shows no data; only the forwarded address is this server's own page.
 
 The install lives in `/workspaces/.loom`, so a rebuilt codespace keeps its `.env` and
-Compose project. Wherever these docs name `~/.loom` or `"$HOME/.loom"`, a codespace uses
+Compose project; a rebuild also runs the latest release's installer over it, which moves it
+to that release. Wherever these docs name `~/.loom` or `"$HOME/.loom"`, a codespace uses
 `/workspaces/.loom`. Codespaces offers to open port 7777 as soon as it listens; the
 dashboard answers once the creation log prints "Loom is running".
 
