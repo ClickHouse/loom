@@ -499,9 +499,9 @@ def _add_install_flags(p_install: argparse.ArgumentParser) -> None:
         default="",
         type=_toolset_arg,
         help=(
-            "MCP toolset the client lists, as `?toolset=` on the URL: "
-            "empty: `coding` for claude-code, codex and cursor, else the server "
-            "default (LOOM_MCP_TOOLSET)."
+            "MCP toolset the client lists, as `?toolset=` on the URL; when omitted, "
+            "`coding` for claude-code, codex and cursor, else the server default "
+            "(LOOM_MCP_TOOLSET)."
         ),
     )
     p_install.add_argument(

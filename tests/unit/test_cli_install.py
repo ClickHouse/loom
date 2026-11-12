@@ -37,17 +37,6 @@ def test_install_one_url_form_preserves_keys(tmp_path, monkeypatch: pytest.Monke
     assert d["other"] == 1 and "keep" in d["mcpServers"]  # unrelated keys preserved
 
 
-def test_install_one_lists_the_server_default_for_a_chat_client(tmp_path, monkeypatch) -> None:
-    cfg = tmp_path / "windsurf" / "mcp_config.json"
-    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
-    cfg.parent.mkdir(parents=True)
-
-    assert cli._install_one(
-        "windsurf", token="T", server_url="https://h", name="loom", dry_run=False
-    )
-    assert json.loads(cfg.read_text())["mcpServers"]["loom"]["url"] == "https://h/mcp"
-
-
 def test_install_one_npx_form_for_stdio_clients(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = tmp_path / "cd" / "c.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
@@ -102,10 +91,10 @@ def test_install_one_toolset_rides_the_url(tmp_path, monkeypatch: pytest.MonkeyP
     """`--toolset coding` selects the coding listing per request
     (`?toolset=` on the MCP URL) so one deployment serves both archetypes; a
     coding agent such as Cursor gets `coding` by default, and a named toolset wins."""
-    cfg = tmp_path / "cursor" / "mcp.json"
+    cfg = tmp_path / "windsurf" / "mcp.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
     assert cli._install_one(
-        "cursor",
+        "windsurf",
         token="T",
         server_url="https://h/",
         name="loom",
@@ -440,8 +429,9 @@ def test_install_gives_each_client_the_toolset_the_server_setup_gives(
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
     cfg.parent.mkdir(parents=True)
     assert cli._install_one(client, token="T", server_url="https://h", name="loom", dry_run=False)
-    written = json.dumps(json.loads(cfg.read_text()))
-    setup = json.dumps(client_config(client, "https://h/mcp", "T")["config"])
+    setup = client_config(client, "https://h/mcp", "T")
+    key = setup["config_key"]
+    assert json.loads(cfg.read_text())[key] == setup["config"][key]
     expected = "https://h/mcp?toolset=coding" if client in CODING_CLIENTS else "https://h/mcp"
-    assert expected in written and expected in setup
-    assert "toolset=coding" not in written or client in CODING_CLIENTS
+    assert expected in json.dumps(setup["config"])
+    assert ("toolset=coding" in json.dumps(setup["config"])) == (client in CODING_CLIENTS)
