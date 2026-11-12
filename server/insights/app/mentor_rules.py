@@ -266,7 +266,7 @@ def _unlisted(ops: tuple[str, ...]) -> str:
         return ""
     for op in ops:
         if op in _LISTED_VIA_ALIAS:
-            return ""
+            continue
         try:
             sets = op_toolsets(op)
         except Exception:  # noqa: BLE001 — an op with no toolset entry is skipped

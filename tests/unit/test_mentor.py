@@ -279,6 +279,8 @@ def test_an_object_store_agent_is_told_to_recall_by_meaning_and_move_the_lease(
     assert "(sre/lease) was read 116×" in loop.text and "written" not in loop.text
     key_only = p.hint("recall_by_key_only")
     assert key_only is not None and key_only.evidence == {"gets": 6606, "searches": 52}
+    # memory.search is listed as loom_search; the note names the op that is not
+    assert key_only.text.endswith(" (call working_memory.set via loom_op)")
 
 
 def test_a_balanced_reader_is_not_called_an_object_store(monkeypatch: pytest.MonkeyPatch) -> None:

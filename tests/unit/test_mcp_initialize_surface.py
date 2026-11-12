@@ -415,7 +415,8 @@ def test_the_primer_sends_documents_through_loom_op() -> None:
 
 
 def test_the_primer_names_the_scratchpad_route_each_listing_has() -> None:
-    assert "`loom_op` (op `working_memory.set`)" in mcp_primer._loom_rules("core", None)
+    for toolset in ("core", "tasks", "tracker"):
+        assert "`loom_op` (op `working_memory.set`)" in mcp_primer._loom_rules(toolset, None)
     for toolset in ("coding", "atomic", "all"):
         rules = mcp_primer._loom_rules(toolset, None)
         assert "leases and pointers go to `loom_working_memory_set`" in rules, toolset

@@ -116,8 +116,7 @@ _SCHEMA_LEAF_RULES: tuple[Callable[[dict[str, Any]], dict[str, Any] | None], ...
 # field: pydantic's `None`, the empty string, the "-" identity sentinel
 # (run_id / agent placeholders the server fills) and `false` on an optional
 # flag (an unset flag is off; `true` defaults stay — they say the behaviour
-# is on unless the caller turns it off). The core + code listing carries
-# ~80 `default: null` and ~100 empty-string defaults.
+# is on unless the caller turns it off).
 _INERT_DEFAULTS: tuple[Any, ...] = (None, "", "-")
 
 
@@ -130,8 +129,7 @@ def collapse_nullable(schema: Any) -> Any:
     The wire keeps accepting null and the empty string; this is the listing
     shape only. An Optional field is one a caller may omit, and omission is
     how a model leaves a field unset — the null branch and the null default
-    spend ~41 bytes per field (~80 fields on the core + code listing) to say
-    so twice. Runs after the per-node rules so a widened
+    spend ~41 bytes per field to say so twice. Runs after the per-node rules so a widened
     integer or a redacted enum inside the surviving branch is kept."""
     if isinstance(schema, list):
         return [collapse_nullable(v) for v in schema]
@@ -160,8 +158,7 @@ def strip_model_docstring(schema: Any) -> Any:
     """Drop the input model's class docstring that pydantic copies into the
     top-level `description` of an inputSchema. It is written for developers
     (env flags, auth internals) and sits beside the curated
-    tool description the model is meant to read; on the core + code listing
-    the sixteen of them cost 1,244 tokens. Called only for tools that carry
+    tool description the model is meant to read. Called only for tools that carry
     a curated description — the metadata fallback keeps the docstring, which
     is then the only prose the tool has."""
     if isinstance(schema, dict) and "description" in schema:

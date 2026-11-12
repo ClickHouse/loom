@@ -549,7 +549,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "saved about the incident', 'expire the meeting notes in 30 days'.\n"
         "WHEN NOT: One key (memory.delete / memory.set / memory.lock). A whole "
         "agent or user (memory.clear, admin, via loom_op); a user's request to "
-        "delete all their data is erasure.request (via loom_op). Never skip "
+        "delete all their data is erasure.request (via loom_op where it is not "
+        "listed). Never skip "
         "the dry run when the user has not seen the list."
     ),
     "memory.unlock": (
@@ -1236,12 +1237,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "blacklist.add": (
         "WHAT: Every later memory write in the namespace (the default "
-        "`scope`) whose value matches `pattern` is refused.\n"
+        "`scope`) whose value matches `pattern` is refused. Refused to a token "
+        "bounded to one user: a pattern refuses every user's writes.\n"
         "WHEN: An explicit 'never remember X' or 'don't store anything about "
         "Y'. Pass `sweep=true` only when the user also asks to forget what is "
-        "already saved: it tombstones every matching row, other writers' too.\n"
-        "WHEN NOT: Forgetting one saved fact is memory.delete. Refused to a "
-        "token bounded to one user: a pattern refuses every user's writes.\n"
+        "already saved: it tombstones up to 5,000 matching rows, other writers' "
+        "too (`swept_truncated` says more remain).\n"
+        "WHEN NOT: Forgetting one saved fact is memory.delete.\n"
         "ARGS: pattern; optional pattern_type (substring | regex), reason, sweep."
     ),
     "blacklist.remove": ("Remove a previously-added blacklist pattern."),
