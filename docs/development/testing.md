@@ -228,11 +228,11 @@ plugin installed from the checkout (`tests/e2e/agent-session.mjs` under the Clau
 plugin: a local fake answers both the model API and Loom), also with `node` off the
 agent's `PATH` on the Ubuntu and macOS runners and without Git Bash on Windows.
 
-`.github/workflows/codeql.yml` runs CodeQL on every pull request, on pushes to `main` and
-`release/**`, and weekly: one `codeql (<language>)` check each for Python,
+`.github/workflows/codeql.yml` runs CodeQL on every pull request into `main` or a `release/**`
+line, on pushes to them, and weekly: one `codeql (<language>)` check each for Python,
 JavaScript/TypeScript and the workflows. Its findings are code scanning alerts (the
 repository's Security tab), triaged by a maintainer; the checks block no merge. Tests and
-the generated settings reference are left out, as the workflow's header says.
+the generated example settings file (`loom.example.yaml`) are left out, as the workflow's header says.
 
 A pull request stacked on another branch gets no checks until it is retargeted to `main`,
 and a pull request with a merge conflict gets none either: "no checks reported" after a

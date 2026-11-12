@@ -4,8 +4,9 @@ name: codeql
 # go to the repository's code scanning alerts and block no merge. Left out:
 # tests, fixtures and benchmark harnesses (code that never ships), the Codex
 # plugin's copies of the Claude Code plugin's files (agent_plugin_sync keeps
-# them identical, so each finding would show twice) and the generated settings
-# reference, whose thousands of comment lines overflow the YAML indexer.
+# them identical, so each finding would show twice) and the generated example
+# settings file (loom.example.yaml), whose thousands of comment lines overflow
+# the YAML indexer.
 # release/** too: a supported line's patches get the same checks.
 on:
   push:
@@ -51,6 +52,7 @@ jobs:
               - "**/*.test-d.ts"
               - sdk/typescript/test/**
               - frontend/e2e/**
+              - frontend/src/test/**
               - bench/**
               - integrations/codex-plugin/bin/**
               - integrations/codex-plugin/hooks/**
