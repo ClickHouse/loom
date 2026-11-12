@@ -55,10 +55,10 @@ knows it. So governance needs no table or state of its own. An edit, a relabel t
 a redact or a tombstone of the source, by any writer or worker on any build, ends
 governance until an admin promotes the source again; a copy that keeps the text (the
 entity pass, a touch) keeps it. `memory.demote` ends governance. Only `memory.promote`
-writes `loom.shared` (the op and `learnings.review`'s path through it); no worker promotes
-on its own. An admin read lists the namespace's shared definitions with the read-time
-check's verdict on each, so a definition whose governance lapsed is seen and promoted
-again.
+promotes into `loom.shared` (the op and `learnings.review`'s path through it; demote and
+erasure only retire rows there); no worker promotes on its own. An admin read lists the
+namespace's shared definitions with the read-time check's verdict on each, so a definition
+whose governance lapsed is seen and promoted again.
 
 The shared layer needs seven changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
@@ -256,10 +256,10 @@ erasure to finish by its id, which `erasure.status` authorizes per row, never by
 
 ### Ops and dashboard
 
-| Op                     | Role  | What it does                                                                                                          |
-| ---------------------- | ----- | --------------------------------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                                              |
-| `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`). |
+| Op                     | Role  | What it does                                                                                                                                                  |
+| ---------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                                                                                      |
+| `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM from its queries alone, with the drafting admin as its `owner`, and queues it (`source_kind = 'knowledge_gap'`). |
 
 Both list what users asked, so neither honours a read-narrowed token: the check that
 admits the `knowledge.` group to such a token (`honours_read_scope` in
@@ -302,20 +302,24 @@ Nothing reaches search until an admin promotes a draft.
 
 `learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate first
 checks the term and aliases against the other governed definitions and the draft for a
-credential-shaped value (`value_reads_high`), so a refused promotion writes nothing. Then
-it writes the definition through `memory.set` for the whole namespace, so the blacklist
-and the pinned-key check run as for any write, and promotes that row into the shared layer
-through `memory.promote`, with the reviewer's server-stamped actor as `promoted_by` and
-the candidate's id ([learnings review
+credential-shaped value (`value_reads_high`), and the rollout gate, so a promotion these
+refuse writes nothing. Then it writes the definition through `memory.set` for the whole
+namespace, with `source_trace = learning:<candidate_id>` so its `source_class` is
+`derived` (an LLM drafted it; the admin's promotion is the approval, not its authorship),
+so the blacklist and the pinned-key check run as for any write, and promotes that row into
+the shared layer through `memory.promote`, with the reviewer's server-stamped actor as
+`promoted_by` and the candidate's id ([learnings review
 queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). The admin
 promoting a definition is the person standing behind it. A draft for a term already
 governed revises that definition: the promotion replaces its shared row. A definition
 promotes to memory only; a `destination` of `knowledge` or `both` is refused for these
 candidates. A rejected draft leaves nothing behind but its queue row. A promotion refused
-after the write (a racing edit, a racing term, the rollout gate, or `memory.set` answering
+after the write (a racing edit, a racing term, or `memory.set` answering
 `PUBLICATION_PENDING`, which today's review path swallows) leaves the candidate pending
-and the namespace-wide row written, which no term leg serves until its text is promoted; a
-retried review, idempotent by key, completes it.
+and the namespace-wide row written, which no term leg serves until its text is promoted;
+for a revision, the old definition lapses meanwhile and the admin read lists it. A retried
+review, idempotent by key, completes it; rejecting the draft instead leaves the written
+row, which the admin restores from the row's history or promotes.
 
 ## Erasure and audit
 
