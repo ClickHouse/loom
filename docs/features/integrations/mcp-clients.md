@@ -82,6 +82,8 @@ The two entry shapes:
 }
 ```
 
+Cursor's URL carries `?toolset=coding`; see `--toolset` above.
+
 The second is for stdio-only clients: `mcp-remote` bridges stdio to HTTP, and
 `--allow-http` lets it reach a local plain-HTTP server. Both shapes store the token in the
 config file; treat it as a secret.

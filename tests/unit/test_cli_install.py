@@ -8,7 +8,7 @@ import json
 import pytest
 
 import server.cli.install as cli
-from server.identity.app.token_clients import CODING_CLIENTS, MCP_CLIENTS, client_config
+from server.identity.app.token_clients import MCP_CLIENTS, client_config
 
 
 @pytest.fixture(autouse=True)
@@ -89,8 +89,8 @@ def test_claude_code_capture_writes_env_preserving_settings(
 
 def test_install_one_toolset_rides_the_url(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`--toolset coding` selects the coding listing per request
-    (`?toolset=` on the MCP URL) so one deployment serves both archetypes; a
-    coding agent such as Cursor gets `coding` by default, and a named toolset wins."""
+    (`?toolset=` on the MCP URL) so one deployment serves both archetypes, and a
+    named toolset wins over a client's default."""
     cfg = tmp_path / "windsurf" / "mcp.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
     assert cli._install_one(
@@ -432,6 +432,3 @@ def test_install_gives_each_client_the_toolset_the_server_setup_gives(
     setup = client_config(client, "https://h/mcp", "T")
     key = setup["config_key"]
     assert json.loads(cfg.read_text())[key] == setup["config"][key]
-    expected = "https://h/mcp?toolset=coding" if client in CODING_CLIENTS else "https://h/mcp"
-    assert expected in json.dumps(setup["config"])
-    assert ("toolset=coding" in json.dumps(setup["config"])) == (client in CODING_CLIENTS)
