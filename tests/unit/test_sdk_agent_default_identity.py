@@ -36,7 +36,7 @@ def test_an_agent_with_no_identity_leaves_it_to_the_server(
 ) -> None:
     with caplog.at_level(logging.WARNING, logger="loom"):
         body = _sent_body(Agent(base_url="http://x", coalesce_sets=False))
-    assert (body["org"], body["namespace"]) == ("", "")
+    assert body["org"] == "" and "namespace" not in body
     assert str(body["agent"]).startswith("sdk-python:")
     assert "anonymous" not in caplog.text
 

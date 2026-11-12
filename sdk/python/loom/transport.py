@@ -365,6 +365,16 @@ class Transport:
             return payload
         return {**payload, "consumer": self.consumer}
 
+    @staticmethod
+    def without_empty_namespace(payload: dict[str, Any]) -> dict[str, Any]:
+        """The body without a `namespace` of "": an Agent built with none leaves it
+        to the server, which a single-user server fills for a call with no token
+        and any other server refuses as missing, rather than reading the empty
+        string as a namespace."""
+        if payload.get("namespace") != "":
+            return payload
+        return {k: v for k, v in payload.items() if k != "namespace"}
+
     @property
     def base_url(self) -> str:
         return self._base_url
@@ -595,7 +605,7 @@ class Transport:
         if idempotency_key is not None:
             headers["Idempotency-Key"] = idempotency_key
         headers["X-Request-Id"] = _request_id_to_send(op_path, request_id)
-        payload = self.with_consumer(payload)
+        payload = self.without_empty_namespace(self.with_consumer(payload))
         if self.before_post is not None:
             extra = await self.before_post(op_path, payload)
             if extra:

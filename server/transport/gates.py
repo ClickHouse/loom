@@ -172,28 +172,36 @@ SINGLE_USER_HTTP_AGENT: Final = "http"
 def with_single_user_identity(
     op: Operation, args: dict[str, Any], auth: AuthInfo | None
 ) -> dict[str, Any]:
-    """The arguments with the single-user install's identity where a call left it
-    out: the org and namespace the MCP endpoint and the dashboard use
-    (`caller_org`, `default_namespace`), and the agent `http` where the op needs
-    one; an op that takes an optional agent reads every agent's rows without it.
-    Only a call with no token on a single-user server is filled, the one caller
-    such a server has; any token, and every other identity mode, still names its
-    own. Code ops keep their plane defaults. A copy, like `with_resolved_org`."""
+    """The arguments with the single-user install's identity where a call left a
+    required field out: the org MCP and the dashboard use (`caller_org`), the
+    install's one namespace (`LOOM_DEFAULT_NAMESPACE`, which `default_namespace`
+    answers for a caller with no token), and the agent `http`. An optional
+    namespace or agent stays out, since leaving it out reads every namespace or
+    every agent. Only a call with no token on a single-user server is filled, the
+    one caller such a server has; any token, and every other identity mode, still
+    names its own. Code and tracker ops keep their plane defaults. A copy, like
+    `with_resolved_org`."""
+    from server.identity.app.caller_home import caller_org
     from server.settings import settings
 
     if auth is not None or settings.effective_identity_provider() != "single-user":
         return args
-    if op.name.startswith("code."):
+    if op.name.startswith(("code.", "tracker.")):
         return args
     fields = op.input_model.model_fields
+    fill = {
+        "org": caller_org(None) or "",
+        "namespace": settings.default_namespace,
+        "agent": SINGLE_USER_HTTP_AGENT,
+    }
     update: dict[str, str] = {}
-    if "org" in fields and present(args.get("org")) is None:
-        update["org"] = settings.self_signup_org
-    if "namespace" in fields and present(args.get("namespace")) is None:
-        update["namespace"] = settings.default_namespace
-    agent = fields.get("agent")
-    if agent is not None and agent.is_required() and present(args.get("agent")) is None:
-        update["agent"] = SINGLE_USER_HTTP_AGENT
+    for name, value in fill.items():
+        field = fields.get(name)
+        if field is None or present(args.get(name)) is not None or not value:
+            continue
+        # An org is filled where the op takes one; an absent org is never "every org".
+        if name == "org" or field.is_required():
+            update[name] = value
     return {**args, **update} if update else args
 
 
