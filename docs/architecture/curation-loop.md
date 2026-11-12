@@ -125,12 +125,13 @@ reader:
 
 The changes break existing callers of two ops. `memory.promote` refuses a `definition`
 promotion without the approved hash, from a row that is not namespace-wide, or under a key
-that is not its term's slug. `learnings.review` refuses a `definition` candidate that is
-not a `knowledge_gap` or `query_history` draft (a `memory_supporters` one is promoted
-today) with `VALIDATION_FAILED`. On both, `approver` no longer names a definition's
-promoter, reviewer or audit subject (the response names it in `ignored_args`). The SDKs
-and the MCP schema carry the hash field, and the implementing pull request names each
-break.
+that is not its term's slug, and one whose term or alias another live shared definition
+already holds, where today only an embedding-close shared row refuses it.
+`learnings.review` refuses a `definition` candidate that is not a `knowledge_gap` or
+`query_history` draft (a `memory_supporters` one is promoted today) with
+`VALIDATION_FAILED`. On both, `approver` no longer names a definition's promoter, reviewer
+or audit subject (the response names it in `ignored_args`). The SDKs and the MCP schema
+carry the hash field, and the implementing pull request names each break.
 
 Should two shared rows match one name despite that refusal (two promotions racing, or one
 promoted through a build without the check), the term leg serves, among the rows the
@@ -151,17 +152,21 @@ refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) nei
 nor retires it, and `memory.consolidate` leaves rows of type `definition` out of its
 clusters (today it groups every active row of one type by similarity and tombstones the
 merged keys), since a definition's key is its term and `MRR` is not a revision of `ARR`.
-This narrows the rule that a pinned row blocks a close write from any user ([read scope
-inside a
+Under `newest_wins`, a write of a `definition/` key by another identity (a user's own
+copy) does not retire the namespace-wide row of that key, as same-key supersession does
+today for every unpinned row the writer reads: only a write of the namespace-wide row
+itself revises it, so no writer ends an admin's definition by writing a private copy,
+which the term leg then keeps out of the served list. This narrows the rule that a pinned
+row blocks a close write from any user ([read scope inside a
 namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
 definitions against definitions only; the implementing pull request updates that page, the
 memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check and
 consolidation in [memory architecture](memory-architecture.md) and [conflicts and
 refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the old verdicts
 during a rollout. Conflict surfacing compares a row only with rows of its own
-`memory_type`, so a learned fact that contradicts a definition is not refused by it. The
-term leg serves the governed definition above such a fact; a cross-type check would add a
-candidate read to every write, and is not part of this design.
+`memory_type`, so a learned fact that contradicts a definition is not flagged against it.
+The term leg serves the governed definition above such a fact; a cross-type check would
+add a candidate read to every write, and is not part of this design.
 
 ### The term leg
 
@@ -215,12 +220,13 @@ boost rows; it drops any key in `exclude_keys`. It serves no definition whose so
 `sensitivity = 'high'` (the read-time check above). Its read is bounded by a setting; past
 the bound, the most recently promoted definitions (by `promoted_at`) are read. It runs
 concurrently with the other legs under its own time bound, which never shortens theirs (a
-leg past its bound adds nothing); an added output field, `term_leg` (`complete`, `capped`
-or `timed_out`, and `off` when the leg did not run: a page handle, a field that turns it
-off, or a namespace with no definition), says which; a miss reads `off` as finished, and
-its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
-`server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
-output field: the SDKs and the MCP schema carry it.
+leg past its bound adds nothing); an added output field, `term_leg` (`complete`, `capped`,
+`timed_out`, `failed` when a source read failed closed and a definition was withheld, and
+`off` when the leg did not run: a page handle, a field that turns it off, or a namespace
+with no definition), says which; a miss reads `off` as finished, and its latency is
+measured against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in
+the pull request that adds it. `governed` is an added output field: the SDKs and the MCP
+schema carry it.
 
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
@@ -294,9 +300,8 @@ a search that could not answer for another reason is not a miss: a degraded answ
 provider fell back, one with writes still waiting for extraction (`pending_extraction >
 0`), one whose fan-out stopped short (`namespaces_skipped`), or one whose hits the memory
 authority dropped (`stale_dropped > 0`), or one whose term leg did not finish (`term_leg`
-`capped` or `timed_out`, or a source read that failed closed; `off`, a leg with no
-definition to read, is finished), so a defined term is never recorded as a gap because its
-leg was cut.
+`capped`, `timed_out` or `failed`; `off`, a leg with no definition to read, is finished),
+so a defined term is never recorded as a gap because its leg was cut.
 
 The **asker** is the person the token stands for, never a body field: the end user of an
 end-user token; else the token's `creator` claim, the person at the root of a delegated
@@ -600,14 +605,15 @@ source while writing another; the rows it retired are listed by `memory.auto_ret
 window), and promoted again; a source it marked `conflicted` is cleared with
 `conflicts.resolve`, one it marked `duplicate` with `memory.dedup_resolve`, and promoted
 again; a write it merged was never stored and is written again; a source an N-1
-`memory.consolidate` tombstoned is brought back with `memory.restore` and promoted again.
-An N-1 relabel of a definition's source to `high` leaves its shared copy's embedding
-served by the ordinary legs: once N serves, the operator runs the retirement N's relabel
-performs (the shared embedding retired, the row kept) over every definition the admin read
-lists as lapsed for `high`, an operator step the implementing pull request's rollout
-section names, so a relabel back governs it again as on N. N-1's redact and namespace
-erasure do not reach the shared row's text, as today: one run during the rollout or after
-a rollback is run again once N serves.
+`memory.consolidate` tombstoned is brought back with `memory.restore` within its 14 days
+and promoted again; past them, the definition is written again from its shared copy's text
+and promoted. An N-1 relabel of a definition's source to `high` leaves its shared copy's
+embedding served by the ordinary legs: once N serves, the operator runs the retirement N's
+relabel performs (the shared embedding retired, the row kept) over every definition the
+admin read lists as lapsed for `high`, an operator step the implementing pull request's
+rollout section names, so a relabel back governs it again as on N. N-1's redact and
+namespace erasure do not reach the shared row's text, as today: one run during the rollout
+or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
