@@ -357,14 +357,16 @@ document in the namespace stops nothing. A `namespace` source's documents go as 
 builds run retires them by tag in the namespace. Under the ClickHouse authority the
 retention TTL override a namespace's `retention_days` sets on `loom.documents` and
 `loom.chunks` (`server/storage/retention_overrides.py`) also covers its mirror, read
-from `loom.knowledge_mirrors`; under the Postgres authority no TTL touches those tables,
-for a mirror as for any namespace. Every `add` runs today's name checks on the namespace
-(`SOURCE_DELETE_PENDING`, `SOURCE_DOCUMENTS_KEPT`), mirrored or not, so a mirrored
-source never replaces the row of a `namespace` source whose documents wait to be retired
-or were kept; the mirror needs no name check, since a mirrored document is never kept
-and ownership there goes by source id. In a mirror, every per-source document read and
-check (`count_documents`, `source_documents`, `source_revisions`, the ownership check
-`_ours` that gates each write and retirement) goes by `source-id:<id>`, not by name.
+from `loom.knowledge_mirrors`; under the Postgres authority no retention TTL deletes
+from `loom.documents` and a namespace's `retention_days` leaves its chunks, while
+`LOOM_RETENTION_CHUNKS_DAYS` still expires a mirror's chunks as any namespace's. Every
+`add` runs today's name checks on the namespace (`SOURCE_DELETE_PENDING`,
+`SOURCE_DOCUMENTS_KEPT`), mirrored or not, so a mirrored source never replaces the row
+of a `namespace` source whose documents wait to be retired or were kept; the mirror
+needs no name check, since a mirrored document is never kept and ownership there goes by
+source id. In a mirror, every per-source document read and check (`count_documents`,
+`source_documents`, `source_revisions`, the ownership check `_ours` that gates each
+write and retirement) goes by `source-id:<id>`, not by name.
 
 A namespace source and a mirrored source that reach the same file own two documents, one
 in the namespace and one in its mirror. The namespace copy is readable by every reader,
@@ -589,23 +591,28 @@ the address (a mirror leg does not take `serves()`'s rule that a missing head se
 and otherwise rules 2 and 3 are evaluated again with the head's `emails`, `groups`,
 `domains`, `anyone`, `unread` and `changed_at`, against the same readers, listing and
 group-members rows. The head read search, synthesize and `outline` make through
-`pg_serving` (`pg_documents.serving`, the `Serving` row) gains the head's list for this;
-`get` and `download` already read the whole head through `get_one`; `list`,
-`knowledge.inspect` and `knowledge.source.inspect` gain one head read per page of
-addresses, which the cost measurement above covers. A leg that cannot read the heads
-shows no mirrored document (`degraded: mirror_unread`); for `knowledge.inspect` that
-means every path on which its `served` read falls back to ClickHouse's rows (the
-authority down, `PostgresUnavailableError`, any other failure) lists no mirrored title.
-So a narrowing or a retirement committed and not yet published, or held by a parked
-delivery, already applies; a widening applies once published.
+`pg_serving` (`pg_documents.serving`, the `Serving` row) gains the head's list for this.
+The other legs (`get`, `download`, `list`, `knowledge.inspect`,
+`knowledge.source.inspect`) read the heads themselves through `pg_documents.heads`,
+which answers only heads, so a missing one shows; `get_one` and `get_many_by_uris` fall
+back to ClickHouse's row and cannot tell. That is one head read per page of addresses,
+which the cost measurement above covers. A leg that cannot read the heads shows no
+mirrored document (`degraded: mirror_unread`); for `knowledge.inspect` that means every
+path on which its `served` read falls back to ClickHouse's rows (the authority down,
+`PostgresUnavailableError`, any other failure) lists no mirrored title. So a narrowing
+or a retirement committed and not yet published, or held by a parked delivery, already
+applies; a widening applies once published.
 
-A mirror document without a head (one written before its namespace had heads) is hidden
-by that rule until it has one: the mirrored listing, which lists every file on every
-turn, commits a head for each stored copy it finds without one, so such a document is
-readable again after the source's next complete listing.
+Under this authority every mirror document has a head: only N writes mirrors, and each
+of its writes commits one. A deployment that moves to the Postgres authority while
+mirrors exist erases them first (`loom knowledge mirror erase --all`, as the rollback
+does) and its mirrored sources list again; a mirror document found without a head anyway
+is dropped by the rule above.
 
-Under the ClickHouse authority, an address whose `loom.documents` row is absent or
-superseded admits nobody, whatever its chunks or readers rows say.
+Under either authority the admitted set holds only addresses with a live
+`loom.documents` row: an address whose row is absent, superseded or not yet published
+admits nobody, whatever its chunks or readers rows say. So a new mirror document is
+readable once its row is published, and a widened list once its rewrite is.
 
 A stopped sync hides every mirrored document once the stale bound passes.
 
@@ -930,16 +937,17 @@ The redirect URI to register with each store is
   authority, on every leg with the check, a narrowed list and a retirement each
   committed but not yet published, or held by a parked delivery, already applying, a
   widening committed but not yet published not applying until it is, a mirror address
-  with no head dropped and given a head by the next complete listing (a mirror written
-  before its namespace had heads readable again after it), a head read that fails
-  showing no mirrored document, and `knowledge.inspect` listing no mirrored title on any
-  path where its `served` read falls back to ClickHouse's rows; under the ClickHouse
-  authority, an address with no live document row admitting nobody; a rule-2 check that
-  admits nobody through the list when one of the source's accounts has a stale listing
-  row and the reader's own is fresh; a document admitted only through `groups`,
-  `domains` or `anyone` passing the admitted-set read; a head moved to `unread` and not
-  yet published admitting nobody through a readers row older than its `changed_at`, and
-  a connected `notion` page, admitted by rule 3 alone, still shown; a source over
+  with no head dropped by `get`, `download` and `knowledge.inspect` as by the chunk
+  legs, a new mirror document whose head is committed and whose row is unpublished
+  admitting nobody through rule 3, a head read that fails showing no mirrored document,
+  and `knowledge.inspect` listing no mirrored title on any path where its `served` read
+  falls back to ClickHouse's rows; under either authority, an address with no live
+  document row admitting nobody; a rule-2 check that admits nobody through the list when
+  one of the source's accounts has a stale listing row and the reader's own is fresh; a
+  document admitted only through `groups`, `domains` or `anyone` passing the
+  admitted-set read; a head moved to `unread` and not yet published admitting nobody
+  through a readers row older than its `changed_at`, and a connected `notion` page,
+  admitted by rule 3 alone, still shown; a source over
   `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` after an item swap writing no new document,
   rewriting a narrowed list, landing its listing row, retiring, and draining back under
   it; a file only one account lists whose permissions read is refused marked `unread`
