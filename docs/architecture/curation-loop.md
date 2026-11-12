@@ -21,10 +21,11 @@ flowchart LR
 ## Governed definitions
 
 A definition is a memory row with `memory_type = 'definition'` under the key
-`definition/<slug>`, where the slug is the case-folded term with runs of other characters
-replaced by `-`, followed by a short hash of the case-folded term, so `C++` and `C#` get
-two keys. Its value is a JSON object, which `memory.set` stores whole in `value` and in
-`value_json`, so the embedding and the content hash cover all of it:
+`definition/<slug>`, where the slug is the case-folded term with runs of characters other
+than letters and digits replaced by `-`, followed by a short hash of the case-folded term,
+so `C++` and `C#` get two keys. Its value is a JSON object, which `memory.set` stores
+whole in `value` and in `value_json`, so the embedding and the content hash cover all of
+it:
 
 | Field      | Meaning                                                             |
 | ---------- | ------------------------------------------------------------------- |
@@ -36,19 +37,21 @@ two keys. Its value is a JSON object, which `memory.set` stores whole in `value`
 
 A definition is **governed** while an admin stands behind its current text. That is
 recorded apart from the memory row, in `loom.governed_definitions`: one row per
-`definition/` key holding the term, its aliases, the row `version` the admin approved, who
-governed it and when. Only an admin op writes it: promotion (below) and an admin's
-explicit govern or ungovern of a namespace-wide definition (`definition.govern`,
-`definition.ungovern`). No memory write reaches it, so
-`memory.set`, `memory.pin`, `memory.verify`, `memory.update` and the bulk and import paths
-cannot make a row governed. A definition is governed exactly while its record exists and
-the row's current version is the approved one. Any later version of the row ends that,
-whoever writes it and on whichever build: an edit, a restatement of the same text, a
-tombstone, a restore or a touch. `definition.list` (admin) lists the namespace's
-records, each governed or lapsed, so the admin sees what to govern again. Only
-namespace-wide rows (`user_id`, `agent` and `session_id` all `'-'`) of type `definition`
-under the `definition/` key can be governed, and the term leg serves one only while its
-status is `active`.
+`definition/` key holding the term, its aliases, the content hash of the text the admin
+approved, who governed it and when. Only an admin op writes it: promotion (below) and an
+admin's explicit govern or ungovern of a namespace-wide definition (`definition.govern`,
+`definition.ungovern`). No memory write reaches it, so `memory.set`, `memory.pin`,
+`memory.verify`, `memory.update` and the bulk and import paths cannot make a row governed.
+A definition is governed exactly while its record exists and the row's live text hashes to
+the approved one (`live_sha256` in `server/memory/domain/trust.py`). A version that
+changes the text ends that, whoever writes it; one that copies the text (the entity pass,
+a touch, a lock, a restatement) keeps it. A tombstone or a redact on N deletes the record,
+so writing the approved text back after a delete does not make the row governed again; no
+record exists while an N-1 replica serves (the rollout gate below). `definition.list`
+(admin) lists the namespace's records, each governed or lapsed, so the admin sees what to
+govern again. Only namespace-wide rows (`user_id`, `agent` and `session_id` all `'-'`) of
+type `definition` under the `definition/` key can be governed, and the term leg serves one
+only while its status is `active`.
 
 No two governed definitions share a term or an alias, compared case-folded as the key is
 built, so `SAT` and `Sat` are one name: governing one whose term or alias is already
@@ -63,8 +66,8 @@ decision, a definition is never judged against a close definition under another 
 write-time check neither marks nor supersedes it, and the conflict resolver ([conflicts
 and refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither
 flags nor retires it, since its key is its term and `MRR` is not a revision of `ARR`. A
-redact on N of a governed definition's version, replayed ones included, deletes its record,
-so the record keeps no redacted term. Conflict
+redact of a governed definition's version, replayed ones included, deletes its record, so
+the record keeps no redacted term. Conflict
 surfacing compares a row only with rows of its own `memory_type`, so a learned fact that
 contradicts a definition is not refused by it. The term leg serves the governed definition
 above such a fact; a cross-type check would add a candidate read to every write, and is
@@ -286,12 +289,12 @@ serves no miss, gap, draft, governed record or registration is written, and N-1 
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
-`loom.knowledge_gaps`, and of `loom.governed_definitions`, so N-1's redact or erasure
-leaves no term behind; governance is done again on N, as after a snapshot restore.
+`loom.knowledge_gaps`, of `loom.governed_definitions`, and the pending `knowledge_gap`
+and `query_history` rows of `loom.learnings_queue`, as rule 23 does for assistant-turn
+rules: N-1's redact or erasure then leaves no term behind and N-1 promotes no definition
+draft; governance is done again on N, as after a snapshot restore.
 Registrations stay, and N-1's namespace erasure does not reach them: a namespace erasure
-run after the rollback is run again once N serves. Any write N-1 makes to a governed
-definition, a conflict verdict included, writes a version, which ends its governance; on
-N, `definition.list` shows it lapsed.
+run after the rollback is run again once N serves.
 
 ## Invariants
 
@@ -299,7 +302,7 @@ N, `definition.list` shows it lapsed.
   form; a query-history draft only the normalised text of queries that many users ran.
 - A miss is recorded only when the operator opted in; its asker comes from the token,
   never the body.
-- A definition is governed only while an admin's record approves its current version, and no
+- A definition is governed only while an admin's record approves its current text, and no
   two governed definitions share a term or an alias; only governed definitions are placed
   above the served list.
 - A query naming no governed term is served exactly as without the term leg.
