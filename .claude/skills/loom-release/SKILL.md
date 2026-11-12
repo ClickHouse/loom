@@ -80,7 +80,7 @@ ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/$run/pending_depl
 gh api -X POST "repos/ClickHouse/loom/actions/runs/$run/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"
 ```
 
-A tag run whose image build failed on a download from outside GitHub (`curl: (7) Failed to connect` from an apt or key server) is re-run with `gh run rerun "$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event push -L 1 --json databaseId --jq '.[0].databaseId')" -R ClickHouse/loom --failed`, which builds again only the jobs that did not succeed, unless another run has tagged the version since ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)).
+A tag run whose image build failed on a download from outside GitHub (`curl: (7) Failed to connect` from an apt or key server) is re-run with `gh run rerun "$run" -R ClickHouse/loom --failed`, `$run` being the tag run's id from the watch in §3, which builds again only the jobs that did not succeed, unless another run has tagged the version since ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)).
 
 The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
 
@@ -92,7 +92,7 @@ After the registry dispatch, check the release as a user meets it:
 gh workflow run release-check.yml -R ClickHouse/loom -f version=X.Y.Z -f previous_version=<the release before>
 ```
 
-Signed in to nothing, it runs the one-line installer (`curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh`, checking that `latest` serves this version, or the version's own URL when it is not Latest) in clean Debian, Ubuntu and Alpine containers on amd64 and arm64: install, a `memory.set`/`memory.search` round trip, a re-run, and an upgrade from the previous release. It verifies both images' signatures (`scripts/release/verify_signatures.sh`) and, unless `-f sdks=false`, installs `clickhouse-loom==X.Y.Z` from PyPI and `@clickhouse/loom@X.Y.Z` from npm, verifying the npm package's registry signatures and attestations (`npm audit signatures`). Then by hand, the MCP Registry listing:
+Signed in to nothing, it runs the one-line installer (`curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh`, checking that `latest` serves this version, or the version's own URL when it is not Latest) in clean Debian, Ubuntu and Alpine containers on amd64 and arm64: install, a `memory.set`/`memory.search` round trip, a re-run, and an upgrade from the previous release. It verifies both images' signatures (`scripts/release/verify_signatures.sh`) and, unless `-f sdks=false`, installs `clickhouse-loom==X.Y.Z` from PyPI and `@clickhouse/loom@X.Y.Z` from npm, verifying the npm package's registry signatures and attestations (`npm audit signatures`). Then by hand, the MCP Registry listing, npm's dist-tags and PyPI's provenance:
 
 ```bash
 curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom" | jq '.servers[].server.version'   # lists X.Y.Z
@@ -100,7 +100,7 @@ npm view @clickhouse/loom dist-tags   # latest names the highest final
 curl -fsS -o /dev/null https://pypi.org/integrity/clickhouse-loom/X.Y.Z/clickhouse_loom-X.Y.Z-py3-none-any.whl/provenance   # exits 0: PyPI holds the wheel's provenance
 ```
 
-npm can take several minutes to list a version it has just accepted ("Your package is being processed"), so read `dist-tags` again before calling the publish missing. Both SDKs publish through trusted publishing, with no token in the workflow.
+npm can take several minutes to list a version it has just accepted ("Your package is being processed"), so read `dist-tags` again before calling the publish missing. Both SDKs publish through trusted publishing, with no token in the workflow, which is why PyPI holds the wheel's provenance and `npm audit signatures` finds an attestation.
 
 The plugins, in a throwaway `HOME`: `claude plugin marketplace add ClickHouse/loom && claude plugin install loom@loom`, and `codex plugin marketplace add ClickHouse/loom` then install `loom` from it; each lists the plugin version on `main`, and its SessionStart against this server prints no `loom:` line about the server's version. Post what you checked, with the run links, on the release pull request (the owner's go-ahead first).
 
