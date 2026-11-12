@@ -266,6 +266,18 @@ def test_the_minimum_server_version_is_no_newer_than_the_server() -> None:
     assert tuple(int(p) for p in minimum.split(".")) <= current
 
 
+def test_plugins_carry_nothing_the_plugin_directory_warns_about() -> None:
+    """The plugin directory's validator warns on a skill's `allowed-tools` and on
+    a manifest field Claude Code does not know (`claude plugin validate
+    --profile directory --strict`)."""
+    for plugin in (CLAUDE, CODEX):
+        for skill in (plugin / "skills").glob("*/SKILL.md"):
+            frontmatter = skill.read_text().split("\n---", 1)[0]
+            assert "allowed-tools:" not in frontmatter, skill
+    claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
+    assert "minServerVersion" not in claude
+
+
 def test_listing_icons_are_files_the_plugins_ship() -> None:
     """The directory listings read these paths; one that does not exist ships a listing
     with no icon."""

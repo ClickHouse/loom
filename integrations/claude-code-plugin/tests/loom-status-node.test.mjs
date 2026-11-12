@@ -160,6 +160,13 @@ test("loom-status Node check warns when only this shell's environment finds Node
     assert.match(f.run("--check").stdout, /Found only/);
     settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin });
     assert.doesNotMatch(f.run("--check").stdout, /Found only/);
+    // A settings PATH that holds only Node's directory, no other tool.
+    const onlyNode = path.join(f.dir, "only-node");
+    fs.mkdirSync(onlyNode);
+    fs.copyFileSync(path.join(f.bin, "node"), path.join(onlyNode, "node"));
+    fs.chmodSync(path.join(onlyNode, "node"), 0o755);
+    settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: onlyNode });
+    assert.doesNotMatch(f.run("--check").stdout, /Found only/);
     // A key that is no variable name is not passed on to the GUI run.
     settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin, "two\nlines": "x", "": "y" });
     assert.doesNotMatch(f.run("--check").stdout, /Found only/);

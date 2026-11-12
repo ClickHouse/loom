@@ -9,7 +9,9 @@
 #   ensure-node.sh --path-node   internal: the `node` on PATH is Node 18+
 set -eu
 
-LAUNCHER="$(dirname "$0")/../../../bin/loom-node"
+# No command runs before --path-node: its PATH may hold only Node's directory.
+case $0 in */*) HERE=${0%/*} ;; *) HERE=. ;; esac
+LAUNCHER="$HERE/../../../bin/loom-node"
 CLAUDE_SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 SETUP_FILE=''
 trap 'if [ -n "$SETUP_FILE" ]; then rm -f "$SETUP_FILE"; fi' EXIT HUP INT TERM

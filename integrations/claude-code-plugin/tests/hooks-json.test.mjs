@@ -18,7 +18,7 @@ test("every SessionEnd hook declares a timeout: Claude Code gives the event 1.5 
   const hooks = groups.flatMap((g) => g.hooks);
   assert.equal(hooks.length, 5);
   for (const h of hooks) {
-    assert.ok(Number.isInteger(h.timeout) && h.timeout >= 5 && h.timeout <= 60, `${h.command}: timeout=${h.timeout}`);
+    assert.ok(Number.isInteger(h.timeout) && h.timeout >= 5 && h.timeout <= 60, `${h.args[0]}: timeout=${h.timeout}`);
   }
 });
 
