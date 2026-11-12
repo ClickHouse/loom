@@ -50,27 +50,29 @@ state that it can see, rows promoted before this design and through N-1 included
 cannot see is named under rolling upgrades. The shared layer already is the namespace's
 admin-approved copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
-`memory.promote` and `memory.demote` need `admin`, the shared row records the candidate it
-came from (`promoted_from_candidate_id`), `memory.lineage` walks it back, and every build
-knows it. So governance needs no table or state of its own. An edit, a relabel to `high`,
-a redact or a tombstone of the source, by any writer or worker on any build, ends
-governance while the source differs from what the admin approved; a copy that keeps the
-text (the entity pass, a touch) keeps it, and a source that returns to the approved state
-(a restore, an edit reverted byte for byte) is governed again with no new promotion. A
-relabel back from `high` does not bring back the shared embedding it retired: the term leg
-serves the definition again, and an admin promotes it again to restore the copy's search
-row. `memory.demote` ends governance. Only `memory.promote` promotes into `loom.shared`
-(the op and `learnings.review`'s path through it; demote, erasure, a redact and a relabel
-to `high` only retire or scrub there, as the changes below say); no worker promotes on its
-own. An admin read, `memory.definitions.list`, lists the namespace's shared definitions
-with the read-time check's verdict on each and the reason a lapsed one lapsed (its text
-changed, it is `high`, gone, expired, past its `valid_to`, under a key that is not its
-term's slug, or no longer `active`). A changed text is promoted again; a source that is no
-longer `active` is restored (Undo in `memory.auto_retirements`, whose reasons include
-`same_key_newest_wins` for a later write of the same key under `newest_wins`) or cleared
-(`conflicts.resolve` for a `conflicted` mark, `memory.dedup_resolve` for a `duplicate`
-one), which governs it again when its text is the approved one, and is promoted again
-otherwise.
+`memory.promote` and `memory.demote` need `admin`, the shared row records its source
+(`promoted_from`) and, on the review path, the candidate it came from
+(`promoted_from_candidate_id`, which a direct `memory.promote` leaves to its caller),
+`memory.lineage` walks it back, and every build knows it. So governance needs no table or
+state of its own. An edit, a relabel to `high` or a tombstone of the source, by any writer
+or worker on any build, ends governance while the source differs from what the admin
+approved; a copy that keeps the text (the entity pass, a touch) keeps it, and a source
+that returns to the approved state (a restore, an edit reverted byte for byte) is governed
+again with no new promotion. A relabel back from `high` does not bring back the shared
+embedding it retired: the term leg serves the definition again, and an admin promotes it
+again to restore the copy's search row. `memory.demote` ends governance. Only
+`memory.promote` promotes into `loom.shared` (the op and `learnings.review`'s path through
+it; demote, erasure, a redact and a relabel to `high` only retire or scrub there, as the
+changes below say); no worker promotes on its own. An admin read,
+`memory.definitions.list`, lists the namespace's shared definitions with the read-time
+check's verdict on each and the reason a lapsed one lapsed (its text changed, it is
+`high`, gone, expired, past its `valid_to`, under a key that is not its term's slug,
+promoted from a row that is not the namespace-wide one, or no longer `active`). A changed
+text is promoted again; a source that is no longer `active` is restored (Undo in
+`memory.auto_retirements`, whose reasons include `same_key_newest_wins` for a later write
+of the same key under `newest_wins`) or cleared (`conflicts.resolve` for a `conflicted`
+mark, `memory.dedup_resolve` for a `duplicate` one), which governs it again when its text
+is the approved one, and is promoted again otherwise.
 
 The shared layer needs eight changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
@@ -78,11 +80,12 @@ leg, because the term leg serves shared rows to every reader:
 - **Namespace erasure** gains a step and a census row for `loom.shared`. Today only user
   erasure reaches it, by provenance, and a definition promoted from the namespace-wide row
   names no user.
-- **A redact** of a definition reaches its shared row and that row's embedding, which a
-  redact of the source does not reach today, and blanks the text of every `knowledge_gap`
-  and `query_history` candidate drafted for its key, promoted or not, which
-  `learnings.list` shows to viewers; the pull request that adds those candidate kinds adds
-  that part.
+- **A redact** of a version of a definition's source (a past version: `memory.redact`
+  refuses the live head) scrubs the shared row whose text is that version's, and that
+  row's embedding, which a redact does not reach today, and blanks the text of every
+  `knowledge_gap` and `query_history` candidate drafted for its key, promoted or not,
+  which `learnings.list` shows to viewers; the pull request that adds those candidate
+  kinds adds that part.
 - **A relabel to `high`** of a promoted definition's source retires that row's shared
   embedding, keeping the row: `loom.shared` has no sensitivity of its own, so the ordinary
   legs would otherwise keep serving the copy, and no sweep removes a durable row its
@@ -170,12 +173,13 @@ namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespac
 governed definitions through this leg only. The leg runs only on a search's first page
 (the governed keys it served there stay out of every later page of that search), and is
 off when a field asks for other rows (a `memory_type` other than `definition`, which the
-pull request adds to the field's values; `tags`; `category`; an explicit `agent`, `run_id`
-or `session_ids`; `as_of`; a body `user_id` or `session_id` under a whole-namespace read;
-`entity_filter`; `min_body_chars`). A `user_id` or `session_id` the read scope pins,
-`scope`, `exclude_keys` and `min_similarity` keep it on; it drops any key in
-`exclude_keys`. It serves no definition whose source is `sensitivity = 'high'` (the
-read-time check above). Its read is bounded by a setting; past the bound, the most
+pull request adds to the field's values; `tags` or `category` filtering, not with
+`tags_soft` or `category_soft`; an explicit `agent`, `run_id` or `session_ids`; `as_of`; a
+body `user_id` or `session_id` under a whole-namespace read; `min_body_chars`). A
+`user_id` or `session_id` the read scope pins, `scope`, `exclude_keys`, `min_similarity`,
+a soft tag or category and `entity_filter`, which only boost rows, keep it on; it drops
+any key in `exclude_keys`. It serves no definition whose source is `sensitivity = 'high'`
+(the read-time check above). Its read is bounded by a setting; past the bound, the most
 recently promoted definitions (by `version`) are read. It runs concurrently with the other
 legs under its own time bound, which never shortens theirs (a leg past its bound adds
 nothing); an added output field, `term_leg` (`complete`, `capped` or `timed_out`), says
@@ -225,8 +229,9 @@ invoked, never by a search another op runs on its behalf:
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
   and served no governed definition, when it read the namespace-wide rows under a read
   scope of the whole namespace and no field removed candidates (for example a user,
-  session, run, agent, type, tag, entity, category, scope, time, body length,
-  `exclude_keys` or `min_similarity` away from its default);
+  session, run, agent, type, filtering tag or category, scope, time, body length,
+  `exclude_keys` or `min_similarity` away from its default; a soft tag or category and
+  `entity_filter` only boost rows);
 - `knowledge.search` with no hit as close as the noise filter's threshold (`_close` in
   `server/knowledge/app/knowledge_search.py`), no exact-key hit and, in `lexical` mode, no
   hit at all, when no field removed candidates (for example `tags`, `uri_prefix`,
@@ -249,41 +254,44 @@ end-user token; else the token's `creator` claim, the person at the root of a de
 token or service account ([tokens and grants](../guides/tokens-and-grants.md)); else, for
 a service account's token minted without the claim, the first subject that is not a
 service account in its creator chain as the registry records it (`created_by` and its
-lineage, `server/auth/service_accounts.py`), and no miss when the chain has none; else the
-token's subject. An agent of a bot (`sa:<bot>:<agent>`) and an agent sign-up's service
-account (whose `created_by` names a namespace, not a person) stand for no person and
-record no miss. Tokens a person mints for themselves therefore count as that person. An
-asker that cannot be resolved (the registry unreadable, or a service account with no
-creator) records no miss: an unknown principal is never counted as a separate person. The
-asker is stored in the form a user erasure names: an end user as their id, without the
-`user:` prefix, and an email lower-cased and folded onto the login handle (`owner_email`)
-of the account the directory ties it to by a verified email, whether that handle is an
-email or not, so one person's two spellings count once. `canonical_subject` in
-`server/auth/aliases.py` keeps an email whose handle is also an email unchanged, so the
-implementing pull request adds a helper beside it that returns the handle; a spelling tied
-to two accounts, or a tie that cannot be read, records no miss. Each miss writes one row
-to `loom.search_misses` under the namespace the search was addressed to: the identity
-tuple, the asker, `actor`, the plane and the query's normalised form (case-folded, with
-every run of characters other than letters, digits, `_`, `+` and `#` made one space, so
-`C++`, `C#` and `arr_v2` stay apart as the term leg keeps them). That form is still the
-query's words, kept as the trace of a question under the request's capture level; only the
-threshold below decides what an admin sees. A query that reads as `high` (`reads_high` in
-`server/memory/domain/sensitivity.py`, the rule namespace-wide listings apply) records no
-miss, so a pasted credential never becomes a gap head, an embedding or an LLM prompt. No
-memory key or document URI is kept: one naming another user's row or document would
-outlive that user's erasure, or the document's delete, in someone else's miss. A miss is
-inserted after the response, so a user erasure could run between the search and the
-insert. An erasure reaches a miss when it is the namespace's (or a list naming it) or a
-user erasure one of whose spellings (`aliases.spellings`, as the user step matches them)
-is the miss's asker or `user_id`. The recording reads `ledger_reads.unfinished_reaching`
-before the insert and records nothing when such an erasure was unfinished when the search
-began or has finished since; it then inserts the miss under an id of its own, waits until
-the row is visible, and reads the ledger again, deleting the row when one now reaches it,
-as other erasure fences check after storing. An unreadable ledger or directory counts as
-reaching. An erasure that begins after that read finds the row and deletes it itself. The
-table has a 16-day TTL: it is a trace, not memory. A pass reads the last 7 days and a
-build lives 7 days from its write, with two days to spare, so a miss outlives every build
-that counted it and a user erasure always finds the namespaces it must clear.
+lineage, `server/auth/service_accounts.py`; `sa_creator` there answers None alike for a
+failed read and for no creator, and ignores `lineage`, so the implementing pull request
+adds a lookup that raises on a failed read and walks `lineage`), and no miss when the
+chain has none; else the token's subject. An agent of a bot (`sa:<bot>:<agent>`) and an
+agent sign-up's service account (whose `created_by` names a namespace, not a person) stand
+for no person and record no miss. Tokens a person mints for themselves therefore count as
+that person. An asker that cannot be resolved (the registry unreadable, or a service
+account with no creator) records no miss: an unknown principal is never counted as a
+separate person. The asker is stored in the form a user erasure names: an end user as
+their id, without the `user:` prefix, and an email lower-cased and folded onto the login
+handle (`owner_email`) of the account the directory ties it to by a verified email,
+whether that handle is an email or not, so one person's two spellings count once.
+`canonical_subject` in `server/auth/aliases.py` keeps an email whose handle is also an
+email unchanged, so the implementing pull request adds a helper beside it that returns the
+handle; a spelling tied to two accounts, or a tie that cannot be read, records no miss.
+Each miss writes one row to `loom.search_misses` under the namespace the search was
+addressed to: the identity tuple, the asker, `actor`, the plane and the query's normalised
+form (case-folded, with every run of characters other than letters, digits, `_`, `+` and
+`#` made one space, so `C++`, `C#` and `arr_v2` stay apart as the term leg keeps them).
+That form is still the query's words, kept as the trace of a question under the request's
+capture level; only the threshold below decides what an admin sees. A query that reads as
+`high` (`reads_high` in `server/memory/domain/sensitivity.py`, the rule namespace-wide
+listings apply) records no miss, so a pasted credential never becomes a gap head, an
+embedding or an LLM prompt. No memory key or document URI is kept: one naming another
+user's row or document would outlive that user's erasure, or the document's delete, in
+someone else's miss. A miss is inserted after the response, so a user erasure could run
+between the search and the insert. An erasure reaches a miss when it is the namespace's
+(or a list naming it) or a user erasure one of whose spellings (`aliases.spellings`, as
+the user step matches them) is the miss's asker or `user_id`. The recording reads
+`ledger_reads.unfinished_reaching` before the insert and records nothing when such an
+erasure was unfinished when the search began or has finished since; it then inserts the
+miss under an id of its own, waits until the row is visible, and reads the ledger again,
+deleting the row when one now reaches it, as other erasure fences check after storing. An
+unreadable ledger or directory counts as reaching. An erasure that begins after that read
+finds the row and deletes it itself. The table has a 16-day TTL: it is a trace, not
+memory. A pass reads the last 7 days and a build lives 7 days from its write, with two
+days to spare, so a miss outlives every build that counted it and a user erasure always
+finds the namespaces it must clear.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
 misses, its `actor` is the token's principal, not the person resolved as below (an end
@@ -439,10 +447,10 @@ written row, which the admin restores from the row's history or promotes.
   namespace-wide row names none, so erasing the admin who promoted it leaves it governed,
   and an admin's name in its `owner`, like `promoted_by` on the shared row today, stays
   until an admin edits the definition.
-- A redact of a definition reaches its memory and shared rows and every `knowledge_gap`
-  and `query_history` candidate drafted for its key (the change above), not the gap it
-  came from, which holds only normalised queries enough askers asked and expires after 7
-  days.
+- A redact of a past version of a definition reaches that version, the shared row holding
+  its text, and every `knowledge_gap` and `query_history` candidate drafted for its key
+  (the change above), not the gap it came from, which holds only normalised queries enough
+  askers asked and expires after 7 days.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
   `user_id` is the user, matching every spelling the directory ties to the named subject
   (`spellings` in `server/auth/aliases.py`, unverified ties included, as a revocation
@@ -502,8 +510,8 @@ answer 503 while any live replica's schema is below N, as `namespace.guide_set` 
 The operator turns `knowledge_gaps_enabled` on only once no N-1 replica serves, as rule 23
 does for assistant-turn learnings. Governed definitions are memory and shared rows, which
 N-1 knows: it serves them as plain rows with no term leg. What N-1 does to them is caught
-by the read-time check: a promotion from another source, or an edit, relabel or redact of
-the source, leaves a row the term leg does not serve, and the term leg's last-promoted
+by the read-time check: a promotion from another source, or an edit, relabel or tombstone
+of the source, leaves a row the term leg does not serve, and the term leg's last-promoted
 rule covers a promotion that skipped the term check. A promotion on N-1 also skips the
 approved-hash check and takes `promoted_by` from the body, which no read-time check can
 tell, and an N-1 `memory.set` ignores `if_absent`, a field it does not know, and writes
