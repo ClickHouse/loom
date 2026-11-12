@@ -162,6 +162,27 @@ describe("NamespaceSettingsDialog on a restricted namespace, before and beside t
     },
   );
 
+  it.each([
+    [
+      { org: "*", roles: ["PLATFORM_ADMIN"], namespaces: ["*"] },
+      "To change its settings, your token must be of dev and name team, and you need a direct admin grant on team.",
+    ],
+    [
+      { org: "dev", roles: ["ADMIN"], namespaces: ["*"] },
+      "To change its settings, your token must name team, and you need a direct admin grant on team.",
+    ],
+  ])("says both what the token misses and the direct grant, with no grant row: %j", async (token, line) => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", ...token },
+      identity: { org: "dev", namespace: "team", agent: "loom-ui" },
+      myNamespaces: [],
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...info, classification: "restricted" });
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await act(async () => undefined);
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
+  });
+
   it("tells a caller with no admin claim and no admin grant the role it needs", async () => {
     await openRestricted(["WRITER"], [grant("writer")]);
     expect(screen.getByTestId("settings-locked")).toHaveTextContent(

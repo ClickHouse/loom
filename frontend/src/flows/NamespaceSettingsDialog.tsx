@@ -157,9 +157,12 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
     // A token scoped per namespace: its role there is the server's to read.
     else if (!misses.includes("grant") && misses.includes("unseen")) lockedReason = serverDecides(name);
     // An admin by claim, by an inherited or pending grant, or by a scoped role the client
-    // cannot see, still lacks the direct grant the gate wants.
+    // cannot see, still lacks the direct grant the gate wants, and maybe parts of the token.
     else if (misses.includes("grant") && (hasAdminClaim(whoami) || grant?.role === "admin" || rolesUnseen(whoami)))
-      lockedReason = `Changing its settings needs a direct ${adminWord} grant on ${name}.`;
+      lockedReason =
+        tokenMisses.length > 0
+          ? `To change its settings, your token must ${andList(tokenMisses)}, and you need a direct ${adminWord} grant on ${name}.`
+          : `Changing its settings needs a direct ${adminWord} grant on ${name}.`;
   }
 
   const save = async (patch: Partial<NamespaceRegisterFields>) => {
