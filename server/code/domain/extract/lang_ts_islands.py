@@ -85,8 +85,10 @@ _FILE_DIALECT_CUES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"mysql", re.I), "mysql"),
     (re.compile(r"sqlite", re.I), "sqlite"),
 )
+# A comment body holds no `*/`, so each comment ends at its first one and a
+# statement that fails to match backtracks in linear time.
 _SQL_HEAD_RE = re.compile(
-    r"^\s*(?:--[^\n]*\n\s*|/\*.*?\*/\s*)*"
+    r"^\s*(?:--[^\n]*\n\s*|/\*(?:[^*]|\*(?!/))*\*/\s*)*"
     r"(SELECT|INSERT|CREATE|DROP|ALTER|WITH|UPDATE|DELETE|OPTIMIZE|SYSTEM|TRUNCATE|EXPLAIN|"
     r"SHOW|DESCRIBE|GRANT|REVOKE|ATTACH|DETACH|COPY|ANALYZE|VACUUM|PRAGMA)\b",
     re.I | re.S,

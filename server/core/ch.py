@@ -348,7 +348,9 @@ _DDL_LEADS = (
     "DELETE",  # DELETE FROM is a lightweight mutation
 )
 _WRITE_LEADS = ("INSERT", "UPDATE")
-_LEAD_RE = re.compile(r"^\s*(?:--[^\n]*\n\s*|/\*.*?\*/\s*)*([A-Za-z]+)", re.S)
+# A comment body holds no `*/`, so each comment ends at its first one and a
+# statement that fails to match backtracks in linear time.
+_LEAD_RE = re.compile(r"^\s*(?:--[^\n]*\n\s*|/\*(?:[^*]|\*(?!/))*\*/\s*)*([A-Za-z]+)", re.S)
 
 # A block that knows it runs long (a CLI mutation that waits on
 # `mutations_sync = 2`, a backfill) raises the bound for every statement it
