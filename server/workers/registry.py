@@ -234,6 +234,14 @@ _WORKERS: tuple[_Worker, ...] = (
         "pg_delivery_interval_seconds",
         idle_interval="pg_delivery_idle_interval_seconds",
     ),
+    # Clears the payloads of the Postgres authority's revisions every ClickHouse backup
+    # holds; idle under the ClickHouse authority.
+    _Worker(
+        "pg_payload_clear",
+        "server.memory.workers.pg_payload_clear",
+        "pg_payload_clear_enabled",
+        "pg_payload_clear_interval_seconds",
+    ),
     _Worker(
         "usage_fold",
         "server.memory.workers.usage_fold",

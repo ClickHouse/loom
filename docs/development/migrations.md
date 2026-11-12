@@ -161,7 +161,9 @@ build would hold off the table's writes, every commit answering 503, until it en
 an index needs `CREATE INDEX CONCURRENTLY` outside a transaction, and a boot waiting on
 the advisory lock deadlocks with it (a waiting session holds a snapshot the build waits
 out): a change that adds such a file also takes the lock by retrying
-`pg_try_advisory_lock`.
+`pg_try_advisory_lock`. When the first release that writes a table carries the file, the
+table is small wherever the file runs, and its index may be built in the file's
+transaction (`010_revision_delivered_at.sql`).
 
 ## Schema dump and check
 

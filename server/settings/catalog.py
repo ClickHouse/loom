@@ -5293,9 +5293,20 @@ class StorageSettings(BaseModel):
     pg_delivery_interval_seconds: int = 2
     # Seconds between delivery passes that found nothing.
     pg_delivery_idle_interval_seconds: int = 10
-    # Deliveries one pass of each delivery worker publishes; also the expired deletion
-    # evidence and settled knowledge deliveries one pass sweeps.
+    # Deliveries one delivery pass publishes; also the expired deletion evidence and settled
+    # knowledge deliveries one pass sweeps, and the revisions one payload clearing batch checks.
     pg_delivery_batch_rows: int = Field(default=500, ge=1)
+    # The pg_payload_clear worker: clears a revision's payload once every usable ClickHouse
+    # backup holds it. Turn it off before a ClickHouse restore (backup-and-recovery.md).
+    pg_payload_clear_enabled: bool = False
+    # Seconds between payload clearing passes.
+    pg_payload_clear_interval_seconds: int = Field(default=60, ge=1)
+    # Minutes between the starts of scheduled ClickHouse backups. The clearing horizon is
+    # never under it plus 60.
+    ch_backup_interval_minutes: Annotated[int, LIVE] = Field(default=1440, ge=1)
+    # Minutes a delivered revision keeps its payload: 0 is twice the backup interval plus 60;
+    # under the interval plus 60 or the insert bound plus 60, it is raised to the larger.
+    pg_payload_restore_horizon_minutes: Annotated[int, LIVE] = Field(default=0, ge=0)
     # Memories one Postgres commit of a `namespace.restore` writes; each batch commits
     # within a request's lease (`pg_request_lease_seconds`).
     pg_restore_batch_rows: int = Field(default=500, ge=1)

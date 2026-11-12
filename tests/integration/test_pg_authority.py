@@ -5280,3 +5280,439 @@ async def test_a_finding_never_cites_a_row_the_authority_moved_past(
     assert after["coverage"]["complete"] is True
     got = await call("memory.get", {"namespace": ns, "agent": "a", "memory_key": "billing/owner"})
     assert got.json()["version"] == newer["version"]
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_a_revision_delivered_late_is_stamped_and_one_delivered_at_once_is_not(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    """A completion stamps `delivered_at` only on a revision it delivers more than
+    LATE_DELIVERY_S after its commit, here one a claim took over from a writer that
+    stopped an hour ago, replacing an older stamp (a revision a restore's reconcile owes
+    again is delivered a second time by a claim, and its horizon starts again from
+    then); the payload clearing counts an unstamped revision delivered that long after
+    `committed_at`."""
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    assert (await call("memory.set", _set(ns, "k", "published at once"))).status_code == 200
+    await _published(pg_conn, org)
+    async with pg_conn.transaction():
+        seq = await pg_conn.fetchval(
+            "UPDATE loom.scope_generations SET generation = generation + 1 "
+            "WHERE org = $1 AND scope = $2 RETURNING generation",
+            org,
+            ns,
+        )
+        await pg_conn.execute(
+            "INSERT INTO loom.memory_revisions (org, namespace, seq, user_id, memory_id, "
+            "version, content_sha256, actor, source_class, committed_at, delivered_at, row, "
+            "audit) "
+            "SELECT org, namespace, $3, user_id, memory_id, version + 1, content_sha256, actor, "
+            "source_class, now() - interval '1 hour', now() - interval '2 days', "
+            "jsonb_set(row, '{version}', to_jsonb(version + 1)), audit "
+            "FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 "
+            "ORDER BY seq DESC LIMIT 1",
+            org,
+            ns,
+            seq,
+        )
+        await pg_conn.execute(
+            "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until) "
+            "VALUES ($1, $2, $3, 3, now() - interval '1 second')",
+            org,
+            ns,
+            seq,
+        )
+    # The next admission in the namespace takes the delivery over and publishes it.
+    assert (await call("memory.set", _set(ns, "k2", "a second fact"))).status_code == 200
+    await _published(pg_conn, org)
+    stamps = await pg_conn.fetch(
+        "SELECT seq, coalesce(delivered_at > now() - interval '1 hour', false) AS stamped "
+        "FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 ORDER BY seq",
+        org,
+        ns,
+    )
+    assert [(r["seq"] == seq, r["stamped"]) for r in stamps] == [
+        (False, False),
+        (True, True),
+        (False, False),
+    ]
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_a_writer_finishing_its_own_delivery_late_stamps_it(
+    pg_conn: Any, org: str, call: Any
+) -> None:
+    """The DELETE arm: a delivery its writer completes under its own token, more than
+    LATE_DELIVERY_S after the commit, is deleted and its revision stamped, replacing an
+    older stamp."""
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    assert (await call("memory.set", _set(ns, "k", "published at once"))).status_code == 200
+    await _published(pg_conn, org)
+    (seq,) = await pg_conn.fetchrow(
+        "SELECT seq FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, ns
+    )
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET committed_at = now() - interval '3 days', "
+        "delivered_at = now() - interval '2 days' WHERE org = $1 AND namespace = $2",
+        org,
+        ns,
+    )
+    await pg_conn.execute(
+        "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until) "
+        "VALUES ($1, $2, $3, 1, now() + interval '1 minute')" + _OVER_SETTLED,
+        org,
+        ns,
+        seq,
+    )
+    try:
+        await pg_memory.complete([(org, ns, seq)], 1)
+    finally:
+        await pg.close_pool()
+    assert await pg_conn.fetchval(
+        "SELECT delivered_at > now() - interval '1 hour' FROM loom.memory_revisions "
+        "WHERE org = $1 AND namespace = $2",
+        org,
+        ns,
+    )
+    assert not await pg_conn.fetchval(
+        "SELECT count(*) FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2",
+        org,
+        ns,
+    )
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_the_clearing_read_walks_its_index_in_order(pg_conn: Any, monkeypatch: Any) -> None:
+    """`clearable_revisions` reads `memory_revisions_payload` in its key's order: with
+    sequential scans and sorts priced out, the plan is an index scan with no Sort, which
+    a read whose order or cut left the index key could not get."""
+    import json
+    from datetime import UTC, datetime
+
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    sent: list[tuple[str, tuple[Any, ...]]] = []
+
+    async def _fetch(sql: str, *args: Any) -> list[Any]:
+        sent.append((sql, args))
+        return []
+
+    monkeypatch.setattr(pg, "fetch", _fetch)
+    after = (datetime(2026, 1, 1, tzinfo=UTC), "o", "n", 1)
+    await pg_memory.clearable_revisions(3600.0, after, 500)
+    ((sql, args),) = sent
+    async with pg_conn.transaction():
+        await pg_conn.execute("SET LOCAL enable_seqscan = off")
+        await pg_conn.execute("SET LOCAL enable_sort = off")
+        await pg_conn.execute("SET LOCAL enable_bitmapscan = off")
+        plan = await pg_conn.fetchval(f"EXPLAIN (FORMAT JSON) {sql}", *args)
+    if isinstance(plan, str):
+        plan = json.loads(plan)
+
+    def nodes(node: dict[str, Any]) -> list[dict[str, Any]]:
+        return [node] + [n for child in node.get("Plans", []) for n in nodes(child)]
+
+    walked = nodes(plan[0]["Plan"])
+    assert any(
+        n["Node Type"] == "Index Scan" and n.get("Index Name") == "memory_revisions_payload"
+        for n in walked
+    ), walked
+    assert not [n for n in walked if n["Node Type"] in ("Sort", "Incremental Sort")], walked
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_a_cleared_head_is_sent_from_its_head_row_and_a_cleared_older_version_parks(
+    call: Any, pg_conn: Any, ch_client: Any, org: str
+) -> None:
+    """A cleared revision that is still its key's head is held and claimed with the head's
+    row (the same version); one superseded has nothing to send: `hold` leaves it out, and
+    a delivery it owes anyway (one held as a pass cleared it) parks at its claim with that
+    reason instead of failing every pass."""
+    from server.core import pg
+    from server.core.ch import get_client
+    from server.memory.app import pg_delivery
+    from server.memory.store import pg_memory
+
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    assert (await call("memory.set", _set(ns, "k", "the first version"))).status_code == 200
+    head = (await call("memory.set", _set(ns, "k", "the second version"))).json()
+    await _published(pg_conn, org)
+    await pg_conn.execute(
+        "DELETE FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2", org, ns
+    )
+    old_seq, head_seq = [
+        int(r["seq"])
+        for r in await pg_conn.fetch(
+            "UPDATE loom.memory_revisions SET row = NULL WHERE org = $1 AND namespace = $2 "
+            "RETURNING seq",
+            org,
+            ns,
+        )
+    ]
+    if old_seq > head_seq:
+        old_seq, head_seq = head_seq, old_seq
+
+    async def _deliveries() -> dict[int, Any]:
+        rows = await pg_conn.fetch(
+            "SELECT seq, lease_until = 'infinity' AS parked, last_error "
+            "FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2",
+            org,
+            ns,
+        )
+        return {int(r["seq"]): (r["parked"], r["last_error"]) for r in rows}
+
+    try:
+        assert await pg_memory.hold([(org, ns, old_seq), (org, ns, head_seq)], [1, 1]) == 1
+        assert set(await _deliveries()) == {head_seq}
+        await pg_conn.execute(
+            "INSERT INTO loom.memory_deliveries (org, namespace, seq, targets, lease_until) "
+            "VALUES ($1, $2, $3, 1, now() - interval '1 s') "
+            "ON CONFLICT (org, namespace, seq) DO UPDATE SET lease_until = EXCLUDED.lease_until",
+            org,
+            ns,
+            old_seq,
+        )
+        await pg_conn.execute(
+            "UPDATE loom.memory_deliveries SET lease_until = now() - interval '1 s' "
+            "WHERE org = $1 AND namespace = $2",
+            org,
+            ns,
+        )
+        (claimed,) = await pg_memory.claim_due(10, scope=(org, ns))
+        head_row = await pg_conn.fetchval(
+            "SELECT row FROM loom.memory_current WHERE org = $1 AND namespace = $2", org, ns
+        )
+        assert claimed.seq == head_seq
+        assert claimed.row == pg_memory.decode_row(head_row)
+        assert int(claimed.row["version"]) == int(head["version"])
+        assert "the second version" in claimed.row["value"]
+        assert (await _deliveries())[old_seq] == (True, pg_memory.PAYLOAD_CLEARED)
+        # ClickHouse without the head, as a restore that lacks it: the head's claim
+        # publishes it again and completes (the settle arm: the claim's token is not the
+        # writer's).
+        key = {"o": org, "n": ns}
+        ch_client.command(
+            "DELETE FROM loom.memory WHERE org = {o:String} AND namespace = {n:String}",
+            parameters=key,
+        )
+        ch = get_client()
+        await ch.connect()
+        try:
+            await pg_delivery._publish([claimed])
+        finally:
+            await ch.disconnect()
+        settled = await pg_conn.fetchval(
+            "SELECT targets = 0 AND settled FROM loom.memory_deliveries "
+            "WHERE org = $1 AND namespace = $2 AND seq = $3",
+            org,
+            ns,
+            head_seq,
+        )
+        assert settled is True
+        landed = ch_client.query(
+            "SELECT version, value FROM loom.memory FINAL "
+            "WHERE org = {o:String} AND namespace = {n:String}",
+            settings=_SEQUENTIAL,
+            parameters=key,
+        ).result_rows
+        assert [(int(v), "the second version" in str(value)) for v, value in landed] == [
+            (int(head["version"]), True)
+        ]
+    finally:
+        await pg_conn.execute(
+            "DELETE FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2", org, ns
+        )
+        await pg.close_pool()
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_an_unstamped_revision_waits_out_the_late_delivery_allowance(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    """An unstamped revision counts as delivered up to 15 minutes after its commit: it is
+    offered only once its commit is past the horizon plus that allowance."""
+    from server.core import pg
+    from server.memory.store import pg_memory
+    from server.memory.workers.pg_payload_clear import effective_horizon_minutes
+
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    assert (await call("memory.set", _set(ns, "k", "a fact to clear"))).status_code == 200
+    await _published(pg_conn, org)
+    await pg_conn.execute(
+        "DELETE FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2", org, ns
+    )
+    horizon_s = effective_horizon_minutes() * 60.0
+
+    async def offered_after_commit_minutes_ago(minutes: float) -> bool:
+        await pg_conn.execute(
+            "UPDATE loom.memory_revisions SET delivered_at = NULL, "
+            "committed_at = now() - make_interval(secs => $3) "
+            "WHERE org = $1 AND namespace = $2",
+            org,
+            ns,
+            horizon_s + minutes * 60,
+        )
+        found = await pg_memory.clearable_revisions(horizon_s, None, 100_000)
+        return any((c.org, c.namespace) == (org, ns) for c in found)
+
+    try:
+        assert pg_memory.LATE_DELIVERY_S == 15 * 60
+        assert not await offered_after_commit_minutes_ago(5)
+        assert await offered_after_commit_minutes_ago(20)
+    finally:
+        await pg.close_pool()
+
+
+@pytest.mark.usefixtures("pg_authority")
+async def test_a_revision_past_the_horizon_that_clickhouse_holds_loses_its_payload(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    """Past the horizon, a revision ClickHouse's history holds (a redacted one included,
+    its content hash kept) loses its payload and keeps its metadata; a redaction of it
+    afterwards marks its columns. One ClickHouse lacks keeps its payload, and so do a
+    profile revision and one still owing its delivery, which are never offered; one
+    stamped as delivered recently is not offered until its stamp is past the horizon
+    too."""
+    from server.core import pg
+    from server.core.ch import get_client
+    from server.memory.store import history, pg_memory
+    from server.memory.workers.pg_payload_clear import effective_horizon_minutes
+
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    second = (await call("memory.set", _set(ns, "k", "the token was rotated"))).json()
+    assert (await call("memory.set", _set(ns, "k", "the token is in the vault"))).status_code == 200
+    for key in ("k2", "kp", "ko", "kd"):
+        assert (await call("memory.set", _set(ns, key, f"the {key} fact"))).status_code == 200
+    await _published(pg_conn, org)
+    redact = {"memory_id": first["memory_id"], "version": first["version"], "reason": "leak"}
+    assert (await call("memory.redact", redact)).json()["redacted"] is True
+    await _published(pg_conn, org)
+    # The delivery pass's sweep, done here: the settled deliveries are gone.
+    await pg_conn.execute(
+        "DELETE FROM loom.memory_deliveries WHERE org = $1 AND namespace = $2 AND settled",
+        org,
+        ns,
+    )
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET committed_at = committed_at - interval '30 days' "
+        "WHERE org = $1 AND namespace = $2",
+        org,
+        ns,
+    )
+    # kd's revision as delivered just now, long after its commit: the horizon counts from
+    # the stamp.
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET delivered_at = now() "
+        "WHERE org = $1 AND namespace = $2 AND memory_key = 'kd'",
+        org,
+        ns,
+    )
+    # k2's revision as ClickHouse's history does not hold it; kp's as a profile revision;
+    # ko's still owing a delivery, parked.
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET content_sha256 = repeat('0', 64) "
+        "WHERE org = $1 AND namespace = $2 AND memory_key = 'k2'",
+        org,
+        ns,
+    )
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET row = row || "
+        """'{"agent": "-", "memory_type": "profile"}'::jsonb """
+        "WHERE org = $1 AND namespace = $2 AND memory_key = 'kp'",
+        org,
+        ns,
+    )
+    await pg_conn.execute(
+        "INSERT INTO loom.memory_deliveries "
+        "(org, namespace, seq, targets, lease_until, fenced_until) "
+        "SELECT org, namespace, seq, 1, 'infinity', now() FROM loom.memory_revisions "
+        "WHERE org = $1 AND namespace = $2 AND memory_key = 'ko'",
+        org,
+        ns,
+    )
+    metadata = (
+        "SELECT seq, memory_id, version, content_sha256, actor, source_class, user_id, "
+        "agent, session_id, memory_key, status, redacted_at, redaction_reason, committed_at, "
+        "delivered_at, request_id, audit FROM loom.memory_revisions "
+        "WHERE org = $1 AND namespace = $2 AND memory_key = 'k' ORDER BY seq"
+    )
+    metadata_before = [dict(r) for r in await pg_conn.fetch(metadata, org, ns)]
+    history_before = (
+        await call("memory.history", {"namespace": ns, "agent": "a", "memory_key": "k"})
+    ).json()["rows"]
+    horizon_s = effective_horizon_minutes() * 60.0
+
+    async def offered(after: Any = None) -> list[pg_memory.Clearable]:
+        return [
+            c
+            for c in await pg_memory.clearable_revisions(horizon_s, after, 100_000)
+            if (c.org, c.namespace) == (org, ns)
+        ]
+
+    ch = get_client()
+    await ch.connect()
+    try:
+        found = await offered()
+        assert [c.memory_key for c in found] == ["k", "k", "k", "k2"]
+        # A pass resuming past the first one reads the rest.
+        assert await offered(found[0].cursor) == found[1:]
+        held = await history.versions_held(found)
+        assert [c.memory_key for c in held] == ["k", "k", "k"]
+        assert await pg_memory.clear_payloads(horizon_s, held) == 3
+        assert [c.memory_key for c in await offered()] == ["k2"]
+        # Once its stamp is past the horizon too, kd is offered and cleared.
+        await pg_conn.execute(
+            "UPDATE loom.memory_revisions SET delivered_at = now() - interval '30 days' "
+            "WHERE org = $1 AND namespace = $2 AND memory_key = 'kd'",
+            org,
+            ns,
+        )
+        late = [c for c in await offered() if c.memory_key == "kd"]
+        assert len(late) == 1
+        assert await pg_memory.clear_payloads(horizon_s, await history.versions_held(late)) == 1
+    finally:
+        await ch.disconnect()
+        await pg.close_pool()
+    # A cleared revision keeps its metadata, and ClickHouse serves its content.
+    assert [dict(r) for r in await pg_conn.fetch(metadata, org, ns)] == metadata_before
+    key = {"namespace": ns, "agent": "a", "memory_key": "k"}
+    assert (await call("memory.history", key)).json()["rows"] == history_before
+    # A redaction of a cleared version (not the head) marks its columns; its payload stays
+    # cleared.
+    redact = {"memory_id": second["memory_id"], "version": second["version"], "reason": "leak"}
+    redacted = (await call("memory.redact", redact)).json()
+    assert redacted["redacted"] is True, redacted
+    kept = await pg_conn.fetch(
+        "SELECT memory_key, row IS NULL AS cleared, redacted_at IS NOT NULL AS redacted "
+        "FROM loom.memory_revisions WHERE org = $1 AND namespace = $2 ORDER BY seq",
+        org,
+        ns,
+    )
+    assert [tuple(r) for r in kept] == [
+        ("k", True, True),
+        ("k", True, True),
+        ("k", True, False),
+        ("k2", False, False),
+        ("kp", False, False),
+        ("ko", False, False),
+        ("kd", True, False),
+    ]
+    # ClickHouse's history, the only copy of the cleared version's content, serves it
+    # scrubbed: every other field and every other version as before.
+    after = (await call("memory.history", key)).json()["rows"]
+    assert [r["version"] for r in after] == [r["version"] for r in history_before]
+    scrubbed = ("value", "redaction_reason", "redacted_at", "content_sha256")
+    for b, a in zip(history_before, after, strict=True):
+        if b["version"] != second["version"]:
+            assert a == b
+            continue
+        assert {k: v for k, v in a.items() if k not in scrubbed} == {
+            k: v for k, v in b.items() if k not in scrubbed
+        }
+        assert a["value"] == "[REDACTED]" and a["redaction_reason"].startswith("leak")
+        assert a["redacted_at"] and a["content_sha256"] != b["content_sha256"]
