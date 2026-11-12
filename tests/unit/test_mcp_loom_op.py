@@ -177,7 +177,7 @@ def test_the_description_stays_small() -> None:
     import json
 
     widest = {**mcp_op.DESCRIPTOR, "description": mcp_op.description(set(), "core")}
-    assert len(json.dumps(widest)) // 4 <= 290
+    assert len(json.dumps(widest)) // 4 <= 280
 
 
 @pytest.mark.parametrize(
