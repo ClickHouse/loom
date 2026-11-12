@@ -35,6 +35,11 @@ function show(role: MyNamespaceEntry["role"] | null) {
   render(<Documents />);
 }
 
+// The section opens from its button beside the page's actions.
+async function openSources(): Promise<void> {
+  await userEvent.setup().click(await screen.findByRole("button", { name: /^Sources/ }));
+}
+
 const LISTED = {
   enabled: true,
   sources: [
@@ -74,6 +79,7 @@ describe("Library sources", () => {
 
   it("lists the namespace's sources and offers Add to its admins", async () => {
     show("admin");
+    await openSources();
     expect(await screen.findByText("team-notes")).toBeInTheDocument();
     expect(sources.listKnowledgeSources).toHaveBeenCalledWith({ org: "acme", namespace: "team" }, expect.anything());
     expect(screen.getByRole("button", { name: "Add a source" })).toBeInTheDocument();
@@ -81,6 +87,7 @@ describe("Library sources", () => {
 
   it.each(["viewer", "writer", null] as const)("offers no Add to a role of %s", async (role) => {
     show(role);
+    await openSources();
     expect(await screen.findByText("team-notes")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add a source" })).toBeNull();
   });
@@ -96,6 +103,7 @@ describe("Library sources", () => {
     history.replaceState(null, "", "/library?collection=col-plans");
     // The header namespace's role is the opposite, so only the collection's can decide.
     show(add ? "viewer" : "admin");
+    await openSources();
     expect(await screen.findByText("team-notes")).toBeInTheDocument();
     await waitFor(() =>
       expect(sources.listKnowledgeSources).toHaveBeenLastCalledWith(
@@ -122,6 +130,7 @@ describe("Library sources", () => {
         expect.anything(),
       ),
     );
+    await openSources();
     expect(await screen.findByText("team-notes")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add a source" })).toBeNull();
   });
@@ -139,7 +148,7 @@ describe("Library sources", () => {
     await act(async () => {
       await sources.listKnowledgeSources.mock.results[0]?.value;
     });
-    expect(screen.queryByRole("heading", { name: "Sources" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Sources/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add a source" })).toBeNull();
   });
 
@@ -147,12 +156,13 @@ describe("Library sources", () => {
     sources.listKnowledgeSources.mockReturnValue(new Promise(() => {}));
     show("admin");
     await waitFor(() => expect(sources.listKnowledgeSources).toHaveBeenCalled());
-    expect(screen.queryByRole("heading", { name: "Sources" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Sources/ })).toBeNull();
   });
 
   it("still lists the active sources of a place that takes no new one", async () => {
     sources.listKnowledgeSources.mockResolvedValue({ ...LISTED, accepts_sources: false });
     show("admin");
+    await openSources();
     expect(await screen.findByText("team-notes")).toBeInTheDocument();
     expect(screen.getByText(/takes no new document sources/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add a source" })).toBeNull();
@@ -161,6 +171,7 @@ describe("Library sources", () => {
   it("shows an admin the Sources section and Add on an empty place that takes sources", async () => {
     sources.listKnowledgeSources.mockResolvedValue({ ...LISTED, sources: [] });
     show("admin");
+    await openSources();
     expect(await screen.findByRole("heading", { name: "Sources" })).toBeInTheDocument();
     expect(screen.getByText(/No document sources\./)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add a source" })).toBeInTheDocument();
@@ -169,6 +180,7 @@ describe("Library sources", () => {
   it("shows an admin the list's error under the Sources heading", async () => {
     sources.listKnowledgeSources.mockRejectedValue(new Error("boom"));
     show("admin");
+    await openSources();
     expect(await screen.findByText(/Couldn't list the document sources/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Sources" })).toBeInTheDocument();
   });
@@ -180,7 +192,7 @@ describe("Library sources", () => {
     await act(async () => {
       await sources.listKnowledgeSources.mock.results[0]?.value.catch(() => {});
     });
-    expect(screen.queryByRole("heading", { name: "Sources" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Sources/ })).toBeNull();
   });
 
   it.each([
@@ -196,7 +208,7 @@ describe("Library sources", () => {
     });
     render(<Documents />);
     await act(async () => {});
-    expect(screen.queryByRole("heading", { name: "Sources" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Sources/ })).toBeNull();
     expect(sources.listKnowledgeSources).not.toHaveBeenCalled();
   });
 
@@ -211,7 +223,7 @@ describe("Library sources", () => {
     show("admin");
     await waitFor(() => expect(api.listKnowledge.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "col-me-1" }));
     expect(sources.listKnowledgeSources).not.toHaveBeenCalled();
-    expect(screen.queryByRole("heading", { name: "Sources" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Sources/ })).toBeNull();
   });
 
   it("shows a viewer no Sources section on a place with no source", async () => {
@@ -221,12 +233,13 @@ describe("Library sources", () => {
     await act(async () => {
       await sources.listKnowledgeSources.mock.results[0]?.value;
     });
-    expect(screen.queryByRole("heading", { name: "Sources" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Sources/ })).toBeNull();
   });
 
   it("tells a viewer a closed place takes no new source, with no retire hint or menu", async () => {
     sources.listKnowledgeSources.mockResolvedValue({ ...LISTED, accepts_sources: false });
     show("viewer");
+    await openSources();
     expect(await screen.findByText("team-notes")).toBeInTheDocument();
     expect(screen.getByText(/takes no new document sources\./)).toBeInTheDocument();
     expect(screen.queryByText(/retire these/)).toBeNull();
@@ -236,6 +249,7 @@ describe("Library sources", () => {
   it("offers only Check and Retire on a source of a place that takes no new one", async () => {
     sources.listKnowledgeSources.mockResolvedValue({ ...LISTED, accepts_sources: false });
     show("admin");
+    await openSources();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Actions for team-notes" }));
     const menu = await screen.findByRole("menu", { name: "Actions for team-notes" });
@@ -244,5 +258,27 @@ describe("Library sources", () => {
         .getAllByRole("menuitem")
         .map((m) => m.textContent),
     ).toEqual(["Check", "Retire"]);
+  });
+});
+
+describe("Library sources button", () => {
+  beforeEach(() => {
+    resetNamespaceRoleCache();
+    sources.listKnowledgeSources.mockResolvedValue(LISTED);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    useStore.setState({ identity: null, whoami: null, myNamespaces: null });
+  });
+
+  it("keeps the list closed, counted on its button, until it is pressed", async () => {
+    show("viewer");
+    const button = await screen.findByRole("button", { name: "Sources (1)" });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("team-notes")).toBeNull();
+    await userEvent.setup().click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByText("team-notes")).toBeInTheDocument();
   });
 });

@@ -599,7 +599,7 @@ schema. These rules keep that safe. The operator procedure is in
 44. **Document sources on any namespace** (`knowledge.source.*` without the trunk
     check): N-1 still refuses `add`, `check`, `rotate` and `sync_now` on a namespace
     that is not a repository's trunk (`NOT_A_CODE_NAMESPACE`), so while it serves, the
-    dashboard's Add (the Library's Sources section offers it on every shared namespace),
+    dashboard's Add (the Library's Sources button offers it on every shared namespace),
     Check, Sync now and Rotate of such a source fail on the replicas it answers from,
     and its sync worker skips such a source until N leads the workers. N-1's
     `namespace.delete`, `collection.delete` and erasure do not retire a namespace's
