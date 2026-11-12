@@ -2,7 +2,7 @@
 of one `core` for two. Membership derives from the frozensets; the toolset is
 selectable per deployment and per request; the code tools ride it without the
 deployment flag; the catalogue says which toolsets list an op; the coding-tier
-descriptions are the core texts with the chat-only sentences removed;
+descriptions are the core texts trimmed of sentences a coding session does not act on;
 each description stays under its budget (the listing's ceiling is in
 test_mcp_listing_budget.py).
 
