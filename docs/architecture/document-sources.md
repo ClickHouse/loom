@@ -339,14 +339,14 @@ same code for any cause. The exceptions are these:
 1. A checked leg's answer to its reader.
 2. The model and embedding tokens and the cost of the mirrored items a request was
    admitted to, counted in its namespace's totals and against its `daily_cost_cap_usd`;
-   the request's per-row values go only to its own caller and a platform admin, and
-   every other reader sees them only in a total per namespace and day, from which any
-   finer grouping (`cost.summary` by `user_id`, `operation` or `agent`) leaves marked
-   rows out. A viewer can still subtract the finer groups and their own spend from the
-   daily total; on a namespace where one other marked request runs that day, that
-   difference is its spend, which is accepted. Its work figures (statements, rows and
-   bytes read, chunks injected, `llm_calls`, the stored duration) go to a platform admin
-   only.
+   the request's per-row values go only to its own caller (in its answer and its own
+   ledger rows, which the mask exempts) and a platform admin, and every other reader
+   sees them only in a total per namespace and day, from which any finer grouping
+   (`cost.summary` by `user_id`, `operation` or `agent`) leaves marked rows out. A
+   viewer can still subtract the finer groups and their own spend from the daily total;
+   on a namespace where one other marked request runs that day, that difference is its
+   spend, which is accepted. Its work figures (statements, rows and bytes read, chunks
+   injected, `llm_calls`, the stored duration) go to a platform admin only.
 3. A connected source's per-item status and `too_many_documents`, to its owner, and its
    listing age, to its owner as a code (fresh or stale).
 4. A platform admin's view of a mirror's sources (every mirrored source's status, the
@@ -405,13 +405,15 @@ rejected that for collections, since one missed path leaks.
   shared across readers (the repository-docs listing cache, `memory.ask`'s precedents,
   the provider response and embedding caches) is read or written with text a mirror leg
   gave, and no field or row of its `agent_events`, trace, exposure, metric or span
-  records, of the recall credit it writes to `loom.memory_usage_events`, nor a
+  records, of recall credit (it writes none to `loom.memory_usage_events`), nor a
   generation's captured text, depends on the mirror. Every request that runs a mirror
   leg is marked, whether or not anything was admitted, since marking on admission would
   tell existence; the costs are accepted: `knowledge.reads` names no address on a
   namespace with a mirror, every knowledge read there drops out of `cost.summary` by
-  `user_id`, `operation` and `agent`, and the assistant's support check reads a marked
-  call as unknown.
+  `user_id`, `operation` and `agent`, the assistant's support check reads a marked call
+  as unknown, and a marked request writes no recall credit or exposure row, so the usage
+  signals (`recall_count`, `last_recalled_at`, the usage totals) leave out every marked
+  read.
 - **The flag.** An answer any part of which comes from an admitted mirrored item carries
   `mirrored: true`, as the first field or line of the answer and again on each admitted
   item, so a truncated copy still carries it. A mirror leg answers nothing to a client
@@ -439,20 +441,24 @@ rejected that for collections, since one missed path leaks.
   and read it, and keep the flag in the session's own state beside what they keep for
   resume and fork. A worker an orchestrator starts outside that process tree (through
   `tmux`, `ssh` or a job queue) inherits nothing; what its own session records is the
-  orchestrating agent's choice, out of scope below. The CLI's `ingest-transcript`
-  refuses a transcript that carries the flag, or whose session's state records it. From
-  the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set until it is off again
-  and the mirror-erase command has run, every session-content op refuses a client that
-  does not declare the flag, in every org, whatever mix of clients and tokens a session
-  runs. The condition is a deployment row written the first time any process reads the
-  switch on and deleted only by the mirror-erase command, and the check fails closed: a
-  process that cannot read it refuses, and the first mirrored `add` waits until every
-  live process reports the switch on, as the schema check does. Since it lifts only
-  then, it says nothing of when another org's mirrors went. Mirrored sources are off for
-  a deployment until an operator turns them on
-  (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`), after every Loom client and hook that
-  sends session content honours the flag. Each pull request that adds a mirror leg,
-  writer, client or hook lists what it writes and tests each against these rules.
+  orchestrating agent's choice, out of scope ([threat model](#threat-model)). The CLI's
+  `ingest-transcript` refuses a transcript that carries the flag, or whose session's
+  state records it. From the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set
+  until it is off again and the mirror-erase command has run, every session-content op
+  refuses a client that does not declare the flag, in every org, whatever mix of clients
+  and tokens a session runs. The condition is a deployment row (org and namespace `-` in
+  `loom.knowledge_mirrors`) or the process's own switch: a process refuses while its
+  switch is on, row or no row, and writes the row whenever it reads the switch on and
+  finds it absent, so neither a lost write nor a restore of a copy without it lifts the
+  refusal. Only the mirror-erase command deletes the row, and it refuses while any live
+  process reports the switch on. The check fails closed: a process that cannot read the
+  row refuses, and the first mirrored `add` waits until every live process reports the
+  switch on, as the schema check does. Since it lifts only then, it says nothing of when
+  another org's mirrors went. Mirrored sources are off for a deployment until an
+  operator turns them on (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`), after every Loom
+  client and hook that sends session content honours the flag. Each pull request that
+  adds a mirror leg, writer, client or hook lists what it writes and tests each against
+  these rules.
 - **The sync and the workers write nothing outside the mirror.** The mirrored sync's
   spend charges no namespace's cap, and
   `LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS` bounds it. A mirrored source's sync
@@ -478,11 +484,15 @@ rejected that for collections, since one missed path leaks.
   and a person's export name no mirror. The analytics export and `sql_v1_usage_daily`
   fold a marked request's spend into a row per namespace and day with agent and
   operation `-`, and every read of `agent_events` rows for anyone below a platform admin
-  goes through the fold and the mask: `sql_v1_agent_events` masks a marked row's token,
-  cost and work fields, `llm_calls` included, and `insights.query`'s analyst reads a
-  masked view of the table, never the table, which exception 2 accepts as a cost beside
-  `cost.summary`'s. `row_reach` refuses the form before its auth-off return, so no
-  id-addressed check or `audit.list` of a named namespace opens one.
+  goes through the fold and the mask: `sql_v1_agent_events` masks every field of a
+  marked row whose value can depend on an admitted item (`model`, the tokens, cost and
+  work fields, `llm_calls`, and the outcome fields a model call can change: `success`,
+  `error_code`, `status_class`), and `insights.query`'s analyst reads a masked view of
+  the table, never the table, with the same signed scope policy on the view as on the
+  table (the implementing pull request updates the isolation proof in [the assistant
+  page](assistant.md)), which exception 2 accepts as a cost beside `cost.summary`'s.
+  `row_reach` refuses the form before its auth-off return, so no id-addressed check or
+  `audit.list` of a named namespace opens one.
 
 A mirrored source's documents are never kept past it: `remove` retires every one it owns
 (`delete_documents` is implied), and so do a disconnect, a SCIM deactivation, the owner
@@ -653,7 +663,8 @@ admits someone the store no longer names.
 
 Out of scope: response timing; how fast the shared pass gets to a connected owner's own
 source, which its fresh or stale code and per-item status reflect; that a namespace
-erasure is still retrying, which a namespace admin sees whatever its cause; a reader who
+erasure is still retrying, which a namespace admin sees whatever its cause; a worker an
+orchestrating agent starts outside a flagged session's process tree; a reader who
 already saw a document and kept its text in a record only they read, or one their agent
 chose to write or sent in a call it chose (a follow-up `memory.search` whose terms come
 from what it read, recorded in a trace log the namespace's viewers read), which is that
@@ -744,7 +755,7 @@ ClickHouse, additive migrations:
 | Table                              | Key                                                           | Holds                                                                                                                                                                                                    |
 | ---------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `loom.knowledge_sources` (columns) | `(org, namespace, name)`                                      | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject` and `subjects`), `secret_enc`          |
-| `loom.knowledge_mirrors`           | `(org, namespace)`                                            | `mirror`, `created_at`                                                                                                                                                                                   |
+| `loom.knowledge_mirrors`           | `(org, namespace)`                                            | `mirror`, `created_at`; the row with org and namespace `-` is the deployment's latch for the session-content refusal                                                                                     |
 | `loom.documents` (column)          | as today; in a mirror `source_uri` is `<address>#<source id>` | `access_json`: a mirrored document's permission list (`emails`, `groups`, `domains`, `anyone`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration |
 | `loom.knowledge_source_listings`   | `(org, namespace, source_id)`                                 | `name`, `started_at` (the start of the source's last complete listing), `version`; `namespace` is the mirror                                                                                             |
 | `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`                          | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                            |
@@ -1064,7 +1075,7 @@ Each implementing pull request lists its own; these pin the model:
       not captured into the parent session.
     - A `loom` CLI run through a shell and a prompt-recall injection carrying
       `mirrored: true` stopping every hook of the session.
-    - The CLI's `ingest-transcript` refusing a transcript that carries the marker.
+      - The CLI's `ingest-transcript` refusing a transcript that carries the flag.
     - A dashboard view of an admitted mirrored document sending no `ui.vitals`.
     - A forked or resumed session not captured after its parent saw the flag.
     - One test over every op the registry classifies as session content, each refusing a
@@ -1076,14 +1087,17 @@ Each implementing pull request lists its own; these pin the model:
       content.
     - A session with clients holding tokens for two orgs, one reading a mirror,
       capturing nothing into the other.
-      - The session-content refusal holding once the switch was set with no mirror
-        yet, when the deployment row cannot be read and on a replica whose view lags
-        it, and lifting only once the switch is off and the mirror-erase command has
-        deleted the row.
+    - The session-content refusal holding once the switch was set with no mirror yet,
+      when the deployment row cannot be read and on a replica whose view lags it, and
+      lifting only once the switch is off and the mirror-erase command has deleted the
+      row.
+    - A mirror-erase run with the switch still on refused, a restore that loses the
+      deployment row, and a mirrored `add` after either, with the refusal still holding.
     - A viewer's `insights.query` over `agent_events` after another person's marked
-      request finding its tokens and cost only as the mask allows.
-    - An admitted mirrored item in `context.pack` leaving the request's recall credits
-      and trace rows equal to a run with the mirror empty.
+      request finding its tokens, cost, `model` and outcome fields only as the mask
+      allows, and the caller's own rows unmasked.
+    - An admitted mirrored item in `context.pack` writing no recall credit or exposure
+      row.
     - A later `ingest-transcript` of a session flagged only by inheritance refused from
       an unflagged shell.
     - A session started from a flagged session's process (`claude -p` through its shell)
