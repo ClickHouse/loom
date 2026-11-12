@@ -128,6 +128,16 @@ describe("NamespaceSettingsDialog on a restricted namespace, before and beside t
     expect(screen.getByTestId("settings-locked")).toHaveTextContent("Your role on this namespace is still loading.");
   });
 
+  it("waits for the grants with an admin claim too, then unlocks for a direct admin", async () => {
+    let answer: (rows: MyNamespaceEntry[]) => void = () => {};
+    vi.mocked(api.listMine).mockReturnValue(new Promise((r) => (answer = r)));
+    await openRestricted(["ADMIN"], null);
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent("Your role on this namespace is still loading.");
+    await act(async () => answer([grant("admin")]));
+    expect(screen.queryByTestId("settings-locked")).toBeNull();
+    expect(screen.getByLabelText("Description")).not.toBeDisabled();
+  });
+
   it("says list_mine failed, rather than what the change needs", async () => {
     vi.mocked(api.listMine).mockRejectedValue(new Error("down"));
     await openRestricted([], null);

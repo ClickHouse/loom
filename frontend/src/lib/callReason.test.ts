@@ -31,6 +31,11 @@ describe("roleGap", () => {
       "Your request to join team is waiting for an admin.",
     );
     expect(roleGap({ role: null, loading: false, rows: [] }, token(["WRITER"], ["*"]), "team")).toBe(SERVER);
+    // A `*` token that also names the namespace and has no row: its claim there is capped.
+    expect(roleGap({ role: null, loading: false, rows: [] }, token(["WRITER"], ["*", "team"]), "team")).toBeNull();
+    expect(
+      callReason("memory.pin", { role: null, loading: false, rows: [] }, token(["WRITER"], ["*", "team"]), "team"),
+    ).toBe("Needs writer on team. An admin of it can grant that.");
     // A read list with no row and no `*` claim is no grant: nothing to explain.
     expect(roleGap({ role: null, loading: false, rows: [] }, who, "team")).toBeNull();
   });

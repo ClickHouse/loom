@@ -32,7 +32,7 @@ interface Props {
   org: string;
   namespace: string;
   /** "code" switches the dialog to repository mode: members are readers (viewer only);
-   *  maintainers (admin) are named by an org admin. */
+   *  maintainers (admin) are named by an org admin or a maintainer of it. */
   kind?: string;
   /** A human name for the namespace — for a code index "owner/name @ branch"
    *  — shown in the heading with the identifier beneath it, so the approver
@@ -70,10 +70,8 @@ export function MembersDialog({
 }: Props) {
   const whoami = useStore((s) => s.whoami);
   const isCode = kind === "code";
-  // A code index has two roles: readers (viewer) and maintainers (admin),
-  // and only an org admin may name a maintainer (the server enforces the
-  // same ceiling — ROLE_CEILING).
-  // Any maintainer may name another maintainer.
+  // A code index has two roles: readers (viewer) and maintainers (admin); an org admin or a
+  // maintainer of it names a maintainer (the server enforces the ceiling — ROLE_CEILING).
   const roles = isCode
     ? ROLES.filter((r) => r.value === "viewer" || r.value === "admin").map((r) =>
         r.value === "viewer"

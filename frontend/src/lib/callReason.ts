@@ -1,5 +1,5 @@
 import type { WhoAmI } from "../api";
-import { canCall, OP_MIN_ROLE, type GatedOp } from "./canCall";
+import { canCall, OP_MIN_ROLE, RANK, type GatedOp } from "./canCall";
 import { needsRole, type NamespaceRole, type NamespaceRoleRead } from "./namespaceRole";
 
 // Apart from canCall.ts and namespaceRole.ts, which the boot chunk holds: only in-page
@@ -10,14 +10,17 @@ export const ROLE_LOADING = "Your role on this namespace is still loading.";
 const serverDecides = (namespace: string) =>
   `The server decides this token's access to ${namespace}; it does not show here.`;
 
-const RANK: Record<NamespaceRole, number> = { viewer: 1, writer: 2, admin: 3 };
-
-/** The token claims `*` without naming `namespace`, with a flat role reaching `min`: a grant
- *  row never holds such a claim below its role (`claim_cap` reads only a named namespace),
- *  and what else may (`ns_write`, a delegated token's creator grant) the client cannot see. */
-function starReaches(whoami: WhoAmI, namespace: string, min: NamespaceRole): boolean {
+/** The token claims `*` without naming `namespace`. */
+function starOnly(whoami: WhoAmI, namespace: string): boolean {
   const named = whoami.namespaces ?? [];
-  if (!named.includes("*") || named.includes(namespace)) return false;
+  return named.includes("*") && !named.includes(namespace);
+}
+
+/** The token claims `*` without naming `namespace`, with a flat role reaching `min`.
+ *  `claim_cap` caps only a named namespace, so a grant row never lowers this claim;
+ *  `ns_write` and a delegated creator grant may, unseen here. */
+function starReaches(whoami: WhoAmI, namespace: string, min: NamespaceRole): boolean {
+  if (!starOnly(whoami, namespace)) return false;
   const roles = (whoami.roles ?? []).map((r) => r.toLowerCase());
   return roles.some((r) => r in RANK && RANK[r as NamespaceRole] >= RANK[min]);
 }
@@ -25,8 +28,8 @@ function starReaches(whoami: WhoAmI, namespace: string, min: NamespaceRole): boo
 /**
  * Why the caller's role on `namespace` is not known, or null when it is: list_mine is still
  * being read (or whoami is), the caller's request to join waits for an admin, list_mine
- * could not be read, or a `*` claim, which list_mine answers no row for, leaves it to the
- * server. A null role with list_mine read and none of these is no grant at all.
+ * could not be read, or a `*` claim that does not name it, which list_mine answers no row
+ * for, leaves it to the server. A null role with list_mine read and none of these is no grant at all.
  */
 export function roleGap(read: NamespaceRoleRead, whoami: WhoAmI | null, namespace: string): string | null {
   if (read.role !== null) return null;
@@ -34,7 +37,7 @@ export function roleGap(read: NamespaceRoleRead, whoami: WhoAmI | null, namespac
   if (read.rows?.some((m) => m.namespace === namespace && m.status === "pending"))
     return `Your request to join ${namespace} is waiting for an admin.`;
   if (read.rows === null) return `Couldn't check your access to ${namespace}.`;
-  if (whoami.namespaces?.includes("*")) return serverDecides(namespace);
+  if (starOnly(whoami, namespace)) return serverDecides(namespace);
   return null;
 }
 

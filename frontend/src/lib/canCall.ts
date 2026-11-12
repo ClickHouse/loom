@@ -188,7 +188,7 @@ export const OP_MIN_ROLE = {
 
 export type GatedOp = keyof typeof OP_MIN_ROLE;
 
-const RANK: Record<MinRole, number> = { viewer: 1, writer: 2, admin: 3 };
+export const RANK: Record<MinRole, number> = { viewer: 1, writer: 2, admin: 3 };
 
 /**
  * True when the client can show that the current principal is allowed to
