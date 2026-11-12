@@ -211,18 +211,67 @@ def test_token_state_starts_no_cell_refresh(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_the_lifespan_reads_the_state_before_its_heartbeat_and_lease() -> None:
+    """The calls the lifespan makes, in the order it makes them (its syntax tree: a
+    comment or a renamed variable changes nothing here)."""
+    import ast
     from pathlib import Path
 
-    src = (Path(boot.__file__).parent / "main.py").read_text()
-    lifespan = src[src.index("async def lifespan(") :]
-    order = [
-        lifespan.index("await boot.require_storage_authority(ch)"),
-        lifespan.index("cell_loops = await boot.start_cell_gate()"),
-        lifespan.index("await _instances.start("),
-        lifespan.index("await boot.ensure_default_namespace()"),
-        lifespan.index("await _leader.decide_supervisor("),
+    tree = ast.parse((Path(boot.__file__).parent / "main.py").read_text())
+    lifespan = next(
+        n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "lifespan"
+    )
+    calls = [
+        ast.unparse(n.func)
+        for n in sorted(
+            ast.walk(lifespan), key=lambda n: (getattr(n, "lineno", 0), getattr(n, "col_offset", 0))
+        )
+        if isinstance(n, ast.Call)
     ]
-    assert order == sorted(order)
+    wanted = [
+        "boot.require_storage_authority",
+        "boot.start_cell_gate",
+        "_instances.start",
+        "boot.ensure_default_namespace",
+        "_leader.decide_supervisor",
+    ]
+    assert [c for c in calls if c in wanted] == wanted
+
+
+def test_keep_lease_starts_and_stops_an_unset_on_processs_workers_with_the_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(leader, "_period_s", lambda _held: 0.01)
+    events: list[str] = []
+
+    async def _on_lost() -> None:
+        events.append("stop")
+
+    async def _wait_for(n: int) -> None:
+        for _ in range(500):
+            if len(events) >= n:
+                return
+            await asyncio.sleep(0.01)
+        raise AssertionError(f"only {events}")
+
+    async def _run() -> None:
+        _rows(monkeypatch, "enforced")
+        lease = await leader.decide_supervisor("on")
+        assert not lease.held
+        task = asyncio.create_task(
+            leader.keep_lease(lease, lambda: events.append("start"), _on_lost)
+        )
+        await asyncio.sleep(0.1)
+        assert events == []  # gated: nothing starts
+        _rows(monkeypatch, "open")
+        await _wait_for(1)
+        _rows(monkeypatch, "partial")
+        await _wait_for(2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_run())
+    assert events[:2] == ["start", "stop"]
 
 
 @pytest.mark.parametrize(
@@ -249,7 +298,7 @@ def test_an_auto_process_takes_the_lease_where_it_serves(
     monkeypatch: pytest.MonkeyPatch, state: str
 ) -> None:
     _rows(monkeypatch, state)
-    monkeypatch.setattr(leader, "newer_build", lambda _name: "")
+    monkeypatch.setattr(leader, "newer_build", lambda _name: 0)
     lease = _auto(_Lock([True]))
     lease.step()
     assert lease.held
@@ -272,7 +321,7 @@ def test_an_auto_cell_process_with_a_matching_state_takes_the_lease(
     monkeypatch.setattr(settings, "cell", "eu-1")
     monkeypatch.setattr(settings, "public_base_url", "https://eu-1.example.test")
     monkeypatch.setattr(cell, "_code_orgs", None)
-    monkeypatch.setattr(leader, "newer_build", lambda _name: "")
+    monkeypatch.setattr(leader, "newer_build", lambda _name: 0)
     _rows(monkeypatch, "enforced", current=cell.as_value(cell.mine()))
     lease = _auto(_Lock([True]))
     lease.step()
@@ -347,3 +396,22 @@ def test_the_default_namespace_boot_write_waits_for_the_gate(
     _rows(monkeypatch, "open")
     asyncio.run(boot.ensure_default_namespace())
     write.assert_awaited_once()
+
+
+def test_a_gated_unset_process_answers_503_naming_the_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.transport.model_maintenance import ModelMaintenanceMiddleware
+
+    _rows(monkeypatch, "enforced")
+    app, send = AsyncMock(), AsyncMock()
+    asyncio.run(
+        ModelMaintenanceMiddleware(app)(
+            {"type": "http", "method": "POST", "path": "/v1/memory.set"}, AsyncMock(), send
+        )
+    )
+    app.assert_not_awaited()
+    assert send.await_args_list[0].args[0]["status"] == 503
+    body = send.await_args_list[1].args[0]["body"]
+    assert b"AUTH_UNAVAILABLE" in body and b"does not serve this deployment's cell state" in body
+    assert b"as its cell" not in body

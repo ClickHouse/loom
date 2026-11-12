@@ -397,7 +397,7 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
     # stdout stays one JSON document; a first cell's next step goes to stderr.
     out = capsys.readouterr()
     assert json.loads(out.out)["is_first"] is True
-    assert out.err.strip() == "prepared first cell; roll out LOOM_CELL next"
+    assert out.err.strip() == "loom cell prepare: prepared the first cell; roll out LOOM_CELL next"
     # A rerun on a cell past recording names no next step.
     monkeypatch.setattr(
         cell_prepare, "_register", AsyncMock(return_value={**OK, "mode": "enforced"})

@@ -494,7 +494,9 @@ async def prepare(
     )
     if answer["is_first"] and answer["mode"] == "recording":
         # The next step for the operator; stdout stays one JSON document.
-        print("prepared first cell; roll out LOOM_CELL next", file=sys.stderr)
+        print(
+            "loom cell prepare: prepared the first cell; roll out LOOM_CELL next", file=sys.stderr
+        )
     return 0
 
 

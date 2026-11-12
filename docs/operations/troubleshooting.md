@@ -270,8 +270,7 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   hold a first cell's full state in `recording`
   ([cells](../architecture/cells.md#the-tenancy-check-and-placement)).
 - **Check:** whether the router's directory holds a row for this deployment. Skip this
-  on a deployment with no router. Run as the role that owns schema `loom`'s tables (the
-  role in `LOOM_PG_DSN` that migrates):
+  on a deployment with no router. Start in a psql session on `LOOM_PG_DSN`:
 
   ```sql
   SELECT deployment_id AS id FROM loom.authority \gset
@@ -286,9 +285,10 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   - **The deployment is not meant to be a cell** (no directory row, or no router), or
     **an unattached later cell** (its row reads `is_first = false`,
     `state = 'attaching'` and `placed = 0`) that you are turning back into a single
-    deployment:
-    clear the state in one transaction. On a lock failure, `ROLLBACK` if psql is still
-    open, then rerun the whole step. The deployment is then `open`. An unattached later
+    deployment: clear the state in one transaction, in a psql session on `LOOM_PG_DSN`
+    (`\connect` back to it after the check) as the role that owns schema `loom`'s tables
+    (the role that migrates; altering a trigger needs the table's owner). On a lock
+    failure, `ROLLBACK` if psql is still open, then rerun the whole step. The deployment is then `open`. An unattached later
     cell's directory row stays live; making the deployment a cell again needs that row
     removed and a new prepare.
 
