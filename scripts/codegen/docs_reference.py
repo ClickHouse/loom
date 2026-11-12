@@ -47,7 +47,7 @@ if str(ROOT) not in sys.path:  # run as a file
     sys.path.insert(0, str(ROOT))
 
 from scripts.codegen.common import write_atomic  # noqa: E402
-from scripts.codegen.page_summary import first_sentence, page_summary  # noqa: E402
+from scripts.codegen.page_summary import SECTIONS, first_sentence, page_summary  # noqa: E402
 from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
 from server.core.errors import (  # noqa: E402
     CLASS_BY_CODE,
@@ -386,18 +386,6 @@ def render_group_pages() -> dict[str, str]:
 # --- llms.txt -----------------------------------------------------------------
 
 LLMS_TXT = ROOT / "llms.txt"
-_LLMS_SECTIONS = (
-    ("Getting started", "getting-started"),
-    ("Use cases", "use-cases"),
-    ("Operations", "operations"),
-    ("Features", "features"),
-    ("Reference", "reference"),
-    ("Concepts", "concepts"),
-    ("Guides", "guides"),
-    ("Architecture", "architecture"),
-    ("Benchmarks", "benchmarks"),
-    ("Development", "development"),
-)
 
 
 def render_llms_txt() -> str:
@@ -419,7 +407,7 @@ def render_llms_txt() -> str:
         "Every operation's fields are in docs/reference/operations/.",
         "",
     ]
-    for heading, sub in _LLMS_SECTIONS:
+    for heading, sub in SECTIONS:
         # A section's own index.md comes first, the rest by path.
         pages = sorted(
             (p for p in (docs / sub).rglob("*.md") if p.parent != GROUP_DIR),

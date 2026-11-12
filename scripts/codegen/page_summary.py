@@ -11,6 +11,21 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+# The docs sections in reading order, as (title, folder under docs/): llms.txt lists them
+# in this order and the documentation site's sidebar follows it.
+SECTIONS = (
+    ("Getting started", "getting-started"),
+    ("Use cases", "use-cases"),
+    ("Operations", "operations"),
+    ("Features", "features"),
+    ("Reference", "reference"),
+    ("Concepts", "concepts"),
+    ("Guides", "guides"),
+    ("Architecture", "architecture"),
+    ("Benchmarks", "benchmarks"),
+    ("Development", "development"),
+)
+
 
 def first_sentence(text: str | None, limit: int = 200) -> str:
     """The first sentence of a docstring or description, on one line."""
@@ -38,7 +53,8 @@ def page_summary(path: Path) -> tuple[str, str]:
         first = para.lstrip()
         if not first or first[0] in "#>|-*<!" or first[:2].isdigit() or first.startswith("1."):
             continue
-        summary = first_sentence(" ".join(para.split()), 240)
+        # Links are page-relative: keep their text, before the sentence is cut to length.
+        plain = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", " ".join(para.split()))
+        summary = first_sentence(plain, 240)
         break
-    summary = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", summary)  # links are page-relative
     return title.replace("`", ""), summary
