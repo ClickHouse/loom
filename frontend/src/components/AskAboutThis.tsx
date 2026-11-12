@@ -1,9 +1,9 @@
 import { Button } from "@clickhouse/click-ui/Button";
 import { Unavailable } from "./ui/Unavailable";
 import { loadDockRuntime, useDock, type AskItem } from "../lib/assistantDock";
-import { canCall } from "../lib/canCall";
+import { callReason } from "../lib/callReason";
 import { isMemoryNamespace } from "../lib/namespace";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { useStore } from "../lib/state";
 
 /** Free text on one line, cut to `max` characters (by code point, so a character outside
@@ -30,11 +30,11 @@ export function exact(id: string): string {
  * "Ask about this": a secondary button that names `item` in the assistant's next question
  * (the chip "Includes: <page> · <item>") and opens the panel with its field focused. It
  * sends nothing. `leave` runs first: a drawer or a dialog closes itself, with a flag so its
- * close hands the focus to nobody (the panel's field takes it). Shown to whoever the
- * assistant's route admits on the header's namespace. Unavailable, with the reason, for the
- * caller's own `reason` (an item read from another place than the header's namespace, which
- * is all the answer reads), on a header namespace that holds no memories, and while the
- * assistant cannot answer.
+ * close hands the focus to nobody (the panel's field takes it). Unavailable, with the reason,
+ * to a caller the assistant's route does not admit on the header's namespace (the role it
+ * needs), for the caller's own `reason` (an item read from another place than the header's
+ * namespace, which is all the answer reads), on a header namespace that holds no memories,
+ * and while the assistant cannot answer.
  */
 export function AskAboutThis({
   what,
@@ -53,10 +53,12 @@ export function AskAboutThis({
   const whoami = useStore((s) => s.whoami);
   const namespace = useStore((s) => s.identity?.namespace ?? "");
   const mine = useStore((s) => s.myNamespaces);
-  const role = useNamespaceRole(namespace);
+  const { role, loading } = useNamespaceRoleRead(namespace);
   const unavailable = useDock((s) => s.reasonShort);
-  if (!canCall("assistant.ask", role, whoami)) return null;
+  // Nothing until the role is read: a reason shown while it loads could be wrong.
+  if (!namespace || loading) return null;
   const why =
+    callReason("assistant.ask", role, whoami, namespace) ||
     reason ||
     (!isMemoryNamespace(namespace, mine) ? "The assistant answers about a memory namespace." : null) ||
     (unavailable ? `The assistant can't answer now: ${unavailable}.` : null);

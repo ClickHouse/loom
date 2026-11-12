@@ -8,7 +8,7 @@ import { toast, toastError } from "../../../components/Toast";
 import { Unavailable } from "../../../components/ui";
 import { GuideDialog } from "../../../flows/GuideDialog";
 import { canCall } from "../../../lib/canCall";
-import { canWrite, useNamespaceRole } from "../../../lib/namespaceRole";
+import { canWrite, needsRole, useNamespaceRole } from "../../../lib/namespaceRole";
 import { useStore } from "../../../lib/state";
 import { ReviewChanges } from "../ReviewChanges";
 
@@ -62,10 +62,7 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
       return (
         <Unavailable
           reason={
-            stale ??
-            (canCall("namespace.register_category", role, whoami)
-              ? null
-              : "Registering a category needs the writer role on this namespace.")
+            stale ?? (canCall("namespace.register_category", role, whoami) ? null : needsRole("writer", tune.namespace))
           }
         >
           <Button type="secondary" htmlType="button" onClick={() => void register(p)}>
@@ -75,9 +72,7 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
       );
     if (op && a.op === "namespace.guide_set")
       return (
-        <Unavailable
-          reason={stale ?? (canWrite(role) ? null : "Editing the guide needs the writer role on this namespace.")}
-        >
+        <Unavailable reason={stale ?? (canWrite(role) ? null : needsRole("writer", tune.namespace))}>
           <Button type="secondary" htmlType="button" onClick={() => setGuideDraft(p)}>
             Review in the guide editor
           </Button>

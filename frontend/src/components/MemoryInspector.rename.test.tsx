@@ -375,13 +375,16 @@ describe("MemoryInspector rename with redirect", () => {
     expect(useStore.getState()).toMatchObject({ inspectedMemoryKey: "prefs/coffee", inspectedOwner: null });
   });
 
-  it("a live row has no badge, and a viewer is not offered the rename", async () => {
+  it("a live row has no badge, and a viewer's rename is unavailable", async () => {
     seed("viewer");
     await open();
     expect(screen.queryByTestId("redirect-badge")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "More actions" }));
     await screen.findByRole("menuitem", { name: "Copy" });
-    expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
+    const rename = screen.getByRole("menuitem", { name: "Rename" });
+    expect(rename).toHaveAccessibleDescription("Needs writer on team-alerts. An admin of it can grant that.");
+    await userEvent.click(rename);
+    expect(screen.queryByTestId("rename-form")).toBeNull();
     expect(moveMemory).not.toHaveBeenCalled();
   });
 });

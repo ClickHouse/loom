@@ -19,7 +19,7 @@ import { announceAssistant } from "../../../lib/assistantDockRuntime";
 import { useDock } from "../../../lib/assistantDock";
 import { canCall } from "../../../lib/canCall";
 import { humanizeError } from "../../../lib/errorWords";
-import { useNamespaceRoleRead } from "../../../lib/namespaceRole";
+import { needsRole, useNamespaceRoleRead } from "../../../lib/namespaceRole";
 import { useStore } from "../../../lib/state";
 import { ask, cardReads, save, useChat } from "../chatStore";
 import { randomId } from "../conversations";
@@ -49,12 +49,13 @@ export function lastInventory(turns = useChat.getState().turns): NamespaceInvent
 export const ROLE_LOADING = "Your role on this namespace is still loading.";
 
 /** Why a card's read cannot run for this person, or null. Each read is gated on its own op:
- *  all are viewer reads, so a refusal means the role is not known yet or at all; the server
+ *  all are viewer reads, so a refusal says why the role is missing (still loading, a request
+ *  waiting, list_mine unread, or no access); the server
  *  refuses memory.inspect and namespace.tune to a token pinned to one user or session, and a
  *  scoped read that needs its user or session in the request, which a card does not send. */
 export function useCardGate(namespace: string): (op: CardOp) => string | null {
   const whoami = useStore((s) => s.whoami);
-  const { role, loading } = useNamespaceRoleRead(namespace);
+  const { role, loading, rows } = useNamespaceRoleRead(namespace);
   const turns = useChat((s) => s.turns);
   const tokenScope = tokenReadScope(storedToken());
   const inventory = lastInventory(turns);
@@ -65,7 +66,13 @@ export function useCardGate(namespace: string): (op: CardOp) => string | null {
     if (op === "graph") return null;
     const scoped = op === "namespace.inventory" || op === "knowledge.inspect";
     if (loading) return ROLE_LOADING;
-    if (!canCall(op, role, whoami)) return "Your role on this namespace is not known.";
+    if (!canCall(op, role, whoami)) {
+      if (rows?.some((m) => m.namespace === namespace && m.status === "pending"))
+        return `Your request to join ${namespace} is waiting for an admin.`;
+      // Signed in and not loading, with no rows: list_mine could not be read.
+      if (whoami && rows === null) return `Couldn't check your access to ${namespace}. Try again.`;
+      return needsRole("viewer", namespace);
+    }
     if (incomplete && scoped)
       return "Your token needs each request to name its user or session, which a card does not send.";
     if (narrowed && (op === "memory.inspect" || op === "namespace.tune"))

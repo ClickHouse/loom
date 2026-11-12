@@ -52,7 +52,9 @@ describe("Header", () => {
     // The live button is replaced by the disabled one once list_mine resolves.
     // aria-disabled, not disabled: the trigger stays focusable so its tooltip can say why.
     await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toHaveAttribute("aria-disabled", "true"));
-    expect(screen.getByRole("button", { name: "New" })).toHaveAccessibleDescription(/You have read-only access here/);
+    expect(screen.getByRole("button", { name: "New" })).toHaveAccessibleDescription(
+      /^Needs writer on .+\. An admin of it can grant that\.$/,
+    );
   });
 
   it("keeps New live for a writer token on the same namespace", async () => {

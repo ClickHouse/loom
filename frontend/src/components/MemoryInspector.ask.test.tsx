@@ -210,9 +210,14 @@ describe("Ask about this in the memory drawer", () => {
     expect(useDock.getState().item).toBeNull();
   });
 
-  it("is not offered to a role the assistant's route does not admit", async () => {
+  it("is unavailable, with the role it needs, to a role the assistant's route does not admit", async () => {
     useStore.setState({ myNamespaces: [] });
     await openDrawer();
-    expect(footer().queryByRole("button", { name: "Ask the assistant about this memory" })).toBeNull();
+    const ask = footer().getByRole("button", { name: "Ask the assistant about this memory" });
+    expect(ask).toHaveAttribute("aria-disabled", "true");
+    expect(ask).toHaveAccessibleDescription(/^Needs viewer on .+\. An admin of it can grant that\.$/);
+    await userEvent.setup().click(ask);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(useDock.getState().item).toBeNull();
   });
 });

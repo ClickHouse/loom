@@ -394,7 +394,7 @@ describe("the drawer footer: one row, two on a narrow drawer", () => {
   });
   afterEach(() => cleanup());
 
-  it("keeps Edit and Delete, and folds a writer's other actions into More", async () => {
+  it("keeps Edit and Delete, and folds a writer's other actions into More, an admin's among them unavailable", async () => {
     await open();
     const footer = screen.getByRole("contentinfo");
     expect(
@@ -414,6 +414,8 @@ describe("the drawer footer: one row, two on a narrow drawer", () => {
       "Remove verification",
       "Copy to…",
       "Lock…",
+      "Share with every agent",
+      "Stop sharing",
       "Rename",
       "Copy",
       "This helped",

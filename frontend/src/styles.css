@@ -333,6 +333,11 @@ body {
     border-color: var(--click-button-basic-color-empty-stroke-disabled);
     color: var(--click-button-basic-color-empty-text-disabled);
   }
+  [data-unavailable="danger"]:not(:disabled) {
+    background: var(--click-button-basic-color-danger-background-disabled);
+    border-color: var(--click-button-basic-color-danger-stroke-disabled);
+    color: var(--click-button-basic-color-danger-text-disabled);
+  }
 }
 
 /* A button whose read is in flight stays focusable (components/ui/BusyButton) and shows

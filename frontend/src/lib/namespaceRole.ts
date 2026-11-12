@@ -15,21 +15,21 @@ import { isPersonalCollection } from "./namespace";
  * - an ADMIN / ORG_ADMIN / PLATFORM_ADMIN claim: admin everywhere (the
  *   server honours the claim before any grant row);
  * - an active grant row from `namespace.list_mine`: its role;
- * - a claim-only row (`role: "jwt"`, no grant to join through): the token's
- *   flat VIEWER / WRITER claim — that is exactly the case the audit found,
- *   a viewer token on a jwt-only namespace being offered "Add memory";
- * - anything else (list_mine not loaded yet, failed, or no row): `null` —
- *   unknown, so nothing is shown and nothing is disabled.
+ * - a claim-only row (`role: "jwt"`, no grant to join through), or no row at all for a
+ *   `*` token: the token's flat VIEWER / WRITER claim, which the server honours there
+ *   (`server/auth/authz.py::check_authorized`). list_mine answers a `jwt` row for each
+ *   namespace the token names whose claim still reaches it (`live_claims`), never for `*`;
+ * - anything else (list_mine not loaded yet, failed, a pending request, or no row on a
+ *   named namespace, whose claim a revoked grant caps): `null` — no request is sent.
  */
 export type NamespaceRole = "admin" | "writer" | "viewer";
 
-export const READ_ONLY_TIP = "You have read-only access here — ask a maintainer for writer";
-
-export const ROLE_TIP: Record<NamespaceRole, string> = {
-  admin: "You're an admin here — you can add memories, manage members and change settings",
-  writer: "You're a writer here — you can add and edit memories",
-  viewer: READ_ONLY_TIP,
-};
+/** Why a control is unavailable to the caller's role: the role it needs on the namespace,
+ *  and who can grant it. Every in-page control a role cannot use shows this as its reason
+ *  (`ui/Unavailable`) rather than disappearing. */
+export function needsRole(role: NamespaceRole, namespace: string): string {
+  return `Needs ${role} on ${namespace}. An admin of it can grant that.`;
+}
 
 /** The token's flat VIEWER / WRITER claim; admin claims go through
  * `hasAdminClaim` so both gates read the same list. */
@@ -50,7 +50,8 @@ export function roleOnNamespace(
   const claim = flatClaim(whoami);
   if (mine === null) return null;
   const row = mine.find((m) => m.namespace === namespace);
-  if (!row || row.status === "pending") return null;
+  if (row?.status === "pending") return null;
+  if (!row) return whoami.namespaces?.includes("*") ? claim : null;
   if (row.role === "jwt") return claim;
   return row.role;
 }
@@ -79,9 +80,17 @@ export function useNamespaceRole(namespace: string | undefined): NamespaceRole |
   return useNamespaceRoleRead(namespace).role;
 }
 
-/** The role, and whether list_mine is still being read for it: a null role while `loading`
- *  is not known yet, rather than known to be missing. */
-export function useNamespaceRoleRead(namespace: string | undefined): { role: NamespaceRole | null; loading: boolean } {
+/** The role, whether list_mine is still being read for it (a null role while `loading` is
+ *  not known yet, rather than known to be missing), and the rows it was read from: null
+ *  while unread or when the read failed. A caller that says why a role is null reads them
+ *  (`views/assistant/cards/cardStore.ts::useCardGate`). */
+export interface NamespaceRoleRead {
+  role: NamespaceRole | null;
+  loading: boolean;
+  rows: MyNamespaceEntry[] | null;
+}
+
+export function useNamespaceRoleRead(namespace: string | undefined): NamespaceRoleRead {
   const whoami = useStore((s) => s.whoami);
   const org = useStore((s) => s.identity?.org);
   const stored = useStore((s) => s.myNamespaces);
@@ -101,9 +110,11 @@ export function useNamespaceRoleRead(namespace: string | undefined): { role: Nam
     };
   }, [org, needsFetch, namespace]);
   const answered = fetched !== null && fetched.org === org;
+  const rows = stored ?? (answered ? fetched.rows : null);
   return {
-    role: roleOnNamespace(whoami, stored ?? (answered ? fetched.rows : null), namespace ?? ""),
+    role: roleOnNamespace(whoami, rows, namespace ?? ""),
     loading: needsFetch && !!org && !answered,
+    rows,
   };
 }
 

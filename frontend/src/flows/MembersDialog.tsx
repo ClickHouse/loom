@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { IconButton as ClickIconButton } from "@clickhouse/click-ui/IconButton";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import {
@@ -14,11 +15,12 @@ import {
 } from "../api";
 import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
+import { needsRole } from "../lib/namespaceRole";
 import { toast, toastError, toastErrorLine } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { fieldError, ListTime, Loading, Tip } from "../components/ui";
+import { fieldError, ListTime, Loading, Tip, Unavailable } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { humanizeError } from "../lib/errorWords";
 import { oneOf } from "../lib/oneOf";
@@ -133,6 +135,9 @@ export function MembersDialog({
       whoami,
       rows?.find((r) => r.subject === me),
     );
+  // What a member who is not an admin here sees on each control an admin uses: the control,
+  // unavailable, with the role it needs. Null while the grants are unread.
+  const manageReason = canManage || rows === null ? null : needsRole("admin", namespace);
 
   const onAdd = async () => {
     const subj = newSubject.trim();
@@ -236,6 +241,17 @@ export function MembersDialog({
 
   const addLabel = isCode ? "Add reader" : "Add member";
 
+  const approveButton = (r: PendingEntry, targets: number) => (
+    <Button
+      type="secondary"
+      htmlType="button"
+      onClick={() => onApprove(r.subject, "approve")}
+      disabled={busy === r.subject}
+    >
+      {`Approve as ${isCode ? (r.requested_role === "admin" ? "maintainer" : "reader") : r.requested_role}${targets > 1 ? ` on ${targets} branches` : ""}`}
+    </Button>
+  );
+
   return (
     <Modal
       open={open}
@@ -301,31 +317,30 @@ export function MembersDialog({
                         )}
                       </div>
                     </div>
-                    {canManage ? (
+                    {r.subject !== me || canManage ? (
                       <>
-                        <Tip
-                          content={`Also approves: ${elsewhere.map((t) => t.label).join(", ")}`}
-                          disabled={targets <= 1}
-                        >
+                        {manageReason ? (
+                          <Unavailable reason={manageReason}>{approveButton(r, targets)}</Unavailable>
+                        ) : (
+                          <Tip
+                            content={`Also approves: ${elsewhere.map((t) => t.label).join(", ")}`}
+                            disabled={targets <= 1}
+                          >
+                            {approveButton(r, targets)}
+                          </Tip>
+                        )}
+                        <Unavailable reason={manageReason}>
                           <Button
-                            type="secondary"
+                            type="empty"
                             htmlType="button"
-                            onClick={() => onApprove(r.subject, "approve")}
+                            onClick={() => onApprove(r.subject, "reject")}
                             disabled={busy === r.subject}
                           >
-                            {`Approve as ${isCode ? (r.requested_role === "admin" ? "maintainer" : "reader") : r.requested_role}${targets > 1 ? ` on ${targets} branches` : ""}`}
+                            Reject
                           </Button>
-                        </Tip>
-                        <Button
-                          type="empty"
-                          htmlType="button"
-                          onClick={() => onApprove(r.subject, "reject")}
-                          disabled={busy === r.subject}
-                        >
-                          Reject
-                        </Button>
+                        </Unavailable>
                       </>
-                    ) : r.subject === me ? (
+                    ) : (
                       <Button
                         type="secondary"
                         htmlType="button"
@@ -353,8 +368,6 @@ export function MembersDialog({
                       >
                         Withdraw
                       </Button>
-                    ) : (
-                      <span className="px-2 text-xs text-text-muted">awaiting admin</span>
                     )}
                   </div>
                 );
@@ -404,7 +417,14 @@ export function MembersDialog({
                     />
                   </>
                 ) : (
-                  <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
+                  <>
+                    <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
+                    {manageReason && r.subject !== me && (
+                      <Unavailable reason={manageReason}>
+                        <ClickIconButton type="danger" size="sm" icon="trash" aria-label={`Remove ${r.subject}`} />
+                      </Unavailable>
+                    )}
+                  </>
                 )}
               </div>
             ))}
@@ -442,6 +462,15 @@ export function MembersDialog({
         </div>
       )}
 
+      {manageReason && (
+        <ModalFooter>
+          <Unavailable reason={manageReason}>
+            <Button type="primary" htmlType="button" iconLeft="plus">
+              {addLabel}
+            </Button>
+          </Unavailable>
+        </ModalFooter>
+      )}
       {canManage && (
         <ModalFooter>
           {adding ? (

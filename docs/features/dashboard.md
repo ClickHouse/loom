@@ -118,6 +118,11 @@ it, the page says so, and names a deployment setting only to whoever runs the de
 platform admin, or anyone with auth off). A viewer's empty Memories page also opens the
 namespace's members, where its admins are listed.
 
+A control inside a page that your role cannot use stays in view, unavailable, and says the
+role it needs and who grants it: "Needs writer on team. An admin of it can grant that."
+Choosing it sends nothing. Only a page or tab meant for another audience, such as the admin
+drawer's pages, is left out.
+
 ### The assistant panel
 
 The **Assistant** button in the header, left of the account menu (its icon, and from

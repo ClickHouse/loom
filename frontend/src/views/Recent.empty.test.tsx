@@ -108,8 +108,10 @@ describe("Memories empty state", () => {
     await userEvent.click(within(state).getByRole("button", { name: "See who the admins are" }));
     const dialog = await screen.findByRole("dialog", undefined, WAIT);
     expect(await within(dialog).findByText("boss@x", undefined, WAIT)).toBeInTheDocument();
-    // Read only: a viewer is offered no way to add a member.
-    expect(within(dialog).queryByRole("button", { name: /Add member/i })).toBeNull();
+    // A viewer sees Add member unavailable, with the role it needs.
+    const add = within(dialog).getByRole("button", { name: "Add member" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    expect(add).toHaveAccessibleDescription(`Needs admin on ${NS}. An admin of it can grant that.`);
   });
 
   it("with auth off reads as a writer's, and the connect dialog shows the plugin lines", async () => {

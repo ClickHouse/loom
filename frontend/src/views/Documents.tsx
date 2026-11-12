@@ -42,7 +42,8 @@ import { committedAnyway, toastCommitted } from "../lib/errorWords";
 import { isPublicationPending } from "../lib/errors";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
-import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip } from "../components/ui";
+import { ListRow, Loading, LoadingSkeleton, PageHeader, TagList, Tip, Unavailable } from "../components/ui";
+import { needsRole } from "../lib/namespaceRole";
 import { BusyButton } from "../components/ui/BusyButton";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
@@ -202,6 +203,8 @@ export function Documents() {
   }, [collection, opensFirst, pickCollection]);
   const identity = useMemo(() => (shown ? { ...picked, namespace: shown.namespace } : picked), [picked, shown]);
   const readOnly = shown?.role === "viewer";
+  // A viewer of the collection sees each write, unavailable, with the role it needs.
+  const writeReason = readOnly && shown ? needsRole("writer", collectionTitle(shown)) : null;
   const phone = useMedia(PHONE_QUERY);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
@@ -970,10 +973,12 @@ export function Documents() {
         actions={
           <>
             {/* The empty state's own Add is the one primary while it shows. */}
-            {!emptyLibrary && !readOnly && !resolving && (
-              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-                Add document
-              </Button>
+            {!emptyLibrary && !resolving && (
+              <Unavailable reason={writeReason}>
+                <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+                  Add document
+                </Button>
+              </Unavailable>
             )}
           </>
         }
@@ -1216,22 +1221,20 @@ export function Documents() {
                   Tables
                 </Button>
               )}
-              {!readOnly && (
-                <Tip content="Upload a new file version of this document">
-                  <Button
-                    type="secondary"
-                    htmlType="button"
-                    iconLeft="refresh"
-                    onClick={() => {
-                      const r = previewEntry;
-                      closePreview();
-                      setReplaceEntry(r);
-                    }}
-                  >
-                    Edit content
-                  </Button>
-                </Tip>
-              )}
+              <Unavailable reason={writeReason} tip="Upload a new file version of this document">
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  iconLeft="refresh"
+                  onClick={() => {
+                    const r = previewEntry;
+                    closePreview();
+                    setReplaceEntry(r);
+                  }}
+                >
+                  Edit content
+                </Button>
+              </Unavailable>
               <AskAboutThis
                 what="document"
                 // A collection's document is not in the namespace the answer reads: said by title.
@@ -1315,20 +1318,22 @@ export function Documents() {
                   <strong>Download text (.md)</strong> above saves its text as Markdown; re-upload it to attach an
                   original file.
                 </div>
-                {previewEntry && !readOnly && (
-                  <Button
-                    type="secondary"
-                    htmlType="button"
-                    iconLeft="refresh"
-                    className="mt-4"
-                    onClick={() => {
-                      const r = previewEntry;
-                      closePreview();
-                      setReplaceEntry(r);
-                    }}
-                  >
-                    Re-upload
-                  </Button>
+                {previewEntry && (
+                  <Unavailable reason={writeReason}>
+                    <Button
+                      type="secondary"
+                      htmlType="button"
+                      iconLeft="refresh"
+                      className="mt-4"
+                      onClick={() => {
+                        const r = previewEntry;
+                        closePreview();
+                        setReplaceEntry(r);
+                      }}
+                    >
+                      Re-upload
+                    </Button>
+                  </Unavailable>
                 )}
               </div>
             </div>
@@ -1372,7 +1377,7 @@ export function Documents() {
         <DatasetsDialog
           identity={identity}
           sourceUri={tablesFor}
-          canApprove={!readOnly}
+          approveReason={writeReason}
           onClose={() => setTablesFor(null)}
         />
       )}

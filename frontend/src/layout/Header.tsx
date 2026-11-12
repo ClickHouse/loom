@@ -25,7 +25,7 @@ import { IconButton } from "../components/IconButton";
 import { Kbd, Unavailable } from "../components/ui";
 import { Tip } from "../components/ui/Tooltip";
 import { useMedia } from "../lib/useMedia";
-import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
+import { canWrite, needsRole, useNamespaceRole } from "../lib/namespaceRole";
 import { MenuTrigger } from "../components/ui/Menu";
 import { paletteShortcut } from "../lib/platform";
 import { forgetAssistantConversations } from "../lib/assistantStorage";
@@ -109,7 +109,7 @@ export function Header() {
 
         {identity &&
           (readOnly ? (
-            <DisabledNew reason={READ_ONLY_TIP} />
+            <DisabledNew reason={needsRole("writer", identity.namespace)} />
           ) : (
             <Menu
               label="New"

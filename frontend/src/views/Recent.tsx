@@ -46,7 +46,7 @@ import { MemoryTabs } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { NamespaceGuideButton } from "../components/NamespaceGuideButton";
 import { Unavailable } from "../components/ui";
-import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
+import { canWrite, needsRole, useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { parseSearchQuery, type SearchQuery, takePendingSearch, toggleQueryToken } from "../lib/memoriesSearch";
 import { oneOf } from "../lib/oneOf";
@@ -697,7 +697,7 @@ function MemoryList() {
             <NamespaceGuideButton identity={identity} compact={phone} />
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyNamespace && (
-              <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
+              <Unavailable reason={readOnly ? needsRole("writer", identity.namespace) : null}>
                 <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
                   Add memory
                 </Button>

@@ -34,32 +34,33 @@ import {
 import { useIdentity, useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { humanizeError } from "../lib/errorWords";
-import { canCall } from "../lib/canCall";
+import { callReason } from "../lib/callReason";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast, toastError } from "../components/Toast";
 import { ListState } from "../components/ui/ListState";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { Alert, ListTime, Loading, Panel, SectionHeading } from "../components/ui";
+import { Alert, ListTime, Loading, Panel, SectionHeading, Unavailable } from "../components/ui";
 
 /**
  * Settings → Structure: what a namespace declares about the shape of its memory. The
  * typed-record schemas (and the records written against them), the schema profiles are
  * built to, the graph's entity types and relations, and the category registry. Anyone
- * who reads the namespace sees them; each change is offered to the role its op asks.
+ * who reads the namespace sees them; each change is offered to the role its op asks, and
+ * shown unavailable, with the role it needs, to anyone else.
  * Setup keys it by namespace, so a switch starts it afresh.
  */
 export function StructureTab() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
   const role = useNamespaceRole(identity.namespace);
-  const can = (op: Parameters<typeof canCall>[0]) => canCall(op, role, whoami);
+  const why = (op: Parameters<typeof callReason>[0]) => callReason(op, role, whoami, identity.namespace);
   return (
     <div className="max-w-4xl space-y-6">
-      <RecordSchemas canRegister={can("memory_schema.register")} canDecide={can("memory_schema.approve")} />
-      <ProfileSchemaPanel canSet={can("profile_schema.set")} canClear={can("profile_schema.clear")} />
-      <Ontology canRegister={can("namespace.register_ontology")} />
-      <Categories canAdd={can("namespace.register_category")} />
+      <RecordSchemas registerReason={why("memory_schema.register")} decideReason={why("memory_schema.approve")} />
+      <ProfileSchemaPanel setReason={why("profile_schema.set")} clearReason={why("profile_schema.clear")} />
+      <Ontology registerReason={why("namespace.register_ontology")} />
+      <Categories addReason={why("namespace.register_category")} />
     </div>
   );
 }
@@ -101,7 +102,10 @@ function SectionState({
 
 const SCHEMA_BADGE: Record<string, "warning" | "neutral"> = { proposed: "warning", rejected: "neutral" };
 
-function RecordSchemas({ canRegister, canDecide }: { canRegister: boolean; canDecide: boolean }) {
+/** Each `…Reason` is why the caller cannot make that change (the role it needs), or null. */
+type Reason = string | null;
+
+function RecordSchemas({ registerReason, decideReason }: { registerReason: Reason; decideReason: Reason }) {
   const identity = useIdentity();
   const { data, error, refresh } = useSection((signal) => listRecordSchemas(identity, { signal }));
   const [adding, setAdding] = useState(false);
@@ -128,17 +132,17 @@ function RecordSchemas({ canRegister, canDecide }: { canRegister: boolean; canDe
         level={2}
         caption="Named fields typed records are written against."
         actions={
-          canRegister && (
+          <Unavailable reason={registerReason}>
             <Button type="secondary" htmlType="button" iconLeft="plus" onClick={() => setAdding(true)}>
               New schema
             </Button>
-          )
+          </Unavailable>
         }
       />
       <SectionState error={error} loading={data === null} things="record schemas" onRetry={refresh} />
       {data?.schemas.length === 0 && (
         <p className="mt-2 text-sm text-text-muted">
-          {canRegister ? "No record schema yet. Add one with New schema." : "No record schema yet."}
+          {registerReason ? "No record schema yet." : "No record schema yet. Add one with New schema."}
         </p>
       )}
       <ul className="mt-2 divide-y divide-border">
@@ -153,24 +157,28 @@ function RecordSchemas({ canRegister, canDecide }: { canRegister: boolean; canDe
               </div>
               <div className="text-xs text-text-muted">{s.fields.map((f) => `${f.name}: ${f.type}`).join(", ")}</div>
             </div>
-            {canDecide && s.status === "proposed" && (
+            {s.status === "proposed" && (
               <>
-                <Button
-                  type="secondary"
-                  htmlType="button"
-                  disabled={deciding !== null}
-                  onClick={() => void decide(s.name, "reject")}
-                >
-                  Reject
-                </Button>
-                <Button
-                  type="secondary"
-                  htmlType="button"
-                  disabled={deciding !== null}
-                  onClick={() => void decide(s.name, "approve")}
-                >
-                  Approve
-                </Button>
+                <Unavailable reason={decideReason}>
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    disabled={deciding !== null}
+                    onClick={() => void decide(s.name, "reject")}
+                  >
+                    Reject
+                  </Button>
+                </Unavailable>
+                <Unavailable reason={decideReason}>
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    disabled={deciding !== null}
+                    onClick={() => void decide(s.name, "approve")}
+                  >
+                    Approve
+                  </Button>
+                </Unavailable>
               </>
             )}
             {s.status === "active" && (
@@ -438,7 +446,7 @@ const PROFILE_EXAMPLE = JSON.stringify(
   2,
 );
 
-function ProfileSchemaPanel({ canSet, canClear }: { canSet: boolean; canClear: boolean }) {
+function ProfileSchemaPanel({ setReason, clearReason }: { setReason: Reason; clearReason: Reason }) {
   const identity = useIdentity();
   const { data, setData, error, refresh } = useSection<ProfileSchema>((signal) =>
     getProfileSchema(identity, { signal }),
@@ -499,8 +507,8 @@ function ProfileSchemaPanel({ canSet, canClear }: { canSet: boolean; canClear: b
             value={shown}
             onChange={setDraft}
             rows={8}
-            disabled={!canSet}
-            placeholder={canSet ? PROFILE_EXAMPLE : "No profile schema."}
+            disabled={!!setReason}
+            placeholder={setReason ? "No profile schema." : PROFILE_EXAMPLE}
             error={parseError ?? undefined}
           />
           {data.updated_by && (
@@ -509,21 +517,24 @@ function ProfileSchemaPanel({ canSet, canClear }: { canSet: boolean; canClear: b
             </p>
           )}
           <div className="flex justify-end gap-2">
-            {canClear && data.found && (
-              <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void save(true)}>
-                Remove
-              </Button>
+            {data.found && (
+              <Unavailable reason={clearReason}>
+                <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void save(true)}>
+                  Remove
+                </Button>
+              </Unavailable>
             )}
-            {canSet && (
+            {/* Unavailable, it stays focusable so its reason is read: never natively disabled. */}
+            <Unavailable reason={setReason}>
               <Button
                 type="primary"
                 htmlType="button"
-                disabled={busy || draft === null || !shown.trim() || !!parseError}
+                disabled={!setReason && (busy || draft === null || !shown.trim() || !!parseError)}
                 onClick={() => void save(false)}
               >
                 Save schema
               </Button>
-            )}
+            </Unavailable>
           </div>
         </div>
       )}
@@ -539,7 +550,7 @@ const KIND_LABEL: Record<OntologyKind, string> = {
   attribute: "Attribute",
 };
 
-function Ontology({ canRegister }: { canRegister: boolean }) {
+function Ontology({ registerReason }: { registerReason: Reason }) {
   const identity = useIdentity();
   const { data, error, refresh } = useSection<OntologyEntry[]>((signal) => listOntology(identity, { signal }));
   const [kind, setKind] = useState<OntologyKind>("entity_type");
@@ -580,7 +591,7 @@ function Ontology({ canRegister }: { canRegister: boolean }) {
       <SectionState error={error} loading={data === null} things="the ontology" onRetry={refresh} />
       {data?.length === 0 && (
         <p className="mt-2 text-sm text-text-muted">
-          {canRegister ? "No term registered. Add one below." : "No term registered."}
+          {registerReason ? "No term registered." : "No term registered. Add one below."}
         </p>
       )}
       <ul className="mt-2 divide-y divide-border">
@@ -589,21 +600,33 @@ function Ontology({ canRegister }: { canRegister: boolean }) {
             <span className="text-xs text-text-muted w-24">{KIND_LABEL[e.kind] ?? e.kind}</span>
             <span className="font-mono text-sm min-w-0 flex-1 truncate">{e.name}</span>
             {e.status === "pending" && <Badge text="pending" state="warning" size="sm" />}
-            {canRegister && e.status === "pending" && (
-              <Button
-                type="secondary"
-                htmlType="button"
-                disabled={busy}
-                aria-label={`Accept ${e.name}`}
-                onClick={() => void accept(e)}
-              >
-                Accept
-              </Button>
+            {e.status === "pending" && (
+              <Unavailable reason={registerReason}>
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  disabled={busy}
+                  aria-label={`Accept ${e.name}`}
+                  onClick={() => void accept(e)}
+                >
+                  Accept
+                </Button>
+              </Unavailable>
             )}
           </li>
         ))}
       </ul>
-      {canRegister && (
+      {/* The form is for whoever can register; anyone else sees its button, unavailable. */}
+      {registerReason && (
+        <div className="mt-3">
+          <Unavailable reason={registerReason}>
+            <Button type="secondary" htmlType="button">
+              Add term
+            </Button>
+          </Unavailable>
+        </div>
+      )}
+      {!registerReason && (
         <div className="mt-3 flex flex-wrap items-end gap-2">
           <div className="w-40">
             <Select
@@ -641,7 +664,7 @@ function Ontology({ canRegister }: { canRegister: boolean }) {
 
 // ─── Categories ────────────────────────────────────────────────────────
 
-function Categories({ canAdd }: { canAdd: boolean }) {
+function Categories({ addReason }: { addReason: Reason }) {
   const identity = useIdentity();
   const { data, error, refresh } = useSection<Category[]>((signal) => listCategories(identity, { signal }));
   const [name, setName] = useState("");
@@ -671,7 +694,7 @@ function Categories({ canAdd }: { canAdd: boolean }) {
       <SectionState error={error} loading={data === null} things="categories" onRetry={refresh} />
       {data?.length === 0 && (
         <p className="mt-2 text-sm text-text-muted">
-          {canAdd ? "No category yet. Add one below." : "No category yet."}
+          {addReason ? "No category yet." : "No category yet. Add one below."}
         </p>
       )}
       <ul className="mt-2 divide-y divide-border">
@@ -687,7 +710,16 @@ function Categories({ canAdd }: { canAdd: boolean }) {
           </li>
         ))}
       </ul>
-      {canAdd && (
+      {addReason && (
+        <div className="mt-3">
+          <Unavailable reason={addReason}>
+            <Button type="secondary" htmlType="button">
+              Add category
+            </Button>
+          </Unavailable>
+        </div>
+      )}
+      {!addReason && (
         <div className="mt-3 flex flex-wrap items-end gap-2">
           <TextField
             id="category-name"

@@ -13,12 +13,13 @@ import {
 } from "../api";
 import { useStore } from "../lib/state";
 import { canUpdateNamespace, isNamespaceAdmin } from "../lib/role";
+import { needsRole } from "../lib/namespaceRole";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { useAbortableEffect } from "../lib/hooks";
 import { oneOf } from "../lib/oneOf";
 import { Modal } from "../components/ui/Modal";
-import { Loading } from "../components/ui";
+import { Loading, Unavailable } from "../components/ui";
 
 const REPO_JOIN_RULES = [
   ["open", "Open", "Anyone in the org joins instantly as a reader."],
@@ -176,6 +177,12 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
         {!ns && <Loading label="Loading namespace settings" />}
         {ns && (
           <div className="space-y-5">
+            {/* The fields stay in view, locked, and say once what changing them needs. */}
+            {!canManage && (
+              <p className="m-0 text-xs text-text-muted" data-testid="settings-locked">
+                {needsRole("admin", namespace)}
+              </p>
+            )}
             <div className="flex items-end gap-2">
               <div className="min-w-0 flex-1">
                 <TextField
@@ -337,14 +344,14 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
               </>
             )}
 
-            {canDelete && (
-              <div className="mt-2 border-t border-border pt-4">
-                <div className="mb-2 text-xs font-medium text-danger">Danger zone</div>
-                <div className="flex items-start justify-between gap-3">
-                  <p className="text-xs text-text-muted">
-                    Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run
-                    an erasure.request separately.
-                  </p>
+            <div className="mt-2 border-t border-border pt-4">
+              <div className="mb-2 text-xs font-medium text-danger">Danger zone</div>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs text-text-muted">
+                  Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run an
+                  erasure.request separately.
+                </p>
+                <Unavailable reason={canDelete ? null : needsRole("admin", namespace)}>
                   <Button
                     type="danger"
                     htmlType="button"
@@ -355,9 +362,9 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                   >
                     Delete namespace
                   </Button>
-                </div>
+                </Unavailable>
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>

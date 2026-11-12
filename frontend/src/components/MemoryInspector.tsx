@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
@@ -61,7 +61,7 @@ import { keepOpenOnToasts, toast, toastError } from "./Toast";
 import { committedAnyway, errorLine, toastCommitted } from "../lib/errorWords";
 import { IconButton } from "./IconButton";
 import { SkeletonText } from "./Skeleton";
-import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
+import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip, Unavailable } from "./ui";
 import { AnchoredPopover } from "./ui/AnchoredPopover";
 import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
@@ -72,6 +72,7 @@ import { absoluteTime, relativeTime, formatValue, parseChTime, SENTINEL_AGENTS }
 import { detectEncodedValue } from "../lib/encoded";
 import { useNamespaceRole } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
+import { callReason } from "../lib/callReason";
 import { historyChange, previousVersion } from "../lib/historyChange";
 import { MenuTrigger } from "./ui/Menu";
 import { shortcutOff } from "../lib/shortcuts";
@@ -476,23 +477,39 @@ export function MemoryInspector({
   const whoami = useStore((s) => s.whoami);
   const role = useNamespaceRole(identity.namespace);
   const conflictsReadable = canCall("conflicts.list", role, whoami);
-  // The rename action is offered only to a role that reaches memory.move (WRITER); a
-  // viewer never sees a button the server would refuse.
-  const canMove = canCall("memory.move", role, whoami);
-  const canTogglePin = canCall(detail?.pinned ? "memory.unpin" : "memory.pin", role, whoami);
-  const canRestore = canCall("memory.restore", role, whoami);
-  const canLock = canCall("memory.lock", role, whoami);
-  const canUnlock = canCall("memory.unlock", role, whoami);
-  const canReject = canCall("memory.reject", role, whoami);
-  const canShare = canCall("memory.promote", role, whoami);
-  const canUnshare = canCall("memory.demote", role, whoami);
+  // Each role-gated action stays in view for a role that cannot call it, unavailable with
+  // the role it needs (`callReason`), so nobody is sent a request the server would refuse.
+  const why = (op: Parameters<typeof callReason>[0]) => callReason(op, role, whoami, identity.namespace);
+  const moveReason = why("memory.move");
+  const pinReason = why(detail?.pinned ? "memory.unpin" : "memory.pin");
+  const restoreReason = why("memory.restore");
+  const lockReason = why(detail?.lock_mode ? "memory.unlock" : "memory.lock");
+  const rejectReason = why("memory.reject");
+  const shareReason = why("memory.promote");
+  const unshareReason = why("memory.demote");
   // memory.promote refuses a profile row and a high one.
   const shareable = detail?.memory_type !== "profile" && detail?.sensitivity !== "high";
-  const canRedact = canCall("memory.redact", role, whoami);
-  const canJudge = canCall("memory.outcome", role, whoami);
+  const redactReason = why("memory.redact");
+  const judgeReason = why("memory.outcome");
+  // The More menu says each distinct reason once, below its items; an item refers to its own.
+  const menuId = useId();
+  const menuReasons = [
+    ...new Set(
+      [
+        pinReason,
+        lockReason,
+        shareable ? shareReason : null,
+        unshareReason,
+        !editing && !valueLockedOf(detail) ? moveReason : null,
+        judgeReason,
+        detail?.lock_mode ? null : rejectReason,
+      ].filter((r): r is string => !!r),
+    ),
+  ];
+  const reasonId = (r: string | null) => (r ? `${menuId}-why-${menuReasons.indexOf(r)}` : undefined);
   // Both lock modes refuse a delete; read_only also refuses a value or expiry change. No
   // lock gates tags (server/memory/domain/lock.py).
-  const valueLocked = detail?.lock_mode === "read_only";
+  const valueLocked = valueLockedOf(detail);
   // A read_only lock that lands while an edit or a rename is open closes it, and says so:
   // both would answer 423.
   const formOpen = editing || renaming;
@@ -524,7 +541,7 @@ export function MemoryInspector({
   }, [identity, memoryKey, conflictsReadable]);
 
   const onPin = async () => {
-    if (!detail || !canTogglePin) return;
+    if (!detail || pinReason) return;
     const wasPinned = detail.pinned;
     setDetail({ ...detail, pinned: !wasPinned });
     try {
@@ -1013,20 +1030,22 @@ export function MemoryInspector({
                         </dd>
                       </>
                     )}
-                    {detail.status === "superseded" && canRestore ? (
+                    {detail.status === "superseded" ? (
                       <>
                         <dt className="text-text-muted">Status</dt>
                         <dd className="text-text flex items-center gap-2 flex-wrap">
                           {statusLabel(detail.status)}
-                          <Button
-                            type="secondary"
-                            htmlType="button"
-                            iconLeft="refresh"
-                            onClick={onRestore}
-                            disabled={restoring}
-                          >
-                            Restore
-                          </Button>
+                          <Unavailable reason={restoreReason}>
+                            <Button
+                              type="secondary"
+                              htmlType="button"
+                              iconLeft="refresh"
+                              onClick={onRestore}
+                              disabled={restoring}
+                            >
+                              Restore
+                            </Button>
+                          </Unavailable>
                         </dd>
                       </>
                     ) : (
@@ -1343,15 +1362,17 @@ export function MemoryInspector({
                                   prevLabel={`${label} (${writtenAt})`}
                                   nextLabel={`v${history.length} (current)`}
                                 />
-                                {canRedact && !detail?.lock_mode && !h.redacted_at && h.memory_id && h.version_text && (
-                                  <Button
-                                    type="danger"
-                                    htmlType="button"
-                                    className="mt-2"
-                                    onClick={() => setRedacting({ entry: h, label })}
-                                  >
-                                    Redact {label}
-                                  </Button>
+                                {!detail?.lock_mode && !h.redacted_at && h.memory_id && h.version_text && (
+                                  <Unavailable reason={redactReason}>
+                                    <Button
+                                      type="danger"
+                                      htmlType="button"
+                                      className="mt-2"
+                                      onClick={() => setRedacting({ entry: h, label })}
+                                    >
+                                      Redact {label}
+                                    </Button>
+                                  </Unavailable>
                                 )}
                               </div>
                             )}
@@ -1435,11 +1456,9 @@ export function MemoryInspector({
                     menuHandsOff.current = false;
                   }}
                 >
-                  {canTogglePin && (
-                    <Dropdown.Item onSelect={onPin}>
-                      <MenuLabel icon={detail.pinned ? "unpin" : "pin"}>{detail.pinned ? "Unpin" : "Pin"}</MenuLabel>
-                    </Dropdown.Item>
-                  )}
+                  <GatedItem reason={pinReason} describedBy={reasonId(pinReason)} onSelect={onPin}>
+                    <MenuLabel icon={detail.pinned ? "unpin" : "pin"}>{detail.pinned ? "Unpin" : "Pin"}</MenuLabel>
+                  </GatedItem>
                   <Dropdown.Item onSelect={onVerify}>
                     <MenuLabel
                       icon={detail.verification === "stale" ? "warning" : verified ? "check-in-circle" : "secure"}
@@ -1455,34 +1474,38 @@ export function MemoryInspector({
                   >
                     <MenuLabel icon="folder-open">Copy to…</MenuLabel>
                   </Dropdown.Item>
-                  {detail.lock_mode
-                    ? canUnlock && (
-                        <Dropdown.Item onSelect={onUnlock}>
-                          <MenuLabel icon="lock">Unlock</MenuLabel>
-                        </Dropdown.Item>
-                      )
-                    : canLock && (
-                        <Dropdown.Item
-                          onSelect={() => {
-                            menuHandsOff.current = true;
-                            setReasonDialog("lock");
-                          }}
-                        >
-                          <MenuLabel icon="lock">Lock…</MenuLabel>
-                        </Dropdown.Item>
-                      )}
-                  {canShare && shareable && (
-                    <Dropdown.Item onSelect={() => void onShare()}>
+                  {detail.lock_mode ? (
+                    <GatedItem reason={lockReason} describedBy={reasonId(lockReason)} onSelect={onUnlock}>
+                      <MenuLabel icon="lock">Unlock</MenuLabel>
+                    </GatedItem>
+                  ) : (
+                    <GatedItem
+                      reason={lockReason}
+                      describedBy={reasonId(lockReason)}
+                      onSelect={() => {
+                        menuHandsOff.current = true;
+                        setReasonDialog("lock");
+                      }}
+                    >
+                      <MenuLabel icon="lock">Lock…</MenuLabel>
+                    </GatedItem>
+                  )}
+                  {shareable && (
+                    <GatedItem reason={shareReason} describedBy={reasonId(shareReason)} onSelect={() => void onShare()}>
                       <MenuLabel icon="users">Share with every agent</MenuLabel>
-                    </Dropdown.Item>
+                    </GatedItem>
                   )}
-                  {canUnshare && (
-                    <Dropdown.Item onSelect={() => void onUnshare()}>
-                      <MenuLabel icon="user">Stop sharing</MenuLabel>
-                    </Dropdown.Item>
-                  )}
-                  {canMove && !editing && !valueLocked && (
-                    <Dropdown.Item
+                  <GatedItem
+                    reason={unshareReason}
+                    describedBy={reasonId(unshareReason)}
+                    onSelect={() => void onUnshare()}
+                  >
+                    <MenuLabel icon="user">Stop sharing</MenuLabel>
+                  </GatedItem>
+                  {!editing && !valueLocked && (
+                    <GatedItem
+                      reason={moveReason}
+                      describedBy={reasonId(moveReason)}
                       onSelect={() => {
                         menuHandsOff.current = true;
                         formSession.current += 1;
@@ -1491,32 +1514,43 @@ export function MemoryInspector({
                       }}
                     >
                       <MenuLabel icon="arrow-right">Rename</MenuLabel>
-                    </Dropdown.Item>
+                    </GatedItem>
                   )}
                   <Dropdown.Item onSelect={onCopyAll}>
                     <MenuLabel icon="copy">Copy</MenuLabel>
                   </Dropdown.Item>
-                  {canJudge && (
-                    <>
-                      <Dropdown.Item onSelect={() => void onOutcome("positive")}>
-                        <MenuLabel icon="check">This helped</MenuLabel>
-                      </Dropdown.Item>
-                      <Dropdown.Item onSelect={() => void onOutcome("negative")}>
-                        <MenuLabel icon="warning">This misled</MenuLabel>
-                      </Dropdown.Item>
-                    </>
-                  )}
-                  {canReject && !detail.lock_mode && (
-                    <Dropdown.Item
-                      type="danger"
+                  <GatedItem
+                    reason={judgeReason}
+                    describedBy={reasonId(judgeReason)}
+                    onSelect={() => void onOutcome("positive")}
+                  >
+                    <MenuLabel icon="check">This helped</MenuLabel>
+                  </GatedItem>
+                  <GatedItem
+                    reason={judgeReason}
+                    describedBy={reasonId(judgeReason)}
+                    onSelect={() => void onOutcome("negative")}
+                  >
+                    <MenuLabel icon="warning">This misled</MenuLabel>
+                  </GatedItem>
+                  {!detail.lock_mode && (
+                    <GatedItem
+                      danger
+                      reason={rejectReason}
+                      describedBy={reasonId(rejectReason)}
                       onSelect={() => {
                         menuHandsOff.current = true;
                         setReasonDialog("reject");
                       }}
                     >
                       <MenuLabel icon="cross">Mark as wrong…</MenuLabel>
-                    </Dropdown.Item>
+                    </GatedItem>
                   )}
+                  {menuReasons.map((r) => (
+                    <p key={r} id={reasonId(r)} className="m-0 max-w-72 px-3 py-2 text-xs text-text-muted">
+                      {r}
+                    </p>
+                  ))}
                 </Dropdown.Content>
               </Dropdown>
               {/* Verify sits in More; who attested stays in view. */}
@@ -2280,6 +2314,38 @@ function LifecycleBadge({ status, pinned }: { status?: string; pinned: boolean }
 
 /** A menu item's icon and label. Not Dropdown.Item's `icon`: Click UI names that svg
  *  after the icon, so the item's spoken name would carry it (as in layout/Header.tsx). */
+/** A read_only lock refuses a value or expiry change. */
+function valueLockedOf(detail: MemoryDetail | null): boolean {
+  return detail?.lock_mode === "read_only";
+}
+
+/** A More-menu action a role cannot use: still listed, `aria-disabled` and described by its
+ *  reason (the line below the items), and choosing it does nothing. Radix's own `disabled`
+ *  would drop it from keyboard focus, so its reason would never be read. */
+function GatedItem({
+  reason,
+  describedBy,
+  onSelect,
+  danger = false,
+  children,
+}: {
+  reason: string | null;
+  describedBy: string | undefined;
+  onSelect: () => void;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Dropdown.Item
+      type={danger ? "danger" : "default"}
+      onSelect={reason ? (e: Event) => e.preventDefault() : onSelect}
+      {...(reason ? { "aria-disabled": true, "data-disabled": "", "aria-describedby": describedBy } : {})}
+    >
+      {children}
+    </Dropdown.Item>
+  );
+}
+
 function MenuLabel({ icon, children }: { icon: IconName; children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-2">
