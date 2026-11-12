@@ -76,13 +76,15 @@ of the same key under `newest_wins`) or cleared (`conflicts.resolve` for a `conf
 mark, `memory.dedup_resolve` for a `duplicate` one), which governs it again when its text
 is the approved one, and is promoted again otherwise.
 
-The shared layer needs eight changes for this, each in the pull request that adds the term
+One prerequisite is not part of this design: namespace erasure does not reach
+`loom.shared` today (only user erasure does, by provenance), so a namespace erasure leaves
+every promoted row's text behind, whatever its type. A fix of its own adds the namespace
+step and its census row, and lands before the term leg.
+
+The shared layer needs seven changes for this, each in the pull request that adds the term
 leg except where a change names another, because the term leg serves shared rows to every
 reader:
 
-- **Namespace erasure** gains a step and a census row for `loom.shared`. Today only user
-  erasure reaches it, by provenance, and a definition promoted from the namespace-wide row
-  names no user.
 - **A redact** of a version of a definition's source (a past version: `memory.redact`
   refuses the live head) scrubs the shared row whose text is that version's, and that
   row's embedding, which a redact does not reach today, and blanks the text of every
@@ -195,12 +197,12 @@ page, and in `server/identity/domain/read_scope.py` the module docstring and the
 on `SCOPED_OPS`, which say every memory read of those ops carries the read scope. The leg
 runs only on a search's first page; the list a search parks for its later pages is the
 merged one, governed hits first, so the next page starts after the rows page one served
-and no ordinary hit is skipped, and is off when a field asks for other rows (a
-`memory_type` other than `definition`, which the pull request adds to the field's values;
-`tags` or `category` filtering, not with `tags_soft` or `category_soft`; an explicit
-`agent`, `run_id` or `session_ids`; `as_of`; a body `user_id` or `session_id` under a
-whole-namespace read; `min_body_chars`). A `user_id` or `session_id` the read scope pins,
-`scope`, `exclude_keys` and `min_similarity` keep it on, as do a soft tag or category and
+and no ordinary hit is skipped, and is off when a field asks for other rows (any
+`memory_type`, since `definition` is not one of the field's values; `tags` or `category`
+filtering, not with `tags_soft` or `category_soft`; an explicit `agent`, `run_id` or
+`session_ids`; `as_of`; a body `user_id` or `session_id` under a whole-namespace read;
+`min_body_chars`). A `user_id` or `session_id` the read scope pins, `scope`,
+`exclude_keys` and `min_similarity` keep it on, as do a soft tag or category and
 `entity_filter`, which only boost rows; it drops any key in `exclude_keys`. It serves no
 definition whose source is `sensitivity = 'high'` (the read-time check above). Its read is
 bounded by a setting; past the bound, the most recently promoted definitions (by
@@ -215,10 +217,11 @@ The leg covers memory only. Knowledge has its own exact-key leg for identifiers 
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
 points at the documents behind it. `loom_search` serves the leg through its memory
 section, and one rule holds for every later stage of `memory.search`, `loom_search` and
-the ops that run `memory.search` inside them: no stage or floor moves, withholds or
-outranks a hit marked `governed`, a stage added later included. Governed hits come first,
-in the order their names first appear in the query (a tie by the later `version`), and
-count within `top_k`, within a stage's cap on the memory section (the tracker verdict's
+the ops that run `memory.search` inside them: no stage or floor reorders governed hits,
+moves one below a hit that is not governed, or drops one in favour of such a hit, a stage
+added later included; a cap cuts governed hits last. Governed hits come first, in the
+order their names first appear in the query (a tie by the later `version`), and count
+within `top_k`, within a stage's cap on the memory section (the tracker verdict's
 `verdict_leads`, which keeps `VERDICT_MEMORY_MAX` memory hits) and within the token
 budgets (`body_budget_tokens`, `context.pack`'s block budget). When more governed hits
 match than fit, the later ones in that order are not served; a budget may shorten a body
@@ -333,29 +336,30 @@ The `knowledge_gaps` worker runs once a day for each namespace with misses or a 
 build. It re-reads the namespace's capture level through an uncached read that raises when
 the consent cannot be read; `capture_consent.resolve` is not that read, since it caches
 and reads an unreadable consent as `off`. A namespace whose level is now `off` gets an
-empty build and its stored misses deleted, so a later consent does not count them again; a
-level that cannot be read skips the namespace's pass, with no build and no delete, so a
-failed read never deletes misses; otherwise it reads the namespace's misses of the last 7
-days and groups them by normalised query. **Privacy threshold:** a group with fewer than
-`knowledge_gaps_min_askers` distinct askers (default three, never below three, one value
-for the deployment) is dropped before anything else, so every query a gap shows was asked
-in that form by at least that many askers. The threshold is as strong as the principals
-behind it: it does not bind whoever holds the signing key (`loom mint-token` mints any
-subject), an end-user issuer or a trusted caller (each names its own users), or a
-deployment where principals can be self-created (`LOOM_SELF_SIGNUP=open`), where an admin
-could ask from accounts of their own. There it limits what one ordinary caller reveals,
-not what an admin can learn. On any deployment, an admin who compares two daily builds can
-tell that one more asker reached a query that day, and in a small namespace that may say
-who; the threshold bounds what one build shows, not what a series of builds implies. The
-reading admin's own asks count toward it too, so an admin who asked a query learns from
-its gap that at least `knowledge_gaps_min_askers` minus one others did, which in a small
-namespace narrows who. The worker embeds the remaining groups' queries (at most
-`knowledge_gaps_max_groups`, those with the most distinct askers, then asks, then the
-latest ask, so the cut is the same for the same questions), merges groups whose vectors
-are at least `knowledge_gaps_merge_similarity` alike, counting a merged gap's askers as
-the union of the distinct askers each group's query returns (`groupUniqArray`), held in
-memory for the pass and never stored, and writes the result as a new build of the
-namespace in `loom.knowledge_gaps`:
+empty build, and its earlier builds and stored misses are deleted (a user erasure finds a
+namespace through the user's misses, so the builds go with them), so a later consent does
+not count them again; a level that cannot be read skips the namespace's pass, with no
+build and no delete, so a failed read never deletes misses; otherwise it reads the
+namespace's misses of the last 7 days and groups them by normalised query. **Privacy
+threshold:** a group with fewer than `knowledge_gaps_min_askers` distinct askers (default
+three, never below three, one value for the deployment) is dropped before anything else,
+so every query a gap shows was asked in that form by at least that many askers. The
+threshold is as strong as the principals behind it: it does not bind whoever holds the
+signing key (`loom mint-token` mints any subject), an end-user issuer or a trusted caller
+(each names its own users), or a deployment where principals can be self-created
+(`LOOM_SELF_SIGNUP=open`), where an admin could ask from accounts of their own. There it
+limits what one ordinary caller reveals, not what an admin can learn. On any deployment,
+an admin who compares two daily builds can tell that one more asker reached a query that
+day, and in a small namespace that may say who; the threshold bounds what one build shows,
+not what a series of builds implies. The reading admin's own asks count toward it too, so
+an admin who asked a query learns from its gap that at least `knowledge_gaps_min_askers`
+minus one others did, which in a small namespace narrows who. The worker embeds the
+remaining groups' queries (at most `knowledge_gaps_max_groups`, those with the most
+distinct askers, then asks, then the latest ask, so the cut is the same for the same
+questions), merges groups whose vectors are at least `knowledge_gaps_merge_similarity`
+alike, counting a merged gap's askers as the union of the distinct askers each group's
+query returns (`groupUniqArray`), held in memory for the pass and never stored, and writes
+the result as a new build of the namespace in `loom.knowledge_gaps`:
 
 | Column            | Meaning                                                         |
 | ----------------- | --------------------------------------------------------------- |
@@ -486,12 +490,12 @@ govern it.
 ## Erasure and audit
 
 - Definitions are memory and shared-layer rows and take every path those take, with the
-  shared layer's namespace erasure and redact added above: tombstone, demote, redact,
-  namespace erasure, history, audit. A user erasure tombstones a shared row whose
-  provenance names the user (`shared.tombstone`); a definition promoted from the
-  namespace-wide row names none, so erasing the admin who promoted it leaves it governed,
-  and an admin's name in its `owner`, like `promoted_by` on the shared row today, stays
-  until an admin edits the definition.
+  shared layer's namespace erasure (the prerequisite above) and the redact added above:
+  tombstone, demote, redact, namespace erasure, history, audit. A user erasure tombstones
+  a shared row whose provenance names the user (`shared.tombstone`); a definition promoted
+  from the namespace-wide row names none, so erasing the admin who promoted it leaves it
+  governed, and an admin's name in its `owner`, like `promoted_by` on the shared row
+  today, stays until an admin edits the definition.
 - A redact of a past version of a definition reaches that version, the shared row holding
   its text, and the `knowledge_gap` and `query_history` candidates whose draft is that
   text (the change above), not the gap it came from, which holds only normalised queries
