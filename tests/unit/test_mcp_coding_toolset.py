@@ -189,9 +189,7 @@ def test_coding_descriptions_derive_from_the_core_texts():
     # derived: every replace took effect and the rest of the text is the core text
     assert "native memory" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
     assert "native memory" in TOOL_DESCRIPTIONS["memory.set"]
-    # the coding tier lists none of the write tools the core text picks among
-    assert "Other writes" in TOOL_DESCRIPTIONS["memory.set"]
-    assert "Other writes" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
+    assert "Other writes" in CODING_TOOL_DESCRIPTIONS["memory.set"]
     for must in (
         "Call this proactively",
         "Don't search before saving",

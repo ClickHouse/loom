@@ -176,7 +176,7 @@ def test_the_namespace_check_sees_the_inner_arguments(monkeypatch: pytest.Monkey
 def test_the_description_stays_small() -> None:
     import json
 
-    assert len(json.dumps(mcp_op.DESCRIPTOR)) // 4 <= 280
+    assert len(json.dumps(mcp_op.DESCRIPTOR)) // 4 <= 290
 
 
 @pytest.mark.parametrize(
@@ -185,14 +185,23 @@ def test_the_description_stays_small() -> None:
 def test_the_example_op_is_unlisted_wherever_loom_op_is(
     toolset: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The op the description's example call runs is one the listing does not show."""
+    """The listed text is the one built for this listing: every op it names,
+    the example call's included, is one the listing does not show and loom_op
+    routes on it."""
     import asyncio
     import re
 
+    from server.operations.registry import OPERATIONS_BY_NAME
+
     monkeypatch.setattr(settings, "mcp_code_tools", True)
-    names = {d["name"] for d in asyncio.run(_tools_descriptor(toolset=toolset))}
-    assert "loom_op" in names
-    examples = re.findall(r'"op": "([a-z_]+(?:\.[a-z_]+)+)"', mcp_op.DESCRIPTOR["description"])
-    assert examples
-    for op in examples:
-        assert "loom_" + op.replace(".", "_") not in names, (toolset, op)
+    tools = asyncio.run(_tools_descriptor(toolset=toolset))
+    names = {d["name"] for d in tools}
+    text = next(d["description"] for d in tools if d["name"] == "loom_op")
+    assert text == mcp_op.description(names, toolset)
+    named = set(re.findall(r'"op": "([a-z_]+(?:\.[a-z_]+)+)"', text))
+    named |= set(re.findall(r"\(([a-z_]+\.[a-z_]+)\)", text))
+    assert "memory.related" in named
+    for op in named:
+        assert OPERATIONS_BY_NAME[op].mcp_tool_name not in names, (toolset, op)
+        assert mcp_op.reachable(OPERATIONS_BY_NAME[op], toolset), (toolset, op)
+    assert ("read-only" in text) == (toolset == "readonly")

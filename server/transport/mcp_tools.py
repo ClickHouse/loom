@@ -53,6 +53,7 @@ from server.transport.mcp_descriptions import (
 )
 from server.transport.mcp_descriptions import coding_search_description
 from server.transport.mcp_op import LOOM_OP_TOOL_NAME, reachable
+from server.transport.mcp_op import description as loom_op_description
 from server.transport.mcp_schemas import (
     _shape_schema,
     _strip_blob_fields_from_knowledge,
@@ -71,8 +72,9 @@ log = logging.getLogger(__name__)
 # Tool name → op: how a `tools/call` resolves its op, and its refusal rows name it.
 TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 
-# An op named in prose: its tool name or its dotted op name, maybe in backticks.
-_NAMED_OP = re.compile(r"(`?)\b(loom_[a-z_]+|[a-z_]+(?:\.[a-z_]+){1,2})\b(`?)")
+# An op named in prose: its tool name or its dotted op name, and a closing
+# backtick, which the "(via loom_op)" marker goes after.
+_NAMED_OP = re.compile(r"\b(loom_[a-z_]+|[a-z_]+(?:\.[a-z_]+){1,2})\b(`?)")
 
 
 def name_ops_for_listing(text: str, listed: set[str], toolset: str) -> str:
@@ -86,18 +88,18 @@ def name_ops_for_listing(text: str, listed: set[str], toolset: str) -> str:
     marked: set[str] = set()
 
     def rename(m: re.Match[str]) -> str:
-        lead, name, trail = m.groups()
+        name, trail = m.groups()
         op = TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
         if op is None:
             return m.group(0)
         if op.mcp_tool_name in listed:
-            return f"{lead}{op.mcp_tool_name}{trail}"
+            return f"{op.mcp_tool_name}{trail}"
         if not routes or op.name in _MCP_HIDDEN_OPS or not reachable(op, toolset):
             return m.group(0)
         if op.name in marked:
-            return f"{lead}{op.name}{trail}"
+            return f"{op.name}{trail}"
         marked.add(op.name)
-        return f"{lead}{op.name}{trail} (via loom_op)"
+        return f"{op.name}{trail} (via loom_op)"
 
     return _NAMED_OP.sub(rename, text)
 
@@ -514,9 +516,11 @@ async def _tools_descriptor(
         descriptors.extend(_synthetic_tool_descriptors(toolset))
     listed = {d["name"] for d in descriptors}
     for d in descriptors:
-        if d["name"] != LOOM_OP_TOOL_NAME:  # its text is about dotted op names
-            d["description"] = name_ops_for_listing(d["description"], listed, toolset)
-            d["inputSchema"] = _name_ops_in_fields(d["inputSchema"], listed, toolset)
+        if d["name"] == LOOM_OP_TOOL_NAME:  # its text is about dotted op names
+            d["description"] = loom_op_description(listed, toolset)
+            continue
+        d["description"] = name_ops_for_listing(d["description"], listed, toolset)
+        d["inputSchema"] = _name_ops_in_fields(d["inputSchema"], listed, toolset)
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,

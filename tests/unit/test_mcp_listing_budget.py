@@ -252,6 +252,25 @@ def test_naming_marks_only_what_loom_op_routes():
     assert mt.name_ops_for_listing("loom_memory_apply", listed, "core") == (
         "memory.apply (via loom_op)"
     )
+    # a dotted name that is no op, such as a response field path, stays
+    assert mt.name_ops_for_listing("`memory.next_page`", listed, "core") == "`memory.next_page`"
+    # field descriptions render the same way, in a copy
+    schema = {"properties": {"k": {"description": "read it with memory.set", "default": "x"}}}
+    rendered = mt._name_ops_in_fields(schema, listed, "core")
+    assert rendered["properties"]["k"] == {
+        "description": "read it with loom_memory_set",
+        "default": "x",
+    }
+    assert schema["properties"]["k"]["description"] == "read it with memory.set"
+
+
+def test_the_compact_profile_keeps_the_tool_names():
+    """compact cuts each description to its first lines; what stays is rendered text."""
+    tools = _listing("core", True, "compact")
+    listed = {TOOL_TO_OP[t["name"]] for t in tools if t["name"] in TOOL_TO_OP}
+    for t in tools:
+        if t["name"] != "loom_op":
+            assert not {r for r in _OP_REF.findall(t["description"]) if r in listed}, t["name"]
 
 
 # ---------------------------------------------------------------- one revision policy
@@ -318,9 +337,9 @@ def test_roster_sizes_derive_from_the_registry():
 def test_listing_budget_chars_over_four():
     """The ceilings sit a little above the current listings; a new tool or a
     long description pays for itself here."""
-    assert _tok({"tools": _listing("core", True)}) <= 9_475
-    assert _tok({"tools": _listing("core", False)}) <= 5_950
-    assert _tok({"tools": _listing("coding", False)}) <= 9_075
+    assert _tok({"tools": _listing("core", True)}) <= 9_500
+    assert _tok({"tools": _listing("core", False)}) <= 5_975
+    assert _tok({"tools": _listing("coding", False)}) <= 9_125
     assert _tok({"tools": _listing("atomic", False)}) <= 4_500
     # every listed tool on every listing: a text's length depends on the listing,
     # since an unlisted op gains "(via loom_op)" where a listed one is renamed

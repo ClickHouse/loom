@@ -64,12 +64,14 @@ def effect_class(op: Operation) -> str:
     return "destructive" if ann["destructiveHint"] else "write"
 
 
-def _description(op: Operation) -> str:
+def _description(op: Operation, tools: set[str]) -> str:
     from server.transport.mcp_descriptions import TOOL_DESCRIPTIONS
+    from server.transport.mcp_tools import name_ops_for_listing
 
     custom = TOOL_DESCRIPTIONS.get(op.name)
     if custom:
-        return str(custom).strip()
+        # the manifest names its tools as an MCP listing of them would
+        return name_ops_for_listing(str(custom).strip(), tools, "all")
     return (
         f"Loom operation `{op.name}` "
         f"({'idempotent' if op.idempotent else 'state-transition'}, "
@@ -89,11 +91,12 @@ def build_manifest(operations: list[Operation] | None = None) -> dict[str, Any]:
 
     ops = operations if operations is not None else list(ALL_OPERATIONS)
     tools: list[dict[str, Any]] = []
+    names = {op.mcp_tool_name for op in ops}
     for op in sorted(ops, key=lambda o: o.name):
         tools.append(
             {
                 "name": op.mcp_tool_name,
-                "description": _description(op),
+                "description": _description(op, names),
                 "inputSchema": strip_titles(op.input_model.model_json_schema()),
                 "outputSchema": strip_titles(op.output_model.model_json_schema()),
                 "loom": {

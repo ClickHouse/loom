@@ -30,6 +30,9 @@ def test_manifest_has_one_tool_per_operation_with_loom_extras():
     assert by_op["memory.delete"]["loom"]["effect"] == "destructive"
     # no pydantic titles ride along (listing bytes)
     assert "title" not in t["inputSchema"]
+    # a description names the other ops by their tool names, as a listing would
+    assert "loom_memory_set" in by_op["memory.apply"]["description"]
+    assert "memory.set" not in by_op["memory.apply"]["description"]
     # the manifest round-trips as JSON
     json.loads(A.to_manifest_json())
 

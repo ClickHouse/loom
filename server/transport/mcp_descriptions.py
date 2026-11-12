@@ -1777,8 +1777,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # The task inbox plane: one durable queue per agent, listed on the
     # `tasks` toolset. Agents push their writes and pull their work; nothing
-    # here pushes a task. The listing names an op outside that roster as one
-    # loom_op reaches.
+    # here pushes a task. The listing marks an op outside that roster
+    # "(via loom_op)" (`name_ops_for_listing`).
     "task.pull": (
         "WHAT: Claim the next task(s) waiting in an inbox you own, under a lease "
         "with a fence token; with wait_seconds it long-polls until one arrives. "
@@ -2236,9 +2236,7 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`conflict_verdict`, `peers` and `next` say",
         "The response's `conflict_verdict`, `peers` and `next` say",
         1,
-    )
-    # the coding tier lists none of the other write tools this line picks among
-    .replace(_WHICH_WRITE, "", 1),
+    ),
     # The search tool's four stores stay (the fan-out is server-side and the
     # same); the parentheticals explaining profile and knowledge go — the
     # coding tier lists no write to either. Built from the core text below,

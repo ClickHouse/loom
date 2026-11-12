@@ -35,35 +35,6 @@ UNKNOWN_OP = "UNKNOWN_OP"
 _HELP = {"", "help", "ops", "list", "catalog", "?"}
 _CATALOG_LIMIT = 15
 
-DESCRIPTOR: dict[str, Any] = {
-    "name": LOOM_OP_TOOL_NAME,
-    "description": (
-        "Run any Loom op by its dotted name: the way to an op this list does "
-        "not show as a tool, such as clearing an agent's memories, an erasure "
-        "request, related memories, or the evidence and digests behind them; "
-        'a description\'s "(via loom_op)" means this tool. '
-        "Prefer a listed tool when one fits.\n"
-        f'FIND: {{"op": "help", "query": "<words>"}} lists up to {_CATALOG_LIMIT} matching ops, '
-        "each with its required and optional arguments and a one-line purpose; "
-        "an unknown op answers with the nearest ones.\n"
-        'CALL: {"op": "memory.related", "arguments": {"memory_key": "deploy_day"}}. '
-        "Identity and namespace default as for a listed tool."
-    ),
-    "inputSchema": {
-        "type": "object",
-        "properties": {
-            "op": {"type": "string", "description": 'A dotted op name, or "help".'},
-            "arguments": {"type": "object", "description": "The op's own arguments."},
-            "query": {"type": "string", "description": "help: words to match."},
-        },
-        "required": ["op"],
-    },
-    # The target op's own output: one object whatever the op (strict clients
-    # validate structuredContent against a declared schema).
-    "outputSchema": {"type": "object"},
-    "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
-}
-
 
 def _ops() -> list[Any]:
     from server.operations.registry import ALL_OPERATIONS
@@ -114,6 +85,61 @@ def routes_writes(toolset: str | None) -> bool:
 def reachable(op: Any, toolset: str | None) -> bool:
     """Whether `loom_op` on this connection routes ``op``."""
     return _is_read(op) or routes_writes(toolset)
+
+
+# What loom_op's text offers by name: each shows only on a listing that leaves
+# it out and where loom_op routes it, so the text holds on every toolset.
+_EXAMPLES: tuple[tuple[str, str], ...] = (
+    ("memory.clear", "wiping an agent's or user's memories"),
+    ("erasure.request", "erasure requests"),
+    ("memory.related", "related memories"),
+    ("memory.evidence", "evidence"),
+    ("memory.digests", "session digests"),
+)
+
+
+def description(listed: set[str], toolset: str | None) -> str:
+    """`loom_op`'s text for a listing whose tool names are ``listed``."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    shown = [
+        f"{what} ({name})"
+        for name, what in _EXAMPLES
+        if OPERATIONS_BY_NAME[name].mcp_tool_name not in listed
+        and reachable(OPERATIONS_BY_NAME[name], toolset)
+    ]
+    such_as = f", such as {', '.join(shown)}" if shown else ""
+    reads = "" if routes_writes(toolset) else " On this read-only connection it runs reads only."
+    return (
+        f"Run a Loom op this list does not show as a tool, by its dotted name{such_as}; "
+        'a description\'s "(via loom_op)" means this tool. '
+        f"Prefer a listed tool when one fits.{reads}\n"
+        f'FIND: {{"op": "help", "query": "<words>"}} lists up to {_CATALOG_LIMIT} matching ops, '
+        "each with its required and optional arguments and a one-line purpose; "
+        "an unknown op answers with the nearest ones.\n"
+        'CALL: {"op": "memory.related", "arguments": {"memory_key": "deploy_day"}}. '
+        "Identity and namespace default as for a listed tool."
+    )
+
+
+DESCRIPTOR: dict[str, Any] = {
+    "name": LOOM_OP_TOOL_NAME,
+    # the text a listing shows comes from description(); this is the default listing's
+    "description": description(set(), "core"),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "op": {"type": "string", "description": 'A dotted op name, or "help".'},
+            "arguments": {"type": "object", "description": "The op's own arguments."},
+            "query": {"type": "string", "description": "help: words to match."},
+        },
+        "required": ["op"],
+    },
+    # The target op's own output: one object whatever the op (strict clients
+    # validate structuredContent against a declared schema).
+    "outputSchema": {"type": "object"},
+    "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
+}
 
 
 def catalog(
