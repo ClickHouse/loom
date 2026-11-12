@@ -30,7 +30,8 @@ change introduced a regression.
 
 On public ClickHouse issues, `tracker.duplicate_check` ranked the older issue first for 91
 of 104 recorded duplicates (0.875) and called 2 of 100 issues with no recorded link a
-duplicate. The result is one tracker's, and its issues are easier than many trackers'.
+duplicate. The result is one tracker's, and its issues (stack traces, error codes, consistently linked
+duplicates) are easier than many trackers'.
 [Duplicate check on public ClickHouse issues](../benchmarks/results.md#duplicate-check-on-public-clickhouse-issues)
 
 ## Start
