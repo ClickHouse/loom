@@ -4,13 +4,24 @@
 # the install in LOOM_INSTALL_DIR (devcontainer.json) and keeps it.
 set -eu
 
-: "${LOOM_INSTALL_DIR:=$HOME/.loom}"
-export LOOM_INSTALL_DIR
+: "${LOOM_INSTALL_DIR:?set by containerEnv in devcontainer.json}"
 # The dev container's user may not own a directory under /workspaces yet.
 if ! mkdir -p "$LOOM_INSTALL_DIR" 2>/dev/null || [ ! -w "$LOOM_INSTALL_DIR" ]; then
   sudo mkdir -p "$LOOM_INSTALL_DIR"
   sudo chown "$(id -u):$(id -g)" "$LOOM_INSTALL_DIR"
 fi
+
+# The docker-in-docker daemon may still be starting; the installer stops at once
+# when it cannot reach it.
+tries=0
+until docker info >/dev/null 2>&1; do
+  tries=$((tries + 1))
+  [ "$tries" -lt 60 ] || {
+    echo "the Docker daemon did not start within 60 seconds" >&2
+    exit 1
+  }
+  sleep 1
+done
 
 installer=$(mktemp)
 trap 'rm -f "$installer"' EXIT

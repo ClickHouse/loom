@@ -130,8 +130,8 @@ also forwards the port to your laptop's `localhost:7777`, where it is as open as
 install to every program on the laptop.
 
 The install lives in `/workspaces/.loom`, so a rebuilt codespace keeps its `.env` and
-Compose project; the commands above that name `"$HOME/.loom"` take
-`--project-directory /workspaces/.loom` there.
+Compose project. Wherever these docs name `~/.loom` or `"$HOME/.loom"`, a codespace uses
+`/workspaces/.loom`. Once the stack is up, Codespaces offers to open port 7777.
 
 ### Start in multi-user mode
 

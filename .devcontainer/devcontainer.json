@@ -1,7 +1,8 @@
 {
   // A try-out of Loom in GitHub Codespaces: the released stack, started by the
-  // released installer, with Claude Code connected to it. Port 7777 is
-  // forwarded privately, to the signed-in GitHub user only.
+  // released installer, with Claude Code connected to it. It is not a development
+  // environment: a checkout's own setup is docs/development. Codespaces forwards
+  // port 7777 privately, to the signed-in GitHub user, unless it is made public.
   "name": "Loom try-out",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
@@ -15,12 +16,13 @@
   "hostRequirements": { "cpus": 4, "memory": "16gb", "storage": "32gb" },
   "forwardPorts": [7777],
   "portsAttributes": {
-    // requireLocalPort: desktop VS Code forwards to the laptop's localhost:7777 or
-    // reports the clash, rather than another port, whose Origin the server refuses.
+    // notify: the port listens before Loom answers, so a tab opened at once would
+    // show an error. requireLocalPort: desktop VS Code forwards to the laptop's
+    // localhost:7777 or reports the clash, rather than another port, whose Origin
+    // the server refuses.
     "7777": {
       "label": "Loom dashboard",
-      "onAutoForward": "openBrowser",
-      "visibility": "private",
+      "onAutoForward": "notify",
       "requireLocalPort": true
     }
   },
