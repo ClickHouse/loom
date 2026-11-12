@@ -53,12 +53,11 @@ export function AskAboutThis({
   const whoami = useStore((s) => s.whoami);
   const namespace = useStore((s) => s.identity?.namespace ?? "");
   const mine = useStore((s) => s.myNamespaces);
-  const { role, loading } = useNamespaceRoleRead(namespace);
+  const roleRead = useNamespaceRoleRead(namespace);
   const unavailable = useDock((s) => s.reasonShort);
-  // Nothing until the role is read: a reason shown while it loads could be wrong.
-  if (!namespace || loading) return null;
+  if (!namespace) return null;
   const why =
-    callReason("assistant.ask", role, whoami, namespace) ||
+    callReason("assistant.ask", roleRead, whoami, namespace) ||
     reason ||
     (!isMemoryNamespace(namespace, mine) ? "The assistant answers about a memory namespace." : null) ||
     (unavailable ? `The assistant can't answer now: ${unavailable}.` : null);

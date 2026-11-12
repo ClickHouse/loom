@@ -89,6 +89,13 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
   // namespace.delete needs ADMIN on the namespace.
   const canManage = canUpdateNamespace(whoami, myNamespaces, namespace, ns);
   const canDelete = isNamespaceAdmin(whoami, myNamespaces, namespace);
+  // Why the fields are locked: a restricted namespace also wants the token itself to name it
+  // with an admin claim, which an admin grant alone does not give (`canUpdateNamespace`).
+  const grant = myNamespaces?.find((m) => m.namespace === namespace);
+  const lockedReason =
+    ns?.classification === "restricted" && grant?.role === "admin" && grant.status !== "pending" && !grant.inherited
+      ? `Your token must name ${namespace} with an admin claim to change its settings.`
+      : needsRole("admin", namespace);
 
   // Repository mode: a code index shows only what applies to read-only source —
   // description, the join rule, danger zone.
@@ -180,7 +187,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
             {/* The fields stay in view, locked, and say once what changing them needs. */}
             {!canManage && (
               <p className="m-0 text-xs text-text-muted" data-testid="settings-locked">
-                {needsRole("admin", namespace)}
+                {lockedReason}
               </p>
             )}
             <div className="flex items-end gap-2">

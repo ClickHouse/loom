@@ -70,7 +70,7 @@ import { AskAboutThis, exact, quoted } from "./AskAboutThis";
 import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
 import { absoluteTime, relativeTime, formatValue, parseChTime, SENTINEL_AGENTS } from "../lib/format";
 import { detectEncodedValue } from "../lib/encoded";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
 import { callReason } from "../lib/callReason";
 import { historyChange, previousVersion } from "../lib/historyChange";
@@ -475,11 +475,12 @@ export function MemoryInspector({
   // known to allow conflicts.list: an unknown role sends nothing and the badge is simply
   // absent.
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity.namespace);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const { role } = roleRead;
   const conflictsReadable = canCall("conflicts.list", role, whoami);
   // Each role-gated action stays in view for a role that cannot call it, unavailable with
   // the role it needs (`callReason`), so nobody is sent a request the server would refuse.
-  const why = (op: Parameters<typeof callReason>[0]) => callReason(op, role, whoami, identity.namespace);
+  const why = (op: Parameters<typeof callReason>[0]) => callReason(op, roleRead, whoami, identity.namespace);
   const moveReason = why("memory.move");
   const pinReason = why(detail?.pinned ? "memory.unpin" : "memory.pin");
   const restoreReason = why("memory.restore");
@@ -2312,8 +2313,6 @@ function LifecycleBadge({ status, pinned }: { status?: string; pinned: boolean }
   );
 }
 
-/** A menu item's icon and label. Not Dropdown.Item's `icon`: Click UI names that svg
- *  after the icon, so the item's spoken name would carry it (as in layout/Header.tsx). */
 /** A read_only lock refuses a value or expiry change. */
 function valueLockedOf(detail: MemoryDetail | null): boolean {
   return detail?.lock_mode === "read_only";
@@ -2346,6 +2345,8 @@ function GatedItem({
   );
 }
 
+/** A menu item's icon and label. Not Dropdown.Item's `icon`: Click UI names that svg
+ *  after the icon, so the item's spoken name would carry it (as in layout/Header.tsx). */
 function MenuLabel({ icon, children }: { icon: IconName; children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-2">

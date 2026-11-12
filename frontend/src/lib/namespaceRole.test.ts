@@ -72,14 +72,16 @@ describe("roleOnNamespace", () => {
     expect(roleOnNamespace(user(["WRITER"]), [row("other", "writer")], "team")).toBeNull();
   });
 
-  it("a `*` token with no row takes its flat role; a named namespace with no row stays unknown", () => {
+  it("a `*` token reads a namespace it covers without naming, as viewer whatever its claim", () => {
     const named = (roles: string[], namespaces: string[]) => ({ ...user(roles), namespaces });
     expect(roleOnNamespace(named(["VIEWER"], ["*"]), [], "team")).toBe("viewer");
-    expect(roleOnNamespace(named(["WRITER"], ["*"]), [], "team")).toBe("writer");
+    // Capped at viewer: ns_write and a delegated token's creator grant are not visible here.
+    expect(roleOnNamespace(named(["WRITER"], ["*"]), [], "team")).toBe("viewer");
     expect(roleOnNamespace(named(["USER"], ["*"]), [], "team")).toBeNull();
-    // list_mine leaves out a named namespace only when a revoked grant caps the claim.
+    // list_mine leaves out a named namespace only when a revoked grant caps the claim, `*` or not.
     expect(roleOnNamespace(named(["VIEWER"], ["team"]), [], "team")).toBeNull();
-    // A pending request holds the token to it.
+    expect(roleOnNamespace(named(["WRITER"], ["*", "team"]), [], "team")).toBeNull();
+    // A pending row is unknown on purpose, whatever the token claims.
     expect(roleOnNamespace(named(["WRITER"], ["*"]), [row("team", "writer", "pending")], "team")).toBeNull();
   });
 });

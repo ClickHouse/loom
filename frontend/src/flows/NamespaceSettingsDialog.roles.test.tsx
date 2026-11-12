@@ -74,3 +74,19 @@ describe("NamespaceSettingsDialog roles", () => {
     expect(confirmAction).toHaveBeenCalled();
   });
 });
+
+describe("NamespaceSettingsDialog on a restricted namespace", () => {
+  it("tells an admin by grant that the token must name the namespace with an admin claim", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: [], namespaces: ["*"] },
+      myNamespaces: [grant("admin")],
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...info, classification: "restricted" });
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await act(async () => undefined);
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(
+      "Your token must name team with an admin claim to change its settings.",
+    );
+    expect(screen.getByLabelText("Description")).toBeDisabled();
+  });
+});

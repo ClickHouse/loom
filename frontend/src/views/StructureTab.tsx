@@ -35,7 +35,7 @@ import { useIdentity, useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { humanizeError } from "../lib/errorWords";
 import { callReason } from "../lib/callReason";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast, toastError } from "../components/Toast";
 import { ListState } from "../components/ui/ListState";
@@ -53,8 +53,8 @@ import { Alert, ListTime, Loading, Panel, SectionHeading, Unavailable } from "..
 export function StructureTab() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity.namespace);
-  const why = (op: Parameters<typeof callReason>[0]) => callReason(op, role, whoami, identity.namespace);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const why = (op: Parameters<typeof callReason>[0]) => callReason(op, roleRead, whoami, identity.namespace);
   return (
     <div className="max-w-4xl space-y-6">
       <RecordSchemas registerReason={why("memory_schema.register")} decideReason={why("memory_schema.approve")} />

@@ -973,7 +973,7 @@ describe("Assistant: overview", () => {
     vi.mocked(listMine).mockRejectedValueOnce(new Error("down"));
     render(<InsightsHarness />);
     const starter = await screen.findByRole("button", { name: INVENTORY_STARTER });
-    await waitFor(() => expect(starter).toHaveAccessibleDescription("Couldn't check your access to team. Try again."));
+    await waitFor(() => expect(starter).toHaveAccessibleDescription("Couldn't check your access to team."));
     expect(starter).toHaveAttribute("aria-disabled", "true");
   });
 
