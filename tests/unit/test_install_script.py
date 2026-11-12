@@ -976,15 +976,10 @@ def test_a_listener_that_never_answers_holds_the_port(
     assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
 
 
-@pytest.mark.parametrize("code", [52, 56, 1, 8, 18])
-def test_a_listener_that_resets_or_answers_nothing_holds_the_port(
-    install, installer_env: dict[str, str], code: int
-) -> None:
-    """Any exit after a connection is a listener: 52 (an empty reply), 56 (a reset),
-    1 (a non-HTTP reply, such as an SSH or TLS server's), 8 (a status line curl
-    cannot read) and 18 (a body cut short)."""
+def test_any_exit_after_a_connect_is_a_listener(install, installer_env: dict[str, str]) -> None:
+    """An exit not named as a listener's (6 here) still is one when curl connected."""
     run, _ = install
-    _start_stubs(installer_env, probe_exit=code, connect_time="0.000150")
+    _start_stubs(installer_env, probe_exit=6, connect_time="0.000150")
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 1
     assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
@@ -1098,16 +1093,19 @@ def test_the_port_probe_goes_where_loom_is_published(
     assert curl_log.read_text().splitlines()[0].endswith(" http://[::1]:28977/")
 
 
+@pytest.mark.parametrize(("probe_exit", "installs"), [(7, True), (0, False)])
 def test_every_call_to_the_local_server_bypasses_a_proxy(
-    install, installer_env: dict[str, str]
+    install, installer_env: dict[str, str], probe_exit: int, installs: bool
 ) -> None:
-    """A proxy in the shell would answer for 127.0.0.1 and make the port look held."""
+    """A proxy in the shell would answer for 127.0.0.1 and make the port look held:
+    the probe, the health poll and the call that names a holder all go direct."""
     run, _ = install
-    curl_log, _ = _start_stubs(installer_env)
+    curl_log, _ = _start_stubs(installer_env, probe_exit=probe_exit, connect_time="0.000100")
     result = run(LOOM_SKIP_START="0", http_proxy="http://proxy.invalid:3128")
-    assert result.returncode == 0, result.stderr
+    assert (result.returncode == 0) == installs, result.stderr
     calls = curl_log.read_text().splitlines()
-    assert calls and all("--noproxy *" in c for c in calls), calls
+    assert any("v1/health" in c for c in calls), calls
+    assert all("--noproxy *" in c for c in calls), calls
 
 
 def test_a_failed_pull_names_dockers_proxy_settings(install, installer_env: dict[str, str]) -> None:
