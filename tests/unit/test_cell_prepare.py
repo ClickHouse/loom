@@ -405,3 +405,13 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
     reads.extend([[_beat("i-new", after)], [_beat("i-new", after)]])
     assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
     assert capsys.readouterr().err == ""
+    # A rerun in recording that writes no first row (the rollout is usually done).
+    monkeypatch.setattr(cell_prepare, "_register", AsyncMock(return_value={**OK}))
+
+    async def _own_only(*_a: Any) -> list[str]:
+        return ["own"]
+
+    monkeypatch.setattr(cell_prepare, "_write_rows", _own_only)
+    reads.extend([[_beat("i-new", after)], [_beat("i-new", after)]])
+    assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
+    assert capsys.readouterr().err == ""

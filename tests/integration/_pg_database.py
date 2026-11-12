@@ -28,8 +28,6 @@ async def create_database(admin_dsn: str) -> tuple[str, str]:
     admin = await asyncpg.connect(admin_dsn)
     try:
         await admin.execute(f'CREATE DATABASE "{name}"')
-    except asyncpg.exceptions.InsufficientPrivilegeError:
-        pytest.skip("this Postgres role cannot create a database")
     finally:
         await admin.close()
     return name, with_database(admin_dsn, name)

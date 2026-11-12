@@ -7,6 +7,7 @@ transaction, run as the page prints it, takes a gated deployment back to `open`
 from __future__ import annotations
 
 import contextlib
+import itertools
 import os
 import re
 from collections.abc import AsyncIterator
@@ -72,22 +73,22 @@ async def _gate(monkeypatch: pytest.MonkeyPatch, conn: Any) -> str:
     return cell.gate_reason()
 
 
+_ROWS = ("first", "mode", "own", "tenancy")
+# Every mix of the four rows but none and the two full sets: the partial states.
+PARTIAL = [
+    set(c)
+    for n in range(1, 5)
+    for c in itertools.combinations(_ROWS, n)
+    if set(c) not in ({"first", "mode", "own"}, {"first", "mode", "own", "tenancy"})
+]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "rows",
-    [
-        {"tenancy"},
-        {"mode"},
-        {"first"},
-        {"own"},
-        {"first", "mode"},
-        {"first", "own"},
-        {"mode", "own", "tenancy"},
-    ],
-)
+@pytest.mark.parametrize("rows", PARTIAL, ids=["+".join(sorted(r)) for r in PARTIAL])
 async def test_every_partial_state_gates_an_unset_process(
     monkeypatch: pytest.MonkeyPatch, rows: set[str]
 ) -> None:
+    assert len(PARTIAL) == 13
     async with _own_database() as conn:
         await _write_state(conn, rows)
         assert "partial cell state" in await _gate(monkeypatch, conn)
