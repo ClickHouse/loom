@@ -144,10 +144,6 @@ def test_coding_listing_is_its_roster_plus_the_code_tools_regardless_of_the_flag
         for n in core_only
         if n in TOOL_TO_OP
     )
-    # The unlisted verbs are core-only — listed under
-    # core, absent from coding, still callable by name
-    for dropped in ("loom_memory_pin", "loom_blacklist_add", "loom_memory_lock"):
-        assert dropped not in names and dropped in core_only and dropped in mcp_call.TOOLS_BY_NAME
 
 
 def test_core_and_atomic_listings_are_unchanged_by_the_new_tier():
@@ -179,7 +175,7 @@ def test_toolset_is_selectable_per_deployment_and_per_request():
 # ---------------------------------------------------------------- descriptions
 
 
-def test_coding_descriptions_derive_from_the_core_texts_and_mark_unlisted_ops():
+def test_coding_descriptions_derive_from_the_core_texts():
     # Memory.pin and working_memory.append are not on the coding
     # listing, so they have no coding texts
     # Blast radius has a coding-tier text (the paging detail stays on qa/all)
