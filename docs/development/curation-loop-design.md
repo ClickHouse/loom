@@ -27,10 +27,10 @@ flowchart LR
 A definition is a memory row with `memory_type = 'definition'` under the key
 `definition/<slug>`, so `C++` and `C#` get two keys. The slug is computed in four steps:
 
-1. The term is normalised to NFKC, trimmed, every run of whitespace made one space, and
-   case-folded (`str.casefold`). This folded form is the term's name wherever two names
-   are compared (the key, the promotion's name check); matching against a query keeps the
-   case rule below.
+1. The term goes through `canonical_document_text` (`server/core/hashing.py`: NFKC,
+   trimmed, every run of whitespace made one space) and is case-folded (`str.casefold`).
+   This folded form is the term's name wherever two names are compared (the key, the
+   promotion's name check); matching against a query keeps the case rule below.
 2. Every run of characters other than letters and digits becomes one `-`, and a `-` at
    either end is dropped.
 3. A `-` is appended.
@@ -38,9 +38,10 @@ A definition is a memory row with `memory_type = 'definition'` under the key
    appended.
 
 One helper in `server/memory/domain/definitions.py` computes it. The SDKs and the
-dashboard port it and test against the same table of terms and keys, and a refused
-promotion names the key it expected. Its value is a JSON object, which `memory.set` stores
-whole in `value` and in `value_json` (the embedding reads its excerpt, as for any row):
+dashboard port it and test against the same table of terms and keys, a full-width term and
+one with a doubled space among them, and a refused promotion names the key it expected.
+Its value is a JSON object, which `memory.set` stores whole in `value` and in `value_json`
+(the embedding reads its excerpt, as for any row):
 
 | Field      | Meaning                                                                     |
 | ---------- | --------------------------------------------------------------------------- |
@@ -264,11 +265,10 @@ which never shortens theirs; a leg past its bound adds nothing. Its latency is m
 against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
 request that adds it.
 
-**Matching.** The query is NFKC-normalised and its runs of whitespace made one space, as a
-name is, so `MRR` matches the full-width `什么是ＭＲＲ` and `churn rate` matches a query that
-puts two spaces between the words; only case follows the per-word rule below. A term or
-alias matches where it appears in the query with no character next to it that continues
-its edge:
+**Matching.** The query goes through `canonical_document_text`, as a name does, so `MRR`
+matches the full-width `什么是ＭＲＲ` and `churn rate` matches a query that puts two spaces
+between the words; only case follows the per-word rule below. A term or alias matches
+where it appears in the query with no character next to it that continues its edge:
 
 - next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
   those;
@@ -460,16 +460,17 @@ to two accounts, or a tie that cannot be read, records no miss.
 
 **The stored row.** Each miss writes one row to `loom.search_misses` under the namespace
 the search was addressed to: the identity tuple, the asker, the plane and the query's
-normalised form. That form is case-folded, with every run of characters other than
-letters, digits, `_`, `+` and `#` made one space, so `C++`, `C#` and `arr_v2` stay apart
-as the term leg keeps them. It is still the query's words, kept as the trace of a question
-under the request's capture level; only the threshold below decides what an admin sees. A
-query that reads or grades as `medium` or `high` (`reads_high` and the grader in
+normalised form. That form is the query through `canonical_document_text`, as the term leg
+reads it, case-folded, with every run of characters other than letters, digits, `_`, `+`
+and `#` made one space, so `C++`, `C#` and `arr_v2` stay apart as the term leg keeps them.
+It is still the query's words, kept as the trace of a question under the request's capture
+level; only the threshold below decides what an admin sees. A query that reads or grades
+as `medium` or `high` (`reads_high` and the grader in
 `server/memory/domain/sensitivity.py`, as a definition's promotion grades its value)
 records no miss, so a pasted credential or an email never becomes a gap head, an
 embedding, an LLM prompt or a draft no promotion could accept. No memory key or document
-URI is kept: one naming another user's row or document would outlive that user's
-erasure, or the document's delete, in someone else's miss.
+URI is kept: one naming another user's row or document would outlive that user's erasure,
+or the document's delete, in someone else's miss.
 
 **The erasure fence.** A miss is inserted after the response, so a user erasure could run
 between the search and the insert. An erasure reaches a miss when it is the namespace's
@@ -766,10 +767,11 @@ from text drawn from a conversation, which no slug or hash check covers.
   erased. `server/erasure/store/census.py` holds the three lists: the census substrates
   (`_CENSUS`), `STEP_ONLY_TABLES` and `NO_MEMORY_CONTENT`. A step with no census row must
   be listed under its step in `STEP_ONLY_TABLES`
-  (`tests/unit/test_erasure_resume_reopens_steps.py`), and the three lists stay disjoint
-  (`tests/unit/test_every_table_is_classified.py`), so the table goes there and not in
-  `NO_MEMORY_CONTENT`. `loom.qa_sources`, the tracker's registration, has no step and is
-  in `NO_MEMORY_CONTENT` as configuration holding no memory or record content.
+  (`tests/unit/test_erasure_resume_reopens_steps.py`), and no table in `_CENSUS` or
+  `STEP_ONLY_TABLES` may also be in `NO_MEMORY_CONTENT`
+  (`tests/unit/test_every_table_is_classified.py`), so the table goes there.
+  `loom.qa_sources`, the tracker's registration, has no step and is in `NO_MEMORY_CONTENT`
+  as configuration holding no memory or record content.
 - A direct `memory.promote` writes its audit row; a promotion through `learnings.review`
   writes the review's row, which names the candidate, and the implementing pull request
   adds the promotion's own row there. `knowledge.gaps.draft` writes one naming the gap,
