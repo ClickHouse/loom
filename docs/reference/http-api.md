@@ -172,10 +172,12 @@ curl -sX POST "$LOOM/v1/memory.set" \
   whose agent is optional and left out acts across every agent: a search reads every
   agent's rows, and `memory.update` finds the key in the whole namespace. A key that
   misspells one of these (`namepsace`) is taken as naming it, so the call is refused
-  rather than filled. Every other op names its own namespace and agent (a blank or
-  `"-"` namespace on one is refused as missing), and so does a call with a token (one
-  the Python SDK finds by itself included: [Credentials](python-sdk.md#credentials))
-  and every call in another identity mode.
+  rather than filled. Every other op names its own namespace and agent; on a
+  single-user server with no token, a blank or `"-"` namespace on one that requires a
+  namespace (code and tracker ops aside) is refused as missing. A call with a token
+  (one the Python SDK finds by itself included:
+  [Credentials](python-sdk.md#credentials)) gets nothing filled, and neither does any
+  call in another identity mode.
 - **`consumer`.** Any body may carry `consumer`, a short tag for the product or
   module calling; it is stored on the request and audit ledgers. A token minted
   with a consumer overrides it. See
