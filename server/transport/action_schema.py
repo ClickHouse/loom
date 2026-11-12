@@ -70,8 +70,8 @@ def _description(op: Operation, tools: set[str]) -> str:
 
     custom = TOOL_DESCRIPTIONS.get(op.name)
     if custom:
-        # the manifest names its tools as an MCP listing of them would
-        return name_ops_for_listing(str(custom).strip(), tools, "all")
+        # an op in the manifest is named by its tool name, any other by its op name
+        return name_ops_for_listing(str(custom).strip(), tools, None)
     return (
         f"Loom operation `{op.name}` "
         f"({'idempotent' if op.idempotent else 'state-transition'}, "

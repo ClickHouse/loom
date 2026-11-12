@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import difflib
 import re
+from collections.abc import Set
 from typing import Any
 
 from server.operations.toolsets import _MCP_HIDDEN_OPS
@@ -83,22 +84,22 @@ def routes_writes(toolset: str | None) -> bool:
 
 
 def reachable(op: Any, toolset: str | None) -> bool:
-    """Whether `loom_op` on this connection routes ``op``."""
-    return _is_read(op) or routes_writes(toolset)
+    """Whether `loom_op` on this connection routes ``op``: never a hidden op."""
+    return op.name not in _MCP_HIDDEN_OPS and (_is_read(op) or routes_writes(toolset))
 
 
 # What loom_op's text offers by name: each shows only on a listing that leaves
 # it out and where loom_op routes it, so the text holds on every toolset.
 _EXAMPLES: tuple[tuple[str, str], ...] = (
-    ("memory.clear", "wiping an agent's or user's memories"),
-    ("erasure.request", "erasure requests"),
     ("memory.related", "related memories"),
     ("memory.evidence", "evidence"),
     ("memory.digests", "session digests"),
+    ("erasure.request", "erasure requests"),
+    ("memory.clear", "wiping an agent's or user's memories"),
 )
 
 
-def description(listed: set[str], toolset: str | None) -> str:
+def description(listed: Set[str], toolset: str | None) -> str:
     """`loom_op`'s text for a listing whose tool names are ``listed``."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
@@ -123,9 +124,7 @@ def description(listed: set[str], toolset: str | None) -> str:
 
 
 DESCRIPTOR: dict[str, Any] = {
-    "name": LOOM_OP_TOOL_NAME,
-    # the text a listing shows comes from description(); this is the default listing's
-    "description": description(set(), "core"),
+    "name": LOOM_OP_TOOL_NAME,  # its description is built per listing: description()
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -171,16 +170,10 @@ def catalog(
 # "no op reachable" plus look-alikes and guess: a help call, a grep of the
 # source, a wrong argument name.
 _INSTEAD: dict[str, str] = {
-    "memory.bulk_set": (
-        "call memory.set once per fact (via loom_op where unlisted); a batch saves no "
-        "round trip here"
-    ),
-    "memory.bulk_get": (
-        "call memory.get per key, or memory.list with a key prefix (each via loom_op where "
-        "unlisted)"
-    ),
-    "memory.keys": "call memory.list (via loom_op where unlisted), which pages the namespace",
-    "memory.delete_version": "call memory.delete (via loom_op where unlisted)",
+    "memory.bulk_set": ("call memory.set once per fact; a batch saves no round trip here"),
+    "memory.bulk_get": ("call memory.get per key, or memory.list with a key prefix"),
+    "memory.keys": "call memory.list, which pages the namespace",
+    "memory.delete_version": "call memory.delete",
     # An owner-only op names the person, never a route: naming the SDK/HTTP
     # op sends a model probing env vars and token files for a way around it.
     "memory.unlock": (
@@ -190,18 +183,14 @@ _INSTEAD: dict[str, str] = {
     "memory.search": "call loom_search (memory, profile, knowledge and conversations in one call)",
     "knowledge.search": "call loom_search",
     "conversation.search": "call loom_search",
-    "namespace.list": "call namespace.list_mine (via loom_op where unlisted)",
-    "run.list": "call run.get with a run id (via loom_op where unlisted)",
-    "code.context_packs": (
-        "call code.context_pack (via loom_op where unlisted) with the pr_number you want"
-    ),
+    "namespace.list": "call namespace.list_mine",
+    "run.list": "call run.get with a run id",
+    "code.context_packs": ("call code.context_pack with the pr_number you want"),
     "memory.extraction_status": (
-        "call memory.extraction_status_mine (via loom_op where unlisted) with the queue_id "
+        "call memory.extraction_status_mine with the queue_id "
         "each deferred memory.set_from_messages returned"
     ),
-    "erasure.status": (
-        "call erasure.list (via loom_op where unlisted); each saga row carries its status"
-    ),
+    "erasure.status": ("call erasure.list; each saga row carries its status"),
     "memory.search_trace": (
         "call loom_search with explain=true; each memory hit carries its ranking terms"
     ),
@@ -210,7 +199,7 @@ _INSTEAD: dict[str, str] = {
     "code.outcome": "the plugin's hooks report what was done with a code answer; nothing to call",
     "code.coverage.watch": (
         "a bot's watch on its own inbox; for the commit the index has reached, call "
-        "code.index_status (via loom_op where unlisted)"
+        "code.index_status"
     ),
     "code.coverage.unwatch": "a bot's watch on its own inbox; nothing to call",
     "code.scip_ingest": "a CI job uploads the SCIP index; nothing to call",
@@ -229,10 +218,12 @@ _NEEDS_AN_OPERATOR = (
 )
 
 
-def hidden_refusal(name: str) -> dict[str, Any] | None:
+def hidden_refusal(name: str, toolset: str | None = None) -> dict[str, Any] | None:
     """The refusal for an op that exists but is kept off MCP: that it is not on
-    MCP, and what to do instead. None when `name` is not a hidden op."""
+    MCP, and what to do instead, naming ops as the ``toolset`` listing does.
+    None when `name` is not a hidden op."""
     from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport.mcp_tools import listed_tool_names, name_ops_for_listing
 
     op = OPERATIONS_BY_NAME.get(name)
     if op is None or name not in _MCP_HIDDEN_OPS:
@@ -241,7 +232,9 @@ def hidden_refusal(name: str) -> dict[str, Any] | None:
     return {
         "error": f"{name} exists but is not callable on this MCP connection",
         "code": "OP_NOT_ON_MCP",
-        "instead": _INSTEAD.get(name, default),
+        "instead": name_ops_for_listing(
+            _INSTEAD.get(name, default), listed_tool_names(toolset), toolset
+        ),
     }
 
 
@@ -285,7 +278,7 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
         return req, _result(req.get("id"), catalog(str(args.get("query") or ""), readonly=readonly))
     by_name = {op.name: op for op in _ops()}
     op = by_name.get(name) or by_name.get(name.replace("_", ".", 1))
-    hidden = hidden_refusal(name)
+    hidden = hidden_refusal(name, toolset)
     if op is None and hidden is not None:
         emit_token_refusal(name, auth, error_code="OP_NOT_ON_MCP")
         return req, _result(req.get("id"), hidden, error=True)

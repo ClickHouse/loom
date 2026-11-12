@@ -482,7 +482,7 @@ async def _resolve_tool(
         if op is not None:  # A hidden op says why and what instead
             from server.transport.mcp_op import hidden_refusal
 
-            body = {**(hidden_refusal(op.name) or {}), "tool": name}
+            body = {**(hidden_refusal(op.name, toolset) or {}), "tool": name}
             emit_token_refusal(op.name, auth, error_code="OP_NOT_ON_MCP")
             msg = f"{body.get('error', msg)}; instead: {body.get('instead', '')}"
         return _ok(

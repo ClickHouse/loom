@@ -178,6 +178,7 @@ _TOOLSETS = [
     ("readonly", False),
     ("assistant", False),
     ("all", True),
+    ("coding+tracker", False),
 ]
 
 
@@ -229,8 +230,7 @@ def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code:
             for op in _op_refs(text) - listed:
                 tool = re.escape(OPS[op].mcp_tool_name)
                 assert not re.search(rf"\b{tool}\b", text), f"{toolset}: {t['name']} lists {op}"
-                routed = op not in _MCP_HIDDEN_OPS and reachable(OPS[op], toolset)
-                if "loom_op" in names and routed:
+                if "loom_op" in names and reachable(OPS[op], toolset):
                     marked = rf"(?<![\w.]){re.escape(op)}`? \(via loom_op\)"
                     assert re.search(marked, text), (
                         f"{toolset}: {t['name']} names unlisted {op} without saying how to reach it"
@@ -289,7 +289,7 @@ def test_one_revision_policy_text_everywhere():
     core_set = TOOL_DESCRIPTIONS["memory.set"]
     assert revision_policy("memory.update") in core_set
     assert revision_policy("memory.update") in TOOL_DESCRIPTIONS["memory.update"]
-    assert revision_policy("loom_memory_set") in ATOMIC_TOOL_DESCRIPTIONS["memory.set"]
+    assert revision_policy("memory.set") in ATOMIC_TOOL_DESCRIPTIONS["memory.set"]
     assert "revision policy" in ATOMIC_TOOL_DESCRIPTIONS["memory.delete"]
     # the contradiction is gone: a changed fact is never "a NEW memory_key"
     assert "NEW memory_key" not in core_set

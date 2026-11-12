@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Set
 from typing import Any, get_args
 
 from server.memory.api.models_loom_search import SearchInput
@@ -77,7 +78,7 @@ TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERAT
 _NAMED_OP = re.compile(r"\b(loom_[a-z_]+|[a-z_]+(?:\.[a-z_]+){1,2})\b(`?)")
 
 
-def name_ops_for_listing(text: str, listed: set[str], toolset: str) -> str:
+def name_ops_for_listing(text: str, listed: Set[str], toolset: str | None) -> str:
     """``text`` as a client of this listing reads it. A client calls a listed op
     by its tool name, so every op the listing carries is named by its tool. An
     op it does not carry keeps its dotted name, the one `loom_op` takes, and its
@@ -94,7 +95,7 @@ def name_ops_for_listing(text: str, listed: set[str], toolset: str) -> str:
             return m.group(0)
         if op.mcp_tool_name in listed:
             return f"{op.mcp_tool_name}{trail}"
-        if not routes or op.name in _MCP_HIDDEN_OPS or not reachable(op, toolset):
+        if not routes or not reachable(op, toolset):
             return m.group(0)
         if op.name in marked:
             return f"{op.name}{trail}"
@@ -104,7 +105,7 @@ def name_ops_for_listing(text: str, listed: set[str], toolset: str) -> str:
     return _NAMED_OP.sub(rename, text)
 
 
-def _name_ops_in_fields(schema: Any, listed: set[str], toolset: str) -> Any:
+def _name_ops_in_fields(schema: Any, listed: Set[str], toolset: str | None) -> Any:
     """A copy of ``schema`` with every field description rendered for the listing."""
     if isinstance(schema, dict):
         return {
@@ -411,6 +412,16 @@ def _curated_description(toolset: str, op_name: str) -> str | None:
         if tiered:
             break
     return tiered or _TOOL_DESCRIPTIONS.get(op_name)
+
+
+def listed_tool_names(toolset: str | None) -> set[str]:
+    """The tool names a `tools/list` on ``toolset`` shows."""
+    from server.settings import settings
+
+    names = {op.mcp_tool_name for op in listed_ops(toolset)}
+    if not is_assistant(resolve_toolset(toolset, settings.mcp_toolset)):
+        names |= {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}
+    return names
 
 
 def listed_ops(toolset: str | None) -> list[Operation]:

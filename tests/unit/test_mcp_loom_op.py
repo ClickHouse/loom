@@ -176,7 +176,8 @@ def test_the_namespace_check_sees_the_inner_arguments(monkeypatch: pytest.Monkey
 def test_the_description_stays_small() -> None:
     import json
 
-    assert len(json.dumps(mcp_op.DESCRIPTOR)) // 4 <= 290
+    widest = {**mcp_op.DESCRIPTOR, "description": mcp_op.description(set(), "core")}
+    assert len(json.dumps(widest)) // 4 <= 290
 
 
 @pytest.mark.parametrize(

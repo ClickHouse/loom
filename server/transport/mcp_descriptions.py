@@ -39,13 +39,6 @@ ACTIVATION_TRIGGERS: tuple[str, ...] = (
 )
 
 
-# The other write tools, and when each fits instead of memory.set.
-_WHICH_WRITE = (
-    "**Other writes:** memory.pin guards a fact from later conflicting "
-    "writes, memory.lock from change or deletion; memory.apply changes many.\n\n"
-)
-
-
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "memory.set": (
         "Save a fact to Loom — shared across every AI tool the user runs; "
@@ -59,8 +52,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "recall; the server dedups. "
         + revision_policy("memory.update")
         + "\n\n"
-        + _WHICH_WRITE
-        + "**Auto-tag from scope words**: 'for billing, X is Y' → "
+        + "**Other writes:** memory.pin guards a fact from later conflicting "
+        "writes, memory.lock from change or deletion; memory.apply changes many.\n\n"
+        "**Auto-tag from scope words**: 'for billing, X is Y' → "
         "`tags=['billing']`; same for person / topic mentions.\n\n"
         "Do NOT save: questions, code help, world knowledge, acknowledgements, "
         "hypotheticals, echoes of your own words.\n\n"
@@ -2150,8 +2144,8 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHAT: CREATE a memory under a new memory_key, or UPDATE one by passing the "
         "memory_key a search or get returned.\n"
         "WHEN: A fact worth keeping past this task appeared, or a fact you already "
-        "hold changed. " + revision_policy("loom_memory_set") + "\n"
-        "WHEN NOT: Task-local state — put that in loom_working_memory_set.\n"
+        "hold changed. " + revision_policy("memory.set") + "\n"
+        "WHEN NOT: Task-local state — put that in working_memory.set.\n"
         "ARGS: memory_key, value (plain text or JSON — never base64; stored "
         "verbatim); memory_type (semantic|procedural|preference)."
     ),
@@ -2162,12 +2156,12 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
         "`unchanged` instead of the body. `follow: true` serves the live "
         "canonical of a `status='duplicate'` row (`resolved_from` names the key "
         "asked for).\n"
-        "WHEN NOT: Natural-language recall — that is loom_search / loom_memory_ask."
+        "WHEN NOT: Natural-language recall — that is loom_search / memory.ask."
     ),
     "memory.delete": (
         "WHAT: DELETE a memory by memory_key (tombstone; undo exists).\n"
         "WHEN: A fact is wrong and has no correct replacement. If a replacement "
-        "exists, follow the revision policy: UPDATE with loom_memory_set under "
+        "exists, follow the revision policy: UPDATE with memory.set under "
         "the same key instead."
     ),
     "memory.ask": (
@@ -2176,7 +2170,7 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
         "it with the run's notes).\n"
         "WHEN: You need the current state of something the store may know. Read "
         "once per question; the answer's memory_keys are the handles for update.\n"
-        "WHEN NOT: You already hold the key — loom_memory_get is cheaper.\n"
+        "WHEN NOT: You already hold the key — memory.get is cheaper.\n"
         "ARGS: `tags` restricts the memories read to rows carrying any of them "
         "(a subsystem, a kind); `tags_soft: true` makes them a boost instead."
     ),
@@ -2186,7 +2180,7 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
         "context.pack and by memory.ask calls that carry "
         "your run_id.\n"
         "WHEN: Every step that changes the task state. Overwrite, do not accumulate.\n"
-        "WHEN NOT: Facts that should outlive the task — those are loom_memory_set."
+        "WHEN NOT: Facts that should outlive the task — those are memory.set."
     ),
     "working_memory.append": (
         "WHAT: Append a line to your run scratchpad.\n"
