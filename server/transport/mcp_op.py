@@ -101,7 +101,8 @@ OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
 # An op named in prose: its tool name or its dotted op name, and a closing
 # backtick, which the "(via loom_op)" marker goes after. A name in quotes, after
 # a `/` or before a `#` is a value, a path or a citation tag
-# ('memory.delete', /v1/memory.set, [knowledge.query#1]), not a reference.
+# ('memory.delete', /v1/memory.set, [knowledge.query#1]), not a reference; a
+# possessive (memory.set's) still is.
 _NAMED_OP = re.compile(rf"(?<!['\"/])\b(loom_[a-z_]+|{OP_MENTION})\b(`?)(?!#|\"|'(?![a-z]))")
 
 
@@ -114,9 +115,9 @@ def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool) -> str:
     """``text`` as a client of this listing reads it. A client calls a listed op
     by its tool name, so every op the listing carries is named by its tool. An
     op it does not carry keeps its dotted name, the one `loom_op` takes, and its
-    first mention says "(via loom_op)", unless `loom_op` does not route it here
-    (a hidden op, a write when ``writes`` (`routes_writes`) is false, a listing
-    without `loom_op`)."""
+    first mention says "(via loom_op)". It stays unmarked when `loom_op` does not
+    route it: a hidden op, a write when ``writes`` is false, or any op on a
+    listing without `loom_op`."""
     has_loom_op = LOOM_OP_TOOL_NAME in listed
     marked: set[str] = set()
 
