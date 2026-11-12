@@ -13,6 +13,10 @@
 </p>
 
 <p align="center">
+  English · <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <a href="#what-loom-is-for">What Loom is for</a> ·
   <a href="#measured-results">Benchmarks</a> ·
   <a href="#get-started">Get started</a> ·
