@@ -124,10 +124,14 @@ session, ask "When do I deploy?".
 The try-out runs single-user, with no sign-in. In the browser, port 7777 is forwarded
 privately: its address answers only your GitHub account, so do not make the port public.
 Agents inside the codespace, such as its `claude`, use `http://localhost:7777`; the
-dashboard's connection lines name the forwarded address instead, which they cannot pass.
-Opened in desktop VS Code, the codespace also forwards the port to your laptop's
-`localhost:7777`, where it is as open as a local install to every program on the laptop.
-The install lives in `/workspaces/.loom`, so a rebuilt codespace keeps it and its data.
+dashboard's connection lines name the forwarded address instead, which needs a GitHub
+sign-in that agents in the codespace do not have. Opened in desktop VS Code, the codespace
+also forwards the port to your laptop's `localhost:7777`, where it is as open as a local
+install to every program on the laptop.
+
+The install lives in `/workspaces/.loom`, so a rebuilt codespace keeps its `.env` and
+Compose project; the commands above that name `"$HOME/.loom"` take
+`--project-directory /workspaces/.loom` there.
 
 ### Start in multi-user mode
 

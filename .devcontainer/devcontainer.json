@@ -9,7 +9,7 @@
     "ghcr.io/devcontainers/features/node:1": { "version": "22" }
   },
   // The install lives outside the home directory, which a rebuild replaces, so a
-  // rebuilt container finds the same .env, project and data.
+  // rebuilt container finds the same .env and Compose project.
   "containerEnv": { "LOOM_INSTALL_DIR": "/workspaces/.loom" },
   // ClickHouse, the server and the document extractor, with about 3 GB of images.
   "hostRequirements": { "cpus": 4, "memory": "16gb", "storage": "32gb" },
@@ -24,7 +24,7 @@
       "requireLocalPort": true
     }
   },
-  "postCreateCommand": "sh .devcontainer/start-loom.sh",
-  // A stopped codespace keeps its volumes; this starts the stack again.
-  "postStartCommand": "docker compose --project-directory \"$LOOM_INSTALL_DIR\" --profile bundled up -d"
+  // A resumed codespace starts the stack again by itself: every service restarts
+  // unless stopped.
+  "postCreateCommand": "sh .devcontainer/start-loom.sh"
 }
