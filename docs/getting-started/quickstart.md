@@ -129,9 +129,10 @@ Agents inside the codespace, such as its `claude`, use `http://localhost:7777`; 
 dashboard's connection lines name the forwarded address instead, which needs a GitHub
 sign-in that agents in the codespace do not have. Opened in desktop VS Code, the codespace
 also forwards the port to your laptop's `localhost:7777`, where it is as open as a local
-install to every program on the laptop; the forward needs that local port free, so stop a
-local Loom first. To serve that page, the try-out trusts pages from the laptop's
-`localhost:7777` and `127.0.0.1:7777`, whichever client you open it in.
+install to every program on the laptop, and agents on the laptop can reach it there; the
+forward needs that local port free, so stop a local Loom first. Use the dashboard from the
+browser address: from the laptop's `localhost:7777` it opens, but the server refuses its
+changes, since only the forwarded address is this server's own page.
 
 The install lives in `/workspaces/.loom`, so a rebuilt codespace keeps its `.env` and
 Compose project. Wherever these docs name `~/.loom` or `"$HOME/.loom"`, a codespace uses

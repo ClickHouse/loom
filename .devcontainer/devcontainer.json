@@ -18,8 +18,7 @@
   "portsAttributes": {
     // notify: the port listens before Loom answers, so a tab opened at once would
     // show an error. requireLocalPort: desktop VS Code forwards to the laptop's
-    // localhost:7777 or reports the clash, rather than another port, whose Origin
-    // the server refuses.
+    // localhost:7777, where the plugin looks, or reports the clash.
     "7777": {
       "label": "Loom dashboard",
       "onAutoForward": "notify",
