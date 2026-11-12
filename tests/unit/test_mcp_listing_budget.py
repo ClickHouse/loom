@@ -318,7 +318,7 @@ def test_marked_fields_are_unlisted_but_still_accepted():
     nothing a curated description or skill tells an agent to pass is marked."""
     from server.operations.base import MCP_HIDDEN
 
-    # `all` carries every core tool plus the stable ops callable by name there.
+    # `all` lists every core tool plus the stable surface.
     listed = {t["name"]: t for t in _listing("all", True)}
     marked: dict[str, set[str]] = {}
     for op in ALL_OPERATIONS:

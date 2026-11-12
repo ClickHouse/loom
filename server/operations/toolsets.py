@@ -203,8 +203,8 @@ _MCP_CODING_OPS: frozenset[str] = frozenset(
 # what it posted, read the board, find the inbox. Its own roster rather than
 # a core addition: the default listing is what every connection without
 # `?toolset=` pays for; a session that acts as an agent mounts `?toolset=tasks`
-# (or is told to). The ops stay
-# experimental until the ledger shows production callers.
+# (or is told to). The ops stay experimental until the ledger shows production
+# callers.
 _MCP_TASK_OPS: frozenset[str] = frozenset(
     {
         "task.pull",
