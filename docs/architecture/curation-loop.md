@@ -72,12 +72,15 @@ promoted from a row that is not the namespace-wide one, or no longer `active`), 
 a definition that passes the check but is not served because a later promotion holds one
 of its names as `shadowed`, naming the row that wins. A changed text is promoted again. On
 N no write-time verdict retires or marks a definition's source (the exemptions below), so
-a source that is no longer `active` was left that way by N-1 or before this design, and is
-restored (Undo in `memory.auto_retirements`, whose reasons include `same_key_newest_wins`
-for a later write of the same key under `newest_wins`, for a retirement of the last 30
-days that op lists, and `memory.restore` for an older one) or cleared (`conflicts.resolve`
-for a `conflicted` mark, `memory.dedup_resolve` for a `duplicate` one), which governs it
-again when its text is the approved one, and is promoted again otherwise.
+a source that is no longer `active` was left that way by N-1 or before this design. The
+admin brings it back by the way it lapsed:
+
+- retired within the last 30 days: Undo in `memory.auto_retirements`;
+- retired earlier: `memory.restore`;
+- marked `conflicted`: `conflicts.resolve`;
+- marked `duplicate`: `memory.dedup_resolve`.
+
+It is governed again when its text is the approved one, and is promoted again otherwise.
 
 One prerequisite is not part of this design: namespace erasure does not reach
 `loom.shared` today (only user erasure does, by provenance), so a namespace erasure leaves
@@ -159,19 +162,22 @@ refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) nei
 nor retires it, and `memory.consolidate` leaves rows of type `definition` out of its
 clusters (today it groups every active, unpinned and unlocked row of one type by
 similarity and tombstones the merged keys), since a definition's key is its term and `MRR`
-is not a revision of `ARR`. Under `newest_wins`, a write of a `definition/` key by another
-identity (a user's own copy) does not retire the namespace-wide row of that key, as
-same-key supersession does today for every unpinned row the writer reads: only a write of
-the namespace-wide row itself revises it, so no writer ends an admin's definition by
-writing a private copy, which the term leg then keeps out of the served list. This narrows
-the `newest_wins` rule that a write for a key retires every older live row with that key,
-whoever wrote it ([conflicts and refusal](../features/memory/conflicts-and-refusal.md)),
-for a definition's namespace-wide row only; the pinned-peer exemption above is the one
-`decision` already has as a key-identified type. The implementing pull request updates the
-policy table of that page, the memory-plane rule (`.claude/rules/memory-plane.md`), the
-write-time check and consolidation in [memory architecture](memory-architecture.md) and
-[conflicts and refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the
-old verdicts during a rollout. Conflict surfacing compares a row only with rows of its own
+is not a revision of `ARR`. Under `newest_wins`, the named-fact path, which closes an
+older single-valued fact and retires the rows behind it across keys and types
+(`newest_wins_contradiction`), never retires a definition's namespace-wide row either. And
+a write of a `definition/` key by another identity (a user's own copy) does not retire the
+namespace-wide row of that key, as same-key supersession does today for every unpinned row
+the writer reads: only a write of the namespace-wide row itself revises it, so no writer
+ends an admin's definition by writing a private copy, which the term leg then keeps out of
+the served list. This narrows the `newest_wins` rule that a write for a key retires every
+older live row with that key, whoever wrote it ([conflicts and
+refusal](../features/memory/conflicts-and-refusal.md)), for a definition's namespace-wide
+row only; the pinned-peer exemption above is the one `decision` already has as a
+key-identified type. The implementing pull request updates the policy table of that page,
+the memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check and
+consolidation in [memory architecture](memory-architecture.md) and [conflicts and
+refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the old verdicts
+during a rollout. Conflict surfacing compares a row only with rows of its own
 `memory_type`, so a learned fact that contradicts a definition is not flagged against it.
 The term leg serves the governed definition above such a fact; a cross-type check would
 add a candidate read to every write, and is not part of this design.
@@ -262,16 +268,18 @@ governed definitions through this leg only. The implementing pull request update
 page, and in `server/identity/domain/read_scope.py` the module docstring and the comment
 on `SCOPED_OPS`, which say every memory read of those ops carries the read scope.
 
-**Stored answers.** A stored `memory.ask` answer (its precedent path) is reused only while
-the namespace's write mark has not moved, and that mark does not cover `loom.shared`
-today. So every write of a definition's shared row (promote, demote, a scrub, an embedding
-retired) moves the namespace's memory write mark, and no answer from before a promotion or
-demotion on N is reused after it; rolling upgrades below covers N-1's. A lapse with no
-write, a source passing its `expires_at` or `valid_to`, does not move the mark, and the
-precedent path's evidence check compares each cited row's live hash (catching a tombstone,
-a redaction or an edit), not its status or validity. An answer that quoted such a
-definition is reused for up to `memory_ask_precedents_fast_max_age_hours`, as for any row
-that expires today.
+**Stored answers.** `memory.ask`'s ordinary precedent path reruns retrieval and reuses an
+answer only when its synthesis window is the same, so a governed hit entering or leaving
+the window already stops the reuse. Its fast path, which the ClickHouse authority runs,
+reuses an answer while the namespace's write mark has not moved, and that mark does not
+cover `loom.shared` today. So every write of a definition's shared row (promote, demote, a
+scrub, an embedding retired) moves the namespace's memory write mark, and no answer from
+before a promotion or demotion on N is reused after it; rolling upgrades below covers
+N-1's. A lapse with no write, a source passing its `expires_at` or `valid_to`, does not
+move the mark, and the precedent path's evidence check compares each cited row's live hash
+(catching a tombstone, a redaction or an edit), not its status or validity. An answer that
+quoted such a definition is reused for up to `memory_ask_precedents_fast_max_age_hours`,
+as for any row that expires today.
 
 **Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
 served list is exactly what it was before. The memory-plane rule asks for a paired
@@ -324,11 +332,11 @@ search another op runs on its behalf:
   records no miss;
 - `loom_search` (`search.query`) whose every section (memory, knowledge, profile,
   conversations) came back empty, with no leg failed, no hit withheld because an answer
-  led (`withheld` with a reason other than `below_precision_floor`, which means nothing
-  passed the floor and counts as found nothing), no tracker verdict, no namespace skipped
-  (`namespaces_skipped`) and no `tags`, under a read scope of the whole namespace. Its own
-  memory and knowledge searches record nothing, so a question that knowledge answers is
-  not a gap because memory abstained.
+  led (`withheld` with reason `home_fact_leads` or `tracker_verdict_leads`; any other
+  reason, such as `below_precision_floor` or `loom_output`, means nothing usable was
+  found), no tracker verdict, no namespace skipped (`namespaces_skipped`) and no `tags`,
+  under a read scope of the whole namespace. Its own memory and knowledge searches record
+  nothing, so a question that knowledge answers is not a gap because memory abstained.
 
 Only a search's first page can record a miss (a call with a `page` handle never does), and
 a search that could not answer for another reason is not a miss: a degraded answer whose
@@ -600,7 +608,9 @@ govern it.
   (`tests/unit/test_every_table_is_classified.py`).
 - A direct `memory.promote` writes its audit row; a promotion through `learnings.review`
   writes the review's row, which names the candidate, and the implementing pull request
-  adds the promotion's own row there. `knowledge.gaps.draft` writes one naming the gap.
+  adds the promotion's own row there. `knowledge.gaps.draft` writes one naming the gap,
+  and `knowledge.query_history.add` and `.remove` each write one whose subject is the
+  registration's name and host, never its credential.
 
 ## Cost bounds
 
@@ -654,15 +664,19 @@ moves the write mark, which N-1's promotions and demotions never move, so a stor
 `memory.ask` answer from the rollout is not reused past it (until then such an answer
 lives at most `memory_ask_precedents_fast_max_age_hours`, with no bound when it is 0).
 N-1, which does not know `definition` as key-identified, can merge, supersede or retire
-one definition's source while writing another; the rows it retired are listed by
-`memory.auto_retirements` (reasons `conflict_resolver`, `newest_wins_contradiction`,
-`value_update` and `same_key_newest_wins`), restored with its Undo (or `memory.restore`
-past its 30-day window), and promoted again; a source it marked `conflicted` is cleared
-with `conflicts.resolve`, one it marked `duplicate` with `memory.dedup_resolve`, and
-promoted again; a write it merged was never stored and is written again; a source an N-1
-`memory.consolidate` tombstoned is brought back with `memory.restore` within its 14 days
-and promoted again; past them, the definition is written again from its shared copy's text
-and promoted. An N-1 relabel of a definition's source to `high` leaves its shared copy's
+one definition's source while writing another. Once N serves, each is recovered and
+promoted again:
+
+- a source it retired (`memory.auto_retirements` reasons `conflict_resolver`,
+  `newest_wins_contradiction`, `value_update` and `same_key_newest_wins`): Undo within 30
+  days, `memory.restore` after;
+- a source it marked `conflicted`: `conflicts.resolve`; one marked `duplicate`:
+  `memory.dedup_resolve`;
+- a write it merged: never stored, so written again;
+- a source its `memory.consolidate` tombstoned: `memory.restore` within 14 days; past
+  them, the definition is written again from its shared copy's text.
+
+An N-1 relabel of a definition's source to `high` leaves its shared copy's
 embedding served by the ordinary legs: once N serves, the operator runs the retirement N's
 relabel performs (the shared embedding retired, the row kept) over every definition the
 admin read lists as lapsed for `high`, an operator step the implementing pull request's
