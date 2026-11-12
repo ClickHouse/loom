@@ -204,11 +204,11 @@ there costs a candidate number, not a final version.
 4. `build` writes the version into the Python SDK sources (in its PEP 440 form, `X.Y.ZrcN`
    for a candidate) and the TypeScript SDK sources, and builds the Python SDK wheel and
    sdist, the npm tarball (after the TypeScript SDK's `check:dist`), and zips of the two
-   plugins (`loom-claude-code-plugin-vX.Y.Z.zip`, `loom-codex-plugin-vX.Y.Z.zip`); it also builds the source-free Compose bundle and its
-   SHA-256 file (naming that ClickHouse release), the release's `install.sh`, which installs
-   this version, and `agent-setup.txt`, the
-   [agent setup contract](../getting-started/agent-setup.md) with this version and commit
-   filled in (`scripts/release/agent_setup.py`);
+   plugins (`loom-claude-code-plugin-vX.Y.Z.zip`, `loom-codex-plugin-vX.Y.Z.zip`); it also
+   builds the source-free Compose bundle and its SHA-256 file (naming that ClickHouse
+   release), the release's `install.sh`, which installs this version, and
+   `agent-setup.txt`, the [agent setup contract](../getting-started/agent-setup.md) with
+   this version and commit filled in (`scripts/release/agent_setup.py`);
 5. `verify` checks those exact files: their names and embedded versions, the plugin
    manifests, no tests in the Claude Code zip, the executable bits git records, and
    that the bundle names the ClickHouse release the `clickhouse` job checked,
