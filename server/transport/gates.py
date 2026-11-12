@@ -156,7 +156,7 @@ def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None
     gate authorizes, never the literal "-" every token reaches or a padded name
     an erasure of the org would miss. A copy: validation, and its own refusal
     row, read it; every later refusal's ledger row reads the arguments as
-    admitted (as sent, plus `with_single_user_identity`'s fill over HTTP). A
+    admitted (over HTTP, after the single-user fill and the `@me` mapping). A
     missing, null or non-string value is left for validation."""
     update: dict[str, str] = {}
     if isinstance(args.get("org"), str):

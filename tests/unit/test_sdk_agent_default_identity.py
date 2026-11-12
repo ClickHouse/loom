@@ -75,3 +75,11 @@ def test_only_an_empty_top_level_namespace_is_left_out() -> None:
     assert Transport.without_empty_namespace(named) is named
     nested = {"entries": [{"namespace": ""}]}
     assert Transport.without_empty_namespace(nested) is nested
+
+
+def test_a_sync_agent_takes_no_identity() -> None:
+    from loom import SyncAgent
+
+    with SyncAgent(base_url="http://x") as sa:
+        assert (sa._agent.org, sa._agent.namespace) == ("", "")
+        assert sa._agent.agent.startswith("sdk-python:")
