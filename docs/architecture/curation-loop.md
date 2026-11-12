@@ -207,10 +207,11 @@ to it that continues its edge:
   spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or punctuation: nothing.
 
 So `рост` does not match inside "простой" and `café` not inside "cafés", while `MRR`
-matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". A name written all in
-capitals, or with a capital after its first letter, matches only as written, so `IT` does
-not match "what is it" and `GitHub` stays exact; any other matches case-folded, so `Churn
-rate` matches "what is our churn rate".
+matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". Case is decided per word of
+the name: a word written all in capitals, or with a capital after its first letter,
+matches only as written, and any other word matches case-folded. So `IT` does not match
+"what is it" and `GitHub` stays exact, while `Churn Rate` matches "what is our churn rate"
+and `ARR growth` matches "ARR Growth" but not "arr growth".
 
 **Placement.** Matched rows go to the top of the served list with `governed = true`, in
 the order their names first appear in the query; a tie goes to the latest promotion
@@ -220,12 +221,15 @@ derived aggregate's synthetic row (`derived_aggregate`, an exact count over the
 namespace's rows) stays first, above the governed hits, as the response documents it. No
 later stage or floor of `memory.search`, `loom_search` or the ops that run `memory.search`
 reorders governed hits, moves one below a hit that is not governed (that row aside), or
-drops one in favour of such a hit, a stage added later included. Governed hits count
-within `top_k`, within a stage's cap on the memory section (the tracker verdict's
-`verdict_leads`, which keeps `VERDICT_MEMORY_MAX` memory hits) and within the token
-budgets (`body_budget_tokens`, `context.pack`'s block budget). A cap cuts governed hits
-last: when more match than fit, the later ones in query order are not served. A budget may
-shorten a body but never reorders the hits.
+drops one in favour of such a hit, a stage added later included. No floor or threshold
+removes a governed hit either: not `min_similarity`, the precision floor, the foreign
+margin or a calibration drop, since its score says nothing about whether the admin's
+definition answers the question. A search in any op that serves a governed hit is not a
+miss. Governed hits count within `top_k`, within a stage's cap on the memory section (the
+tracker verdict's `verdict_leads`, which keeps `VERDICT_MEMORY_MAX` memory hits) and
+within the token budgets (`body_budget_tokens`, `context.pack`'s block budget). A cap cuts
+governed hits last: when more match than fit, the later ones in query order are not
+served. A budget may shorten a body but never reorders the hits.
 
 **Scores.** A governed hit's `similarity` and `distance` are its shared embedding's to the
 query, `0` when it has none (both stay numbers, and `governed` marks the hit), and its
@@ -456,10 +460,12 @@ gap holds the drafted definition and the gap's id. The LLM drafts it from nothin
 gap's queries, each asked in that form by at least `knowledge_gaps_min_askers` askers; its
 words are the model's, but nothing else reached the model: that threshold is why it may be
 shown to the namespace's viewers in `learnings.list`, and why it outlives a user erasure.
-A gap has at most one pending draft: the candidate's id derives from the gap's id, and a
-second `knowledge.gaps.draft` for it answers the pending draft without an LLM call. The
-Library page shows a gaps tile for a namespace the viewer administers, with a **Draft
-definition** action per gap.
+A gap's id has at most one draft: the candidate's id derives from the gap's id, and a
+second `knowledge.gaps.draft` for it answers that candidate, pending or decided, without
+an LLM call or a new queue row, so a decision is never overwritten. A gap whose most asked
+query changes between builds gets a new id, and so may get a second draft. The Library
+page shows a gaps tile for a namespace the viewer administers, with a **Draft definition**
+action per gap.
 
 ## Definitions from query history
 
