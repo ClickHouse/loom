@@ -55,14 +55,15 @@ knows it. So governance needs no table or state of its own. An edit, a relabel t
 a redact or a tombstone of the source, by any writer or worker on any build, ends
 governance until an admin promotes the source again; a copy that keeps the text (the
 entity pass, a touch) keeps it. `memory.demote` ends governance. Only `memory.promote`
-promotes into `loom.shared` (the op and `learnings.review`'s path through it; demote and
-erasure only retire rows there); no worker promotes on its own. An admin read lists the
-namespace's shared definitions with the read-time check's verdict on each and the reason a
-lapsed one lapsed (its text changed, it is `high`, gone, expired, or no longer `active`).
-A changed text is promoted again; a source that is no longer `active` is first restored
-(Undo in `memory.auto_retirements`, whose reasons include `same_key_newest_wins` for a
-later write of the same key under `newest_wins`) or cleared (`conflicts.resolve` for a
-`conflicted` or `duplicate` mark), then promoted again.
+promotes into `loom.shared` (the op and `learnings.review`'s path through it; demote,
+erasure, a redact and a relabel to `high` only retire or scrub there, as the changes below
+say); no worker promotes on its own. An admin read lists the namespace's shared
+definitions with the read-time check's verdict on each and the reason a lapsed one lapsed
+(its text changed, it is `high`, gone, expired, or no longer `active`). A changed text is
+promoted again; a source that is no longer `active` is first restored (Undo in
+`memory.auto_retirements`, whose reasons include `same_key_newest_wins` for a later write
+of the same key under `newest_wins`) or cleared (`conflicts.resolve` for a `conflicted` or
+`duplicate` mark), then promoted again.
 
 The shared layer needs eight changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
@@ -74,9 +75,11 @@ leg, because the term leg serves shared rows to every reader:
   redact of the source does not reach today, and blanks the text of every `knowledge_gap`
   and `query_history` candidate drafted for its key, promoted or not, which
   `learnings.list` shows to viewers.
-- **A relabel to `high`** of a promoted definition's source retires its shared row and
-  that row's embedding, as `memory.promote` refuses a `high` row: `loom.shared` has no
-  sensitivity of its own, so the ordinary legs would keep serving the copy.
+- **A relabel to `high`** of a promoted definition's source retires that row's shared
+  embedding, keeping the row, as a `high` row in `loom.memory` keeps its row and loses its
+  embedding: `loom.shared` has no sensitivity of its own, so the ordinary legs would
+  otherwise keep serving the copy, and no sweep removes a durable row its writer did not
+  ask to remove.
 - **A promotion of a definition carries the content hash it approves**, the hash of the
   candidate's drafted value on the review path, or one the caller must pass to
   `memory.promote` (a definition promotion without one is refused), and is refused when
@@ -94,6 +97,12 @@ leg, because the term leg serves shared rows to every reader:
   `term`, so a revision of a term always lands on the governed row's key. The read-time
   check above is what the term leg relies on; this refusal keeps such rows from being
   made.
+
+The changes to `memory.promote` break existing callers: a `definition` promotion without
+the approved hash, from a row that is not namespace-wide, or under a key that is not its
+term's slug is refused, and `approver` no longer names a definition's promoter; the SDKs
+and the MCP schema carry the hash field, and the implementing pull request names the
+break.
 
 No two governed definitions share a term or an alias, compared case-folded (the form the
 key's hash reads), so `SAT` and `Sat` are one name: promoting a definition whose term or
@@ -305,8 +314,8 @@ names the team that owns its definitions. Each turn:
    otherwise, grouped by `normalized_query_hash`, counting initial queries only
    (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and then by
    recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
-   ran. Only the normalised text is read (`normalizeQuery`, which replaces literals), so
-   no user's literal values reach the LLM or the draft;
+   ran. Only the normalised text is read, with comments removed and literals replaced
+   (`normalizeQuery`), so no user's literal values reach the LLM or the draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition for at most a setting's number of groups, and
    queues each (`source_kind = 'query_history'`): the metric's name is the `term`, its
@@ -360,7 +369,7 @@ promotes.
   `user_id` is the user (a token subject spelled as the user's id goes too, which costs
   only a trace row), and a census row; an end user's asker is stored as their id, the form
   the erasure names.
-- `loom.knowledge_gaps` keeps counts, not askers, so no op or page can say who asked: a
+- `loom.knowledge_gaps` keeps counts, not askers, so no op or page names who asked: a
   namespace step, and a user step that reads the namespaces the user has misses in, before
   the miss step deletes them, and deletes those namespaces' builds (derived rows the next
   daily pass rebuilds without the user's misses; the cost is a day without gaps there). A
