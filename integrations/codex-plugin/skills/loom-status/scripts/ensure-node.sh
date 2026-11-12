@@ -9,9 +9,25 @@
 #   ensure-node.sh --path-node   internal: the `node` on PATH is Node 18+
 set -eu
 
-# No command runs before --path-node: its PATH may hold only Node's directory.
-case $0 in */*) HERE=${0%/*} ;; *) HERE=. ;; esac
-LAUNCHER="$HERE/../../../bin/loom-node"
+# path_node: the `node` on PATH is Node.js 18+; prints the line the launcher's
+# --check prints.
+path_node() {
+  n=$(command -v node 2>/dev/null) || return 1
+  v=$("$n" --version 2>/dev/null) || return 1
+  m=${v#v}
+  m=${m%%.*}
+  case $m in '' | *[!0-9]*) return 1 ;; esac
+  [ "$m" -ge 18 ] || return 1
+  printf 'Loom hook runtime ready: %s (%s)\n' "$n" "$v"
+}
+
+# Before any command runs: the Dock check's PATH may hold only Node's directory.
+if [ "${1:-}" = '--path-node' ]; then
+  path_node
+  exit
+fi
+
+LAUNCHER="$(dirname "$0")/../../../bin/loom-node"
 CLAUDE_SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 SETUP_FILE=''
 trap 'if [ -n "$SETUP_FILE" ]; then rm -f "$SETUP_FILE"; fi' EXIT HUP INT TERM
@@ -34,18 +50,6 @@ require_privilege() {
 download_setup() {
   SETUP_FILE=$(mktemp "${TMPDIR:-/tmp}/loom-node-setup.XXXXXX")
   curl -fsSL --connect-timeout 10 --max-time 120 "$1" -o "$SETUP_FILE"
-}
-
-# path_node: the `node` on PATH is Node.js 18+; prints the line the launcher's
-# --check prints.
-path_node() {
-  n=$(command -v node 2>/dev/null) || return 1
-  v=$("$n" --version 2>/dev/null) || return 1
-  m=${v#v}
-  m=${m%%.*}
-  case $m in '' | *[!0-9]*) return 1 ;; esac
-  [ "$m" -ge 18 ] || return 1
-  printf 'Loom hook runtime ready: %s (%s)\n' "$n" "$v"
 }
 
 # Claude Code's hooks run the `node` on its PATH. Started from the Dock it has
@@ -84,11 +88,6 @@ codex_helper_check() {
 }
 
 GUI_FIX='set PATH in the env block of '"$CLAUDE_SETTINGS"' to the whole search path with that Node'"'"'s directory first, such as "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin".'
-
-if [ "${1:-}" = '--path-node' ]; then
-  path_node
-  exit
-fi
 
 if [ "${1:-}" = '--check' ]; then
   if claude_code; then
