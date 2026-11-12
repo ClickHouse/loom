@@ -126,11 +126,17 @@ function createRecallKey(file) {
   }
 }
 
-/** The names besideKey gives next to `file`: `<name>.<pid>.<12 hex>`. */
-const besideKeyPattern = (file) => new RegExp(`^${path.basename(file).replace(/\./g, "\\.")}\\.\\d+\\.[0-9a-f]{12}$`);
+const BESIDE_KEY_SUFFIX = /^\d+\.[0-9a-f]{12}$/;
+
+/** Whether `name` is one besideKey gives next to `file`: `<name>.<pid>.<12 hex>`. The
+ *  file's own name is compared as text, so no character of it reads as a pattern. */
+const isBesideKey = (name, file) => {
+  const head = `${path.basename(file)}.`;
+  return name.startsWith(head) && BESIDE_KEY_SUFFIX.test(name.slice(head.length));
+};
 
 /** After a read refused `target` for a second link: removes every other link to it
- *  that is one of this install's names beside `keyFile` (besideKeyPattern: a creator
+ *  that is one of this install's names beside `keyFile` (isBesideKey: a creator
  *  between its link and its unlink, or one that died there), then looks again.
  *  "retry" when `target` is now ours with one link, or gone; "refuse" for anything
  *  else: a link elsewhere, a symlink, another user's file. Exported for tests. */
@@ -149,7 +155,6 @@ export function clearStrayLinks(target, keyFile) {
   if (!st) return "refuse";
   if (st.nlink === 1) return "retry"; // the creator has unlinked its name since the read
   const dir = path.dirname(keyFile);
-  const pattern = besideKeyPattern(keyFile);
   let names = [];
   try {
     names = fs.readdirSync(dir);
@@ -158,7 +163,7 @@ export function clearStrayLinks(target, keyFile) {
   }
   for (const n of names) {
     const p = path.join(dir, n);
-    if (p === target || !pattern.test(n)) continue;
+    if (p === target || !isBesideKey(n, keyFile)) continue;
     try {
       const other = fs.lstatSync(p);
       if (other.ino === st.ino && other.dev === st.dev) removeFile(p);
