@@ -550,8 +550,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN NOT: One key (memory.delete / memory.set / memory.lock). A whole "
         "agent or user (memory.clear, admin, via loom_op); a user's request to "
         "delete all their data is erasure.request (via loom_op where it is not "
-        "listed). Never skip "
-        "the dry run when the user has not seen the list."
+        "listed). Never skip the dry run when the user has not seen the list."
     ),
     "memory.unlock": (
         "Lift a memory.lock (admin). Returns the previous mode. Locking only "
@@ -569,8 +568,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "user now states a new value, a correction, or a more precise version "
         "of it — 'the deploy day moved to Thursday', 'the budget is actually "
         "40k'. It keeps the row's tags, confidence, expiry, lock and history; "
-        "memory.set would "
-        "write a new version blind. " + revision_policy("memory.update") + " "
+        "memory.set would write a new version blind. " + revision_policy("memory.update") + " "
         "Do NOT use it for a genuinely new fact — call memory.set.\n\n"
         "Resolves the key across the namespace; pass agent/user_id/session_id "
         "only to narrow when the key is live under several writers (409 "

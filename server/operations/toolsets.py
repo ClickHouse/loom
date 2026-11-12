@@ -201,9 +201,8 @@ _MCP_CODING_OPS: frozenset[str] = frozenset(
 # for a session acting as an agent — pull and claim, post for another agent,
 # finish / fail / decline / defer what it claimed, renew the lease, watch
 # what it posted, read the board, find the inbox. Its own roster rather than
-# a core addition: the default core listing is paid by every Claude Code
-# session and its tool count sits under the tool-selection knee; a session
-# that acts as an agent mounts `?toolset=tasks` (or is told to). The ops stay
+# a core addition: the default listing is paid by every session that mounts
+# it; a session that acts as an agent mounts `?toolset=tasks` (or is told to). The ops stay
 # experimental until the ledger shows production callers.
 _MCP_TASK_OPS: frozenset[str] = frozenset(
     {
