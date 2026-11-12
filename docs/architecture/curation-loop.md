@@ -53,42 +53,38 @@ and through N-1 included; what it cannot see is named under rolling upgrades. Th
 layer already is the namespace's admin-approved copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records its source
-(`promoted_from`) and, on the review path, the candidate it came from
-(`promoted_from_candidate_id`; for a definition the wire op `memory.promote` ignores the
-field and names it in `ignored_args`, as it does `approver`, while the review path passes
-the candidate's id to the promotion as an internal argument the wire model does not
-expose, so only a review records a candidate), `memory.lineage` walks it back, and every
-build knows it. So governance needs no table or state of its own. An edit, a relabel to
-`high` or a tombstone of the source, by any writer or worker on any build, ends governance
-while the source differs from what the admin approved; a copy that keeps the text (the
-entity pass, a touch) keeps it, and a source that returns to the approved state (a
-restore, an edit reverted byte for byte) is governed again with no new promotion. A
-relabel back from `high` does not bring back the shared embedding it retired: the term leg
-serves the definition again, and an admin promotes it again to restore the copy's search
-row. `memory.demote` ends governance. Only `memory.promote` promotes into `loom.shared`
-(the op and `learnings.review`'s path through it; demote, erasure, a redact and a relabel
-to `high` only retire or scrub there, as the changes below say); no worker promotes on its
-own. An admin read, `memory.definitions.list`, lists the namespace's shared definitions
-with the read-time check's verdict on each and the reason a lapsed one lapsed (its text
-changed, it is `high`, gone, expired, past its `valid_to`, under a key that is not its
-term's slug, promoted from a row that is not the namespace-wide one, or no longer
-`active`), and lists a definition that passes the check but is not served because a later
-promotion holds one of its names as `shadowed`, naming the row that wins. A changed text
-is promoted again. On N no write-time verdict retires or marks a definition's source (the
-exemptions below), so a source that is no longer `active` was left that way by N-1 or
-before this design, and is restored (Undo in `memory.auto_retirements`, whose reasons
-include `same_key_newest_wins` for a later write of the same key under `newest_wins`, for
-a retirement of the last 30 days that op lists, and `memory.restore` for an older one) or
-cleared (`conflicts.resolve` for a `conflicted` mark, `memory.dedup_resolve` for a
-`duplicate` one), which governs it again when its text is the approved one, and is
-promoted again otherwise.
+(`promoted_from`) and the candidate it came from (`promoted_from_candidate_id`),
+`memory.lineage` walks it back, and every build knows it. So governance needs no table or
+state of its own. An edit, a relabel to `high` or a tombstone of the source, by any writer
+or worker on any build, ends governance while the source differs from what the admin
+approved; a copy that keeps the text (the entity pass, a touch) keeps it, and a source
+that returns to the approved state (a restore, an edit reverted byte for byte) is governed
+again with no new promotion. A relabel back from `high` does not bring back the shared
+embedding it retired: the term leg serves the definition again, and an admin promotes it
+again to restore the copy's search row. `memory.demote` ends governance. Only
+`memory.promote` promotes into `loom.shared` (the op and `learnings.review`'s path through
+it; demote, erasure, a redact and a relabel to `high` only retire or scrub there, as the
+changes below say); no worker promotes on its own. An admin read,
+`memory.definitions.list`, lists the namespace's shared definitions with the read-time
+check's verdict on each and the reason a lapsed one lapsed (its text changed, it is
+`high`, gone, expired, past its `valid_to`, under a key that is not its term's slug,
+promoted from a row that is not the namespace-wide one, or no longer `active`), and lists
+a definition that passes the check but is not served because a later promotion holds one
+of its names as `shadowed`, naming the row that wins. A changed text is promoted again. On
+N no write-time verdict retires or marks a definition's source (the exemptions below), so
+a source that is no longer `active` was left that way by N-1 or before this design, and is
+restored (Undo in `memory.auto_retirements`, whose reasons include `same_key_newest_wins`
+for a later write of the same key under `newest_wins`, for a retirement of the last 30
+days that op lists, and `memory.restore` for an older one) or cleared (`conflicts.resolve`
+for a `conflicted` mark, `memory.dedup_resolve` for a `duplicate` one), which governs it
+again when its text is the approved one, and is promoted again otherwise.
 
 One prerequisite is not part of this design: namespace erasure does not reach
 `loom.shared` today (only user erasure does, by provenance), so a namespace erasure leaves
 every promoted row's text behind, whatever its type. A fix of its own adds the namespace
 step and its census row, and lands before the term leg.
 
-The shared layer needs seven changes for this, each in the pull request that adds the term
+The shared layer needs eight changes for this, each in the pull request that adds the term
 leg except where a change names another, because the term leg serves shared rows to every
 reader:
 
@@ -97,12 +93,12 @@ reader:
   row's embedding, which a redact does not reach today, and blanks the text of every
   `knowledge_gap` and `query_history` candidate whose drafted value hashes (canonical
   JSON) to that version's `content_sha256`, promoted or not, which `learnings.list` shows
-  to viewers, and no other draft of the term; the pull request that adds those candidate
-  kinds adds that part. When the live head still holds the redacted text (an edit reverted
-  byte for byte), the shared copy and the drafts are left, as `memory.redact` leaves a
-  live copy of a text it scrubs from history. A blanked candidate is not promoted:
-  `learnings.review` answers it not found, as it does a blanked `assistant_turn` candidate
-  today.
+  (a `knowledge_gap` draft to viewers, a `query_history` one to admins), and no other
+  draft of the term; the pull request that adds those candidate kinds adds that part. When
+  the live head still holds the redacted text (an edit reverted byte for byte), the shared
+  copy and the drafts are left, as `memory.redact` leaves a live copy of a text it scrubs
+  from history. A blanked candidate is not promoted: `learnings.review` answers it not
+  found, as it does a blanked `assistant_turn` candidate today.
 - **A relabel to `high`** of a promoted definition's source retires that row's shared
   embedding, keeping the row: `loom.shared` has no sensitivity of its own, so the ordinary
   legs would otherwise keep serving the copy, and no sweep removes a durable row its
@@ -112,6 +108,10 @@ reader:
   `memory.promote` (a definition promotion without one is refused), and is refused when
   the source's text no longer has it, so a writer's change between the write and the
   promotion is never signed off as the admin's.
+- **`promoted_from_candidate_id`** of a definition is set only by the review path, which
+  passes the candidate's id to the promotion as an internal argument the wire model does
+  not expose; the wire op `memory.promote` ignores the field for a definition and names it
+  in `ignored_args`, so only a review records a candidate.
 - **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
   through `memory.promote` or `learnings.review`, and so are the queue row's `decided_by`
   and the audit subject on such a review, never taken from the body's `approver`, which
@@ -157,21 +157,21 @@ refusal](../features/memory/conflicts-and-refusal.md) applies to every other typ
 the conflict resolver ([conflicts and
 refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither flags
 nor retires it, and `memory.consolidate` leaves rows of type `definition` out of its
-clusters (today it groups every active row of one type by similarity and tombstones the
-merged keys), since a definition's key is its term and `MRR` is not a revision of `ARR`.
-Under `newest_wins`, a write of a `definition/` key by another identity (a user's own
-copy) does not retire the namespace-wide row of that key, as same-key supersession does
-today for every unpinned row the writer reads: only a write of the namespace-wide row
-itself revises it, so no writer ends an admin's definition by writing a private copy,
-which the term leg then keeps out of the served list. This narrows the `newest_wins` rule
-that a write for a key retires every older live row with that key, whoever wrote it
-([conflicts and refusal](../features/memory/conflicts-and-refusal.md)), for a definition's
-namespace-wide row only; the pinned-peer exemption above is the one `decision` already has
-as a key-identified type. The implementing pull request updates the policy table of that
-page, the memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check and
-consolidation in [memory architecture](memory-architecture.md) and [conflicts and
-refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the old verdicts
-during a rollout. Conflict surfacing compares a row only with rows of its own
+clusters (today it groups every active, unpinned and unlocked row of one type by
+similarity and tombstones the merged keys), since a definition's key is its term and `MRR`
+is not a revision of `ARR`. Under `newest_wins`, a write of a `definition/` key by another
+identity (a user's own copy) does not retire the namespace-wide row of that key, as
+same-key supersession does today for every unpinned row the writer reads: only a write of
+the namespace-wide row itself revises it, so no writer ends an admin's definition by
+writing a private copy, which the term leg then keeps out of the served list. This narrows
+the `newest_wins` rule that a write for a key retires every older live row with that key,
+whoever wrote it ([conflicts and refusal](../features/memory/conflicts-and-refusal.md)),
+for a definition's namespace-wide row only; the pinned-peer exemption above is the one
+`decision` already has as a key-identified type. The implementing pull request updates the
+policy table of that page, the memory-plane rule (`.claude/rules/memory-plane.md`), the
+write-time check and consolidation in [memory architecture](memory-architecture.md) and
+[conflicts and refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the
+old verdicts during a rollout. Conflict surfacing compares a row only with rows of its own
 `memory_type`, so a learned fact that contradicts a definition is not flagged against it.
 The term leg serves the governed definition above such a fact; a cross-type check would
 add a candidate read to every write, and is not part of this design.
@@ -188,11 +188,13 @@ fields, which the SDKs and the MCP schema carry.
 **What it reads.** The addressed namespace's live `loom.shared` rows of type `definition`
 under a `definition/` key, from that namespace only, whatever `namespace_scope` fans out
 over. It serves no definition whose source is `sensitivity = 'high'` (the read-time check
-above). Its read is bounded by a setting; past the bound, the most recently promoted
-definitions (by `promoted_at`) are read. It runs concurrently with the other legs under
-its own time bound, which never shortens theirs; a leg past its bound adds nothing. Its
-latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
-`server/settings/catalog.py`) in the pull request that adds it.
+above). Its read is bounded by a setting; past the bound (`term_leg` `capped`, which also
+keeps a `memory.search` from recording a miss, and which `memory.definitions.list` reports
+for a namespace over the bound), the most recently promoted definitions (by `promoted_at`)
+are read. It runs concurrently with the other legs under its own time bound, which never
+shortens theirs; a leg past its bound adds nothing. Its latency is measured against the
+op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull request that
+adds it.
 
 **Matching.** A term or alias matches where it appears in the query with no character next
 to it that continues its edge:
@@ -226,10 +228,10 @@ last: when more match than fit, the later ones in query order are not served. A 
 shorten a body but never reorders the hits.
 
 **Scores.** A governed hit's `similarity` and `distance` are its shared embedding's to the
-query, null when it has none, and its `rank_score` is above the pool's; its
-`below_threshold` flag is never set. A response that serves a governed hit has `abstain`
-false and no `abstain_code`; `retrieval_confidence` and `retrieval_risk` describe the hits
-that are not governed.
+query, `0` when it has none (both stay numbers, and `governed` marks the hit), and its
+`rank_score` is above the pool's; its `below_threshold` flag is never set. A response that
+serves a governed hit has `abstain` false and no `abstain_code`; `retrieval_confidence`
+and `retrieval_risk` describe the hits that are not governed.
 
 **Pages and fields.** The leg runs only on a search's first page. The list a search parks
 for its later pages is the merged one, governed hits first, so the next page starts after
@@ -317,10 +319,12 @@ search another op runs on its behalf:
   sources](document-sources.md)), a search that left out a document its reader may not see
   records no miss;
 - `loom_search` (`search.query`) whose every section (memory, knowledge, profile,
-  conversations) came back empty, with no leg failed, no hit withheld (`withheld`), no
-  tracker verdict, no namespace skipped (`namespaces_skipped`) and no `tags`, under a read
-  scope of the whole namespace. Its own memory and knowledge searches record nothing, so a
-  question that knowledge answers is not a gap because memory abstained.
+  conversations) came back empty, with no leg failed, no hit withheld because an answer
+  led (`withheld` with a reason other than `below_precision_floor`, which means nothing
+  passed the floor and counts as found nothing), no tracker verdict, no namespace skipped
+  (`namespaces_skipped`) and no `tags`, under a read scope of the whole namespace. Its own
+  memory and knowledge searches record nothing, so a question that knowledge answers is
+  not a gap because memory abstained.
 
 Only a search's first page can record a miss (a call with a `page` handle never does), and
 a search that could not answer for another reason is not a miss: a degraded answer whose
@@ -451,11 +455,11 @@ admits the `knowledge.` group to such a token (`honours_read_scope` in
 gap holds the drafted definition and the gap's id. The LLM drafts it from nothing but the
 gap's queries, each asked in that form by at least `knowledge_gaps_min_askers` askers; its
 words are the model's, but nothing else reached the model: that threshold is why it may be
-shown to the namespace's viewers in `learnings.list`, as every learning is, and why it
-outlives a user erasure. A gap has at most one pending draft: the candidate's id derives
-from the gap's id, and a second `knowledge.gaps.draft` for it answers the pending draft
-without an LLM call. The Library page shows a gaps tile for a namespace the viewer
-administers, with a **Draft definition** action per gap.
+shown to the namespace's viewers in `learnings.list`, and why it outlives a user erasure.
+A gap has at most one pending draft: the candidate's id derives from the gap's id, and a
+second `knowledge.gaps.draft` for it answers the pending draft without an LLM call. The
+Library page shows a gaps tile for a namespace the viewer administers, with a **Draft
+definition** action per gap.
 
 ## Definitions from query history
 
