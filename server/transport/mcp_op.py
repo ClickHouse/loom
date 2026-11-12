@@ -74,10 +74,6 @@ def _row(op: Any, purpose: str | None = None) -> dict[str, Any]:
     return row
 
 
-def _is_read(op: Operation) -> bool:
-    return bool(op.read_only)
-
-
 def routes_writes(toolset: str | None) -> bool:
     """Whether `loom_op` on this connection's ``?toolset=`` routes a write op
     (a read-only connection routes read ops only). Resolved as the listing is,
@@ -94,7 +90,7 @@ def reachable(op: Operation, toolset: str | None) -> bool:
 
 def _routed(op: Operation, writes: bool) -> bool:
     """`reachable` for a connection whose `routes_writes` is already known."""
-    return op.name not in _MCP_HIDDEN_OPS and (_is_read(op) or writes)
+    return op.name not in _MCP_HIDDEN_OPS and (op.read_only or writes)
 
 
 # Tool name → op: how a `tools/call` resolves its op, and how prose naming a
@@ -114,7 +110,7 @@ def _lookup(name: str) -> Operation | None:
     return TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
 
 
-def name_ops_for_listing(text: str, listed: Set[str], writes: bool) -> str:
+def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool) -> str:
     """``text`` as a client of this listing reads it. A client calls a listed op
     by its tool name, so every op the listing carries is named by its tool. An
     op it does not carry keeps its dotted name, the one `loom_op` takes, and its
@@ -147,7 +143,7 @@ _EXAMPLES: tuple[tuple[str, str], ...] = (
 )
 
 
-def loom_op_description(listed: Set[str], writes: bool) -> str:
+def loom_op_description(listed: Set[str], *, writes: bool) -> str:
     """`loom_op`'s text for a listing whose tool names are ``listed`` and whose
     `routes_writes` is ``writes``."""
     shown = []
@@ -157,8 +153,8 @@ def loom_op_description(listed: Set[str], writes: bool) -> str:
             shown.append(f"{what} ({name})")
     such_as = f" It reaches, for example, {' and '.join(shown)}." if shown else ""
     reads = "" if writes else " On this connection it runs read ops only."
-    # Discovery and the call shape lead: compact keeps the first paragraph cut near
-    # 280 chars, so both must fit in the first sentence.
+    # compact keeps about the first 280 chars, so the help call and the example
+    # call come first.
     return (
         "Run a Loom op this list does not show as a tool, by its dotted name: "
         '{"op": "help", "query": "<words>"} lists matching ops, then call one as '
@@ -169,8 +165,9 @@ def loom_op_description(listed: Set[str], writes: bool) -> str:
     )
 
 
+# Its description is built per listing: loom_op_description().
 DESCRIPTOR: dict[str, Any] = {
-    "name": LOOM_OP_TOOL_NAME,  # its description is built per listing: loom_op_description()
+    "name": LOOM_OP_TOOL_NAME,
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -257,21 +254,16 @@ _INSTEAD: dict[str, str] = {
 }
 
 
-_NEEDS_THE_USER = (
-    "this needs the user: ask them to do it in the dashboard. Don't look for another "
-    "route, token or credential to do it yourself"
-)
+_NO_WORKAROUND = "Don't look for another route, token or credential to do it yourself"
+_NEEDS_THE_USER = f"this needs the user: ask them to do it in the dashboard. {_NO_WORKAROUND}"
 # For an op without the `dashboard` reach kind (server/operations/reach.py).
-_NEEDS_AN_OPERATOR = (
-    "this needs the user or an operator, outside this chat. Don't look for another "
-    "route, token or credential to do it yourself"
-)
+_NEEDS_AN_OPERATOR = f"this needs the user or an operator, outside this chat. {_NO_WORKAROUND}"
 # The hidden ops whose alternative is a write. On a connection that routes
 # reads only they get _READ_ONLY_CONNECTION instead of a route it cannot take.
 _WRITE_ALTERNATIVE = frozenset({"memory.bulk_set", "memory.delete_version"})
 _READ_ONLY_CONNECTION = (
     "this connection is read-only: tell the user the change needs a connection that "
-    "can write. Don't look for another route, token or credential to do it yourself"
+    f"can write. {_NO_WORKAROUND}"
 )
 
 
@@ -290,7 +282,7 @@ def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
     else:
         default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
         instead = name_ops_for_listing(
-            _INSTEAD.get(name, default), listed_tool_names(toolset), writes
+            _INSTEAD.get(name, default), listed_tool_names(toolset), writes=writes
         )
     return {
         "error": f"{name} exists but is not callable on this MCP connection",
@@ -346,8 +338,8 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     if op is None or not _routed(op, writes):
         if op is not None:  # a write on a read-only connection
             emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP)
-        # suggest only ops this connection routes, never the write it refused
-        routed = [n for n, o in by_name.items() if _routed(o, writes) and n != name]
+        # suggest only ops this connection routes
+        routed = [n for n, o in by_name.items() if _routed(o, writes)]
         near = difflib.get_close_matches(name, routed, n=5, cutoff=0.6)
         body = {
             "error": f"no op {name!r} reachable here"

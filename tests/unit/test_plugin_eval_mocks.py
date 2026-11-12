@@ -35,7 +35,7 @@ MOCKS = Path(__file__).resolve().parents[2] / "integrations/claude-code-plugin/e
 _OPS = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 _SYNTHETIC = {
     d["name"]: d.get("outputSchema") or {}
-    for d in _synthetic_tool_descriptors("core", listed_tool_names("core"), True)
+    for d in _synthetic_tool_descriptors("core", listed_tool_names("core"), writes=True)
 }
 _PLACEHOLDER = re.compile(r"\{\{\s*input\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}")
 _JSON_TYPES: dict[str, type | tuple[type, ...]] = {

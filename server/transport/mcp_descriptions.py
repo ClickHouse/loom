@@ -701,8 +701,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "strongest neighbours and the walk stops at max_nodes.\n"
         "WHEN: Multi-hop reasoning — 'what's connected to X', "
         "'who works on the same projects as Y', 'walk the relationships "
-        "of entity Z'. facts.related is single-hop only. "
-        "Heavier than facts.related; use when single-hop isn't enough.\n"
+        "of entity Z'. Heavier than facts.related, which is single-hop only; "
+        "use it when one hop is not enough.\n"
         "ARGS: `seed_entity` is required. `max_hops` (default 2, max 4) "
         "controls walk depth. `top_k_per_hop` (default 20) caps the "
         "frontier per step so a hub entity doesn't blow up the walk. "
@@ -2371,8 +2371,7 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
 # The assistant listing has no facts.related and no ingest ops, so these drop the
 # pointers the shared texts give (derived, so the rest cannot drift).
 ASSISTANT_TOOL_DESCRIPTIONS["facts.traverse"] = TOOL_DESCRIPTIONS["facts.traverse"].replace(
-    "facts.related is single-hop only. Heavier than facts.related; use when single-hop "
-    "isn't enough.",
+    "Heavier than facts.related, which is single-hop only; use it when one hop is not enough.",
     "Heavier than a one-hop lookup; use it when one hop is not enough.",
     1,
 )

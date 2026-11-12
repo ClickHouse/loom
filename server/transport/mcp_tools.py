@@ -74,18 +74,18 @@ log = logging.getLogger(__name__)
 # ============================================================
 
 
-def _name_ops_in_fields(schema: Any, listed: Set[str], writes: bool) -> Any:
+def _name_ops_in_fields(schema: Any, listed: Set[str], *, writes: bool) -> Any:
     """A copy of ``schema`` with every field description rendered for the listing."""
     if isinstance(schema, list):
-        return [_name_ops_in_fields(item, listed, writes) for item in schema]
+        return [_name_ops_in_fields(item, listed, writes=writes) for item in schema]
     if not isinstance(schema, dict):
         return schema
     out: dict[str, Any] = {}
     for key, value in schema.items():
         if key == "description" and isinstance(value, str):
-            out[key] = name_ops_for_listing(value, listed, writes)
+            out[key] = name_ops_for_listing(value, listed, writes=writes)
         else:
-            out[key] = _name_ops_in_fields(value, listed, writes)
+            out[key] = _name_ops_in_fields(value, listed, writes=writes)
     return out
 
 
@@ -97,7 +97,7 @@ SYNTHETIC_TOOL_NAMES = frozenset(
 
 
 def _synthetic_tool_descriptors(
-    toolset: str, listed: Set[str], writes: bool
+    toolset: str, listed: Set[str], *, writes: bool
 ) -> list[dict[str, Any]]:
     """The hand-written tools a listing carries. ``listed`` is that listing's tool
     names and ``writes`` its `routes_writes`."""
@@ -109,7 +109,7 @@ def _synthetic_tool_descriptors(
         # synthetic schemas as it does to the registry's.
         d["inputSchema"] = collapse_nullable(d["inputSchema"])
         if d["name"] == LOOM_OP_TOOL_NAME:  # its text names what this listing leaves out
-            d["description"] = loom_op_description(listed, writes)
+            d["description"] = loom_op_description(listed, writes=writes)
     if "coding" in toolset_parts(toolset):
         # The coding tier's activation text (same triggers,
         # one line, no persona-tone clause) and search text (derived).
@@ -499,12 +499,12 @@ async def _tools_descriptor(
             descriptor["_meta"] = {"anthropic/alwaysLoad": True}
         descriptors.append(descriptor)
     if not is_assistant(toolset):
-        descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes))
+        descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
     for d in descriptors:
         if d["name"] == LOOM_OP_TOOL_NAME:  # built for this listing already
             continue
-        d["description"] = name_ops_for_listing(d["description"], listed, writes)
-        d["inputSchema"] = _name_ops_in_fields(d["inputSchema"], listed, writes)
+        d["description"] = name_ops_for_listing(d["description"], listed, writes=writes)
+        d["inputSchema"] = _name_ops_in_fields(d["inputSchema"], listed, writes=writes)
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,

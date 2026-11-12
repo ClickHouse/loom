@@ -232,7 +232,8 @@ def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code:
 
 
 def test_the_assistant_listing_names_only_its_own_tools():
-    """With no loom_op to reach the rest, a text may name only tools the listing carries."""
+    """With no loom_op to reach the rest, a text may name only tools the listing carries,
+    the synthetic ones included."""
     tools = _listing("assistant", False)
     names = {t["name"] for t in tools}
     listed = {TOOL_TO_OP.get(n, n) for n in names}
@@ -241,6 +242,25 @@ def test_the_assistant_listing_names_only_its_own_tools():
         for text in _texts(t):
             unlisted = _op_refs(text) - listed
             assert not unlisted, f"assistant: {t['name']} names {sorted(unlisted)}"
+            synthetic = set(re.findall(r"\bloom_[a-z_]+\b", text)) & (
+                mt.SYNTHETIC_TOOL_NAMES - names
+            )
+            assert not synthetic, f"assistant: {t['name']} names {sorted(synthetic)}"
+
+
+def test_no_source_text_puts_an_op_inside_a_longer_code_span():
+    """The "(via loom_op)" marker would land inside the span."""
+    from server.transport.mcp_descriptions import (
+        ASSISTANT_TOOL_DESCRIPTIONS,
+        CODING_TOOL_DESCRIPTIONS,
+    )
+
+    sources = (TOOL_DESCRIPTIONS, ATOMIC_TOOL_DESCRIPTIONS, CODING_TOOL_DESCRIPTIONS)
+    for texts in (*sources, ASSISTANT_TOOL_DESCRIPTIONS, mcp_op._INSTEAD):
+        for name, text in texts.items():
+            for span in re.findall(r"`([^`]+)`", text):
+                ops = [m for m in re.findall(mcp_op.OP_MENTION, span) if m in OPS]
+                assert not ops or span.strip() in ops, f"{name}: `{span}`"
 
 
 def test_no_source_text_writes_an_op_as_a_call():
@@ -260,35 +280,44 @@ def test_no_source_text_writes_an_op_as_a_call():
 def test_naming_marks_only_what_loom_op_routes():
     listed = {"loom_op", "loom_memory_set"}
     text = "Save with memory.set; tidy with `memory.apply`, then memory.apply again."
-    assert mcp_op.name_ops_for_listing(text, listed, True) == (
+    assert mcp_op.name_ops_for_listing(text, listed, writes=True) == (
         "Save with loom_memory_set; tidy with `memory.apply` (via loom_op), "
         "then memory.apply again."
     )
     # loom_op routing reads only (writes=False) leaves a write unmarked; a hidden op stays
-    assert mcp_op.name_ops_for_listing("memory.apply", listed, False) == "memory.apply"
-    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, False) == "memory.apply"
-    assert mcp_op.name_ops_for_listing("memory.bulk_set", listed, True) == "memory.bulk_set"
+    assert mcp_op.name_ops_for_listing("memory.apply", listed, writes=False) == "memory.apply"
+    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, writes=False) == "memory.apply"
+    assert mcp_op.name_ops_for_listing("memory.bulk_set", listed, writes=True) == "memory.bulk_set"
     # without loom_op on the listing nothing is marked
-    assert mcp_op.name_ops_for_listing("memory.apply", {"loom_memory_set"}, True) == "memory.apply"
-    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, True) == (
+    assert (
+        mcp_op.name_ops_for_listing("memory.apply", {"loom_memory_set"}, writes=True)
+        == "memory.apply"
+    )
+    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, writes=True) == (
         "memory.apply (via loom_op)"
     )
     # a dotted name that is no op, such as a response field path, stays
-    assert mcp_op.name_ops_for_listing("`memory.next_page`", listed, True) == "`memory.next_page`"
+    assert (
+        mcp_op.name_ops_for_listing("`memory.next_page`", listed, writes=True)
+        == "`memory.next_page`"
+    )
     # a quoted value or a path is not a reference; a possessive is
-    assert mcp_op.name_ops_for_listing("('memory.delete', 'memory.*')", listed, True) == (
+    assert mcp_op.name_ops_for_listing("('memory.delete', 'memory.*')", listed, writes=True) == (
         "('memory.delete', 'memory.*')"
     )
-    assert mcp_op.name_ops_for_listing("/v1/memory.set", listed, True) == "/v1/memory.set"
-    assert mcp_op.name_ops_for_listing("memory.set's text", listed, True) == (
+    assert mcp_op.name_ops_for_listing("/v1/memory.set", listed, writes=True) == "/v1/memory.set"
+    assert mcp_op.name_ops_for_listing("memory.set's text", listed, writes=True) == (
         "loom_memory_set's text"
     )
     # a citation tag is not an op mention
-    assert mcp_op.name_ops_for_listing("[knowledge.query#1]", listed, True) == (
+    assert mcp_op.name_ops_for_listing("[knowledge.query#1]", listed, writes=True) == (
         "[knowledge.query#1]"
     )
     # a field path under a listed op is not an op mention and stays whole
-    assert mcp_op.name_ops_for_listing("`memory.set.value`", listed, True) == "`memory.set.value`"
+    assert (
+        mcp_op.name_ops_for_listing("`memory.set.value`", listed, writes=True)
+        == "`memory.set.value`"
+    )
 
 
 def test_a_listing_build_leaves_the_source_texts_as_written():

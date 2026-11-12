@@ -2806,7 +2806,7 @@ settings:
   # that names one gets that one instead). Rosters are the frozensets in
   # server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on
   # "assistant"); on every toolset but "assistant" this is visibility only and every op
-  # stays callable by name over MCP and /v1/*, save that loom_op on "readonly" routes
+  # stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes
   # read ops only. "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
   # mcp_code_tools is on). "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the
   # plugin selects it per request with `?toolset=coding`. "tracker", "tasks" — the

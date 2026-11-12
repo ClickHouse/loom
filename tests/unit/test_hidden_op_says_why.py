@@ -50,7 +50,7 @@ def test_a_readonly_deployment_default_routes_reads_only(monkeypatch) -> None:
 
     monkeypatch.setattr(settings, "mcp_toolset", "readonly")
     assert not mcp_op.routes_writes(None)
-    assert "read ops only" in mcp_op.loom_op_description(set(), mcp_op.routes_writes(None))
+    assert "read ops only" in mcp_op.loom_op_description(set(), writes=mcp_op.routes_writes(None))
     body = _call("memory.set", {"memory_key": "k", "value": "v"})["structuredContent"]
     assert body["code"] == "UNKNOWN_OP" and "read-only" in body["error"]
     assert mcp_op.hidden_refusal("memory.bulk_set", None)["instead"].startswith(

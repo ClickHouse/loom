@@ -176,7 +176,7 @@ def test_the_namespace_check_sees_the_inner_arguments(monkeypatch: pytest.Monkey
 def test_the_description_stays_small() -> None:
     import json
 
-    widest = {**mcp_op.DESCRIPTOR, "description": mcp_op.loom_op_description(set(), True)}
+    widest = {**mcp_op.DESCRIPTOR, "description": mcp_op.loom_op_description(set(), writes=True)}
     assert len(json.dumps(widest)) // 4 <= 250
 
 
@@ -198,7 +198,7 @@ def test_loom_op_text_is_built_for_its_listing(
     tools = asyncio.run(_tools_descriptor(toolset=toolset))
     names = {d["name"] for d in tools}
     text = next(d["description"] for d in tools if d["name"] == "loom_op")
-    assert text == mcp_op.loom_op_description(names, mcp_op.routes_writes(toolset))
+    assert text == mcp_op.loom_op_description(names, writes=mcp_op.routes_writes(toolset))
     named = set(re.findall(r'"op": "([a-z_]+(?:\.[a-z_]+)+)"', text))
     named |= set(re.findall(r"\(([a-z_]+\.[a-z_]+)\)", text))
     assert "memory.related" in named
