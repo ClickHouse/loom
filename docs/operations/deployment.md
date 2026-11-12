@@ -783,8 +783,8 @@ and what it leaves:
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but any client entry whose toolset includes `coding`, `tracker`
   (`code.bisect_candidates`, `code.pr_check`, `code.impact`) or `assistant` (`code.search`,
-  `code.symbol`) lists code tools that refuse. The plugins, `loom install` for Claude Code
-  and Codex, the lines `loom up` and `loom init` print, and the dashboard's Claude Code,
+  `code.symbol`) lists code tools that refuse. The plugins, `loom install` for Claude Code,
+  Codex and Cursor, the lines `loom up` and `loom init` print, and the dashboard's Claude Code,
   Codex and Cursor snippets ask for `coding`. Point those entries at `core` (with `tasks`
   added where agents use the task inbox): the Claude Code plugin's `toolset` option
   ([options](../features/integrations/claude-code.md#install)),
