@@ -1748,7 +1748,7 @@ Mark a memory as explicitly rejected (extractor / user review decided the candid
 
 Find memories sharing entities with the source memory.
 
-`POST /v1/memory.related` · MCP `loom_memory_related` · role `viewer` · read
+`POST /v1/memory.related` · MCP `loom_memory_related` · role `viewer` · read · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |

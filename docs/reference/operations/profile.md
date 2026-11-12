@@ -32,7 +32,7 @@ Recent profile reads per agent — "which AI client read my profile, when?".
 
 WHAT: Atomic append to an existing profile section.
 
-`POST /v1/profile.append` · MCP `loom_profile_append` · role `writer` · write
+`POST /v1/profile.append` · MCP `loom_profile_append` · role `writer` · write · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -114,7 +114,7 @@ WHAT: Substring rewrite within a profile section.
 
 WHAT: Create or replace a profile section at `label`.
 
-`POST /v1/profile.set` · MCP `loom_profile_set` · role `writer` · idempotent
+`POST /v1/profile.set` · MCP `loom_profile_set` · role `writer` · idempotent · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |

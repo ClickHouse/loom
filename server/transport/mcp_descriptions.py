@@ -189,7 +189,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`found: false` = no live row — `tombstoned: false` is never success.\n"
         "WHEN: Explicit user request — 'forget that I…', 'delete X in Loom'.\n"
         "WHEN NOT: Not as cleanup or on inferred intent; to fix a wrong memory, "
-        "memory.set the corrected value (the new write supersedes).\n"
+        "memory.update it with the corrected value.\n"
         "ARGS: memory_key. Server fills identity."
     ),
     "memory.promote": (
@@ -524,8 +524,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: 'make sure this never changes', 'freeze the deploy window', "
         "'this must not be deleted / forgotten', 'protect this fact', "
         "'legal hold on X', 'keep this exactly as is'.\n"
-        "WHEN NOT: To rank a memory higher (that is memory.set with pinned) "
-        "or to share it (memory.promote, via loom_op). Never lock on "
+        "WHEN NOT: To keep a fact ahead of later conflicting writes (that is "
+        "memory.pin) or to share it (memory.promote, via loom_op). Never lock on "
         "inferred intent.\n"
         "ARGS: memory_key, mode (read_only | no_delete), reason (required), "
         "optional until / ttl_seconds. Server fills identity."
@@ -566,7 +566,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: a read (memory.get or loom_search) returned this key and the "
         "user now states a new value, a correction, or a more precise version "
         "of it — 'the deploy day moved to Thursday', 'the budget is actually "
-        "40k', 'the client is Acme Corp (the Berlin office)'. It keeps the "
+        "40k'. It keeps the "
         "row's tags, confidence, expiry, lock and history; memory.set would "
         "write a new version blind. " + revision_policy("memory.update") + " "
         "Do NOT use it for a genuinely new fact — call memory.set.\n\n"
@@ -574,7 +574,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "only to narrow when the key is live under several writers (409 "
         "AMBIGUOUS_KEY lists them). updated=false with reason=not_found means "
         "the key has no live row — save it with memory.set instead. Pass "
-        "if_match_sha256 from the read for a no-clobber update."
+        "if_match_sha256 from the read for a no-clobber update. Given a "
+        "memory_id rather than a key, call memory.update_by_id via loom_op."
     ),
     "memory.update_by_id": (
         "Update a memory by UUID with an optimistic concurrency check. "
@@ -593,9 +594,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`fields: [value, tags, …]` trims every entry to those fields."
     ),
     "memory.history": (
-        "Show every version (current + tombstoned) of a memory_key. Use "
-        'when the user asks "what did I say about X before" or wants '
-        "to inspect the evolution of a memory."
+        "WHAT: Every recorded version of one memory_key, newest first, "
+        "tombstoned and redacted versions included; empty when the key was "
+        "never written.\n"
+        "WHEN: 'what did I say about X before', 'when did this change', or "
+        "checking what a key held before you revise it.\n"
+        "WHEN NOT: The current value alone is memory.get.\n"
+        "ARGS: memory_key; optional limit (default 50)."
     ),
     "memory.lineage": (
         "Trace where a memory came from — promotions, cross_promotes, "
@@ -1020,19 +1025,21 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "save under the same key starts a fresh brief."
     ),
     "working_memory.set": (
-        "Replace one small working-memory block. Use for active task "
-        "state the agent must see on every turn — current plan, open "
-        "assumptions, notes for the next agent, or transient checklist. Do NOT use "
-        "for durable facts about the user/project; those belong in "
-        "memory.set. `context.pack` loads this block into prompt context."
+        "WHAT: Overwrite one working-memory block (the scratchpad context.pack "
+        "loads into the prompt) with `content`.\n"
+        "WHEN: Task state you rewrite as it changes: the plan, open "
+        "assumptions, a checklist, notes for the next agent.\n"
+        "WHEN NOT: A durable fact about the user or project is memory.set."
     ),
     "working_memory.append": (
-        "Append to a working-memory block. Use when the active scratchpad "
-        "needs an additive note or checklist item. Missing block creates "
-        "it. Do NOT append long transcripts or facts meant for retrieval. "
-        "The response carries `fill_ratio` (length / char_limit); above "
-        "~0.7 condense the block with working_memory.replace before the "
-        "next append fails at 1.0."
+        "WHAT: Add `addition` to the end of a working-memory block, creating "
+        "the block when it is missing.\n"
+        "WHEN: A new note or checklist item for the active task.\n"
+        "WHEN NOT: Rewriting the block is working_memory.set; durable facts "
+        "are memory.set; never append long transcripts.\n"
+        "The response carries `fill_ratio` (length / char_limit): above ~0.7, "
+        "rewrite the block shorter with working_memory.set before an append "
+        "fails at 1.0."
     ),
     "working_memory.replace": (
         "Replace exact text inside a working-memory block. Use for "
@@ -1061,11 +1068,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "inventory questions; for semantic recall use loom_search."
     ),
     "knowledge.get": (
-        "Fetch one document by source_uri (latest version; "
-        "`include_superseded=true` reads a soft-deleted one). Use after "
-        "knowledge.list when you have the URI of a doc and need its full content. For a "
-        "long document, prefer knowledge.outline (via loom_op) first and "
-        "read only the section you need."
+        "WHAT: Fetch one whole document by `source_uri` (the latest version; "
+        "`include_superseded=true` reads a soft-deleted one).\n"
+        "WHEN: loom_search returned a document hit, or the user named a "
+        "document, and the task needs its full text.\n"
+        "WHEN NOT: Finding documents by topic is loom_search. For a long "
+        "document, read knowledge.outline (via loom_op) first and fetch only "
+        "the section you need."
     ),
     "knowledge.synthesize": (
         "Complete a task over WHOLE documents — summarize a long document, "
@@ -1221,9 +1230,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "wants to audit what's being filtered out."
     ),
     "blacklist.add": (
-        "Add a pattern that prevents matching content from being saved "
-        'to memory. Use on explicit "never remember X" requests. Refused to a '
-        "token bounded to one user: a pattern refuses every user's writes."
+        "WHAT: Refuse future saves of matching content: every later memory "
+        "write in the namespace whose value matches `pattern` is refused.\n"
+        "WHEN: An explicit 'never remember X' or 'don't store anything about "
+        "Y'. `sweep=true` also tombstones the rows already saved that match.\n"
+        "WHEN NOT: Forgetting one saved fact is memory.delete. Refused to a "
+        "token bounded to one user: a pattern refuses every user's writes.\n"
+        "ARGS: pattern; optional pattern_type (substring | regex), reason, sweep."
     ),
     "blacklist.remove": ("Remove a previously-added blacklist pattern."),
     # ---- Erasure / Cost / Audit ----

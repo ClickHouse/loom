@@ -153,13 +153,14 @@ async def test_tunables_reach_clickhouse_as_parameters(monkeypatch: pytest.Monke
     assert all("3600" not in s and "0.25" not in s for s in ch.sqls)
 
 
-def test_registered_on_the_core_mcp_surface_with_a_description() -> None:
+def test_registered_as_callable_by_name_with_a_description() -> None:
     from server.operations.registry import OPERATIONS_BY_NAME
 
     op = OPERATIONS_BY_NAME["namespace.validate"]
     assert op.idempotent is True and op.audit is False
     assert op.required_role.name == "VIEWER"
-    assert "namespace.validate" in toolsets._MCP_CORE_OPS
+    # Listed under `all`, callable by name on the core listing.
+    assert "namespace.validate" not in toolsets._MCP_CORE_OPS
     assert "namespace.validate" not in toolsets._MCP_HIDDEN_OPS
     assert "healthy" in mcp_descriptions.TOOL_DESCRIPTIONS["namespace.validate"]
 

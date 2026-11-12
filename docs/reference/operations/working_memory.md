@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `working_memory.append`
 
-Append to a working-memory block.
+WHAT: Add `addition` to the end of a working-memory block, creating the block when it is missing.
 
 `POST /v1/working_memory.append` · MCP `loom_working_memory_append` · role `writer` · write
 
@@ -38,7 +38,7 @@ Append to a working-memory block.
 
 Delete one working-memory block.
 
-`POST /v1/working_memory.delete` · MCP `loom_working_memory_delete` · role `writer` · idempotent
+`POST /v1/working_memory.delete` · MCP `loom_working_memory_delete` · role `writer` · idempotent · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -110,7 +110,7 @@ Render working-memory blocks as XML or markdown. context.pack already includes t
 
 Replace exact text inside a working-memory block.
 
-`POST /v1/working_memory.replace` · MCP `loom_working_memory_replace` · role `writer` · idempotent
+`POST /v1/working_memory.replace` · MCP `loom_working_memory_replace` · role `writer` · idempotent · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -134,7 +134,7 @@ Replace exact text inside a working-memory block.
 
 ## `working_memory.set`
 
-Replace one small working-memory block.
+WHAT: Overwrite one working-memory block (the scratchpad context.pack loads into the prompt) with `content`.
 
 `POST /v1/working_memory.set` · MCP `loom_working_memory_set` · role `writer` · idempotent
 

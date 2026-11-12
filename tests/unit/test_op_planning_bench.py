@@ -386,7 +386,7 @@ def test_archetype_cohort_is_the_tasks_a_toolset_lists_every_gold_tool_of(
     )
     assert "loom_code_bisect_candidates" in coding and "loom_code_pr_check" in coding
     assert len(B.load_tools("coding", "standard", "on")) == 21
-    assert len(B.load_tools("core", "standard", "off")) == 34  # + loom_op
+    assert len(B.load_tools("core", "standard", "off")) == 13  # + loom_op
     # the summary names the arm's settings
     res = {
         "model": "m",

@@ -167,7 +167,7 @@ Fields for every `blacklist` op: [operations/blacklist.md](operations/blacklist.
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`blacklist.add`](operations/blacklist.md#blacklistadd) | Add a pattern that prevents matching content from being saved to memory. | writer | idempotent | yes | yes |
+| [`blacklist.add`](operations/blacklist.md#blacklistadd) | WHAT: Refuse future saves of matching content: every later memory write in the namespace whose value matches `pattern` is refused. | writer | idempotent | yes | yes |
 | [`blacklist.list`](operations/blacklist.md#blacklistlist) | List patterns that suppress memory storage. | viewer | read | no |  |
 | [`blacklist.remove`](operations/blacklist.md#blacklistremove) | Remove a previously-added blacklist pattern. | admin | idempotent | no | yes |
 | [`blacklist.sweep`](operations/blacklist.md#blacklistsweep) | Tombstone the live rows an existing pattern matches. | writer | idempotent | no | yes |
@@ -288,7 +288,7 @@ Fields for every `conversation` op: [operations/conversation.md](operations/conv
 | --- | --- | --- | --- | --- | --- |
 | [`conversation.append`](operations/conversation.md#conversationappend) | Log one chat turn (role + content) to the active thread. | writer | idempotent | yes |  |
 | [`conversation.compact`](operations/conversation.md#conversationcompact) | Summarize old turns into one embedded system turn and tombstone the originals. | writer | idempotent | no | yes |
-| [`conversation.create`](operations/conversation.md#conversationcreate) | Open a thread container. | writer | idempotent | yes |  |
+| [`conversation.create`](operations/conversation.md#conversationcreate) | Open a thread container. | writer | idempotent | no |  |
 | [`conversation.delete`](operations/conversation.md#conversationdelete) | Soft-delete one thread: its messages, thread row and embeddings no other agent holds. | admin | idempotent | no | yes |
 | [`conversation.get`](operations/conversation.md#conversationget) | Fetch one thread by id: thread metadata + optional messages. | viewer | read | no |  |
 | [`conversation.list`](operations/conversation.md#conversationlist) | Enumerate stored conversation threads for an agent / namespace. | viewer | read | no |  |
@@ -414,7 +414,7 @@ Fields for every `knowledge` op: [operations/knowledge.md](operations/knowledge.
 | [`knowledge.dataset_get`](operations/knowledge.md#knowledgedataset_get) | The typed datasets an ingested file's tables became: their schemas, what needs a person's answer, the rows rejected and, on request, the first rows. | viewer | read | no |  |
 | [`knowledge.dedup_list`](operations/knowledge.md#knowledgededup_list) | List cross-URI doc duplicates and (optionally) chunk-overlap clusters. | admin | idempotent | no |  |
 | [`knowledge.dedup_resolve`](operations/knowledge.md#knowledgededup_resolve) | Resolve one document duplicate pair. | admin | idempotent | no | yes |
-| [`knowledge.delete`](operations/knowledge.md#knowledgedelete) | Soft-delete a document by source_uri: writes its tombstone. | writer | idempotent | yes | yes |
+| [`knowledge.delete`](operations/knowledge.md#knowledgedelete) | Soft-delete a document by source_uri: writes its tombstone. | writer | idempotent | no | yes |
 | [`knowledge.formats`](operations/knowledge.md#knowledgeformats) | The document formats this deployment reads, as `knowledge.ingest` sends them to its extractors, and the upload's limits. | viewer | read | no |  |
 | [`knowledge.get`](operations/knowledge.md#knowledgeget) | Fetch a single document by source_uri. | viewer | read | yes |  |
 | [`knowledge.ingest`](operations/knowledge.md#knowledgeingest) | Extract an uploaded file (the extractor service parses it, the server checks what it returns) and publish it as a document revision, asynchronously: the answer names the job, and… | writer | write | no |  |
@@ -514,7 +514,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.redact`](operations/memory.md#memoryredact) | Scrub the value of a historical memory row, preserving its audit entry. | admin | idempotent | no | yes |
 | [`memory.reindex`](operations/memory.md#memoryreindex) | Re-embed a namespace's memories whose vectors were made by another embedding model (or all of them with `force`). | admin | idempotent | no | yes |
 | [`memory.reject`](operations/memory.md#memoryreject) | Mark a memory as explicitly rejected (extractor / user review decided the candidate fact is wrong), so it isn't re-extracted. | writer | idempotent | no | yes |
-| [`memory.related`](operations/memory.md#memoryrelated) | Find memories sharing entities with the source memory. | viewer | read | yes |  |
+| [`memory.related`](operations/memory.md#memoryrelated) | Find memories sharing entities with the source memory. | viewer | read | no |  |
 | [`memory.resolve_orphan_duplicates`](operations/memory.md#memoryresolve_orphan_duplicates) | Scan (org, namespace) for orphaned duplicate rows and re-activate them. | writer | idempotent | yes | yes |
 | [`memory.restore`](operations/memory.md#memoryrestore) | Bring back a deleted memory (within 14 days) or one Loom retired on its own. | writer | idempotent | yes | yes |
 | [`memory.search`](operations/memory.md#memorysearch) | Semantic search over the agent's own memory. | viewer | read | no |  |
@@ -651,10 +651,10 @@ Fields for every `profile` op: [operations/profile.md](operations/profile.md).
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
 | [`profile.activity`](operations/profile.md#profileactivity) | Recent profile reads per agent — "which AI client read my profile, when?". | viewer | read | yes |  |
-| [`profile.append`](operations/profile.md#profileappend) | WHAT: Atomic append to an existing profile section. | writer | write | yes |  |
+| [`profile.append`](operations/profile.md#profileappend) | WHAT: Atomic append to an existing profile section. | writer | write | no |  |
 | [`profile.render`](operations/profile.md#profilerender) | Render every section in (org, namespace) into one prompt fragment. | viewer | read | yes |  |
 | [`profile.replace`](operations/profile.md#profilereplace) | WHAT: Substring rewrite within a profile section. | writer | idempotent | no |  |
-| [`profile.set`](operations/profile.md#profileset) | WHAT: Create or replace a profile section at `label`. | writer | idempotent | yes |  |
+| [`profile.set`](operations/profile.md#profileset) | WHAT: Create or replace a profile section at `label`. | writer | idempotent | no |  |
 | [`profile.structured`](operations/profile.md#profilestructured) | The user's structured profile and whether it is current. | viewer | read | no |  |
 
 ### profile_schema
@@ -777,12 +777,12 @@ Fields for every `working_memory` op: [operations/working_memory.md](operations/
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`working_memory.append`](operations/working_memory.md#working_memoryappend) | Append to a working-memory block. | writer | write | yes |  |
-| [`working_memory.delete`](operations/working_memory.md#working_memorydelete) | Delete one working-memory block. | writer | idempotent | yes |  |
+| [`working_memory.append`](operations/working_memory.md#working_memoryappend) | WHAT: Add `addition` to the end of a working-memory block, creating the block when it is missing. | writer | write | yes |  |
+| [`working_memory.delete`](operations/working_memory.md#working_memorydelete) | Delete one working-memory block. | writer | idempotent | no |  |
 | [`working_memory.get`](operations/working_memory.md#working_memoryget) | Fetch one working-memory block by key. | viewer | read | no |  |
 | [`working_memory.render`](operations/working_memory.md#working_memoryrender) | Render working-memory blocks as XML or markdown. context.pack already includes this section; direct render is mainly for SDK or custom orchestration code. | viewer | read | yes |  |
-| [`working_memory.replace`](operations/working_memory.md#working_memoryreplace) | Replace exact text inside a working-memory block. | writer | idempotent | yes |  |
-| [`working_memory.set`](operations/working_memory.md#working_memoryset) | Replace one small working-memory block. | writer | idempotent | yes |  |
+| [`working_memory.replace`](operations/working_memory.md#working_memoryreplace) | Replace exact text inside a working-memory block. | writer | idempotent | no |  |
+| [`working_memory.set`](operations/working_memory.md#working_memoryset) | WHAT: Overwrite one working-memory block (the scratchpad context.pack loads into the prompt) with `content`. | writer | idempotent | yes |  |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: operations -->

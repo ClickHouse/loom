@@ -36,10 +36,6 @@ from server.transport.mcp_schemas import (
 
 OPS = {op.name: op for op in ALL_OPERATIONS}
 TOOL_TO_OP = {op.mcp_tool_name: op.name for op in ALL_OPERATIONS}
-# core + code − coding ≥ the floor, same tree, chars/4. A shared description
-# growing still fails here; a tool added to the coding tier on purpose
-# re-bases the floor. The floor sits a little under the current saving.
-CODING_SAVING_FLOOR = 4_600
 
 
 def _listing(toolset: str, code: bool, profile: str | None = None) -> list[dict]:
@@ -271,18 +267,10 @@ def test_roster_sizes_derive_from_the_registry():
 def test_listing_budget_chars_over_four():
     """The ceilings sit a little above the current listings; a new tool or a
     long description pays for itself here."""
-    assert _tok({"tools": _listing("core", True)}) <= 13_700
-    assert _tok({"tools": _listing("core", False)}) <= 11_000
+    assert _tok({"tools": _listing("core", True)}) <= 9_300
+    assert _tok({"tools": _listing("core", False)}) <= 5_800
     assert _tok({"tools": _listing("coding", False)}) <= 8_850
     assert _tok({"tools": _listing("atomic", False)}) <= 4_500
-    # The coding tier's gate is the saving it makes on the
-    # core + code listing — every coding tool is a core or code tool, so a
-    # field or sentence grown on a shared tool moves both sides by the same
-    # amount and leaves the saving alone.
-    assert (
-        _tok({"tools": _listing("core", True)}) - _tok({"tools": _listing("coding", False)})
-        >= CODING_SAVING_FLOOR
-    )
     for t in _listing("core", True):
         assert len(t["description"]) // 4 <= 480, f"{t['name']} description is over budget"
 
@@ -329,7 +317,8 @@ def test_marked_fields_are_unlisted_but_still_accepted():
     nothing a curated description or skill tells an agent to pass is marked."""
     from server.operations.base import MCP_HIDDEN
 
-    listed = {t["name"]: t for t in _listing("core", True)}
+    # `all` carries every core tool plus the stable ops callable by name there.
+    listed = {t["name"]: t for t in _listing("all", True)}
     marked: dict[str, set[str]] = {}
     for op in ALL_OPERATIONS:
         fields = {

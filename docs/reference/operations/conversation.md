@@ -64,7 +64,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 
 Open a thread container.
 
-`POST /v1/conversation.create` · MCP `loom_conversation_create` · role `writer` · idempotent
+`POST /v1/conversation.create` · MCP `loom_conversation_create` · role `writer` · idempotent · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |

@@ -37,8 +37,8 @@ _CATALOG_LIMIT = 15
 DESCRIPTOR: dict[str, Any] = {
     "name": LOOM_OP_TOOL_NAME,
     "description": (
-        "Run an op this list doesn't show — tracker.flaky, task.pull, "
-        "facts.traverse and any other op a doc or hint calls callable by name. "
+        "Run an op this list doesn't show — knowledge.add, memory.list, "
+        "conversation.append and any other op a doc or hint calls callable by name. "
         '`op` is the dotted name, `arguments` its arguments; op="help" with '
         "an optional `query` lists matching ops and their args. "
         "Prefer a listed tool when one fits."
@@ -140,8 +140,8 @@ def catalog(
 # source, a wrong argument name.
 _INSTEAD: dict[str, str] = {
     "memory.bulk_set": "call loom_memory_set once per fact; a batch saves no round trip here",
-    "memory.bulk_get": "call loom_memory_get per key, or loom_memory_list with a key prefix",
-    "memory.keys": "call loom_memory_list, which pages the namespace",
+    "memory.bulk_get": "call loom_memory_get per key, or memory.list (loom_op) with a key prefix",
+    "memory.keys": "call memory.list (loom_op), which pages the namespace",
     "memory.delete_version": "call loom_memory_delete",
     # An owner-only op names the person, never a route: naming the SDK/HTTP
     # op sends a model probing env vars and token files for a way around it.
@@ -152,7 +152,7 @@ _INSTEAD: dict[str, str] = {
     "memory.search": "call loom_search (memory, profile, knowledge and conversations in one call)",
     "knowledge.search": "call loom_search",
     "conversation.search": "call loom_search",
-    "namespace.list": "call loom_namespace_list_mine",
+    "namespace.list": "call namespace.list_mine (loom_op)",
     "run.list": "call run.get with a run id (loom_op)",
     "code.context_packs": "call code.context_pack (loom_op) with the pr_number you want",
     "memory.extraction_status": (

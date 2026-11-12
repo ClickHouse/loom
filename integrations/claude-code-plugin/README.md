@@ -23,8 +23,7 @@ same places the hooks read it. The helper also sends `X-Loom-Code-Scope: org/nam
 revise / read / delete, the working-memory scratchpad, `context.pack`, the
 eight code tools, the duplicate check, bisect candidates, PR check and blast
 radius, `loom_search`, `loom_activate`, `loom_op`), ~9k
-tokens per `tools/list` against ~14k for `core` with the code tools; every
-other op runs through `loom_op {op, arguments}`. The `toolset` plugin setting selects
+tokens per `tools/list`; every other op runs through `loom_op {op, arguments}`. The `toolset` plugin setting selects
 another listing, including a union such as `coding+tracker`. See
 [docs/features/integrations/mcp-clients.md](../../docs/features/integrations/mcp-clients.md).
 

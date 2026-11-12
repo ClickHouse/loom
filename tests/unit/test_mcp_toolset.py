@@ -56,10 +56,8 @@ def test_core_surface_is_small_and_focused():
     for expected in (
         "loom_memory_set",
         "loom_memory_get",
-        "loom_knowledge_add",
-        "loom_profile_set",
-        "loom_namespace_list_mine",
-        "loom_erasure_request",
+        "loom_memory_pin",
+        "loom_memory_apply",
         "loom_context_pack",
     ):
         assert expected in names, expected
@@ -67,22 +65,27 @@ def test_core_surface_is_small_and_focused():
     # whole product surface — every slot is a per-turn tax. These moved to
     # callable-by-name: render (context.pack already loads the profile),
     # get_by_id (conflict-resolution flow), namespace membership ops
-    # (onboarding-time actions).
+    # (onboarding-time actions), and the inventory, profile, namespace and
+    # erasure ops a chat loop reaches for rarely.
     for demoted in (
         "loom_profile_render",
+        "loom_profile_set",
+        "loom_memory_list",
+        "loom_memory_set_from_messages",
+        "loom_working_memory_replace",
+        "loom_knowledge_add",
+        "loom_conversation_append",
+        "loom_namespace_list_mine",
+        "loom_erasure_request",
         "loom_memory_get_by_id",
         "loom_namespace_join",
         "loom_namespace_leave",
         "loom_namespace_browse",
     ):
         assert demoted not in names, demoted
-    # Conversation capture is in-band: MCP is pull-based, so the transcript
-    # only lands if the model can see + call these. Without them, the
-    # Conversations page stays empty for MCP clients.
-    assert "loom_conversation_create" in names
-    assert "loom_conversation_append" in names
-    # Comfortably under the ~30-50 tool-selection degradation knee.
-    assert len(names) <= 34, f"core surface too large: {len(names)}"
+    # Thirteen at most: every listed tool is read on every turn. Documents,
+    # the scratchpad and conversation capture run through loom_op.
+    assert len(names) <= 13, f"core surface too large: {len(names)}"
     # The Refuse verb must be reachable in-band ("never remember X").
     assert "loom_blacklist_add" in names
 

@@ -187,13 +187,13 @@ def test_manifest_finds_the_known_reach_paths():
 
 
 def test_agent_controlled_verbs_are_on_the_core_tier():
-    """The standing-memory and forgetting verbs an agent should control
-    (standing memory, a hot tier): pin, refuse, scratchpad."""
-    for name in ("memory.pin", "blacklist.add", "working_memory.append"):
+    """The standing-memory and forgetting verbs an agent should control: pin,
+    refuse, lock. The scratchpad is on the coding and atomic tiers."""
+    for name in ("memory.pin", "blacklist.add", "memory.lock"):
         assert name in _MCP_CORE_OPS and name not in _MCP_HIDDEN_OPS, name
         assert "mcp_core" in op_reach(name)
     names = {t["name"] for t in _listing("core", False)}
-    assert {"loom_memory_pin", "loom_blacklist_add", "loom_working_memory_append"} <= names
+    assert {"loom_memory_pin", "loom_blacklist_add", "loom_memory_lock"} <= names
     pin = next(t for t in _listing("core", False) if t["name"] == "loom_memory_pin")
     # a curated description that names memory.set as the default save
     assert "memory.set" in pin["description"] and "WHEN NOT" in pin["description"]

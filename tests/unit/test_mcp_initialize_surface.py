@@ -402,12 +402,14 @@ def test_the_initialize_primer_names_only_tools_its_listing_carries(
     assert named and named <= listed, named - listed
 
 
-def test_the_coding_primer_sends_documents_through_loom_op() -> None:
+def test_the_primer_sends_documents_through_loom_op() -> None:
     coding = mcp_primer._loom_rules("coding", None)
     core = mcp_primer._loom_rules("core", None)
-    assert "`loom_knowledge_add`" not in coding
-    assert "`loom_op` (op `knowledge.add`)" in coding
-    assert "`loom_knowledge_add`" in core and "(op `knowledge.add`)" not in core
+    everything = mcp_primer._loom_rules("all", None)
+    for listing in (coding, core):
+        assert "`loom_knowledge_add`" not in listing
+        assert "`loom_op` (op `knowledge.add`)" in listing
+    assert "`loom_knowledge_add`" in everything and "(op `knowledge.add`)" not in everything
     # The ops the coding listing carries keep their own tool.
     assert "`loom_memory_set`" in coding and "`loom_context_pack`" in coding
 

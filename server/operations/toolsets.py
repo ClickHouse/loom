@@ -136,71 +136,36 @@ _MCP_CODE_CORE_OPS: frozenset[str] = frozenset(
 
 
 # The "core" MCP toolset (settings.mcp_toolset == "core", the default): the
-# focused chat surface visible in tools/list. Everything else stays callable
-# by name over MCP and via /v1/* + SDKs — hidden only to keep the tool budget
-# under the count where selection accuracy degrades. Synthetic tools are
-# always shown. LOOM_MCP_TOOLSET=all exposes the full surface.
+# listing every client that names no toolset sees. It carries the memory loop
+# only: the belief-revision verbs (set, update, delete, pin, and blacklist.add
+# to refuse), reads by key, the two wide-write shapes and task context. Every
+# other op (documents, the scratchpad, conversation capture, profile,
+# namespaces, erasure) stays callable by name through loom_op and on /v1/* and
+# the SDKs: each listed tool is read on every turn, and a model picks among
+# fewer tools more reliably. The primer names loom_op for the ones it points
+# at. Synthetic tools are always shown. LOOM_MCP_TOOLSET=all exposes the full
+# surface.
 _MCP_CORE_OPS: frozenset[str] = frozenset(
     {
-        # Save + recall + manage memory — the core loop.
+        # Save, revise, forget, keep: the belief-revision verbs.
         "memory.set",
         # The standing-memory verb: a pinned fact is never evicted by a later
         # conflicting write. Its description names memory.set as the default
         # save and pin as the exception, or a model routes every 'remember X'
         # to it.
         "memory.pin",
-        "memory.set_from_messages",
         "memory.update",
-        "memory.update_by_id",
-        "memory.get",
-        # memory.get_by_id: conflict-resolution flow — callable by name;
-        # the chat loop reaches memories via search/list/get.
-        "memory.list",
-        "memory.related",
-        "memory.history",
         "memory.delete",
+        # Refuse: the in-band "never remember X" consent verb.
+        "blacklist.add",
+        # Read by exact key, and every version of a key; recall by meaning is
+        # loom_search.
+        "memory.get",
+        "memory.history",
         # The two write shapes an agent reaches for after set/delete: a wide,
         # previewed write over a scope and a per-row lock.
         "memory.apply",
         "memory.lock",
-        # Knowledge documents.
-        "knowledge.add",
-        "knowledge.get",
-        "knowledge.list",
-        "knowledge.delete",
-        # Profile — the always-loaded persona/context. render stays
-        # callable-by-name: context.pack already loads the rendered profile,
-        # so the chat loop writes (set/append) but never re-renders.
-        "profile.set",
-        "profile.append",
-        # Conversation history — the agent opens a thread once per session
-        # and logs each turn, so the transcript shows in the dashboard. MCP is
-        # pull-based (the server
-        # only sees what the model calls), so these must be visible for any
-        # transcript to land at all; recall of past threads stays folded
-        # into loom_search.
-        "conversation.create",
-        "conversation.append",
-        # Working memory — scratchpad included by context.pack.
-        "working_memory.set",
-        "working_memory.append",
-        "working_memory.replace",
-        "working_memory.delete",
-        # Self-service namespaces: orientation stays listed; the
-        # join/leave/browse membership ops are onboarding-time actions,
-        # callable by name when an agent is told to use them. Every listing
-        # slot is a per-turn tax on every session — the roster carries the
-        # chat loop, not the whole product surface.
-        "namespace.list_mine",
-        "namespace.summary",
-        # The end-of-task integrity call: did my writes leave the namespace
-        # consistent? Read-only, returns counts + samples per check.
-        "namespace.validate",
-        # Data rights.
-        "erasure.request",
-        "erasure.export",
-        # Refuse — the in-band "never remember X" consent verb.
-        "blacklist.add",
         # One-call task-context loader.
         "context.pack",
     }
