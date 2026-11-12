@@ -141,10 +141,7 @@ class Agent:
         write under a run is scoped to it: a restatement of another scope's
         row is inserted as a `duplicate`, not merged. `consumer` is stamped
         on every op body that names none; '' stamps nothing."""
-        # Left empty, the org is the code or tracker plane's on those ops, else the
-        # token's own or, on a single-user server with no token, the install's; the
-        # namespace is filled only by a single-user server, for a call with no token
-        # to an op it lists.
+        # "" leaves org and namespace to the server (python-sdk.md#identity-defaults).
         self.org = org
         self.namespace = namespace
         # An agent that names itself "", "-" or "*" is every

@@ -290,3 +290,15 @@ def test_a_misspelled_namespace_is_not_filled(seen: Seen) -> None:
     response = _post("memory.search", {"namepsace": "team", "query": "q"})
     assert "namespace" in _missing(response)
     assert seen == []
+
+
+def test_a_history_naming_user_dash_reads_every_agent(seen: Seen) -> None:
+    """`-` is no user: the history is filled with `*` as for none."""
+    _post("memory.history", {"memory_key": "k", "user_id": "-"})
+    assert len(seen) == 1 and seen[0][3] == "*"
+
+
+def test_a_blank_namespace_beside_a_misspelled_one_is_refused(seen: Seen) -> None:
+    body = {"namespace": "", "namepsace": "team", "query": "q"}
+    assert "namespace" in _missing(_post("memory.search", body))
+    assert seen == []
