@@ -29,8 +29,8 @@ memory: what one agent learns in a session, the next agent or tool can find.
 Agents connect through MCP, HTTP, Python or TypeScript. Self-host with Docker or
 [on Kubernetes with the Helm chart](./docs/operations/kubernetes.md); agent context and
 index data live in [ClickHouse](./docs/use-cases/self-hosted-clickhouse.md), and a
-deployment can choose [Postgres at first boot](./docs/operations/postgres.md) for live memory and knowledge
-state. The dashboard brings memories, repositories, tasks and runs into one place.
+deployment can choose [Postgres at first boot](./docs/operations/postgres.md) for live
+memory and knowledge state. The dashboard brings memories, repositories, tasks and runs into one place.
 
 ## What Loom is for
 
@@ -45,8 +45,7 @@ state. The dashboard brings memories, repositories, tasks and runs into one plac
   [Namespaces and sharing](./docs/features/namespaces-and-sharing.md)
 - **A code index of your repositories** that coding agents query for definitions,
   callers and change impact. [Code index](./docs/use-cases/code-intelligence.md)
-- **Lower model cost for coding agents**: 20% and 21% less on two of three measured
-  Claude Code question sets on the ClickHouse codebase, excluding Loom's own model calls.
+- **Lower model cost for coding agents**, as [measured](#measured-results) below.
   [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
 - **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
   extractor service converts. [Document search](./docs/use-cases/document-search.md)

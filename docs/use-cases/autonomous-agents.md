@@ -2,7 +2,7 @@
 
 Loom gives autonomous agents memory they recall later, an audit record of who wrote what,
 and erasure of a scope everywhere Loom keeps it. These are server operations, stored in
-ClickHouse (or Postgres for live memory state).
+ClickHouse (or Postgres for live memory and knowledge state).
 
 ## What you get
 

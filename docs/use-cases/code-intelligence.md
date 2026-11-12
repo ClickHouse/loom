@@ -19,8 +19,9 @@ built and kept fresh is in [the code index overview](../features/code-index/over
   needs.
 - **Freshness you can see.** The index trails the branch by merged commits, and a stale
   answer says so. [Freshness](../features/code-index/freshness.md)
-- **Plugins.** The Claude Code and Codex plugins connect on the `coding` toolset, which
-  lists the code tools; Cursor and other MCP clients use `?toolset=coding`.
+- **Plugins.** The Claude Code plugin connects on the `coding` toolset and the Codex plugin
+  on `core,coding,tracker,tasks`; both list the code tools. Cursor and other MCP clients use
+  `?toolset=coding`.
   [Connect a coding agent](../getting-started/connect-a-coding-agent.md)
 
 ## Measured
