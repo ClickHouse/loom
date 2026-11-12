@@ -78,9 +78,10 @@ leg, because the term leg serves shared rows to every reader:
   that row's embedding, as `memory.promote` refuses a `high` row: `loom.shared` has no
   sensitivity of its own, so the ordinary legs would keep serving the copy.
 - **A promotion of a definition carries the content hash it approves**, the hash of the
-  candidate's drafted value on the review path, or one the caller passes to
-  `memory.promote`, and is refused when the source's text no longer has it, so a writer's
-  change between the write and the promotion is never signed off as the admin's.
+  candidate's drafted value on the review path, or one the caller must pass to
+  `memory.promote` (a definition promotion without one is refused), and is refused when
+  the source's text no longer has it, so a writer's change between the write and the
+  promotion is never signed off as the admin's.
 - **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
   `memory.promote` or `learnings.review`, and so are the queue row's `decided_by` and the
   audit subject for these candidate kinds, never taken from the body's `approver`.
@@ -123,12 +124,12 @@ check would add a candidate read to every write, and is not part of this design.
 of type `definition` under a `definition/` key (only that namespace, whatever
 `namespace_scope` fans out over), matches the query against each one's term and aliases,
 and places the matched rows at the top of the served list with `governed = true` on the
-hit, removing any other hit under the same key, so an edited private copy is not served
-beside the governed text. A term or alias matches where it appears in the query with no
-letter, digit, `+` or `#` next to it. One written all in capitals, or with a capital after
-its first letter, matches only as written, so `IT` does not match "what is it" and
-`GitHub` stays exact; any other matches case-folded, so `Churn rate` matches "what is our
-churn rate".
+hit, removing any other hit under the same key in the addressed namespace, so an edited
+private copy is not served beside the governed text. A term or alias matches where it
+appears in the query with no letter, digit, `+` or `#` next to it. One written all in
+capitals, or with a capital after its first letter, matches only as written, so `IT` does
+not match "what is it" and `GitHub` stays exact; any other matches case-folded, so `Churn
+rate` matches "what is our churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -152,9 +153,11 @@ output field: the SDKs and the MCP schema carry it.
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
 points at the documents behind it. `loom_search` serves the leg through its memory
-section, and two of its later stages change with it: the repository-decision merge and the
-answer-first rules (precision floor, home margin) never move, withhold or outrank a hit
-marked `governed`.
+section, and one rule holds for every later stage of either op: no stage or floor moves,
+withholds or outranks a hit marked `governed` (in `loom_search` today:
+`drop_flagged_hits`, `floor_mode`, `quality_filter`, the answer-first precision floor and
+home margin, and the repository-decision merge; a stage added later follows the same
+rule).
 
 **Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
 served list is exactly what it was before. The memory-plane rule asks for a paired
@@ -203,24 +206,25 @@ short (`namespaces_skipped`), or one whose hits the memory authority dropped
 The **asker** is the person the token stands for, never a body field: the end user of an
 end-user token; else the token's `creator` claim, the person at the root of a delegated
 token or service account ([tokens and grants](../guides/tokens-and-grants.md)); else, for
-a service account's token minted without the claim, its creator as the registry records it
-(`sa_creator` in `server/auth/service_accounts.py`); else the token's subject. An agent of
-a machine trust (`sa:<trust>:<agent>`) stands for no person and records no miss. Tokens a
-person mints for themselves therefore count as that person. An asker that cannot be
-resolved (the registry unreadable, or a service account with no creator) records no miss:
-an unknown principal is never counted as a separate person. The asker is stored in the
-form a user erasure names: an end user as their id, without the `user:` prefix. Each miss
-writes one row to `loom.search_misses` under the namespace the search was addressed to:
-the identity tuple, the asker, `actor`, the plane and the query's normalised form
-(case-folded, with every run of characters other than letters, digits, `+` and `#` made
-one space, so `C++` and `C#` stay apart as the term leg keeps them). That form is still
-the query's words, kept as the trace of a question under the namespace's consent; only the
-threshold below decides what an admin sees. No memory key or document URI is kept: one
-naming another user's row or document would outlive that user's erasure, or the document's
-delete, in someone else's miss. The table has a 16-day TTL: it is a trace, not memory. A
-pass reads the last 7 days and a build lives 7 days from its write, with two days to
-spare, so a miss outlives every build that counted it and a user erasure always finds the
-namespaces it must clear.
+a service account's token minted without the claim, the first subject that is not a
+service account in its creator chain as the registry records it (`created_by` and its
+lineage, `server/auth/service_accounts.py`), and no miss when the chain has none; else the
+token's subject. An agent of a machine trust (`sa:<trust>:<agent>`) stands for no person
+and records no miss. Tokens a person mints for themselves therefore count as that person.
+An asker that cannot be resolved (the registry unreadable, or a service account with no
+creator) records no miss: an unknown principal is never counted as a separate person. The
+asker is stored in the form a user erasure names: an end user as their id, without the
+`user:` prefix. Each miss writes one row to `loom.search_misses` under the namespace the
+search was addressed to: the identity tuple, the asker, `actor`, the plane and the query's
+normalised form (case-folded, with every run of characters other than letters, digits, `+`
+and `#` made one space, so `C++` and `C#` stay apart as the term leg keeps them). That
+form is still the query's words, kept as the trace of a question under the namespace's
+consent; only the threshold below decides what an admin sees. No memory key or document
+URI is kept: one naming another user's row or document would outlive that user's erasure,
+or the document's delete, in someone else's miss. The table has a 16-day TTL: it is a
+trace, not memory. A pass reads the last 7 days and a build lives 7 days from its write,
+with two days to spare, so a miss outlives every build that counted it and a user erasure
+always finds the namespaces it must clear.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
 misses and has no `user_id` to count askers or erase by. `loom.query_nodes` keeps one row
@@ -270,10 +274,10 @@ erasure to finish by its id, which `erasure.status` authorizes per row, never by
 
 ### Ops and dashboard
 
-| Op                     | Role  | What it does                                                                                                                                                  |
-| ---------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                                                                                      |
-| `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM from its queries alone, with the drafting admin as its `owner`, and queues it (`source_kind = 'knowledge_gap'`). |
+| Op                     | Role  | What it does                                                                                                                                                        |
+| ---------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                                                                                            |
+| `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM from its queries alone, with `owner` left empty for the admin to set, and queues it (`source_kind = 'knowledge_gap'`). |
 
 Both list what users asked, so neither honours a read-narrowed token: the check that
 admits the `knowledge.` group to such a token (`honours_read_scope` in
@@ -347,8 +351,7 @@ promotes.
   provenance names the user (`shared.tombstone`); a definition promoted from the
   namespace-wide row names none, so erasing the admin who promoted it leaves it governed,
   and an admin's name in its `owner`, like `promoted_by` on the shared row today, stays
-  until an admin edits the definition; so does the drafting admin's name in a queued or
-  rejected draft, which leaves with its namespace.
+  until an admin edits the definition.
 - A redact of a definition reaches its memory and shared rows and every `knowledge_gap`
   and `query_history` candidate drafted for its key (the change above), not the gap it
   came from, which holds only normalised queries enough askers asked and expires after 7
@@ -411,9 +414,11 @@ source while writing another; the rows it retired are listed by `memory.auto_ret
 (reasons `conflict_resolver`, `newest_wins_contradiction`, `value_update` and
 `same_key_newest_wins`), restored with its Undo, and promoted again; a source it marked
 `conflicted` or `duplicate` is cleared with `conflicts.resolve` and promoted again; a
-write it merged was never stored and is written again. N-1's redact and namespace erasure
-do not reach the shared row's text, as today: one run during the rollout or after a
-rollback is run again once N serves.
+write it merged was never stored and is written again. An N-1 relabel of a definition's
+source to `high` leaves its shared copy served by the ordinary legs: once N serves, an
+admin demotes every definition the admin read lists as lapsed for `high`. N-1's redact and
+namespace erasure do not reach the shared row's text, as today: one run during the rollout
+or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
