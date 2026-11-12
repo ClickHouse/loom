@@ -217,9 +217,10 @@ checkout.
 14. Moving to a build whose namespace erasure reaches `loom.shared`, a roll forward after a
     rollback included: once the newer build serves alone, clear the promoted rows an older
     build's namespace erasure left ([rolling upgrades](../architecture/rolling-upgrades.md),
-    rule 45). The namespaces an erasure requested within the ledger's 90 days reached, with
-    the last time one completed without a purge and with one (only a `namespace_list`
-    purges, and an older build's `namespace` row may hold the flag it was asked for):
+    rule 45). The query below lists each namespace that a `namespace` or `namespace_list`
+    erasure in the ledger (kept 90 days) reached, with the last completion without a purge
+    (`erased_at`) and with one (`purged_at`). Only a `namespace_list` purges, and an older
+    build's `namespace` row may hold the flag it was asked for.
 
     ```sql
     SELECT org, namespace,

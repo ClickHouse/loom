@@ -1265,11 +1265,11 @@ document bucket configured, the bucket objects left under the erased namespaces
 namespace); a non-zero count re-opens `documents.tombstone`. The registry is in
 `server/erasure/store/census.py`:
 
-| List                | Holds                                                                                                                                                                    |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `_CENSUS`           | One `Substrate(table, live, user_pred, ns_step, user_step, final)` per table that can hold content in scope. Any live row in scope fails the saga.                       |
-| `STEP_ONLY_TABLES`  | Tables a step clears that the census does not count (user-scope shared tombstones, consolidated tombstones, term aggregates, session outcomes, the code index purge, …). |
-| `NO_MEMORY_CONTENT` | Every other table, each with the reason it holds no content in scope.                                                                                                    |
+| List                | Holds                                                                                                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_CENSUS`           | One `Substrate(table, live, user_pred, ns_step, user_step, final)` per table that can hold content in scope. Any live row in scope fails the saga.                                          |
+| `STEP_ONLY_TABLES`  | Tables a step clears that the census does not count (the shared embeddings a user erasure tombstones, consolidated tombstones, term aggregates, session outcomes, the code index purge, …). |
+| `NO_MEMORY_CONTENT` | Every other table, each with the reason it holds no content in scope.                                                                                                                       |
 
 The row links (`entity_triple_rows`, `entity_edge_rows`) carry the row's writer as
 `user_id`, so a user's erasure finds them after the row itself is gone.
