@@ -460,3 +460,19 @@ def test_execute_registers_each_namespace_as_bench_and_erases_them(monkeypatch) 
     ns = seen[0][1]["namespace"]
     assert seen[0][1]["kind"] == "bench" and ns.startswith("opb-")
     assert json.loads(seen[-1][1]["scope_value"])["namespaces"] == [ns]
+
+
+def test_a_loom_op_call_scores_as_the_op_it_runs() -> None:
+    task = {
+        "id": "t",
+        "gold": [{"tool": "loom_memory_update_by_id", "required": ["memory_id", "value"]}],
+    }
+    routed = {
+        "name": "loom_op",
+        "input": {"op": "memory.update_by_id", "arguments": {"memory_id": "m", "value": "v"}},
+    }
+    assert B.score_task(task, [routed], {})["sma"]
+    wrong = {"name": "loom_op", "input": {"op": "memory.delete", "arguments": {"memory_id": "m"}}}
+    assert not B.score_task(task, [wrong], {})["sma"]
+    help_call = {"name": "loom_op", "input": {"query": "update"}}
+    assert B.unwrap_loom_op(help_call) == help_call

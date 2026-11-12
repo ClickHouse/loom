@@ -599,7 +599,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "tombstoned and redacted versions included; empty when the key was "
         "never written.\n"
         "WHEN: 'what did I say about X before', 'when did this change', or "
-        "checking what a key held before you revise it.\n"
+        "what a key held earlier.\n"
         "WHEN NOT: The current value alone is memory.get.\n"
         "ARGS: memory_key; optional limit (default 50)."
     ),
@@ -1233,8 +1233,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "wants to audit what's being filtered out."
     ),
     "blacklist.add": (
-        "WHAT: Refuse future saves of matching content: every later memory "
-        "write in the namespace (the default `scope`) whose value matches `pattern` is refused.\n"
+        "WHAT: Every later memory write in the namespace (the default "
+        "`scope`) whose value matches `pattern` is refused.\n"
         "WHEN: An explicit 'never remember X' or 'don't store anything about "
         "Y'. `sweep=true` also tombstones the rows already saved that match.\n"
         "WHEN NOT: Forgetting one saved fact is memory.delete. Refused to a "

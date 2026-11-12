@@ -638,8 +638,8 @@ def _rules_coordination(c: _Ctx) -> None:
     c.add(
         "coordination_loop",
         "warning",
-        f"{what}: coordination state — {_byname('working_memory.set')} / working_memory.get "
-        "holds it without a version row, an embedding or a conflict check per write.",
+        f"{what}: keep it in {_byname('working_memory.set')} / get, with no version row, "
+        "embedding or conflict check per write.",
         ("working_memory.set", "working_memory.get"),
         max_sets_one_key=ms,
         max_gets_one_key=mg,
@@ -805,7 +805,7 @@ def _rule_set_churn(
     return (
         "set_churn",
         f"{key} was set {n} times this session: a value that changes every turn is "
-        "working_memory.set, not a memory version each time.",
+        "working_memory.set (via loom_op where unlisted), not a memory version each time.",
     )
 
 
@@ -877,7 +877,8 @@ def _rule_get_miss(
     return (
         "get_miss",
         f"no row at {key or 'that key'}: memory.search recalls by meaning, memory.list prefix= "
-        "lists the siblings, and a moved key answers with canonical_key (follow=true).",
+        "(via loom_op) lists the siblings, and a moved key answers with canonical_key "
+        "(follow=true).",
     )
 
 

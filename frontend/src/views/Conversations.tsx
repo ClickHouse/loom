@@ -610,7 +610,7 @@ export function Conversations() {
             {...(loggingEnabled === false
               ? {
                   description: canSetLogging
-                    ? "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here: turn on Record conversations above, then connect an agent."
+                    ? "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here: turn on Record conversations above, then connect an agent that records its turns, such as the Claude Code or Codex plugin or a transcript hook."
                     : "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here; an admin of this namespace can turn it on.",
                 }
               : {
