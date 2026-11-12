@@ -291,7 +291,7 @@ async def test_a_tunnel_whose_client_sent_eof_closes_when_the_server_goes_quiet(
         await done.wait()
         writer.close()
 
-    monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.2)
+    monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 1.0)
     proxy, server, reader, writer = await _tunnel_to(never_closes, sock_dir, monkeypatch)
     try:
         writer.write_eof()

@@ -128,7 +128,7 @@ def _thread_failing_on(start: int) -> types.SimpleNamespace:
                 raise RuntimeError("can't start new thread")
             super().start()
 
-    return types.SimpleNamespace(Thread=Thread)
+    return types.SimpleNamespace(Thread=Thread, Event=threading.Event)
 
 
 def _socket_failing_once() -> types.SimpleNamespace:
@@ -191,6 +191,19 @@ def test_a_bridge_keeps_its_slot_until_the_proxy_closes(sock_dir: Path) -> None:
         assert not upstream.arrived.acquire(timeout=0.5)
         upstream.held[0].close()  # the proxy frees its slot
         assert upstream.arrived.acquire(timeout=5)
+        second.close()
+
+
+def test_a_client_left_open_after_the_proxy_closed_frees_its_slot(sock_dir: Path) -> None:
+    """A client may keep a finished connection in its pool and never close it."""
+    with _relay(sock_dir, 1) as (port, upstream):
+        first = socket.create_connection(("127.0.0.1", port), timeout=5)
+        assert upstream.arrived.acquire(timeout=5)
+        upstream.held[0].close()  # the proxy ends the tunnel
+        assert first.recv(1) == b""
+        second = socket.create_connection(("127.0.0.1", port))  # first is still open
+        assert upstream.arrived.acquire(timeout=5)
+        first.close()
         second.close()
 
 

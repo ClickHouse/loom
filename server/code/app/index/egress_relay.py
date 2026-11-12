@@ -13,7 +13,9 @@ mounted in; this script bridges to it so ordinary clients can use it:
 It is not imported by the server; sandbox.py mounts this file into the sandbox.
 """
 
+import contextlib
 import os
+import select
 import socket
 import sys
 import threading
@@ -21,17 +23,39 @@ import time
 from collections.abc import Callable
 
 
-def _pipe(src: socket.socket, dst: socket.socket) -> None:
+def _pipe(src: socket.socket, dst: socket.socket, done: threading.Event) -> None:
+    """Proxy to client, to the proxy's EOF."""
     try:
         while data := src.recv(65536):
             dst.sendall(data)
     except OSError:
         pass
     finally:
-        try:
+        done.set()
+        with contextlib.suppress(OSError):
             dst.shutdown(socket.SHUT_WR)
-        except OSError:
-            pass
+
+
+def _forward(src: socket.socket, dst: socket.socket, back_done: threading.Event) -> None:
+    """Client to proxy, to the client's EOF. Once the proxy's side has ended, what
+    the client still sends is dropped, and a second without a byte ends it: a client
+    may keep a finished connection open, and the bridge would hold its slot."""
+    try:
+        while True:
+            if not select.select([src], [], [], 1.0)[0]:
+                if back_done.is_set():
+                    return
+                continue
+            data = src.recv(65536)
+            if not data:
+                return
+            if not back_done.is_set():
+                dst.sendall(data)
+    except OSError:
+        pass
+    finally:
+        with contextlib.suppress(OSError):
+            dst.shutdown(socket.SHUT_WR)
 
 
 def _start(target: Callable[..., None], *args: object) -> threading.Thread:
@@ -50,11 +74,14 @@ def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
             upstream.connect(path)
-            back = _start(_pipe, upstream, conn)
-            _pipe(conn, upstream)
+            back_done = threading.Event()
+            back = _start(_pipe, upstream, conn, back_done)
+            _forward(conn, upstream, back_done)
             back.join()
-            # the proxy frees its slot before it closes: hold ours until then, or the
-            # next connection could reach a proxy that is still full
+            # Hold the slot until the proxy has finished with the tunnel, or the next
+            # connection could reach a proxy that is still full. A client that reset
+            # mid-download leaves the rest of it read here, as the proxy keeps a tunnel
+            # that still moves bytes.
             while upstream.recv(65536):
                 pass
     except OSError:
