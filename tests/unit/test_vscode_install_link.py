@@ -16,9 +16,11 @@ LINK = re.compile(r"https://(?:insiders\.)?vscode\.dev/redirect\?url=[^)\s`]+")
 def _entries(text: str) -> list[dict[str, object]]:
     out = []
     for link in LINK.findall(text):
-        target = parse_qs(urlparse(link).query)["url"][0]
+        parsed = urlparse(link)
+        target = parse_qs(parsed.query)["url"][0]
         scheme, _, payload = target.partition(":mcp/install?")
-        assert scheme in {"vscode", "vscode-insiders"}, target
+        insiders = (parsed.hostname or "").startswith("insiders.")
+        assert scheme == ("vscode-insiders" if insiders else "vscode"), link
         out.append(json.loads(unquote(payload)))
     return out
 

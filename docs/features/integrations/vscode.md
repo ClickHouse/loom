@@ -9,15 +9,16 @@ with no session capture or code shunt; the [Claude Code](claude-code.md) and
 
 A single-user server on the same machine takes MCP calls without a token.
 [Add Loom to VS Code](https://vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522loom%2522%252C%2522type%2522%253A%2522http%2522%252C%2522url%2522%253A%2522http%253A%252F%252Flocalhost%253A7777%252Fmcp%2522%257D) ·
-[Add Loom to VS Code Insiders](https://insiders.vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522loom%2522%252C%2522type%2522%253A%2522http%2522%252C%2522url%2522%253A%2522http%253A%252F%252Flocalhost%253A7777%252Fmcp%2522%257D) adds this entry under `servers.loom` in
-the user profile's `mcp.json`, the entry the dashboard and `loom install --client vscode`
-give VS Code:
+[Add Loom to VS Code Insiders](https://insiders.vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522loom%2522%252C%2522type%2522%253A%2522http%2522%252C%2522url%2522%253A%2522http%253A%252F%252Flocalhost%253A7777%252Fmcp%2522%257D) adds a `servers.loom`
+entry to the user profile's `mcp.json`, with the `type` and `url` the dashboard and
+`loom install --client vscode` give VS Code. The links' payload, URL-encoded into
+`vscode:mcp/install?<payload>`, is:
 
 ```json
 { "name": "loom", "type": "http", "url": "http://localhost:7777/mcp" }
 ```
 
-The links open VS Code's install prompt (`vscode:mcp/install?<entry>`). From a terminal,
+The links open VS Code's install prompt. From a terminal,
 `code --add-mcp '{"name":"loom","type":"http","url":"http://localhost:7777/mcp"}'` does
 the same. Coding sessions that use the code index add `?toolset=coding` to `url`
 ([choosing a toolset](mcp-clients.md#choosing-a-toolset)).
