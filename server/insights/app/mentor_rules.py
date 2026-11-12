@@ -338,11 +338,15 @@ class _Ctx:
         self, code: str, severity: str, text: str, ops: tuple[str, ...], **evidence: Any
     ) -> None:
         note = _unlisted(ops)
+        # The body is clipped, never the note: it says how to reach the op.
+        body = text.rstrip(".") + "."
+        if len(body) + len(note) > HINT_CHARS:
+            body = body[: HINT_CHARS - len(note) - 1].rstrip() + "…"
         self.hints.append(
             Hint(
                 code=code,
                 severity=severity,
-                text=clip(text.rstrip(".") + "." + note),
+                text=body + note,
                 ops=ops,
                 evidence=evidence,
             )
@@ -575,7 +579,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "records_for_identities",
             "info",
             f"{idk} writes keyed by a number, {c.fact('top_prefix_sets')} of them "
-            f"{c.facts.get('top_prefix') or 'prefix'}<id>: a table of facts with identity — "
+            f"{c.facts.get('top_prefix') or 'prefix'}<id>: facts with identity — "
             f"{_byname('memory_schema.register')} once, then memory.record.write{counts}.",
             ("memory_schema.register", "memory.record.write", "memory.aggregate"),
             id_keyed_sets=idk,
@@ -638,8 +642,8 @@ def _rules_coordination(c: _Ctx) -> None:
     c.add(
         "coordination_loop",
         "warning",
-        f"{what}: keep it in {_byname('working_memory.set')} / get, with no version row, "
-        "embedding or conflict check per write.",
+        f"{what}: coordination state — {_byname('working_memory.set')} / working_memory.get "
+        "holds it without a version row, an embedding or a conflict check per write.",
         ("working_memory.set", "working_memory.get"),
         max_sets_one_key=ms,
         max_gets_one_key=mg,
@@ -805,7 +809,7 @@ def _rule_set_churn(
     return (
         "set_churn",
         f"{key} was set {n} times this session: a value that changes every turn is "
-        "working_memory.set (via loom_op where unlisted), not a memory version each time.",
+        "working_memory.set, not a memory version each time." + _unlisted(("working_memory.set",)),
     )
 
 
@@ -877,8 +881,8 @@ def _rule_get_miss(
     return (
         "get_miss",
         f"no row at {key or 'that key'}: memory.search recalls by meaning, memory.list prefix= "
-        "(via loom_op) lists the siblings, and a moved key answers with canonical_key "
-        "(follow=true).",
+        "lists the siblings, and a moved key answers with canonical_key (follow=true)."
+        + _unlisted(("memory.list",)),
     )
 
 

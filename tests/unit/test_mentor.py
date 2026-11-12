@@ -1825,3 +1825,24 @@ def test_a_profile_whose_repository_fact_failed_is_remembered_briefly(
     asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 5.0 + m.FAILURE_TTL_SECONDS + 1))
     assert len(computed) == 3
     m.reset_cache()
+
+
+def test_a_long_hint_keeps_its_listing_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hint body is clipped to fit, never the note that says how to reach the op."""
+    _wire(
+        monkeypatch,
+        _store(
+            _usage(memory__set=300, memory__get=300, memory__search=300),
+            30,
+            max_sets_one_key=12,
+            hot_set_key="sre/lease/payments-primary-eu-west",
+            max_gets_one_key=40,
+            hot_get_key="sre/pointer/payments-primary-eu-west",
+            hot_key_chars=20,
+        ),
+    )
+    p = _profile()
+    assert p is not None
+    loop = p.hint("coordination_loop")
+    assert loop is not None and len(loop.text) <= mentor_rules.HINT_CHARS
+    assert loop.text.endswith(" (call working_memory.set via loom_op)")

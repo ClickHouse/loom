@@ -548,7 +548,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "their confidence', 'tag every runbook as ops', 'lock everything I "
         "saved about the incident', 'expire the meeting notes in 30 days'.\n"
         "WHEN NOT: One key (memory.delete / memory.set / memory.lock). A whole "
-        "agent or user (memory.clear, admin, via loom_op). Never skip "
+        "agent or user (memory.clear, admin, via loom_op); a user's request to "
+        "delete all their data is erasure.request (via loom_op). Never skip "
         "the dry run when the user has not seen the list."
     ),
     "memory.unlock": (
@@ -1038,9 +1039,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: A new note or checklist item for the active task.\n"
         "WHEN NOT: Rewriting the block is working_memory.set; durable facts "
         "are memory.set; never append long transcripts.\n"
-        "The response carries `fill_ratio` (length / char_limit): above ~0.7, "
-        "rewrite the block shorter with working_memory.set before an append "
-        "fails at 1.0."
+        "The response carries `fill_ratio` (length / char_limit) and "
+        "`char_limit`: above ~0.7, rewrite the block shorter with "
+        "working_memory.set, passing that `char_limit`, before an append fails "
+        "at 1.0."
     ),
     "working_memory.replace": (
         "Replace exact text inside a working-memory block. Use for "
@@ -1236,7 +1238,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHAT: Every later memory write in the namespace (the default "
         "`scope`) whose value matches `pattern` is refused.\n"
         "WHEN: An explicit 'never remember X' or 'don't store anything about "
-        "Y'. `sweep=true` also tombstones the rows already saved that match.\n"
+        "Y'. Pass `sweep=true` only when the user also asks to forget what is "
+        "already saved: it tombstones every matching row, other writers' too.\n"
         "WHEN NOT: Forgetting one saved fact is memory.delete. Refused to a "
         "token bounded to one user: a pattern refuses every user's writes.\n"
         "ARGS: pattern; optional pattern_type (substring | regex), reason, sweep."

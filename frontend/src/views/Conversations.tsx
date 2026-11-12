@@ -617,7 +617,7 @@ export function Conversations() {
                   // A viewer's agent saves nothing here; a read that failed leaves whether
                   // recording is on unknown. Either way, no connect.
                   description: canWrite(roleHere)
-                    ? "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on."
+                    ? "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on: the Claude Code or Codex plugin, or a transcript hook."
                     : "Conversations appear here when someone with writer access connects an agent that saves its chat turns, one thread per chat, while Record conversations is on.",
                   ...(loggingEnabled === true && canWrite(roleHere) ? { connect: "primary" as const } : {}),
                 })}

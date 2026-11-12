@@ -7,8 +7,7 @@ memory-operation languages, and the one BFCL uses for tool calls:
   planning   — natural-language instruction → the model, given loom's MCP
                tool surface, emits tool calls. Scored per task, all steps
                must match (BFCL's all-or-nothing):
-                 tool      exact tool name, in order (a loom_op call counts
-                           as the op it names)
+                 tool      exact tool name, in order
                  required  every gold-required argument present
                  literal   every gold literal argument equal (strings
                            case-insensitive and whitespace-normalised;
@@ -179,23 +178,10 @@ def score_step(
     }
 
 
-def unwrap_loom_op(call: dict[str, Any]) -> dict[str, Any]:
-    """A `loom_op {op, arguments}` call as the target op's own tool call, so a
-    model that reaches an unlisted op through loom_op scores as calling it."""
-    args = call.get("input") or {}
-    if call.get("name") != "loom_op" or not isinstance(args.get("op"), str):
-        return call
-    return {
-        "name": "loom_" + args["op"].replace(".", "_"),
-        "input": args.get("arguments") or {},
-    }
-
-
 def score_task(
     task: dict[str, Any], calls: list[dict[str, Any]], schemas: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
     gold = task["gold"]
-    calls = [unwrap_loom_op(c) for c in calls]
     steps = []
     for i, g in enumerate(gold):
         call = calls[i] if i < len(calls) else None
