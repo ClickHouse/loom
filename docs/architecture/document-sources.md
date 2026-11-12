@@ -403,13 +403,13 @@ to run, naming them, if it finds any.
 
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
 check below, while the namespace's source list holds a mirrored source (a fact that list
-shows every viewer); a mirror whose last source is gone runs no leg. Every other read
-path reads the namespace and finds nothing of the mirror. So a new op, a context-pack
-leg or an export that nobody taught the check shows no mirrored document; an N-1 replica
-has no mirror leg, and the rollback procedure keeps it off a mirror that holds rows. A
-permission column on `loom.documents` read by every path would make the opposite the
-default; [sharing](sharing.md#alternatives-not-taken) rejected that for collections,
-since one missed path leaks.
+shows every viewer); a mirror with no active mirrored source in that list runs no leg.
+Every other read path reads the namespace and finds nothing of the mirror. So a new op,
+a context-pack leg or an export that nobody taught the check shows no mirrored document;
+an N-1 replica has no mirror leg, and the rollback procedure keeps it off a mirror that
+holds rows. A permission column on `loom.documents` read by every path would make the
+opposite the default; [sharing](sharing.md#alternatives-not-taken) rejected that for
+collections, since one missed path leaks.
 
 - **Legs with the check:** `knowledge.search`, `get`, `outline`, `list`, `download`,
   `synthesize`, `knowledge.inspect` (titles), `knowledge.source.inspect` (a mirrored
@@ -430,7 +430,8 @@ since one missed path leaks.
   generation's captured text, depends on the mirror. Every request that runs a mirror
   leg is marked, whether or not anything was admitted, since marking on admission would
   tell existence. The costs are accepted:
-  - `knowledge.reads` names no address on a namespace with a mirrored source;
+  - `knowledge.reads` names no address a marked request read, a namespace document's
+    included;
   - every knowledge read there drops out of `cost.summary` by `user_id`, `operation` and
     `agent`;
   - a marked request writes no recall credit or exposure row, so the usage signals
@@ -441,13 +442,14 @@ since one missed path leaks.
   - the assistant's step list cannot say a marked tool call failed;
   - every session whose request runs a mirror leg is flagged, and a prompt-recall
     `context.pack` runs one, so while a namespace lists a mirrored source every Loom
-    hook of a session over it stops after its first recall (capture, recall,
-    `memory.for_file`, `code.impact`), and a dashboard view of such an answer sends no
-    `ui.vitals` ([the session rule](#the-session-rule)).
+    hook of a session over it stops after its first recall, reads included, and a
+    dashboard view of a flagged answer sends no `ui.vitals`
+    ([the session rule](#the-session-rule)).
 
   The assistant front end's token record of a marked answer is a spend row under
   exception 2 that only the deployment's operator reads; the conversation itself lives
-  in the reader's browser.
+  with the caller (the dashboard's browser storage, or the message list an SDK or HTTP
+  caller sends).
 
 - **The flag.** The answer of every marked request carries `mirrored: true` as its
   first field or line, whether or not anything was admitted, for the same reason as the
@@ -456,13 +458,12 @@ since one missed path leaks.
   and the chat route, `POST /v1/assistant/chat/completions`, which carries the flag in
   its stream's first event or its response's first field) is marked and flagged, since
   its answer is model text written from tool results and need not carry the field the
-  tools answered. A mirror leg answers
-  nothing to a client that does not declare it honours the flag. Loom's plugins and CLI
-  declare it, and so do the dashboard, which shows the document, and the assistant,
-  whose answer token declares the flag only when its caller's request did: a caller that
-  does not declare gets no mirrored text through the assistant, and the assistant writes
-  nothing from that turn into anything it shares. An SDK declares it only when the app
-  built on it opts in.
+  tools answered. A mirror leg answers nothing to a client that does not declare it
+  honours the flag. Loom's plugins and CLI declare it, and so do the dashboard, which
+  shows the document, and the assistant, whose answer token declares the flag only when
+  its caller's request did: a caller that does not declare gets no mirrored text through
+  the assistant, and the assistant writes nothing from that turn into anything it
+  shares. An SDK declares it only when the app built on it opts in.
 - **The session rule** keeps a session that saw a mirrored answer from sending it on
   ([the session rule](#the-session-rule)).
 - **The sync and the workers write nothing outside the mirror.** The mirrored sync's
@@ -557,10 +558,9 @@ The refusal: from the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is se
 it is off again and the mirror-erase command has run, every session-content op refuses a
 client that does not declare the flag, in every org, whatever mix of clients and tokens
 a session runs; the declaration is the client's promise, carried by the transport and
-never by an op argument a model fills in (an assistant answer token carries its
-caller's declaration as a claim the bridge fixes at delegation), and a client that does
-not make it (a third-party MCP client connected straight to Loom) is refused like any
-other. The
+never by an op argument a model fills in (an assistant answer token carries its caller's
+declaration as a claim the bridge fixes at delegation), and a client that does not make
+it (a third-party MCP client connected straight to Loom) is refused like any other. The
 condition is the one row of `loom.knowledge_mirror_latch` or the process's own switch: a
 process refuses while its switch is on, row or no row, and writes the row whenever it
 reads the switch on and finds it absent, so neither a lost write nor a restore of a copy
@@ -1168,7 +1168,8 @@ Each implementing pull request lists its own; these pin the model:
       allow.
     - A mirrored source's document counts shown to nobody but a platform admin.
     - `knowledge.reads` after an admitted reader's `knowledge.get` of a mirrored address
-      not naming it.
+      not naming it, nor a namespace document's address read in the same marked
+      request.
     - The dashboard's `knowledge.get` and the assistant's `memory.ask` of an admitted
       mirrored document answered with `mirrored: true`.
     - A later turn of a session that saw `mirrored: true` not captured, and a client
@@ -1181,7 +1182,8 @@ Each implementing pull request lists its own; these pin the model:
     - A `loom` CLI run through a shell and a prompt-recall injection carrying
       `mirrored: true` stopping every hook of the session.
     - The CLI's `ingest-transcript` refusing a transcript that carries the flag.
-    - A dashboard view of an admitted mirrored document sending no `ui.vitals`.
+    - A dashboard view of an answer carrying `mirrored: true`, with or without an
+      admitted item, sending no `ui.vitals`.
     - A forked or resumed session not captured after its parent saw the flag.
     - One test over every op the registry classifies as session content, each refusing a
       client that does not declare the flag from the first time
