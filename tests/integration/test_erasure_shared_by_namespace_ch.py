@@ -13,8 +13,6 @@ from server.core.ch import get_client
 from server.erasure.store import census, mutations, steps_memory
 from tests.integration._resources import unique_org
 
-pytestmark = pytest.mark.usefixtures("ch_target_required")
-
 
 @pytest.fixture(autouse=True)
 async def _ch_connected():

@@ -623,10 +623,10 @@ schema. These rules keep that safe. The operator procedure is in
     namespace's promoted rows live, and so did every one an older build completed. Their
     search rows are gone (`memory_embeddings.tombstone`), but `memory.lineage` and the
     shared reads still return them. Once N serves alone, the [upgrade
-    procedure](../operations/upgrades.md#upgrade-procedure), step 14, lists what the
-    erasures the ledger still holds (90 days) left: live rows to demote with
-    `memory.demote`, and the namespaces a purge erased, whose rows promoted before it are
-    deleted. An older erasure's rows cannot be found and stay. No gate holds the rollout,
+    procedure](../operations/upgrades.md#upgrade-procedure), step 14, lists the
+    namespaces the erasures the ledger still holds (90 days) reached, and runs over each
+    what N's step runs: rows promoted before the erasure are tombstoned, or deleted after a
+    purge. An older erasure's rows cannot be found and stay. No gate holds the rollout,
     and the mixed-version gate does not check this rule.
 
 ## What checks them
