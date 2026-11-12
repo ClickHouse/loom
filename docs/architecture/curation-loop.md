@@ -187,16 +187,16 @@ would read the term as undefined. This narrows the read-scope rule that a bounde
 serves no namespace-wide row ([read scope inside a
 namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
 governed definitions through this leg only; the implementing pull request updates that
-page and the comment on `SCOPED_OPS` in `server/identity/domain/read_scope.py`, which says
-every memory read of those ops carries the read scope. The leg runs only on a search's
-first page; the list a search parks for its later pages is the merged one, governed hits
-first, so the next page starts after the rows page one served and no ordinary hit is
-skipped, and is off when a field asks for other rows (a `memory_type` other than
-`definition`, which the pull request adds to the field's values; `tags` or `category`
-filtering, not with `tags_soft` or `category_soft`; an explicit `agent`, `run_id` or
-`session_ids`; `as_of`; a body `user_id` or `session_id` under a whole-namespace read;
-`min_body_chars`). A `user_id` or `session_id` the read scope pins, `scope`,
-`exclude_keys` and `min_similarity` keep it on, as do a soft tag or category and
+page, and in `server/identity/domain/read_scope.py` the module docstring and the comment
+on `SCOPED_OPS`, which say every memory read of those ops carries the read scope. The leg
+runs only on a search's first page; the list a search parks for its later pages is the
+merged one, governed hits first, so the next page starts after the rows page one served
+and no ordinary hit is skipped, and is off when a field asks for other rows (a
+`memory_type` other than `definition`, which the pull request adds to the field's values;
+`tags` or `category` filtering, not with `tags_soft` or `category_soft`; an explicit
+`agent`, `run_id` or `session_ids`; `as_of`; a body `user_id` or `session_id` under a
+whole-namespace read; `min_body_chars`). A `user_id` or `session_id` the read scope pins,
+`scope`, `exclude_keys` and `min_similarity` keep it on, as do a soft tag or category and
 `entity_filter`, which only boost rows; it drops any key in `exclude_keys`. It serves no
 definition whose source is `sensitivity = 'high'` (the read-time check above). Its read is
 bounded by a setting; past the bound, the most recently promoted definitions (by
@@ -387,12 +387,12 @@ The `knowledge.gaps.` ops list what users asked and the `knowledge.query_history
 manage a source, not documents, so none honours a read-narrowed token: the check that
 admits the `knowledge.` group to such a token (`honours_read_scope` in
 `server/identity/domain/read_scope.py`) refuses both prefixes first. A draft queued from a
-gap holds the drafted definition and the gap's id. The LLM writes it from the gap's
-queries, so it carries only text from queries at least `knowledge_gaps_min_askers` askers
-asked in that form: that threshold is why it may be shown to the namespace's viewers in
-`learnings.list`, as every learning is, and why it outlives a user erasure. The Library
-page shows a gaps tile for a namespace the viewer administers, with a **Draft definition**
-action per gap.
+gap holds the drafted definition and the gap's id. The LLM drafts it from nothing but the
+gap's queries, each asked in that form by at least `knowledge_gaps_min_askers` askers; its
+words are the model's, but nothing else reached the model: that threshold is why it may be
+shown to the namespace's viewers in `learnings.list`, as every learning is, and why it
+outlives a user erasure. The Library page shows a gaps tile for a namespace the viewer
+administers, with a **Draft definition** action per gap.
 
 ## Definitions from query history
 
@@ -462,12 +462,13 @@ written with `if_match_sha256` against that head; no head is written with `if_ab
 precondition the implementing pull request adds to `memory.set` that refuses the write
 when a live row holds the key, so a writer who creates the row first is never overwritten;
 any other head is a writer's edit, or a head the read-time check would not serve
-(`conflicted`, `duplicate`, expired), and the review is refused rather than overwrite or
-promote it; a demoted term's live row is such a head too, since no shared copy is
-governed, and the admin edits that row to the draft's text and promotes it with
-`memory.promote` and its hash instead. A retry so completes the promotion; rejecting the
-draft instead leaves the written row, which the admin restores from the row's history or
-promotes.
+(`conflicted`, `duplicate`, expired), or a pinned head (a pinned key refuses a changed
+value; the admin unpins it with `memory.unpin` and reviews again), and the review is
+refused rather than overwrite or promote it; a demoted term's live row is such a head too,
+since no shared copy is governed, and the admin edits that row to the draft's text and
+promotes it with `memory.promote` and its hash instead. A retry so completes the
+promotion; rejecting the draft instead leaves the written row, which the admin restores
+from the row's history or promotes.
 
 `learnings.review` promotes a definition only from a `knowledge_gap` or `query_history`
 candidate. A candidate of another kind whose type is `definition` (a `memory_supporters`
@@ -555,22 +556,23 @@ approved-hash check and takes `promoted_by` from the body, which no read-time ch
 tell, and an N-1 `memory.set` ignores `if_absent`, a field it does not know, and writes
 over a live row; the review path that sends it answers 503 while N-1 serves, and a direct
 caller relies on it only once no N-1 replica serves. Once none does, an admin promotes
-again the definitions promoted during the rollout (`loom.shared` rows of type `definition`
-by promotion time). N-1, which does not know `definition` as key-identified, can merge,
-supersede or retire one definition's source while writing another; the rows it retired are
-listed by `memory.auto_retirements` (reasons `conflict_resolver`,
-`newest_wins_contradiction`, `value_update` and `same_key_newest_wins`), restored with its
-Undo, and promoted again; a source it marked `conflicted` is cleared with
-`conflicts.resolve`, one it marked `duplicate` with `memory.dedup_resolve`, and promoted
-again; a write it merged was never stored and is written again; a source an N-1
-`memory.consolidate` tombstoned is brought back with `memory.restore` and promoted again.
-An N-1 relabel of a definition's source to `high` leaves its shared copy's embedding
-served by the ordinary legs: once N serves, the operator runs the retirement N's relabel
-performs (the shared embedding retired, the row kept) over every definition the admin read
-lists as lapsed for `high`, an operator step the implementing pull request's rollout
-section names, so a relabel back governs it again as on N. N-1's redact and namespace
-erasure do not reach the shared row's text, as today: one run during the rollout or after
-a rollback is run again once N serves.
+again every definition promoted before then, through N-1 or before this design
+(`loom.shared` rows of type `definition` by promotion time), since none of those carried
+the hash check or a token-stamped `promoted_by`. N-1, which does not know `definition` as
+key-identified, can merge, supersede or retire one definition's source while writing
+another; the rows it retired are listed by `memory.auto_retirements` (reasons
+`conflict_resolver`, `newest_wins_contradiction`, `value_update` and
+`same_key_newest_wins`), restored with its Undo, and promoted again; a source it marked
+`conflicted` is cleared with `conflicts.resolve`, one it marked `duplicate` with
+`memory.dedup_resolve`, and promoted again; a write it merged was never stored and is
+written again; a source an N-1 `memory.consolidate` tombstoned is brought back with
+`memory.restore` and promoted again. An N-1 relabel of a definition's source to `high`
+leaves its shared copy's embedding served by the ordinary legs: once N serves, the
+operator runs the retirement N's relabel performs (the shared embedding retired, the row
+kept) over every definition the admin read lists as lapsed for `high`, an operator step
+the implementing pull request's rollout section names, so a relabel back governs it again
+as on N. N-1's redact and namespace erasure do not reach the shared row's text, as today:
+one run during the rollout or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
@@ -583,7 +585,8 @@ operator runs the same delete once more then, for what N wrote in between.
 ## Invariants
 
 - A gap shows only queries that at least `knowledge_gaps_min_askers` askers asked in that
-  form; a query-history draft only the normalised text of queries that many users ran.
+  form; a draft is written from nothing but such queries, or, for query history, the
+  normalised text of queries that many users ran.
 - A miss is recorded only when the operator opted in and the namespace's capture level is
   not `off`; its asker comes from the token, never the body.
 - A definition is governed only while an admin's promotion of its namespace-wide row into
