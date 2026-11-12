@@ -85,24 +85,31 @@ code without the count, and a platform admin sees both (exception 4). The read o
 source's stored copies goes in pages by `source_uri`, so it never cuts one off. A
 listing asks the store about at most 50 parent folders per query (not a setting), so a
 source of many folders lists in several queries; a recursive folder's subfolders are
-walked on every full listing, and a file in a new subfolder arrives with the next one. A
-probe checks a bounded sample: every item while there are at most 20, otherwise the 20
+walked on every full listing, and a file in a new subfolder arrives with the next one.
+
+A probe checks a bounded sample: every item while there are at most 20, otherwise the 20
 items added last, and the answer says `sampled: true` with the number checked, which is
-shown wherever the item count is. A mirrored source's probe answers reachability, the
-items checked and codes, never a count, a sample of titles or a summary that names a
-file, since it lists as the owner or as crawled people. Every mirrored source's probe
-and status, to anyone but a connected source's owner and a platform admin, answer only
-source-level codes (whether the credential and its scopes work, `owner_inactive`;
-`rate_limited`, which grows with how much a source lists, only to its owner and a
-platform admin), and a viewer's status and `sync_now` answer depend only on source-level
-conditions, so a held-back code reads as a clean sync: an item refusal, a per-file or
-per-item code (`item <n>: http_404`, `meet_recordings: not found`, `too_large`,
-`extraction_failed:<code>`) and the oldest listing start are not answered there, since
-each depends on what a person can read. A refused item of the sample refuses `add` or
-`update` only on a `namespace` source and on a connected source probed by its owner; on
-any other mirrored probe, a platform admin's included, items never refuse, and only the
-source-level codes do. The next sync turn reports a refused item as
-`item <n>: http_404`, to those who see per-item codes, and goes on with the rest.
+shown wherever the item count is.
+
+On a mirrored source, the probe and the status hold back what depends on what a person
+can read:
+
+- A mirrored source's probe answers reachability, the items checked and codes, never a
+  count, a sample of titles or a summary that names a file, since it lists as the owner
+  or as crawled people.
+- To anyone but a connected source's owner and a platform admin, a mirrored source's
+  probe and status answer only source-level codes: whether the credential and its scopes
+  work, and `owner_inactive`. `rate_limited`, which grows with how much a source lists,
+  an item refusal, a per-file or per-item code (`item <n>: http_404`,
+  `meet_recordings: not found`, `too_large`, `extraction_failed:<code>`) and the oldest
+  listing start go only to the owner and a platform admin.
+- Every other caller's status and `sync_now` answer depend only on source-level
+  conditions, so a held-back code reads as a clean sync.
+- A refused item of the sample refuses `add` or `update` only on a `namespace` source
+  and on a connected source probed by its owner; on any other mirrored probe, a platform
+  admin's included, items never refuse, and only the source-level codes do. The next
+  sync turn reports a refused item as `item <n>: http_404`, to those who see per-item
+  codes, and goes on with the rest.
 
 ### The link parser
 
@@ -340,7 +347,8 @@ address, and a code that depends on the mirror's rows (a residue failure) reads 
 same code for any cause. The exceptions are these:
 
 1. A checked leg's answer to its reader, every field of which depends only on the items
-   that reader was admitted to and the request.
+   that reader was admitted to, the request, and whether the leg's per-request reads
+   succeeded.
 2. The rows a marked request leaves, and every read of them (its own answer falls under
    exception 1, so a marked `memory.ask` still answers its `synth_*` fields to its
    caller):
@@ -358,9 +366,9 @@ same code for any cause. The exceptions are these:
 3. A connected source's per-item and per-file codes and `too_many_documents`, to its
    owner, and its listing age, to its owner as a code (fresh or stale).
 4. A platform admin's view of a mirror's sources (every mirrored source's status, the
-   probe's sample and the oldest listing start), its sync and spend, and its erasure
-   counts, as codes and counts, through `loom doctor`, `knowledge.source.inspect` and
-   the erasure ops.
+   probe's sampled items and their codes, and the oldest listing start), its sync and
+   spend, and its erasure counts, as codes and counts, through `loom doctor`,
+   `knowledge.source.inspect` and the erasure ops.
 
 A deployment with auth off (`LOOM_AUTH_REQUIRED=false`) has no reader identity to check.
 It refuses to add a mirrored source with `AUTH_REQUIRED`, which wins over
@@ -486,8 +494,10 @@ A namespace source and a mirrored source that reach the same file own two docume
 in the namespace and one in its mirror. The namespace copy is readable by every reader,
 because an admin registered a source that makes it so; every leg answers the address
 once, dropping duplicates after the check: the namespace copy wins whenever the reader
-may see it, so a reader a mirror copy does not admit keeps it, and a reader who sees
-both gets no `mirrored: true` for text every reader of the namespace sees.
+may see it, and the hit then carries only the namespace copy's own chunks and scores (a
+hit only the mirror copy produced keeps the flag), so a reader a mirror copy does not
+admit keeps it, and a reader who sees both gets no `mirrored: true` for text every
+reader of the namespace sees.
 
 ### The session rule
 
@@ -506,15 +516,19 @@ hook sends with a session's prompt, files or transcript (`context.pack`, `code.s
 registry's classes and a test over what the shipped hooks send pin the full set.
 
 Once a session has seen the flag, no Loom hook sends any op from it, reads included, and
-no client sends a session-content op; only the calls the agent makes go on. A session
-resumed, forked or compacted from a flagged one is flagged, and so is one started from a
-flagged session's process (`claude -p` or `codex exec` run through its shell): the CLI
-and the hooks set an inherited marker in the environment and read it, and keep the flag
-in the session's own state beside what they keep for resume and fork. A worker an
-orchestrator starts outside that process tree (through `tmux`, `ssh` or a job queue)
-inherits nothing; what its own session records is the orchestrating agent's choice, out
-of scope ([threat model](#threat-model)). The CLI's `ingest-transcript` refuses a
-transcript that carries the flag, or whose session's state records it.
+no client sends a session-content op on its own; the calls the agent makes go on,
+dual-use ops (`code.search`, `context.pack`) included. A session is also flagged when a
+subagent or a child process it started saw the flag: the child records it in the session
+state it shares with the parent, which the parent's hooks read, since the child's final
+text, reworded, need not carry `mirrored: true`. A session resumed, forked or compacted
+from a flagged one is flagged, and so is one started from a flagged session's process
+(`claude -p` or `codex exec` run through its shell): the CLI and the hooks set an
+inherited marker in the environment and read it, and keep the flag in the session's own
+state beside what they keep for resume and fork. A worker an orchestrator starts outside
+that process tree (through `tmux`, `ssh` or a job queue) inherits nothing; what its own
+session records is the orchestrating agent's choice, out of scope ([threat
+model](#threat-model)). The CLI's `ingest-transcript` refuses a transcript that carries
+the flag, or whose session's state records it.
 
 The refusal: from the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set until
 it is off again and the mirror-erase command has run, every session-content op refuses a
@@ -581,11 +595,12 @@ A reader sees a mirrored document when all of these hold:
    `source-id` tag) is active and has a last complete listing that started within
    `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` (default 3600) of now, read from its row in
    `loom.knowledge_source_listings`.
-3. The reader's subject is the list's `owner` entry, or one of the reader's verified
-   emails is in the list's `emails`, or in the members of one of its `groups` from a
-   members row of the document's owning source read within
-   `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` (by its `source-id` tag), or that email's
-   domain is in its `domains`, or its `anyone` is set.
+3. The person the token reads as (below) is the list's `owner` entry, compared through
+   `canonical_subject`, or one of that person's verified emails is in the list's
+   `emails`, or in the members of one of its `groups` from a members row of the
+   document's owning source read within `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` (by
+   its `source-id` tag), or that email's domain is in its `domains`, or its `anyone` is
+   set.
 
 The reader's verified emails are its subject's directory emails that
 `VERIFIED_EMAIL_SQL` admits (an SSO account's or a linked one's,
@@ -596,17 +611,20 @@ only an SSO sign-in or a link writes such a row's `contact_email`, or narrows th
 predicate for this check. A domain matches only through an SSO sign-in whose identity
 provider vouches for that domain (the store's hosted-domain claim, or the org's
 configured SSO domain), never a linked account's email or a bare verified address. A
-person's own session token (one carrying a sign-in session, `sid`; a token minted for a
-subject without one is not) reads with that person's emails. Another token reads with
-its creator's emails only when it was minted for that person alone and says so (a
-`reads_as_creator` claim, which only the person's own signed-in session can mint,
-through the dashboard's flow that connects their own agent, which the coding-agent
-plugins use; delegation never copies it). The assistant's answer token, delegated from
-the caller's for that answer alone, reads with the caller's emails, and no token
-delegated from it does; the conversation the assistant's front end stores is the
-reader's own record; a service account made for tools, CI or a team, a bot and an
-end-user token have none, whatever their `creator`, so they see only `anyone` documents.
-A request sent on behalf of another person (`X-Loom-On-Behalf-Of`) reads with no emails.
+token reads as one person, for both the `owner` entry and the emails, or as nobody:
+
+- a person's own session token (one carrying a sign-in session, `sid`) reads as that
+  person; a token minted for a subject without one reads as nobody;
+- a token minted for one person alone that says so (a `reads_as_creator` claim, which
+  only the person's own signed-in session can mint, through the dashboard's flow that
+  connects their own agent, which the coding-agent plugins use; delegation never copies
+  it) reads as its creator;
+- the assistant's answer token, delegated from the caller's for that answer alone, reads
+  as the caller, and no token delegated from it reads as anyone; the conversation the
+  assistant's front end stores is the reader's own record;
+- every other token (a service account made for tools, CI or a team, a bot, an end-user
+  token, whatever their `creator`) and a request sent on behalf of another person
+  (`X-Loom-On-Behalf-Of`) reads as nobody, so it sees only `anyone` documents.
 
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
 a link-only permission, a permission the store marks deleted or pending (its address may
@@ -757,12 +775,13 @@ requests. That design has to answer what this page found:
   `connection.list` and `connection.disconnect` are new (a connection starts in the
   dashboard, `POST /v1/connect/<kind>/start`); `list` and `inspect` show items, modes
   and, through the check, the documents each owns. A mirrored source shows its document
-  counts to nobody but a platform admin (exception 4), and a connected source's items
-  only to its owner (an admin can still remove the source). To a viewer who is neither
-  the owner nor an admin, a mirrored source shows its kind, its owner as "a connected
-  account" for a connected one, its item count and its last sync's status, not its
-  items, `config` or `created_by`; its error text carries codes only, for every viewer.
-  Python and TypeScript SDKs are regenerated.
+  counts to nobody but a platform admin (exception 4), apart from what a checked leg
+  lists to an admitted reader, and a connected source's items only to its owner (an
+  admin can still remove the source). To a viewer who is neither the owner nor an admin,
+  a mirrored source shows its kind, its owner as "a connected account" for a connected
+  one, its item count and its last sync's status, not its items, `config` or
+  `created_by`; its error text carries codes only, for every viewer. Python and
+  TypeScript SDKs are regenerated.
 - **CLI.** `loom knowledge source add|update|list --namespace <ns> --link <url>...`
   (`--credential-file`, `--connected`), `loom connect gdrive|notion|linear`,
   `loom connection list|disconnect`, `loom knowledge mirror erase --all` ([restores and
@@ -1052,8 +1071,8 @@ Each implementing pull request lists its own; these pin the model:
       marker.
     - The same `degraded` marker for a query that matches a hidden document and one that
       matches nothing while a mirror read fails.
-      - A failed list, members or heads read with one hidden candidate answering exactly
-        as a query with no candidate: no marker.
+    - A failed list, members or heads read with one hidden candidate answering exactly
+      as a query with no candidate: no marker.
     - A leg on a lagging replica that sees a fresh listing row and an older list
       admitting nobody.
     - A document missing from a complete listing admitting nobody once its listing row
@@ -1147,6 +1166,19 @@ Each implementing pull request lists its own; these pin the model:
     - A session started from a flagged session's process (`claude -p` through its shell)
       flagged through the inherited marker, and a hook's `code.search` and
       `context.pack` sending nothing after the flag.
+    - The owner's `reads_as_creator` token admitted to the owner-only list of a
+      connected source; an on-behalf request for the owner and a token minted for the
+      owner's subject without `sid` refused.
+    - A `claude -p` child that read a mirror flagging its parent session, whose hooks
+      then send nothing.
+    - A namespace copy winning a dedupe carrying only its own chunks and scores; a
+      reader only the namespace copy admits keeping it; a reader whose query matches
+      only the mirror copy's revision getting that hit with `mirrored: true`.
+    - A restore that drops a `loom.knowledge_mirrors` row while `acl-` rows stay in the
+      documents, chunks, heads and bucket, then `loom knowledge mirror erase --all`
+      deleting every one of them before the latch.
+    - A non-owner admin's `sync_now` on a mirrored source with a refused item answering
+      as on a clean source.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`: for every leg with the check and every id-addressed
   op, a reader the list leaves out sees no mirrored document, its title, its address,
