@@ -1,4 +1,4 @@
-# Lower token and model cost for coding agents
+# Lower model cost for coding agents
 
 With the Loom plugin and code index, Claude Code answered questions about the ClickHouse
 codebase at 6% to 21% lower model cost than without it. The savings were 20% on 24
@@ -12,7 +12,8 @@ Both arms ran Claude Code (`claude-sonnet-5`) on the same checkout: one plain se
 with the Loom plugin and the `coding` toolset. Cost is the whole session's model bill and
 excludes Loom's own server-side model calls, hosting and indexing. The comparison measures
 the plugin as a whole; it does not separate the code index from memory. Results are
-specific to the tested workloads.
+specific to the tested workloads. With Loom a question takes longer on the clock: the
+plugin's per-prompt search and the MCP round trips add latency.
 [With and without Loom](../benchmarks/results.md#with-and-without-loom) has every set, the
 protocol and the artifacts, and [evaluate Loom](../getting-started/evaluate.md) shows how
 to measure it on your own repository.

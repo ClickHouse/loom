@@ -8,7 +8,7 @@ does for that need and where to start.
 | Long-term and shared memory for AI agents (an MCP memory server)  | [Agent memory](agent-memory.md)                        |
 | Knowledge and document search for agents (RAG)                    | [Document search](document-search.md)                  |
 | A code index and code intelligence for coding agents              | [Code index](code-intelligence.md)                     |
-| Lower token and model cost for coding agents                      | [Coding-agent cost](coding-agent-cost.md)              |
+| Lower model cost for coding agents                                | [Coding-agent cost](coding-agent-cost.md)              |
 | Shared context between agents in a multi-agent workflow           | [Multi-agent](multi-agent.md)                          |
 | Memory, recall, audit and erasure for autonomous agents           | [Autonomous agents](autonomous-agents.md)              |
 | Agent runs, traces, tracker and PR history                        | [Runs and PR history](runs-and-pr-history.md)          |

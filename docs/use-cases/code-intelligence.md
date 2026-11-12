@@ -26,7 +26,8 @@ files. How the index is built and kept fresh is in
 
 On the ClickHouse repository, Claude Code with Loom named the right file among its three for
 96.4% of 36 conceptual questions (10 paired runs) against 91.4% without it, at 21% lower model cost.
-On 200 SWE-bench Verified issues, a changed file was among the first 10 results for 82%,
+On 200 SWE-bench Verified issues, `code.search` ranked a changed file in its first 10
+results for 82% (file localization, not issue resolution),
 against 57% for BM25 over every indexed file and 79% for BM25 over `.py` files only; the `.py`-only gap is within noise.
 [With and without Loom](../benchmarks/results.md#with-and-without-loom) ·
 [SWE-bench Verified file localization](../benchmarks/results.md#swe-bench-verified-file-localization)

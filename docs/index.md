@@ -23,7 +23,7 @@ One page per need, each saying what Loom does for it and where to start:
 [agent memory](use-cases/agent-memory.md) ·
 [document search and RAG](use-cases/document-search.md) ·
 [code index for coding agents](use-cases/code-intelligence.md) ·
-[coding-agent token and model cost](use-cases/coding-agent-cost.md) ·
+[coding-agent model cost](use-cases/coding-agent-cost.md) ·
 [multi-agent shared context](use-cases/multi-agent.md) ·
 [autonomous agents: recall, audit, erasure](use-cases/autonomous-agents.md) ·
 [runs, traces and PR history](use-cases/runs-and-pr-history.md) ·

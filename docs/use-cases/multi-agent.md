@@ -13,6 +13,8 @@ learn and hand over.
   [Namespace conflict policy](../features/memory/conflicts-and-refusal.md#namespace-conflict-policy)
 - **Task inboxes.** Each agent has a durable queue with leases, retries and review rules;
   a claimed task has one owner at a time. [Tasks, decisions and policies](../features/tasks-and-decisions.md)
+- **Decisions.** What was decided in a case like this, why, and whether it worked.
+  [Decisions](../features/tasks-and-decisions.md#decisions)
 - **Working memory.** Text an agent is given every time instead of finding it by
   search, separate from long-term memory. [Working memory and profiles](../features/memory/working-memory-and-profiles.md)
 - **Context packs.** `context.pack` builds the bounded bundle an agent loads at the start

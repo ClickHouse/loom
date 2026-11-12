@@ -45,7 +45,7 @@ state. The dashboard brings memories, repositories, tasks and runs into one plac
   [Namespaces and sharing](./docs/features/namespaces-and-sharing.md)
 - **A code index of your repositories** that coding agents query for definitions,
   callers and change impact. [Code index](./docs/use-cases/code-intelligence.md)
-- **Lower token and model cost for coding agents**: 6% to 21% lower model cost across
+- **Lower model cost for coding agents**: 6% to 21% lower model cost across
   the measured Claude Code sets. [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
 - **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
   extractor service converts. [Document search](./docs/use-cases/document-search.md)

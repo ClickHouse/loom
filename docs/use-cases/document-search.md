@@ -30,4 +30,5 @@ says what is still missing.
 ## Start
 
 The [quickstart](../getting-started/quickstart.md) runs the stack with the extractor
-service. Add a document from the dashboard's Library page or with `knowledge.add`.
+service. Add a document from the dashboard's Library page, with `knowledge.add` for text, or with
+`knowledge.ingest` for a file the extractor converts.

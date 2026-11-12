@@ -1,9 +1,9 @@
 # Memory, recall, audit and erasure for autonomous agents
 
-An autonomous agent needs memory it can trust without a person watching: facts it can
-recall later, a record of who wrote what, and a way to delete data everywhere when asked.
-Loom provides these as server operations, stored in ClickHouse (or Postgres for live
-memory state).
+Loom gives autonomous agents memory they can trust without a person watching: facts they
+recall later, an audit record of who wrote what, and erasure of a scope everywhere Loom
+keeps it. These are server operations, stored in ClickHouse (or Postgres for live memory
+state).
 
 ## What you get
 
@@ -16,8 +16,8 @@ memory state).
   content, and a worker seals hourly windows into a hash chain, so an edit or deletion is
   detectable. Audit writes are fail-open: a failed insert loses the row.
   [Audit log](../features/observability/audit.md#limits-and-failure-modes)
-- **Erasure you can check.** `erasure.request` erases a scope (tombstones by default, deletes
-  with `purge=true`) from every table that holds memory content and ends with a residue census and a receipt.
+- **Erasure you can check.** `erasure.request` erases a scope (tombstones by default; `purge=true`
+  deletes the rows of a `user_id` or `namespace_list` scope) from every table that holds memory content and ends with a residue census and a receipt.
   [Retention and erasure](../features/memory/retention-and-erasure.md)
 - **Rollback.** `namespace.rollback` returns every memory in a namespace to its version
   at a point in time.
