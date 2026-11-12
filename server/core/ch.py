@@ -349,7 +349,7 @@ _DDL_LEADS = (
     "DELETE",  # DELETE FROM is a lightweight mutation
 )
 _WRITE_LEADS = ("INSERT", "UPDATE")
-_LEAD_RE = re.compile(LEADING_COMMENTS + r"([A-Za-z]+)", re.S)
+_LEAD_RE = re.compile(LEADING_COMMENTS + r"([A-Za-z]+)")
 
 # A block that knows it runs long (a CLI mutation that waits on
 # `mutations_sync = 2`, a backfill) raises the bound for every statement it

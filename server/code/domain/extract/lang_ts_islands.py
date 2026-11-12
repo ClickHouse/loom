@@ -90,7 +90,7 @@ _SQL_HEAD_RE = re.compile(
     LEADING_COMMENTS
     + r"(SELECT|INSERT|CREATE|DROP|ALTER|WITH|UPDATE|DELETE|OPTIMIZE|SYSTEM|TRUNCATE|EXPLAIN|"
     r"SHOW|DESCRIBE|GRANT|REVOKE|ATTACH|DETACH|COPY|ANALYZE|VACUUM|PRAGMA)\b",
-    re.I | re.S,
+    re.I,
 )
 # The keywords that follow a verb in a statement and never in a UI string: `Delete ${n}
 # items?` and `Show ${n} more` open with a verb too (105 of langfuse's 489 verb-headed

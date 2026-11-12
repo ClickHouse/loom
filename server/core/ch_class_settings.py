@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 _CLASS_SETTINGS_RAW: str | None = None
 _CLASS_SETTINGS: dict[str, dict[str, Any]] = {}
-_READ_HEAD = re.compile(LEADING_COMMENTS + r"(SELECT|WITH)\b", re.I | re.S)
+_READ_HEAD = re.compile(LEADING_COMMENTS + r"(SELECT|WITH)\b", re.I)
 
 
 def traffic_class_settings(traffic_class: str) -> dict[str, Any]:
