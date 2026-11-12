@@ -346,16 +346,18 @@ therefore answers codes for what a mirror holds, never a count, title, file id o
 address, and a code that depends on the mirror's rows (a residue failure) reads as the
 same code for any cause. The exceptions are these:
 
-1. A checked leg's answer to its reader, every field of which depends only on the items
-   that reader was admitted to, the request, and whether the leg's per-request reads
-   succeeded.
+1. A checked leg's answer to its reader, every field of which depends on nothing of the
+   mirror but the items that reader was admitted to, and on the request and whether the
+   leg's per-request reads succeeded.
 2. The rows a marked request leaves, and every read of them (its own answer falls under
    exception 1, so a marked `memory.ask` still answers its `synth_*` fields to its
    caller):
-   - Its spend (input, output and embedding tokens, and cost) counts in its namespace's
-     totals and cap. Below a platform admin it shows only in the per-namespace-day total
-     and in `cost.budget_status`'s live total, and every other `cost.summary` dimension
-     leaves it out. The fold carries ops, those tokens and cost only, and leaves marked
+   - Its spend (input, output and embedding tokens, and cost) depends only on what
+     exception 1 lets the answer depend on, so the check runs before any model or
+     embedding call over mirror text, and counts in its namespace's totals and cap.
+     Below a platform admin it shows only in the per-namespace-day total and in
+     `cost.budget_status`'s live total, and every other `cost.summary` dimension leaves
+     it out. The fold carries ops, those tokens and cost only, and leaves marked
      requests out of `errors` and the latency figures. A viewer can still difference a
      live or daily total around another person's marked request and so learn that
      request's spend; that residual is accepted.
@@ -430,15 +432,21 @@ rejected that for collections, since one missed path leaks.
   `user_id`, `operation` and `agent`, the assistant's support check reads a marked call
   as unknown, and a marked request writes no recall credit or exposure row, so the usage
   signals (`recall_count`, `last_recalled_at`, the usage totals) leave out every marked
-  read, and the assistant gives a memory it cites from a marked call the reason that the
-  check could not run (`unchecked`), not `unsupported`.
+  read, the assistant gives a memory it cites from a marked call the reason that the
+  check could not run (`unchecked`), not `unsupported`, and its step list cannot say a
+  marked tool call failed. The assistant front end's own token record of a marked answer
+  is a cost record under exception 2.
 - **The flag.** An answer any part of which comes from an admitted mirrored item carries
   `mirrored: true`, as the first field or line of the answer and again on each admitted
   item, so a truncated copy still carries it. A mirror leg answers nothing to a client
   that does not declare it honours the flag. Loom's plugins and CLI declare it, and so
-  do the dashboard, which shows the document, and the assistant, which writes nothing
-  from that turn into anything it shares; an SDK declares it only when the app built on
-  it opts in.
+  do the dashboard, which shows the document, and the assistant: its answer token
+  declares the flag only when its caller's request did, so a caller that does not
+  declare gets no mirrored text through it, and it writes nothing from that turn into
+  anything it shares; an SDK declares it only when the app built on it opts in. Every
+  `assistant.ask` on a namespace with a mirror is marked and answers `mirrored: true`,
+  admitted or not, since its answer is model text written from tool results and need not
+  carry the field the tools answered.
 - **The session rule** keeps a session that saw a mirrored answer from sending it on
   ([the session rule](#the-session-rule)).
 - **The sync and the workers write nothing outside the mirror.** The mirrored sync's
@@ -493,11 +501,10 @@ namespace's `retention_days` and `warm_days`.
 A namespace source and a mirrored source that reach the same file own two documents, one
 in the namespace and one in its mirror. The namespace copy is readable by every reader,
 because an admin registered a source that makes it so; every leg answers the address
-once, dropping duplicates after the check: the namespace copy wins whenever the reader
-may see it, and the hit then carries only the namespace copy's own chunks and scores (an
-address only the mirror copy matched keeps the flag; otherwise the mirror copy's chunks
-are dropped), so a reader a mirror copy does not admit keeps it, and a reader who sees
-both gets no `mirrored: true` for text every reader of the namespace sees.
+once, dropping duplicates after the check. When both copies matched and the reader may
+see the namespace copy, the hit is the namespace copy's, with its own chunks and scores
+and no `mirrored: true`. When only a mirror copy the reader is admitted to matched, the
+hit is that copy's, with the flag. Otherwise the mirror copy is dropped.
 
 ### The session rule
 
@@ -620,11 +627,12 @@ A token reads as one person, for both the `owner` entry and the emails, or as no
 - a token minted for one person alone that says so (a `reads_as_creator` claim, which
   only the person's own signed-in session can mint, through the dashboard's flow that
   connects their own agent, which the coding-agent plugins use; delegation never copies
-  it) reads as its creator;
+  it, except into the assistant's answer token below) reads as its creator;
 - the assistant's answer token, delegated from the caller's for that answer alone, reads
   as whomever the caller's own token reads as (so as nobody for a token that reads as
-  nobody), and no token delegated from it reads as anyone; the conversation the
-  assistant's front end stores is the reader's own record;
+  nobody), a claim the bridge alone fixes at delegation and the check never infers from
+  the token's `jti` or consumer; no token delegated from it reads as anyone; the
+  conversation the assistant's front end stores is the reader's own record;
 - every other token (a service account made for tools, CI or a team, a bot, an end-user
   token, whatever their `creator`) and a request sent on behalf of another person
   (`X-Loom-On-Behalf-Of`) reads as nobody, so it sees only `anyone` documents.
@@ -1000,9 +1008,9 @@ Each implementing pull request lists its own; these pin the model:
     - The query builder escaping every field.
     - A non-owner admin's `list` and `inspect` of a connected source showing `config`
       `{}`.
-      - A connected source's items, and its counts other than what the check admits,
-        hidden from an admin who is not its owner; a non-owner admin's `check` of a
-        connected source answering no item ids.
+    - A connected source's items, and its document counts beyond those a checked leg
+      lists to that admin when admitted, hidden from an admin who is not its owner; a
+      non-owner admin's `check` of a connected source answering no item ids.
     - An assistant answer token delegated from a Settings-made service-account token
       refused an `emails` document.
     - A failed read of the reader's canonical subject or emails giving the same marker
@@ -1063,11 +1071,19 @@ Each implementing pull request lists its own; these pin the model:
     - A deactivated team member admitted by no `linear` list.
     - Against an `emails` document: a person's own session token and a
       `reads_as_creator` agent token admitted, a Settings-made service-account token
-      (with `creator`), a delegated child of a `reads_as_creator` token and a request on
-      behalf of another person not.
+      (with `creator`), a delegated child of a `reads_as_creator` token other than the
+      assistant's answer token, and a request on behalf of another person not.
     - A permission the store marks deleted, whose address now belongs to another
       verified user, admitting nobody.
-    - The assistant's answer token admitted and a token delegated from it refused.
+    - An answer token delegated from the listed person's session token admitted, an
+      answer token delegated from a `reads_as_creator` token admitted as its creator,
+      and a token delegated from an answer token refused.
+    - A caller of `assistant.ask` or `loom_assistant_ask` that does not declare the flag
+      getting no mirrored text; a plugin session whose `loom_assistant_ask` answer
+      carries `mirrored: true` flagged; a marked `assistant.ask` row folded and masked
+      like a marked tool-call row.
+    - A caller admitted to nothing seeing the same `cost.budget_status` change over 10
+      and over 10,000 hidden matching documents.
     - A file another mirrored source holds, added by a second source, written as that
       source's own copy with its own list, so the adder sees what they would with no
       other source.
