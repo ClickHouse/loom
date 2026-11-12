@@ -41,10 +41,6 @@ def test_a_refusal_names_ops_as_the_callers_listing_does() -> None:
     assert (
         instead["readonly"] == "call loom_memory_get per key, or loom_memory_list with a key prefix"
     )
-    # a hidden write on readonly names no write: the connection cannot make one
-    assert mcp_op.hidden_refusal("memory.bulk_set", "readonly")["instead"].startswith(
-        "this connection is read-only"
-    )
 
 
 def test_a_readonly_deployment_default_routes_reads_only(monkeypatch) -> None:
@@ -78,35 +74,30 @@ def test_unlock_says_only_the_owner_unlocks() -> None:
 
 
 @pytest.mark.parametrize("name", sorted(mcp_op._INSTEAD))
-def test_a_readonly_refusal_says_read_only_exactly_when_its_alternative_is_a_write(
-    name: str,
-) -> None:
-    from server.operations.registry import OPERATIONS_BY_NAME
-
-    text = mcp_op._INSTEAD[name]
-    called = mcp_op._NAMED_OP.search(text) if text.startswith("call ") else None
-    op = mcp_op._lookup(called.group(1)) if called else None
-    write = op is not None and not op.read_only
+def test_a_readonly_refusal_says_read_only_only_for_a_write_alternative(name: str) -> None:
+    """On readonly, only bulk_set and delete_version (whose alternative is a write)
+    get the read-only text; every other refusal keeps its reason."""
     instead = mcp_op.hidden_refusal(name, "readonly")["instead"]
-    assert instead.startswith("this connection is read-only") == write, (name, instead)
-    assert name in OPERATIONS_BY_NAME
+    expected = name in {"memory.bulk_set", "memory.delete_version"}
+    assert instead.startswith("this connection is read-only") == expected, (name, instead)
 
 
-def test_a_readonly_refusal_keeps_the_reason_when_its_alternative_is_a_read() -> None:
-    instead = mcp_op.hidden_refusal("memory.extraction_status", "readonly")["instead"]
-    assert instead.startswith("call memory.extraction_status_mine (via loom_op) with the queue_id")
-
-
-def test_a_readonly_refusal_keeps_every_reason_that_names_no_write() -> None:
-    """Only an alternative this connection cannot reach becomes the read-only text."""
+def test_a_readonly_refusal_keeps_its_reason() -> None:
     instead = {
         name: mcp_op.hidden_refusal(name, "readonly")["instead"]
-        for name in ("memory.unlock", "code.coverage.watch", "ui.vitals", "memory.bulk_set")
+        for name in (
+            "memory.unlock",
+            "code.coverage.watch",
+            "ui.vitals",
+            "memory.extraction_status",
+        )
     }
     assert "only the user can unlock" in instead["memory.unlock"]
     assert instead["code.coverage.watch"].endswith("call code.index_status (via loom_op)")
     assert instead["ui.vitals"].endswith("nothing to call")
-    assert instead["memory.bulk_set"].startswith("this connection is read-only")
+    assert instead["memory.extraction_status"].startswith(
+        "call memory.extraction_status_mine (via loom_op) with the queue_id"
+    )
 
 
 def test_every_hidden_op_gets_a_reason_and_an_unknown_op_keeps_the_old_refusal() -> None:

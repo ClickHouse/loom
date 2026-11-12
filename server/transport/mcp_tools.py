@@ -52,7 +52,12 @@ from server.transport.mcp_descriptions import (
 )
 from server.transport.mcp_descriptions import coding_search_description
 from server.transport.mcp_op import DESCRIPTOR as LOOM_OP_DESCRIPTOR
-from server.transport.mcp_op import LOOM_OP_TOOL_NAME, loom_op_description, name_ops_for_listing
+from server.transport.mcp_op import (
+    LOOM_OP_TOOL_NAME,
+    loom_op_description,
+    name_ops_for_listing,
+    routes_writes,
+)
 from server.transport.mcp_schemas import (
     _shape_schema,
     _strip_blob_fields_from_knowledge,
@@ -69,18 +74,18 @@ log = logging.getLogger(__name__)
 # ============================================================
 
 
-def _name_ops_in_fields(schema: Any, listed: Set[str], toolset: str | None) -> Any:
+def _name_ops_in_fields(schema: Any, listed: Set[str], writes: bool) -> Any:
     """A copy of ``schema`` with every field description rendered for the listing."""
     if isinstance(schema, list):
-        return [_name_ops_in_fields(item, listed, toolset) for item in schema]
+        return [_name_ops_in_fields(item, listed, writes) for item in schema]
     if not isinstance(schema, dict):
         return schema
     out: dict[str, Any] = {}
     for key, value in schema.items():
         if key == "description" and isinstance(value, str):
-            out[key] = name_ops_for_listing(value, listed, toolset)
+            out[key] = name_ops_for_listing(value, listed, writes)
         else:
-            out[key] = _name_ops_in_fields(value, listed, toolset)
+            out[key] = _name_ops_in_fields(value, listed, writes)
     return out
 
 
@@ -446,6 +451,7 @@ async def _tools_descriptor(
     descriptors: list[dict[str, Any]] = []
     ops = listed_ops(toolset)
     listed = _tool_names(ops, toolset)
+    writes = routes_writes(toolset)
     for op in ops:
         custom = _curated_description(toolset, op.name)
         if custom:
@@ -487,8 +493,8 @@ async def _tools_descriptor(
     for d in descriptors:
         if d["name"] == LOOM_OP_TOOL_NAME:  # built for this listing already
             continue
-        d["description"] = name_ops_for_listing(d["description"], listed, toolset)
-        d["inputSchema"] = _name_ops_in_fields(d["inputSchema"], listed, toolset)
+        d["description"] = name_ops_for_listing(d["description"], listed, writes)
+        d["inputSchema"] = _name_ops_in_fields(d["inputSchema"], listed, writes)
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,

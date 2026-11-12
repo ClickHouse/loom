@@ -28,6 +28,7 @@ from server.operations.toolsets import (
     MCP_TOOLSETS,
     curated_roster,
     op_toolsets,
+    resolve_toolset,
 )
 from server.settings import settings
 from server.transport import mcp_op, mcp_primer
@@ -68,7 +69,7 @@ def _names(tools: list[dict]) -> set[str]:
 
 def _shown(listed: dict[str, dict], toolset: str, name: str, source: str) -> bool:
     """Whether tool ``name`` carries ``source`` as this listing renders it."""
-    text = mcp_op.name_ops_for_listing(source, set(listed), toolset)
+    text = mcp_op.name_ops_for_listing(source, set(listed), mcp_op.routes_writes(toolset))
     return listed[name]["description"] == text
 
 
@@ -163,12 +164,12 @@ def test_core_and_atomic_listings_are_unchanged_by_the_new_tier():
 
 
 def test_toolset_is_selectable_per_deployment_and_per_request():
-    assert mt.resolve_toolset(None, "coding") == "coding"
-    assert mt.resolve_toolset("coding", "core") == "coding"
-    assert mt.resolve_toolset("CODING", "core") == "coding"
-    assert mt.resolve_toolset("bogus", "core") == "core", "an unknown request value is the default"
-    assert mt.resolve_toolset(None, "bogus") == "core", "an unknown configured value is core"
-    assert mt.resolve_toolset("", None) == "core"
+    assert resolve_toolset(None, "coding") == "coding"
+    assert resolve_toolset("coding", "core") == "coding"
+    assert resolve_toolset("CODING", "core") == "coding"
+    assert resolve_toolset("bogus", "core") == "core", "an unknown request value is the default"
+    assert resolve_toolset(None, "bogus") == "core", "an unknown configured value is core"
+    assert resolve_toolset("", None) == "core"
     # the per-request override on a `core` deployment is the coding listing
     assert len(_listing("core", True, requested="coding")) == 21
     assert (
@@ -342,11 +343,11 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
     assert not is_toolset("coding+all") and not is_toolset("coding+readonly")
     assert not is_toolset("coding+bogus") and not is_toolset("+") and not is_toolset("")
     assert is_curated("coding+tracker") and not is_curated("all") and not is_curated("coding+all")
-    assert mt.resolve_toolset("coding+tracker", "core") == "coding+tracker"
-    assert mt.resolve_toolset("Coding+TRACKER+coding", "core") == "coding+tracker"
-    assert mt.resolve_toolset("coding+qa", "core") == "core"
-    assert mt.resolve_toolset("coding+bogus", "core") == "core", "an unknown part is the default"
-    assert mt.resolve_toolset(None, "coding+tracker") == "coding+tracker", (
+    assert resolve_toolset("coding+tracker", "core") == "coding+tracker"
+    assert resolve_toolset("Coding+TRACKER+coding", "core") == "coding+tracker"
+    assert resolve_toolset("coding+qa", "core") == "core"
+    assert resolve_toolset("coding+bogus", "core") == "core", "an unknown part is the default"
+    assert resolve_toolset(None, "coding+tracker") == "coding+tracker", (
         "a deployment may default to a union"
     )
     # the roster is the union of the parts' rosters

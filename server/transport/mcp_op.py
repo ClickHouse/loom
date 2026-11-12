@@ -113,15 +113,14 @@ def _lookup(name: str) -> Operation | None:
     return TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
 
 
-def name_ops_for_listing(text: str, listed: Set[str], toolset: str | None) -> str:
+def name_ops_for_listing(text: str, listed: Set[str], writes: bool) -> str:
     """``text`` as a client of this listing reads it. A client calls a listed op
     by its tool name, so every op the listing carries is named by its tool. An
     op it does not carry keeps its dotted name, the one `loom_op` takes, and its
     first mention says "(via loom_op)", unless `loom_op` does not route it here
-    (a hidden op, a write on a read-only connection, a listing without
-    `loom_op`)."""
+    (a hidden op, a write when ``writes`` (`routes_writes`) is false, a listing
+    without `loom_op`)."""
     has_loom_op = LOOM_OP_TOOL_NAME in listed
-    writes = routes_writes(toolset)
     marked: set[str] = set()
 
     def rename(m: re.Match[str]) -> str:
@@ -149,16 +148,14 @@ _EXAMPLES: tuple[tuple[str, str], ...] = (
 
 def loom_op_description(listed: Set[str], toolset: str | None) -> str:
     """`loom_op`'s text for a listing whose tool names are ``listed``."""
+    writes = routes_writes(toolset)
     shown = []
     for name, what in _EXAMPLES:
         op = OPERATIONS_BY_NAME[name]
-        if op.mcp_tool_name not in listed and reachable(op, toolset):
+        if op.mcp_tool_name not in listed and _routed(op, writes):
             shown.append(f"{what} ({name})")
-    such_as = ""
-    if shown:
-        examples = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
-        such_as = f" It reaches, for example, {examples}."
-    reads = "" if routes_writes(toolset) else " On this connection it runs read ops only."
+    such_as = f" It reaches, for example, {' and '.join(shown)}." if shown else ""
+    reads = "" if writes else " On this connection it runs read ops only."
     # Discovery and the call shape lead: compact keeps the first paragraph cut near
     # 280 chars, so both must fit in the first sentence.
     return (
@@ -268,7 +265,9 @@ _NEEDS_AN_OPERATOR = (
     "this needs the user or an operator, outside this chat. Don't look for another "
     "route, token or credential to do it yourself"
 )
-# A hidden write on a connection whose loom_op routes reads only.
+# The hidden ops whose alternative is a write. On a connection that routes
+# reads only they get _READ_ONLY_CONNECTION instead of a route it cannot take.
+_WRITE_ALTERNATIVE = frozenset({"memory.bulk_set", "memory.delete_version"})
 _READ_ONLY_CONNECTION = (
     "this connection is read-only: tell the user the change needs a connection that "
     "is not. Don't look for another route, token or credential to do it yourself"
@@ -284,18 +283,14 @@ def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
     op = OPERATIONS_BY_NAME.get(name)
     if op is None or name not in _MCP_HIDDEN_OPS:
         return None
-    default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
-    text = _INSTEAD.get(name, default)
-    listed = listed_tool_names(toolset)
     writes = routes_writes(toolset)
-    # An alternative reads "call <op> ...": the op it calls is the first one named.
-    called = _NAMED_OP.search(text) if text.startswith("call ") else None
-    alternative = _lookup(called.group(1)) if called else None
-    if alternative and alternative.mcp_tool_name not in listed and not _routed(alternative, writes):
-        # the alternative is a write this read-only connection cannot make
+    if name in _WRITE_ALTERNATIVE and not writes:
         instead = _READ_ONLY_CONNECTION
     else:
-        instead = name_ops_for_listing(text, listed, toolset)
+        default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
+        instead = name_ops_for_listing(
+            _INSTEAD.get(name, default), listed_tool_names(toolset), writes
+        )
     return {
         "error": f"{name} exists but is not callable on this MCP connection",
         "code": "OP_NOT_ON_MCP",

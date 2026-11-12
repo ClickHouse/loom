@@ -243,29 +243,27 @@ def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code:
 def test_naming_marks_only_what_loom_op_routes():
     listed = {"loom_op", "loom_memory_set"}
     text = "Save with memory.set; tidy with `memory.apply`, then memory.apply again."
-    assert mcp_op.name_ops_for_listing(text, listed, "core") == (
+    assert mcp_op.name_ops_for_listing(text, listed, True) == (
         "Save with loom_memory_set; tidy with `memory.apply` (via loom_op), "
         "then memory.apply again."
     )
-    # a read-only connection's loom_op routes reads only; a hidden op stays as written
-    assert mcp_op.name_ops_for_listing("memory.apply", listed, "readonly") == "memory.apply"
-    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, "readonly") == "memory.apply"
-    assert mcp_op.name_ops_for_listing("memory.bulk_set", listed, "core") == "memory.bulk_set"
+    # loom_op routing reads only (writes=False) leaves a write unmarked; a hidden op stays
+    assert mcp_op.name_ops_for_listing("memory.apply", listed, False) == "memory.apply"
+    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, False) == "memory.apply"
+    assert mcp_op.name_ops_for_listing("memory.bulk_set", listed, True) == "memory.bulk_set"
     # without loom_op on the listing nothing is marked
-    assert (
-        mcp_op.name_ops_for_listing("memory.apply", {"loom_memory_set"}, "core") == "memory.apply"
-    )
-    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, "core") == (
+    assert mcp_op.name_ops_for_listing("memory.apply", {"loom_memory_set"}, True) == "memory.apply"
+    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, True) == (
         "memory.apply (via loom_op)"
     )
     # a dotted name that is no op, such as a response field path, stays
-    assert mcp_op.name_ops_for_listing("`memory.next_page`", listed, "core") == "`memory.next_page`"
+    assert mcp_op.name_ops_for_listing("`memory.next_page`", listed, True) == "`memory.next_page`"
     # a citation tag is not an op mention
-    assert mcp_op.name_ops_for_listing("[knowledge.query#1]", listed, "core") == (
+    assert mcp_op.name_ops_for_listing("[knowledge.query#1]", listed, True) == (
         "[knowledge.query#1]"
     )
     # a field path under a listed op is not an op mention and stays whole
-    assert mcp_op.name_ops_for_listing("`memory.set.value`", listed, "core") == "`memory.set.value`"
+    assert mcp_op.name_ops_for_listing("`memory.set.value`", listed, True) == "`memory.set.value`"
 
 
 def test_a_listing_build_leaves_the_source_texts_as_written():
