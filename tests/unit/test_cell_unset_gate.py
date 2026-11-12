@@ -312,7 +312,7 @@ def test_an_auto_process_in_enforced_does_not_take_the_lease(
     _rows(monkeypatch, "enforced")
     lease = _auto(_Lock([True]))
     lease.step()
-    assert not lease.held and "this cell does not serve" in lease.reason
+    assert not lease.held and "the cell gate" in lease.reason
 
 
 def test_an_auto_cell_process_with_a_matching_state_takes_the_lease(

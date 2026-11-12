@@ -77,15 +77,9 @@ async def test_attachs_mode_write_and_a_recording_insert_never_cross() -> None:
 
     async with own_database() as dsn:
         admin = await asyncpg.connect(dsn)
-        if not await admin.fetchval("SELECT to_regclass('loom.tenancy') IS NOT NULL"):
-            await admin.close()
-            pytest.skip("this Postgres has not applied 008_cells.sql")
         a, b = (f"tenancy-race-{uuid.uuid4().hex[:8]}" for _ in range(2))
         racers: list[asyncpg.Connection] = []
-        found, read = None, False
         try:
-            found, read = await admin.fetchval("SELECT mode FROM loom.tenancy_mode"), True
-            await admin.execute("DELETE FROM loom.tenancy_mode")
             await admin.execute("INSERT INTO loom.tenancy_mode (mode) VALUES ('recording')")
             # The isolation the cell's pool pins (server/core/pg.py).
             isolation = {"default_transaction_isolation": "read committed"}
@@ -111,23 +105,14 @@ async def test_attachs_mode_write_and_a_recording_insert_never_cross() -> None:
             assert await admin.fetchval(tenancy._HOLDS, a) == 1
             assert await admin.fetchval(tenancy._HOLDS, b) is None
         finally:
-            try:
-                # End the racing backends first: one blocked in a lock wait would otherwise
-                # finish after the cleanup and write a row back.
-                pids = [c.get_server_pid() for c in racers]
-                ended = "SELECT count(pg_terminate_backend(p, 5000)) FROM unnest($1::int[]) p"
-                await admin.fetchval(ended, pids)
-                for c in racers:
-                    c.terminate()
-                await admin.execute("DELETE FROM loom.tenancy WHERE org = ANY($1::text[])", [a, b])
-                if read:
-                    await admin.execute("DELETE FROM loom.tenancy_mode")
-                    if found is not None:
-                        await admin.execute(
-                            "INSERT INTO loom.tenancy_mode (mode) VALUES ($1)", found
-                        )
-            finally:
-                await admin.close()
+            # The database goes with the test; the racing backends end first, so none is
+            # left in a lock wait.
+            pids = [c.get_server_pid() for c in racers]
+            ended = "SELECT count(pg_terminate_backend(p, 5000)) FROM unnest($1::int[]) p"
+            await admin.fetchval(ended, pids)
+            for c in racers:
+                c.terminate()
+            await admin.close()
 
 
 @pytest.mark.asyncio

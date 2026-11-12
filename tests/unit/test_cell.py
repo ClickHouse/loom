@@ -291,7 +291,7 @@ def test_a_gated_process_stands_aside_from_the_workers(monkeypatch: pytest.Monke
     monkeypatch.setattr(leader.deployment_config, "drift", lambda: [])
     _cell_settings(monkeypatch)
     _view(monkeypatch)
-    assert "this cell does not serve" in leader._stand_aside_reason()
+    assert "the cell gate: " in leader._stand_aside_reason()
     assert leader.SupervisorLease("auto").advertised() == ""
     _serving_view(monkeypatch)
     assert leader._stand_aside_reason() == ""

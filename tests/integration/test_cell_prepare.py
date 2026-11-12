@@ -28,31 +28,10 @@ from server.core.schema import pg_migrate
 from server.router import app as router_app
 from server.router import directory
 from server.settings import settings
+from tests.integration._pg_database import create_database, drop_database
 
 OPERATOR = "lco_" + "1" * 128
 CREDENTIAL_SHA = hashlib.sha256(b"lcr_eu-1").hexdigest()
-
-
-async def _own_database(admin_dsn: str) -> tuple[str, str]:
-    import asyncpg
-
-    name = f"loom_t{uuid.uuid4().hex[:12]}"
-    admin = await asyncpg.connect(admin_dsn)
-    try:
-        await admin.execute(f'CREATE DATABASE "{name}"')
-    finally:
-        await admin.close()
-    return name, admin_dsn.rsplit("/", 1)[0] + "/" + name
-
-
-async def _drop(admin_dsn: str, name: str) -> None:
-    import asyncpg
-
-    admin = await asyncpg.connect(admin_dsn)
-    try:
-        await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
-    finally:
-        await admin.close()
 
 
 @pytest.fixture
@@ -60,8 +39,8 @@ async def stores(monkeypatch: pytest.MonkeyPatch):
     cell_dsn = os.environ.get("LOOM_PG_DSN") or pytest.skip("LOOM_PG_DSN not set")
     router_dsn = os.environ.get("LOOM_ROUTER_PG_DSN") or pytest.skip("LOOM_ROUTER_PG_DSN not set")
     os.environ.get("LOOM_CH_HOST") or pytest.skip("LOOM_CH_HOST not set")
-    cell_db, own_cell = await _own_database(cell_dsn)
-    router_db, own_router = await _own_database(router_dsn)
+    cell_db, own_cell = await create_database(cell_dsn)
+    router_db, own_router = await create_database(router_dsn)
     deployment = f"dep-{uuid.uuid4().hex[:8]}"
     for name, value in {
         "cell": "eu-1",
@@ -105,8 +84,8 @@ async def stores(monkeypatch: pytest.MonkeyPatch):
         await ch.disconnect()
         await pg.close_pool()
         await directory.close()
-        await _drop(cell_dsn, cell_db)
-        await _drop(router_dsn, router_db)
+        await drop_database(cell_dsn, cell_db)
+        await drop_database(router_dsn, router_db)
 
 
 def _live(ids: list[str]) -> Any:
@@ -296,7 +275,7 @@ async def test_a_later_cell_registers_after_the_first_as_enforced(
     capsys.readouterr()
     # The later cell's own Postgres, deployment and LOOM_CELL; its processes beat with it.
     cell_dsn = os.environ["LOOM_PG_DSN"]
-    later_db, later_dsn = await _own_database(cell_dsn)
+    later_db, later_dsn = await create_database(cell_dsn)
     try:
         await pg.close_pool()
         monkeypatch.setattr(settings, "pg_dsn", later_dsn)
@@ -345,7 +324,7 @@ async def test_a_later_cell_registers_after_the_first_as_enforced(
         assert await _nonces_left(ch) == (0, 0)
     finally:
         await pg.close_pool()
-        await _drop(cell_dsn, later_db)
+        await drop_database(cell_dsn, later_db)
 
 
 @pytest.mark.asyncio

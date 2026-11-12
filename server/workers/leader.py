@@ -39,8 +39,8 @@ contends again GIVE_UP_COOLDOWN_S later.
 
 Modes (`LOOM_BACKGROUND_WORKERS`, as `settings.workers_mode()` resolves it):
   auto  — contend for the lease (default); `off` outside the deployment
-  on    — always run (one process, or an operator who wants N copies); a cell's
-          process runs only while its cell's gate lets it serve
+  on    — always run (one process, or an operator who wants N copies); under the
+          Postgres authority only while the cell gate lets the process serve
   off   — never run (a pure web replica behind a load balancer)
 """
 
@@ -235,7 +235,7 @@ def _stand_aside_reason() -> str:
     if found := deployment_config.drift():
         return "configuration differs from the deployment's: " + "; ".join(found)
     if reason := cell.gate_reason():
-        return "this cell does not serve: " + reason
+        return "the cell gate: " + reason
     return ""
 
 
@@ -297,8 +297,8 @@ async def keep_lease(
     """Renew the lease while held, contend while not, and start or stop the
     supervisor when that changes. While the workers run, every wait (the
     sleep, a blocked renewal) is cut at the lease's deadline, and the workers
-    stop then. `auto` mode, and a cell's `on` mode, whose gate is its only
-    lease; cancelled on shutdown."""
+    stop then. `auto` mode, and `on` mode under the Postgres authority, whose cell
+    gate is its only lease; cancelled on shutdown."""
     running = lease.held  # the lifespan started the supervisor when held at boot
     while True:
         running = await _until_done(asyncio.sleep(_period_s(lease.held)), lease, running, on_lost)
