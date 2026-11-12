@@ -216,15 +216,16 @@ checkout.
 
 14. Moving to a build whose namespace erasure reaches `loom.shared`, a roll forward after a
     rollback included: once the newer build serves alone, clear the promoted rows an older
-    build's namespace erasure left live
-    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 45). The rows promoted
-    before a namespace erasure that completed within the ledger's 90 days:
+    build's namespace erasure left ([rolling upgrades](../architecture/rolling-upgrades.md),
+    rule 45). The rows promoted before a namespace erasure requested within the ledger's 90
+    days, live ones and, for a purge, demoted ones too, once each:
 
     ```sql
-    SELECT s.org, s.namespace, s.memory_key, e.id, e.purge
+    SELECT s.org, s.namespace, s.memory_key, groupArray(e.id) AS erasures,
+           max(e.purge) AS purged
     FROM (
-        SELECT org, namespace, memory_key, promoted_at
-        FROM loom.shared FINAL WHERE tombstoned_at IS NULL
+        SELECT org, namespace, memory_key, promoted_at, tombstoned_at
+        FROM loom.shared FINAL
     ) AS s
     INNER JOIN (
         SELECT id, org, completed_at, purge,
@@ -235,16 +236,18 @@ checkout.
         FROM loom.erasure_requests FINAL
         WHERE scope_type IN ('namespace', 'namespace_list') AND status = 'completed'
     ) AS e ON s.org = e.org AND s.namespace = e.namespace
-    WHERE s.promoted_at <= e.completed_at
+    WHERE s.promoted_at <= e.completed_at AND (s.tombstoned_at IS NULL OR e.purge)
+    GROUP BY s.org, s.namespace, s.memory_key
     ```
 
-    Demote each listed row with `memory.demote`. A demotion keeps the row's text; where
-    the erasure was a purge (`e.purge`), and nobody has written to the namespace since
-    (a namespace `collection.delete` or the namespace sweep removed), request instead a
-    one-name `namespace_list` erasure with `{"namespaces": ["<namespace>"], "purge": true}`,
-    which deletes them (a `namespace` scope never purges). A namespace erasure that
-    completed before the ledger's 90 days is not listed, and the promoted rows it left
-    cannot be told apart from a live namespace's; they stay as the older build left them.
+    Demote each listed row whose erasure did not purge (`purged = 0`) with `memory.demote`.
+    A demotion keeps the row's text, so for a namespace whose erasure purged (`purged = 1`)
+    and that nobody has written to since (for example one that `collection.delete` or the
+    namespace sweep removed), request a one-name `namespace_list` erasure with
+    `{"namespaces": ["<namespace>"], "purge": true}` instead, which deletes the rows, demoted
+    ones included (a `namespace` scope never purges). A namespace erasure requested before
+    the ledger's 90 days is not listed, and the promoted rows it left cannot be told apart
+    from a live namespace's; they stay as the older build left them.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
