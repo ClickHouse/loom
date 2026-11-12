@@ -1,9 +1,7 @@
 name: plugin scanner
 
-# Scores the repository with the plugin catalog's scanner, the same pinned
-# version the catalog runs, so a change that would drop the listing below its
-# 75-point threshold shows here first. Read-only token, no secrets, checkout
-# credentials not persisted; both actions are pinned to a commit.
+# Scores the repository with the plugin catalog's scanner; the catalog lists
+# Loom at 75 or more, so a change that drops the score shows here first.
 # Guide: https://github.com/hashgraph-online/awesome-ai-plugins/blob/main/SCANNER_GUIDE.md
 on:
   push:
@@ -16,8 +14,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scan:
