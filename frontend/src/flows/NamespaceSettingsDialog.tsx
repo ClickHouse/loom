@@ -42,6 +42,8 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   org: string;
   namespace: string;
+  /** A repository's name ("owner/name @ branch"), which its reasons name it by. */
+  label?: string;
 }
 
 /**
@@ -54,7 +56,7 @@ interface Props {
  *
  * Both open from Discover's "Namespaces you manage" section.
  */
-export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: Props) {
+export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, label }: Props) {
   const whoami = useStore((s) => s.whoami);
   const myNamespaces = useStore((s) => s.myNamespaces);
   // A loaded row is kept with the (org, namespace) it was read for, so a row read for a
@@ -87,13 +89,9 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
     [open, org, namespace],
   );
 
-  // The settings round-trip namespace.register, whose update path also admits the owner of an
-  // auto-registered row (and on a restricted row only a named, directly granted admin);
-  // namespace.delete needs ADMIN on the namespace.
-  // The caller's grants: App's boot read, or this dialog's own while that has not landed.
-  // An admin claim settles the role elsewhere without them, but not a restricted row's
-  // gate, which wants the grant itself. `rows` is null until read, and on a failed read.
   const [mineRead, setMineRead] = useState<{ org: string; rows: MyNamespaceEntry[] | null } | null>(null);
+  // The caller's grants: App's boot read, else this dialog's own (a restricted row's gate
+  // wants the grant even under an admin claim). Null until read, and on a failed read.
   useEffect(() => {
     if (!open || myNamespaces !== null) return;
     let live = true;
@@ -107,6 +105,9 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
   }, [open, org, myNamespaces]);
   const mineLoading = myNamespaces === null && mineRead?.org !== org;
   const rows = myNamespaces ?? (mineLoading ? null : (mineRead?.rows ?? null));
+  // The settings round-trip namespace.register, whose update path also admits the owner of an
+  // auto-registered row (and on a restricted row only a named, directly granted admin);
+  // namespace.delete needs ADMIN on the namespace.
   const canManage = canUpdateNamespace(whoami, rows, namespace, ns);
   const canDelete = isNamespaceAdmin(whoami, rows, namespace);
 
@@ -114,7 +115,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
   // description, the join rule, danger zone.
   const isRepo = ns?.kind === "code";
   // A repository's admins are its maintainers.
-  const needsAdmin = isRepo ? needsMaintainer(namespace) : needsRole("admin", namespace);
+  const needsAdmin = isRepo ? needsMaintainer(label ?? namespace) : needsRole("admin", namespace);
 
   // Why the fields are locked. A restricted namespace wants a direct admin grant (not one
   // inherited through a creator) and a token of its org (never `*`) that names it and carries
@@ -126,15 +127,17 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
     whoami?.namespaces?.includes(namespace) ? null : `name ${namespace}`,
     hasAdminClaim(whoami) ? null : "carry an admin claim",
   ].filter((p): p is string => p !== null);
-  const adminGrant = grant?.role === "admin" && grant.status !== "pending";
+  const directAdmin = grant?.role === "admin" && grant.status !== "pending" && !grant.inherited;
+  const adminRole = hasAdminClaim(whoami) || grant?.role === "admin";
   let lockedReason = needsAdmin;
   if (ns?.classification === "restricted") {
     if (rows === null)
       lockedReason = roleGap({ role: null, loading: mineLoading, rows }, whoami, namespace) ?? needsAdmin;
-    else if (adminGrant && grant.inherited)
-      lockedReason = `Changing its settings needs a direct admin grant on ${namespace}.`;
-    else if (adminGrant && tokenMisses.length > 0)
+    else if (directAdmin && tokenMisses.length > 0)
       lockedReason = `To change its settings, your token must ${andList(tokenMisses)}.`;
+    // An admin by claim, or by an inherited or pending grant, still lacks the direct grant.
+    else if (adminRole && !directAdmin)
+      lockedReason = `Changing its settings needs a direct admin grant on ${namespace}.`;
   }
 
   const save = async (patch: Partial<NamespaceRegisterFields>) => {

@@ -122,6 +122,23 @@ describe("NamespaceSettingsDialog on a restricted namespace, before and beside t
     );
   });
 
+  it.each([[[]], [[grant("viewer")]], [[grant("writer")]]])(
+    "asks an admin by claim for a direct admin grant, with grants %j",
+    async (rows) => {
+      await openRestricted(["ORG_ADMIN"], rows);
+      expect(screen.getByTestId("settings-locked")).toHaveTextContent(
+        "Changing its settings needs a direct admin grant on team.",
+      );
+    },
+  );
+
+  it("tells a caller with no admin claim and no admin grant the role it needs", async () => {
+    await openRestricted(["WRITER"], [grant("writer")]);
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(
+      "Needs admin on team. An admin of it can grant that.",
+    );
+  });
+
   it("says the role is still loading while list_mine is read", async () => {
     vi.mocked(api.listMine).mockReturnValue(new Promise(() => {}));
     await openRestricted([], null);
@@ -147,15 +164,15 @@ describe("NamespaceSettingsDialog on a restricted namespace, before and beside t
 });
 
 describe("NamespaceSettingsDialog for a repository", () => {
-  it("says a change needs a maintainer", async () => {
+  it("says a change needs a maintainer, naming the repository", async () => {
     useStore.setState({
       whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: [] },
       myNamespaces: [grant("viewer")],
     });
     vi.mocked(api.getNamespace).mockResolvedValue({ ...info, kind: "code" } as NamespaceInfo);
-    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" label="acme/api @ main" />);
     await act(async () => undefined);
-    const line = "Needs maintainer on team. A maintainer of it can grant that.";
+    const line = "Needs maintainer on acme/api @ main. A maintainer of it can grant that.";
     expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
     expect(screen.getByRole("button", { name: "Delete namespace" })).toHaveAccessibleDescription(line);
   });
