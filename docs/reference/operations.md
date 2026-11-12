@@ -192,7 +192,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.bisect_candidates`](operations/code.md#codebisect_candidates) | Rank PRs that may have introduced a bug; Loom does not test or reproduce it. | viewer | read | no |  |
 | [`code.blame_range`](operations/code.md#codeblame_range) | Which merged PRs last touched these lines, between release A and B? | viewer | read | no |  |
 | [`code.calibrate`](operations/code.md#codecalibrate) | Derive code-specific abstention thresholds from the authored probe corpus (query/positive/hard-distractor triples over the indexed repo) and persist them as this namespace's calibration. | admin | write | no | yes |
-| [`code.callees`](operations/code.md#codecallees) | What does this symbol call — forward call edges (depth<=3), tier-marked like loom_code_callers. | viewer | read | no |  |
+| [`code.callees`](operations/code.md#codecallees) | What does this symbol call — forward call edges (depth<=3), tier-marked like code.callers. | viewer | read | no |  |
 | [`code.callers`](operations/code.md#codecallers) | Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved where available; `edge_kinds: ['inherits']` narrows the walk to what implements or extends a type. | viewer | read | yes |  |
 | [`code.context_pack`](operations/code.md#codecontext_pack) | Briefing at the START of a task, instead of exploring file by file. | viewer | read | yes |  |
 | [`code.context_packs`](operations/code.md#codecontext_packs) | List the stored per-PR context packs of a repository, optionally for one PR. | viewer | read | no |  |
