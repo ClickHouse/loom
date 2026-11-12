@@ -46,9 +46,12 @@ claude plugin marketplace list 2>/dev/null | grep -Eq '[[:space:]]loom$' \
   || claude plugin marketplace add ClickHouse/loom
 claude plugin install loom@loom
 
+dashboard="the forwarded port 7777 (Ports tab)"
+if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]; then
+  dashboard="https://$CODESPACE_NAME-7777.$GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN"
+fi
+printf '\nLoom is running. Dashboard: %s\n' "$dashboard"
 cat <<'TEXT'
-
-Loom is running. The dashboard is the forwarded port 7777 (Ports tab).
 Try it: run `cd ~ && claude`, sign in, and say "Remember that I deploy only on
 Tuesdays". In a new `claude` session, ask "When do I deploy?".
 TEXT
