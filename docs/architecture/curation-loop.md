@@ -4,9 +4,12 @@ The curation loop turns what people ask into definitions an organization stands 
 Searches that find nothing become knowledge gaps. A gap, or a query a team runs often on
 its own ClickHouse, becomes a drafted definition in the learnings queue. A definition an
 admin promotes into the shared layer is governed: `memory.search` ranks it first when a
-query names its term. This page is the design of the loop. None of its ops, tables or
-settings are served until the pull request that builds each part lands; that pull request
-rewrites its section to describe what it built.
+query names its term. This page is the design of the loop. The parts land in this order:
+knowledge gaps (recording, grouping and the list), governed definitions (the shared-layer
+changes and the term leg), then `knowledge.gaps.draft` and query history, which queue
+definition drafts and so need the review path the second part builds. None of its ops,
+tables or settings are served until the pull request that builds each part lands; that
+pull request rewrites its section to describe what it built.
 
 ```mermaid
 flowchart LR
@@ -182,8 +185,10 @@ invoked, never by a search another op runs on its behalf:
 
 Only a search's first page can record a miss (a call with a `page` handle never does), and
 a search that could not answer for another reason is not a miss: an expired page handle
-(`abstain_code = 'page_expired'`), a degraded answer whose provider fell back, or one with
-writes still waiting for extraction (`pending_extraction > 0`).
+(`abstain_code = 'page_expired'`), a degraded answer whose provider fell back, one with
+writes still waiting for extraction (`pending_extraction > 0`), one whose fan-out stopped
+short (`namespaces_skipped`), or one whose hits the memory authority dropped
+(`stale_dropped > 0`).
 
 The **asker** is the person the token stands for, never a body field: the end user of an
 end-user token; else the token's `creator` claim, the person at the root of a delegated
@@ -197,14 +202,15 @@ an unknown principal is never counted as a separate person. The asker is stored 
 form a user erasure names: an end user as their id, without the `user:` prefix. Each miss
 writes one row to `loom.search_misses` under the namespace the search was addressed to:
 the identity tuple, the asker, `actor`, the plane and the query's normalised form
-(case-folded, with every run of characters other than letters and digits made one space).
-That form is still the query's words, kept as the trace of a question under the
-namespace's consent; only the threshold below decides what an admin sees. No memory key or
-document URI is kept: one naming another user's row or document would outlive that user's
-erasure, or the document's delete, in someone else's miss. The table has a 14-day TTL: it
-is a trace, not memory. A pass reads the last 7 days, and a build lives 7 days, so a miss
-outlives every build that counted it and a user erasure always finds the namespaces it
-must clear.
+(case-folded, with every run of characters other than letters, digits, `+` and `#` made
+one space, so `C++` and `C#` stay apart as the term leg keeps them). That form is still
+the query's words, kept as the trace of a question under the namespace's consent; only the
+threshold below decides what an admin sees. No memory key or document URI is kept: one
+naming another user's row or document would outlive that user's erasure, or the document's
+delete, in someone else's miss. The table has a 16-day TTL: it is a trace, not memory. A
+pass reads the last 7 days and a build lives 7 days from its write, with two days to
+spare, so a miss outlives every build that counted it and a user erasure always finds the
+namespaces it must clear.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
 misses and has no `user_id` to count askers or erase by. `loom.query_nodes` keeps one row
