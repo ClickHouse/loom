@@ -37,8 +37,7 @@ _CATALOG_LIMIT = 15
 DESCRIPTOR: dict[str, Any] = {
     "name": LOOM_OP_TOOL_NAME,
     "description": (
-        "Run an op this list doesn't show, such as memory.related, callable by name "
-        "through this tool. "
+        "Run an op this list doesn't show (such as memory.related, callable by name). "
         '`op` is the dotted name, `arguments` its arguments; op="help" with '
         "an optional `query` lists matching ops and their args. "
         "Prefer a listed tool when one fits."
