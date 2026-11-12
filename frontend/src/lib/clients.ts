@@ -35,10 +35,9 @@ export function isClientId(v: string | null): v is ClientId {
 // bridge to a remote HTTP MCP server. Mirrors server/identity/app/token_clients.py.
 const STDIO_VIA_NPX: ReadonlySet<ClientId> = new Set(["claude-desktop", "zed", "cline"]);
 
-// Coding agents mount the `coding` toolset: 19 tools, where the deployment default `core`
-// lists 41 once the code tools are on — over Cursor's historical 40-tool cap, and ~14k
-// tokens of listing per turn for Claude Code. `?toolset=` rides the URL, so one server
-// serves both.
+// Coding agents mount the `coding` toolset: the memory verbs they call plus the code
+// tools, which the deployment default `core` lists only with LOOM_MCP_CODE_TOOLS.
+// `?toolset=` rides the URL, so one server serves both.
 const CODING_TOOLSET = "coding";
 export const CODING_TOOLSET_CLIENTS: ReadonlySet<ClientId> = new Set(["claude-code", "codex", "cursor"]);
 

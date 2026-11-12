@@ -41,9 +41,6 @@ from server.transport.mcp_descriptions import (
 OPS = {op.name: op for op in ALL_OPERATIONS}
 TOOL_TO_OP = {op.mcp_tool_name: op.name for op in ALL_OPERATIONS}
 SYNTHETIC = {"loom_search", "loom_activate", "loom_op"}
-# The coding listing's ceiling (chars/4), a little above its current size;
-# a tool added to the tier on purpose re-bases it.
-CODING_CEILING = 8_850
 # The prose the tier authors: a derived text may exceed the core text it is
 # built from only by the "(callable by name)" mark (≤ 8 tokens).
 CALLABLE_BY_NAME_MARK_TOKENS = 8
@@ -261,10 +258,9 @@ def test_activation_triggers_are_one_list_on_both_tiers():
 # ---------------------------------------------------------------- budget
 
 
-def test_coding_listing_stays_under_its_ceiling():
-    """The gate: the coding listing stays under its ceiling (chars/4)."""
-    coding = _tok({"tools": _listing("coding", False)})
-    assert coding <= CODING_CEILING, coding
+def test_coding_descriptions_stay_under_budget():
+    """Each coding description stays under the per-tool budget; the listing's
+    total ceiling is in test_mcp_listing_budget.py."""
     for t in _listing("coding", False):
         assert len(t["description"]) // 4 <= 480, f"{t['name']} description is over budget"
     # the coding-authored prose: never longer than the core text it derives

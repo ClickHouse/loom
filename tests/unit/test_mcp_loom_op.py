@@ -177,3 +177,20 @@ def test_the_description_stays_small() -> None:
     import json
 
     assert len(json.dumps(mcp_op.DESCRIPTOR)) // 4 <= 220
+
+
+@pytest.mark.parametrize(
+    "toolset", ["core", "coding", "atomic", "tasks", "tracker", "readonly", "all"]
+)
+def test_the_example_op_is_unlisted_wherever_loom_op_is(toolset: str, monkeypatch) -> None:
+    """The op the description gives as its example is one the listing does not show."""
+    import asyncio
+    import re
+
+    monkeypatch.setattr(settings, "mcp_code_tools", True)
+    names = {d["name"] for d in asyncio.run(_tools_descriptor(toolset=toolset))}
+    assert "loom_op" in names
+    examples = re.findall(r"such as ([a-z_]+\.[a-z_.]+)", mcp_op.DESCRIPTOR["description"])
+    assert examples
+    for op in examples:
+        assert "loom_" + op.replace(".", "_") not in names, (toolset, op)

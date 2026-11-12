@@ -1,6 +1,6 @@
 // The plugin mounts the Loom server from its own `.mcp.json`.
 // A user-scope entry in ~/.claude.json pointing at the same server lists every
-// Loom tool a second time (the core roster is ≈13K tokens per turn), and its
+// Loom tool a second time (a listing read on every turn), and its
 // copy carries no code scope and no header-helper token — models call either.
 // The SessionStart primer says so once a day; it costs nothing per turn.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

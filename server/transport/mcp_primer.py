@@ -213,7 +213,14 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
     primer never asks for a call the client cannot make."""
     listed = {op.name: op.mcp_tool_name for op in listed_ops(toolset)}
     out: dict[str, str | None] = {}
-    for name in ("context.pack", "memory.set", "knowledge.add", "mentor.guide", "collection.list"):
+    for name in (
+        "context.pack",
+        "memory.set",
+        "knowledge.add",
+        "working_memory.set",
+        "mentor.guide",
+        "collection.list",
+    ):
         if name in listed:
             out[name] = f"`{listed[name]}`"
         elif loom_op_reachable(OPERATIONS_BY_NAME[name], toolset):
@@ -234,6 +241,7 @@ def _write_rules(tool: dict[str, str | None]) -> str:
             "anything through Loom.\n\n"
         )
     doc = tool["knowledge.add"] or save
+    scratch = tool["working_memory.set"] or "working memory"
     return (
         "**3. Save.** On any remember/save/store intent, call "
         f"{save}. Loom persists across Claude Desktop, "
@@ -242,7 +250,7 @@ def _write_rules(tool: dict[str, str | None]) -> str:
         "readable key (`<scope>/<kind>/<id>`): send text or the object, "
         "never `json.dumps` twice or base64; a document or anything over "
         f"~2 KB goes to {doc}; leases and pointers go to "
-        "working memory; a revision rewrites the same key. A document "
+        f"{scratch}; a revision rewrites the same key. A document "
         f"for a shared collection (`col-…`) goes to {doc} with the "
         "collection's name as `namespace`.\n\n"
     )

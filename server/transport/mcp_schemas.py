@@ -273,8 +273,8 @@ def _strip_blob_fields_from_knowledge(op_name: str, schema: Any) -> Any:
 # ============================================================
 #
 # tools/list is a per-session tax paid by every connected client before it has done
-# anything: ~14k tokens for 33 tools, 37% of it outputSchema (which no MCP client we
-# ship to reads), 27% prose descriptions, 27% inputSchema. Names, argument names and
+# anything, and with the full profile much of it is outputSchema (which no MCP client
+# we ship to reads), then prose descriptions and inputSchema. Names, argument names and
 # short descriptions carry the invocation. The compact profile keeps exactly that: the
 # first paragraph of the description, the argument tree with types / required / enum /
 # bounds and a one-sentence field description, and no outputSchema. Selected per request
