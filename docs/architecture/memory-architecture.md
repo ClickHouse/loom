@@ -1342,8 +1342,9 @@ revisions there. The user-scope census counts a summary's row, not its
 `loom.memory_embeddings` or `loom.memory_code_links` rows or its `loom.shared` copies,
 which `consolidated.tombstone`, `shared_embeddings.tombstone`, `shared.tombstone` and
 `memory.retire` retire with it. A copy an older build promoted with `agent="*"` names
-`*` for its source agent and the request's user: no erasure finds one of a summary,
-and one of a user's own row is found only by the user the request named.
+`*` for its source agent and the request's user: no user erasure finds one of a
+summary, and one of a user's own row is found only by the user the request named; a
+namespace erasure takes either with the namespace's other promoted rows.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no

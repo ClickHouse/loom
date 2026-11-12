@@ -218,8 +218,10 @@ checkout.
     rollback included: once the newer build serves alone, clear the promoted rows an older
     build's namespace erasure left ([rolling upgrades](../architecture/rolling-upgrades.md),
     rule 45). The query below lists each namespace that a `namespace` or `namespace_list`
-    erasure in the ledger (kept 90 days) reached without running `shared.tombstone`,
-    with the last completion without a purge (`erased_at`) and with one (`purged_at`).
+    erasure in the ledger (kept 90 days) reached and that holds a promoted row, with the
+    last completion without a purge (`erased_at`) and with one (`purged_at`). Running the
+    statements below over an erasure the newer build finished changes nothing, as its step
+    already left no row promoted before it.
     Only a `namespace_list` purges, and an older build's `namespace` row may hold the flag
     it was asked for.
 
@@ -235,9 +237,9 @@ checkout.
                                JSONExtract(scope_value, 'namespaces', 'Array(String)')))) AS namespace
         FROM loom.erasure_requests FINAL
         WHERE scope_type IN ('namespace', 'namespace_list') AND status = 'completed'
-          -- An erasure the newer build's saga finished ran the step already.
-          AND NOT has(steps_completed, 'shared.tombstone')
     )
+    -- Only a namespace that holds a promoted row has anything to clear.
+    WHERE (org, namespace) IN (SELECT org, namespace FROM loom.shared)
     GROUP BY org, namespace
     ```
 
