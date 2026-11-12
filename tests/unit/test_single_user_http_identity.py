@@ -112,11 +112,11 @@ def test_the_namespace_is_the_installs_default_namespace(
 @pytest.mark.parametrize(
     ("op", "body", "named"),
     [
-        ("namespace.delete", {}, {"org", "namespace"}),
-        ("memory.clear", {}, {"org", "namespace"}),
-        ("memory.lock", {"memory_key": "k", "reason": "x"}, {"org", "namespace", "agent"}),
-        ("memory.bulk_get", {"memory_keys": ["k"]}, {"org", "namespace", "agent"}),
-        ("working_memory.set", {"content": "c"}, {"org", "namespace", "agent"}),
+        ("namespace.delete", {}, {"namespace"}),
+        ("memory.clear", {}, {"namespace"}),
+        ("memory.lock", {"memory_key": "k", "reason": "x"}, {"namespace", "agent"}),
+        ("memory.bulk_get", {"memory_keys": ["k"]}, {"namespace", "agent"}),
+        ("working_memory.set", {"content": "c"}, {"namespace", "agent"}),
         ("tracker.item", {"number": 1}, {"namespace"}),
     ],
 )
@@ -124,7 +124,8 @@ def test_any_other_op_still_names_its_identity(
     seen: Seen, op: str, body: dict[str, Any], named: set[str]
 ) -> None:
     """Admin and namespace ops, exact-identity reads and writes, working memory and
-    the plane ops: what was left out is still missing, never the install's."""
+    the plane ops: a namespace or agent left out is still missing, never the
+    install's."""
     assert named <= _missing(_post(op, body))
     assert seen == []
 
@@ -191,3 +192,39 @@ def test_the_http_reference_names_every_filled_op() -> None:
     page = (Path(__file__).resolve().parents[2] / "docs/reference/http-api.md").read_text()
     identity = page[page.index("- **Identity.**") : page.index("- **`consumer`.**")]
     assert [op for op in SINGLE_USER_DEFAULT_AGENT if f"`{op}`" not in identity] == []
+
+
+def test_an_org_wide_op_runs_in_the_installs_org(seen: Seen) -> None:
+    """Not on the list, but the install has one org: an org-wide read with no
+    namespace reads it, rather than org ""."""
+    _post("audit.list", {})
+    assert seen == [("AuditListInput", "dev", None, None)]
+
+
+def test_a_code_or_tracker_op_keeps_its_plane_org(seen: Seen) -> None:
+    """Their org defaults to the plane's in the gate, not to the install's."""
+    from server.transport.gates import with_single_user_identity
+
+    for name in ("tracker.item", "code.search"):
+        args = {"number": 1, "query": "q"}
+        assert with_single_user_identity(OPERATIONS_BY_NAME[name], args, None) is args
+
+
+@pytest.mark.parametrize("value", [0, False, [], {}])
+def test_a_value_that_is_not_an_identity_is_left_for_validation(seen: Seen, value: Any) -> None:
+    _missing(_post("memory.set", {"namespace": value, "memory_key": "k", "value": "v"}))
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    ("op", "body"),
+    [
+        ("memory.delete", {"memory_key": "deploy_window"}),
+        ("memory.bulk_set", {"entries": [{"memory_key": "k", "value": "v"}]}),
+    ],
+)
+def test_a_listed_delete_or_bulk_write_runs_as_http(
+    seen: Seen, op: str, body: dict[str, Any]
+) -> None:
+    _post(op, body)
+    assert len(seen) == 1 and seen[0][1:] == ("dev", "local", "http")

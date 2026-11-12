@@ -156,19 +156,20 @@ curl -sX POST "$LOOM/v1/memory.set" \
   and `session_id` default to `"-"`. The token decides which of them the caller
   may address. `code.*` and `tracker.*` ops default `org` and `namespace` to the
   deployment's code or tracker plane when the body omits them. On a single-user
-  server, a call with no token to `memory.set`, `memory.bulk_set`, `memory.get`,
-  `memory.delete`, `memory.list`, `memory.history`, `memory.search`,
-  `memory.search_trace`, `memory.ask`, `memory.update`, `search.query` or
-  `knowledge.search` may leave out `org`, `namespace` and `agent`, or send one blank
-  or `"-"`: it runs in the install's org and namespace (`LOOM_SELF_SIGNUP_ORG`,
-  `LOOM_DEFAULT_NAMESPACE`), the ones MCP and the dashboard use. `memory.set` and
+  server, a call with no token that names no `org`, or a blank or `"-"` one, runs in
+  the install's org (`LOOM_SELF_SIGNUP_ORG`), the one MCP and the dashboard use; a
+  code or tracker op keeps its plane org. A call with no token to `memory.set`,
+  `memory.bulk_set`, `memory.get`, `memory.delete`, `memory.list`, `memory.history`,
+  `memory.search`, `memory.search_trace`, `memory.ask`, `memory.update`,
+  `search.query` or `knowledge.search` may also leave out `namespace` and `agent`: it
+  runs in the install's namespace (`LOOM_DEFAULT_NAMESPACE`). `memory.set` and
   `memory.bulk_set` write as agent `http`; `memory.get` and `memory.delete` try the
   key under agent `http`, then under any agent of the same user; `memory.list` and
   `memory.history` read every agent, as on MCP. An op whose agent is optional and left
   out acts across every agent: a search reads every agent's rows, and `memory.update`
-  finds the key in the whole namespace. Every other op, a call with a token (one the
-  SDK finds in `LOOM_API_KEY` or `~/.loom/token` included), and every other identity
-  mode names its own identity.
+  finds the key in the whole namespace. Every other op names its own namespace and
+  agent, and a call with a token (one the SDK finds in `LOOM_API_KEY` or
+  `~/.loom/token` included), and every other identity mode, names its whole identity.
 - **`consumer`.** Any body may carry `consumer`, a short tag for the product or
   module calling; it is stored on the request and audit ledgers. A token minted
   with a consumer overrides it. See

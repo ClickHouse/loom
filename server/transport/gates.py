@@ -11,6 +11,10 @@ here, once:
   the request's, else the op's plane default (code.* / tracker.*), else the
   verified token's own org. A namespace is never authorized without an org:
   that is a refusal (IDENTITY_INCOMPLETE), not a flat-role pass.
+- `with_single_user_identity`: on a single-user server, a call with no token
+  gets the install's org, and on the everyday memory and search ops
+  (SINGLE_USER_DEFAULT_AGENT) its namespace and the op's agent, where it left
+  them out; the HTTP body every later phase reads.
 - `with_resolved_org` / `with_target`: before validation a blank or "-"
   org is set to the org the call acts in and a padded org or namespace is
   stripped; after authorization an absent code namespace is set to the
@@ -191,32 +195,41 @@ SINGLE_USER_DEFAULT_AGENT: Final[dict[str, str]] = {
 def with_single_user_identity(
     op: Operation, args: dict[str, Any], auth: AuthInfo | None
 ) -> dict[str, Any]:
-    """The arguments of a SINGLE_USER_DEFAULT_AGENT op with the install's identity
-    where the call left it out: the org MCP and the dashboard use (`caller_org`),
-    the install's one namespace (`LOOM_DEFAULT_NAMESPACE`, which `default_namespace`
-    answers for a caller with no token) and the op's default agent. Only a call with
-    no token on a single-user server is filled, the one caller such a server has;
-    any token, and every other identity mode, names its own. A copy, like
-    `with_resolved_org`."""
+    """The body every later phase of an HTTP call reads (validation, authorization,
+    the ledger), with the single-user install's identity where the call left it out.
+    Only a call with no token on a single-user server is filled, the one caller such
+    a server has; any token, and every other identity mode, names its own.
+
+    The org is filled on every op but the code and tracker ones, which keep their
+    plane org: the install has the one org MCP and the dashboard use (`caller_org`).
+    The namespace and agent are filled only on a SINGLE_USER_DEFAULT_AGENT op: the
+    install's one namespace (`LOOM_DEFAULT_NAMESPACE`, which `default_namespace`
+    answers for a caller with no token) and the op's default agent. A field is
+    filled when it is missing, null, or a string the gates read as absent (blank or
+    "-"); any other value is left for validation."""
     from server.identity.app.caller_home import caller_org
     from server.settings import settings
 
     if auth is not None or settings.effective_identity_provider() != "single-user":
         return args
-    if op.name not in SINGLE_USER_DEFAULT_AGENT:
+    if op.name.startswith(("code.", "tracker.")):
         return args
-    fill = {
-        "org": caller_org(None) or "",
-        "namespace": settings.default_namespace,
-        "agent": SINGLE_USER_DEFAULT_AGENT[op.name],
-    }
+    fill = {"org": caller_org(None) or ""}
+    if op.name in SINGLE_USER_DEFAULT_AGENT:
+        fill["namespace"] = settings.default_namespace
+        fill["agent"] = SINGLE_USER_DEFAULT_AGENT[op.name]
     fields = op.input_model.model_fields
     update = {
         name: value
         for name, value in fill.items()
-        if value and name in fields and present(args.get(name)) is None
+        if value and name in fields and _absent(args.get(name))
     }
     return {**args, **update} if update else args
+
+
+def _absent(value: Any) -> bool:
+    """Missing, null, or a string the gates read as no identity."""
+    return value is None or (isinstance(value, str) and present(value) is None)
 
 
 def with_target(input_obj: Any, target: Target) -> Any:
