@@ -89,8 +89,8 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.memory", LIVE, f"({UID} OR {USER_SUMMARIES})", "memory.tombstone", "memory.retire"
     ),
-    # The namespace's promoted rows. The user step matches them by provenance instead,
-    # uncounted (STEP_ONLY_TABLES): a row promoted from the namespace-wide row names no user.
+    # Counted by namespace: a row promoted from a namespace-wide memory names no user. The
+    # user step matches by provenance, uncounted (STEP_ONLY_TABLES).
     Substrate("loom.shared", LIVE, None, "shared.tombstone", None),
     Substrate(
         "loom.memory_embeddings",
