@@ -1,8 +1,8 @@
 name: plugin platforms
 
 # The Claude Code and Codex plugins run inside the user's agent, on the
-# user's OS: every hook goes through a shell the agent picks (sh, Git Bash,
-# PowerShell, cmd.exe) and starts Node through bin/loom-node. Each job runs
+# user's OS: Claude Code spawns `node` for each hook with no shell; Codex's
+# hooks go through a shell (sh, cmd.exe) and bin/loom-node. Each job runs
 # the plugin suite, then one real session per agent with the plugin
 # installed from this checkout (tests/e2e/agent-session.mjs: a local fake
 # answers the model API and Loom, so no provider is called).
@@ -84,7 +84,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs codex --bin "$CODEX_BIN"
       # Started from the Dock or a desktop launcher, the agent has no node on
-      # PATH: the launcher finds it under a version manager.
+      # PATH: Claude Code gets it from PATH in its settings env, Codex's
+      # launcher finds it under a version manager.
       - name: Claude Code session, node off PATH
         if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin "$CLAUDE_BIN" --expect-tool Bash --node-off-path

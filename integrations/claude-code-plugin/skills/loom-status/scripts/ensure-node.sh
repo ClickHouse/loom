@@ -32,8 +32,8 @@ download_setup() {
   curl -fsSL --connect-timeout 10 --max-time 120 "$1" -o "$SETUP_FILE"
 }
 
-# The launcher as Claude Code started from the Dock runs it: no shell
-# profile, only HOME, the system PATH and its settings.json `env`.
+# Claude Code's hooks run the `node` on its PATH. Started from the Dock it has
+# no shell profile, only HOME, the system PATH and its settings.json `env`.
 gui_check() {
   set -- HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin
   settings=$(sh "$LAUNCHER" -e '
@@ -48,7 +48,7 @@ gui_check() {
   done <<SETTINGS
 $settings
 SETTINGS
-  env -i "$@" sh "$LAUNCHER" --check >/dev/null 2>&1
+  env -i "$@" sh -c 'command -v node' >/dev/null 2>&1
 }
 
 claude_code() {
@@ -72,7 +72,7 @@ if [ "${1:-}" = '--check' ]; then
   # On Windows a GUI app gets the user's PATH, and Codex runs no launcher.
   case "$(uname -s)" in Darwin | Linux) ;; *) exit 0 ;; esac
   if claude_code; then
-    gui_check || echo 'Found only with this shell'"'"'s environment: Claude Code started from the Dock or a desktop launcher finds no Node. Set LOOM_NODE to the path above in the env block of '"$CLAUDE_SETTINGS."
+    gui_check || echo 'Found only with this shell'"'"'s environment: Claude Code started from the Dock or a desktop launcher finds no node on its PATH. Add the directory of the Node above to PATH in the env block of '"$CLAUDE_SETTINGS."
   else
     codex_helper_check || echo 'The MCP header helper, which Codex runs without LOOM_NODE or a version manager'"'"'s variables, finds no Node. Put that Node'"'"'s directory on the PATH Codex starts with.'
   fi

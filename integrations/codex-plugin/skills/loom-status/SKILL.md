@@ -12,7 +12,6 @@ description: >
   plugin or MCP entry missing, stranded captures) and the one fix. NOT for
   server-side operations (that is `loom doctor` on the server) and NOT for
   deciding what to remember (loom-memory).
-allowed-tools: Bash, Read
 disable-model-invocation: true
 ---
 
@@ -32,9 +31,10 @@ Code; in Codex, the newest `~/.codex/plugins/cache/loom/loom/*/` directory.
    prints the Node 18+ the hooks and the MCP header helper run under, or one
    line saying none was found or the one found is too old. A second line
    names a launch that finds none, with its fix: relay it. On a failure, tell
-   the user the hooks cannot run and offer the fix: `LOOM_NODE=/path/to/node`
-   for a Node the check missed (under Codex it reaches the hooks only; the
-   MCP header helper needs that Node on PATH), else the same script without
+   the user the hooks cannot run and offer the fix: Claude Code's hooks need
+   that Node's directory on `PATH` (the `env` block of its settings); under
+   Codex `LOOM_NODE=/path/to/node` reaches the hooks, and the MCP header
+   helper needs that Node on PATH. Else the same script without
    `--check` installs Node (root or passwordless sudo, then apt/dnf/yum, apk
    or Homebrew). Run it only when the user says yes; if it exits 2, report its
    blocker line, do not retry. After an install the user restarts the

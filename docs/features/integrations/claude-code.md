@@ -85,27 +85,21 @@ finding.
 ## Requirements
 
 - A reachable Loom server ([quickstart](../../getting-started/quickstart.md)).
-- Node.js 18 or newer. The hooks and the MCP header helper start through the plugin's
-  `bin/loom-node`, which runs the first Node 18+ among `LOOM_NODE`, `node` on the `PATH`
-  Claude Code hands its hooks, a version manager's default or newest install, and the
-  usual install directories. That `PATH` is Claude Code's own, so Claude Code started
-  from the Dock or a desktop launcher does not see one a shell profile sets up. For a
-  Node the launcher misses, set `LOOM_NODE=/path/to/node` in the `env` block of
-  `~/.claude/settings.json`. If a hook says it found no Node, run the `loom-status`
-  skill; it diagnoses read-only and offers to install Node, running the installer only
-  when you say yes.
+- Node.js 18 or newer as `node` on the `PATH` Claude Code starts with. Every hook is
+  `node` with the script's path as its argument, which Claude Code spawns with no shell,
+  and the MCP header helper is `node "${CLAUDE_PLUGIN_ROOT}/bin/loom-mcp-headers.mjs"`.
+  That `PATH` is Claude Code's own, so Claude Code started from the Dock or a desktop
+  launcher does not see a `node` that a shell profile or a version manager puts on it:
+  add that Node's directory to `PATH` in the `env` block of `~/.claude/settings.json`.
+  If a hook says `node` was not found, run the `loom-status` skill; it diagnoses
+  read-only and offers to install Node, running the installer only when you say yes.
 - Supported platforms: macOS (Apple silicon, Intel), Linux (x86_64, arm64; glibc or musl;
-  WSL 2 included) and Windows (x86_64, arm64). On macOS and Linux every hook and the
-  header helper go through `bin/loom-node` under the system `sh`. On Windows the header
-  helper runs through `cmd.exe` and the hooks through Git Bash, or through PowerShell when
-  Git Bash is absent; the header helper under `cmd.exe` and the hooks under PowerShell
-  run the `node` on `PATH`, so Windows needs Node.js 18 or newer on the `PATH` Claude Code
-  starts with; without Git Bash the hooks run that `node` without checking its version. A
-  hook that finds no `node` lets the session continue; it writes one `loom:` line to its
-  stderr, which Claude Code shows as a hook error under `sh` (macOS, Linux, Git Bash) and,
-  under PowerShell (where the hook exits 0), only in `claude --debug`. Without Git Bash,
-  commands run through Claude Code's PowerShell tool are captured and the test gate reads
-  the paths they name, but the code shunt judges only `sh` commands.
+  WSL 2 included) and Windows (x86_64, arm64), with or without Git Bash: the hooks need no
+  shell, and the header helper runs under `sh` on macOS and Linux and `cmd.exe` on
+  Windows. A hook that finds no `node` lets the session continue; Claude Code shows it as
+  a hook error. Without Git Bash, commands run through Claude Code's PowerShell tool are
+  captured and the test gate reads the paths they name, but the code shunt judges only
+  `sh` commands.
 - A **writer** token for the namespace the session writes to. A viewer token lets the
   tools read, but the server refuses every capture.
 
@@ -230,7 +224,7 @@ The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
 | SessionEnd                                        | `loom-run.mjs`              | closes the run (`run.complete`, `outcome: none`, the last reply as the final response)                                                                                                                                                                                                                                          | `LOOM_RUN_LEDGER=off`                                                                                       |
 | SessionEnd                                        | `loom-session-memory.mjs`   | hands the session's turns to `memory.set_from_messages(defer=true)`, which extracts facts and writes the session summary                                                                                                                                                                                                        | `LOOM_SESSION_MEMORY=off`                                                                                   |
 
-The plugin manifest declares `minServerVersion`, the oldest Loom server its hooks support. SessionStart reads the server's `version` from the `GET /v1/health` answer it already requests and, when that version is older, prints one `loom:` line naming both versions and asking for a server upgrade. The session goes on either way; an unreachable server, an answer other than 2xx, a server that reports no `version`, a version that is not SemVer or a manifest it cannot read prints nothing. The `loom-status` skill (`bin/loom-client-status.mjs`) reports the same as a warning. The minimum rises with the release that first serves what a hook needs, so between that hook's merge and that release a server of the previous release gets no warning.
+The plugin names the oldest Loom server its hooks support (`MIN_SERVER_VERSION` in `lib/server-version.mjs`). SessionStart reads the server's `version` from the `GET /v1/health` answer it already requests and, when that version is older, prints one `loom:` line naming both versions and asking for a server upgrade. The session goes on either way; an unreachable server, an answer other than 2xx, a server that reports no `version`, or a version that is not SemVer prints nothing. The `loom-status` skill (`bin/loom-client-status.mjs`) reports the same as a warning. The minimum rises with the release that first serves what a hook needs, so between that hook's merge and that release a server of the previous release gets no warning.
 
 **Why the run closes with `outcome: none`.** The hook knows the session ended, not
 whether it succeeded, and it never guesses which memories the agent relied on. An agent

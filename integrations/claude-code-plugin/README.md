@@ -60,20 +60,20 @@ The scripts are standalone Node ESM (`.mjs`) with **zero dependencies** — no L
 SDK, no `node_modules`. They run on any Node ≥ 18 (global `fetch` +
 `AbortSignal.timeout`).
 
-**Which Node.** Every hook and the MCP header helper start through
-`sh bin/loom-node`, because the PATH an agent hands its hooks is its own: an
-agent started from the Dock or a desktop launcher, or a version manager that
-sets PATH only in interactive shells, leaves `node` off it. The launcher runs
-the first Node 18+ among `LOOM_NODE`, `node` on PATH, a version manager's
-default (or its newest install when the default cannot be read or is older
-than 18), and the usual install directories. With none, the hook exits 1 with one line
-naming the Node it found too old, or none, and `LOOM_NODE`. Set
-`LOOM_NODE=/path/to/node` (for Claude Code, in the `env` block of
-`~/.claude/settings.json`) for a Node it misses. On Windows a hook runs the
-launcher under Git Bash; without Git Bash, Claude Code runs hooks with
-PowerShell, and the header helper always with `cmd.exe`, which take the `node`
-on PATH (each `hooks.json` command reads as both an `sh` and a PowerShell
-script; `docs/features/integrations/claude-code.md` has the platforms).
+**Which Node.** Claude Code runs every hook as `node` with the script's path as
+its argument, spawned with no shell, and the MCP header helper as
+`node "${CLAUDE_PLUGIN_ROOT}/bin/loom-mcp-headers.mjs"`: both take the `node` on
+the PATH Claude Code starts with, on every OS, with or without Git Bash. That
+PATH is the agent's own: an agent started from the Dock or a desktop launcher,
+or a version manager that sets PATH only in interactive shells, leaves `node`
+off it; add that Node's directory to `PATH` in the `env` block of
+`~/.claude/settings.json`. The Codex wiring, `hooks.generic.json` and the
+skills' commands start Node through `sh bin/loom-node`, which runs the first
+Node 18+ among `LOOM_NODE`, `node` on PATH, a version manager's default (or its
+newest install when the default cannot be read or is older than 18), and the
+usual install directories. With none, it exits 1 with one line naming the Node
+it found too old, or none, and `LOOM_NODE`
+(`docs/features/integrations/claude-code.md` has the platforms).
 
 ## Safety model: fire-and-forget, hard-bounded
 
@@ -176,7 +176,7 @@ path.
 
 | Var                                   | Default                                                                                  | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_NODE`                           | _(unset)_                                                                                | Path to the Node binary the hooks and the MCP header helper run under; it wins over the search. A path that is not Node 18+ fails the hooks; the header helper then tries the `node` on PATH. On Windows the header helper, and the hooks without Git Bash, run the `node` on PATH instead.                                                                                                                                                                                                                                                                                                                             |
+| `LOOM_NODE`                           | _(unset)_                                                                                | Path to the Node binary `bin/loom-node` runs (the Codex hooks, `hooks.generic.json` and the skills' commands); it wins over the search. A path that is not Node 18+ fails them. Claude Code's hooks and header helper run the `node` on PATH.                                                                                                                                                                                                                                                                                                                                                                           |
 | `LOOM_NODE_SYSTEM_DIRS`               | Homebrew, Linuxbrew, `/usr/local/bin`, `/usr/bin`, `/bin`, `/snap/bin`, `/opt/local/bin` | Colon-separated directories `bin/loom-node` searches last, after PATH and the version managers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `LOOM_BASE_URL`                       | _(`~/.loom/config.json` → )_ `http://localhost:7777`                                     | Control-plane base URL.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `LOOM_API_KEY`                        | _(unset)_                                                                                | Bearer JWT. Falls back to `~/.loom/config.json`, then `~/.loom/token`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |

@@ -887,19 +887,6 @@ def _plugin_version(name: str) -> tuple[int, ...]:
     return tuple(int(n) for n in re.findall(r"\d+", name))
 
 
-def posix_sh(env: dict[str, str]) -> str | None:
-    """The sh Claude Code runs hooks with: on Windows Git Bash, found the
-    way Claude Code finds it (CLAUDE_CODE_GIT_BASH_PATH, else beside git)."""
-    if not WINDOWS:
-        return shutil.which("sh")
-    if env.get("CLAUDE_CODE_GIT_BASH_PATH"):
-        bash: Path | None = Path(env["CLAUDE_CODE_GIT_BASH_PATH"])
-    else:
-        git = shutil.which("git")
-        bash = Path(git).parents[1] / "bin" / "bash.exe" if git else None
-    return str(bash) if bash and bash.is_file() else None
-
-
 def claude_plugin_install(home: Path) -> Path | None:
     """The user-scope loom plugin directory from Claude Code's own records;
     None when it is not installed there or user settings disable it. A
@@ -930,13 +917,13 @@ def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, 
 
 
 _NO_NODE = 'No hook runs, and the MCP entry gets no token ("needs authentication").'
-_NO_SH = "no POSIX sh: the hooks and the MCP header helper run `sh` (Git Bash on Windows)."
+_NO_SH = "no POSIX sh: the hooks and the MCP header helper run `sh`."
 
 
 def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     """The Node each installed plugin's hooks and MCP header helper run
-    under, as that plugin's own launcher finds it in that client's
-    environment."""
+    under in that client's environment: for Claude Code the `node` on its
+    PATH, for Codex what the plugin's own launcher finds."""
     out: list[Check] = []
     install = claude_plugin_install(home)
     if install is not None:
@@ -962,9 +949,26 @@ def _predates_launcher(name: str, install: Path, client: str, fix: str) -> Check
     )
 
 
+def _path_node(env: dict[str, str]) -> tuple[int, str]:
+    """The `node` on env's PATH: (0, its ready line), or (1, why it cannot
+    run the hooks). Raises OSError or TimeoutExpired when it does not run."""
+    node = shutil.which("node", path=env.get("PATH", ""))
+    if node is None:
+        return 1, "no `node` on Claude Code's PATH."
+    r = subprocess.run(
+        [node, "--version"], env=env, capture_output=True, text=True, timeout=10, check=False
+    )
+    version = r.stdout.strip()
+    major = re.match(r"v(\d+)\.", version)
+    if r.returncode != 0 or major is None or int(major.group(1)) < 18:
+        return 1, f"the `node` on Claude Code's PATH, {node} ({version}), is not Node.js 18+."
+    return 0, f"Loom hook runtime ready: {node} ({version})"
+
+
 def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
-    """Claude Code runs hooks and the helper with its own environment plus
-    its settings `env`: this shell's, or a GUI launch's with no profile."""
+    """Claude Code runs hooks and the helper with the `node` on its own PATH,
+    its settings `env` applied: this shell's, or a GUI launch's with no
+    profile."""
     name = "client:claude-code:node"
     if not install.is_dir():
         return (
@@ -973,31 +977,23 @@ def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
             f"the installed plugin at {install} is not on disk. Fix: "
             "`claude plugin uninstall loom@loom && claude plugin install loom@loom`.",
         )
-    launcher = install / "bin" / "loom-node"
-    if not launcher.is_file():
-        return _predates_launcher(name, install, "Claude Code", "`claude plugin update loom@loom`")
     settings = _claude_settings_env(home)
-    client_env = {**env, **settings}
-    sh = posix_sh(client_env)
-    if sh is None:
-        return (name, FAIL, _NO_SH)
     try:
-        code, line = _launcher_check(sh, launcher, client_env)
+        code, line = _path_node({**env, **settings})
         if code != 0:
             return (name, FAIL, f"{line} {_NO_NODE} Fix: /loom:loom-status.")
         if WINDOWS:  # a Windows GUI app gets the user's PATH
             return (name, PASS, line)
-        gui = {"HOME": str(home), "PATH": GUI_PATH, **settings}
-        gui_code, _ = _launcher_check(sh, launcher, gui)
+        gui_code, _ = _path_node({"HOME": str(home), "PATH": GUI_PATH, **settings})
     except (OSError, subprocess.TimeoutExpired) as e:
-        return (name, WARN, f"could not run {launcher}: {e}")
+        return (name, WARN, f"could not run node: {e}")
     if gui_code != 0:
         return (
             name,
             WARN,
             f"{line}, but only with this shell's environment: Claude Code started from "
-            "the Dock or a desktop launcher finds no Node. Fix: set LOOM_NODE to that "
-            "path in the `env` block of ~/.claude/settings.json.",
+            "the Dock or a desktop launcher finds no `node`. Fix: add its directory to "
+            "PATH in the `env` block of ~/.claude/settings.json.",
         )
     return (name, PASS, line)
 

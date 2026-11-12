@@ -1,15 +1,18 @@
-// The plugin's minimum Loom server version. Each plugin manifest declares
-// `minServerVersion`; SessionStart compares it with the `version` the server's
-// `GET /v1/health` reports and prints one line when the server is older.
-// Anything unreadable (no manifest field, a server without the field, a
-// version that is not SemVer) says nothing: the check never stands between
-// the user and a session.
+// The plugin's minimum Loom server version. SessionStart compares
+// MIN_SERVER_VERSION with the `version` the server's `GET /v1/health` reports
+// and prints one line when the server is older. Anything unreadable (no
+// manifest, a server without the field, a version that is not SemVer) says
+// nothing: the check never stands between the user and a session.
 
 import { readFileSync } from "node:fs";
 
 // The manifests sit beside lib/: Claude Code's in .claude-plugin/, Codex's in
 // .codex-plugin/ (lib/ is synced into both plugins).
 const MANIFESTS = ["../.claude-plugin/plugin.json", "../.codex-plugin/plugin.json"];
+
+// The oldest Loom server the hooks support. lib/ is synced, so both plugins
+// carry the same minimum; a release raises it (docs/development/release-process.md).
+export const MIN_SERVER_VERSION = "1.0.0";
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -32,18 +35,18 @@ export function isOlder(version, minimum) {
   return false;
 }
 
-/** This plugin's `{ version, minServerVersion }` from its manifest; empty
- *  strings when no manifest can be read. */
+/** This plugin's `{ version, minServerVersion }`: the version from its
+ *  manifest, empty when no manifest can be read. */
 export function pluginManifest(base = import.meta.url) {
   for (const rel of MANIFESTS) {
     try {
       const m = JSON.parse(readFileSync(new URL(rel, base), "utf8"));
-      return { version: String(m.version || ""), minServerVersion: String(m.minServerVersion || "") };
+      return { version: String(m.version || ""), minServerVersion: MIN_SERVER_VERSION };
     } catch {
       // Not this plugin's layout, or unreadable: try the other one.
     }
   }
-  return { version: "", minServerVersion: "" };
+  return { version: "", minServerVersion: MIN_SERVER_VERSION };
 }
 
 /** The sentence about a server older than the plugin's minimum, or "". */

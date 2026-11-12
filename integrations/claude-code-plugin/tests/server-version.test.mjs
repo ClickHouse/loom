@@ -9,7 +9,13 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isOlder, parseVersion, pluginManifest, serverVersionLine } from "../lib/server-version.mjs";
+import {
+  MIN_SERVER_VERSION,
+  isOlder,
+  parseVersion,
+  pluginManifest,
+  serverVersionLine,
+} from "../lib/server-version.mjs";
 
 const HOOK = fileURLToPath(new URL("../hooks/loom-session-start.mjs", import.meta.url));
 const MANIFEST = { version: "2.0.0", minServerVersion: "1.2.0" };
@@ -62,9 +68,12 @@ test("serverVersionLine: one loom: line naming both versions for an older server
 
 test("pluginManifest reads this plugin's own manifest", () => {
   const m = JSON.parse(fs.readFileSync(new URL("../.claude-plugin/plugin.json", import.meta.url), "utf8"));
-  assert.deepEqual(pluginManifest(), { version: m.version, minServerVersion: m.minServerVersion });
-  assert.ok(parseVersion(m.minServerVersion), m.minServerVersion);
-  assert.deepEqual(pluginManifest("file:///nonexistent/lib/x.mjs"), { version: "", minServerVersion: "" });
+  assert.deepEqual(pluginManifest(), { version: m.version, minServerVersion: MIN_SERVER_VERSION });
+  assert.ok(parseVersion(MIN_SERVER_VERSION), MIN_SERVER_VERSION);
+  assert.deepEqual(pluginManifest("file:///nonexistent/lib/x.mjs"), {
+    version: "",
+    minServerVersion: MIN_SERVER_VERSION,
+  });
 });
 
 /** A fake Loom whose /v1/health answers `health` (`hang` never answers it). */
@@ -182,6 +191,6 @@ test("the Codex copy reads its own manifest", async () => {
   );
   assert.deepEqual(codex.pluginManifest(), {
     version: manifest.version,
-    minServerVersion: manifest.minServerVersion,
+    minServerVersion: MIN_SERVER_VERSION,
   });
 });

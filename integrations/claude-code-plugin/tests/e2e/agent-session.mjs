@@ -14,8 +14,10 @@
 //     [--expect-tool PowerShell]  Claude Code's shell tool must be this one: without
 //                           Git Bash it is PowerShell, which runs the hooks too
 //     [--node-off-path]     the agent's PATH has no node, as for a GUI launch:
-//                           the hooks' launcher must find it under a version
-//                           manager (not on Windows: the stand-in nvm node is a sh script)
+//                           Codex's launcher must find it under a version
+//                           manager; Claude Code gets it from PATH in the env
+//                           block of its settings.json, the documented fix
+//                           (not on Windows: the stand-in nvm node is a sh script)
 //
 // Exit 0 when the helper sent the token, each event's own Loom call arrived
 // with it, and (Claude Code, which reports them) every hook exited 0 with
@@ -222,7 +224,8 @@ function scratch() {
 
 /** PATH without any directory holding node, and a home where node is found
  *  only as nvm's default install, as for an agent started from the Dock. That
- *  node notes each run's arguments (not its --version probe) in a file. */
+ *  node notes each run's arguments (not its --version probe) in a file.
+ *  Returns the directory that holds it. */
 function hideNode(env, home) {
   const exe = process.platform === "win32" ? "node.exe" : "node";
   const own = path.dirname(process.execPath);
@@ -256,6 +259,7 @@ function hideNode(env, home) {
   ]) {
     delete env[k];
   }
+  return bin;
 }
 
 /** The JSON objects among an agent's output lines. */
@@ -294,7 +298,13 @@ async function claudeSession(opts, box, url) {
     const r = await run(opts.bin, args, { env, cwd: box.work, timeoutMs: 120000 });
     if (r.status !== 0) return { problems: [`claude ${args.join(" ")} exited ${r.status}: ${r.stderr}${r.stdout}`] };
   }
-  if (opts.nodeOffPath) hideNode(env, box.home);
+  if (opts.nodeOffPath) {
+    const nvmBin = hideNode(env, box.home);
+    const settings = path.join(box.home, ".claude", "settings.json");
+    const current = fs.existsSync(settings) ? JSON.parse(fs.readFileSync(settings, "utf8")) : {};
+    current.env = { ...current.env, PATH: `${nvmBin}${path.delimiter}${env.PATH}` };
+    fs.writeFileSync(settings, JSON.stringify(current));
+  }
   const r = await run(
     opts.bin,
     [

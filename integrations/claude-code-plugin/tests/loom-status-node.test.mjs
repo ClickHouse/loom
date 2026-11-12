@@ -154,18 +154,15 @@ test("loom-status Node check warns when only this shell's environment finds Node
       shellOnly.stdout,
       /ready: .*\nFound only with this shell's environment: Claude Code .*settings\.json\.\n$/,
     );
-    // Claude Code's settings env reaches a GUI-started agent: LOOM_NODE or PATH there counts.
+    // Claude Code's settings env reaches a GUI-started agent: a PATH there
+    // counts; LOOM_NODE does not, since its hooks run the node on PATH.
     settings({ LOOM_NODE_SYSTEM_DIRS: "", LOOM_NODE: path.join(f.bin, "node") });
-    assert.doesNotMatch(f.run("--check").stdout, /Found only/);
+    assert.match(f.run("--check").stdout, /Found only/);
     settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin });
     assert.doesNotMatch(f.run("--check").stdout, /Found only/);
     // A key that is no variable name is not passed on to the GUI run.
     settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin, "two\nlines": "x", "": "y" });
     assert.doesNotMatch(f.run("--check").stdout, /Found only/);
-    // A LOOM_NODE exported in this shell only does not.
-    settings({ LOOM_NODE_SYSTEM_DIRS: "" });
-    f.env.LOOM_NODE = path.join(f.bin, "node");
-    assert.match(f.run("--check").stdout, /Found only/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }
@@ -200,7 +197,7 @@ test("loom-status Node check knows Claude Code by where it is installed", NEEDS_
     const r = f.runAt(custom, "--check");
     assert.match(r.stdout, /Found only with this shell's environment: Claude Code/);
     assert.ok(r.stdout.includes(`env block of ${path.join(f.env.CLAUDE_CONFIG_DIR, "settings.json")}.`), r.stdout);
-    settings(f.env.CLAUDE_CONFIG_DIR, { LOOM_NODE_SYSTEM_DIRS: "", LOOM_NODE: path.join(f.bin, "node") });
+    settings(f.env.CLAUDE_CONFIG_DIR, { LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin });
     assert.doesNotMatch(f.runAt(custom, "--check").stdout, /Found only/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });

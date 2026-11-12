@@ -43,8 +43,8 @@ a removal follows the rule below.
 
 ## Coding-agent plugins
 
-The Claude Code and Codex plugins carry their own version, and their manifests name the oldest
-server their hooks support (`minServerVersion`). A session against an older server starts with one
+The Claude Code and Codex plugins carry their own version, and name the oldest server their
+hooks support (`MIN_SERVER_VERSION` in `lib/server-version.mjs`). A session against an older server starts with one
 `loom:` line saying so, and the plugin goes on working where it can
 ([Claude Code](../features/integrations/claude-code.md)).
 

@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-start.mjs\" SessionStart\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-session-start.mjs\" SessionStart } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-start.mjs", "SessionStart"]
           }
         ]
       }
@@ -15,7 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs\" UserPromptSubmit\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-prompt-pack.mjs\" UserPromptSubmit } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-pack.mjs", "UserPromptSubmit"]
           }
         ]
       },
@@ -23,7 +25,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs\" UserPromptSubmit\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-prompt-recall.mjs\" UserPromptSubmit } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-prompt-recall.mjs", "UserPromptSubmit"]
           }
         ]
       },
@@ -31,7 +34,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs\" UserPromptSubmit\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-run.mjs\" UserPromptSubmit } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs", "UserPromptSubmit"]
           }
         ]
       }
@@ -42,7 +46,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-code-shunt.mjs\" PreToolUse\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-code-shunt.mjs\" PreToolUse } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-code-shunt.mjs", "PreToolUse"]
           }
         ]
       },
@@ -51,18 +56,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-file-context.mjs\" PreToolUse\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-file-context.mjs\" PreToolUse } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-file-context.mjs", "PreToolUse"]
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__loom__.*|mcp__plugin_loom_loom__.*",
+        "matcher": "mcp__plugin_loom_loom__.*",
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-mentor-hint.mjs\" PostToolUse\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-mentor-hint.mjs\" PostToolUse } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-mentor-hint.mjs", "PostToolUse"]
           }
         ]
       },
@@ -71,7 +78,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-blast-radius.mjs\" PostToolUse\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-blast-radius.mjs\" PostToolUse } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-blast-radius.mjs", "PostToolUse"]
           }
         ]
       },
@@ -80,7 +88,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUse\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-capture.mjs\" PostToolUse } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs", "PostToolUse"]
           }
         ]
       }
@@ -91,7 +100,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" PostToolUseFailure\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-capture.mjs\" PostToolUseFailure } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs", "PostToolUseFailure"]
           }
         ]
       }
@@ -101,15 +111,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" PreCompact\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-capture.mjs\" PreCompact } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs", "PreCompact"]
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" PreCompact\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-working-memory.mjs\" PreCompact } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-working-memory.mjs", "PreCompact"]
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" PreCompact\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-session-brief.mjs\" PreCompact } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-brief.mjs", "PreCompact"]
           }
         ]
       }
@@ -119,31 +132,38 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" Stop\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-capture.mjs\" Stop } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs", "Stop"]
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-conversation.mjs\" Stop\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-conversation.mjs\" Stop } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-conversation.mjs", "Stop"]
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-usage.mjs\" Stop\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-usage.mjs\" Stop } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-usage.mjs", "Stop"]
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-test-gate.mjs\" Stop\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-test-gate.mjs\" Stop } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-test-gate.mjs", "Stop"]
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-validate-gate.mjs\" Stop\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-validate-gate.mjs\" Stop } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-validate-gate.mjs", "Stop"]
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-namespace-health.mjs\" Stop\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-namespace-health.mjs\" Stop } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-namespace-health.mjs", "Stop"]
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-working-memory.mjs\" Stop\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-working-memory.mjs\" Stop } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0"
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-working-memory.mjs", "Stop"]
           }
         ]
       }
@@ -153,27 +173,32 @@
         "hooks": [
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs\" SessionEnd\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-capture.mjs\" SessionEnd } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-capture.mjs", "SessionEnd"],
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-conversation.mjs\" SessionEnd\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-conversation.mjs\" SessionEnd } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-conversation.mjs", "SessionEnd"],
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs\" SessionEnd\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-run.mjs\" SessionEnd } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-run.mjs", "SessionEnd"],
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-memory.mjs\" SessionEnd\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-session-memory.mjs\" SessionEnd } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-memory.mjs", "SessionEnd"],
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "set x `# <#`\nexec sh \"${CLAUDE_PLUGIN_ROOT}/bin/loom-node\" \"${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-brief.mjs\" SessionEnd\n#>\nif (Get-Command node -ErrorAction SilentlyContinue) { node \"$env:CLAUDE_PLUGIN_ROOT/hooks/loom-session-brief.mjs\" SessionEnd } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }\nexit 0",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/loom-session-brief.mjs", "SessionEnd"],
             "timeout": 10
           }
         ]
