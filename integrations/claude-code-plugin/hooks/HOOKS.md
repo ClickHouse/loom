@@ -5,11 +5,11 @@ only and warns on any other key, so the notes live here. The Codex plugin
 runs byte-identical copies of these scripts with its own wiring
 (`integrations/codex-plugin/hooks/hooks.json`, which says what differs and
 why). `hooks.generic.json` maps the same scripts onto a hand-wired client's
-events. Claude Code runs each script as `node <script> <Event>` with no shell; the
-other wirings as `sh bin/loom-node <script> <Event> [client]`, where the
-launcher finds Node 18+ (README, "Which Node"). The event name is the first
-argument, the client (`codex`, …) the optional second; the payload is JSON
-on stdin.
+events. Claude Code runs each script as `node <script> <Event>` with no
+shell; the other wirings as `sh bin/loom-node <script> <Event> [client]`,
+where the launcher finds Node 18+ (README, "Which Node"). The event name is
+the first argument, the client (`codex`, …) the optional second; the payload
+is JSON on stdin.
 
 ## What every hook guarantees
 

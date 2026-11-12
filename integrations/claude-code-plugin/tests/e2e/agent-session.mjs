@@ -45,7 +45,11 @@ function parseArgs(argv) {
     else if (argv[i] === "--expect-tool") out.expectTool = argv[++i];
     else throw new Error(`unknown argument ${argv[i]}`);
   }
-  if (!["claude", "codex"].includes(out.agent) || !out.bin || (out.noNode && out.agent !== "claude")) {
+  if (
+    !["claude", "codex"].includes(out.agent) ||
+    !out.bin ||
+    (out.noNode && (out.agent !== "claude" || out.nodeOffPath))
+  ) {
     throw new Error(
       "usage: agent-session.mjs claude|codex --bin <path> [--port n] [--node-off-path] [--no-node] [--expect-tool <name>]",
     );

@@ -18,6 +18,14 @@ path_node() {
   m=${m%%.*}
   case $m in '' | *[!0-9]*) return 1 ;; esac
   [ "$m" -ge 18 ] || return 1
+  # fnm's per-shell link goes away with the shell: name the directory it points at.
+  case $n in
+    */fnm_multishells/*)
+      if d=$(cd -P "${n%/*}" 2>/dev/null && pwd -P); then
+        n=$d/${n##*/}
+      fi
+      ;;
+  esac
   printf 'Loom hook runtime ready: %s (%s)\n' "$n" "$v"
 }
 

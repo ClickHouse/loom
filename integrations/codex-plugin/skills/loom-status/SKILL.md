@@ -34,8 +34,8 @@ Code; in Codex, the newest `~/.codex/plugins/cache/loom/loom/*/` directory.
    found is too old. A second line names a launch that finds none, with its
    fix: relay it. On a failure, tell the user the hooks cannot run and offer
    the fix: for Claude Code, set `PATH` in the `env` block of its settings to
-   the whole search path with Node 18+'s directory first (that `PATH` replaces
-   every session's); under Codex `LOOM_NODE=/path/to/node` reaches
+   the whole search path with Node 18+'s directory first (that `PATH`
+   replaces every session's); under Codex `LOOM_NODE=/path/to/node` reaches
    the hooks, and the MCP header helper needs that Node on PATH. Else the same
    script without `--check` installs Node (root or passwordless sudo, then
    apt/dnf/yum, apk or Homebrew). Run it only when the user says yes; if it

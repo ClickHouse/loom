@@ -115,6 +115,21 @@ def test_off_macos_a_shell_path_node_passes_with_no_gui_run(
     )
 
 
+def test_an_fnm_per_shell_node_is_named_by_the_directory_it_points_at(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install(home, ".claude", "1.3.0")
+    real = _node(home / "fnm" / "node-versions" / "v22.1.0" / "installation" / "bin", "v22.1.0")
+    link = home / "fnm_multishells" / "123_456"
+    link.parent.mkdir()
+    link.symlink_to(real.parent.parent)
+    monkeypatch.setattr(dc, "DARWIN", False)
+    assert _checks(home, PATH=str(link / "bin"))["client:claude-code:node"] == (
+        dc.PASS,
+        f"Loom hook runtime ready: {real.resolve()} (v22.1.0)",
+    )
+
+
 def test_an_old_node_on_the_gui_path_warns_for_claude_code(home: Path) -> None:
     _install(home, ".claude", "1.3.0")
     node = _node(home / "shell-only", "v24.0.0")

@@ -957,6 +957,9 @@ def _path_node(env: dict[str, str]) -> tuple[int, str]:
     major = re.match(r"v(\d+)\.", version)
     if r.returncode != 0 or major is None or int(major.group(1)) < 18:
         return 1, f"the `node` on Claude Code's PATH, {node} ({version}), is not Node.js 18+."
+    # fnm's per-shell link goes away with the shell: name the directory it points at.
+    if "fnm_multishells" in node:
+        node = os.path.join(os.path.realpath(os.path.dirname(node)), os.path.basename(node))
     return 0, f"Loom hook runtime ready: {node} ({version})"
 
 

@@ -199,6 +199,27 @@ test("loom-status Node check under Claude Code judges the node on PATH, not the 
   }
 });
 
+test("under Claude Code an fnm per-shell node is named by the directory it points at", () => {
+  const f = fixture();
+  try {
+    f.put("uname", "echo Linux");
+    const real = path.join(f.dir, "fnm", "node-versions", "v22.1.0", "installation");
+    fs.mkdirSync(path.join(real, "bin"), { recursive: true });
+    fs.writeFileSync(path.join(real, "bin", "node"), "#!/bin/sh\necho v22.1.0\n", { mode: 0o755 });
+    const link = path.join(f.dir, "fnm_multishells", "123_456");
+    fs.mkdirSync(path.dirname(link));
+    fs.symlinkSync(real, link);
+    f.env.PATH = `${path.join(link, "bin")}:${f.bin}`;
+    f.env.CLAUDE_PLUGIN_ROOT = path.join(f.dir, "plugin");
+    const r = f.run("--check");
+    assert.equal(r.status, 0, r.stderr);
+    const resolved = path.join(fs.realpathSync(real), "bin", "node");
+    assert.equal(r.stdout, `Loom hook runtime ready: ${resolved} (v22.1.0)\n`);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
 test("after an install that leaves no Node 18+, the helper names what it found, per client", () => {
   const f = fixture();
   try {
