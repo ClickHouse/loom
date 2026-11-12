@@ -219,6 +219,15 @@ class _View:
 
 _view = _View()
 _deployment_id = ""
+# Set by the server process that reads the cell state (`boot.start_cell_gate`): until its
+# first read lands it is gated. Unset in a process that reads nothing (a CLI, the
+# workers child with LOOM_CELL unset), whose unread view is `open`.
+_server_reads = False
+
+
+def mark_server_reads() -> None:
+    global _server_reads
+    _server_reads = True
 
 
 def set_deployment_id(deployment_id: str) -> None:
@@ -304,6 +313,11 @@ def _unset_reason(view: _View) -> str:
     cell or a first cell still recording."""
     if not server_reads_state():
         return ""
+    if _server_reads and view.read_at is None:
+        # A failed read is never taken for an absent row.
+        return "the deployment's cell state is not read yet" + (
+            f" ({view.error})" if view.error else ""
+        )
     found = view.state()
     if found in ("open", "recording"):
         return ""

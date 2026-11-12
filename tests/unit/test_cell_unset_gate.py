@@ -18,7 +18,7 @@ from tests.unit.test_supervisor_lease import _auto, _Lock
 
 _OWN = {"v": 1, "fields": {}}
 
-# (first, mode, has_tenancy, has_own) -> state. Shared with the SQL function's test.
+# (first, mode, has_tenancy, has_own) -> state.
 STATES = [
     ((None, "", False, False), "open"),
     (((True, "eu-1"), "recording", False, True), "recording"),
@@ -42,6 +42,7 @@ def _unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cell, "_memo", None)
     # A test's refresh() replaces the module's view; undone at teardown.
     monkeypatch.setattr(cell, "_view", cell._View())
+    monkeypatch.setattr(cell, "_server_reads", False)
     monkeypatch.setattr(readiness, "draining", lambda: False)
     monkeypatch.setattr(leader.deployment_config, "drift", lambda: [])
 
@@ -169,6 +170,11 @@ def test_pending_postgres_migrations_boot_unready_rather_than_refuse(
     monkeypatch.setattr(cell, "start_refresh_loop", lambda: "loop")
     monkeypatch.setattr(boot, "SKIPPED_PG_MIGRATIONS", ("pg:008_cells.sql",))
     assert asyncio.run(boot.start_cell_gate()) == ["loop"]
+    # Gated until a read lands: a failed read is never taken for an absent row.
+    assert "not read yet" in cell.gate_reason()
+    assert asyncio.run(leader.decide_supervisor("on")).held is False
+    monkeypatch.setattr(cell, "_view", cell._View(read_at=time.monotonic()))
+    assert cell.gate_reason() == ""
 
 
 def test_the_server_reads_the_state_once_and_runs_one_refresh_loop(

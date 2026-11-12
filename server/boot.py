@@ -637,13 +637,14 @@ async def start_cell_gate() -> list[asyncio.Task[None]]:
 
     if not cell.server_reads_state():
         return []
+    cell.mark_server_reads()
     if not await cell.refresh() and not SKIPPED_PG_MIGRATIONS:
         raise RuntimeError(
             "refusing to start: the deployment's cell state could not be read "
             f"({cell.read_error()})"
         )
     # With Postgres migrations pending (LOOM_BOOT_MIGRATE off) the state tables may not
-    # exist yet: the process boots unready on its `migrations` check, as before.
+    # exist yet: the process boots, gated and unready until a read lands.
     return [cell.start_refresh_loop()]
 
 
