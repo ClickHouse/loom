@@ -6,6 +6,12 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/clickhouse-loom/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/clickhouse-loom"></a>
+  <a href="./LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+  <a href="https://glama.ai/mcp/servers/ClickHouse/loom"><img alt="MCP server score" src="https://glama.ai/mcp/servers/ClickHouse/loom/badges/score.svg"></a>
+</p>
+
+<p align="center">
   <a href="#what-loom-is-for">What Loom is for</a> ·
   <a href="#measured-results">Benchmarks</a> ·
   <a href="#get-started">Get started</a> ·
@@ -176,6 +182,12 @@ point Codex at it as described in
 tokens in **Settings → Tokens**. Cursor and other MCP clients, and
 [the SDK](./docs/getting-started/first-agent.md), are covered there too.
 
+For Cursor against a single-user server on the same machine, this link adds the MCP
+entry `{"url": "http://localhost:7777/mcp"}`, which needs no token. For a team server,
+use `loom install --client cursor` as in [Cursor](./docs/features/integrations/cursor.md).
+
+[![Add Loom to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=loom&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0Ojc3NzcvbWNwIn0%3D)
+
 ## Why Loom
 
 - **Memory that carries forward.** Share decisions and findings across agents and
@@ -197,12 +209,12 @@ tokens in **Settings → Tokens**. Cursor and other MCP clients, and
 
 ## Integrations
 
-| Integration                                                                                                                           | What it connects                                                              |
-| ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [Claude Code, Codex, Cursor and other MCP clients](./docs/features/integrations/index.md)                                             | Memory and code intelligence in your existing agent workflow.                 |
-| [Python](./docs/reference/python-sdk.md), [TypeScript](./docs/reference/typescript-sdk.md) and [HTTP](./docs/reference/operations.md) | Your own agents and applications.                                             |
-| [Langfuse](./docs/features/integrations/langfuse.md)                                                                                  | Request traces, model costs, retrieval scores and prompt-version attribution. |
-| [ClickStack / HyperDX](./docs/features/integrations/clickstack.md)                                                                    | OpenTelemetry traces, logs and metrics in ClickHouse.                         |
+| Integration                                                                                                                                                                                                                       | What it connects                                                              |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Claude Code](./docs/features/integrations/claude-code.md), [Codex](./docs/features/integrations/codex.md), [Cursor](./docs/features/integrations/cursor.md) and [other MCP clients](./docs/features/integrations/mcp-clients.md) | Memory and code intelligence in your existing agent workflow.                 |
+| [Python](./docs/reference/python-sdk.md), [TypeScript](./docs/reference/typescript-sdk.md) and [HTTP](./docs/reference/operations.md)                                                                                             | Your own agents and applications.                                             |
+| [Langfuse](./docs/features/integrations/langfuse.md)                                                                                                                                                                              | Request traces, model costs, retrieval scores and prompt-version attribution. |
+| [ClickStack / HyperDX](./docs/features/integrations/clickstack.md)                                                                                                                                                                | OpenTelemetry traces, logs and metrics in ClickHouse.                         |
 
 Langfuse and ClickStack are optional integrations, not bundled services in the Docker stack.
 

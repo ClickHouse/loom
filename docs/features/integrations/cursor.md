@@ -12,6 +12,17 @@ working memory; the [Claude Code](claude-code.md) and [Codex](codex.md) plugins 
 
 ## MCP tools
 
+Against a single-user server on the same machine, which takes MCP calls without a token,
+the install link adds this entry under `mcpServers.loom` in Cursor's MCP settings:
+
+```json
+{ "url": "http://localhost:7777/mcp" }
+```
+
+`https://cursor.com/en/install-mcp?name=loom&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0Ojc3NzcvbWNwIn0%3D`
+is that link: `config` is the entry, base64-encoded. For any other server, write the entry
+with its token:
+
 ```bash
 loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"
 ```
