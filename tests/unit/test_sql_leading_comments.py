@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from server.code.domain.extract.lang_py_islands import _sql_head
 from server.code.domain.extract.lang_ts_islands import looks_like_sql
 from server.core.ch import statement_class
 from server.core.ch_class_settings import is_read_statement
@@ -27,6 +28,7 @@ def test_leading_comments_are_skipped() -> None:
     assert statement_class("/** doc **/ /***/ INSERT INTO t VALUES (1)") == "write"
     assert is_read_statement("/** doc **/ SELECT 1")
     assert looks_like_sql("/***/ SELECT a FROM t", inside_client=True)
+    assert _sql_head("-- name: Get :one\n/* a */ /** b **/ SELECT 1") == "SELECT 1"
 
 
 def test_a_comment_ends_at_its_first_close() -> None:
@@ -45,4 +47,5 @@ def test_comment_runs_before_a_non_keyword_finish_quickly(text: str) -> None:
     statement_class(text)
     is_read_statement(text)
     looks_like_sql(text, inside_client=True)
+    _sql_head(text)
     assert time.monotonic() - started < 1.0
