@@ -406,17 +406,16 @@ main() {
   case "$own_ports " in
     *" $port "*) ;;
     *)
-      # Curl's exit 7 is a refused connection: nothing listens there. A timeout
-      # with no connection made (a zero connect time, printed in the C locale)
-      # says nothing about the port; one after a connection is a listener that
-      # does not answer. An answer (0, or 22 for an HTTP error), an empty reply
-      # (52) and a reset (56) all come from a listener too.
+      # Whether curl connected decides it: exit 7 is a refused connection and
+      # the port is free; a connect time above zero (printed in the C locale) is
+      # a listener, whatever it answered; a timeout with none says nothing.
       probe=0
       connected=$(LC_ALL=C curl -s --noproxy '*' -o /dev/null -w '%{time_connect}' \
         --connect-timeout 3 --max-time 5 "http://$host:$port/" 2>/dev/null) || probe=$?
       case $probe,$connected in
-        28,0.000 | 28,0.000000 | 28,) probe=unreachable ;;
-        0,* | 22,* | 28,* | 52,* | 56,*) probe=held ;;
+        7,*) ;;
+        *,0.000 | *,0.000000 | *,) [ "$probe" != 28 ] || probe=unreachable ;;
+        *) probe=held ;;
       esac
       case $probe in
         7) ;;

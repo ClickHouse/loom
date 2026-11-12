@@ -979,9 +979,11 @@ def test_a_listener_that_never_answers_holds_the_port(
 def test_a_listener_that_resets_or_answers_nothing_holds_the_port(
     install, installer_env: dict[str, str]
 ) -> None:
-    """Curl's 52 (an empty reply) and 56 (a reset) come from a listener."""
+    """Any exit after a connection is a listener: 52 (an empty reply), 56 (a reset),
+    1 (a non-HTTP reply, such as an SSH or TLS server's) and 8 (a status line curl
+    cannot read)."""
     run, _ = install
-    for code in (52, 56):
+    for code in (52, 56, 1, 8):
         _start_stubs(installer_env, probe_exit=code, connect_time="0.000150")
         result = run(LOOM_SKIP_START="0")
         assert result.returncode == 1
