@@ -141,13 +141,10 @@ def catalog(
 _INSTEAD: dict[str, str] = {
     "memory.bulk_set": "call loom_memory_set once per fact; a batch saves no round trip here",
     "memory.bulk_get": (
-        "call memory.get per key, or memory.list with a key prefix (via loom_op where "
-        "either is not listed)"
+        "call memory.get per key, or memory.list with a key prefix (via loom_op where unlisted)"
     ),
-    "memory.keys": (
-        "call memory.list (via loom_op where it is not listed), which pages the namespace"
-    ),
-    "memory.delete_version": "call loom_memory_delete",
+    "memory.keys": "call memory.list (via loom_op where unlisted), which pages the namespace",
+    "memory.delete_version": "call memory.delete (via loom_op where unlisted)",
     # An owner-only op names the person, never a route: naming the SDK/HTTP
     # op sends a model probing env vars and token files for a way around it.
     "memory.unlock": (
@@ -157,14 +154,18 @@ _INSTEAD: dict[str, str] = {
     "memory.search": "call loom_search (memory, profile, knowledge and conversations in one call)",
     "knowledge.search": "call loom_search",
     "conversation.search": "call loom_search",
-    "namespace.list": "call namespace.list_mine (via loom_op where it is not listed)",
-    "run.list": "call run.get with a run id (loom_op)",
-    "code.context_packs": "call code.context_pack (loom_op) with the pr_number you want",
-    "memory.extraction_status": (
-        "call memory.extraction_status_mine (loom_op) with the queue_id each deferred "
-        "memory.set_from_messages returned"
+    "namespace.list": "call namespace.list_mine (via loom_op where unlisted)",
+    "run.list": "call run.get with a run id (via loom_op where unlisted)",
+    "code.context_packs": (
+        "call code.context_pack (via loom_op where unlisted) with the pr_number you want"
     ),
-    "erasure.status": "call erasure.list (loom_op); each saga row carries its status",
+    "memory.extraction_status": (
+        "call memory.extraction_status_mine (via loom_op where unlisted) with the queue_id "
+        "each deferred memory.set_from_messages returned"
+    ),
+    "erasure.status": (
+        "call erasure.list (via loom_op where unlisted); each saga row carries its status"
+    ),
     "memory.search_trace": (
         "call loom_search with explain=true; each memory hit carries its ranking terms"
     ),
@@ -173,7 +174,7 @@ _INSTEAD: dict[str, str] = {
     "code.outcome": "the plugin's hooks report what was done with a code answer; nothing to call",
     "code.coverage.watch": (
         "a bot's watch on its own inbox; for the commit the index has reached, call "
-        "code.index_status (loom_op)"
+        "code.index_status (via loom_op where unlisted)"
     ),
     "code.coverage.unwatch": "a bot's watch on its own inbox; nothing to call",
     "code.scip_ingest": "a CI job uploads the SCIP index; nothing to call",

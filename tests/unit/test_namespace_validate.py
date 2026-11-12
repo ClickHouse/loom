@@ -153,7 +153,7 @@ async def test_tunables_reach_clickhouse_as_parameters(monkeypatch: pytest.Monke
     assert all("3600" not in s and "0.25" not in s for s in ch.sqls)
 
 
-def test_registered_as_callable_by_name_with_a_description() -> None:
+def test_registered_on_the_all_listing_with_a_description() -> None:
     from server.operations.registry import OPERATIONS_BY_NAME
 
     op = OPERATIONS_BY_NAME["namespace.validate"]
