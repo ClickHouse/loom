@@ -89,7 +89,12 @@ def routes_writes(toolset: str | None) -> bool:
 
 def reachable(op: Operation, toolset: str | None) -> bool:
     """Whether `loom_op` on this connection routes ``op``: never a hidden op."""
-    return op.name not in _MCP_HIDDEN_OPS and (_is_read(op) or routes_writes(toolset))
+    return _routed(op, routes_writes(toolset))
+
+
+def _routed(op: Operation, writes: bool) -> bool:
+    """`reachable` for a connection whose `routes_writes` is already known."""
+    return op.name not in _MCP_HIDDEN_OPS and (_is_read(op) or writes)
 
 
 # Tool name → op: how a `tools/call` resolves its op, and how prose naming a
@@ -103,6 +108,11 @@ OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
 _NAMED_OP = re.compile(rf"\b(loom_[a-z_]+|{OP_MENTION})\b(`?)(?!#)")
 
 
+def _lookup(name: str) -> Operation | None:
+    """The op a prose mention names, by tool name or dotted op name."""
+    return TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
+
+
 def name_ops_for_listing(text: str, listed: Set[str], toolset: str | None) -> str:
     """``text`` as a client of this listing reads it. A client calls a listed op
     by its tool name, so every op the listing carries is named by its tool. An
@@ -111,16 +121,17 @@ def name_ops_for_listing(text: str, listed: Set[str], toolset: str | None) -> st
     (a hidden op, a write on a read-only connection, a listing without
     `loom_op`)."""
     has_loom_op = LOOM_OP_TOOL_NAME in listed
+    writes = routes_writes(toolset)
     marked: set[str] = set()
 
     def rename(m: re.Match[str]) -> str:
         name, trail = m.groups()
-        op = TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
+        op = _lookup(name)
         if op is None:
             return m.group(0)
         if op.mcp_tool_name in listed:
             return f"{op.mcp_tool_name}{trail}"
-        if not has_loom_op or op.name in marked or not reachable(op, toolset):
+        if not has_loom_op or op.name in marked or not _routed(op, writes):
             return f"{op.name}{trail}"
         marked.add(op.name)
         return f"{op.name}{trail} (via loom_op)"
@@ -183,7 +194,7 @@ DESCRIPTOR: dict[str, Any] = {
 
 
 def catalog(
-    query: str = "", *, readonly: bool = False, limit: int = _CATALOG_LIMIT
+    query: str = "", *, toolset: str | None = None, limit: int = _CATALOG_LIMIT
 ) -> dict[str, Any]:
     """The ops `loom_op` reaches that match any word of `query`, ranked by
     the words their NAME carries (twice) plus those their purpose carries,
@@ -191,8 +202,9 @@ def catalog(
     ops at once, so a word need not match every op."""
     words = [w for w in re.split(r"[^\w.]+", query.lower()) if w]
     hits: list[tuple[int, str, dict[str, Any]]] = []
+    writes = routes_writes(toolset)
     for op in _ops():
-        if readonly and not _is_read(op):
+        if not _routed(op, writes):
             continue
         purpose = _purpose(op)
         name_l, purpose_l = op.name.lower(), purpose.lower()
@@ -273,14 +285,16 @@ def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
     op = OPERATIONS_BY_NAME.get(name)
     if op is None or name not in _MCP_HIDDEN_OPS:
         return None
-    if not _is_read(op) and not routes_writes(toolset):
-        # its alternative is a write too, which this connection does not route
+    default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
+    text = _INSTEAD.get(name, default)
+    listed = listed_tool_names(toolset)
+    writes = routes_writes(toolset)
+    named = [_lookup(m.group(1)) for m in _NAMED_OP.finditer(text)]
+    if any(o and o.mcp_tool_name not in listed and not _routed(o, writes) for o in named):
+        # the alternative is a write this read-only connection cannot make
         instead = _READ_ONLY_CONNECTION
     else:
-        default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
-        instead = name_ops_for_listing(
-            _INSTEAD.get(name, default), listed_tool_names(toolset), toolset
-        )
+        instead = name_ops_for_listing(text, listed, toolset)
     return {
         "error": f"{name} exists but is not callable on this MCP connection",
         "code": "OP_NOT_ON_MCP",
@@ -323,16 +337,15 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     if assistant_connection(toolset):
         return req, None  # `_call_tool` refuses `loom_op` on the assistant toolset
     name = str(args.get("op") or "").strip()
-    readonly = not routes_writes(toolset)
     if name.lower() in _HELP:
-        return req, _result(req.get("id"), catalog(str(args.get("query") or ""), readonly=readonly))
+        return req, _result(req.get("id"), catalog(str(args.get("query") or ""), toolset=toolset))
     by_name = {op.name: op for op in _ops()}
     op = by_name.get(name) or by_name.get(name.replace("_", ".", 1))
     hidden = hidden_refusal(name, toolset)
     if op is None and hidden is not None:
         emit_token_refusal(name, auth, error_code="OP_NOT_ON_MCP")
         return req, _result(req.get("id"), hidden, error=True)
-    if op is None or (readonly and not _is_read(op)):
+    if op is None or not reachable(op, toolset):
         if op is not None:  # a write on a read-only connection
             emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP)
         near = difflib.get_close_matches(name, list(by_name), n=5, cutoff=0.6)

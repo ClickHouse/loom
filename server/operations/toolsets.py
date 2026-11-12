@@ -562,8 +562,8 @@ def resolve_toolset(requested: str | None, configured: str | None) -> str:
     """The toolset a listing uses: the per-request ``?toolset=`` override when
     it names a known toolset, else the deployment's ``settings.mcp_toolset``,
     else ``core``. An unknown value on either side falls through — a bad
-    query string never widens or narrows the listing silently (
-    the rule ``?schema_profile=`` follows)."""
+    query string never widens or narrows the listing silently (the rule
+    ``?schema_profile=`` follows)."""
     configured_l = canonical_toolset(configured or "core")
     if not is_toolset(configured_l):
         configured_l = "core"

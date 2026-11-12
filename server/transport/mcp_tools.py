@@ -51,6 +51,7 @@ from server.transport.mcp_descriptions import (
     TOOL_DESCRIPTIONS as _TOOL_DESCRIPTIONS,
 )
 from server.transport.mcp_descriptions import coding_search_description
+from server.transport.mcp_op import DESCRIPTOR as LOOM_OP_DESCRIPTOR
 from server.transport.mcp_op import LOOM_OP_TOOL_NAME, loom_op_description, name_ops_for_listing
 from server.transport.mcp_schemas import (
     _shape_schema,
@@ -106,10 +107,8 @@ def _synthetic_tool_descriptors(toolset: str, listed: Set[str]) -> list[dict[str
 
 
 def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
-    from server.transport.mcp_op import DESCRIPTOR as _LOOM_OP
-
     return [
-        dict(_LOOM_OP),
+        dict(LOOM_OP_DESCRIPTOR),
         {
             "name": _LOOM_SEARCH_TOOL_NAME,
             "description": (

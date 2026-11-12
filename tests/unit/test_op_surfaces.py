@@ -103,11 +103,13 @@ def test_an_op_kept_off_mcp_is_never_agent_only():
         assert NOT_IN_DASHBOARD.get(name) not in AGENT_ONLY, name
 
 
-def test_a_refusal_names_the_dashboard_only_for_an_op_the_dashboard_calls():
+@pytest.mark.parametrize("toolset", [None, "readonly"])
+def test_a_refusal_names_the_dashboard_only_for_an_op_the_dashboard_calls(toolset):
     """A hidden op with no alternative of its own sends the agent to the user in the
-    dashboard when the dashboard calls it, and to an operator when it does not."""
+    dashboard when the dashboard calls it, and to an operator when it does not, on a
+    read-only connection too."""
     for name in _MCP_HIDDEN_OPS:
-        instead = mcp_op.hidden_refusal(name, None)["instead"]
+        instead = mcp_op.hidden_refusal(name, toolset)["instead"]
         called = "dashboard" in OPERATIONS_BY_NAME[name].reach
         if "dashboard" in instead:
             assert called, name

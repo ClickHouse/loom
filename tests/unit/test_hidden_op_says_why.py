@@ -75,6 +75,18 @@ def test_unlock_says_only_the_owner_unlocks() -> None:
     assert body["code"] == "OP_NOT_ON_MCP" and "only the user" in body["instead"]
 
 
+def test_a_readonly_refusal_keeps_every_reason_that_names_no_write() -> None:
+    """Only an alternative this connection cannot reach becomes the read-only text."""
+    instead = {
+        name: mcp_op.hidden_refusal(name, "readonly")["instead"]
+        for name in ("memory.unlock", "code.coverage.watch", "ui.vitals", "memory.bulk_set")
+    }
+    assert "only the user can unlock" in instead["memory.unlock"]
+    assert instead["code.coverage.watch"].endswith("call code.index_status (via loom_op)")
+    assert instead["ui.vitals"].endswith("nothing to call")
+    assert instead["memory.bulk_set"].startswith("this connection is read-only")
+
+
 def test_every_hidden_op_gets_a_reason_and_an_unknown_op_keeps_the_old_refusal() -> None:
     from server.operations.registry import ALL_OPERATIONS
 
