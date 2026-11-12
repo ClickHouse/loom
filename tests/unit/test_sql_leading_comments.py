@@ -34,6 +34,8 @@ def test_a_comment_ends_at_its_first_close() -> None:
     assert statement_class("/* a /* b */ (c) */ INSERT INTO t VALUES (1)") == "read"
     assert not is_read_statement("/* a /* b */ (c) */ SELECT 1")
     assert not looks_like_sql("/* a /* b */ (c) */ SELECT a FROM t", inside_client=True)
+    assert not is_read_statement("/* a /* b */ x */ SELECT 1")
+    assert not looks_like_sql("/* a /* b */ x */ SELECT a FROM t", inside_client=True)
 
 
 @pytest.mark.parametrize("text", _HOSTILE)
