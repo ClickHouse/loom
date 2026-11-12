@@ -1,8 +1,8 @@
 """Each reader of a statement's leading `--` and `/* */` comments
 (`statement_class`, `is_read_statement`, `looks_like_sql`, `_sql_head`) skips them
 in time linear in the text: `looks_like_sql` reads template literals from indexed
-repositories. A comment body that may hold `*/` makes a
-failed match backtrack exponentially in the number of `*/` runs."""
+repositories. A comment body that may hold `*/` makes a failed match backtrack
+exponentially in the number of `*/` runs."""
 
 from __future__ import annotations
 
