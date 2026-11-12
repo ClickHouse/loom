@@ -93,7 +93,7 @@ async def _step_purge_code_index_by_ns(org: str, namespace: _NS) -> int:
 # how long a code-link erasure waits for a linking pass to give up the queue lease: longer
 # than the link worker's pass deadline (a test holds it so)
 _LINK_PASS_WAIT_S = DEADLINE_CAP_SECONDS
-_SOURCE_TURN_WAIT_S = 30.0  # not a setting: well inside a request and the recovery pass
+_SOURCE_RETIRE_WAIT_S = 30.0  # not a setting: well inside a request and the recovery pass
 
 
 async def _step_delete_code_links_by_user(org: str, user_id: str) -> int:
@@ -155,7 +155,7 @@ async def _step_retire_personal_collection_by_user(org: str, user_id: str) -> in
 
 async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
     """First of all, so no source writes back what the later steps erase."""
-    return await retire_sources_of(org, namespaces_of(namespace), wait_s=_SOURCE_TURN_WAIT_S)
+    return await retire_sources_of(org, namespaces_of(namespace), wait_s=_SOURCE_RETIRE_WAIT_S)
 
 
 async def _step_forget_collection_owner_by_user(org: str, user_id: str) -> int:

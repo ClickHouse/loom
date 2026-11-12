@@ -123,12 +123,10 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
 
     monkeypatch.setattr(source_probes, "probe", _probe)
     leases_taken: list[str] = []
-    lease_waits: list[float] = []
 
     @contextlib.asynccontextmanager
     async def _holding(name: str, **kw: Any) -> AsyncIterator[bool]:
         leases_taken.append(name)
-        lease_waits.append(kw["wait_s"])
         yield True
 
     watched: list[str] = []
@@ -150,7 +148,6 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
     fake.erasures = erasures  # type: ignore[attr-defined]
     fake.probes = probes  # type: ignore[attr-defined]
     fake.leases = leases_taken  # type: ignore[attr-defined]
-    fake.lease_waits = lease_waits  # type: ignore[attr-defined]
     fake.watched = watched  # type: ignore[attr-defined]
     return fake
 
@@ -1217,12 +1214,20 @@ def test_the_erasure_step_waits_while_an_add_holds_the_sources_lease(
     assert fake.sequential == [True]
 
 
-def test_the_erasure_step_s_lease_wait_counts_against_its_deadline(
+def test_the_erasure_step_fails_at_its_deadline_while_the_retirement_lease_is_held(
     fake: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-a")))
-    fake.lease_waits.clear()  # type: ignore[attr-defined]
-    # Another change holds the lease for 10 s of the step's 30: the retirement waits 20.
-    _clocked(monkeypatch, {f"knowledge-source:{ORG}:team-a": 110.0})
-    asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=30.0))
-    assert fake.lease_waits == [20.0]  # type: ignore[attr-defined]
+    # The lease is free when the step looks, then another change takes it for good: the
+    # retirement waits out what is left of the 30 s, not 5 s more.
+    clock = _clocked(monkeypatch, {})
+
+    @contextlib.asynccontextmanager
+    async def _held_elsewhere(name: str, *, wait_s: float, **_kw: Any) -> AsyncIterator[bool]:
+        await clock.async_sleep(wait_s)
+        yield False
+
+    monkeypatch.setattr(leases, "holding", _held_elsewhere)
+    with pytest.raises(OverloadedError):
+        asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=30.0))
+    assert clock.t == 130.0
