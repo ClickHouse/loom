@@ -86,8 +86,9 @@ reader:
 - **A redact** of a version of a definition's source (a past version: `memory.redact`
   refuses the live head) scrubs the shared row whose text is that version's, and that
   row's embedding, which a redact does not reach today, and blanks the text of every
-  `knowledge_gap` and `query_history` candidate drafted for its key, promoted or not,
-  which `learnings.list` shows to viewers; the pull request that adds those candidate
+  `knowledge_gap` and `query_history` candidate whose drafted value hashes (canonical
+  JSON) to that version's `content_sha256`, promoted or not, which `learnings.list` shows
+  to viewers, and no other draft of the term; the pull request that adds those candidate
   kinds adds that part.
 - **A relabel to `high`** of a promoted definition's source retires that row's shared
   embedding, keeping the row: `loom.shared` has no sensitivity of its own, so the ordinary
@@ -98,11 +99,10 @@ reader:
   `memory.promote` (a definition promotion without one is refused), and is refused when
   the source's text no longer has it, so a writer's change between the write and the
   promotion is never signed off as the admin's.
-- **`promoted_by`** is stamped from the token's actor on every promotion of a definition
-  (a candidate or source of type `definition`, whatever its `source_kind`), through
-  `memory.promote` or `learnings.review`, and so are the queue row's `decided_by` and the
-  audit subject on such a review, never taken from the body's `approver`, which both ops
-  then name in `ignored_args`.
+- **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
+  through `memory.promote` or `learnings.review`, and so are the queue row's `decided_by`
+  and the audit subject on such a review, never taken from the body's `approver`, which
+  both ops then name in `ignored_args`.
 - **`check_against_shared`**, the promotion's conflict check, skips `definition` (only),
   so promoting `MRR` is not refused as a conflict with `ARR`; decisions keep the check.
 - **`memory.promote` refuses a definition whose term or alias** is already another
@@ -181,8 +181,9 @@ namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespac
 governed definitions through this leg only; the implementing pull request updates that
 page and the comment on `SCOPED_OPS` in `server/identity/domain/read_scope.py`, which says
 every memory read of those ops carries the read scope. The leg runs only on a search's
-first page (the governed keys it served there stay out of every later page of that
-search), and is off when a field asks for other rows (a `memory_type` other than
+first page; the list a search parks for its later pages is the merged one, governed hits
+first, so the next page starts after the rows page one served and no ordinary hit is
+skipped, and is off when a field asks for other rows (a `memory_type` other than
 `definition`, which the pull request adds to the field's values; `tags` or `category`
 filtering, not with `tags_soft` or `category_soft`; an explicit `agent`, `run_id` or
 `session_ids`; `as_of`; a body `user_id` or `session_id` under a whole-namespace read;
@@ -333,11 +334,12 @@ who; the threshold bounds what one build shows, not what a series of builds impl
 reading admin's own asks count toward it too, so an admin who asked a query learns from
 its gap that at least `knowledge_gaps_min_askers` minus one others did, which in a small
 namespace narrows who. The worker embeds the remaining groups' queries (at most
-`knowledge_gaps_max_groups`), merges groups whose vectors are at least
-`knowledge_gaps_merge_similarity` alike, counting a merged gap's askers as the union of
-the distinct askers each group's query returns (`groupUniqArray`), held in memory for the
-pass and never stored, and writes the result as a new build of the namespace in
-`loom.knowledge_gaps`:
+`knowledge_gaps_max_groups`, those with the most distinct askers, then asks, then the
+latest ask, so the cut is the same for the same questions), merges groups whose vectors
+are at least `knowledge_gaps_merge_similarity` alike, counting a merged gap's askers as
+the union of the distinct askers each group's query returns (`groupUniqArray`), held in
+memory for the pass and never stored, and writes the result as a new build of the
+namespace in `loom.knowledge_gaps`:
 
 | Column            | Meaning                                                         |
 | ----------------- | --------------------------------------------------------------- |
@@ -428,7 +430,7 @@ Nothing reaches search until an admin promotes a draft.
 checks the term and aliases against every other live shared row of type `definition` (the
 set `memory.promote` refuses on) and the draft for a credential-shaped value
 (`value_reads_high`), and the rollout gate, so a promotion these refuse writes nothing.
-Then it writes the definition through `memory.set` for the whole namespace (today's review
+Then it writes the definition through `memory.set` for the whole namespace (today's seeder
 path writes under the approver's `user_id`; the implementing pull request writes the
 namespace-wide row), declaring `source_class = derived`, the downgrade a caller may
 declare (an LLM drafted it; the admin's promotion is the approval, not its authorship), so
@@ -458,10 +460,11 @@ governed, and the admin edits that row to the draft's text and promotes it with
 draft instead leaves the written row, which the admin restores from the row's history or
 promotes.
 
-A `memory_supporters` candidate of type `definition` promotes its supporter row through
-`learnings.review` too, and today's path splits the supporter tuple on `/` into exactly
-six parts, which a `definition/<slug>` key breaks; the implementing pull request splits
-off the five identity parts and keeps the rest as the key.
+`learnings.review` promotes a definition only from a `knowledge_gap` or `query_history`
+candidate. A candidate of another kind whose type is `definition` (a `memory_supporters`
+candidate promotes a writer's own row, which the namespace-wide rule refuses) is refused
+with `VALIDATION_FAILED`, naming `memory.promote` of the namespace-wide row as the way to
+govern it.
 
 ## Erasure and audit
 
@@ -473,9 +476,9 @@ off the five identity parts and keeps the rest as the key.
   and an admin's name in its `owner`, like `promoted_by` on the shared row today, stays
   until an admin edits the definition.
 - A redact of a past version of a definition reaches that version, the shared row holding
-  its text, and every `knowledge_gap` and `query_history` candidate drafted for its key
-  (the change above), not the gap it came from, which holds only normalised queries enough
-  askers asked and expires after 7 days.
+  its text, and the `knowledge_gap` and `query_history` candidates whose draft is that
+  text (the change above), not the gap it came from, which holds only normalised queries
+  enough askers asked and expires after 7 days.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
   `user_id` is the user, matching every spelling the directory ties to the named subject
   (`spellings` in `server/auth/aliases.py`, unverified ties included, as a revocation
@@ -552,10 +555,12 @@ Undo, and promoted again; a source it marked `conflicted` is cleared with
 `conflicts.resolve`, one it marked `duplicate` with `memory.dedup_resolve`, and promoted
 again; a write it merged was never stored and is written again; a source an N-1
 `memory.consolidate` tombstoned is brought back with `memory.restore` and promoted again.
-An N-1 relabel of a definition's source to `high` leaves its shared copy served by the
-ordinary legs: once N serves, an admin demotes every definition the admin read lists as
-lapsed for `high`. N-1's redact and namespace erasure do not reach the shared row's text,
-as today: one run during the rollout or after a rollback is run again once N serves.
+An N-1 relabel of a definition's source to `high` leaves its shared copy's embedding
+served by the ordinary legs: once N serves, the step N's relabel runs, retiring the shared
+embedding and keeping the row, runs over every definition the admin read lists as lapsed
+for `high`, so a relabel back governs it again as on N. N-1's redact and namespace erasure
+do not reach the shared row's text, as today: one run during the rollout or after a
+rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
