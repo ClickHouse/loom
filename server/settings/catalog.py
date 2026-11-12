@@ -335,8 +335,9 @@ class AuthSettings(BaseModel):
     cell_router_token: Annotated[str, Field(pattern=r"^(?:lcr_[0-9a-f]{128})?$")] = ""
     # Seconds a whole placement call to the router may take before the request answers 503.
     cell_router_timeout_s: float = Field(default=5.0, gt=0)
-    # Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not
-    # held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
+    # Seconds (at least 1) between reads of the cell state rows (every server process under
+    # the Postgres authority) and before an org read as not held is read again;
+    # LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
     tenancy_mode_cache_s: float = Field(default=5.0, ge=1.0)
     # The router's directory, its own Postgres database (`loom router serve` and
     # `loom router migrate`); "" = none. Never a cell's memory authority database.

@@ -150,9 +150,25 @@ def test_the_read_asks_whether_a_tenancy_row_exists(monkeypatch: pytest.MonkeyPa
 
 
 def test_a_failed_first_read_refuses_the_servers_boot(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cell, "refresh", AsyncMock(return_value=False))
-    with pytest.raises(RuntimeError, match="cell state could not be read"):
+    async def _fails() -> bool:
+        monkeypatch.setattr(cell, "_view", cell._View(error="connection refused"))
+        return False
+
+    monkeypatch.setattr(cell, "refresh", _fails)
+    monkeypatch.setattr(boot, "SKIPPED_PG_MIGRATIONS", ())
+    with pytest.raises(RuntimeError, match=r"could not be read \(connection refused\)"):
         asyncio.run(boot.start_cell_gate())
+
+
+def test_pending_postgres_migrations_boot_unready_rather_than_refuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With LOOM_BOOT_MIGRATE off and 008 pending the state tables do not exist yet: the
+    process boots, unready on its `migrations` check, and keeps reading."""
+    monkeypatch.setattr(cell, "refresh", AsyncMock(return_value=False))
+    monkeypatch.setattr(cell, "start_refresh_loop", lambda: "loop")
+    monkeypatch.setattr(boot, "SKIPPED_PG_MIGRATIONS", ("pg:008_cells.sql",))
+    assert asyncio.run(boot.start_cell_gate()) == ["loop"]
 
 
 def test_the_server_reads_the_state_once_and_runs_one_refresh_loop(
@@ -168,9 +184,39 @@ def test_the_server_reads_the_state_once_and_runs_one_refresh_loop(
 
 def test_token_state_starts_no_cell_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
     """The lifespan's own read replaces it: a booted web process runs one loop."""
-    import inspect
+    from server.auth import end_user_keys, keyring, revocation
+    from server.core import grant_cache
 
-    assert "start_cell_state" not in inspect.getsource(boot.start_token_state)
+    for mod, name in (
+        (revocation, "load_at_boot"),
+        (keyring, "refresh"),
+        (grant_cache, "poll"),
+        (end_user_keys, "refresh"),
+    ):
+        monkeypatch.setattr(mod, name, AsyncMock())
+    for mod in (revocation, keyring, end_user_keys):
+        monkeypatch.setattr(mod, "start_refresh_loop", lambda *_a: "loop")
+    monkeypatch.setattr(grant_cache, "start_poll_loop", lambda *_a: "loop")
+    read = AsyncMock(return_value=True)
+    monkeypatch.setattr(cell, "refresh", read)
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    assert asyncio.run(boot.start_token_state()) == ["loop"] * 4
+    read.assert_not_awaited()
+
+
+def test_the_lifespan_reads_the_state_before_its_heartbeat_and_lease() -> None:
+    from pathlib import Path
+
+    src = (Path(boot.__file__).parent / "main.py").read_text()
+    lifespan = src[src.index("async def lifespan(") :]
+    order = [
+        lifespan.index("await boot.require_storage_authority(ch)"),
+        lifespan.index("cell_loops = await boot.start_cell_gate()"),
+        lifespan.index("await _instances.start("),
+        lifespan.index("await boot.ensure_default_namespace()"),
+        lifespan.index("await _leader.decide_supervisor("),
+    ]
+    assert order == sorted(order)
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,7 @@ import argparse
 import json
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -396,7 +397,11 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
     # stdout stays one JSON document; a first cell's next step goes to stderr.
     out = capsys.readouterr()
     assert json.loads(out.out)["is_first"] is True
-    assert (
-        out.err.strip()
-        == "prepared first cell; roll out LOOM_CELL; attach ships in a later release"
+    assert out.err.strip() == "prepared first cell; roll out LOOM_CELL next"
+    # A rerun on a cell past recording names no next step.
+    monkeypatch.setattr(
+        cell_prepare, "_register", AsyncMock(return_value={**OK, "mode": "enforced"})
     )
+    reads.extend([[_beat("i-new", after)], [_beat("i-new", after)]])
+    assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
+    assert capsys.readouterr().err == ""

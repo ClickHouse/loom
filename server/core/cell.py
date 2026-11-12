@@ -288,6 +288,11 @@ def gate_reason() -> str:
     return reason
 
 
+def read_error() -> str:
+    """Why the last read failed, as a caller may see it ('' after a read that landed)."""
+    return _view.error
+
+
 def server_reads_state() -> bool:
     """Whether a server process reads the state rows and is gated on them: every one
     under the Postgres authority, `LOOM_CELL` set or not."""

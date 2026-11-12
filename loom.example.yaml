@@ -714,9 +714,9 @@ settings:
   # 503. [restart]
   # cell_router_timeout_s: 5.0
 
-  # Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not
-  # held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
-  # [restart]
+  # Seconds (at least 1) between reads of the cell state rows (every server process
+  # under the Postgres authority) and before an org read as not held is read again;
+  # LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. [restart]
   # tenancy_mode_cache_s: 5.0
 
   # Placement calls one cell may make in a minute, counted by each router replica.

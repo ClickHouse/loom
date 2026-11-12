@@ -94,7 +94,7 @@ Authentication, tokens and identity providers.
 | `LOOM_CELL_ROUTER_URL` | `str` | `''` |  | The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; "" = none: in `enforced`, a new org answers 503. |
 | `LOOM_CELL_ROUTER_TOKEN` | `str` | *(unset)* |  | The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64` (never the length of a SHA-256); any other form is refused at boot. "" = none. |
 | `LOOM_CELL_ROUTER_TIMEOUT_S` | `float` | `5.0` |  | Seconds a whole placement call to the router may take before the request answers 503. |
-| `LOOM_TENANCY_MODE_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. |
+| `LOOM_TENANCY_MODE_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) between reads of the cell state rows (every server process under the Postgres authority) and before an org read as not held is read again; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. |
 | `LOOM_ROUTER_PG_DSN` | `str` | *(unset)* |  | The router's directory, its own Postgres database (`loom router serve` and `loom router migrate`); "" = none. Never a cell's memory authority database. |
 | `LOOM_ROUTER_PLACEMENTS_PER_MINUTE` | `int` | `60` |  | Placement calls one cell may make in a minute, counted by each router replica. |
 | `LOOM_ROUTER_DIRECTORY_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) a router replica keeps the cells' credential hashes and a placed org's lookup answer before reading again; a new credential or host works within this. |

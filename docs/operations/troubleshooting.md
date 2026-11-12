@@ -275,7 +275,7 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
   ```sql
   SELECT deployment_id AS id FROM loom.authority \gset
-  \connect '<the router's LOOM_ROUTER_PG_DSN>'
+  \connect '<router DSN>'
   SELECT cell, is_first, state, placed FROM loom_router.cells WHERE deployment_id = :'id';
   ```
 
@@ -284,8 +284,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     unattached later cell, below): set `LOOM_CELL` to the cell's name; for a partial
     state, run `loom cell prepare` again, which completes it.
   - **The deployment is not meant to be a cell** (no directory row, or no router), or
-    **an unattached later cell** (its row reads `is_first = false`, `state =
-'attaching'` and `placed = 0`) that you are turning back into a single deployment:
+    **an unattached later cell** (its row reads `is_first = false`,
+    `state = 'attaching'` and `placed = 0`) that you are turning back into a single
+    deployment:
     clear the state in one transaction. On a lock failure, `ROLLBACK` if psql is still
     open, then rerun the whole step. The deployment is then `open`. An unattached later
     cell's directory row stays live; making the deployment a cell again needs that row
