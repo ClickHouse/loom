@@ -10,7 +10,7 @@ metadata:
 
 A release publishes what nobody can take back: images anyone pulls, a PyPI version that can never be reused, an npm version, an MCP Registry listing, and the GitHub Release the one-line installer reads. The procedure and the workflow are in [release process](../../../docs/development/release-process.md); this skill orders the steps and adds the checks that prove each one. Supported lines and deprecations: [supported versions](../../../docs/operations/supported-versions.md).
 
-Every step others see is the owner's to start, as AGENTS.md has it: opening or merging a pull request (the release pull request, and a fix's against `release/X.Y`) and posting on it, pushing a tag or `release/X.Y`, the registry dispatch and approving or declining its `pypi`, `npm` and `mcp-registry` environments, editing a GitHub Release, a PyPI yank, `npm deprecate` and `npm dist-tag`, moving `:latest`. Print the command, get the go-ahead, then run it. Everything else here (the dry run, `prepare.py`, the checks) you run yourself.
+Every step others see is the owner's to start, as AGENTS.md has it: opening or merging a pull request (the release pull request, and a fix's against `release/X.Y`) and posting on it, pushing a tag or `release/X.Y`, re-running a release run, the registry dispatch and approving or declining its `pypi`, `npm` and `mcp-registry` environments, editing a GitHub Release, a PyPI yank, `npm deprecate` and `npm dist-tag`, moving `:latest`. Print the command, get the go-ahead, then run it. Everything else here (the dry run, `prepare.py`, the checks) you run yourself.
 
 ## 0. Is it time
 
@@ -54,7 +54,7 @@ run=$(gh run list -R ClickHouse/loom --workflow release.yml --branch vX.Y.Z-rc.1
 gh run watch -R ClickHouse/loom "${run:?no run for the tag yet}" --exit-status
 ```
 
-A tag run whose image build failed on a download from outside GitHub (`curl: (7) Failed to connect` from an apt or key server), for a candidate or a final, is re-run with `gh run rerun "$run" -R ClickHouse/loom --failed`, which re-runs only the failed jobs and the jobs after them. Never re-run it once another run has tagged the version ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)).
+A tag run whose image build failed on a download from outside GitHub (`curl: (7) Failed to connect` from an apt or key server), for a candidate or a final, is re-run with `gh run rerun "$run" -R ClickHouse/loom --failed`, which re-runs only the failed jobs and the jobs after them (the owner's go-ahead first). Never re-run it once another run has tagged the version ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)).
 
 A prerelease takes neither Latest nor `:latest` and is not listed in the MCP Registry. Deploy it to a deployment you run (`loom-deploy`; on Kubernetes set `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`) and use it for at least two days. A regression is fixed on `main`, whose files already name `X.Y.Z`; tag `rc.2` on the fix's merge commit (for a patch, on its merge commit on `release/X.Y`, as in §7) and soak again. Never move a tag: once its images are published, the workflow refuses a tag that points elsewhere. Once the final is tagged, a candidate's run is refused (`prepare.py check-tag`), and the message says whether to run the final, do nothing, or delete a stray tag.
 
@@ -77,13 +77,13 @@ The registry dispatch's `pypi`, `npm` and `mcp-registry` jobs (only `pypi` and `
 ```bash
 tag=vX.Y.Z   # vX.Y.Z-rc.N for a candidate
 # Once the run shows waiting (after github-release): the GET then lists pypi and npm, and mcp-registry for a final.
-dispatch=$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event workflow_dispatch -L 1 --json databaseId --jq '.[0].databaseId // empty')
+dispatch=$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event workflow_dispatch --status waiting -L 1 --json databaseId --jq '.[0].databaseId // empty')
 gh api "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag yet}/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
 ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
 gh api -X POST "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"   # the owner's go-ahead first
 ```
 
-To publish only the images and the GitHub Release, as for a `clickhouse_image` or `allow_clickhouse_downgrade` dispatch that stands in for a stopped tag run ([release process](../../../docs/development/release-process.md)), send the POST with `-f state=rejected -f comment="SDKs not published for $tag"`. The run then ends failed on those jobs, while the images and the GitHub Release stay published.
+To publish only the images and the GitHub Release, as for a `clickhouse_image` or `allow_clickhouse_downgrade` dispatch that stands in for a stopped tag run ([when the clickhouse job stops](../../../docs/development/release-process.md#when-the-clickhouse-job-stops)), send the POST with `-f state=rejected -f comment="Registries not published for $tag"`. The run then ends failed on those jobs, while the images and the GitHub Release stay published.
 
 The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
 
@@ -100,8 +100,10 @@ Signed in to nothing, it runs the one-line installer (`curl -fsSL https://github
 ```bash
 curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom" | jq '.servers[].server.version'   # lists X.Y.Z
 npm view @clickhouse/loom dist-tags   # latest names the highest final
-curl -fsS -o /dev/null https://pypi.org/integrity/clickhouse-loom/X.Y.Z/clickhouse_loom-X.Y.Z-py3-none-any.whl/provenance   # exits 0: PyPI holds the wheel's provenance; X.Y.ZrcN in both places for a candidate
+curl -fsS -o /dev/null https://pypi.org/integrity/clickhouse-loom/X.Y.Z/clickhouse_loom-X.Y.Z-py3-none-any.whl/provenance   # exits 0: PyPI holds the wheel's provenance
 ```
+
+For a candidate, the MCP Registry does not list it, `next` names `X.Y.Z-rc.N`, and the PyPI path takes `X.Y.ZrcN` in both places.
 
 npm can take several minutes to list a version it has just accepted ("Your package is being processed"), so re-run a failed `sdks` job of `release-check` and read `dist-tags` again before calling the publish missing. Both SDKs publish through trusted publishing, with no token in the workflow, which is why PyPI holds the wheel's provenance and `npm audit signatures` finds an attestation.
 
