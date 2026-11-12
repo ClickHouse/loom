@@ -13,6 +13,7 @@ _STDIO_VIA_NPX = {"claude-desktop", "zed", "cline"}
 # Coding agents mount the `coding` toolset, on the URL, as the dashboard's snippets do
 # (frontend/src/lib/clients.ts CODING_TOOLSET_CLIENTS) and `loom install` does.
 CODING_CLIENTS = frozenset({"claude-code", "codex", "cursor"})
+CODING_TOOLSET = "coding"
 
 
 # Where each client keeps its MCP config, per platform. `loom install` writes the same
@@ -78,7 +79,7 @@ def _coding_url(mcp_url: str) -> str:
     # toolset keeps it; otherwise toolset=coding is appended.
     if re.search(r"[?&]toolset=", mcp_url):
         return mcp_url
-    return f"{mcp_url}{'&' if '?' in mcp_url else '?'}toolset=coding"
+    return f"{mcp_url}{'&' if '?' in mcp_url else '?'}toolset={CODING_TOOLSET}"
 
 
 def mcp_entry(client: str, url: str, minted: str) -> dict[str, object]:

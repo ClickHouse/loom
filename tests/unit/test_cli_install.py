@@ -429,7 +429,6 @@ def test_install_gives_each_client_the_toolset_the_server_setup_gives(
     entry for the client carries: `coding` for a coding agent, else bare."""
     cfg = tmp_path / client / "config.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
-    cfg.parent.mkdir(parents=True)
     assert cli._install_one(client, token="T", server_url="https://h", name="loom", dry_run=False)
     setup = client_config(client, "https://h/mcp", "T")
     key = setup["config_key"]

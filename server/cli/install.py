@@ -12,7 +12,13 @@ from typing import Any
 
 from server.cli._client import DEFAULT_BASE_URL, agent_mode, default_base_url, resolve_token
 from server.cli._paths import write_private
-from server.identity.app.token_clients import CODING_CLIENTS, CONFIG_PATHS, config_key, mcp_entry
+from server.identity.app.token_clients import (
+    CODING_CLIENTS,
+    CODING_TOOLSET,
+    CONFIG_PATHS,
+    config_key,
+    mcp_entry,
+)
 
 # ============================================================
 # `loom install` — wire Loom into a local AI client's config
@@ -81,10 +87,6 @@ def _install_mcp_url(server_url: str, toolset: str) -> str:
     if toolset:
         mcp_url += f"?toolset={toolset}"
     return mcp_url
-
-
-# A client in CODING_CLIENTS lists the coding tier unless --toolset names another.
-_CODING_TOOLSET = "coding"
 
 
 def _shell_words(argv: list[str]) -> str:
@@ -353,7 +355,8 @@ def _install_one(
     goes through `claude mcp add`."""
     import json as _json
 
-    toolset = toolset or (_CODING_TOOLSET if client in CODING_CLIENTS else "")
+    # A client in CODING_CLIENTS lists the coding tier unless --toolset names another.
+    toolset = toolset or (CODING_TOOLSET if client in CODING_CLIENTS else "")
     if client == "claude-code":
         return _install_claude_code_mcp(
             server_url=server_url,
