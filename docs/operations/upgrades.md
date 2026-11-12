@@ -218,7 +218,7 @@ checkout.
     rollback included: once the newer build serves alone, clear the promoted rows an older
     build's namespace erasure left ([rolling upgrades](../architecture/rolling-upgrades.md),
     rule 45). The query below lists each namespace that a `namespace` or `namespace_list`
-    erasure in the ledger (kept 90 days) reached, with the last completion without a purge
+    erasure in the ledger (kept 90 days) reached without running `shared.tombstone`, with the last completion without a purge
     (`erased_at`) and with one (`purged_at`). Only a `namespace_list` purges, and an older
     build's `namespace` row may hold the flag it was asked for.
 
@@ -234,6 +234,8 @@ checkout.
                                JSONExtract(scope_value, 'namespaces', 'Array(String)')))) AS namespace
         FROM loom.erasure_requests FINAL
         WHERE scope_type IN ('namespace', 'namespace_list') AND status = 'completed'
+          -- An erasure the newer build's saga finished ran the step already.
+          AND NOT has(steps_completed, 'shared.tombstone')
     )
     GROUP BY org, namespace
     ```
@@ -251,13 +253,15 @@ checkout.
     and where `erased_at` is set, tombstone the live ones left:
 
     ```sql
-    ALTER TABLE loom.shared UPDATE tombstoned_at = now()
+    ALTER TABLE loom.shared UPDATE tombstoned_at = toDateTime('<the time you run it>')
     WHERE org = '<org>' AND namespace = '<namespace>' AND tombstoned_at IS NULL
       AND promoted_at <= '<erased_at>'
     SETTINGS mutations_sync = 2
     ```
 
-    The setting waits for each statement on every replica. A namespace erasure requested
+    The setting waits for each statement on every replica. The time is written as a
+    literal, as the step binds it, because a replicated table refuses a mutation that calls
+    a non-deterministic function such as `now()`. A namespace erasure requested
     before the ledger's 90 days is not listed, and the promoted rows it left cannot be told
     apart from a live namespace's; they stay as the older build left them.
 
