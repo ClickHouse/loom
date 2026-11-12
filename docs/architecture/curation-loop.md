@@ -77,8 +77,9 @@ one of its names as `shadowed`, naming the row that wins. A changed text is prom
 again. On N no automatic verdict retires or marks a definition's source (the exemptions
 below, and the negative-outcome quarantine of `memory.outcome`, which skips a definition's
 namespace-wide row as it skips a locked one), so a source that is no longer `active` was
-rejected by a writer, or left that way by N-1 or before this design. The admin brings it
-back by the way it lapsed:
+rejected by a writer, or left that way by N-1 or before this design. The sensitivity sweep
+can still relabel a source, which lapses it as a relabel does. The admin brings it back by
+the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
@@ -89,10 +90,9 @@ back by the way it lapsed:
 
 It is governed again when its text is the approved one, and is promoted again otherwise.
 
-One prerequisite is not part of this design: namespace erasure does not reach
-`loom.shared` today (only user erasure does, by provenance), so a namespace erasure leaves
-every promoted row's text behind, whatever its type. A fix of its own adds the namespace
-step and its census row, and lands before the term leg.
+Namespace erasure reaches `loom.shared`: its `shared.tombstone` step takes every promoted
+row of the namespace and its census counts them, beside the user erasure's match by
+provenance.
 
 The shared layer needs nine changes for this, each in the pull request that adds the term
 leg except where a change names another, because the term leg serves shared rows to every
@@ -110,10 +110,10 @@ reader:
   left, as `memory.redact` leaves a live copy of a text it scrubs from history. A blanked
   candidate is not promoted: `learnings.review` answers it not found, as it does a blanked
   `assistant_turn` candidate today.
-- **A relabel to `high`** of a promoted definition's source retires that row's shared
-  embedding, keeping the row: `loom.shared` has no sensitivity of its own, so the ordinary
-  legs would otherwise keep serving the copy, and no sweep removes a durable row its
-  writer did not ask to remove.
+- **A relabel to `medium` or `high`** of a promoted definition's source, by a writer or
+  the sensitivity sweep, retires that row's shared embedding, keeping the row:
+  `loom.shared` has no sensitivity of its own, so the ordinary legs would otherwise keep
+  serving the copy, and no sweep removes a durable row its writer did not ask to remove.
 - **A promotion of a definition carries the content hash it approves**, on the review path
   the canonical-JSON hash of the candidate's drafted value, or one the caller must pass to
   `memory.promote` (a definition promotion without one is refused), and is refused when
@@ -137,12 +137,12 @@ reader:
   shared copy, never reaches a governed definition.
 - **`memory.promote` refuses a definition whose term or alias** is already another
   definition's, governed or lapsed (every live shared row of type `definition`), on every
-  promotion path, so a lapsed definition that returns to its approved state never shares
-  a name with one promoted meanwhile. The check reads the namespace's definition rows
-  within the term leg's bound, since an alias lives inside its definition's value and no
-  key finds it, and refuses the promotion when that read is capped, so it never passes on
-  a partial read. Names are compared case-folded (the form the key's hash reads), so `SAT` and
-  `Sat` are one name.
+  promotion path, so a lapsed definition that returns to its approved state never shares a
+  name with one promoted meanwhile. The check reads the namespace's definition rows within
+  the term leg's bound, since an alias lives inside its definition's value and no key
+  finds it, and refuses the promotion when that read is capped, so it never passes on a
+  partial read. Names are compared case-folded (the form the key's hash reads), so `SAT`
+  and `Sat` are one name.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row, whose source key is not the slug key of
   its `term` (`definition/<slug>`), or whose `target_key` differs from that key, so a
@@ -381,12 +381,14 @@ recorded as a gap because its leg was cut.
 - the end user of an end-user token;
 - else the token's `creator` claim, the person at the root of a delegated token or service
   account ([tokens and grants](../guides/tokens-and-grants.md));
-- else, for a service account's token minted without the claim, the first subject in its
-  creator chain that is not a service account, as the registry records it (`created_by`
-  and its `lineage`, `server/auth/service_accounts.py`); no miss when the chain has none.
-  `sa_creator` there answers None alike for a failed read and for no creator, and ignores
-  `lineage`, so the implementing pull request adds a lookup that raises on a failed read
-  and walks `lineage`;
+- else, for a service account's token minted without the claim, the first subject that is
+  not a service account, found by walking `created_by` one hop at a time in the registry
+  (`server/auth/service_accounts.py`). When a hop's row is gone, the walk takes the single
+  subject in its `lineage` that is not a service account; `lineage` is a set of every
+  subject above the account, not an ordered chain, so none or several there record no
+  miss, as does a chain with no person. `sa_creator` answers None alike for a failed read
+  and for no creator, so the implementing pull request adds a lookup that raises on a
+  failed read;
 - else the token's subject.
 
 So tokens a person mints for themselves count as that person. An agent of a bot
@@ -599,15 +601,20 @@ promoting a definition is the person standing behind it. A draft for a term alre
 governed revises that definition: the promotion replaces its shared row. A definition
 promotes to memory only; a `destination` of `knowledge` or `both` is refused for these
 candidates. A draft rejected before any promotion attempt leaves nothing behind but its
-queue row. A promotion refused after the write (a racing edit, a racing term, or
-`memory.set` answering `PUBLICATION_PENDING`, which today's review path swallows) leaves
-the candidate pending and the namespace-wide row written, which no term leg serves until
-its text is promoted; for a revision, the old definition lapses meanwhile and the admin
-read lists it.
+queue row. Between the write and the promotion the row is an ordinary namespace-wide row,
+which the ordinary legs read for those moments. A promotion refused after the write (a
+racing edit, a racing term, or `memory.set` answering `PUBLICATION_PENDING`, which today's
+review path swallows) tombstones the review's own row again, with `if_match_sha256`
+against the version it wrote, so a row a writer changed since is left to that writer, and
+leaves the candidate pending; for a revision, the old definition lapses meanwhile and the
+admin read lists it.
 
 Every attempt, the first and each retry, decides from the head it reads, checking these in
 order, the first that matches deciding:
 
+- a pinned or locked head refuses the review, as a pinned key or a lock refuses a changed
+  value; the admin unpins or unlocks it (`memory.unpin`, `memory.unlock`) and reviews
+  again;
 - a head that is live and `active`, carries no `expires_at` and whose text hashes to the
   draft's is promoted without a write;
 - a head holding the governed shared copy's text is written with `if_match_sha256` against
@@ -615,16 +622,15 @@ order, the first that matches deciding:
 - no head is written with `if_absent`, a precondition the implementing pull request adds
   to `memory.set` that refuses the write when a live row holds the key, so a writer who
   creates the row first is never overwritten;
-- a pinned head refuses the review, as a pinned key refuses a changed value; the admin
-  unpins it with `memory.unpin` and reviews again;
+
 - a demoted term's live row refuses it, since no shared copy is governed; the admin edits
   that row to the draft's text and reviews again, which the first case then promotes;
 - any other head is a writer's edit, or a head the read-time check would not serve
   (`conflicted`, `duplicate`, expired), and the review is refused rather than overwrite or
   promote it.
 
-A retry so completes the promotion. Rejecting the draft instead leaves the written row,
-which the admin restores from the row's history or promotes.
+A retry so completes the promotion. Rejecting the draft instead leaves any row a writer
+wrote, which the admin restores from the row's history or promotes.
 
 `learnings.review` promotes a definition only from a `knowledge_gap` or `query_history`
 candidate. A candidate of another kind whose type is `definition` (a `memory_supporters`
@@ -635,12 +641,12 @@ govern it.
 ## Erasure and audit
 
 - Definitions are memory and shared-layer rows and take every path those take, with the
-  shared layer's namespace erasure (the prerequisite above) and the redact added above:
-  tombstone, demote, redact, namespace erasure, history, audit. A user erasure tombstones
-  a shared row whose provenance names the user (`shared.tombstone`); a definition promoted
-  from the namespace-wide row names none, so erasing the admin who promoted it leaves it
-  governed, and `promoted_by` on the shared row names the admin as an audit actor does, as
-  it does today.
+  shared layer's namespace erasure and the redact added above: tombstone, demote, redact,
+  namespace erasure, history, audit. A user erasure tombstones a shared row whose
+  provenance names the user (`shared.tombstone`); a definition promoted from the
+  namespace-wide row names none, so erasing the admin who promoted it leaves it governed,
+  and `promoted_by` on the shared row names the admin as an audit actor does, as it does
+  today.
 - A redact of a past version of a definition reaches that version, the shared row holding
   its text, and the `knowledge_gap` and `query_history` candidates whose draft is that
   text or named by its `candidate-id:` tag (the change above), not the gap it came from,
@@ -742,6 +748,7 @@ promoted again:
 - a source it marked `conflicted`: `conflicts.resolve`; one marked `duplicate`:
   `memory.dedup_resolve`;
 - a write it merged: never stored, so written again;
+- a source its negative-outcome quarantine of `memory.outcome` rejected: written again;
 - a source its `memory.consolidate` tombstoned: `memory.restore` within 14 days; past
   them, the definition is written again from its shared copy's text.
 
