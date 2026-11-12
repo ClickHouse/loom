@@ -402,7 +402,6 @@ async def test_close_ends_a_tunnel_in_its_half_close_wait(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     done = asyncio.Event()
-
     client_eof = asyncio.Event()
 
     async def quiet(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

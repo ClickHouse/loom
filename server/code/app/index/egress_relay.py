@@ -23,7 +23,7 @@ import time
 from collections.abc import Callable
 
 # How long a client may stay silent once the proxy has ended its tunnel.
-# not a setting: the relay runs inside the sandbox on the standard library alone
+# not a setting: a pause between a client's writes, far below any timeout to tune
 _LINGER_S = 1.0
 
 

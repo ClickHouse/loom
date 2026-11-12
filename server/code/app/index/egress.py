@@ -16,8 +16,9 @@ Anything that is not CONNECT (plain http) is refused. One job holds at most
 `MAX_TUNNELS` tunnels; one more waits up to `code_egress_slot_wait_s` and is refused with
 a 503 (the first refusal and the job's count are logged). A tunnel with no byte either
 way for `code_egress_idle_timeout_s` is closed, or for `code_egress_half_close_timeout_s`
-once its client has sent EOF. The relay inside the sandbox bridges at most `MAX_TUNNELS`
-connections, so the rest wait in its listen backlog.
+once its client has sent EOF, at once if no byte moved before that EOF. The relay
+inside the sandbox bridges at most `MAX_TUNNELS` connections, so the rest wait in its
+listen backlog.
 """
 
 from __future__ import annotations
@@ -86,10 +87,10 @@ async def _splice(
 async def _until_server_quiet(
     server_side: asyncio.Task[None], last_active: list[float], to_client: asyncio.StreamWriter
 ) -> None:
-    """Wait for the server's direction until `code_egress_half_close_timeout_s` passes
-    with no byte either way: a server need not close a connection its client has
-    finished with. Bytes still on their way to a slow client are not silence, up to
-    `code_egress_idle_timeout_s`."""
+    """Once the client has sent EOF, wait for the server's direction until
+    `code_egress_half_close_timeout_s` passes with no byte either way: a server need
+    not close a connection its client has finished with. Bytes still on their way to
+    a slow client are not silence, up to `code_egress_idle_timeout_s`."""
     while not server_side.done():
         half_close = settings.code_egress_half_close_timeout_s
         buffered = to_client.transport.get_write_buffer_size()
@@ -162,7 +163,7 @@ class EgressProxy:
         server_side = asyncio.create_task(_splice(up_reader, writer, last_active))
         try:
             await _splice(reader, up_writer, last_active)
-            if last_active[0] != opened:  # else the client gave up before a byte
+            if last_active[0] > opened:  # a byte moved: the client did not give up
                 await _until_server_quiet(server_side, last_active, writer)
         finally:
             up_writer.close()
