@@ -503,11 +503,6 @@ def claude_plugin_installed(home: Path) -> bool:
     )
 
 
-# Tools/list size per roster (tool count, chars/4 tokens), as measured against the
-# trimmed schemas. The plugin mounts `coding`.
-_ROSTER_LISTING = {"core": (41, 13265), "coding": (20, 8498), "all": (109, 31943)}
-
-
 def duplicate_registration_check(name: str, entry: dict[str, Any]) -> Check:
     """The plugin mounts the server AND a user-scope entry
     points at it. Every session lists both rosters; the model calls whichever
@@ -518,15 +513,13 @@ def duplicate_registration_check(name: str, entry: dict[str, Any]) -> Check:
 
     url = str(entry.get("url") or "")
     toolset = (parse_qs(urlsplit(url).query).get("toolset") or ["core"])[0]
-    tools, tokens = _ROSTER_LISTING.get(toolset, (0, 0))
-    size = f"{tools} more tools, ≈{tokens:,} tokens per turn" if tools else "a second roster"
     return (
         "client:claude-code:mcp-duplicate",
         WARN,
         f"Loom is registered twice: the plugin's own mount and the user-scope entry "
-        f"{name!r} (toolset={toolset}: {size}). The model calls either copy; the "
-        f"user-scope one carries no code scope for this checkout and its own static "
-        f"bearer. Fix: `claude mcp remove {name} -s user` (the plugin keeps the tools).",
+        f"{name!r} (toolset={toolset}: a second roster on every turn). The model calls "
+        f"either copy; the user-scope one carries no code scope for this checkout and its own "
+        f"static bearer. Fix: `claude mcp remove {name} -s user` (the plugin keeps the tools).",
     )
 
 

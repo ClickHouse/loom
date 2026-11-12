@@ -163,7 +163,7 @@ Resolve one document duplicate pair.
 
 Soft-delete a document by source_uri: writes its tombstone.
 
-`POST /v1/knowledge.delete` · MCP `loom_knowledge_delete` · role `writer` · idempotent · audited
+`POST /v1/knowledge.delete` · MCP `loom_knowledge_delete` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |

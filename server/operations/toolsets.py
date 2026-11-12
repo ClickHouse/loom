@@ -86,7 +86,7 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
         # Namespace backup/restore — operator-only; exposing tempts mis-fire.
         "namespace.snapshot",
         "namespace.restore",
-        # Erasure status polling (request + export stay visible — users ask).
+        # Erasure status polling (request and export stay callable through loom_op).
         "erasure.status",
         # Audit + cost dashboards.
         "audit.list",
@@ -135,72 +135,29 @@ _MCP_CODE_CORE_OPS: frozenset[str] = frozenset(
 )
 
 
-# The "core" MCP toolset (settings.mcp_toolset == "core", the default): the
-# focused chat surface visible in tools/list. Everything else stays callable
-# by name over MCP and via /v1/* + SDKs — hidden only to keep the tool budget
-# under the count where selection accuracy degrades. Synthetic tools are
-# always shown. LOOM_MCP_TOOLSET=all exposes the full surface.
+# The "core" MCP toolset, the default listing: the memory loop only. Every other op
+# runs through loom_op, since each listed tool is read on every turn.
 _MCP_CORE_OPS: frozenset[str] = frozenset(
     {
-        # Save + recall + manage memory — the core loop.
+        # Save, revise, forget, keep: the belief-revision verbs.
         "memory.set",
         # The standing-memory verb: a pinned fact is never evicted by a later
         # conflicting write. Its description names memory.set as the default
         # save and pin as the exception, or a model routes every 'remember X'
         # to it.
         "memory.pin",
-        "memory.set_from_messages",
         "memory.update",
-        "memory.update_by_id",
-        "memory.get",
-        # memory.get_by_id: conflict-resolution flow — callable by name;
-        # the chat loop reaches memories via search/list/get.
-        "memory.list",
-        "memory.related",
-        "memory.history",
         "memory.delete",
+        # Refuse: the in-band "never remember X" consent verb.
+        "blacklist.add",
+        # Read by exact key, and every version of a key; recall by meaning is
+        # loom_search.
+        "memory.get",
+        "memory.history",
         # The two write shapes an agent reaches for after set/delete: a wide,
         # previewed write over a scope and a per-row lock.
         "memory.apply",
         "memory.lock",
-        # Knowledge documents.
-        "knowledge.add",
-        "knowledge.get",
-        "knowledge.list",
-        "knowledge.delete",
-        # Profile — the always-loaded persona/context. render stays
-        # callable-by-name: context.pack already loads the rendered profile,
-        # so the chat loop writes (set/append) but never re-renders.
-        "profile.set",
-        "profile.append",
-        # Conversation history — the agent opens a thread once per session
-        # and logs each turn, so the transcript shows in the dashboard. MCP is
-        # pull-based (the server
-        # only sees what the model calls), so these must be visible for any
-        # transcript to land at all; recall of past threads stays folded
-        # into loom_search.
-        "conversation.create",
-        "conversation.append",
-        # Working memory — scratchpad included by context.pack.
-        "working_memory.set",
-        "working_memory.append",
-        "working_memory.replace",
-        "working_memory.delete",
-        # Self-service namespaces: orientation stays listed; the
-        # join/leave/browse membership ops are onboarding-time actions,
-        # callable by name when an agent is told to use them. Every listing
-        # slot is a per-turn tax on every session — the roster carries the
-        # chat loop, not the whole product surface.
-        "namespace.list_mine",
-        "namespace.summary",
-        # The end-of-task integrity call: did my writes leave the namespace
-        # consistent? Read-only, returns counts + samples per check.
-        "namespace.validate",
-        # Data rights.
-        "erasure.request",
-        "erasure.export",
-        # Refuse — the in-band "never remember X" consent verb.
-        "blacklist.add",
         # One-call task-context loader.
         "context.pack",
     }
@@ -213,9 +170,9 @@ _MCP_CORE_OPS: frozenset[str] = frozenset(
 # threads, edit a profile, manage knowledge documents or namespaces, or file
 # erasures. The listing is the memory-side ops below plus _MCP_CODE_CORE_OPS
 # (the code tools ride the coding tier regardless of LOOM_MCP_CODE_TOOLS —
-# they are its point) plus the two synthetic tools. It carries what coding
+# they are its point) plus the three synthetic tools. It carries what coding
 # clients actually call; everything on `core` (memory.pin, blacklist.add,
-# working_memory.append, …) stays callable by name, since the transport reads
+# memory.lock, …) stays callable by name, since the transport reads
 # the registry, not the roster. memory.update stays: it is the revision verb
 # the descriptions and the planning bench's revision tasks name.
 _MCP_CODING_OPS: frozenset[str] = frozenset(
@@ -244,10 +201,10 @@ _MCP_CODING_OPS: frozenset[str] = frozenset(
 # for a session acting as an agent — pull and claim, post for another agent,
 # finish / fail / decline / defer what it claimed, renew the lease, watch
 # what it posted, read the board, find the inbox. Its own roster rather than
-# a core addition: the default core listing is paid by every Claude Code
-# session and its tool count sits under the tool-selection knee; a session
-# that acts as an agent mounts `?toolset=tasks` (or is told to). The ops stay
-# experimental until the ledger shows production callers.
+# a core addition: the default listing is what every connection without
+# `?toolset=` pays for; a session that acts as an agent mounts `?toolset=tasks`
+# (or is told to). The ops stay experimental until the ledger shows production
+# callers.
 _MCP_TASK_OPS: frozenset[str] = frozenset(
     {
         "task.pull",
@@ -294,8 +251,8 @@ _MCP_TRACKER_OPS: frozenset[str] = frozenset(
 # the run scratchpad and the run ledger. Create and update are one tool —
 # memory.set under a key a read returned IS the update — and read is
 # loom_search (the synthetic search tool, always listed) plus memory.get. The
-# ops below plus the two synthetic tools; a small verb set plans better than
-# the core surface.
+# ops below plus the three synthetic tools: one verb creates and updates, so
+# there is no revision split to choose between.
 _MCP_ATOMIC_OPS: frozenset[str] = frozenset(
     {
         "memory.set",

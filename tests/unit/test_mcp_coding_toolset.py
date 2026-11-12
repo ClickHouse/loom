@@ -2,15 +2,15 @@
 of one `core` for two. Membership derives from the frozensets; the toolset is
 selectable per deployment and per request; the code tools ride it without the
 deployment flag; the catalogue says which toolsets list an op; the coding-tier
-descriptions are the core texts with the unlisted op marked callable by name;
-the listing stays under its measured ceiling.
+descriptions are the core texts trimmed of sentences a coding session does not act on;
+each description stays under its budget (the listing's ceiling is in
+test_mcp_listing_budget.py).
 
 Hermetic: `_caller_default_context` (which can hit ClickHouse) is patched."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 
@@ -41,15 +41,6 @@ from server.transport.mcp_descriptions import (
 OPS = {op.name: op for op in ALL_OPERATIONS}
 TOOL_TO_OP = {op.mcp_tool_name: op.name for op in ALL_OPERATIONS}
 SYNTHETIC = {"loom_search", "loom_activate", "loom_op"}
-# The gate is the saving: the tokens the coding listing takes off the core +
-# code listing, both measured on the same tree. Every coding tool is a core or
-# code tool, so a description or field grown on a shared tool moves both sides
-# by the same amount and leaves the saving where it was (a ratio would drift
-# with shared growth). The floor sits a little under the current saving.
-CODING_SAVING_FLOOR = 4_600
-# The prose the tier authors: a derived text may exceed the core text it is
-# built from only by the "(callable by name)" mark (≤ 8 tokens).
-CALLABLE_BY_NAME_MARK_TOKENS = 8
 
 
 @pytest.fixture(autouse=True)
@@ -73,10 +64,6 @@ def _listing(toolset: str, code: bool, *, requested: str | None = None) -> list[
 
 def _names(tools: list[dict]) -> set[str]:
     return {t["name"] for t in tools}
-
-
-def _tok(obj) -> int:
-    return len(json.dumps(obj, separators=(",", ":"))) // 4
 
 
 # ---------------------------------------------------------------- membership
@@ -106,7 +93,8 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
         "code.pr_check",
         "code.impact",
     }
-    assert _MCP_CODING_OPS - tracker_on_coding <= _MCP_CORE_OPS, "coding ⊆ core + the QA-plane four"
+    # the scratchpad is coding's own; the memory verbs are core's
+    assert _MCP_CODING_OPS - tracker_on_coding - {"working_memory.set"} <= _MCP_CORE_OPS
     assert not (_MCP_CODING_OPS & _MCP_HIDDEN_OPS)
     assert len(_MCP_CODE_CORE_OPS) == 8
     assert curated_roster("coding", code_tools=False) == _MCP_CODING_OPS | _MCP_CODE_CORE_OPS
@@ -133,7 +121,7 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
     assert CURATED_TOOLSETS == {"core", "coding", "atomic", "tasks", "tracker"}
 
 
-def test_coding_listing_is_twenty_tools_with_the_code_tools_regardless_of_the_flag():
+def test_coding_listing_is_its_roster_plus_the_code_tools_regardless_of_the_flag():
     for code in (False, True):
         tools = _listing("coding", code)
         names = _names(tools)
@@ -143,15 +131,11 @@ def test_coding_listing_is_twenty_tools_with_the_code_tools_regardless_of_the_fl
     # what the census found no coding client calling is not listed …
     core_only = _names(_listing("core", True)) - _names(_listing("coding", True))
     assert {
-        "loom_knowledge_add",
-        "loom_conversation_create",
-        "loom_profile_set",
-        "loom_erasure_request",
-        "loom_namespace_list_mine",
         "loom_memory_apply",
         "loom_memory_lock",
-        "loom_memory_set_from_messages",
-        "loom_working_memory_replace",
+        "loom_memory_pin",
+        "loom_memory_history",
+        "loom_blacklist_add",
     } <= core_only
     # … and every one of those stays callable by name (the transport reads the
     # registry, not the roster)
@@ -160,10 +144,6 @@ def test_coding_listing_is_twenty_tools_with_the_code_tools_regardless_of_the_fl
         for n in core_only
         if n in TOOL_TO_OP
     )
-    # The unlisted verbs are core-only — listed under
-    # core, absent from coding, still callable by name
-    for dropped in ("loom_memory_pin", "loom_blacklist_add", "loom_working_memory_append"):
-        assert dropped not in names and dropped in core_only and dropped in mcp_call.TOOLS_BY_NAME
 
 
 def test_core_and_atomic_listings_are_unchanged_by_the_new_tier():
@@ -195,7 +175,7 @@ def test_toolset_is_selectable_per_deployment_and_per_request():
 # ---------------------------------------------------------------- descriptions
 
 
-def test_coding_descriptions_derive_from_the_core_texts_and_mark_unlisted_ops():
+def test_coding_descriptions_derive_from_the_core_texts():
     # Memory.pin and working_memory.append are not on the coding
     # listing, so they have no coding texts
     # Blast radius has a coding-tier text (the paging detail stays on qa/all)
@@ -267,22 +247,15 @@ def test_activation_triggers_are_one_list_on_both_tiers():
 # ---------------------------------------------------------------- budget
 
 
-def test_coding_listing_stays_under_its_ceiling():
-    """The gate: core + code − coding ≥ the floor, both listings measured on
-    this tree (chars/4). What the tier owns is its membership (pinned above)
-    and four derived texts, so only those can spend the saving; an absolute
-    ceiling or a ratio would move with text the tier does not author."""
-    coding = _tok({"tools": _listing("coding", False)})
-    core_code = _tok({"tools": _listing("core", True)})
-    assert core_code - coding >= CODING_SAVING_FLOOR, (coding, core_code, core_code - coding)
+def test_coding_descriptions_stay_under_budget():
+    """Each coding description stays under the per-tool budget; the listing's
+    total ceiling is in test_mcp_listing_budget.py."""
     for t in _listing("coding", False):
         assert len(t["description"]) // 4 <= 480, f"{t['name']} description is over budget"
-    # the coding-authored prose: never longer than the core text it derives
-    # from, beyond the mark that names the unlisted op as callable by name
+    # a derived text is never longer than the core text it is built from
     for op, text in CODING_TOOL_DESCRIPTIONS.items():
         if op in TOOL_DESCRIPTIONS:
-            grown = (len(text) - len(TOOL_DESCRIPTIONS[op])) // 4
-            assert grown <= CALLABLE_BY_NAME_MARK_TOKENS, (op, grown)
+            assert len(text) <= len(TOOL_DESCRIPTIONS[op]), op
 
 
 # ---------------------------------------------------------------- catalogue
@@ -291,7 +264,7 @@ def test_coding_listing_stays_under_its_ceiling():
 def test_catalogue_carries_the_toolset_membership():
     assert op_toolsets("memory.set") == ["all", "atomic", "coding", "core"]
     assert op_toolsets("memory.update") == ["all", "coding", "core"]
-    assert op_toolsets("knowledge.add") == ["all", "core"]
+    assert op_toolsets("knowledge.add") == ["all"]
     assert op_toolsets("code.search") == ["all", "assistant", "coding", "core"]
     assert op_toolsets("run.begin") == ["all", "atomic"]
     assert op_toolsets("facts.traverse") == ["all", "assistant"]

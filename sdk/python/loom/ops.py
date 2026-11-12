@@ -5255,6 +5255,8 @@ class AuditListRow(TypedDict, total=False):
 
 
 class BlacklistAddInput(TypedDict, total=False):
+    "Refuse future memory writes whose value matches a pattern."
+
     org: Required[str]
     namespace: Required[str]
     pattern: Required[str]
@@ -5266,6 +5268,8 @@ class BlacklistAddInput(TypedDict, total=False):
 
 
 class BlacklistAddBody(TypedDict, total=False):
+    "Refuse future memory writes whose value matches a pattern."
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     pattern: Required[str]
@@ -20119,6 +20123,8 @@ class WebhookRemoveOutput(TypedDict, total=False):
 
 
 class WorkingMemoryAppendInput(TypedDict, total=False):
+    "Append text to a working-memory block, creating it when missing."
+
     org: Required[str]
     namespace: Required[str]
     agent: Required[str]
@@ -20131,6 +20137,8 @@ class WorkingMemoryAppendInput(TypedDict, total=False):
 
 
 class WorkingMemoryAppendBody(TypedDict, total=False):
+    "Append text to a working-memory block, creating it when missing."
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -20269,6 +20277,8 @@ class WorkingMemoryReplaceBody(TypedDict, total=False):
 
 
 class WorkingMemorySetInput(TypedDict, total=False):
+    "Overwrite one working-memory block."
+
     org: Required[str]
     namespace: Required[str]
     agent: Required[str]
@@ -20281,6 +20291,8 @@ class WorkingMemorySetInput(TypedDict, total=False):
 
 
 class WorkingMemorySetBody(TypedDict, total=False):
+    "Overwrite one working-memory block."
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]

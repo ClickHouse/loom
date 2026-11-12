@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `conversation.append`
 
-Log one chat turn (role + content) to the active thread.
+Log one chat turn (role + content) to a thread.
 
 `POST /v1/conversation.append` · MCP `loom_conversation_append` · role `writer` · idempotent
 
@@ -64,7 +64,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 
 Open a thread container.
 
-`POST /v1/conversation.create` · MCP `loom_conversation_create` · role `writer` · idempotent
+`POST /v1/conversation.create` · MCP `loom_conversation_create` · role `writer` · idempotent · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |

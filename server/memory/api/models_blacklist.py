@@ -12,6 +12,8 @@ Scope = Literal["namespace", "org", "global"]
 
 
 class BlacklistAddInput(BaseModel):
+    """Refuse future memory writes whose value matches a pattern."""
+
     org: str
     namespace: str
     # The text to refuse, matched case-sensitively against a stored value: as a

@@ -50,8 +50,16 @@ def test_atomic_surface_is_the_four_verbs_plus_scratchpad_and_ledger() -> None:
     assert not any(n.startswith("loom_code_") for n in names)
     # the count derives from the roster: the atomic ops plus the three synthetic tools
     assert len(names) == len(_MCP_ATOMIC_OPS) + 3
+    # atomic's memory verbs are core's; its ask, scratchpad and ledger tools are its own
     core = {d["name"] for d in _descriptors("core")}
-    assert names < core | {"loom_memory_ask", "loom_run_begin", "loom_run_complete"}
+    own = {
+        "loom_memory_ask",
+        "loom_working_memory_set",
+        "loom_working_memory_append",
+        "loom_run_begin",
+        "loom_run_complete",
+    }
+    assert names - own < core
 
 
 def test_atomic_descriptions_are_the_policy_text() -> None:
@@ -65,6 +73,5 @@ def test_atomic_descriptions_are_the_policy_text() -> None:
     assert core_by["loom_memory_set"] != by["loom_memory_set"]
 
 
-def test_other_toolsets_are_unchanged() -> None:
-    assert len(_descriptors("core")) >= 20
+def test_all_lists_more_than_core_and_core_more_than_atomic() -> None:
     assert len(_descriptors("all")) > len(_descriptors("core")) > len(_descriptors("atomic"))

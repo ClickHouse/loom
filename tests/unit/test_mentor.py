@@ -279,6 +279,8 @@ def test_an_object_store_agent_is_told_to_recall_by_meaning_and_move_the_lease(
     assert "(sre/lease) was read 116×" in loop.text and "written" not in loop.text
     key_only = p.hint("recall_by_key_only")
     assert key_only is not None and key_only.evidence == {"gets": 6606, "searches": 52}
+    # memory.search is listed as loom_search; the note names the op that is not
+    assert key_only.text.endswith(" (call working_memory.set via loom_op)")
 
 
 def test_a_balanced_reader_is_not_called_an_object_store(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -379,6 +381,9 @@ def test_every_other_rule_fires_on_its_fact_and_the_profile_keeps_eight(
     for h in full:
         assert len(h.text) <= mentor_rules.HINT_CHARS
         assert h.ops
+    # loom_search is listed under another name; the note names the op that is not
+    abstains = next(h for h in full if h.code == "search_abstains")
+    assert abstains.text.endswith(" (call namespace.audit via loom_op)")
 
 
 def test_a_well_used_namespace_gets_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1825,3 +1830,24 @@ def test_a_profile_whose_repository_fact_failed_is_remembered_briefly(
     asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 5.0 + m.FAILURE_TTL_SECONDS + 1))
     assert len(computed) == 3
     m.reset_cache()
+
+
+def test_a_long_hint_keeps_its_listing_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hint body is clipped to fit, never the note that says how to reach the op."""
+    _wire(
+        monkeypatch,
+        _store(
+            _usage(memory__set=300, memory__get=300, memory__search=300),
+            30,
+            max_sets_one_key=12,
+            hot_set_key="sre/lease/payments-primary-eu-west",
+            max_gets_one_key=40,
+            hot_get_key="sre/pointer/payments-primary-eu-west",
+            hot_key_chars=20,
+        ),
+    )
+    p = _profile()
+    assert p is not None
+    loop = p.hint("coordination_loop")
+    assert loop is not None and len(loop.text) <= mentor_rules.HINT_CHARS
+    assert loop.text.endswith(" (call working_memory.set via loom_op)")

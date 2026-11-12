@@ -259,14 +259,14 @@ _LISTED_VIA_ALIAS = frozenset(
 def _unlisted(ops: tuple[str, ...]) -> str:
     """A trailing note for the first recommended op that is not on the core
     listing, so the agent knows not to look for it in its tool list (the
-    reference lint's "callable by name" phrase)."""
+    reference lint's "via loom_op" marker)."""
     try:
         from server.operations.toolsets import _MCP_HIDDEN_OPS, op_toolsets
     except Exception:  # noqa: BLE001 — no MCP config in this process: no note
         return ""
     for op in ops:
         if op in _LISTED_VIA_ALIAS:
-            return ""
+            continue
         try:
             sets = op_toolsets(op)
         except Exception:  # noqa: BLE001 — an op with no toolset entry is skipped
@@ -301,8 +301,8 @@ def _byname(op: str) -> str:
     return op
 
 
-def clip(text: str) -> str:
-    return text if len(text) <= HINT_CHARS else text[: HINT_CHARS - 1].rstrip() + "…"
+def clip(text: str, limit: int = HINT_CHARS) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 @dataclass
@@ -338,11 +338,13 @@ class _Ctx:
         self, code: str, severity: str, text: str, ops: tuple[str, ...], **evidence: Any
     ) -> None:
         note = _unlisted(ops)
+        # The body is clipped, never the note: it says how to reach the op.
+        body = clip(text.rstrip(".") + ".", HINT_CHARS - len(note))
         self.hints.append(
             Hint(
                 code=code,
                 severity=severity,
-                text=clip(text.rstrip(".") + "." + note),
+                text=body + note,
                 ops=ops,
                 evidence=evidence,
             )
@@ -575,7 +577,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "records_for_identities",
             "info",
             f"{idk} writes keyed by a number, {c.fact('top_prefix_sets')} of them "
-            f"{c.facts.get('top_prefix') or 'prefix'}<id>: a table of facts with identity — "
+            f"{c.facts.get('top_prefix') or 'prefix'}<id>: facts with identity — "
             f"{_byname('memory_schema.register')} once, then memory.record.write{counts}.",
             ("memory_schema.register", "memory.record.write", "memory.aggregate"),
             id_keyed_sets=idk,
