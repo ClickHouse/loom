@@ -103,9 +103,10 @@ TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERAT
 # A dotted op name as prose spells it (`memory.set`, `knowledge.source.add`).
 OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
 # An op named in prose: its tool name or its dotted op name, and a closing
-# backtick, which the "(via loom_op)" marker goes after. A name followed by `#`
-# is a citation tag (`[knowledge.query#1]`), not a reference.
-_NAMED_OP = re.compile(rf"\b(loom_[a-z_]+|{OP_MENTION})\b(`?)(?!#)")
+# backtick, which the "(via loom_op)" marker goes after. A name in quotes, after
+# a `/` or before a `#` is a value, a path or a citation tag
+# ('memory.delete', /v1/memory.set, [knowledge.query#1]), not a reference.
+_NAMED_OP = re.compile(rf"(?<!['\"/])\b(loom_[a-z_]+|{OP_MENTION})\b(`?)(?!#|\"|'(?![a-z]))")
 
 
 def _lookup(name: str) -> Operation | None:
@@ -146,9 +147,9 @@ _EXAMPLES: tuple[tuple[str, str], ...] = (
 )
 
 
-def loom_op_description(listed: Set[str], toolset: str | None) -> str:
-    """`loom_op`'s text for a listing whose tool names are ``listed``."""
-    writes = routes_writes(toolset)
+def loom_op_description(listed: Set[str], writes: bool) -> str:
+    """`loom_op`'s text for a listing whose tool names are ``listed`` and whose
+    `routes_writes` is ``writes``."""
     shown = []
     for name, what in _EXAMPLES:
         op = OPERATIONS_BY_NAME[name]
@@ -344,7 +345,10 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     if op is None or not reachable(op, toolset):
         if op is not None:  # a write on a read-only connection
             emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP)
-        near = difflib.get_close_matches(name, list(by_name), n=5, cutoff=0.6)
+        # suggest only ops this connection routes, never the write it refused
+        writes = routes_writes(toolset)
+        routed = [n for n, o in by_name.items() if _routed(o, writes) and n != name]
+        near = difflib.get_close_matches(name, routed, n=5, cutoff=0.6)
         body = {
             "error": f"no op {name!r} reachable here"
             + (" on a read-only connection" if op is not None else ""),

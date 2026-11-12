@@ -50,7 +50,7 @@ def test_a_readonly_deployment_default_routes_reads_only(monkeypatch) -> None:
 
     monkeypatch.setattr(settings, "mcp_toolset", "readonly")
     assert not mcp_op.routes_writes(None)
-    assert "read ops only" in mcp_op.loom_op_description(set(), None)
+    assert "read ops only" in mcp_op.loom_op_description(set(), mcp_op.routes_writes(None))
     body = _call("memory.set", {"memory_key": "k", "value": "v"})["structuredContent"]
     assert body["code"] == "UNKNOWN_OP" and "read-only" in body["error"]
     assert mcp_op.hidden_refusal("memory.bulk_set", None)["instead"].startswith(
@@ -80,6 +80,20 @@ def test_a_readonly_refusal_says_read_only_only_for_a_write_alternative(name: st
     instead = mcp_op.hidden_refusal(name, "readonly")["instead"]
     expected = name in {"memory.bulk_set", "memory.delete_version"}
     assert instead.startswith("this connection is read-only") == expected, (name, instead)
+
+
+@pytest.mark.parametrize("name", sorted(mcp_op._INSTEAD))
+def test_a_readonly_refusal_sends_the_model_only_where_it_can_go(name: str) -> None:
+    """On readonly, every op a refusal names is listed there or routed by loom_op."""
+    from server.transport.mcp_tools import listed_tool_names
+
+    instead = mcp_op.hidden_refusal(name, "readonly")["instead"]
+    listed = listed_tool_names("readonly")
+    for m in mcp_op._NAMED_OP.finditer(instead):
+        op = mcp_op._lookup(m.group(1))
+        # extraction_status names set_from_messages as where a queue_id came from
+        if op is not None and op.name != "memory.set_from_messages":
+            assert op.mcp_tool_name in listed or mcp_op.reachable(op, "readonly"), (name, op.name)
 
 
 def test_a_readonly_refusal_keeps_its_reason() -> None:

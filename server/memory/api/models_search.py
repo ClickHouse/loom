@@ -201,8 +201,8 @@ class MemorySearchInput(BaseModel):
     category: str = Field(
         default="",
         description="If set, restrict the search to memories assigned to "
-        "this category (via namespace.register_category + "
-        "memory.assign_category). Hard filter by default — only members of "
+        "this category (one registered in the namespace). Hard filter by "
+        "default — only members of "
         "the category are returned; set category_soft=True to make it a "
         "ranking boost instead. Empty = no category scoping.",
     )

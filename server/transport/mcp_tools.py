@@ -89,8 +89,18 @@ def _name_ops_in_fields(schema: Any, listed: Set[str], writes: bool) -> Any:
     return out
 
 
-def _synthetic_tool_descriptors(toolset: str, listed: Set[str]) -> list[dict[str, Any]]:
-    """The hand-written tools a listing carries; ``listed`` is that listing's tool names."""
+# The hand-written tools every listing but `assistant` carries; the builder
+# below makes one descriptor for each.
+SYNTHETIC_TOOL_NAMES = frozenset(
+    {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}
+)
+
+
+def _synthetic_tool_descriptors(
+    toolset: str, listed: Set[str], writes: bool
+) -> list[dict[str, Any]]:
+    """The hand-written tools a listing carries. ``listed`` is that listing's tool
+    names and ``writes`` its `routes_writes`."""
     from server.transport.mcp_schemas import collapse_nullable
 
     out = _synthetic_tool_descriptors_core()
@@ -99,7 +109,7 @@ def _synthetic_tool_descriptors(toolset: str, listed: Set[str]) -> list[dict[str
         # synthetic schemas as it does to the registry's.
         d["inputSchema"] = collapse_nullable(d["inputSchema"])
         if d["name"] == LOOM_OP_TOOL_NAME:  # its text names what this listing leaves out
-            d["description"] = loom_op_description(listed, toolset)
+            d["description"] = loom_op_description(listed, writes)
     if "coding" in toolset_parts(toolset):
         # The coding tier's activation text (same triggers,
         # one line, no persona-tone clause) and search text (derived).
@@ -374,16 +384,16 @@ def _curated_description(toolset: str, op_name: str) -> str | None:
 
 def listed_tool_names(toolset: str | None) -> set[str]:
     """The tool names a `tools/list` on ``toolset`` shows."""
-    return _tool_names(listed_ops(toolset), toolset)
+    from server.settings import settings
+
+    resolved = resolve_toolset(toolset, settings.mcp_toolset)
+    return _tool_names(listed_ops(resolved), resolved)
 
 
-def _tool_names(ops: list[Operation], toolset: str | None) -> set[str]:
-    # The synthetic names are the ones _synthetic_tool_descriptors_core builds
-    # (test_listed_tool_names_is_what_the_listing_shows holds them together).
+def _tool_names(ops: list[Operation], resolved: str) -> set[str]:
+    """``ops``' tool names plus the synthetic ones, on a resolved toolset."""
     names = {op.mcp_tool_name for op in ops}
-    if not assistant_connection(toolset):
-        names |= {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}
-    return names
+    return names if is_assistant(resolved) else names | SYNTHETIC_TOOL_NAMES
 
 
 def listed_ops(toolset: str | None) -> list[Operation]:
@@ -489,7 +499,7 @@ async def _tools_descriptor(
             descriptor["_meta"] = {"anthropic/alwaysLoad": True}
         descriptors.append(descriptor)
     if not is_assistant(toolset):
-        descriptors.extend(_synthetic_tool_descriptors(toolset, listed))
+        descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes))
     for d in descriptors:
         if d["name"] == LOOM_OP_TOOL_NAME:  # built for this listing already
             continue

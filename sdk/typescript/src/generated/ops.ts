@@ -6652,7 +6652,7 @@ export interface MemorySearchInput {
   read_scope?: "namespace" | "own_user" | "own_session";
   /** If non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
   entity_filter?: string[];
-  /** If set, restrict the search to memories assigned to this category (via namespace.register_category + memory.assign_category). Hard filter by default — only memb */
+  /** If set, restrict the search to memories assigned to this category (one registered in the namespace). Hard filter by default — only members of the category are r */
   category?: string;
   tags_soft?: boolean;
   /** Max rank contribution from tag overlap when tags_soft (scaled by fraction of query tags present). */
@@ -6779,7 +6779,7 @@ export interface MemorySearchTraceInput {
   read_scope?: "namespace" | "own_user" | "own_session";
   /** If non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
   entity_filter?: string[];
-  /** If set, restrict the search to memories assigned to this category (via namespace.register_category + memory.assign_category). Hard filter by default — only memb */
+  /** If set, restrict the search to memories assigned to this category (one registered in the namespace). Hard filter by default — only members of the category are r */
   category?: string;
   tags_soft?: boolean;
   /** Max rank contribution from tag overlap when tags_soft (scaled by fraction of query tags present). */

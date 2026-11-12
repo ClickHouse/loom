@@ -216,12 +216,12 @@ def test_coding_descriptions_derive_from_the_core_texts():
 def test_activation_triggers_are_one_list_on_both_tiers():
     core_text = next(
         d
-        for d in mt._synthetic_tool_descriptors("core", mt.listed_tool_names("core"))
+        for d in mt._synthetic_tool_descriptors("core", mt.listed_tool_names("core"), True)
         if d["name"] == "loom_activate"
     )
     coding_text = next(
         d
-        for d in mt._synthetic_tool_descriptors("coding", mt.listed_tool_names("coding"))
+        for d in mt._synthetic_tool_descriptors("coding", mt.listed_tool_names("coding"), True)
         if d["name"] == "loom_activate"
     )
     assert coding_text["description"] == CODING_TOOL_DESCRIPTIONS["loom_activate"]
@@ -236,12 +236,12 @@ def test_activation_triggers_are_one_list_on_both_tiers():
 
     core_s = next(
         d
-        for d in mt._synthetic_tool_descriptors("core", mt.listed_tool_names("core"))
+        for d in mt._synthetic_tool_descriptors("core", mt.listed_tool_names("core"), True)
         if d["name"] == "loom_search"
     )
     coding_s = next(
         d
-        for d in mt._synthetic_tool_descriptors("coding", mt.listed_tool_names("coding"))
+        for d in mt._synthetic_tool_descriptors("coding", mt.listed_tool_names("coding"), True)
         if d["name"] == "loom_search"
     )
     assert coding_s["description"] == coding_search_description(core_s["description"])

@@ -1852,7 +1852,7 @@ Semantic search over the agent's own memory.
 | `quality_filter` | `bool` | `False` | Drop stored rows that are not facts (trajectory steps, session narration, tool tips, code-location trivia, probes, one-moment status — server/memory/domain/fact_quality.py) and restatements of a higher-ranked fact from the pool before the… |
 | `read_scope` | `Literal['namespace', 'own_user', 'own_session']` | `'namespace'` | How far this read may reach inside each namespace: "namespace" — every row the token can access (membership is the read boundary; the default). "own_user" — only rows written under `user_id`, which must be set. "own_session" — only rows… |
 | `entity_filter` | `list[str]` | *(computed)* | If non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. |
-| `category` | `str` | `''` | If set, restrict the search to memories assigned to this category (via namespace.register_category + memory.assign_category). |
+| `category` | `str` | `''` | If set, restrict the search to memories assigned to this category (one registered in the namespace). |
 | `tags_soft` | `bool` | `False` | --- Soft metadata ranking (sharpen recall without the coverage loss of a hard filter). |
 | `tag_boost` | `float` | `0.3` | Max rank contribution from tag overlap when tags_soft (scaled by fraction of query tags present). |
 | `category_soft` | `bool` | `False` | True turns `category` from a hard filter into a rank boost of `category_boost` for its members; False (default) returns members only. |
@@ -1981,7 +1981,7 @@ Same shape as memory.search; returns the vector leg's per-candidate scoring brea
 | `quality_filter` | `bool` | `False` | Drop stored rows that are not facts (trajectory steps, session narration, tool tips, code-location trivia, probes, one-moment status — server/memory/domain/fact_quality.py) and restatements of a higher-ranked fact from the pool before the… |
 | `read_scope` | `Literal['namespace', 'own_user', 'own_session']` | `'namespace'` | How far this read may reach inside each namespace: "namespace" — every row the token can access (membership is the read boundary; the default). "own_user" — only rows written under `user_id`, which must be set. "own_session" — only rows… |
 | `entity_filter` | `list[str]` | *(computed)* | If non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. |
-| `category` | `str` | `''` | If set, restrict the search to memories assigned to this category (via namespace.register_category + memory.assign_category). |
+| `category` | `str` | `''` | If set, restrict the search to memories assigned to this category (one registered in the namespace). |
 | `tags_soft` | `bool` | `False` | --- Soft metadata ranking (sharpen recall without the coverage loss of a hard filter). |
 | `tag_boost` | `float` | `0.3` | Max rank contribution from tag overlap when tags_soft (scaled by fraction of query tags present). |
 | `category_soft` | `bool` | `False` | True turns `category` from a hard filter into a rank boost of `category_boost` for its members; False (default) returns members only. |

@@ -240,6 +240,19 @@ def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code:
                     )
 
 
+@pytest.mark.parametrize("toolset", ["assistant"])
+def test_a_listing_without_loom_op_names_only_its_own_tools(toolset: str):
+    """With no loom_op to reach the rest, a text may name only tools the listing carries."""
+    tools = _listing(toolset, False)
+    names = {t["name"] for t in tools}
+    listed = {TOOL_TO_OP.get(n, n) for n in names}
+    assert "loom_op" not in names
+    for t in tools:
+        for text in _texts(t):
+            unlisted = _op_refs(text) - listed - _MCP_HIDDEN_OPS
+            assert not unlisted, f"{toolset}: {t['name']} names {sorted(unlisted)}"
+
+
 def test_naming_marks_only_what_loom_op_routes():
     listed = {"loom_op", "loom_memory_set"}
     text = "Save with memory.set; tidy with `memory.apply`, then memory.apply again."
@@ -258,6 +271,14 @@ def test_naming_marks_only_what_loom_op_routes():
     )
     # a dotted name that is no op, such as a response field path, stays
     assert mcp_op.name_ops_for_listing("`memory.next_page`", listed, True) == "`memory.next_page`"
+    # a quoted value or a path is not a reference; a possessive is
+    assert mcp_op.name_ops_for_listing("('memory.delete', 'memory.*')", listed, True) == (
+        "('memory.delete', 'memory.*')"
+    )
+    assert mcp_op.name_ops_for_listing("/v1/memory.set", listed, True) == "/v1/memory.set"
+    assert mcp_op.name_ops_for_listing("memory.set's text", listed, True) == (
+        "loom_memory_set's text"
+    )
     # a citation tag is not an op mention
     assert mcp_op.name_ops_for_listing("[knowledge.query#1]", listed, True) == (
         "[knowledge.query#1]"

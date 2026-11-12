@@ -321,7 +321,9 @@ def test_initialize_keeps_established_session_id(_mcp_client) -> None:
 
 
 def test_loom_search_output_schema_declares_all_returned_sections() -> None:
-    descriptors = mcp_tools._synthetic_tool_descriptors("core", mcp_tools.listed_tool_names("core"))
+    descriptors = mcp_tools._synthetic_tool_descriptors(
+        "core", mcp_tools.listed_tool_names("core"), True
+    )
     loom_search = next(d for d in descriptors if d["name"] == "loom_search")
     props = set(loom_search["outputSchema"]["properties"])
     # structuredContent returns exactly these four sections; strict
