@@ -36,10 +36,10 @@ Code; in Codex, the newest `~/.codex/plugins/cache/loom/loom/*/` directory.
    the fix: Claude Code needs Node 18+ first on the PATH it starts with (the
    `env` block of its settings); under Codex `LOOM_NODE=/path/to/node` reaches
    the hooks, and the MCP header helper needs that Node on PATH. Else the same
-   script without `--check` installs Node (root or passwordless sudo, then apt/dnf/yum, apk
-   or Homebrew). Run it only when the user says yes; if it exits 2, report its
-   blocker line, do not retry. After an install the user restarts the
-   session: SessionStart hooks cannot rerun in this one.
+   script without `--check` installs Node (root or passwordless sudo, then
+   apt/dnf/yum, apk or Homebrew). Run it only when the user says yes; if it
+   exits 2, report its blocker line, do not retry. After an install the user
+   restarts the session: SessionStart hooks cannot rerun in this one.
    An MCP-only client has no hooks and skips this step.
 2. **Server, token, auth, grant.** `sh "<root>/bin/loom-node" "<root>/bin/loom-client-status.mjs"`
    prints JSON whose `checks` come in this order: `server`, `server version`

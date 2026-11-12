@@ -81,9 +81,9 @@ pull request the tag ships.
    section of its description; edit the notes where an entry needs it. CI must pass, including
    `make schema-check` and the strict migration dry run.
    When a merged pull request's changelog entry says it needs the next server release, the same
-   pull request raises `MIN_SERVER_VERSION` in `integrations/claude-code-plugin/lib/server-version.mjs`
-   to this version, syncs it into the Codex plugin and bumps both plugin versions: clients get
-   it only through a new plugin version.
+   pull request raises `MIN_SERVER_VERSION` in
+   `integrations/claude-code-plugin/lib/server-version.mjs` to this version, syncs it into the
+   Codex plugin and bumps both plugin versions: clients get it only through a new plugin version.
 3. After the release pull request merges, tag its merge commit and push the tag. To soak a
    release candidate first, tag `vX.Y.Z-rc.1` there instead, and the final later on the
    highest-numbered candidate's commit (below):
