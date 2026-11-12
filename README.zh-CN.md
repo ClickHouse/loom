@@ -9,8 +9,7 @@
   <a href="./README.md">English</a> · 简体中文
 </p>
 
-本页是简短的中文介绍，内容以英文 [README](./README.md) 为准；完整文档为英文，见
-[文档首页](./docs/index.md)。
+本页是简短的中文介绍，内容以英文 [README](./README.md) 为准；完整文档为英文，见[文档首页](./docs/index.md)。
 
 Loom 是一个开源、自托管的 MCP 服务器，为你的智能体提供长期的共享记忆：一个智能体在一次会话中学到的内容，下一个智能体或工具都能找到。
 
@@ -20,18 +19,17 @@ Loom 是一个开源、自托管的 MCP 服务器，为你的智能体提供长�
 
 ## 适用场景
 
-- **在多个编程智能体之间共享的长期记忆**：插件在会话开始时加载上下文，并在会话进行中记录会话。[Agent memory](./docs/use-cases/agent-memory.md)
+- **在多个编程智能体之间共享的长期记忆**：插件在会话开始时加载上下文，并在会话进行中持续记录。[Agent memory](./docs/use-cases/agent-memory.md)
 - **智能体应用的记忆**：通过 Python 或 TypeScript SDK 按用户保存。[Your first agent](./docs/getting-started/first-agent.md)
 - **多用户 MCP 记忆服务器**：命名空间、角色和 token。[Multi-user mode](./docs/getting-started/quickstart.md#start-in-multi-user-mode)
 - **代码仓库索引**：编程智能体可以查询定义、调用方和变更影响。[Code index](./docs/use-cases/code-intelligence.md)
 - **降低编程智能体的模型成本**：见下方实测结果。[Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
 - **带引用的文档检索（RAG）**：包括由提取服务转换的 PDF、`.docx` 和 `.pptx` 文件。[Document search](./docs/use-cases/document-search.md)
 - **多智能体工作流中的共享上下文**：共享记忆、任务收件箱和决策。[Multi-agent](./docs/use-cases/multi-agent.md)
-- **自主智能体的记忆、召回、审计与删除。**[Autonomous agents](./docs/use-cases/autonomous-agents.md)
+- **自主智能体的记忆、召回、审计与擦除。**[Autonomous agents](./docs/use-cases/autonomous-agents.md)
 - **智能体工作记录**：可检索的会话（开启记录时）、可从中恢复的会话摘要、带目标、结果和模型成本（如有上报）的运行记录，以及 PR 与 issue 历史。[Runs and PR history](./docs/use-cases/runs-and-pr-history.md)
 
-Loom 不是供单个智能体在进程内使用的短期记忆库，也不是智能体框架。
-[何时不适合使用 Loom](./docs/getting-started/overview.md#when-it-does-not-fit)
+Loom 不是供单个智能体在进程内使用的短期记忆库，也不是智能体框架。[何时不适合使用 Loom](./docs/getting-started/overview.md#when-it-does-not-fit)
 
 ## 实测结果
 
@@ -41,7 +39,7 @@ Loom 不是供单个智能体在进程内使用的短期记忆库，也不是智
 | 编程智能体文件定位     | **96.4%** | 91.4%       | 模型成本**低 21%**                        | 36 个问题 × 10 次配对运行     |
 | 记忆与完整历史作答对比 | **94%**   | 90%         | 作答模型（reader）的提示 token **少 91%** | 100 个 LongMemEval-S 配对问题 |
 
-两组编程评测都在 ClickHouse 代码库上使用 Claude Code（`claude-sonnet-5`）；成本为整个会话的模型费用，不含 Loom 服务端的模型调用、托管和索引成本。回答质量衡量回答对一个经过核实的答案中各要点的覆盖程度，与其矛盾时扣分。文件定位统计智能体最后列出的三个文件中是否包含正确的文件。
+两组编程评测都在 ClickHouse 代码库上使用 Claude Code（`claude-sonnet-5`）；成本为整个会话的模型费用，不含 Loom 服务端的模型调用、托管和索引成本。回答质量衡量回答覆盖经核实的参考答案要点的程度，与参考答案矛盾时扣分。文件定位统计智能体最后列出的三个文件中是否包含正确的文件。
 
 记忆这一行用同一个 `gpt-5` 作答模型，比较“检索到的记忆”与“完整会话历史”两种输入。token 节省不含构建记忆的成本；94% 与 90% 的准确率差异只是描述性的，在统计上不显著。结果仅适用于所测试的工作负载。详情见 [Measured results](./README.md#measured-results)。
 
@@ -59,7 +57,7 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 
 单用户模式请保持仅本机访问；需要共享访问时，按照[团队部署指南](./docs/operations/deployment.md#identity-modes)配置，包括 TLS。
 
-默认安装无需密钥或网络即可启动：存储、控制台、代码结构索引和语义检索都可用，使用镜像自带的小型本地嵌入模型；默认的 `fake-echo-1` LLM 不会生成 AI 回答。在控制台的 **Settings → Models & keys** 中选择提供商和模型并填写密钥，即可启用真实模型。见 [Models and keys](./docs/getting-started/models-and-keys.md)。
+默认安装无需密钥或网络即可启动：存储、控制台、代码结构索引和语义检索都可用，使用镜像自带的小型本地嵌入模型；默认的 `fake-echo-1` LLM 不会生成 AI 回答。在控制台的 **Settings → Models & keys** 中选择提供商和模型、填写密钥，然后点击 **Test & apply**。控制台的嵌入模型选项均为托管服务；如需保留 `local` 并添加 LLM，请改为在 `~/.loom/.env` 中设置（[Models and keys](./docs/getting-started/models-and-keys.md#claude-for-the-llm)）。使用 Claude 作为 LLM 时，需要另配一个嵌入模型提供商。
 
 在运行个人安装的机器上，插件无需 token：
 
