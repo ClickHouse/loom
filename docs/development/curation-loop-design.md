@@ -27,23 +27,24 @@ flowchart LR
 A definition is a memory row with `memory_type = 'definition'` under the key
 `definition/<slug>`, so `C++` and `C#` get two keys. The slug is computed in four steps:
 
-1. The term is folded: it goes through `canonical_document_text`
-   (`server/core/hashing.py`: NFKC, trimmed, every run of whitespace made one space),
-   loses its format characters (Unicode category Cf, such as a pasted byte-order mark) and
-   is case-folded (`str.casefold`). This folded form is the term's name wherever two names
+1. The term is folded: it loses its format characters (Unicode category Cf, such as a
+   pasted byte-order mark), then goes through `canonical_document_text`
+   (`server/core/hashing.py`: NFKC, trimmed, every run of whitespace made one space) and
+   is case-folded (`str.casefold`). A term that is not valid Unicode (a lone surrogate) is
+   refused. This folded form is the term's name wherever two names
    are compared (the key, the promotion's name check); matching against a query keeps the
    case rule below.
-2. Every run of characters other than letters, marks and digits (Unicode categories L, M
-   and N) becomes one `-`, and a `-` at either end is dropped.
+2. Every run of characters other than letters, marks and numbers (Unicode categories L,
+   M and N) becomes one `-`, and a `-` at either end is dropped.
 3. A `-` is appended.
 4. The first 12 hex characters of the SHA-256 of the folded term's UTF-8 bytes are
    appended.
 
-One helper in `server/memory/domain/definitions.py` folds a name and computes the key.
-The SDKs and the dashboard port it, follow the Unicode version of the server's
-`unicodedata`, and test against one table of terms and keys that covers each step where a
-port can differ from Python: NFKC, a case fold that is not lower-casing, whitespace and
-format characters, and combining marks. A refused promotion names the key it expected. Its
+One helper in `server/memory/domain/definitions.py` folds a name and computes the key,
+and nothing else computes it: the SDKs and the dashboard do not port it, since a port
+would follow another Unicode version. A caller learns the key from the server: a refused
+promotion names the key it expected, and `memory.definitions.list` lists each
+definition's key. Its
 value is a JSON object, which `memory.set` stores whole in `value` and in `value_json`
 (the embedding reads its excerpt, as for any row):
 
@@ -282,14 +283,17 @@ to it that continues its edge:
 - before Hangul, a Hangul syllable, so `매출` does not match inside "판매출고"; after it,
   nothing, since Korean particles attach to the word before them;
 - next to a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or
-  punctuation: nothing.
+  punctuation: nothing;
+- a combining mark (category M) continues the character before it, so `कम` does not match
+  inside "कमी".
 
 So `рост` does not match inside "простой" and `café` not inside "cafés", while `MRR`
 matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". Case is decided per word of
-the name: a word written all in capitals, or with a capital after its first letter,
-matches only as written, and any other word matches case-folded. So `IT` does not match
-"what is it" and `GitHub` stays exact, while `Churn Rate` matches "what is our churn rate"
-and `ARR growth` matches "ARR Growth" but not "arr growth".
+the name, a word being a run of letters, marks and numbers as in the slug: a word written
+all in capitals, or with a capital after its first letter, matches only as written, and
+any other word matches case-folded. So `IT` does not match "what is it" and `GitHub` stays
+exact, while `Churn Rate` matches "what is our churn rate" and `ARR growth` matches "ARR
+Growth" but not "arr growth".
 
 **Placement.** Matched rows go to the top of the served list with `governed = true`, in
 the order their names first appear in the query. Two names that start at the same place
@@ -466,9 +470,9 @@ to two accounts, or a tie that cannot be read, records no miss.
 **The stored row.** Each miss writes one row to `loom.search_misses` under the namespace
 the search was addressed to: the identity tuple, the asker, the plane and the query's
 normalised form. That form is the query folded as a name is, with every run of characters
-other than letters, marks, digits, `_`, `+` and `#` made one space and a space at either
-end dropped, so `C++`, `C#` and `arr_v2` stay apart as the term leg keeps them. It is
-still the query's words, kept as the trace of a question under the request's capture
+other than letters, marks, numbers (L, M, N), `_`, `+` and `#` made one space and a space
+at either end dropped, so `C++`, `C#` and `arr_v2` stay apart as the term leg keeps them.
+It is still the query's words, kept as the trace of a question under the request's capture
 level; only the threshold below decides what an admin sees. A query that reads or grades
 as `medium` or `high` (`reads_high` and the grader in
 `server/memory/domain/sensitivity.py`, as a definition's promotion grades its value)
@@ -859,11 +863,15 @@ and shared rows, which N-1 knows: it serves them as plain rows with no term leg.
 read-time check grades the source's value on every read, so a later build whose detector
 grades differently changes which definitions are governed, and two builds serving side by
 side may disagree on one row until the older one stops; the build that changes the
-detector names this in its rollout notes. What N-1 does to them is caught by the read-time
-check: a promotion from another source, or an edit, relabel or tombstone of the source,
-leaves a row the term leg does not serve, and the term leg's last-promoted rule covers a
-promotion that skipped the term check. A promotion on N-1 also skips the approved-hash
-check and takes `promoted_by` from the body, which no read-time check can tell, and an N-1
+detector names this in its rollout notes. A build whose Python ships another Unicode
+version can change a term's fold, and so its key, and the read-time check then lapses that
+definition as under a key that is not its term's slug; that build's notes name the change,
+`memory.definitions.list` lists the lapsed definitions, and an admin writes and promotes
+each again under its new key. What N-1 does to them is caught by the read-time check: a
+promotion from another source, or an edit, relabel or tombstone of the source, leaves a
+row the term leg does not serve, and the term leg's last-promoted rule covers a promotion
+that skipped the term check. A promotion on N-1 also skips the approved-hash check and
+takes `promoted_by` from the body, which no read-time check can tell, and an N-1
 `memory.set` ignores `if_absent`, and an N-1 `memory.delete` ignores `if_match_sha256`,
 fields they do not know, so they write over or delete a live row; the review path that
 sends them answers 503 while N-1 serves, and a direct caller relies on them only once no
