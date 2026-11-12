@@ -73,5 +73,5 @@ def test_atomic_descriptions_are_the_policy_text() -> None:
     assert core_by["loom_memory_set"] != by["loom_memory_set"]
 
 
-def test_other_toolsets_are_unchanged() -> None:
+def test_all_lists_more_than_core_and_core_more_than_atomic() -> None:
     assert len(_descriptors("all")) > len(_descriptors("core")) > len(_descriptors("atomic"))

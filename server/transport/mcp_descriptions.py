@@ -1075,8 +1075,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: loom_search returned a document hit, or the user named a "
         "document, and the task needs its full text.\n"
         "WHEN NOT: Finding documents by topic is loom_search. For a long "
-        "document, read knowledge.outline (via loom_op) first and fetch only "
-        "the section you need."
+        "document, call knowledge.outline (via loom_op) and pass it the "
+        "`section_path` you need."
     ),
     "knowledge.synthesize": (
         "Complete a task over WHOLE documents — summarize a long document, "

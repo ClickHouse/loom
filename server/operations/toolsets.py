@@ -170,7 +170,7 @@ _MCP_CORE_OPS: frozenset[str] = frozenset(
 # threads, edit a profile, manage knowledge documents or namespaces, or file
 # erasures. The listing is the memory-side ops below plus _MCP_CODE_CORE_OPS
 # (the code tools ride the coding tier regardless of LOOM_MCP_CODE_TOOLS —
-# they are its point) plus the two synthetic tools. It carries what coding
+# they are its point) plus the three synthetic tools. It carries what coding
 # clients actually call; everything on `core` (memory.pin, blacklist.add,
 # memory.lock, …) stays callable by name, since the transport reads
 # the registry, not the roster. memory.update stays: it is the revision verb
@@ -250,7 +250,7 @@ _MCP_TRACKER_OPS: frozenset[str] = frozenset(
 # the run scratchpad and the run ledger. Create and update are one tool —
 # memory.set under a key a read returned IS the update — and read is
 # loom_search (the synthetic search tool, always listed) plus memory.get. The
-# ops below plus the two synthetic tools; a small verb set plans better than
+# ops below plus the three synthetic tools; a small verb set plans better than
 # the core surface.
 _MCP_ATOMIC_OPS: frozenset[str] = frozenset(
     {
