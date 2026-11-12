@@ -38,11 +38,11 @@ its source lease, clearing their credentials, as `code.repo.remove` does today, 
 source outlives its namespace with a sealed credential or writes back what an erasure
 took.
 
-Sync state stays where [storage layout](storage-layout.md#cursors) keeps a source's sync
-state (`loom.code_index_state` today, Postgres `cursors` from wave 3), keyed by the
-source's namespace, which the namespace's erasure already covers: by name for a
-`namespace` source, as today, and by source id for a mirrored one, so a later source of
-the same name resumes none of an earlier one's listing.
+A source's sync state is keyed by its namespace and, for a mirrored source, its source
+id (by name for a `namespace` source, as today), so the namespace's erasure covers it
+and a later source of the same name resumes none of an earlier one's listing. It lives
+where [storage layout](storage-layout.md#cursors) places it (`loom.code_index_state`
+today, Postgres `cursors` from wave 3).
 
 On the dashboard, the Library shows a Sources section for the namespace or collection in
 view; the repository card keeps its own.
@@ -297,8 +297,10 @@ A source's `access`:
 
 The model has four parts: mirrored documents live in a companion namespace no grant
 opens; each document carries its permission list; every read through that namespace
-checks the list and fails closed; and every sync turn reads the lists again. Everything
-else in this section follows from those four.
+checks the list and fails closed; and every sync turn reads the lists again. One rule
+holds them together: nothing derived from a mirrored document (its address, title, text,
+counts or existence) is written outside the mirror, except a checked leg's answer to its
+reader.
 
 A deployment with auth off (`LOOM_AUTH_REQUIRED=false`) has no reader identity to check.
 It refuses to add a mirrored source (`AUTH_REQUIRED`), and when auth is switched off
@@ -339,12 +341,18 @@ missed path leaks.
 - **Nothing to read:** decision mining and dataset extraction skip mirrored documents,
   since a decision row is a memory every reader of the namespace reads and a dataset is
   read by `knowledge.query` without the check.
-- **Reads recorded under the mirror:** a mirror leg's `agent_events` row is filed under
-  the mirror's namespace, so `knowledge.reads` on the namespace names no mirrored
-  address, and `sql_v1_agent_events`, `sql_v1_usage_daily` (replaced by a migration),
-  the analytics export's usage entity and the insights agents and cost reads leave
-  `acl-` names out; a mirror's spend is charged to its namespace, under that namespace's
-  `daily_cost_cap_usd`.
+- **Rows filed under the mirror:** what the sync and the legs write about a mirrored
+  document (the sync's audit rows, its source's error text and per-file wait state,
+  which carry codes and no file id or address) is filed under the mirror's namespace. A
+  request on the namespace that a mirror leg answered keeps no address argument or found
+  flag in its `agent_events` row, so `knowledge.reads` and the ledger of the namespace
+  name no mirrored address and tell no reader whom the list admits; the row's spend
+  still counts against the namespace's `daily_cost_cap_usd`.
+- **No org-wide rollup reaches a mirror:** `every_namespace_scope` and
+  `rollup_member_namespaces` (`server/auth/context.py`) leave out the `acl-[0-9a-f]{24}`
+  form, so `audit.list`, the insights, usage and cost reads, `sql_v1_agent_events`,
+  `sql_v1_usage_daily` (replaced by a migration) and the analytics export name no
+  mirror.
 - **No text in a trace:** a generation whose context holds a mirrored chunk captures no
   prompt or completion text, whatever the namespace's `capture_generation_io` says.
 - **No id reaches a mirror:** the id-addressed checks (`row_reach`, `row_in_scope`,
@@ -376,7 +384,9 @@ no Postgres migration), written by the turn of the source that owns the document
   `unread`.
 - `groups`: group emails, which a crawl's directory read expands into
   `loom.knowledge_group_members` (one row per source and group, with its members and
-  `read_at`). A connected source reads no directory and expands no group.
+  `read_at`). A connected or `shared` mirrored source reads no directory and expands no
+  group, so a file shared with its reader only through a group shows to nobody, the
+  owner included.
 - `domains` and `anyone`: a domain or public permission the store marks discoverable. A
   link-only share (one the store marks not discoverable) is left out: it lets someone
   who holds the link open the file, not find it.
@@ -468,7 +478,7 @@ admits someone the store no longer names.
 | A person leaves the org and their connected sources keep syncing         | SCIM deactivation and disconnect stop the sources and clear the credential, then revoke it at the store; each turn's owner check skips a source whose owner is revoked, deactivated or no longer a writer.     | `server/auth/scim.py`; the sync's turn                                 |
 | A crawl reads more than its registrant meant, or can write               | An org-wide role to register, update or rotate; the probe requires the store to refuse a write scope; subjects and scopes in the audit row.                                                                    | the crawl probe; `loom.audit_log`                                      |
 | An id-addressed read confirms a mirrored document exists                 | `get`, `outline`, `download` and the inspects answer `found=false` or leave out an address the reader may not see.                                                                                             | the mirror legs                                                        |
-| A new read path shows mirrored documents to everyone                     | Mirrored documents live in a namespace no grant opens and no listing names; a path that does not read the mirror shows none.                                                                                   | `check_authorized` (`acl-[0-9a-f]{24}`)                                |
+| A new read path shows mirrored documents to everyone                     | Mirrored documents live in a namespace no grant opens and no listing names; a path that does not read the mirror shows none, and an org-wide rollup's scope leaves `acl-` names out.                           | `check_authorized` (`acl-[0-9a-f]{24}`); `every_namespace_scope`       |
 | An older build shows mirrored documents                                  | N-1 reads no mirror; its gate does not refuse a mirror's name, so no N-1 serves while one holds rows: the new modes wait for N everywhere, and a rollback first erases the mirrors with every replica stopped. | the random name; the rollback procedure                                |
 | A mirrored document's text reaches every reader through a derived row    | Decision mining and dataset extraction skip mirrored documents; a generation over a mirrored chunk captures no text.                                                                                           | the sync; generation capture                                           |
 | A store account is linked into another person's Loom account, either way | The connection is stored only from the browser that started it, with that subject's own dashboard session and the `state` cookie. A connection's email is never a reader identity.                             | the connect routes                                                     |
@@ -532,11 +542,11 @@ requests. That design has to answer what this page found:
   `crawl`, `directory_subject` and `subjects`; `update`, `parse_links`,
   `connection.list` and `connection.disconnect` are new (a connection starts in the
   dashboard, `POST /v1/connect/<kind>/start`); `list` and `inspect` show items, modes
-  and the documents each owns. To a viewer who is neither the owner nor an admin, a
-  mirrored source shows its kind, its owner as "a connected account" for a connected
-  one, its item count and its last sync's status, not its items, `config`, `created_by`,
-  its document counts or the error text, which can name an item. Python and TypeScript
-  SDKs are regenerated.
+  and, through the check, the documents each owns. To a viewer who is neither the owner
+  nor an admin, a mirrored source shows its kind, its owner as "a connected account" for
+  a connected one, its item count and its last sync's status, not its items, `config`,
+  `created_by` or its document counts; a mirrored source's error text carries codes
+  only, for every viewer. Python and TypeScript SDKs are regenerated.
 - **CLI.** `loom knowledge source add|update|list --namespace <ns> --link <url>...`
   (`--credential-file`, `--connected`), `loom connect gdrive|notion|linear`, `loom
 connection list|disconnect`, `loom knowledge mirror erase --all` ([restores and
@@ -736,6 +746,10 @@ Each implementing pull request lists its own; these pin the model:
     through their directory email, never the connection's store email; a generation over
     a mirrored chunk capturing no text; the insights agents and cost reads leaving
     `acl-` names out.
+  - The sync's audit rows and a source's error text naming no mirrored file id or
+    address; a request a mirror leg answered leaving no address or found flag in the
+    namespace's `agent_events` row; `every_namespace_scope` and
+    `rollup_member_namespaces` leaving out every `acl-` name.
   - `row_reach`, `row_in_scope` and `namespace_for_id` opening nothing of a mirror with
     auth off; a mirrored source's document counts hidden from a viewer who is neither
     its owner nor an admin.
@@ -750,8 +764,10 @@ mirror_unread`.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`: for every leg with the check and every id-addressed
   op, a reader the list leaves out sees no mirrored document, its title, its count or
-  its existence, under both storage authorities; a reader the list names sees it; a
-  reader removed from the store's list stops seeing it after the next listing.
+  its existence, through the legs, `knowledge.reads`, `audit.list`, the org-wide rollups
+  or a source's status (an admin who is not the owner included), under both storage
+  authorities; a reader the list names sees it; a reader removed from the store's list
+  stops seeing it after the next listing.
 - Integration: a `connected` source is mirrored wherever it writes; a SCIM deactivation
   and a disconnect stop the person's sources and retire their mirrored documents;
   `namespace.delete` and `collection.delete` retire the namespace's sources and clear
