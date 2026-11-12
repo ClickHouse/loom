@@ -44,7 +44,7 @@ explicit govern or ungovern of a namespace-wide definition (`definition.govern`,
 cannot make a row governed. A definition is governed exactly while its record exists and
 the row's current version is the approved one. Any later version of the row ends that,
 whoever writes it and on whichever build: an edit, a restatement of the same text, a
-tombstone, a redact, a restore or a touch. `definition.list` (admin) lists the namespace's
+tombstone, a restore or a touch. `definition.list` (admin) lists the namespace's
 records, each governed or lapsed, so the admin sees what to govern again. Only
 namespace-wide rows (`user_id`, `agent` and `session_id` all `'-'`) of type `definition`
 under the `definition/` key can be governed, and the term leg serves one only while its
@@ -63,7 +63,8 @@ decision, a definition is never judged against a close definition under another 
 write-time check neither marks nor supersedes it, and the conflict resolver ([conflicts
 and refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither
 flags nor retires it, since its key is its term and `MRR` is not a revision of `ARR`. A
-redact on N also deletes the row's record, so the record keeps no redacted term. Conflict
+redact on N of a governed definition's version, replayed ones included, deletes its record,
+so the record keeps no redacted term. Conflict
 surfacing compares a row only with rows of its own `memory_type`, so a learned fact that
 contradicts a definition is not refused by it. The term leg serves the governed definition
 above such a fact; a cross-type check would add a candidate read to every write, and is
@@ -86,10 +87,11 @@ would read the term as undefined. This narrows the read-scope rule that a bounde
 serves no row stamped `'-'` ([read scope inside a
 namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
 governed definitions through this leg only; every other namespace-wide row keeps it. The
-leg runs only on a search's first page and only when no field narrows the candidate set
-(the same rule a miss uses, below), since `memory_type` cannot name `definition` and a
-narrowed search asked for something else; it drops any key in `exclude_keys`, and never
-serves a `sensitivity = 'high'` row, as no other leg does. Its read is bounded by a
+leg runs only on a search's first page, and is off when a field asks for other rows
+(`memory_type`, which cannot name `definition`, `tags`, `category`, `scope`, an explicit
+`agent`, `run_id` or `session_ids`, `as_of`). A `user_id` or `session_id` the read scope
+pins, `exclude_keys` and `min_similarity` keep it on: it drops any key in `exclude_keys`.
+It never serves a `sensitivity = 'high'` row, as no other leg does. Its read is bounded by a
 setting; past the bound, the most recently updated definitions are read and the response
 says the leg was cut. It runs beside the others under the same time budget, and its
 latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
@@ -118,14 +120,14 @@ another op runs on its behalf:
 
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
   and served no governed definition, when it read the namespace-wide rows under a read
-  scope of the whole namespace and no field narrowed its candidate set (a user, session,
-  run, agent, type, tag, entity, category, scope, time, `exclude_keys` or `min_similarity`
-  away from its default);
+  scope of the whole namespace and no field removed candidates (for example a user,
+  session, run, agent, type, tag, entity, category, scope, time, body length,
+  `exclude_keys` or `min_similarity` away from its default);
 - `knowledge.search` with no hit as close as the noise filter's threshold (`_close` in
   `server/knowledge/app/knowledge_search.py`), no exact-key hit and, in `lexical` mode, no
-  hit at all, when no field narrowed its candidate set (`namespaces`, `tags`, `uri_prefix`,
-  `since_seconds`, `session_ids`, `source_classes`, `formats` or `block_types` away from
-  its default); documents are the namespace's under any read scope;
+  hit at all, when no field removed candidates (for example `namespaces`, `tags`,
+  `uri_prefix`, `since_seconds`, `session_ids`, `source_classes`, `formats` or
+  `block_types` away from its default); documents are the namespace's under any read scope;
 - `loom_search` (`search.query`) whose memory and knowledge sections both came back empty,
   with no leg failed, under a read scope of the whole namespace. Its own memory and
   knowledge searches record nothing, so a question that knowledge answers is not a gap
@@ -163,8 +165,8 @@ new build of the namespace in `loom.knowledge_gaps`:
 | ----------------- | --------------------------------------------------------------- |
 | `gap_id`          | A hash of the namespace and the gap's most asked query.         |
 | `head`, `samples` | The most asked normalised query, and the others merged into it. |
-| `askers`          | The askers behind it, for erasure.                              |
-| `asks`, `last_at` | How many times, and when it was last asked.                     |
+| `askers`, `asks`  | How many distinct askers, and how many times.                   |
+| `last_at`         | When it was last asked.                                         |
 | `nearest`         | The document URIs the misses came closest to.                   |
 
 Every build writes its gaps, then a marker row, and readers take the latest build that has
@@ -223,13 +225,15 @@ Nothing reaches search until an admin promotes a draft.
 `learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate first
 checks the term and aliases against the governed definitions, so a refused promotion
 writes nothing; then it writes the definition through `memory.set` for the whole
-namespace, so the blacklist and the pinned-key check run as for any write ([learnings review
-queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). Then the
-same call governs it as the reviewer's server-stamped actor: the admin promoting a
-definition is the person standing behind it. A draft for a term already governed revises
-that definition, and the promotion is the approval of its new text. A definition promotes
-to memory only; a `destination` of `knowledge` or `both` is refused for these candidates.
-A rejected draft leaves nothing behind but its queue row.
+namespace, so the blacklist and the pinned-key check run as for any write ([learnings
+review queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)).
+Then the same call governs the version the write committed (under the Postgres memory
+authority, the version Postgres committed, published or not) as the reviewer's
+server-stamped actor: the admin promoting a definition is the person standing behind it. A
+draft for a term already governed revises that definition, and the promotion is the
+approval of its new text. A definition promotes to memory only; a `destination` of
+`knowledge` or `both` is refused for these candidates. A rejected draft leaves nothing
+behind but its queue row.
 
 ## Erasure and audit
 
@@ -238,8 +242,10 @@ A rejected draft leaves nothing behind but its queue row.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
   `user_id` is the user (a token subject spelled as the user's id goes too, which costs
   only a trace row), and a census row.
-- `loom.knowledge_gaps`: a namespace step, a user step that deletes every gap whose
-  `askers` holds the user, and a census row counting those.
+- `loom.knowledge_gaps` keeps counts, not askers, so no op or page can say who asked: a
+  namespace step, and a user step that deletes every build of the user's org (derived
+  rows the next daily pass rebuilds without the user's misses, which the miss step
+  deleted first; the cost is a day without gaps), each with a census row.
 - `loom.governed_definitions` holds terms and aliases, which are definition content: a
   namespace step and a census row.
 - A query-history registration holds a host and a sealed credential: a namespace step and
@@ -280,10 +286,12 @@ serves no miss, gap, draft, governed record or registration is written, and N-1 
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
-`loom.knowledge_gaps`. Governed records and registrations stay, and N-1's namespace
-erasure does not reach them: a namespace erasure run after the rollback is run again once
-N serves. Any write N-1 makes to a governed definition, a conflict verdict included, writes
-a version, which ends its governance; on N, `definition.list` shows it lapsed.
+`loom.knowledge_gaps`, and of `loom.governed_definitions`, so N-1's redact or erasure
+leaves no term behind; governance is done again on N, as after a snapshot restore.
+Registrations stay, and N-1's namespace erasure does not reach them: a namespace erasure
+run after the rollback is run again once N serves. Any write N-1 makes to a governed
+definition, a conflict verdict included, writes a version, which ends its governance; on
+N, `definition.list` shows it lapsed.
 
 ## Invariants
 
