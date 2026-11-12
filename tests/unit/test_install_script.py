@@ -36,6 +36,10 @@ def installer_env(tmp_path: Path) -> dict[str, str]:
     docker = bin_dir / "docker"
     docker.write_text('#!/bin/sh\n[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1\n')
     docker.chmod(0o755)
+    # Nothing listens anywhere: the port check's probe is refused (curl's exit 7).
+    curl = bin_dir / "curl"
+    curl.write_text("#!/bin/sh\nexit 7\n")
+    curl.chmod(0o755)
     return {
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "HOME": str(tmp_path),
@@ -367,7 +371,11 @@ def test_the_health_check_polls_where_loom_is_published(
     run, target = install
     seen = Path(installer_env["HOME"]) / "curl.log"
     curl = Path(installer_env["PATH"].split(":")[0]) / "curl"
-    curl.write_text(f'#!/bin/sh\necho "$@" >> {seen}\necho \'{{"status":"ok"}}\'\n')
+    # The port probe before the pull is refused; the health poll answers ok.
+    curl.write_text(
+        f'#!/bin/sh\necho "$@" >> {seen}\ncase "$*" in *health*) ;; *) exit 7 ;; esac\n'
+        'echo \'{"status":"ok"}\'\n'
+    )
     curl.chmod(0o755)
     # Every compose call (pull, up) succeeds; only the version is asked for its output.
     docker = curl.with_name("docker")
@@ -906,3 +914,91 @@ def test_the_inspect_path_installs_from_the_checked_bundle(tmp_path: Path) -> No
     assert f"LOOM_INSTALL_BUNDLE={home}/loom-stack.tar.gz" in passed, passed
     assert f"LOOM_INSTALL_CHECKSUM={home}/loom-stack.tar.gz.sha256" in passed, passed
     assert not (home / "loom-install.sh").exists(), (page, install)
+
+
+def _start_stubs(installer_env: dict[str, str], *, curl_exit: int, docker_body: str) -> Path:
+    """Stub curl (the port probe exits `curl_exit`, the health poll answers ok) and a
+    docker that logs its calls and runs `docker_body`; returns the log."""
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    (bin_dir / "curl").write_text(
+        '#!/bin/sh\ncase "$*" in *v1/health*) echo \'{"status":"ok"}\'; exit 0 ;; esac\n'
+        f"exit {curl_exit}\n"
+    )
+    log = bin_dir / "docker.log"
+    (bin_dir / "docker").write_text(
+        '#!/bin/sh\n[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1 && exit 0\n'
+        f'echo "$*" >> {log}\n{docker_body}\n'
+    )
+    return log
+
+
+def test_a_port_another_program_holds_stops_before_any_pull(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    log = _start_stubs(installer_env, curl_exit=0, docker_body="exit 0")
+    result = run(LOOM_SKIP_START="0", LOOM_PORT="28977")
+    assert result.returncode == 1
+    assert "port 28977 on 127.0.0.1 is in use by another program:" in result.stderr
+    assert "LOOM_PORT=7778" in result.stderr
+    assert not any(" pull" in c or " up " in c for c in log.read_text().splitlines())
+
+
+def test_a_rerun_over_its_own_running_server_skips_the_port_check(
+    install, installer_env: dict[str, str]
+) -> None:
+    """This install's server holds the port: the probe is not made, the run goes on."""
+    run, _ = install
+    body = 'case "$*" in *" ps -q --status running --status restarting loom") echo 3f2a ;; esac\nexit 0'
+    log = _start_stubs(installer_env, curl_exit=0, docker_body=body)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "in use by another program" not in result.stderr
+    assert any(" up -d" in c for c in log.read_text().splitlines())
+
+
+def test_a_failed_pull_names_dockers_proxy_settings(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    body = 'case "$*" in *" pull"*) exit 1 ;; esac\nexit 0'
+    log = _start_stubs(installer_env, curl_exit=7, docker_body=body)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "could not pull the Loom images" in result.stderr
+    assert "docs.docker.com/engine/daemon/proxy" in result.stderr
+    assert not any(" up " in c for c in log.read_text().splitlines())
+
+
+def test_a_port_another_loom_holds_is_named_as_loom(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env, curl_exit=0, docker_body="exit 0")
+    curl = Path(installer_env["PATH"].split(":")[0]) / "curl"
+    curl.write_text('#!/bin/sh\necho \'{"status":"ok","schema_version":"1"}\'\n')
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "port 7777 on 127.0.0.1 is in use by another Loom server" in result.stderr
+
+
+def test_the_port_probe_goes_where_loom_is_published(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env, curl_exit=0, docker_body="exit 0")
+    seen = Path(installer_env["HOME"]) / "curl.log"
+    curl = Path(installer_env["PATH"].split(":")[0]) / "curl"
+    curl.write_text(
+        f'#!/bin/sh\necho "$@" >> {seen}\n'
+        'case "$*" in *v1/health*) echo \'{"status":"ok"}\'; exit 0 ;; esac\nexit 7\n'
+    )
+    assert run(LOOM_SKIP_START="0", LOOM_PORT="28977", LOOM_BIND_HOST="::").returncode == 0
+    assert seen.read_text().splitlines()[0].endswith(" http://[::1]:28977/")
+
+
+def test_a_port_that_does_not_answer_in_time_is_not_called_in_use(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env, curl_exit=28, docker_body="exit 0")
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "cannot reach 127.0.0.1:7777 within 3 seconds" in result.stderr
+    assert "in use" not in result.stderr

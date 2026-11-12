@@ -383,8 +383,40 @@ main() {
       -f "$INSTALL_DIR/compose.yaml" "$@"
   }
 
+  port=$(get_env LOOM_PORT)
+  port=${port:-7777}
+  # Loom listens where it is published: loopback unless LOOM_BIND_HOST names an address.
+  case $(get_env LOOM_BIND_HOST) in
+    '' | 0.0.0.0) host=127.0.0.1 ;;
+    ::) host='[::1]' ;; # Docker publishes [::] on IPv6 only
+    *:*) host="[$(get_env LOOM_BIND_HOST)]" ;;
+    *) host=$(get_env LOOM_BIND_HOST) ;;
+  esac
+
+  # A port held by another program fails `up` only after the pull and the
+  # ClickHouse start, with Docker's bind error: say so before either. Curl's
+  # exit 7 is a refused connection, so nothing listens there. This install's own
+  # server, running or restarting, holds the port itself and `up` recreates it.
+  if [ -z "$(compose ps -q --status running --status restarting loom 2>/dev/null)" ]; then
+    probe=0
+    curl -s -o /dev/null --max-time 3 "http://$host:$port/" 2>/dev/null || probe=$?
+    other_port=7778
+    [ "$port" != 7778 ] || other_port=7779
+    case $probe in
+      7) ;;
+      28) fail "cannot reach $host:$port within 3 seconds: check LOOM_BIND_HOST and LOOM_PORT, or a firewall on this host" ;;
+      *)
+        holder="another program"
+        curl -fsS --max-time 3 "http://$host:$port/v1/health" 2>/dev/null | grep -q '"schema_version"' \
+          && holder="another Loom server (another install, or one started from a checkout)"
+        fail "port $port on $host is in use by $holder: stop it, or run the install command again with a free port, such as LOOM_PORT=$other_port"
+        ;;
+    esac
+  fi
+
   printf 'Starting Loom %s (the first pull can take a few minutes)…\n' "$version"
-  compose pull
+  compose pull \
+    || fail "could not pull the Loom images (above). Behind a proxy, Docker needs it in its own settings: https://docs.docker.com/engine/daemon/proxy/"
   case ",$(get_env COMPOSE_PROFILES)," in
     *,bundled,*) ;;
     *)
@@ -401,15 +433,6 @@ main() {
   esac
   compose up -d
 
-  port=$(get_env LOOM_PORT)
-  port=${port:-7777}
-  # Loom listens where it is published: loopback unless LOOM_BIND_HOST names an address.
-  case $(get_env LOOM_BIND_HOST) in
-    '' | 0.0.0.0) host=127.0.0.1 ;;
-    ::) host='[::1]' ;; # Docker publishes [::] on IPv6 only
-    *:*) host="[$(get_env LOOM_BIND_HOST)]" ;;
-    *) host=$(get_env LOOM_BIND_HOST) ;;
-  esac
   health="http://$host:$port/v1/health"
   attempt=0
   while [ "$attempt" -lt 90 ]; do
