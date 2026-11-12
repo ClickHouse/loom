@@ -28,28 +28,36 @@ memory: what one agent learns in a session, the next agent or tool can find.
 
 Agents connect through MCP, HTTP, Python or TypeScript. Self-host with Docker or
 [on Kubernetes with the Helm chart](./docs/operations/kubernetes.md); agent context and
-index data live in ClickHouse, and a deployment can choose
+index data live in [ClickHouse](./docs/use-cases/self-hosted-clickhouse.md), and a deployment can choose
 [Postgres at first boot](./docs/operations/postgres.md) for live memory and knowledge
 state. The dashboard brings memories, repositories, tasks and runs into one place.
 
 ## What Loom is for
 
-- **Memory shared across your coding agents**, with plugins that load context at session
-  start and capture the session as it runs.
+- **Long-term memory shared across your coding agents**, with plugins that load context
+  at session start and capture the session as it runs.
+  [Agent memory](./docs/use-cases/agent-memory.md) ·
   [Connect a coding agent](./docs/getting-started/connect-a-coding-agent.md)
 - **Long-term memory for an agent application**, per user, from the Python or TypeScript
   SDK. [Your first agent](./docs/getting-started/first-agent.md)
 - **A multi-user MCP memory server** with namespaces, roles and tokens.
   [Multi-user mode](./docs/getting-started/quickstart.md#start-in-multi-user-mode) ·
   [Namespaces and sharing](./docs/features/namespaces-and-sharing.md)
-- **A code index of your repositories** that coding agents query.
-  [Code index](./docs/features/code-index/overview.md)
-- **Document search with citations**, including PDF, `.docx` and `.pptx` files the
-  extractor service converts. [Knowledge documents](./docs/features/knowledge.md)
+- **A code index of your repositories** that coding agents query for definitions,
+  callers and change impact. [Code index](./docs/use-cases/code-intelligence.md)
+- **Lower token and model cost for coding agents**: 20% lower model cost in the
+  measured Claude Code runs below. [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
+- **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
+  extractor service converts. [Document search](./docs/use-cases/document-search.md)
+- **Shared context for multi-agent workflows**: shared memory, task inboxes and
+  decisions. [Multi-agent](./docs/use-cases/multi-agent.md)
+- **Memory, recall, audit and erasure for autonomous agents.**
+  [Autonomous agents](./docs/use-cases/autonomous-agents.md)
 - **A record of agent work**, with searchable conversations (when recording is on),
-  session briefs to resume from, and runs with their goals, outcomes and model costs
-  when supplied. [Conversations](./docs/features/conversations-and-sessions.md) ·
-  [Runs](./docs/features/runs.md)
+  session briefs to resume from, runs with their goals, outcomes and model costs when
+  supplied, and PR and tracker history. [Runs and PR history](./docs/use-cases/software-factory.md)
+
+Every use case, and when another tool fits better: [use cases](./docs/use-cases/index.md).
 
 Loom is not an in-process library for one agent's short-lived memory, nor an agent
 framework. [When Loom does not fit](./docs/getting-started/overview.md#when-it-does-not-fit)

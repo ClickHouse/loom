@@ -402,6 +402,7 @@ def render_group_pages() -> dict[str, str]:
 LLMS_TXT = ROOT / "llms.txt"
 _LLMS_SECTIONS = (
     ("Getting started", "getting-started"),
+    ("Use cases", "use-cases"),
     ("Operations", "operations"),
     ("Features", "features"),
     ("Reference", "reference"),
@@ -445,8 +446,8 @@ def render_llms_txt() -> str:
         "docs/getting-started/agent-setup.md and follows the agent-setup.txt each release "
         "attaches, with its pins filled in. To connect to a running server: "
         "docs/getting-started/connect-a-coding-agent.md. To decide whether Loom fits: "
-        "docs/getting-started/overview.md. Every operation's fields are in "
-        "docs/reference/operations/.",
+        "docs/getting-started/overview.md; for one need, docs/use-cases/. "
+        "Every operation's fields are in docs/reference/operations/.",
         "",
     ]
     for heading, sub in _LLMS_SECTIONS:

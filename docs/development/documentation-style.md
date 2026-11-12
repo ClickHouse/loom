@@ -8,6 +8,7 @@ A page does one kind of writing. When it starts doing a second, split it and lin
 
 | Kind              | Answers                                      | Lives in                           | Voice                                                       |
 | ----------------- | -------------------------------------------- | ---------------------------------- | ----------------------------------------------------------- |
+| Use case          | "Does Loom do X for me?"                     | `docs/use-cases/`                  | The need answered in the first sentence; links, not repeats |
 | Tutorial          | "Show me, start to finish."                  | `docs/getting-started/`            | Numbered steps that always work on the stock stack          |
 | How-to guide      | "How do I get X done?"                       | `docs/guides/`, `docs/operations/` | Goal-first steps; assumes the concepts                      |
 | Concept / feature | "What is it, why does it work so?"           | `docs/concepts/`, `docs/features/` | Explanation, trade-offs, links to reference                 |

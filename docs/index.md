@@ -17,6 +17,19 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
 | 6. Code index            | [Code index](features/code-index/overview.md) → [Repositories](features/code-index/repositories.md) → [Code-index operations](operations/code-index-operations.md)                        |
 | 7. Operate               | [Monitoring](operations/monitoring.md) · [Troubleshooting](operations/troubleshooting.md) · [Upgrades](operations/upgrades.md) · [Backup and recovery](operations/backup-and-recovery.md) |
 
+## Use cases
+
+One page per need, each saying what Loom does for it, what was measured and where to start:
+[agent memory](use-cases/agent-memory.md) ·
+[document search and RAG](use-cases/document-search.md) ·
+[code index for coding agents](use-cases/code-intelligence.md) ·
+[coding-agent token and model cost](use-cases/coding-agent-cost.md) ·
+[multi-agent shared context](use-cases/multi-agent.md) ·
+[autonomous agents: recall, audit, erasure](use-cases/autonomous-agents.md) ·
+[runs, traces and PR history](use-cases/software-factory.md) ·
+[self-hosted on ClickHouse](use-cases/self-hosted-clickhouse.md) ·
+[all use cases](use-cases/index.md).
+
 ## 1. Getting started
 
 - [Overview](getting-started/overview.md): what Loom is, when it fits, prerequisites.

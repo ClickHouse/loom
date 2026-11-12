@@ -1,0 +1,35 @@
+# Long-term and shared memory for AI agents
+
+Loom is a self-hosted MCP server and HTTP API that gives AI agents long-term memory they
+share: a fact one agent saves in a session, the next session, another agent or a person at
+the dashboard can find. This page shows how that works and where to start.
+
+## What you get
+
+- **One claim per key, in a namespace.** `memory.set` saves a fact; `memory.get` reads it
+  back by key; `memory.search` and `loom_search` find it by meaning. A namespace is the
+  unit of sharing: every member reads every row in it. [Memory](../concepts/memory.md)
+- **Memory that can be corrected.** Each write makes a new version. A near-duplicate
+  merges, a contradiction is flagged for review, and a write against a pinned fact is
+  refused. [Conflicts and refusal](../features/memory/conflicts-and-refusal.md) ·
+  [History and provenance](../features/memory/history-and-provenance.md)
+- **Search that abstains.** When nothing is close enough, search says so with a reason
+  code instead of returning a weak match. [Search and ask](../features/memory/search-and-ask.md)
+- **Memory across coding agents.** The Claude Code and Codex plugins load relevant
+  context at session start and capture the session as it runs; Cursor and other MCP
+  clients connect to the same server. [Connect a coding agent](../getting-started/connect-a-coding-agent.md)
+- **Per-user memory for your own agent.** The Python and TypeScript SDKs write and read
+  memory per end user. [Your first agent](../getting-started/first-agent.md)
+
+## Measured
+
+On 100 paired LongMemEval-S questions with the same `gpt-5` reader, answers from Loom's
+retrieved memories scored 94% against 90% from the whole history, with 91% fewer reader
+prompt tokens; the accuracy difference is not statistically established.
+[With and without Loom](../benchmarks/results.md#with-and-without-loom)
+
+## Start
+
+[Quickstart](../getting-started/quickstart.md) boots the local stack and saves a first
+memory over HTTP, Python and MCP. [When Loom does not fit](../getting-started/overview.md#when-it-does-not-fit)
+covers the cases an in-process memory library serves better.
