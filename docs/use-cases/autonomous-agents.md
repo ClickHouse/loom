@@ -13,7 +13,9 @@ ClickHouse (or Postgres for live memory state).
   pattern no write may store. [Conflicts and refusal](../features/memory/conflicts-and-refusal.md)
 - **Audit.** Each operation that changes memory leaves an audit row with a SHA-256 of its
   content, and a worker seals hourly windows into a hash chain, so an edit or deletion is
-  detectable. Audit writes are fail-open: a failed insert loses the row.
+  detectable. The transport's audit writes are fail-open (a failed insert loses
+  the row); under the Postgres authority a memory revision's audit row is stored with the
+  revision.
   [Audit log](../features/observability/audit.md#limits-and-failure-modes)
 - **Erasure you can check.** `erasure.request` erases a scope (tombstones by default; `purge=true`
   deletes the rows of a `user_id` or `namespace_list` scope) from every table that holds memory content and ends with a residue census and a receipt.

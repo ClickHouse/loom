@@ -6,15 +6,15 @@ How to place a new page in the right section, write it in the house style, and p
 
 A page does one kind of writing. When it starts doing a second, split it and link.
 
-| Kind              | Answers                                      | Lives in                           | Voice                                                                                          |
-| ----------------- | -------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Use case          | "Does Loom do X for me?"                     | `docs/use-cases/`                  | The need answered in the first sentence; quotes the README's numbers with a link to the result |
-| Tutorial          | "Show me, start to finish."                  | `docs/getting-started/`            | Numbered steps that always work on the stock stack                                             |
-| How-to guide      | "How do I get X done?"                       | `docs/guides/`, `docs/operations/` | Goal-first steps; assumes the concepts                                                         |
-| Concept / feature | "What is it, why does it work so?"           | `docs/concepts/`, `docs/features/` | Explanation, trade-offs, links to reference                                                    |
-| Architecture      | "How is it built inside?"                    | `docs/architecture/`               | Components, data flow, invariants, code paths                                                  |
-| Reference         | "What exactly are the options?"              | `docs/reference/`                  | Exhaustive, terse, preferably generated                                                        |
-| Benchmark         | "How well does it work, and how do we know?" | `docs/benchmarks/`                 | Methodology first, numbers only with a reproduction command                                    |
+| Kind              | Answers                                      | Lives in                           | Voice                                                                                                           |
+| ----------------- | -------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Use case          | "Does Loom do X for me?"                     | `docs/use-cases/`                  | The need answered in the first sentence; quotes published results from `docs/benchmarks/results.md` with a link |
+| Tutorial          | "Show me, start to finish."                  | `docs/getting-started/`            | Numbered steps that always work on the stock stack                                                              |
+| How-to guide      | "How do I get X done?"                       | `docs/guides/`, `docs/operations/` | Goal-first steps; assumes the concepts                                                                          |
+| Concept / feature | "What is it, why does it work so?"           | `docs/concepts/`, `docs/features/` | Explanation, trade-offs, links to reference                                                                     |
+| Architecture      | "How is it built inside?"                    | `docs/architecture/`               | Components, data flow, invariants, code paths                                                                   |
+| Reference         | "What exactly are the options?"              | `docs/reference/`                  | Exhaustive, terse, preferably generated                                                                         |
+| Benchmark         | "How well does it work, and how do we know?" | `docs/benchmarks/`                 | Methodology first, numbers only with a reproduction command                                                     |
 
 - `docs/concepts/` explains the model a user holds in their head (identity, memory, ranking).
 - `docs/features/` explains one capability from the caller's side: what it does, the operations, an example, the settings, the limits.

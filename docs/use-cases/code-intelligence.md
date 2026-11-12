@@ -1,8 +1,8 @@
 # A code index for coding agents
 
-Loom gives coding agents a shared index of your git repositories, served over MCP, so an
-agent asks a structure question and gets the lines that answer it instead of reading whole
-files. It needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`; how the index is
+Needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`. Loom gives coding agents a
+shared index of your git repositories, served over MCP, so an agent asks a structure
+question and gets the lines that answer it instead of reading whole files. How the index is
 built and kept fresh is in [the code index overview](../features/code-index/overview.md).
 
 ## What you get

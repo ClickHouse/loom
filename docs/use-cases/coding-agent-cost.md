@@ -1,10 +1,10 @@
 # Lower model cost for coding agents
 
 With the Loom plugin and code index, Claude Code answered questions about the ClickHouse
-codebase at 6% to 21% lower model cost than without it. The savings were 20% on 24
-answer-graded questions (answer quality 0.84 against 0.78), 21% on 36 conceptual questions
-and 6% on 24 multi-hop questions, where tracing a bug to its fix on a release branch cost
-the same both ways.
+codebase at 20% and 21% lower model cost than without it on two of three measured question
+sets. The savings were 20% on 24 answer-graded questions (answer quality 0.84 against
+0.78), 21% on 36 conceptual questions and 6% on 24 multi-hop questions, where tracing a bug
+to its fix on a release branch cost the same both ways.
 
 ## What was measured
 
