@@ -220,8 +220,10 @@ checkout.
     rule 45). The query below lists each namespace that a `namespace` or `namespace_list`
     erasure in the ledger (kept 90 days) reached and that holds a promoted row, with the
     time the last one without a purge (`erased_at`) and with one (`purged_at`) ran its
-    census. Running the statements below over an erasure the newer build finished changes
-    nothing, as its step left no row promoted before its census.
+    census. The statements below take rows promoted before that second, so a row promoted
+    after the census stays, and so may one promoted earlier in the census's own second,
+    which `promoted_at`'s whole seconds cannot tell apart; the newer build's step already
+    took such a row in an erasure it ran.
     Only a `namespace_list` purges, and an older build's `namespace` row may hold the flag
     it was asked for.
 
@@ -246,12 +248,12 @@ checkout.
     ```
 
     For each, run what the newer build's step runs, over every version promoted before the
-    erasure, a version a later promotion of the same key hides from `FINAL` included; a row
-    promoted since stays. Where `purged_at` is set, delete them:
+    erasure's census, a version a later promotion of the same key hides from `FINAL`
+    included. Where `purged_at` is set, delete them:
 
     ```sql
     ALTER TABLE loom.shared DELETE
-    WHERE org = '<org>' AND namespace = '<namespace>' AND promoted_at <= '<purged_at>'
+    WHERE org = '<org>' AND namespace = '<namespace>' AND promoted_at < '<purged_at>'
     SETTINGS mutations_sync = 2
     ```
 
@@ -260,7 +262,7 @@ checkout.
     ```sql
     ALTER TABLE loom.shared UPDATE tombstoned_at = toDateTime('<the time you run it>')
     WHERE org = '<org>' AND namespace = '<namespace>' AND tombstoned_at IS NULL
-      AND promoted_at <= '<erased_at>'
+      AND promoted_at < '<erased_at>'
     SETTINGS mutations_sync = 2
     ```
 
