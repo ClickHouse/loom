@@ -129,16 +129,18 @@ check would add a candidate read to every write, and is not part of this design.
 
 ### The term leg
 
-`memory.search` gains one leg. It reads the addressed namespace's live `loom.shared` rows
-of type `definition` under a `definition/` key (only that namespace, whatever
-`namespace_scope` fans out over), matches the query against each one's term and aliases,
-and places the matched rows at the top of the served list with `governed = true` on the
-hit, removing any other hit under the same key in the addressed namespace, so an edited
-private copy is not served beside the governed text. A term or alias matches where it
-appears in the query with no letter, digit, `+` or `#` next to it. One written all in
-capitals, or with a capital after its first letter, matches only as written, so `IT` does
-not match "what is it" and `GitHub` stays exact; any other matches case-folded, so `Churn
-rate` matches "what is our churn rate".
+`memory.search` gains one leg, which runs wherever `memory.search` runs, inside
+`memory.ask`, `context.pack` and `memory.recall` as well; the rule below that no later
+stage moves a governed hit covers those ops' stages too. It reads the addressed
+namespace's live `loom.shared` rows of type `definition` under a `definition/` key (only
+that namespace, whatever `namespace_scope` fans out over), matches the query against each
+one's term and aliases, and places the matched rows at the top of the served list with
+`governed = true` on the hit, removing any other hit under the same key in the addressed
+namespace, so an edited private copy is not served beside the governed text. A term or
+alias matches where it appears in the query with no letter, digit, `+` or `#` next to it.
+One written all in capitals, or with a capital after its first letter, matches only as
+written, so `IT` does not match "what is it" and `GitHub` stays exact; any other matches
+case-folded, so `Churn rate` matches "what is our churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -162,11 +164,11 @@ output field: the SDKs and the MCP schema carry it.
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
 points at the documents behind it. `loom_search` serves the leg through its memory
-section, and one rule holds for every later stage of either op: no stage or floor moves,
-withholds or outranks a hit marked `governed` (in `loom_search` today:
-`drop_flagged_hits`, `floor_mode`, `quality_filter`, the answer-first precision floor and
-home margin, and the repository-decision merge; a stage added later follows the same
-rule).
+section, and one rule holds for every later stage of `memory.search`, `loom_search` and
+the ops that run `memory.search` inside them: no stage or floor moves, withholds or
+outranks a hit marked `governed` (in `loom_search` today: `drop_flagged_hits`,
+`floor_mode`, `quality_filter`, the answer-first precision floor and home margin, and the
+repository-decision merge; a stage added later follows the same rule).
 
 **Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
 served list is exactly what it was before. The memory-plane rule asks for a paired
@@ -223,17 +225,20 @@ and records no miss. Tokens a person mints for themselves therefore count as tha
 An asker that cannot be resolved (the registry unreadable, or a service account with no
 creator) records no miss: an unknown principal is never counted as a separate person. The
 asker is stored in the form a user erasure names: an end user as their id, without the
-`user:` prefix. Each miss writes one row to `loom.search_misses` under the namespace the
-search was addressed to: the identity tuple, the asker, `actor`, the plane and the query's
-normalised form (case-folded, with every run of characters other than letters, digits, `+`
-and `#` made one space, so `C++` and `C#` stay apart as the term leg keeps them). That
-form is still the query's words, kept as the trace of a question under the namespace's
-consent; only the threshold below decides what an admin sees. No memory key or document
-URI is kept: one naming another user's row or document would outlive that user's erasure,
-or the document's delete, in someone else's miss. The table has a 16-day TTL: it is a
-trace, not memory. A pass reads the last 7 days and a build lives 7 days from its write,
-with two days to spare, so a miss outlives every build that counted it and a user erasure
-always finds the namespaces it must clear.
+`user:` prefix, and a person's spelling folded onto the one the directory ties it to
+(`canonical_subject` in `server/auth/aliases.py`, the login handle for a contact email),
+so one person's two spellings count once; a tie that cannot be read records no miss. Each
+miss writes one row to `loom.search_misses` under the namespace the search was addressed
+to: the identity tuple, the asker, `actor`, the plane and the query's normalised form
+(case-folded, with every run of characters other than letters, digits, `+` and `#` made
+one space, so `C++` and `C#` stay apart as the term leg keeps them). That form is still
+the query's words, kept as the trace of a question under the namespace's consent; only the
+threshold below decides what an admin sees. No memory key or document URI is kept: one
+naming another user's row or document would outlive that user's erasure, or the document's
+delete, in someone else's miss. The table has a 16-day TTL: it is a trace, not memory. A
+pass reads the last 7 days and a build lives 7 days from its write, with two days to
+spare, so a miss outlives every build that counted it and a user erasure always finds the
+namespaces it must clear.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
 misses and has no `user_id` to count askers or erase by. `loom.query_nodes` keeps one row
