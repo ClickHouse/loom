@@ -42,6 +42,11 @@ def _install(home: Path, client: str, version: str) -> Path:
     bin_dir.mkdir(parents=True)
     shutil.copy(LAUNCHER, bin_dir / "loom-node")
     if client == ".claude":
+        hook = {"type": "command", "command": "node", "args": ["x.mjs", "Stop"]}
+        (bin_dir.parent / "hooks").mkdir()
+        (bin_dir.parent / "hooks" / "hooks.json").write_text(
+            json.dumps({"hooks": {"Stop": [{"hooks": [hook]}]}})
+        )
         install = {"scope": "user", "installPath": str(bin_dir.parent)}
         record = {"version": 2, "plugins": {"loom@loom": [install]}}
         (home / ".claude" / "plugins" / "installed_plugins.json").write_text(json.dumps(record))
@@ -282,6 +287,20 @@ def test_a_codex_plugin_from_before_the_launcher_is_named(home: Path) -> None:
             "hooks need `node` on Codex's PATH. Fix: `codex plugin marketplace upgrade loom`.",
         ),
     }
+
+
+def test_a_plugin_with_the_launcher_wiring_is_named(home: Path) -> None:
+    launcher = _install(home, ".claude", "1.2.20")
+    install = launcher.parent.parent
+    hook = {"type": "command", "command": 'sh "${CLAUDE_PLUGIN_ROOT}/bin/loom-node" x.mjs Stop'}
+    (install / "hooks" / "hooks.json").write_text(
+        json.dumps({"hooks": {"Stop": [{"hooks": [hook]}]}})
+    )
+    assert _checks(home)["client:claude-code:node"] == (
+        dc.WARN,
+        f"the installed plugin at {install} starts its hooks through an older wiring this "
+        "check does not judge. Fix: `claude plugin update loom@loom`.",
+    )
 
 
 def test_an_install_that_is_not_on_disk_is_named(home: Path) -> None:

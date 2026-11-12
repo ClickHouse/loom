@@ -47,7 +47,7 @@ The Claude Code and Codex plugins carry their own version, and name the oldest s
 hooks support (`MIN_SERVER_VERSION` in `lib/server-version.mjs`). A session against an older
 server starts with one `loom:` line saying so, and the plugin goes on working where it can
 ([Claude Code](../features/integrations/claude-code.md)). The Claude Code plugin needs Claude Code
-2.1.319 or newer, the oldest checked with its hook form.
+2.1.139 or newer, the first that runs a hook's `args` with no shell.
 
 ## Removing something
 

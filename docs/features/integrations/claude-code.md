@@ -85,7 +85,9 @@ finding.
 ## Requirements
 
 - A reachable Loom server ([quickstart](../../getting-started/quickstart.md)).
-- Claude Code 2.1.319 or newer, the oldest checked with the plugin's hook form.
+- Claude Code 2.1.139 or newer, the first that runs a hook's `args` with no shell. An
+  older one drops them and runs `node` with the hook's payload as its program: every hook
+  fails with a `SyntaxError`.
 - Node.js 18 or newer as `node` on the `PATH` Claude Code starts with. Every hook is
   `node` with the script's path as its argument, which Claude Code spawns with no shell,
   and the MCP header helper is `node "${CLAUDE_PLUGIN_ROOT}/bin/loom-mcp-headers.mjs"`.
@@ -376,6 +378,7 @@ instead.
 | Symptom                                                      | Cause                                              | Fix                                                                                                                                                                                                                |
 | ------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | a hook error says `node` was not found                       | no `node` on the `PATH` Claude Code starts with    | set `PATH` in the `env` block of settings.json to the whole search path with that Node's directory first, such as `"PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"`, or the `loom-status` skill; restart |
+| every hook error quotes `[stdin]:1`, a `SyntaxError`         | Claude Code older than 2.1.139 drops `args`        | update Claude Code                                                                                                                                                                                                 |
 | hooks fail and nothing is captured, though Node is installed | the first `node` on that `PATH` is older than 18   | put Node.js 18+ first on that `PATH`, or run the `loom-status` skill; restart                                                                                                                                      |
 | MCP server "needs authentication"                            | no Node for the header helper, or no token found   | the `loom-status` skill names which                                                                                                                                                                                |
 | no primer, nothing captured                                  | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                                                                                                                                                                         |

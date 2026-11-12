@@ -72,11 +72,10 @@ no Homebrew or nodejs.org Node): set `PATH` in the `env` block of
 first, such as `"PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"`. The
 Codex wiring, `hooks.generic.json` and the skills' commands start Node through
 `sh bin/loom-node`, which runs the first Node 18+ among `LOOM_NODE`, `node` on
-PATH, a version manager's default (or its
-newest install when the default cannot be read or is older than 18), and the
-usual install directories. With none, it exits 1 with one line naming the Node
-it found too old, or none, and `LOOM_NODE`
-(`docs/features/integrations/claude-code.md` has the platforms).
+PATH, a version manager's default (or its newest install when the default
+cannot be read or is older than 18), and the usual install directories. With
+none, it exits 1 with one line naming the Node it found too old, or none, and
+`LOOM_NODE` (`docs/features/integrations/claude-code.md` has the platforms).
 
 ## Safety model: fire-and-forget, hard-bounded
 

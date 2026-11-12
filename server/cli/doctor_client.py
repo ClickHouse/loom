@@ -963,6 +963,22 @@ def _path_node(env: dict[str, str]) -> tuple[int, str]:
     return 0, f"Loom hook runtime ready: {node} ({version})"
 
 
+def _hooks_run_node(install: Path) -> bool:
+    """Whether the installed plugin's hooks run `node` with no shell; a
+    plugin before 1.2.21 starts them through its launcher. An unreadable
+    hooks.json reads as the current wiring."""
+    try:
+        hooks = json.loads((install / "hooks" / "hooks.json").read_text())["hooks"]
+        return any(
+            h.get("command") == "node"
+            for groups in hooks.values()
+            for g in groups
+            for h in g["hooks"]
+        )
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return True
+
+
 def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
     """Claude Code runs hooks and the helper with the `node` on its own PATH,
     its settings `env` applied: this shell's, or a GUI launch's with no
@@ -974,6 +990,13 @@ def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
             WARN,
             f"the installed plugin at {install} is not on disk. Fix: "
             "`claude plugin uninstall loom@loom && claude plugin install loom@loom`.",
+        )
+    if not _hooks_run_node(install):
+        return (
+            name,
+            WARN,
+            f"the installed plugin at {install} starts its hooks through an older wiring "
+            "this check does not judge. Fix: `claude plugin update loom@loom`.",
         )
     settings = _claude_settings_env(home)
     code, line = _path_node({**env, **settings})
