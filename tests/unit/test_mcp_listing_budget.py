@@ -20,7 +20,6 @@ from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
 )
 from server.settings import settings
-from server.transport import mcp_op
 from server.transport import mcp_tools as mt
 from server.transport.mcp_descriptions import (
     ATOMIC_TOOL_DESCRIPTIONS,
@@ -218,7 +217,8 @@ def test_a_listed_op_is_named_by_its_tool(toolset: str, code: bool):
 @pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
 def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code: bool):
     """An op the listing does not carry is named by its dotted name, the one
-    loom_op takes, and when loom_op routes it its first mention says "(via loom_op)"."""
+    loom_op takes, and when loom_op routes it a mention says "(via loom_op)"
+    (the renderer marks the first; test_naming_marks_only_what_loom_op_routes)."""
     tools = _listing(toolset, code)
     names = {t["name"] for t in tools}
     listed = {TOOL_TO_OP.get(n, n) for n in names}
@@ -235,15 +235,6 @@ def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code:
                     assert re.search(marked, text), (
                         f"{toolset}: {t['name']} names unlisted {op} without saying how to reach it"
                     )
-
-
-def test_the_ops_loom_op_names_are_unlisted_on_the_default_listing():
-    """loom_op's text names five ops the default list does not show."""
-    named = {r for r in _OP_REF.findall(mcp_op.DESCRIPTOR["description"]) if r in OPS}
-    assert {"memory.clear", "erasure.request", "memory.related"} <= named
-    for code in (False, True):
-        listed = {t["name"] for t in _listing("core", code)}
-        assert not {OPS[op].mcp_tool_name for op in named} & listed
 
 
 def test_naming_marks_only_what_loom_op_routes():
@@ -331,9 +322,11 @@ def test_listing_budget_chars_over_four():
     assert _tok({"tools": _listing("core", False)}) <= 5_950
     assert _tok({"tools": _listing("coding", False)}) <= 9_075
     assert _tok({"tools": _listing("atomic", False)}) <= 4_500
-    # every listed tool, on the widest listing (it carries everything core lists)
-    for t in _listing("all", True):
-        assert len(t["description"]) // 4 <= 480, f"{t['name']} description is over budget"
+    # every listed tool on every listing: a text's length depends on the listing,
+    # since an unlisted op gains "(via loom_op)" where a listed one is renamed
+    for toolset, code in _TOOLSETS:
+        for t in _listing(toolset, code):
+            assert len(t["description"]) // 4 <= 480, f"{toolset}: {t['name']} is over budget"
 
 
 def test_tracker_toolset_lists_the_tracker_record_bisect_pr_check_and_impact_within_its_own_budget():

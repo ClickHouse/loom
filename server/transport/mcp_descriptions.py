@@ -39,7 +39,7 @@ ACTIVATION_TRIGGERS: tuple[str, ...] = (
 )
 
 
-# When to pick memory.set over the other write tools.
+# The other write tools, and when each fits instead of memory.set.
 _WHICH_WRITE = (
     "**Other writes:** memory.pin guards a fact from later conflicting "
     "writes, memory.lock from change or deletion; memory.apply changes many.\n\n"
@@ -70,8 +70,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`tags` for classification. Cite the response's `namespace` and "
         "`memory_key` in your confirmation; `conflict_verdict`, `peers` and "
         "`next` say what the store held (`dry_run=true` checks without "
-        "writing). `value` is stored verbatim — never base64 (kills "
-        "search; see `advisories`).\n\n"
+        "writing). `value` is stored verbatim — never base64 (kills search; "
+        "see `advisories`).\n\n"
         "**A fact with a natural lifetime gets one at write time.** A "
         "deadline, a temporary state ('on call this week'), a rotating value: "
         "pass `ttl_seconds` AND `on_expire` (tombstone | demote | anonymize) "
@@ -528,7 +528,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "'deploys freeze on Fridays', 'the prod DB is read-only').\n"
         "WHEN NOT: An ordinary fact, preference or state is memory.set, the "
         "default for almost every save; a fact that must not change or be "
-        "deleted at all is memory.lock.\n"
+        "deleted at all is memory.lock; a topic never to be saved is "
+        "blacklist.add.\n"
         "ARGS: memory_key, value; optional tags, ttl_seconds, on_expire. "
         "Server fills identity."
     ),

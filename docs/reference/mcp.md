@@ -156,8 +156,8 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   tool (`loom_memory_update`), and an op it does not carry keeps its op name,
   the one `loom_op` takes, with "(via loom_op)" after its first mention when
   `loom_op` routes it on that connection (not a hidden op, a write on
-  `readonly`, or any op on `assistant`). Field descriptions are rendered the
-  same way.
+  `readonly`, or any op on `assistant`). Input field descriptions are rendered
+  the same way; `loom_op`'s own text, which is about op names, is not.
 - **Input schema.** The op's Pydantic input model without the fields the
   server fills itself (`org`, `agent`, `user_id`, `session_id`, `consumer`),
   the dashboard-only fields (`_HIDDEN_OP_PROPS` in

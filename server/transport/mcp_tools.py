@@ -103,8 +103,7 @@ def name_ops_for_listing(text: str, listed: set[str], toolset: str) -> str:
 
 
 def _name_ops_in_fields(schema: Any, listed: set[str], toolset: str) -> Any:
-    """A copy of ``schema`` with every field description rendered for the
-    listing (schemas may be cached, so the walk never edits them in place)."""
+    """A copy of ``schema`` with every field description rendered for the listing."""
     if isinstance(schema, dict):
         return {
             key: name_ops_for_listing(value, listed, toolset)
@@ -464,9 +463,11 @@ async def _tools_descriptor(
     """Build the MCP tools/list response.
 
     Description is `_TOOL_DESCRIPTIONS[op.name]` if present, else a metadata
-    fallback. The caller's default-workspace context is delivered once via
-    the `initialize` `instructions` field, not duplicated per tool; descriptors
-    are caller-independent. ``toolset`` is the per-request ``?toolset=`` override.
+    fallback, with the ops it names rendered for this listing
+    (`name_ops_for_listing`, input field descriptions too). The caller's
+    default-workspace context is delivered once via the `initialize`
+    `instructions` field, not duplicated per tool; descriptors are
+    caller-independent. ``toolset`` is the per-request ``?toolset=`` override.
     """
     from server.settings import settings
 

@@ -39,9 +39,9 @@ DESCRIPTOR: dict[str, Any] = {
     "name": LOOM_OP_TOOL_NAME,
     "description": (
         "Run any Loom op by its dotted name: the way to an op this list does "
-        "not show as a tool (on the default list: memory.clear, erasure.request, "
-        "memory.related, memory.evidence, memory.digests); a description's "
-        '"(via loom_op)" means this tool. '
+        "not show as a tool, such as clearing an agent's memories, an erasure "
+        "request, related memories, or the evidence and digests behind them; "
+        'a description\'s "(via loom_op)" means this tool. '
         "Prefer a listed tool when one fits.\n"
         f'FIND: {{"op": "help", "query": "<words>"}} lists up to {_CATALOG_LIMIT} matching ops, '
         "each with its required and optional arguments and a one-line purpose; "
