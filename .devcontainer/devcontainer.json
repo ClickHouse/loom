@@ -1,0 +1,20 @@
+{
+  // A try-out of Loom in GitHub Codespaces: the released stack, started by the
+  // released installer, with Claude Code connected to it. Port 7777 is
+  // forwarded privately, to the signed-in GitHub user only.
+  "name": "Loom try-out",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+  },
+  // ClickHouse, the server and the document extractor, with about 3 GB of images.
+  "hostRequirements": { "cpus": 4, "memory": "16gb", "storage": "32gb" },
+  "forwardPorts": [7777],
+  "portsAttributes": {
+    "7777": { "label": "Loom dashboard", "onAutoForward": "openBrowser", "visibility": "private" }
+  },
+  "postCreateCommand": "sh .devcontainer/start-loom.sh",
+  // A stopped codespace keeps its volumes; this starts the stack again.
+  "postStartCommand": "docker compose --project-directory \"$HOME/.loom\" --profile bundled up -d"
+}

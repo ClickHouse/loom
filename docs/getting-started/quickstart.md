@@ -110,6 +110,21 @@ docker compose --project-directory "$HOME/.loom" down
 
 Add `--volumes` only for an intentional, irreversible reset.
 
+### Try it in GitHub Codespaces
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ClickHouse/loom?quickstart=1)
+
+The repository's dev container runs the latest release in a codespace, with nothing on
+your machine: it installs Loom with the installer above, starts it, and connects Claude
+Code to it. The first start downloads about 3 GB of images and takes a few minutes. Open
+the dashboard from the **Ports** tab (port 7777). In the codespace's terminal, run
+`claude`, sign in, and say "Remember that I deploy only on Tuesdays"; in a new `claude`
+session, ask "When do I deploy?".
+
+Port 7777 is forwarded privately: only your GitHub account reaches it. The try-out runs
+single-user, with no sign-in, so do not make the port public. An agent on your own machine
+cannot reach a private forwarded port; install Loom locally for that.
+
 ### Start in multi-user mode
 
 For a fresh released-image installation with accounts and sign-in from the first boot,
