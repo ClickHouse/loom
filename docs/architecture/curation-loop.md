@@ -57,8 +57,12 @@ governance until an admin promotes the source again; a copy that keeps the text 
 entity pass, a touch) keeps it. `memory.demote` ends governance. Only `memory.promote`
 promotes into `loom.shared` (the op and `learnings.review`'s path through it; demote and
 erasure only retire rows there); no worker promotes on its own. An admin read lists the
-namespace's shared definitions with the read-time check's verdict on each, so a definition
-whose governance lapsed is seen and promoted again.
+namespace's shared definitions with the read-time check's verdict on each and the reason a
+lapsed one lapsed (its text changed, it is `high`, gone, expired, or no longer `active`).
+A changed text is promoted again; a source that is no longer `active` is first restored
+(Undo in `memory.auto_retirements`, whose reasons include `same_key_newest_wins` for a
+later write of the same key under `newest_wins`) or cleared (`conflicts.resolve` for a
+`conflicted` or `duplicate` mark), then promoted again.
 
 The shared layer needs seven changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
@@ -222,8 +226,9 @@ per query text with its sessions, not its people, and only for memory searches.
 ### Grouping
 
 The `knowledge_gaps` worker runs once a day for each namespace with misses or a live
-build. It re-reads the namespace's capture consent, failing closed, and writes an empty
-build for one that now refuses capture; otherwise it reads the namespace's misses of the
+build. It re-reads the namespace's capture consent, failing closed, and for one that now
+refuses capture writes an empty build and deletes the namespace's stored misses, so a
+later consent does not count them again; otherwise it reads the namespace's misses of the
 last 7 days and groups them by normalised query. **Privacy threshold:** a group with fewer
 than `knowledge_gaps_min_askers` distinct askers (default three, never below three, one
 value for the deployment) is dropped before anything else, so every query a gap shows was
@@ -290,14 +295,14 @@ names the team that owns its definitions. Each turn:
 
 1. reads finished `SELECT` queries of the source's window, from every replica when the
    registration names the cluster (`clusterAllReplicas`, a table function: a cluster
-   registration accepts the `REMOTE` and `CREATE TEMPORARY TABLE` grants it needs beside
-   the tracker's read-only list, and the read runs under `readonly = 2`, as the tracker's
-   `remoteSecure` reads do) and from the node it connects to otherwise, grouped by
-   `normalized_query_hash`, counting initial queries only (`is_initial_query = 1`) by
-   `initial_user`, ranked by distinct users and then by recency, and drops a group that
-   fewer than `knowledge_gaps_min_askers` distinct users ran. Only the normalised text is
-   read (`normalizeQuery`, which replaces literals), so no user's literal values reach the
-   LLM or the draft;
+   registration accepts the `REMOTE` grant it needs beside the tracker's read-only list
+   (which already allows `CREATE TEMPORARY TABLE`), and the read runs under `readonly =
+2`, as the tracker's `remoteSecure` reads do) and from the node it connects to
+   otherwise, grouped by `normalized_query_hash`, counting initial queries only
+   (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and then by
+   recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
+   ran. Only the normalised text is read (`normalizeQuery`, which replaces literals), so
+   no user's literal values reach the LLM or the draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition for at most a setting's number of groups, and
    queues each (`source_kind = 'query_history'`): the metric's name is the `term`, its
@@ -336,7 +341,9 @@ row, which the admin restores from the row's history or promotes.
   shared layer's namespace erasure and redact added above: tombstone, demote, redact,
   namespace erasure, history, audit. A user erasure tombstones a shared row whose
   provenance names the user (`shared.tombstone`); a definition promoted from the
-  namespace-wide row names none, so erasing the admin who promoted it leaves it governed.
+  namespace-wide row names none, so erasing the admin who promoted it leaves it governed,
+  and an admin's name in its `owner`, like `promoted_by` on the shared row today, stays
+  until an admin edits the definition.
 - A redact of a definition reaches its memory and shared rows and every `knowledge_gap`
   and `query_history` candidate drafted for its key (the change above), not the gap it
   came from, which holds only normalised queries enough askers asked and expires after 7
@@ -396,10 +403,12 @@ tell; once no N-1 replica serves, an admin promotes again the definitions promot
 the rollout (`loom.shared` rows of type `definition` by promotion time). N-1, which does
 not know `definition` as key-identified, can merge, supersede or retire one definition's
 source while writing another; the rows it retired are listed by `memory.auto_retirements`
-(reasons `conflict_resolver`, `newest_wins_contradiction` and `value_update`), restored
-with its Undo, and promoted again; a write it merged was never stored and is written
-again. N-1's redact and namespace erasure do not reach the shared row's text, as today:
-one run during the rollout or after a rollback is run again once N serves.
+(reasons `conflict_resolver`, `newest_wins_contradiction`, `value_update` and
+`same_key_newest_wins`), restored with its Undo, and promoted again; a source it marked
+`conflicted` or `duplicate` is cleared with `conflicts.resolve` and promoted again; a
+write it merged was never stored and is written again. N-1's redact and namespace erasure
+do not reach the shared row's text, as today: one run during the rollout or after a
+rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
