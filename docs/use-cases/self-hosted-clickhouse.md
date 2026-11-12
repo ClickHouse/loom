@@ -23,6 +23,13 @@ receive what they process), and what your agents know is queryable with SQL.
   the embedding provider accepts an OpenAI-compatible endpoint you run.
   [Models and API keys](../getting-started/models-and-keys.md)
 
+## Measured
+
+A synthetic load of memories with 2.4 versions per key took about 13.2 KB per key in
+ClickHouse, almost all of it the embedding row; the runs used local containers on a shared
+host, so compare rows of one setup rather than read them as capacity figures.
+[Memory at scale](../benchmarks/results.md#memory-at-scale)
+
 ## Start
 
 [Quickstart](../getting-started/quickstart.md) · [Prerequisites](../getting-started/overview.md#prerequisites) ·
