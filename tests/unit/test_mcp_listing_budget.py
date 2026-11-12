@@ -137,7 +137,7 @@ def test_input_schema_keeps_every_argument_and_field_description():
 
 # ---------------------------------------------------------------- reference lint
 
-_OP_REF = re.compile(r"\b[a-z_]+(?:\.[a-z_]+){1,2}\b")
+_OP_REF = re.compile(rf"\b{mt.OP_MENTION}\b")
 _TOOL_REF = re.compile(r"\bloom_[a-z_]+\b")
 
 
@@ -254,14 +254,28 @@ def test_naming_marks_only_what_loom_op_routes():
     )
     # a dotted name that is no op, such as a response field path, stays
     assert mt.name_ops_for_listing("`memory.next_page`", listed, "core") == "`memory.next_page`"
-    # field descriptions render the same way, in a copy
-    schema = {"properties": {"k": {"description": "read it with memory.set", "default": "x"}}}
-    rendered = mt._name_ops_in_fields(schema, listed, "core")
-    assert rendered["properties"]["k"] == {
-        "description": "read it with loom_memory_set",
-        "default": "x",
-    }
-    assert schema["properties"]["k"]["description"] == "read it with memory.set"
+
+
+def test_a_listing_build_leaves_the_source_texts_as_written():
+    """Rendering works on copies: a second build matches the first, and the
+    source texts keep op names and carry no hand-written marker."""
+    assert _listing("core", True) == _listing("core", True)
+    assert "memory.update" in TOOL_DESCRIPTIONS["memory.set"]
+    for texts in (TOOL_DESCRIPTIONS, ATOMIC_TOOL_DESCRIPTIONS):
+        for name, text in texts.items():
+            assert "(via loom_op)" not in text, f"{name}: the listing adds the marker"
+
+
+@pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
+def test_listed_tool_names_is_what_the_listing_shows(toolset: str, code: bool):
+    """A refusal names ops by listed_tool_names; it must be the listing's own set."""
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(settings, "mcp_toolset", toolset)
+    monkey.setattr(settings, "mcp_code_tools", code)
+    try:
+        assert mt.listed_tool_names(None) == {t["name"] for t in _listing(toolset, code)}
+    finally:
+        monkey.undo()
 
 
 def test_the_compact_profile_keeps_the_tool_names():

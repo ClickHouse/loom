@@ -79,8 +79,12 @@ def _is_read(op: Any) -> bool:
 
 def routes_writes(toolset: str | None) -> bool:
     """Whether `loom_op` on this connection's ``?toolset=`` routes a write op
-    (a read-only connection routes read ops only)."""
-    return str(toolset or "").lower() != "readonly"
+    (a read-only connection routes read ops only). Resolved as the listing is,
+    so a deployment whose default is `readonly` routes reads only too."""
+    from server.settings import settings
+    from server.transport.mcp_tools import resolve_toolset
+
+    return resolve_toolset(toolset, settings.mcp_toolset) != "readonly"
 
 
 def reachable(op: Any, toolset: str | None) -> bool:
@@ -103,12 +107,11 @@ def description(listed: Set[str], toolset: str | None) -> str:
     """`loom_op`'s text for a listing whose tool names are ``listed``."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
-    shown = [
-        f"{what} ({name})"
-        for name, what in _EXAMPLES
-        if OPERATIONS_BY_NAME[name].mcp_tool_name not in listed
-        and reachable(OPERATIONS_BY_NAME[name], toolset)
-    ]
+    shown = []
+    for name, what in _EXAMPLES:
+        op = OPERATIONS_BY_NAME[name]
+        if op.mcp_tool_name not in listed and reachable(op, toolset):
+            shown.append(f"{what} ({name})")
     such_as = f", such as {', '.join(shown)}" if shown else ""
     reads = "" if routes_writes(toolset) else " On this read-only connection it runs reads only."
     return (
@@ -170,8 +173,8 @@ def catalog(
 # "no op reachable" plus look-alikes and guess: a help call, a grep of the
 # source, a wrong argument name.
 _INSTEAD: dict[str, str] = {
-    "memory.bulk_set": ("call memory.set once per fact; a batch saves no round trip here"),
-    "memory.bulk_get": ("call memory.get per key, or memory.list with a key prefix"),
+    "memory.bulk_set": "call memory.set once per fact; a batch saves no round trip here",
+    "memory.bulk_get": "call memory.get per key, or memory.list with a key prefix",
     "memory.keys": "call memory.list, which pages the namespace",
     "memory.delete_version": "call memory.delete",
     # An owner-only op names the person, never a route: naming the SDK/HTTP
@@ -185,12 +188,12 @@ _INSTEAD: dict[str, str] = {
     "conversation.search": "call loom_search",
     "namespace.list": "call namespace.list_mine",
     "run.list": "call run.get with a run id",
-    "code.context_packs": ("call code.context_pack with the pr_number you want"),
+    "code.context_packs": "call code.context_pack with the pr_number you want",
     "memory.extraction_status": (
         "call memory.extraction_status_mine with the queue_id "
         "each deferred memory.set_from_messages returned"
     ),
-    "erasure.status": ("call erasure.list; each saga row carries its status"),
+    "erasure.status": "call erasure.list; each saga row carries its status",
     "memory.search_trace": (
         "call loom_search with explain=true; each memory hit carries its ranking terms"
     ),

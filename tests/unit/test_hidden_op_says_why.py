@@ -26,6 +26,40 @@ def test_bulk_set_names_memory_set_instead() -> None:
     assert "loom_memory_set once per fact" in body["instead"] and "did_you_mean" not in body
 
 
+def test_a_refusal_names_ops_as_the_callers_listing_does() -> None:
+    instead = {ts: mcp_op.hidden_refusal("memory.bulk_get", ts)["instead"] for ts in _TS}
+    assert instead["core"] == (
+        "call loom_memory_get per key, or memory.list (via loom_op) with a key prefix"
+    )
+    assert instead["coding"].startswith("call loom_memory_get per key")
+    # readonly lists both reads
+    assert (
+        instead["readonly"] == "call loom_memory_get per key, or loom_memory_list with a key prefix"
+    )
+    # a write loom_op cannot route on readonly is left as written, unmarked
+    assert mcp_op.hidden_refusal("memory.bulk_set", "readonly")["instead"].startswith(
+        "call memory.set once per fact"
+    )
+
+
+_TS = ("core", "coding", "readonly")
+
+
+def test_a_readonly_deployment_default_routes_reads_only(monkeypatch) -> None:
+    """With no ?toolset=, the deployment's readonly default governs loom_op as it
+    governs the listing: a write is refused and the text says reads only."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "mcp_toolset", "readonly")
+    assert not mcp_op.routes_writes(None)
+    assert "reads only" in mcp_op.description(set(), None)
+    body = _call("memory.set", {"memory_key": "k", "value": "v"})["structuredContent"]
+    assert body["code"] == "UNKNOWN_OP" and "read-only" in body["error"]
+    assert mcp_op.hidden_refusal("memory.bulk_set", None)["instead"].startswith(
+        "call memory.set once"
+    )
+
+
 def test_unlock_says_only_the_owner_unlocks() -> None:
     body = _call("memory.unlock")["structuredContent"]
     assert body["code"] == "OP_NOT_ON_MCP" and "only the user" in body["instead"]

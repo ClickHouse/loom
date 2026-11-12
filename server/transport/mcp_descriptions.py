@@ -51,8 +51,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "**Don't search before saving.** A stated fact is a write, not a "
         "recall; the server dedups. "
         + revision_policy("memory.update")
-        + "\n\n"
-        + "**Other writes:** memory.pin guards a fact from later conflicting "
+        + "\n\n**Other writes:** memory.pin guards a fact from later conflicting "
         "writes, memory.lock from change or deletion; memory.apply changes many.\n\n"
         "**Auto-tag from scope words**: 'for billing, X is Y' → "
         "`tags=['billing']`; same for person / topic mentions.\n\n"
@@ -523,7 +522,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN NOT: An ordinary fact, preference or state is memory.set, the "
         "default for almost every save; a fact that must not change or be "
         "deleted at all is memory.lock; a topic never to be saved is "
-        "blacklist.add.\n"
+        "blacklist.add (refused to a token bounded to one user).\n"
         "ARGS: memory_key, value; optional tags, ttl_seconds, on_expire. "
         "Server fills identity."
     ),
@@ -1381,11 +1380,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "prefix), or a path prefix — from the file table, no content read. "
         "Returns path, lang, size, lines and the indexed commit, exact stem "
         "matches first; `total` before `limit`. Use it for 'does test NNNNN "
-        "exist, and where' (loom_code_grep matches content, not paths) and "
-        "to list a directory; loom_code_test_home gives the next FREE test "
+        "exist, and where' (code.grep matches content, not paths) and "
+        "to list a directory; code.test_home gives the next FREE test "
         "number. A stateless test row carries `reference` — the path of its "
         "indexed expected-output file, or null; the .reference files are "
-        "listed as rows of their own (lang `reference`), and loom_code_outline "
+        "listed as rows of their own (lang `reference`), and code.outline "
         "on one returns its head."
     ),
     "code.conventions": (
@@ -1411,11 +1410,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "merged PR). Use when grep has no name to look for or misses: "
         "CONCEPTUAL lookups — 'quota enforcement', 'backpressure handling'; "
         "a name you already know is cheaper to grep. For a full QUESTION you "
-        "want ANSWERED, prefer loom_code_ask (grounded answer with citations, "
+        "want ANSWERED, prefer code.ask (grounded answer with citations, "
         "often served instantly from the shared cache). Results: ranked "
         "file:line pointers with descriptions, bodies where the budget allows. "
         "Arbitration: for a DEFINITION or 'what calls X', "
-        "prefer loom_code_symbol / loom_code_callers (exact, "
+        "prefer code.symbol / code.callers (exact, "
         "compiler-grade). For exact strings, error messages verbatim, or "
         "anything in your UNCOMMITTED working tree, use grep — this index "
         "only knows merged code. When the response says abstain: true, "
@@ -1435,7 +1434,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "~0.2s; it goes stale when a cited or read file changes at merge. "
         "`cache` says hit/miss/stale/guarded/negative. Use INSTEAD of "
         "exploring for architectural questions about MERGED code; use "
-        "loom_code_search for raw code units, grep for your uncommitted "
+        "code.search for raw code units, grep for your uncommitted "
         "tree. If it abstains, trust it and grep."
     ),
     "code.symbol": (
@@ -1450,7 +1449,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "carry `uses`: count, files and the top call sites (path, line, "
         "caller, tier, confidence) from the call graph — ask for it instead "
         "of grepping the short name; `skipped: 'hub'` means too many "
-        "callers, use loom_code_callers. `uses: true` adds instead the full "
+        "callers, use code.callers. `uses: true` adds instead the full "
         "list of lines that mention the name with their enclosing scope (the "
         "definition excluded, `uses_limit` caps it). "
         "When SEVERAL definitions match, pass `near_paths: [...]` (the files "
@@ -1494,7 +1493,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "lines gone and no backport recorded make `not_affected` exact (the "
         "branch already holds the fixed state); `presence.patch` carries the "
         "mode (exact | symbol_only) and the counts. Use INSTEAD of probing "
-        "each branch with loom_code_symbol and searching GitHub for "
+        "each branch with code.symbol and searching GitHub for "
         "'Backport #N'."
         " `history: true` (implies `exact`) reads the branch's own tree and "
         "history in the mirror for the rows the lines leave undecided: every "
@@ -1529,7 +1528,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "classes, structs, fixtures) in source order with its line span and "
         "signature, from the index — no file read. Use INSTEAD of reading a "
         "whole file to orient: pick the span you need, then Read it with "
-        "offset/limit or call loom_code_symbol on the name. Whole-row "
+        "offset/limit or call code.symbol on the name. Whole-row "
         "budgeted (default ~1.5K tokens); `next` names the first elided "
         "entry. `indexed: false` means read the file."
     ),
@@ -1628,8 +1627,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "searching CI artifacts by hand for a binary that contains a merge."
     ),
     "code.callees": (
-        "What does this symbol call — forward call edges (depth<=3), "
-        "tier-marked like loom_code_callers."
+        "What does this symbol call — forward call edges (depth<=3), tier-marked like code.callers."
     ),
     "code.impact": (
         "Blast radius of changing a symbol: reverse edges (depth<=2), the "
@@ -2310,19 +2308,19 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
         "Fetch one memory by exact `memory_key`: its value, version, content_sha256, "
         "identity (agent, user_id, session_id), provenance and verification. Use it to "
         "read the row a finding or a search hit names before citing it. On `found: false` "
-        "the key may be spelled differently: loom_memory_list with a `prefix` finds it."
+        "the key may be spelled differently: memory.list with a `prefix` finds it."
     ),
     "memory.list": (
         "Enumerate memory keys and types in the namespace, newest first (no content). "
         "Use for inventory: `prefix` narrows to a key family, `memory_type` and `tags` to a "
         "facet. A listing is bounded by `limit`; say so when it is cut. For content use "
-        "loom_memory_get on a key or loom_memory_search by meaning."
+        "memory.get on a key or memory.search by meaning."
     ),
     "memory.search": (
         "Search the namespace's memories by meaning and keywords. Each hit carries its "
         "`memory_key`, `version`, identity and dates: cite the key and version. Hits are "
         "ranked candidates, not verified answers; for an answer synthesized from them with "
-        "citations use loom_memory_ask, and for documents loom_knowledge_search. An empty "
+        "citations use memory.ask, and for documents knowledge.search. An empty "
         "result means nothing matched in this namespace, not that the fact is false. Do not "
         "pass `memory_type` unless the question names one."
     ),
@@ -2346,11 +2344,11 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
         "an ingested file, a `locator` (its lines, key path, pages or rows): cite the source_uri, "
         "section and revision (a revision of 0 was not recorded: cite none). A hit is the "
         "nearest passage, not an answer: when no hit states the fact, say it is not in the "
-        "documents. Memories are searched with loom_memory_search."
+        "documents. Memories are searched with memory.search."
     ),
     "knowledge.list": (
         "Enumerate the namespace's documents (source_uri and title), for an inventory. "
-        "For content search them with loom_knowledge_search."
+        "For content search them with knowledge.search."
     ),
     "knowledge.get": (
         "Fetch one document by `source_uri` (latest version; `include_superseded=true` "
@@ -2360,7 +2358,7 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "code.search": (
         "Search the shared code index of a repository by concept ('quota enforcement'). "
         "Results are file:line pointers with descriptions; cite the path and line. For a "
-        "definition by name use loom_code_symbol. When the response says `abstain: true`, "
+        "definition by name use code.symbol. When the response says `abstain: true`, "
         "report that the index found nothing rather than guessing."
     ),
     "code.symbol": (

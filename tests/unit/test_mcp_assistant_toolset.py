@@ -480,12 +480,18 @@ def _model_fields(model: Any, out: set[str], seen: set[Any]) -> set[str]:
 
 def test_every_field_an_assistant_description_names_is_served() -> None:
     from server.transport.mcp_descriptions import ASSISTANT_TOOL_DESCRIPTIONS
-    from server.transport.mcp_tools import TOOLS_BY_NAME
+    from server.transport.mcp_tools import OP_MENTION, TOOLS_BY_NAME
 
     for name, text in ASSISTANT_TOOL_DESCRIPTIONS.items():
-        # The op's own fields, and those of a tool the text sends the model to.
+        # The op's own fields, and those of an op the text sends the model to,
+        # named by op name or tool name.
         ops = [OPERATIONS_BY_NAME[name]]
         ops += [TOOLS_BY_NAME[t] for t in re.findall(r"loom_[a-z_]+", text) if t in TOOLS_BY_NAME]
+        ops += [
+            OPERATIONS_BY_NAME[o]
+            for o in re.findall(rf"\b{OP_MENTION}\b", text)
+            if o in OPERATIONS_BY_NAME
+        ]
         served: set[str] = set()
         for op in ops:
             _model_fields(op.input_model, served, set())

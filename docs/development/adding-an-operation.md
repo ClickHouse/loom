@@ -132,7 +132,7 @@ The op is **read-only** (MCP `readOnlyHint`, the `readonly` toolset) exactly whe
 - **`_MCP_HIDDEN_OPS`**: not reachable over MCP. `tests/unit/test_hidden_op_says_why.py` requires a refusal that names what to call instead.
 
 A listed op needs its description in `server/transport/mcp_descriptions.py`
-(`TOOL_DESCRIPTIONS`). Write it for the model: when to call the tool, what it returns, what not to use it for. A description about a changed fact interpolates `revision_policy()` from the same module instead of stating its own. See the [MCP reference](../reference/mcp.md).
+(`TOOL_DESCRIPTIONS`). Write it for the model: when to call the tool, what it returns, what not to use it for. A description about a changed fact interpolates `revision_policy()` from the same module instead of stating its own. Name another op by its dotted op name and never write "(via loom_op)": each listing renames a listed op to its tool and marks an unlisted one ([MCP reference](../reference/mcp.md#tool-list)).
 
 ## 5. Check reach and maturity
 

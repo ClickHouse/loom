@@ -73,9 +73,11 @@ log = logging.getLogger(__name__)
 # Tool name → op: how a `tools/call` resolves its op, and its refusal rows name it.
 TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 
+# A dotted op name as prose spells it (`memory.set`, `knowledge.source.add`).
+OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
 # An op named in prose: its tool name or its dotted op name, and a closing
 # backtick, which the "(via loom_op)" marker goes after.
-_NAMED_OP = re.compile(r"\b(loom_[a-z_]+|[a-z_]+(?:\.[a-z_]+){1,2})\b(`?)")
+_NAMED_OP = re.compile(rf"\b(loom_[a-z_]+|{OP_MENTION})\b(`?)")
 
 
 def name_ops_for_listing(text: str, listed: Set[str], toolset: str | None) -> str:
