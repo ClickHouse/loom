@@ -214,7 +214,7 @@ def test_a_code_or_tracker_op_keeps_its_plane_org(seen: Seen) -> None:
     for name in ("tracker.item", "code.search"):
         args = {"number": 1, "query": "q"}
         filled = asyncio.run(with_single_user_identity(OPERATIONS_BY_NAME[name], args, None))
-        assert filled is args
+        assert filled == args
 
 
 @pytest.mark.parametrize("value", [0, False, [], {}])
@@ -259,3 +259,14 @@ def test_a_listed_op_with_an_optional_agent_gets_the_installs_namespace(
 ) -> None:
     _post(op, body)
     assert len(seen) == 1 and seen[0][1:3] == ("dev", "local")
+
+
+@pytest.mark.parametrize("scope", [{"user_id": "alice"}, {"session_id": "s1"}])
+@pytest.mark.parametrize("op", ["memory.list", "memory.history"])
+def test_a_cross_agent_read_naming_a_user_or_session_names_its_agent(
+    seen: Seen, op: str, scope: dict[str, str]
+) -> None:
+    """Agent `*` reads every user's and session's rows too: a call that names one
+    is not widened past it, and still has to name its agent."""
+    assert "agent" in _missing(_post(op, {"memory_key": "k", **scope}))
+    assert seen == []

@@ -331,9 +331,9 @@ operator access and [TLS](../operations/deployment.md#proxy-and-tls).
 ## 3. Get a token
 
 In single-user mode a token is optional. Minting one anyway keeps your scripts working
-when auth is turned on, as long as they name their `org`, `namespace` and `agent`: a call
-that sends a token, as the SDK does when it finds one in `LOOM_API_KEY` or `~/.loom/token`,
-gets none of them filled in.
+when auth is turned on, as long as they name their `namespace` and `agent`: a call that
+sends a token, as the SDK does when it finds one in `LOOM_API_KEY` or `~/.loom/token`,
+gets neither filled in (a blank `org` is the token's own).
 
 - **Dashboard:** **Settings → Tokens → New token**. By default the token reads every
   namespace and repository you belong to (a restricted repository only when you add it),

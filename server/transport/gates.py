@@ -211,7 +211,11 @@ async def with_single_user_identity(
     fill = {"org": org}
     if op.name in SINGLE_USER_FILLED_OPS:
         fill["namespace"] = await default_namespace(None, org)
-        fill["agent"] = SINGLE_USER_FILLED_OPS[op.name]
+        agent = SINGLE_USER_FILLED_OPS[op.name]
+        # "*" reads every agent, and in a history every user and session too: a call
+        # that names a user or session reads only theirs, so it names its agent.
+        if agent != "*" or not (present(args.get("user_id")) or present(args.get("session_id"))):
+            fill["agent"] = agent
     fields = op.input_model.model_fields
     update = {
         name: value
