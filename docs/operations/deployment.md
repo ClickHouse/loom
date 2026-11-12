@@ -879,10 +879,11 @@ LOOM_DEFAULT_NAMESPACE=local   # optional
 
 A call that names none resolves to `LOOM_DEFAULT_NAMESPACE` in org `LOOM_SELF_SIGNUP_ORG`
 (default `dev`): on MCP for every op but `code.*`; over HTTP the org on every op but
-`code.*` and `tracker.*`, and the namespace on the everyday memory and search ops
-([which ops](../reference/http-api.md#request)). The server provisions it at boot as a real namespace with an admin grant, so it
-stays administrable if auth is turned on later. Changing the setting leaves the previous
-namespace's memories in place but out of view (the boot log names them).
+`code.*` and `tracker.*`, and the namespace on the everyday memory and search ops ([which
+ops](../reference/http-api.md#request)). The server provisions it at boot as a real
+namespace with an admin grant, so it stays administrable if auth is turned on later.
+Changing the setting leaves the previous namespace's memories in place but out of view
+(the boot log names them).
 
 > **Warning.** Never expose `single-user` mode to a network. Anyone who can reach the
 > port is the admin of its namespace.

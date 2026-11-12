@@ -87,7 +87,7 @@ def test_a_list_or_a_key_history_reads_every_agent(
     seen: Seen, op: str, body: dict[str, Any]
 ) -> None:
     """Their agent is required, and filled with `*`, which their stores read as every
-    agent: what another agent wrote is found."""
+    agent; the input carries `*`."""
     _post(op, body)
     assert len(seen) == 1 and seen[0][1:] == ("dev", "local", "*")
 
@@ -275,3 +275,11 @@ def test_a_list_naming_a_user_reads_every_agent_of_that_user(seen: Seen) -> None
     """A list keeps its user and session filters under agent `*`."""
     _post("memory.list", {"user_id": "alice"})
     assert len(seen) == 1 and seen[0][1:] == ("dev", "local", "*")
+
+
+@pytest.mark.parametrize("blank", ["", "-"])
+def test_a_blank_namespace_on_another_op_is_a_missing_one(seen: Seen, blank: str) -> None:
+    """What the TypeScript SDK sends for an Agent built with no namespace."""
+    body = {"namespace": blank, "agent": "a", "content": "c"}
+    assert "namespace" in _missing(_post("working_memory.set", body))
+    assert seen == []

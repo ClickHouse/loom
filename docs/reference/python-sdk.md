@@ -95,9 +95,10 @@ Agent(org="", namespace="", agent=None, *, base_url=None, api_key=None, timeout_
 
 ### Identity defaults
 
-`org` and `namespace` may be left empty for a single-user server and a call with no token:
-the server fills them in, `org` on every op but `code.*` and `tracker.*` (which keep their
-plane's), `namespace` on the everyday memory and search ops ([which
+`org` may be left empty: a call with a token runs in the token's org, and a single-user
+server fills the install's for a call with no token, on every op but `code.*` and
+`tracker.*` (which keep their plane's). `namespace` may be left empty only for a
+single-user server and a call with no token, on the everyday memory and search ops ([which
 ops](http-api.md#request)). An empty `namespace` is left out of the body, so any other
 server, or any other op that requires one, answers `VALIDATION_FAILED` naming it rather
 than reading `""` as a namespace. The SDK sends any credential it finds

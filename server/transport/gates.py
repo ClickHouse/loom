@@ -223,6 +223,18 @@ async def with_single_user_identity(
         for name, value in fill.items()
         if value and name in fields and _absent(args.get(name))
     }
+    namespace = fields.get("namespace")
+    if (
+        "namespace" not in fill
+        and namespace is not None
+        and namespace.is_required()
+        and isinstance(args.get("namespace"), str)
+        and _absent(args["namespace"])
+    ):
+        # A blank namespace on any other op is a missing one, named by validation,
+        # never the empty namespace.
+        rest = {k: v for k, v in args.items() if k != "namespace"}
+        return {**rest, **update}
     return {**args, **update} if update else args
 
 
