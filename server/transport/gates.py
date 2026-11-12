@@ -179,7 +179,6 @@ SINGLE_USER_DEFAULT_AGENT: Final[dict[str, str]] = {
     "memory.delete": "http",
     "memory.list": "*",
     "memory.history": "*",
-    "memory.related": "*",
     "memory.search": "",
     "memory.search_trace": "",
     "memory.ask": "",
