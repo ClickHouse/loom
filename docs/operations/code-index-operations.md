@@ -532,9 +532,9 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   refused, including when reached through a redirect or a `.gitmodules` URL) and
   connects to the address it vetted. Plain HTTP has no route. One job holds at most 32
   tunnels at a time. A client using the relay as its HTTPS proxy waits inside the sandbox
-  until one of the job's tunnels ends (at most the idle timeout). A connection over the
-  cap at the proxy, such as an ssh tunnel, is refused after 5 seconds. The proxy logs the
-  first refusal, and the total when the job ends. A tunnel idle for 5 minutes is closed;
+  until one of the job's tunnels ends. A connection over the cap at the proxy, such as an
+  ssh tunnel, is refused after 5 seconds. The proxy logs the first refusal, and the total
+  when the job ends if there was more than one. A tunnel idle for 5 minutes is closed;
   once its client has finished, it is closed after 10 seconds without a byte from the
   server (`LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S`).
 

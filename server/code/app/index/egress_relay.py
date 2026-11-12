@@ -20,7 +20,7 @@ import threading
 import time
 
 
-def _pipe(src: socket.socket, dst: socket.socket, how: int = socket.SHUT_WR) -> None:
+def _pipe(src: socket.socket, dst: socket.socket) -> None:
     try:
         while data := src.recv(65536):
             dst.sendall(data)
@@ -28,7 +28,7 @@ def _pipe(src: socket.socket, dst: socket.socket, how: int = socket.SHUT_WR) -> 
         pass
     finally:
         try:
-            dst.shutdown(how)
+            dst.shutdown(socket.SHUT_WR)
         except OSError:
             pass
 
@@ -37,11 +37,7 @@ def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
             upstream.connect(path)
-            # Once the proxy's side ends, the client's ends too: a CONNECT client
-            # has nothing left to send, and one that keeps its socket open would
-            # hold the slot.
-            args = (upstream, conn, socket.SHUT_RDWR)
-            back = threading.Thread(target=_pipe, args=args, daemon=True)
+            back = threading.Thread(target=_pipe, args=(upstream, conn), daemon=True)
             back.start()
             _pipe(conn, upstream)
             back.join()
@@ -61,14 +57,14 @@ def accept_loop(listener: socket.socket, path: str, slots: threading.Semaphore) 
             conn, _ = listener.accept()
         except OSError:  # ENFILE, ECONNABORTED and the like: retried
             slots.release()
-            if listener.fileno() == -1:  # closed: only the tests stop the relay so
+            if listener.fileno() == -1:  # the listener was closed: how the tests stop it
                 return
             time.sleep(0.1)
             continue
-        bridge = threading.Thread(target=_bridge, args=(conn, path, slots), daemon=True)
         while True:
+            # a new Thread each try: one whose start failed cannot be started again
             try:
-                bridge.start()
+                threading.Thread(target=_bridge, args=(conn, path, slots), daemon=True).start()
                 break
             except RuntimeError:  # the job is at its task limit: wait, as the backlog does
                 time.sleep(0.1)

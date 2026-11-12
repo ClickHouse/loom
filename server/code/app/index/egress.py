@@ -156,9 +156,9 @@ class EgressProxy:
             await _splice(reader, up_writer, last_active)
             await _until_server_quiet(server_side, last_active)
         finally:
+            up_writer.close()
             server_side.cancel()
             await asyncio.gather(server_side, return_exceptions=True)
-            up_writer.close()
 
     async def close(self) -> None:
         if self._refused > 1:

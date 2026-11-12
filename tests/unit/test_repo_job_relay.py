@@ -1,8 +1,8 @@
 """The relay inside a repository-job sandbox bridges at most a fixed number of
-connections at a time, and a thread it cannot start, a socket it cannot open or a
-failed accept costs at most one connection, never the relay: a client opening hundreds at once (pnpm's
-metadata check) would otherwise reach the job's task limit and leave the job
-with no route out."""
+connections at a time. A thread it cannot start, a socket it cannot open or a
+failed accept costs at most one connection, never the relay: a client opening
+hundreds at once (pnpm's metadata check) would otherwise reach the job's task
+limit and leave the job with no route out."""
 
 from __future__ import annotations
 
@@ -111,14 +111,20 @@ def test_connections_past_the_cap_wait_until_a_bridge_ends(upstream: _Upstream) 
 
 
 def _thread_failing_on(start: int) -> types.SimpleNamespace:
-    """A stand-in for the relay's `threading` whose `start`-th thread start fails."""
+    """A stand-in for the relay's `threading` whose `start`-th thread start fails.
+    As in CPython 3.13 and later, a Thread whose start failed cannot be started again."""
     starts = 0
 
     class Thread(threading.Thread):
+        failed = False
+
         def start(self) -> None:
             nonlocal starts
+            if self.failed:
+                raise RuntimeError("threads can only be started once")
             starts += 1
             if starts == start:
+                self.failed = True
                 raise RuntimeError("can't start new thread")
             super().start()
 
@@ -136,7 +142,7 @@ def _socket_failing_once() -> types.SimpleNamespace:
             raise OSError(errno.ENFILE, "Too many open files in system")
         return socket.socket(*args)
 
-    names = ("AF_UNIX", "SOCK_STREAM", "SHUT_WR", "SHUT_RDWR")
+    names = ("AF_UNIX", "SOCK_STREAM", "SHUT_WR")
     return types.SimpleNamespace(socket=make, **{n: getattr(socket, n) for n in names})
 
 
@@ -150,35 +156,31 @@ def test_a_bridge_thread_that_cannot_start_is_retried(
         client.close()
 
 
-@pytest.mark.parametrize("failure", ["its second pipe's thread", "its upstream socket"])
-def test_a_failure_inside_a_bridge_costs_its_connection_only(
-    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch, failure: str
+def _assert_first_closed_and_slot_back(port: int, upstream: _Upstream, reached: bool) -> None:
+    first = socket.create_connection(("127.0.0.1", port), timeout=5)
+    assert first.recv(1) == b""  # closed
+    first.close()
+    if reached:  # its bridge had connected to the proxy
+        assert upstream.arrived.acquire(timeout=5)
+    second = socket.create_connection(("127.0.0.1", port))
+    assert upstream.arrived.acquire(timeout=5)  # its slot came back
+    second.close()
+
+
+def test_a_second_pipe_thread_that_cannot_start_costs_its_connection_only(
+    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    if failure == "its second pipe's thread":
-        monkeypatch.setattr(egress_relay, "threading", _thread_failing_on(2))
-    else:
-        monkeypatch.setattr(egress_relay, "socket", _socket_failing_once())
+    monkeypatch.setattr(egress_relay, "threading", _thread_failing_on(2))
     with _relay(upstream.server.getsockname(), 1) as port:
-        first = socket.create_connection(("127.0.0.1", port), timeout=5)
-        assert first.recv(1) == b""  # closed
-        first.close()
-        if failure == "its second pipe's thread":  # its bridge had reached the proxy
-            assert upstream.arrived.acquire(timeout=5)
-        second = socket.create_connection(("127.0.0.1", port))
-        assert upstream.arrived.acquire(timeout=5)  # its slot came back
-        second.close()
+        _assert_first_closed_and_slot_back(port, upstream, reached=True)
 
 
-def test_a_client_left_open_after_the_proxy_closed_frees_its_slot(upstream: _Upstream) -> None:
+def test_an_upstream_socket_that_cannot_open_costs_its_connection_only(
+    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(egress_relay, "socket", _socket_failing_once())
     with _relay(upstream.server.getsockname(), 1) as port:
-        first = socket.create_connection(("127.0.0.1", port), timeout=5)
-        assert upstream.arrived.acquire(timeout=5)
-        upstream.held[0].close()  # the proxy ends the tunnel
-        assert first.recv(1) == b""
-        second = socket.create_connection(("127.0.0.1", port))  # first is still open
-        assert upstream.arrived.acquire(timeout=5)
-        first.close()
-        second.close()
+        _assert_first_closed_and_slot_back(port, upstream, reached=False)
 
 
 def test_an_accept_that_fails_is_retried(upstream: _Upstream) -> None:
