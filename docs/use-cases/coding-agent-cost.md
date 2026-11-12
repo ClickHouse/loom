@@ -15,7 +15,8 @@ the plugin as a whole; it does not separate the code index from memory. Results 
 specific to the tested workloads. With Loom a question takes longer on the clock: the
 plugin's per-prompt search and the MCP round trips add latency. No interval is published
 for a set's total cost, and the without-Loom arm's own batches differ by more than 10% on a
-third of the questions, so the 6% multi-hop saving may sit inside run-to-run noise.
+third of the questions, so the savings on the 3-run sets (20% and 6%) may sit inside
+run-to-run noise; the 21% comes from the 10-run conceptual set.
 [With and without Loom](../benchmarks/results.md#with-and-without-loom) has every set, the
 protocol and the artifacts, and [evaluate Loom](../getting-started/evaluate.md) shows how
 to measure it on your own repository.

@@ -45,8 +45,8 @@ state. The dashboard brings memories, repositories, tasks and runs into one plac
   [Namespaces and sharing](./docs/features/namespaces-and-sharing.md)
 - **A code index of your repositories** that coding agents query for definitions,
   callers and change impact. [Code index](./docs/use-cases/code-intelligence.md)
-- **Lower model cost for coding agents**: up to 21% less across the measured Claude
-  Code sets on the ClickHouse codebase. [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
+- **Lower model cost for coding agents**: up to 21% less in the measured Claude Code
+  runs on the ClickHouse codebase (specific to those workloads). [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
 - **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
   extractor service converts. [Document search](./docs/use-cases/document-search.md)
 - **Shared context for multi-agent workflows**: shared memory, task inboxes and

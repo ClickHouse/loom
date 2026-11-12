@@ -27,3 +27,5 @@ learn and hand over.
 [Integrate Loom into an agent](../guides/agent-integration.md) covers the identity each
 agent sends and what to write; [tokens and grants](../guides/tokens-and-grants.md) gives
 each agent its own token.
+
+Ops marked experimental may change between releases: see [status](../reference/status.md).
