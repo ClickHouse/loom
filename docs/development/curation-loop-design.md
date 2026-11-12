@@ -127,7 +127,9 @@ reader:
   promotion is never signed off as the admin's.
 - **`promoted_from_candidate_id`** stays on the wire for other promotions; for a
   definition the wire op `memory.promote` ignores it and names it in `ignored_args`, and
-  the review path sets it internally, so only a review records a candidate.
+  the review path sets it internally, so only a review records a candidate, and
+  `memory.lineage` makes no match by key and time window for a `definition` promoted
+  without one, so it never names a rejected draft as a definition's origin.
 - **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
   through `memory.promote` or `learnings.review`, and so are the queue row's `decided_by`
   and the audit subject on such a review, never taken from the body's `approver`, which
@@ -307,11 +309,11 @@ page, and in `server/identity/domain/read_scope.py` the module docstring and the
 on `SCOPED_OPS`, which say every memory read of those ops carries the read scope.
 
 **Memory scope.** The leg also serves shared rows to a search with `scope = "private"`,
-the default, which today reads the per-agent layer and leaves the shared layer to `scope =
-"shared"`: a governed definition answers every search that names its term. This is a
-second exception, for governed definitions through this leg only. The implementing pull
-request updates the `scope` field's description in `server/memory/api/models_search.py`,
-the shared-layer section of [identities and
+the default, whose fact leg today reads only private rows (its key-match arm, anchor pool
+and digest descent already reach shared ones): a governed definition answers every search
+that names its term. This is a second exception, for governed definitions through this leg
+only. The implementing pull request updates the `scope` field's description in
+`server/memory/api/models_search.py`, the shared-layer section of [identities and
 namespaces](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)
 and the generated operations reference.
 
@@ -551,11 +553,14 @@ gap holds the drafted definition and the gap's id. The LLM drafts it from nothin
 gap's queries, each asked in that form by at least `knowledge_gaps_min_askers` askers; its
 words are the model's, but nothing else reached the model: that threshold is why it may be
 shown to the namespace's viewers in `learnings.list`, and why it outlives a user erasure.
-A gap's id has at most one draft: the candidate's id derives from the gap's id, and a
-second `knowledge.gaps.draft` for it answers that candidate, pending or decided, without
-an LLM call or a new queue row, so a decision is never overwritten. A gap whose most asked
-query changes between builds gets a new id, and so may get a second draft. The Library
-page shows a gaps tile for a namespace the viewer administers, with a **Draft definition**
+A gap's id has at most one draft: the candidate's id derives from the gap's id, and the
+draft claims that id before its LLM call (a claim row, as `run.begin` claims a run), so a
+second `knowledge.gaps.draft` for it, sent alongside or later, answers the claimed
+candidate, pending or decided, without an LLM call or a new queue row, and a decision is
+never overwritten. The query-history turn claims its drafts' ids the same way, so two
+copies of a pass running at once draft each group once. A gap whose most asked query
+changes between builds gets a new id, and so may get a second draft. The Library page
+shows a gaps tile for a namespace the viewer administers, with a **Draft definition**
 action per gap.
 
 ## Definitions from query history
@@ -631,7 +636,10 @@ carries on with the promotion. A promotion refused after the write (a racing edi
 racing term) undoes the review's own write, with `if_match_sha256` against the version it
 wrote, so a row a writer changed since is left to that writer, and leaves the candidate
 pending. For a revision it writes the previous head's text back, so the old definition is
-governed again with no new promotion; for a new term it tombstones the row.
+governed again with no new promotion; for a new term it tombstones the row with
+`memory.delete` and `if_match_sha256` against the version it wrote, a precondition the
+implementing pull request adds to `memory.delete` as `memory.set` has it, so a writer's
+edit made since is never deleted.
 
 Every attempt, the first and each retry, decides from the head it reads, checking these in
 order, the first that matches deciding:
@@ -764,18 +772,18 @@ does to them is caught by the read-time check: a promotion from another source, 
 edit, relabel or tombstone of the source, leaves a row the term leg does not serve, and
 the term leg's last-promoted rule covers a promotion that skipped the term check. A
 promotion on N-1 also skips the approved-hash check and takes `promoted_by` from the body,
-which no read-time check can tell, and an N-1 `memory.set` ignores `if_absent`, a field it
-does not know, and writes over a live row; the review path that sends it answers 503 while
-N-1 serves, and a direct caller relies on it only once no N-1 replica serves. Once none
-does, an admin promotes again every definition promoted before then, through N-1 or before
-this design (`loom.shared` rows of type `definition` by promotion time), since none of
-those carried the hash check or a token-stamped `promoted_by`; that promotion on N also
-moves the write mark, which N-1's promotions and demotions never move, so a stored
-`memory.ask` answer from the rollout is not reused past it (until then such an answer
-lives at most `memory_ask_precedents_fast_max_age_hours`, with no bound when it is 0).
-N-1, which does not know `definition` as key-identified, can merge, supersede or retire
-one definition's source while writing another. Once N serves, each is recovered and
-promoted again:
+which no read-time check can tell, and an N-1 `memory.set` ignores `if_absent`, and an N-1
+`memory.delete` ignores `if_match_sha256`, fields they do not know, so they write over or
+delete a live row; the review path that sends them answers 503 while N-1 serves, and a
+direct caller relies on them only once no N-1 replica serves. Once none does, an admin
+promotes again every definition promoted before then, through N-1 or before this design
+(`loom.shared` rows of type `definition` by promotion time), since none of those carried
+the hash check or a token-stamped `promoted_by`; that promotion on N also moves the write
+mark, which N-1's promotions and demotions never move, so a stored `memory.ask` answer
+from the rollout is not reused past it (until then such an answer lives at most
+`memory_ask_precedents_fast_max_age_hours`, with no bound when it is 0). N-1, which does
+not know `definition` as key-identified, can merge, supersede or retire one definition's
+source while writing another. Once N serves, each is recovered and promoted again:
 
 - a source it retired (`memory.auto_retirements` reasons `conflict_resolver`,
   `newest_wins_contradiction`, `value_update` and `same_key_newest_wins`):
