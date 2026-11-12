@@ -89,7 +89,11 @@ reader:
   `knowledge_gap` and `query_history` candidate whose drafted value hashes (canonical
   JSON) to that version's `content_sha256`, promoted or not, which `learnings.list` shows
   to viewers, and no other draft of the term; the pull request that adds those candidate
-  kinds adds that part.
+  kinds adds that part. When the live head still holds the redacted text (an edit reverted
+  byte for byte), the shared copy and the drafts are left, as `memory.redact` leaves a
+  live copy of a text it scrubs from history. A blanked candidate is not promoted:
+  `learnings.review` answers it not found, as it does a blanked `assistant_turn` candidate
+  today.
 - **A relabel to `high`** of a promoted definition's source retires that row's shared
   embedding, keeping the row: `loom.shared` has no sensitivity of its own, so the ordinary
   legs would otherwise keep serving the copy, and no sweep removes a durable row its
@@ -156,22 +160,26 @@ candidate read to every write, and is not part of this design.
 
 `memory.search` gains one leg, which runs wherever `memory.search` runs, inside
 `memory.ask` and `context.pack` as well; the rule below that no later stage moves a
-governed hit covers those ops' stages too. It reads the addressed namespace's live
-`loom.shared` rows of type `definition` under a `definition/` key (only that namespace,
-whatever `namespace_scope` fans out over), matches the query against each one's term and
-aliases, and places the matched rows at the top of the served list with `governed = true`
-on the hit, removing any other hit under the same key in the addressed namespace, so an
-edited private copy is not served beside the governed text. A term or alias matches where
-it appears in the query with no character next to it that continues its edge: next to a
-Latin letter (accented ones included), digit, `_`, `+` or `#`, another of those; next to a
-letter of another script written with spaces (Cyrillic, Greek), a letter or digit that is
-not Latin; next to Hangul, whose particles attach to the word before them, or a script
-written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or punctuation, nothing. So
-`рост` does not match inside "простой" and `café` not inside "cafés", while `MRR` matches
-in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". One written all in capitals, or with a
-capital after its first letter, matches only as written, so `IT` does not match "what is
-it" and `GitHub` stays exact; any other matches case-folded, so `Churn rate` matches "what
-is our churn rate".
+governed hit covers those ops' stages too. A stored `memory.ask` answer (its precedent
+path) is reused only while the namespace's write mark has not moved, and that mark does
+not cover `loom.shared` today, so every write of a definition's shared row (promote,
+demote, a scrub, an embedding retired) moves the namespace's memory write mark, and no
+answer from before a promotion or demotion is reused after it. It reads the addressed
+namespace's live `loom.shared` rows of type `definition` under a `definition/` key (only
+that namespace, whatever `namespace_scope` fans out over), matches the query against each
+one's term and aliases, and places the matched rows at the top of the served list with
+`governed = true` on the hit, removing any other hit under the same key in the addressed
+namespace, so an edited private copy is not served beside the governed text. A term or
+alias matches where it appears in the query with no character next to it that continues
+its edge: next to a Latin letter (accented ones included), digit, `_`, `+` or `#`, another
+of those; next to a letter of another script written with spaces (Cyrillic, Greek), a
+letter or digit that is not Latin; next to Hangul, whose particles attach to the word
+before them, or a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or
+punctuation, nothing. So `рост` does not match inside "простой" and `café` not inside
+"cafés", while `MRR` matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". One
+written all in capitals, or with a capital after its first letter, matches only as
+written, so `IT` does not match "what is it" and `GitHub` stays exact; any other matches
+case-folded, so `Churn rate` matches "what is our churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -188,15 +196,16 @@ skipped, and is off when a field asks for other rows (a `memory_type` other than
 filtering, not with `tags_soft` or `category_soft`; an explicit `agent`, `run_id` or
 `session_ids`; `as_of`; a body `user_id` or `session_id` under a whole-namespace read;
 `min_body_chars`). A `user_id` or `session_id` the read scope pins, `scope`,
-`exclude_keys`, `min_similarity`, a soft tag or category and `entity_filter`, which only
-boost rows, keep it on; it drops any key in `exclude_keys`. It serves no definition whose
-source is `sensitivity = 'high'` (the read-time check above). Its read is bounded by a
-setting; past the bound, the most recently promoted definitions (by `version`) are read.
-It runs concurrently with the other legs under its own time bound, which never shortens
-theirs (a leg past its bound adds nothing); an added output field, `term_leg` (`complete`,
-`capped` or `timed_out`), says which, and its latency is measured against the op's budget
-(`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull request that adds it.
-`governed` is an added output field: the SDKs and the MCP schema carry it.
+`exclude_keys` and `min_similarity` keep it on, as do a soft tag or category and
+`entity_filter`, which only boost rows; it drops any key in `exclude_keys`. It serves no
+definition whose source is `sensitivity = 'high'` (the read-time check above). Its read is
+bounded by a setting; past the bound, the most recently promoted definitions (by
+`version`) are read. It runs concurrently with the other legs under its own time bound,
+which never shortens theirs (a leg past its bound adds nothing); an added output field,
+`term_leg` (`complete`, `capped` or `timed_out`), says which, and its latency is measured
+against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
+request that adds it. `governed` is an added output field: the SDKs and the MCP schema
+carry it.
 
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
@@ -556,11 +565,12 @@ Undo, and promoted again; a source it marked `conflicted` is cleared with
 again; a write it merged was never stored and is written again; a source an N-1
 `memory.consolidate` tombstoned is brought back with `memory.restore` and promoted again.
 An N-1 relabel of a definition's source to `high` leaves its shared copy's embedding
-served by the ordinary legs: once N serves, the step N's relabel runs, retiring the shared
-embedding and keeping the row, runs over every definition the admin read lists as lapsed
-for `high`, so a relabel back governs it again as on N. N-1's redact and namespace erasure
-do not reach the shared row's text, as today: one run during the rollout or after a
-rollback is run again once N serves.
+served by the ordinary legs: once N serves, the operator runs the retirement N's relabel
+performs (the shared embedding retired, the row kept) over every definition the admin read
+lists as lapsed for `high`, an operator step the implementing pull request's rollout
+section names, so a relabel back governs it again as on N. N-1's redact and namespace
+erasure do not reach the shared row's text, as today: one run during the rollout or after
+a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
