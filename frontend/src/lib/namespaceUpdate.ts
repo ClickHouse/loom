@@ -56,7 +56,7 @@ export function canUpdateNamespace(
  * per namespace and the server decides. `what` names the thing changed ("its settings");
  * `claimRole` is the flat claim the gate asked for (admin unless said).
  */
-export function restrictedLine(
+function restrictedLine(
   misses: RestrictedMiss[],
   {
     org,
