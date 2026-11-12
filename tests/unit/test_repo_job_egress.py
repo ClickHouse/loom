@@ -329,6 +329,34 @@ async def test_a_server_still_sending_after_the_clients_eof_keeps_its_tunnel(
         server.close()
 
 
+async def test_a_slow_client_after_its_eof_still_gets_the_whole_response(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The proxy blocks writing to a client that does not read yet; that is not a
+    quiet server."""
+    done = asyncio.Event()
+    body = b"x" * (8 * 1024 * 1024)
+
+    async def sends_a_lot(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read()
+        writer.write(body)
+        await writer.drain()
+        await done.wait()
+        writer.close()
+
+    monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.3)
+    proxy, server, reader, writer = await _tunnel_to(sends_a_lot, sock_dir, monkeypatch)
+    try:
+        writer.write_eof()
+        await asyncio.sleep(1.0)  # past three half-close timeouts before reading
+        assert len(await asyncio.wait_for(reader.read(), timeout=10)) == len(body)
+        writer.close()
+    finally:
+        done.set()
+        await proxy.close()
+        server.close()
+
+
 async def test_close_ends_an_open_tunnel_and_its_server_side(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -77,20 +77,25 @@ async def _splice(
             last_active[0] = time.monotonic()
             writer.write(data)
             await writer.drain()
-            last_active[0] = time.monotonic()  # a slow reader is not a silent one
         if writer.can_write_eof():
             writer.write_eof()
     except (ConnectionError, OSError):
         pass
 
 
-async def _until_server_quiet(server_side: asyncio.Task[None], last_active: list[float]) -> None:
+async def _until_server_quiet(
+    server_side: asyncio.Task[None], last_active: list[float], to_client: asyncio.StreamWriter
+) -> None:
     """Wait for the server's direction until `code_egress_half_close_timeout_s` passes
-    with no byte: a server need not close a connection its client has finished with."""
+    with no byte: a server need not close a connection its client has finished with.
+    Bytes still on their way to a slow client are not silence."""
     while not server_side.done():
-        left = settings.code_egress_half_close_timeout_s - (time.monotonic() - last_active[0])
+        timeout = settings.code_egress_half_close_timeout_s
+        left = timeout - (time.monotonic() - last_active[0])
         if left <= 0:
-            return
+            if not to_client.transport.get_write_buffer_size():
+                return
+            left = timeout
         await asyncio.wait({server_side}, timeout=left)
 
 
@@ -155,7 +160,7 @@ class EgressProxy:
         server_side = asyncio.create_task(_splice(up_reader, writer, last_active))
         try:
             await _splice(reader, up_writer, last_active)
-            await _until_server_quiet(server_side, last_active)
+            await _until_server_quiet(server_side, last_active, writer)
         finally:
             up_writer.close()
             server_side.cancel()
