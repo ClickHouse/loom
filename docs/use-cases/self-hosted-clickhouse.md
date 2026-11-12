@@ -25,9 +25,10 @@ receive what they process), and what your agents know is queryable with SQL.
 
 ## Measured
 
-A synthetic load of memories with 2.4 versions per key took about 13.6 KB per key in
-ClickHouse, almost all of it the embedding row; the runs used local containers on a shared
-host, so compare rows of one setup rather than read them as capacity figures.
+A synthetic load of memories with 2.4 versions per key and 3072-dimension embeddings (two
+vectors per row) took about 13.6 KB per key in ClickHouse, almost all of it the embedding
+row; a smaller embedder takes less, and parts with few rows carry somewhat more per row
+until they merge.
 [Memory at scale](../benchmarks/results.md#memory-at-scale)
 
 ## Start

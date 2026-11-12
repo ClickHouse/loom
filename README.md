@@ -30,7 +30,8 @@ Agents connect through MCP, HTTP, Python or TypeScript. Self-host with Docker or
 [on Kubernetes with the Helm chart](./docs/operations/kubernetes.md); agent context and
 index data live in [ClickHouse](./docs/use-cases/self-hosted-clickhouse.md), and a
 deployment can choose [Postgres at first boot](./docs/operations/postgres.md) for live
-memory and knowledge state. The dashboard brings memories, repositories, tasks and runs into one place.
+memory and knowledge state. The dashboard brings memories, repositories, tasks and runs
+into one place.
 
 ## What Loom is for
 
