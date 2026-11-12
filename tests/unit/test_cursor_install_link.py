@@ -34,6 +34,6 @@ def test_the_link_decodes_to_the_documented_local_entry() -> None:
     documented = json.loads(match.group(1))
     assert query["name"] == ["loom"]
     assert json.loads(base64.b64decode(query["config"][0])) == documented
-    # the URL the dashboard's Connect dialog gives Cursor for the same server
+    # the URL the server's Cursor setup gives (token_clients, kept alike with the dashboard's)
     dashboard = client_config("cursor", "http://localhost:7777/mcp", "-")
     assert documented == {"url": dashboard["config"]["mcpServers"]["loom"]["url"]}
