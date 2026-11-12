@@ -144,7 +144,6 @@ def name_ops_for_listing(text: str, listed: Set[str], toolset: str | None) -> st
 _EXAMPLES: tuple[tuple[str, str], ...] = (
     ("memory.evidence", "the source turns behind a memory"),
     ("memory.digests", "session digests"),
-    ("erasure.request", "erasure requests"),
 )
 
 
@@ -289,8 +288,10 @@ def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
     text = _INSTEAD.get(name, default)
     listed = listed_tool_names(toolset)
     writes = routes_writes(toolset)
-    named = [_lookup(m.group(1)) for m in _NAMED_OP.finditer(text)]
-    if any(o and o.mcp_tool_name not in listed and not _routed(o, writes) for o in named):
+    # An alternative reads "call <op> ...": the op it calls is the first one named.
+    called = _NAMED_OP.search(text) if text.startswith("call ") else None
+    alternative = _lookup(called.group(1)) if called else None
+    if alternative and alternative.mcp_tool_name not in listed and not _routed(alternative, writes):
         # the alternative is a write this read-only connection cannot make
         instead = _READ_ONLY_CONNECTION
     else:

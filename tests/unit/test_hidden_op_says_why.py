@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import mcp_op
 
@@ -73,6 +75,26 @@ def test_a_readonly_deployment_default_routes_reads_only(monkeypatch) -> None:
 def test_unlock_says_only_the_owner_unlocks() -> None:
     body = _call("memory.unlock")["structuredContent"]
     assert body["code"] == "OP_NOT_ON_MCP" and "only the user" in body["instead"]
+
+
+@pytest.mark.parametrize("name", sorted(mcp_op._INSTEAD))
+def test_a_readonly_refusal_says_read_only_exactly_when_its_alternative_is_a_write(
+    name: str,
+) -> None:
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    text = mcp_op._INSTEAD[name]
+    called = mcp_op._NAMED_OP.search(text) if text.startswith("call ") else None
+    op = mcp_op._lookup(called.group(1)) if called else None
+    write = op is not None and not op.read_only
+    instead = mcp_op.hidden_refusal(name, "readonly")["instead"]
+    assert instead.startswith("this connection is read-only") == write, (name, instead)
+    assert name in OPERATIONS_BY_NAME
+
+
+def test_a_readonly_refusal_keeps_the_reason_when_its_alternative_is_a_read() -> None:
+    instead = mcp_op.hidden_refusal("memory.extraction_status", "readonly")["instead"]
+    assert instead.startswith("call memory.extraction_status_mine (via loom_op) with the queue_id")
 
 
 def test_a_readonly_refusal_keeps_every_reason_that_names_no_write() -> None:

@@ -373,6 +373,8 @@ def listed_tool_names(toolset: str | None) -> set[str]:
 
 
 def _tool_names(ops: list[Operation], toolset: str | None) -> set[str]:
+    # The synthetic names are the ones _synthetic_tool_descriptors_core builds
+    # (test_listed_tool_names_is_what_the_listing_shows holds them together).
     names = {op.mcp_tool_name for op in ops}
     if not assistant_connection(toolset):
         names |= {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}

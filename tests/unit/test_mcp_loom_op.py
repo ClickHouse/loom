@@ -177,7 +177,7 @@ def test_the_description_stays_small() -> None:
     import json
 
     widest = {**mcp_op.DESCRIPTOR, "description": mcp_op.loom_op_description(set(), "core")}
-    assert len(json.dumps(widest)) // 4 <= 260
+    assert len(json.dumps(widest)) // 4 <= 250
 
 
 @pytest.mark.parametrize(
@@ -206,9 +206,6 @@ def test_loom_op_text_is_built_for_its_listing(
         assert OPERATIONS_BY_NAME[op].mcp_tool_name not in names, (toolset, op)
         assert mcp_op.reachable(OPERATIONS_BY_NAME[op], toolset), (toolset, op)
     assert ("read ops only" in text) == (toolset == "readonly")
-    # the reads among the examples are listed on `all` and `readonly`; erasure.request
-    # is listed on `all` and a write readonly does not route
-    expected = {"all": set(), "readonly": set()}.get(
-        toolset, {"memory.evidence", "memory.digests", "erasure.request"}
-    )
+    # both examples are reads that `all` and `readonly` list as tools
+    expected = {"all": set(), "readonly": set()}.get(toolset, {"memory.evidence", "memory.digests"})
     assert named - {"memory.related"} == expected, toolset
