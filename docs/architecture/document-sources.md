@@ -138,20 +138,25 @@ whose turn last wrote its content, as today; which sources hold it is the holds 
 to say, and `inspect` and a source's document counts read the holds, so no write ever
 rewrites tags for a change of holders. A source's stored-copy check matches the document
 row and its chunks by the source's held addresses, not by its own tag, so one holder's
-write never makes another's copy look missing. A document another writer (a person, an
-agent) holds is never overwritten or retired by any source, as today. A retirement reads
+write never makes another's copy look missing. A source may write or retire an address
+when the live document there was written by the sync worker and the source has a `held`
+hold on it; a document another writer (a person, an agent) wrote is never overwritten or
+retired by any source, as today, and a sync-worker document with no hold (a kept one) is
+overwritten by no source until a source holds it again by listing it. A retirement reads
 the address's holds, access row and readers rows under `sequential_reads()`, as today's
 retirement reads its writer check, and each source writes its dropped hold before that
 read, so of two sources dropping their holds at once at least one sees no hold left. A
 hold row is `held`, `dropped`, `settled` or `kept`. A cleanup without `retire_documents`
 writes its holds `kept`, not `dropped`: a `kept` hold blocks every retirement of its
 address as a live hold does, and is never synced, so the document stays until
-`knowledge.delete` removes it, whichever source drops its hold later. A cleanup and a
-turn's retirement take their addresses from the source's `dropped` rows (`FINAL`),
-retire each one no `held` or `kept` hold covers, and then write it `settled`, whether
-they retired it or found it covered, so a run cut short between its hold drops and its
-retirements finishes when it runs again, and an address settled long ago is never
-revisited. The per-source read uses a bloom-filter skip index on `source_id` (read under
+`knowledge.delete` removes it, whichever source drops its hold later. Retiring or
+deleting a document writes every `kept` hold at its address `settled`, so a later
+source's hold on a new document there is not blocked by it. A cleanup and a turn's
+retirement take their addresses from the source's `dropped` rows (`FINAL`), retire each
+one no `held` or `kept` hold covers, and then write it `settled`, whether they retired
+it or found it covered, so a run cut short between its hold drops and its retirements
+finishes when it runs again, and an address settled long ago is never revisited. The
+per-source read uses a bloom-filter skip index on `source_id` (read under
 `use_skip_indexes_if_final_exact_mode=1`), and the implementing pull request measures
 it; it retires only when no hold is left, then writes `deleted` the address's one access
 row and every readers row it read. Each `deleted` row carries the `version` of the row
@@ -161,10 +166,10 @@ read time, so one written from a read older than the row the retirement replaced
 to the `deleted` row and waits for the next read of the list; the heal therefore writes
 the access row only from a list read in that same turn.
 
-`remove` drops the source's holds. With `delete_documents`, a document left with no hold
-is retired; without it, such a document stays as a kept document, as today
-(`SOURCE_DOCUMENTS_KEPT`). A mirrored source's documents are always retired
-([below](#where-a-mirrored-document-lives)).
+`remove` drops the source's holds, or, without `delete_documents`, writes them `kept`.
+With `delete_documents`, a document left with no hold is retired; without it, such a
+document stays as a kept document, as today (`SOURCE_DOCUMENTS_KEPT`). A mirrored
+source's documents are always retired ([below](#where-a-mirrored-document-lives)).
 
 ## Credentials
 
@@ -760,8 +765,17 @@ knowledge mirror erase --all`, a server CLI command that reads
 - **Holds and tags.** N-1 does not read holds: it treats a document carrying its
   source's tag as its own, overwrites it at a new revision (the same text) and may
   retire it on its own source's evidence though another source holds it. N's next turn
-  of the other holder writes it again. The cost is a document missing for up to one
-  interval.
+  of the other holder writes it again, so the cost is a document missing for up to one
+  interval; a document only a `kept` hold covers, whose last writer was an N-1 source,
+  is retired by that N-1 source and not written back, a loss of a kept document the
+  rollout accepts.
+- **Holds of today's documents.** The first pass N runs writes, once, a hold for every
+  live document the sync worker wrote that carries a `source:<name>` tag: `held` for an
+  active source of that name, `kept` for an inactive one without `pending_delete`, and a
+  cleanup row (with `retire_documents`) for an inactive one with it; a source N-1 adds,
+  syncs and removes during the rollout gets the same at N's next pass, as this backfill
+  runs again at every pass until no N-1 replica serves. Until it has run, the sync
+  treats a namespace's sources as it does today.
 - **State.** Sync state stays in `loom.code_index_state`; N-1 ignores the per-account
   cursors N keeps in it and the listings position row (its own turns merge into the
   state and leave them).
@@ -869,24 +883,27 @@ The redirect URI to register with each store is
   its hold drops and its retirements, whose rerun still retires the documents; a hold a
   source dropped earlier, whose document became a kept document when another source was
   removed without `delete_documents`, surviving that source's next turn and its cleanup;
-  a second holder's turn neither fetching nor rewriting a copy another holder wrote; an
-  anti-join over a mirrored source N-1 removed, whose lease key and re-check use the
-  source's namespace; no access row left by a turn that starts after a cleanup; a
-  `remove` without `delete_documents` on a `namespace` source keeping its documents
-  through the cleanup; a source whose registry row a lagging replica does not show yet
-  left alone; a person dropped from a crawl's expansion leaving no readers or listing
-  row; a directory read that fails mid-group, or returns over the cap, dropping nobody;
-  a user erasure leaving no row, of any version, keyed by the person's pseudonyms;
-  `erasure.request` refusing an `acl-` scope for an org admin and a namespace admin and
-  admitting a platform admin; a user erasure leaving no address of the person in
-  `loom.knowledge_sources`, nor a crawl readers or listing row naming them;
-  `erasure.request` and `erasure.export` refusing an `acl-` scope with auth off; the
-  mirror cache after an erasure followed by a new mirrored `add`; a connected `notion`
-  page shown to its owner only; a consent callback without the starting browser's
-  cookie, or in another subject's session, storing nothing; an admin's `update` adding
-  items to someone else's connected source refused; scope refusals on the connect
-  callback and a crawl's probe; today's `check`, `rotate`, `remove` and turn over a row
-  N wrote with `kind` empty.
+  a second holder's turn neither fetching nor rewriting a copy another holder wrote, and
+  rewriting and retiring it when it changes or goes; a kept document deleted, then held
+  and dropped by another source, being retired; a source from before the upgrade removed
+  with `delete_documents` before its first full listing on N, its documents retired
+  through the backfilled holds; an anti-join over a mirrored source N-1 removed, whose
+  lease key and re-check use the source's namespace; no access row left by a turn that
+  starts after a cleanup; a `remove` without `delete_documents` on a `namespace` source
+  keeping its documents through the cleanup; a source whose registry row a lagging
+  replica does not show yet left alone; a person dropped from a crawl's expansion
+  leaving no readers or listing row; a directory read that fails mid-group, or returns
+  over the cap, dropping nobody; a user erasure leaving no row, of any version, keyed by
+  the person's pseudonyms; `erasure.request` refusing an `acl-` scope for an org admin
+  and a namespace admin and admitting a platform admin; a user erasure leaving no
+  address of the person in `loom.knowledge_sources`, nor a crawl readers or listing row
+  naming them; `erasure.request` and `erasure.export` refusing an `acl-` scope with auth
+  off; the mirror cache after an erasure followed by a new mirrored `add`; a connected
+  `notion` page shown to its owner only; a consent callback without the starting
+  browser's cookie, or in another subject's session, storing nothing; an admin's
+  `update` adding items to someone else's connected source refused; scope refusals on
+  the connect callback and a crawl's probe; today's `check`, `rotate`, `remove` and turn
+  over a row N wrote with `kind` empty.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`, seeds mirrored documents with canary text and reads
   every knowledge read op, `knowledge.reads`, `knowledge.query` and
