@@ -138,6 +138,8 @@ export function MembersDialog({
   // unavailable, with the role it needs. Null while the grants are unread.
   // A token scoped per namespace with no grant of its own here may be an admin the client
   // cannot see: the server decides. A grant of its own caps it, so that grant is the most.
+  // A repository is named by its label.
+  const name = isCode ? (label ?? namespace) : namespace;
   const manageReason =
     canManage || rows === null
       ? null
@@ -145,10 +147,10 @@ export function MembersDialog({
             whoami,
             rows.some((r) => r.subject === me),
           )
-        ? serverDecides(label ?? namespace)
+        ? serverDecides(name)
         : isCode
-          ? needsMaintainer(label ?? namespace)
-          : needsRole("admin", namespace);
+          ? needsMaintainer(name)
+          : needsRole("admin", name);
 
   const onAdd = async () => {
     const subj = newSubject.trim();

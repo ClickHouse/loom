@@ -892,8 +892,8 @@ export function MemoryInspector({
     }
   };
 
-  // The More menu, built once: each item shown, in order, with its reason when the role cannot
-  // use it. The menu says each distinct reason once, below the items, and an item refers to it.
+  // The More menu in one list: each item in order, with its reason when the role cannot use it.
+  // The menu says each distinct reason once, below the items, and an item refers to it.
   const handOff = (open: () => void) => () => {
     menuHandsOff.current = true;
     open();
