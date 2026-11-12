@@ -1,5 +1,5 @@
-"""The dashboard's bytes arrive compressed and its
-hashed assets are cached for a year."""
+"""Large answers arrive gzipped, small ones as they are, and the server's origin is the
+dashboard. The hashed assets' cache header: tests/unit/test_dashboard_routes.py."""
 
 from __future__ import annotations
 
