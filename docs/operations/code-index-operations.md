@@ -531,10 +531,11 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   is public (loopback, private ranges, link-local and the cloud metadata address are
   refused, including when reached through a redirect or a `.gitmodules` URL) and
   connects to the address it vetted. Plain HTTP has no route. One job holds at most 32
-  tunnels at a time; a client that opens more waits for a free one inside the sandbox,
-  and the proxy logs any connection it refuses at the cap. A tunnel idle for 5 minutes
-  is closed, and one whose client has finished after 10 seconds without a byte
-  (`LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S`).
+  tunnels at a time. A client that uses the relay as its HTTPS proxy and opens more waits
+  for a free one inside the sandbox; any other connection past the cap is refused after 5
+  seconds, and the proxy logs the first refusal and, when the job ends, how many. A
+  tunnel idle for 5 minutes is closed; once its client has finished, it is closed after
+  10 seconds without a byte from the server (`LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S`).
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are

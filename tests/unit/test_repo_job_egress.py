@@ -5,9 +5,6 @@ public, and always to the address it vetted (never the name again)."""
 from __future__ import annotations
 
 import asyncio
-import shutil
-import tempfile
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -25,15 +22,6 @@ NAMES = {
     "metadata.example": ["169.254.169.254"],
     "mapped.example": ["::ffff:127.0.0.1"],
 }
-
-
-@pytest.fixture
-def tmp_path() -> Iterator[Path]:
-    """A short directory for the proxy's socket: an AF_UNIX path is capped near 104
-    bytes on macOS, and pytest's default temporary directory there is longer."""
-    short = Path(tempfile.mkdtemp(prefix="egress-", dir="/tmp"))
-    yield short
-    shutil.rmtree(short, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)
@@ -85,8 +73,8 @@ async def test_a_public_host_on_an_allowed_port_is_vetted_to_its_address() -> No
     assert (await egress.vet_connect("CONNECT public.example:22 HTTP/1.1", ALLOWED))[0] == 200
 
 
-async def test_the_jobs_own_remote_port_is_allowed_and_no_other(tmp_path: Path) -> None:
-    proxy = await egress.start_proxy(str(tmp_path / "p.sock"), 8443)
+async def test_the_jobs_own_remote_port_is_allowed_and_no_other(sock_dir: Path) -> None:
+    proxy = await egress.start_proxy(str(sock_dir / "p.sock"), 8443)
     try:
         assert proxy.allowed_ports == {443, 22, 8443}
     finally:
@@ -103,7 +91,7 @@ async def _ask(sock: str, request: bytes) -> bytes:
 
 
 async def test_the_proxy_connects_to_the_vetted_address_not_the_name(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     dialled: list[tuple[str, int]] = []
 
@@ -112,7 +100,7 @@ async def test_the_proxy_connects_to_the_vetted_address_not_the_name(
         raise OSError("test: no route")
 
     monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
-    sock = str(tmp_path / "p.sock")
+    sock = str(sock_dir / "p.sock")
     proxy = await egress.start_proxy(sock, None)
     try:
         out = await _ask(sock, b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
@@ -128,7 +116,7 @@ async def test_the_proxy_connects_to_the_vetted_address_not_the_name(
 
 
 async def test_an_allowed_tunnel_splices_bytes_both_ways(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         writer.write(b"echo:" + await reader.readexactly(4))
@@ -144,7 +132,7 @@ async def test_an_allowed_tunnel_splices_bytes_both_ways(
         return await real_open("127.0.0.1", port, **kw)
 
     monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
-    sock = str(tmp_path / "p.sock")
+    sock = str(sock_dir / "p.sock")
     proxy = await egress.start_proxy(sock, None)
     try:
         reader, writer = await asyncio.open_unix_connection(sock)
@@ -168,7 +156,7 @@ async def test_a_port_out_of_range_is_refused_even_when_the_remote_names_it() ->
 
 
 async def test_a_job_holds_at_most_max_tunnels_and_close_ends_every_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Each waiting connection would otherwise put a getaddrinfo on the shared
     thread pool; close() returns only once every handler has finished."""
@@ -182,7 +170,7 @@ async def test_a_job_holds_at_most_max_tunnels_and_close_ends_every_one(
         return "refused", ""
 
     monkeypatch.setattr(egress, "vet_host", slow_vet)
-    sock = str(tmp_path / "p.sock")
+    sock = str(sock_dir / "p.sock")
     proxy = await egress.start_proxy(sock, None)
     writers = []
     for _ in range(egress.MAX_TUNNELS + 20):
@@ -198,7 +186,7 @@ async def test_a_job_holds_at_most_max_tunnels_and_close_ends_every_one(
 
 
 async def test_a_connection_past_the_tunnel_cap_is_refused_after_a_short_wait(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Waiting without a bound would let a job park any number of connections
     (two fds each) in the workers process."""
@@ -211,23 +199,29 @@ async def test_a_connection_past_the_tunnel_cap_is_refused_after_a_short_wait(
     monkeypatch.setattr(egress, "vet_host", slow_vet)
     monkeypatch.setattr(egress, "MAX_TUNNELS", 1)
     monkeypatch.setattr(settings, "code_egress_slot_wait_s", 0.2)
-    sock = str(tmp_path / "p.sock")
+    sock = str(sock_dir / "p.sock")
     proxy = await egress.start_proxy(sock, None)
     try:
         _r1, first = await asyncio.open_unix_connection(sock)
         first.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
         await asyncio.sleep(0.05)
-        second, w2 = await asyncio.open_unix_connection(sock)
-        answer = await asyncio.wait_for(second.read(), timeout=5)
-        assert answer.startswith(b"HTTP/1.1 503")
+        for _ in range(2):
+            second, w2 = await asyncio.open_unix_connection(sock)
+            answer = await asyncio.wait_for(second.read(), timeout=5)
+            assert answer.startswith(b"HTTP/1.1 503")
+            w2.close()
         first.close()
-        w2.close()
     finally:
         await proxy.close()
+    logged = [r.getMessage() for r in caplog.records if r.name == "loom.code_index.egress"]
+    assert logged == [
+        "egress refused a tunnel: all 1 are open",
+        "egress refused 2 tunnels at the cap of 1",
+    ]
 
 
 async def test_a_tunnel_with_no_bytes_either_way_is_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def silent(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         await reader.read()  # never answers
@@ -241,7 +235,7 @@ async def test_a_tunnel_with_no_bytes_either_way_is_closed(
 
     monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
     monkeypatch.setattr(settings, "code_egress_idle_timeout_s", 0.2)
-    sock = str(tmp_path / "p.sock")
+    sock = str(sock_dir / "p.sock")
     proxy = await egress.start_proxy(sock, None)
     try:
         reader, writer = await asyncio.open_unix_connection(sock)
@@ -256,15 +250,18 @@ async def test_a_tunnel_with_no_bytes_either_way_is_closed(
 
 
 async def test_a_tunnel_whose_client_sent_eof_closes_when_the_server_goes_quiet(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A registry need not close a connection its client has finished with; the
     tunnel would otherwise hold its slot for the whole idle timeout."""
 
+    done = asyncio.Event()
+
     async def never_closes(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         await reader.read()
         writer.write(b"bye")
-        await asyncio.sleep(60)
+        await done.wait()
+        writer.close()
 
     server = await asyncio.start_server(never_closes, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
@@ -275,7 +272,7 @@ async def test_a_tunnel_whose_client_sent_eof_closes_when_the_server_goes_quiet(
 
     monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
     monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.2)
-    sock = str(tmp_path / "p.sock")
+    sock = str(sock_dir / "p.sock")
     proxy = await egress.start_proxy(sock, None)
     try:
         reader, writer = await asyncio.open_unix_connection(sock)
@@ -287,5 +284,6 @@ async def test_a_tunnel_whose_client_sent_eof_closes_when_the_server_goes_quiet(
         assert await asyncio.wait_for(reader.read(), timeout=5) == b"bye"
         writer.close()
     finally:
+        done.set()
         await proxy.close()
         server.close()

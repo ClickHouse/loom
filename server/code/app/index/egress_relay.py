@@ -50,15 +50,14 @@ def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
 
 
 def accept_loop(listener: socket.socket, path: str, slots: threading.Semaphore) -> None:
-    """Bridge each connection in its own two threads, at most `slots` at a time. A
-    connection past that waits in the listen backlog, costing no thread: a client
-    opening hundreds at once would otherwise reach the job's task limit, and a
-    thread that cannot start must not end the loop."""
+    """Bridge each connection in two threads, as many at a time as `slots` allows;
+    the rest wait in the listen backlog. A bridge ends when both its client and the
+    proxy have closed."""
     while True:
         slots.acquire()
         try:
             conn, _ = listener.accept()
-        except OSError:  # out of file descriptors, or the listener is closed
+        except OSError:  # EMFILE: retried; a closed listener (shut down) ends the loop
             slots.release()
             if listener.fileno() == -1:
                 return

@@ -532,9 +532,17 @@ async def run_sandboxed(argv: Sequence[str], **job: Unpack[JobOptions]) -> JobRe
                 f"{egress_dir}/proxy.sock", job.get("allow_remote_port")
             )
             _network_env(job_env)
-            relay = [sys.executable, "-I", _RELAY_INSIDE, "serve", str(RELAY_PORT)]
-            sock = f"{_EGRESS_INSIDE}/proxy.sock"
-            argv = [*relay, sock, str(egress.MAX_TUNNELS), "--", *argv]
+            argv = [
+                sys.executable,
+                "-I",
+                _RELAY_INSIDE,
+                "serve",
+                str(RELAY_PORT),
+                f"{_EGRESS_INSIDE}/proxy.sock",
+                str(egress.MAX_TUNNELS),
+                "--",
+                *argv,
+            ]
         readonly = _readonly_paths(job["env"], job.get("readonly", ()))
         binds = _binds(job.get("writable", ()), readonly, egress_dir)
         if (cwd := job.get("cwd")) is not None:

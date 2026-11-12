@@ -16,8 +16,10 @@ import asyncio
 import ipaddress
 import logging
 import os
+import shutil
 import socket
 import sys
+import tempfile
 import threading
 import time
 import types
@@ -150,6 +152,15 @@ def _load_repo_dotenv() -> None:
 def _seed_test_api_key() -> None:
     """Shadows the integration suite's fixture of the same name: no unit test
     runs with a minted wildcard-org `LOOM_API_KEY` in its environment."""
+
+
+@pytest.fixture
+def sock_dir() -> Iterator[Path]:
+    """A short directory for unix sockets: an AF_UNIX path is capped near 104 bytes
+    on macOS, and pytest's `tmp_path` there is longer."""
+    short = Path(tempfile.mkdtemp(prefix="sock-", dir="/tmp"))
+    yield short
+    shutil.rmtree(short, ignore_errors=True)
 
 
 @pytest.fixture
