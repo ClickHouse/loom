@@ -355,14 +355,12 @@ same code for any cause. The exceptions are these:
    `acl-` names out.
 
 A deployment with auth off (`LOOM_AUTH_REQUIRED=false`) has no reader identity to check.
-It refuses to add a mirrored source (`AUTH_REQUIRED`, which wins over
+It refuses to add a mirrored source with `AUTH_REQUIRED`, which wins over
 `MIRRORED_SOURCES_OFF`, the answer of every deployment until
-`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set; turned off again once mirrors exist,
-that setting makes the mirror legs answer nothing and stops the sync apart from the
-cleanup of a stopped source, as auth off does), and when auth is switched off after
-mirrors exist, the gate still refuses every mirror name, the mirror legs answer nothing,
-and the sync skips mirrored sources, apart from the cleanup of a stopped one, which only
-deletes.
+`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set. That setting turned off again once
+mirrors exist makes the mirror legs answer nothing and stops the sync apart from the
+cleanup of a stopped source. Auth turned off once mirrors exist does the same, and the
+gate still refuses every mirror name; the cleanup only deletes.
 
 ### The mirror
 
@@ -376,14 +374,14 @@ return included, and `namespace.register` and `namespace.restore` refuse the for
 admin with auth on, and `erasure.export` for every caller; with auth off both refuse it
 for everyone. So no token searches, reads or exports a mirror, and the threat model's
 rows hold for every token. A mirror has no directory row and appears in no namespace
-listing or usage view; a namespace name keeps its mirror until a namespace erasure
-deletes the `loom.knowledge_mirrors` row, so a name deleted keeps it, and counts as in
-use until that erasure, and a name with a `loom.knowledge_mirrors` row counts as in use
-(`namespace_census.in_use`), whatever its mirror holds, answered with the same code as
-any other in-use reason. A namespace erasure deletes that row last, after the mirror's
-rows (the table is classified as holding no memory content), so an erased name can be
-registered again and gets a new mirror. The implementing pull request checks for
-existing namespaces of the reserved form before it enables the refusal.
+listing or usage view; a deleted name keeps its mirror and counts as in use
+(`namespace_census.in_use`, with the same code as any other reason, whatever the mirror
+holds) until a namespace erasure deletes the `loom.knowledge_mirrors` row. A namespace
+erasure deletes that row last, after the mirror's rows (the table is classified as
+holding no memory content), so an erased name can be registered again and gets a new
+mirror. The migration that enables the refusal first looks for namespaces of the
+reserved form, registered or holding rows, and refuses to run, naming them, if it finds
+any.
 
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
 check below. Every other read path reads the namespace and finds nothing of the mirror.
@@ -422,16 +420,21 @@ missed path leaks.
   do the dashboard, which shows the document, and the assistant, which writes nothing
   from that turn into anything it shares; an SDK declares it only when the app built on
   it opts in.
-- **The session rule.** The session-content ops are `conversation.append` and transcript
-  ingest, `memory.set_from_messages`, `session.brief_save`, `observe.record` and
-  `observe.crystallize`, `working_memory.set`, `run.complete`, `cost.record_turns` and
-  `ui.vitals`. Once a session has seen the flag (one resumed, forked or compacted from
-  it included), no Loom hook or client sends anything to them from that session, while
-  reads and the reader's own writes go on; the CLI's `ingest-transcript` refuses a
-  transcript that carries the marker. While `loom.knowledge_mirrors` holds any row,
-  every session-content op refuses a client that does not declare the flag, whatever mix
-  of clients the session runs and whether or not the switch below is on. Mirrored
-  sources are off for a deployment until an operator turns them on
+- **The session rule.** A session-content op is any op that takes text, or a figure
+  derived from it, from a session: today `conversation.append` (which the CLI's
+  `ingest-transcript` calls), `conversation.save_message`, the `title` and `metadata` of
+  `conversation.create` and `conversation.update`, `memory.set_from_messages`,
+  `session.brief_save`, `observe.record` and `observe.crystallize`,
+  `working_memory.set`, `run.complete`, `cost.record_turns` and `ui.vitals`, and every
+  op added later that fits the rule. Once a session has seen the flag (one resumed,
+  forked or compacted from it included), no Loom hook or client sends anything to them
+  from that session, while reads and the reader's own writes go on; the CLI's
+  `ingest-transcript` refuses a transcript that carries the marker. While
+  `loom.knowledge_mirrors` holds a row of the caller's org, every session-content op
+  refuses a client that does not declare the flag, whatever mix of clients the session
+  runs and whether or not the switch below is on; a session reads only its own org's
+  namespaces, so another org's clients are not refused. Mirrored sources are off for a
+  deployment until an operator turns them on
   (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`), after every Loom client and hook that
   sends session content honours the flag. Each pull request that adds a mirror leg,
   writer, client or hook lists what it writes and tests each against these rules.
@@ -440,20 +443,25 @@ missed path leaks.
   mirror's namespace and go with it when it is erased; whatever of a mirror leaves it (a
   source's status, a worker's pass notes, logs, spans and metrics, the extractor
   service's logs and traces) carries codes only (exceptions 3 and 4 apart).
-- **No scope reaches a mirror.** Every statement that reads a table holding mirror rows
-  other than by a namespace the caller names leaves out the `acl-[0-9a-f]{24}` form.
-  `resolve_org_scope`, ahead of its auth-off return, `every_namespace_scope` and
-  `rollup_member_namespaces` (`server/auth/context.py`) leave it out for a request's
-  caller; the sync, the erasure saga, the mirror-erase command and the maintenance
-  workers (reindex and embedding-model rebuilds, tier and retention moves, the blob and
-  originals sweeps, which keep a mirror's rows referenced) reach a mirror through the
-  stores, never the gate, under the workers' rule below. Every `sql_v1_` view (each
-  replaced by a migration), the analytics export's statements and the org-wide reads of
-  `erasure.export` and of a `user_id` erasure's steps and census (their `Shown.hidden`
-  always carries the form) leave it out too, so `audit.list`, the insights, usage and
-  cost reads, the SQL surface and a person's export name no mirror. `row_reach` refuses
-  the form before its auth-off return, so no id-addressed check or `audit.list` of a
-  named namespace opens one.
+- **No scope reaches a mirror.** Every statement a request runs that reads a table
+  holding mirror rows other than by a namespace the caller names leaves out the
+  `acl-[0-9a-f]{24}` form; the workers named here are the exception, since they must
+  reach the mirror's rows. `resolve_org_scope`, ahead of its auth-off return,
+  `every_namespace_scope` and `rollup_member_namespaces` (`server/auth/context.py`)
+  leave it out for a request's caller; the sync, the erasure saga, the mirror-erase
+  command and the maintenance workers (reindex and embedding-model rebuilds, tier and
+  retention moves, the blob and originals sweeps, which keep a mirror's rows referenced)
+  reach a mirror through the stores, never the gate, under [the workers'
+  rule](#the-mirror) above. Every `sql_v1_` view (each replaced by a migration), the
+  analytics export's statements and the org-wide reads of `erasure.export` and of a
+  `user_id` erasure's steps and census (their `Shown.hidden` always carries the form)
+  leave it out too, so `audit.list`, the insights, usage and cost reads, the SQL surface
+  and a person's export name no mirror. The analytics export and `sql_v1_usage_daily`
+  fold a marked request's spend into a row per namespace and day with agent and
+  operation `-`, and `sql_v1_agent_events` masks a marked row's token, cost and work
+  fields, which exception 2 accepts as a cost beside `cost.summary`'s. `row_reach`
+  refuses the form before its auth-off return, so no id-addressed check or `audit.list`
+  of a named namespace opens one.
 
 A mirrored source's documents are never kept past it: `remove` retires every one it owns
 (`delete_documents` is implied), and so do a disconnect, a SCIM deactivation, the owner
@@ -766,7 +774,8 @@ statements and census keys against these, and its tests pin each one:
 ## Rolling upgrades
 
 - **Clients.** A client built before `mirrored: true` declares nothing, so a mirror leg
-  answers it nothing until it is upgraded. Mirrored sources stay off
+  answers it nothing until it is upgraded, and in an org with a mirror every
+  session-content op refuses it. Mirrored sources stay off
   (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`) until the operator has rolled out the
   plugins, CLI, SDKs and hooks that honour the flag.
 - **N-1 cannot operate on a source it must not.** N-1 reads `kind`, unseals
@@ -805,6 +814,8 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 
 - Mirrored sources need `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`, which an operator
   sets once every Loom client and hook honours `mirrored: true`.
+- In an org with a mirror, every session-content op refuses a client that does not
+  declare `mirrored: true`, for as long as the mirror exists.
 - The source ops no longer answer `NOT_A_CODE_NAMESPACE`; `add` answers
   `NAMESPACE_INACTIVE` for an inactive namespace, `PERSONAL_NAMESPACE` for a person's
   own place and `ERASURE_PENDING` while an erasure of the namespace is unfinished.
@@ -977,17 +988,17 @@ Each implementing pull request lists its own; these pin the model:
     untouched; a viewer's cost or insights read showing no per-request token spend of
     another person's marked request.
   - A viewer's `cost.summary` grouped by `user_id` and `operation` showing no single
-    marked request's tokens; `ui.vitals` from a dashboard view of an admitted mirrored
-    document recording no size-dependent figure; a capture or transcript-ingest op from
-    a client that does not declare the flag refused while mirrored sources are on; a
-    forked or resumed session not captured after its parent saw the flag; N reporting a
-    below-schema heartbeat while a mirror holds rows; a deactivated team member admitted
-    by no `linear` list.
-  - `memory.set_from_messages`, `session.brief_save`, `observe.record`,
-    `observe.crystallize`, `working_memory.set` and `run.complete` each refusing a
-    client that does not declare the flag while a mirror exists, with the switch on and
-    off; a mirror's originals surviving a blob sweep and its chunks re-embedded after a
-    model change.
+    marked request's tokens; a dashboard view of an admitted mirrored document sending
+    no `ui.vitals`; a forked or resumed session not captured after its parent saw the
+    flag; N reporting a below-schema heartbeat while a mirror holds rows; a deactivated
+    team member admitted by no `linear` list.
+    - One test over every session-content op the rule names, each refusing a client that
+      does not declare the flag while the caller's org has a mirror, with the switch on
+      and off, and each accepting it in an org without one; a namespace-scoped SQL user
+      reading `sql_v1_agent_events` and `sql_v1_usage_daily`, and the analytics export's
+      `usage` rows, after another person's marked request, finding its spend and work
+      only as the fold and the mask allow; a mirror's originals surviving a blob sweep
+      and its chunks re-embedded after a model change.
   - `row_reach`, `row_in_scope` and `namespace_for_id` opening nothing of a mirror with
     auth off; a mirrored source's document counts shown to nobody but a platform admin.
   - A turn that finds a narrowed list rewriting the row without rebuilding a chunk, and
