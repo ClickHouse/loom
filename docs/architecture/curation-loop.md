@@ -100,20 +100,21 @@ The shared layer needs nine changes for this, each in the pull request that adds
 leg except where a change names another, because the term leg serves shared rows to every
 reader:
 
-- **A redact** of a version of a definition's source (a past version: `memory.redact`
-  refuses the live head) scrubs the shared row whose `value`'s served hash is the
-  version's: the served hash of the version's value, read before the scrub, or, when an
-  older build already scrubbed it, the `content_sha256` the redact keeps, so a redact run
-  again still finds it, and that row's embedding, which a redact does not reach today, and
-  blanks the text of every `knowledge_gap` and `query_history` candidate whose drafted
-  value hashes (canonical JSON) to that version's `content_sha256`, or that the version's
-  `candidate-id:` tag names, promoted or not, which `learnings.list` shows (a
-  `knowledge_gap` draft to viewers, a `query_history` one to admins), and no other draft
-  of the term; the pull request that adds those candidate kinds adds that part. When the
-  live head still holds the redacted text (an edit reverted byte for byte), the shared
-  copy and the drafts are left, as `memory.redact` leaves a live copy of a text it scrubs
-  from history. A blanked candidate is not promoted: `learnings.review` answers it not
-  found, as it does a blanked `assistant_turn` candidate today.
+- **A redact** of a past version of a definition's source (`memory.redact` refuses the
+  live head) reaches two things, and no more:
+  - the shared row whose `value` has the version's served hash (read from the version
+    before the scrub, or, when an older build already scrubbed it, the `content_sha256`
+    the redact keeps, so a redact run again still finds it): its text is scrubbed and its
+    embedding retired, which a redact does not reach today;
+  - every `knowledge_gap` and `query_history` candidate whose drafted value has that hash,
+    or that the version's `candidate-id:` tag names, promoted or not: its text is blanked,
+    since `learnings.list` shows it (a `knowledge_gap` draft to viewers, a `query_history`
+    one to admins), and a blanked candidate is not promoted (`learnings.review` answers it
+    not found, as it does a blanked `assistant_turn` candidate today); the pull request
+    that adds those candidate kinds adds this part;
+  - nothing else: no other draft of the term, and neither the shared copy nor the drafts
+    when the live head still holds the redacted text (an edit reverted byte for byte), as
+    `memory.redact` leaves a live copy of a text it scrubs from history.
 - **A relabel to `medium` or `high`** of a promoted definition's source, by a writer or
   the sensitivity sweep, retires that row's shared embedding, keeping the row:
   `loom.shared` has no sensitivity of its own, so the ordinary legs would otherwise keep
@@ -163,8 +164,9 @@ definition's `promoted_from_candidate_id`. `learnings.review` refuses a `definit
 candidate that is not a `knowledge_gap` or `query_history` draft (a `memory_supporters`
 one is promoted today) with `VALIDATION_FAILED`. On both, `approver` no longer names a
 definition's promoter, reviewer or audit subject (the response names it in
-`ignored_args`). The SDKs and the MCP schema carry the hash field, and the implementing
-pull request names each break.
+`ignored_args`). The SDKs, the MCP schema and the dashboard's memory drawer, whose share
+action promotes a row, carry the hash field (the drawer passes the `content_sha256` of the
+row it shows), and the implementing pull request names each break.
 
 Should two shared rows match one name despite that refusal (two promotions racing, or one
 promoted through a build without the check), the term leg serves, among the rows the
@@ -249,22 +251,24 @@ matches only as written, and any other word matches case-folded. So `IT` does no
 and `ARR growth` matches "ARR Growth" but not "arr growth".
 
 **Placement.** Matched rows go to the top of the served list with `governed = true`, in
-the order their names first appear in the query; a tie goes to the latest `promoted_at`,
-then `promotion_event`, as for one name. Any other hit under the same key in the addressed
-namespace is removed, so an edited private copy is not served beside the governed text. A
-derived aggregate's synthetic row (`derived_aggregate`, an exact count over the
-namespace's rows) stays first, above the governed hits, as the response documents it. No
-later stage or floor of `memory.search`, `loom_search` or the ops that run `memory.search`
-reorders governed hits, moves one below a hit that is not governed (that row aside), or
-drops one in favour of such a hit, a stage added later included. No floor or threshold
-removes a governed hit either: not `min_similarity`, the precision floor, the foreign
-margin or a calibration drop, since its score says nothing about whether the admin's
-definition answers the question. A search in any op that serves a governed hit is not a
-miss. Governed hits count within `top_k`, within a stage's cap on the memory section (the
-tracker verdict's `verdict_leads`, which keeps `VERDICT_MEMORY_MAX` memory hits) and
-within the token budgets (`body_budget_tokens`, `context.pack`'s block budget). A cap cuts
-governed hits last: when more match than fit, the later ones in query order are not
-served. A budget may shorten a body but never reorders the hits.
+the order their names first appear in the query. Two names that start at the same place
+put the longer first, so `ARR growth` comes before `ARR` in "what drove ARR growth"; a tie
+past that goes to the latest `promoted_at`, then `promotion_event`, as for one name. Any
+other hit under the same key in the addressed namespace is removed, so an edited private
+copy is not served beside the governed text. A derived aggregate's synthetic row
+(`derived_aggregate`, an exact count over the namespace's rows) stays first, above the
+governed hits, as the response documents it. No later stage or floor of `memory.search`,
+`loom_search` or the ops that run `memory.search` reorders governed hits, moves one below
+a hit that is not governed (that row aside), or drops one in favour of such a hit, a stage
+added later included. No floor or threshold removes a governed hit either: not
+`min_similarity`, the precision floor, the foreign margin or a calibration drop, since its
+score says nothing about whether the admin's definition answers the question. A search in
+any op that serves a governed hit is not a miss. Governed hits count within `top_k`,
+within a stage's cap on the memory section (the tracker verdict's `verdict_leads`, which
+keeps `VERDICT_MEMORY_MAX` memory hits) and within the token budgets
+(`body_budget_tokens`, `context.pack`'s block budget). A cap cuts governed hits last: when
+more match than fit, the later ones in query order are not served. A budget may shorten a
+body but never reorders the hits.
 
 **Scores.** A governed hit's `similarity` and `distance` are its shared embedding's to the
 query; when it has none, `similarity` is `0` and `distance` is `1`, since similarity is
@@ -663,8 +667,9 @@ govern it.
   redact, namespace erasure, history, audit. A user erasure tombstones a shared row whose
   provenance names the user (`shared.tombstone`); a definition promoted from the
   namespace-wide row names none, so erasing the admin who promoted it leaves it governed,
-  and `promoted_by` on the shared row names the admin as an audit actor does, as it does
-  today.
+  and `promoted_by` on the shared row, which today holds the body's `approver` and this
+  design stamps from the token, names that admin and is kept through a user erasure, as
+  the audit log keeps its actor.
 - A redact of a past version of a definition reaches that version, the shared row holding
   its text, and the `knowledge_gap` and `query_history` candidates whose draft is that
   text or named by its `candidate-id:` tag (the change above), not the gap it came from,
