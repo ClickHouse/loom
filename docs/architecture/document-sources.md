@@ -67,19 +67,20 @@ service account has no recordings folder of its own.
 
 A source holds at most 300 items (a wire contract, not a setting), and at most
 `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` documents (default 50,000: today's bound on the
-read of a source's stored copies, made a setting). A listing that passes it writes
-nothing new and ends the turn with `too_many_documents`. The read of a source's stored
-copies goes in pages by `source_uri`, so it never cuts one off, and a source over the
-bound (new files written while old ones wait for retirement, or a lowered setting)
-writes nothing new but still retires, so its copies drain back under it; `inspect` and
-`loom doctor` show `too_many_documents` with the stored count meanwhile. A listing asks
-the store about at most 50 parent folders per query (not a setting), so a source of many
-folders lists in several queries; a recursive folder's subfolders are walked on every
-full listing, and a file in a new subfolder arrives with the next one. A probe checks a
-bounded sample: every item while there are at most 20, otherwise the 20 items added
-last, and the answer says `sampled: true` with the number checked. Only a refused item
-of the sample refuses `add` or `update`; the next sync turn reports any other as `item
-<n>: http_404` and goes on with the rest.
+read of a source's stored copies, made a setting). The bound counts the source's stored
+documents plus the new files a listing finds. A turn over it (a listing grown past it,
+new files written while old ones wait for retirement, or a lowered setting) holds back
+new documents only: it finishes its listing, rewrites changed lists, writes its deleted
+readers rows, retires, and lands its listing row, so its copies drain back under the
+bound and no list goes stale; `inspect` and `loom doctor` show `too_many_documents` with
+the count meanwhile. The read of a source's stored copies goes in pages by `source_uri`,
+so it never cuts one off. A listing asks the store about at most 50 parent folders per
+query (not a setting), so a source of many folders lists in several queries; a recursive
+folder's subfolders are walked on every full listing, and a file in a new subfolder
+arrives with the next one. A probe checks a bounded sample: every item while there are
+at most 20, otherwise the 20 items added last, and the answer says `sampled: true` with
+the number checked. Only a refused item of the sample refuses `add` or `update`; the
+next sync turn reports any other as `item <n>: http_404` and goes on with the rest.
 
 ### The link parser
 
@@ -377,10 +378,10 @@ rows ([below](#erasure-and-audit)):
   newest read by the source that owns the document: `emails` (people the store grants
   any role, lower-cased), `groups` (group emails), `domains` (a domain permission the
   store marks discoverable), `anyone` (a public permission the store marks
-  discoverable), `changed_at` (when the list last differed from the one before it; only
-  the change into `unread` moves it, and an `unread` list refused again is unchanged)
-  and `unread` (no current list is known: no account that lists the file could read it,
-  or the source stopped listing the file and its retirement is not confirmed yet). A new
+  discoverable), `changed_at` (when the list last differed from the one before it, a
+  change into `unread` included; an `unread` list refused again changes nothing) and
+  `unread` (no current list is known: no account that lists the file could read it, or
+  the source stopped listing the file and its retirement is not confirmed yet). A new
   document is written with the list its fetch reads with the file's metadata. A listing
   that reads a list unlike the stored one rewrites the document's row with the same
   content and the new list, as `knowledge.update_metadata` without `reindex` does today,
@@ -388,11 +389,15 @@ rows ([below](#erasure-and-audit)):
   comparison read changes from today's `(source_uri, version)` match against
   `loom.chunks` to a match on the document's `revision` (`loom.documents.revision`
   against the chunks' `chunk_metadata` `revision`), which the rewrite keeps, so the next
-  turn finds the copy current and fetches nothing; under the Postgres authority the
-  check is `serves()` against the head, which records `chunks_revision`. Every read of a
-  list, the sync's comparison and the mirror leg's check alike, reads it from the copy
-  that serves the document: the head under the Postgres authority, `loom.documents`
-  otherwise, so a list committed and not yet published is already the one checked. The
+  turn finds the copy current and fetches nothing; a chunk written before chunks
+  recorded a revision (`revision` 0) still matches by `(source_uri, version)`, so no
+  existing copy is fetched again. Under the Postgres authority the comparison still
+  reads each copy's live chunks (their `revision` and `doc_version`) from `loom.chunks`
+  and judges them with `serves()` against the head, which records `chunks_revision`, and
+  it compares the list against the head's. The mirror leg keeps its admitted set in
+  ClickHouse (below) and, under that authority, checks each hit's list against its head,
+  as `pg_serving` checks a hit's head today, dropping a hit the head's list no longer
+  admits; so a list committed and not yet published is already the one that decides. The
   list lives and dies with its document: a retirement, an erasure or the mirror's
   retention removes it with the row, and no read op returns the column. Only the owning
   source's turn writes it, under its turn lease, so the document's own version order is
@@ -486,14 +491,15 @@ not find it in a search. For `gdrive` the list is the file's `permissions` (type
 `emailAddress`, `domain`, `allowFileDiscovery`), read with the listing when the reading
 account may share the file. When it may not (a view-only file), or for a file in a
 shared drive, where the listing leaves `permissions` out, the turn reads
-`permissions.list` with `supportsAllDrives`. When that is refused too, the turn reads it
-as the next account that lists the file, and marks the list `unread` only when no
-listing account can read it; then only the readers rows prove access. For `linear` the
-list is the union of the members of every team the project belongs to. A `crawl` source
-expands, through its directory read, the groups its `subjects` name, and only those,
-within its cap of 2000 people; a group on a file's list that no crawl of the mirror
-expanded admits nobody, and the people named directly still read. A `connected` source
-reads no directory and expands no group itself.
+`permissions.list` with `supportsAllDrives`. When that is refused too, the same turn
+reads it as another account of the source that lists the file, and marks the list
+`unread` when none can, before the listing row of the account that first listed it
+lands; then only the readers rows prove access. For `linear` the list is the union of
+the members of every team the project belongs to. A `crawl` source expands, through its
+directory read, the groups its `subjects` name, and only those, within its cap of 2000
+people; a group on a file's list that no crawl of the mirror expanded admits nobody, and
+the people named directly still read. A `connected` source reads no directory and
+expands no group itself.
 
 A reader sees a mirrored document when rule 1 holds, and rule 2 or rule 3:
 
@@ -561,13 +567,14 @@ Each mirror leg first computes the addresses the reader may see: one read of the
 mirror's lists from the copy that serves each document (above) and of its three tables
 with `FINAL`, newest row per key, filtered by `has` and `hasAny` over the reader's
 emails and connection accounts, then the chunk search, outline or list restricted to
-those addresses before its `LIMIT`, so a page is never cut short by the check. Any skip
-index on those tables is read only under `use_skip_indexes_if_final_exact_mode=1`, so a
-granule skipped for its newest version cannot leave an older one that names the reader.
-No admitted set is cached. The implementing pull request measures the leg (rows read,
-memory, p50) on a mirror of a million documents and puts the figures here. A leg that
-cannot read the tables shows no mirrored document and marks the answer `degraded:
-mirror_unread`.
+those addresses before its `LIMIT`, so a page is never cut short by the check, except
+for a hit the Postgres head check drops (above), as a stale hit is dropped today. Any
+skip index on those tables is read only under `use_skip_indexes_if_final_exact_mode=1`,
+so a granule skipped for its newest version cannot leave an older one that names the
+reader. No admitted set is cached. The implementing pull request measures the leg (rows
+read, memory, p50) on a mirror of a million documents, under both storage authorities,
+and puts the figures here. A leg that cannot read the tables shows no mirrored document
+and marks the answer `degraded: mirror_unread`.
 
 A stopped sync hides every mirrored document once the stale bound passes.
 
@@ -791,9 +798,9 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 - The source ops no longer answer `NOT_A_CODE_NAMESPACE`; `add` answers
   `NAMESPACE_INACTIVE` for an inactive namespace.
 - `recording` sources lose the `meet` provider.
-- A source whose listing passes `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` (default 50,000)
-  writes nothing new and ends with `too_many_documents`, where today it syncs on with a
-  truncated comparison.
+- A source whose stored documents plus new files pass
+  `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` (default 50,000) writes no new document and
+  reports `too_many_documents`, where today it syncs on with a truncated comparison.
 - The gate of `add`, `update`, `check`, `sync_now` and `remove` takes `writer`, with
   `admin` checked by the handler for shared and crawl sources; `rotate` is refused for a
   connected source.
@@ -803,7 +810,7 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 | Setting                                              | Default | Meaning                                                                              |
 | ---------------------------------------------------- | ------- | ------------------------------------------------------------------------------------ |
 | `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS`            | 3600    | a source's lists, group members row or account listing older than this admits nobody |
-| `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`                | 50000   | a source's documents; past it a turn writes nothing new but still retires            |
+| `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`                | 50000   | a source's stored documents plus new files; past it a turn holds back new documents  |
 | `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_PERSON`    | 8       | a person's connected sources in one namespace                                        |
 | `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_NAMESPACE` | 64      | a namespace's connected sources                                                      |
 | `LOOM_CONNECT_GDRIVE_CLIENT_ID`, `_SECRET`           | unset   | the shared-folder store's OAuth client; unset, those connections are off             |
@@ -891,39 +898,42 @@ The redirect URI to register with each store is
   a retirement cut by the pass bound leaving the older listing start; under the Postgres
   authority, a narrowed list committed but not yet published already the one the leg
   checks; a source over `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` after an item swap writing
-  nothing new, retiring, and draining back under it; a crawl where one account drops a
-  file another still lists, neither retiring nor marking it, and the dropping account's
-  row not held back; a file whose first listing account's permissions read is refused
-  and whose next account's succeeds, not marked `unread`; an `unread` list refused again
-  writing nothing and moving no `changed_at`; a cleanup killed mid-retirement, whose
-  rerun finds the documents still tagged and retires them; an anti-join over a mirrored
-  source N-1 removed, whose lease key and re-check use the source's namespace; no
-  readers, listing or group-members row left by a turn that starts after a cleanup; a
-  `remove` without `delete_documents` on a `namespace` source keeping its documents,
-  also when a same-named mirrored source's cleanup runs; a connected source N-1 removed
-  during its first listing leaving no readers row after the anti-join's cleanup; a new
-  document written with the list its fetch read; no read op returning `access_json`; a
-  mirrored `add` over a `namespace` source of the same name removed with
-  `delete_documents`, refused with `SOURCE_DELETE_PENDING`, and over its kept documents
-  with `SOURCE_DOCUMENTS_KEPT`; a mirrored `add` reusing the name of a source N stopped
-  while its cleanup is open, the two sharing the turn lease, the cleanup retiring only
-  documents of the old id and the new source writing each freed address at its next
-  complete listing; a mirrored `add` reusing the name of a stopped mirrored source whose
-  documents are still in the mirror, before the anti-join runs, owning none of them and
-  counting them `skipped`; a source whose registry row a lagging replica does not show
-  yet left alone; a person dropped from a crawl's expansion leaving no readers or
-  listing row; a directory read that fails mid-group, or returns over the cap, dropping
-  nobody; a user erasure leaving no row, of any version, keyed by the person's
-  pseudonyms; `erasure.request` refusing an `acl-` scope for an org admin and a
-  namespace admin and admitting a platform admin; a user erasure leaving no address of
-  the person in `loom.knowledge_sources`, nor a crawl readers or listing row naming
-  them; `erasure.request` and `erasure.export` refusing an `acl-` scope with auth off;
-  the mirror cache after an erasure followed by a new mirrored `add`; a connected
-  `notion` page shown to its owner only; a consent callback without the starting
-  browser's cookie, or in another subject's session, storing nothing; an admin's
-  `update` adding items to someone else's connected source refused; scope refusals on
-  the connect callback and a crawl's probe; today's `check`, `rotate`, `remove` and turn
-  over a row N wrote with `kind` empty.
+  no new document, rewriting a narrowed list, landing its listing row, retiring, and
+  draining back under it; a file only one account lists whose permissions read is
+  refused marked `unread` before that account's listing row lands, its old list
+  admitting nobody; a chunk with `revision` 0 matching by version, with no refetch after
+  the upgrade; a crawl where one account drops a file another still lists, neither
+  retiring nor marking it, and the dropping account's row not held back; a file whose
+  first listing account's permissions read is refused and whose next account's succeeds,
+  not marked `unread`; an `unread` list refused again writing nothing and moving no
+  `changed_at`; a cleanup killed mid-retirement, whose rerun finds the documents still
+  tagged and retires them; an anti-join over a mirrored source N-1 removed, whose lease
+  key and re-check use the source's namespace; no readers, listing or group-members row
+  left by a turn that starts after a cleanup; a `remove` without `delete_documents` on a
+  `namespace` source keeping its documents, also when a same-named mirrored source's
+  cleanup runs; a connected source N-1 removed during its first listing leaving no
+  readers row after the anti-join's cleanup; a new document written with the list its
+  fetch read; no read op returning `access_json`; a mirrored `add` over a `namespace`
+  source of the same name removed with `delete_documents`, refused with
+  `SOURCE_DELETE_PENDING`, and over its kept documents with `SOURCE_DOCUMENTS_KEPT`; a
+  mirrored `add` reusing the name of a source N stopped while its cleanup is open, the
+  two sharing the turn lease, the cleanup retiring only documents of the old id and the
+  new source writing each freed address at its next complete listing; a mirrored `add`
+  reusing the name of a stopped mirrored source whose documents are still in the mirror,
+  before the anti-join runs, owning none of them and counting them `skipped`; a source
+  whose registry row a lagging replica does not show yet left alone; a person dropped
+  from a crawl's expansion leaving no readers or listing row; a directory read that
+  fails mid-group, or returns over the cap, dropping nobody; a user erasure leaving no
+  row, of any version, keyed by the person's pseudonyms; `erasure.request` refusing an
+  `acl-` scope for an org admin and a namespace admin and admitting a platform admin; a
+  user erasure leaving no address of the person in `loom.knowledge_sources`, nor a crawl
+  readers or listing row naming them; `erasure.request` and `erasure.export` refusing an
+  `acl-` scope with auth off; the mirror cache after an erasure followed by a new
+  mirrored `add`; a connected `notion` page shown to its owner only; a consent callback
+  without the starting browser's cookie, or in another subject's session, storing
+  nothing; an admin's `update` adding items to someone else's connected source refused;
+  scope refusals on the connect callback and a crawl's probe; today's `check`, `rotate`,
+  `remove` and turn over a row N wrote with `kind` empty.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`, seeds mirrored documents with canary text and reads
   every knowledge read op, `knowledge.reads`, `knowledge.query` and
