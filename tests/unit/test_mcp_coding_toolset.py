@@ -129,7 +129,7 @@ def test_coding_roster_is_the_six_memory_verbs_plus_the_code_tools():
     assert CURATED_TOOLSETS == {"core", "coding", "atomic", "tasks", "tracker"}
 
 
-def test_coding_listing_is_twenty_tools_with_the_code_tools_regardless_of_the_flag():
+def test_coding_listing_is_its_roster_plus_the_code_tools_regardless_of_the_flag():
     for code in (False, True):
         tools = _listing("coding", code)
         names = _names(tools)

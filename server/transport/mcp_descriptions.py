@@ -1234,8 +1234,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "wants to audit what's being filtered out."
     ),
     "blacklist.add": (
-        "WHAT: Every later memory write in this namespace whose value "
-        "matches `pattern` is refused. Refused to a token "
+        "WHAT: Every later memory write in the pattern's `scope` (this "
+        "namespace by default) whose value matches `pattern` is refused. Refused to a token "
         "bounded to one user: a pattern refuses every user's writes.\n"
         "WHEN: An explicit 'never remember X' or 'don't store anything about "
         "Y'. Pass `sweep=true` only when the user also asks to forget what is "
@@ -1243,7 +1243,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "other writers' too. `swept_truncated: true` or a non-empty `sweep_error` means it did "
         "not finish: tell the user, and do not add the pattern again.\n"
         "WHEN NOT: Forgetting one saved fact is memory.delete.\n"
-        "ARGS: pattern; optional pattern_type (substring | regex), reason, sweep."
+        "ARGS: pattern; optional pattern_type (substring | regex), scope "
+        "(namespace | org, needs org admin | global, needs platform admin), reason, sweep."
     ),
     "blacklist.remove": ("Remove a previously-added blacklist pattern."),
     # ---- Erasure / Cost / Audit ----
