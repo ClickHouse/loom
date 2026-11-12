@@ -23,7 +23,9 @@
 //
 // Exit 0 when the helper sent the token, each event's own Loom call arrived
 // with it, and (Claude Code, which reports them) every hook exited 0 with
-// nothing on stderr; otherwise exit 1 naming what is missing.
+// nothing on stderr; with --no-node, when every hook failed on the missing
+// node, none with exit 2, and the turn's command ran. Otherwise exit 1
+// naming what is missing.
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
