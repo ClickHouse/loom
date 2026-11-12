@@ -179,81 +179,93 @@ add a candidate read to every write, and is not part of this design.
 ### The term leg
 
 `memory.search` gains one leg, which runs wherever `memory.search` runs, inside
-`memory.ask` and `context.pack` as well; the rule below that no later stage moves a
-governed hit covers those ops' stages too. A stored `memory.ask` answer (its precedent
-path) is reused only while the namespace's write mark has not moved, and that mark does
-not cover `loom.shared` today, so every write of a definition's shared row (promote,
-demote, a scrub, an embedding retired) moves the namespace's memory write mark, and no
-answer from before a promotion or demotion on N is reused after it (rolling upgrades below
-covers N-1's). A lapse with no write, a source passing its `expires_at` or `valid_to`,
-does not move the mark, and the precedent path's evidence check compares each cited row's
-live hash (catching a tombstone, a redaction or an edit), not its status or validity, so
-an answer that quoted such a definition is reused for up to
-`memory_ask_precedents_fast_max_age_hours`, as for any row that expires today. It reads
-the addressed namespace's live `loom.shared` rows of type `definition` under a
-`definition/` key (only that namespace, whatever `namespace_scope` fans out over), matches
-the query against each one's term and aliases, and places the matched rows at the top of
-the served list with `governed = true` on the hit (its `similarity` and `distance` its
-shared embedding's to the query, null when it has none, and a `rank_score` above the
-pool's; the response's `abstain`, `abstain_code`, `retrieval_confidence` and
-`retrieval_risk` read the first hit that is not governed, a governed hit's own
-`below_threshold` flag is never set, and a response that serves a governed hit does not
-abstain), removing any other hit under the same key in the addressed namespace, so an
-edited private copy is not served beside the governed text. A term or alias matches where
-it appears in the query with no character next to it that continues its edge: next to a
-Latin letter (accented ones included), digit, `_`, `+` or `#`, another of those; next to a
-letter of another script written with spaces (Cyrillic, Greek), a letter or digit that is
-not Latin; next to Hangul, whose particles attach to the word before them, or a script
-written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or punctuation, nothing. So
-`рост` does not match inside "простой" and `café` not inside "cafés", while `MRR` matches
-in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". One written all in capitals, or with a
-capital after its first letter, matches only as written, so `IT` does not match "what is
-it" and `GitHub` stays exact; any other matches case-folded, so `Churn rate` matches "what
-is our churn rate".
+`memory.ask` and `context.pack` as well. It covers memory only: knowledge has its own
+exact-key leg for identifiers a document defines (`server/knowledge/domain/exact_keys.py`),
+and a definition's `rests_on` already points at the documents behind it. `loom_search`
+serves the leg through its memory section. `governed` and `term_leg` are added output
+fields, which the SDKs and the MCP schema carry.
 
-Governed definitions are served through this leg under any read scope: an admin published
-them for every reader of the namespace, and a user-bounded reader who could not see one
-would read the term as undefined. This narrows the read-scope rule that a bounded read
-serves no namespace-wide row ([read scope inside a
-namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
-governed definitions through this leg only; the implementing pull request updates that
-page, and in `server/identity/domain/read_scope.py` the module docstring and the comment
-on `SCOPED_OPS`, which say every memory read of those ops carries the read scope. The leg
-runs only on a search's first page; the list a search parks for its later pages is the
-merged one, governed hits first, so the next page starts after the rows page one served
-and no ordinary hit is skipped, and is off when a field asks for other rows (any
-`memory_type`, since `definition` is not one of the field's values; `tags` or `category`
-filtering, not with `tags_soft` or `category_soft`; an explicit `agent`, `run_id` or
-`session_ids`; `as_of`; a body `user_id` or `session_id` under a whole-namespace read;
-`min_body_chars`; and `recent_first` or `anchor_first` above 0, whose rows are documented
-to come first). A derived aggregate's synthetic row (`derived_aggregate`, an exact count
-over the namespace's rows) stays first, above the governed hits, as the response documents
-it. A `user_id` or `session_id` the read scope pins, `scope`, `exclude_keys` and
-`min_similarity` keep it on, as do a soft tag or category and `entity_filter`, which only
-boost rows; it drops any key in `exclude_keys`. It serves no definition whose source is
-`sensitivity = 'high'` (the read-time check above). Its read is bounded by a setting; past
-the bound, the most recently promoted definitions (by `promoted_at`) are read. It runs
-concurrently with the other legs under its own time bound, which never shortens theirs (a
-leg past its bound adds nothing); an added output field, `term_leg` (`complete`, `capped`,
-`timed_out`, `failed` when a source read failed closed and a definition was withheld, and
-`empty` when the namespace holds no definition, and `off` when a page handle or a field
-turned the leg off), says which; and its latency is measured against the op's budget
-(`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull request that adds it.
-`governed` is an added output field: the SDKs and the MCP schema carry it.
+**What it reads.** The addressed namespace's live `loom.shared` rows of type `definition`
+under a `definition/` key, from that namespace only, whatever `namespace_scope` fans out
+over. It serves no definition whose source is `sensitivity = 'high'` (the read-time check
+above). Its read is bounded by a setting; past the bound, the most recently promoted
+definitions (by `promoted_at`) are read. It runs concurrently with the other legs under
+its own time bound, which never shortens theirs; a leg past its bound adds nothing. Its
+latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
+`server/settings/catalog.py`) in the pull request that adds it.
 
-The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
-defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
-points at the documents behind it. `loom_search` serves the leg through its memory
-section, and one rule holds for every later stage of `memory.search`, `loom_search` and
-the ops that run `memory.search` inside them: no stage or floor reorders governed hits,
-moves one below a hit that is not governed (the derived aggregate's row aside), or drops
-one in favour of such a hit, a stage added later included; a cap cuts governed hits last.
-Governed hits come first, in the order their names first appear in the query (a tie by the
-later `version`), and count within `top_k`, within a stage's cap on the memory section
-(the tracker verdict's `verdict_leads`, which keeps `VERDICT_MEMORY_MAX` memory hits) and
-within the token budgets (`body_budget_tokens`, `context.pack`'s block budget). When more
-governed hits match than fit, the later ones in that order are not served; a budget may
+**Matching.** A term or alias matches where it appears in the query with no character next
+to it that continues its edge:
+
+- next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
+  those;
+- next to a letter of another script written with spaces (Cyrillic, Greek): a letter or
+  digit that is not Latin;
+- next to Hangul, whose particles attach to the word before them, a script written without
+  spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or punctuation: nothing.
+
+So `рост` does not match inside "простой" and `café` not inside "cafés", while `MRR`
+matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". A name written all in
+capitals, or with a capital after its first letter, matches only as written, so `IT` does
+not match "what is it" and `GitHub` stays exact; any other matches case-folded, so `Churn
+rate` matches "what is our churn rate".
+
+**Placement.** Matched rows go to the top of the served list with `governed = true`, in
+the order their names first appear in the query; a tie goes to the latest promotion
+(`promoted_at`, then `promotion_event`). Any other hit under the same key in the addressed
+namespace is removed, so an edited private copy is not served beside the governed text. A
+derived aggregate's synthetic row (`derived_aggregate`, an exact count over the
+namespace's rows) stays first, above the governed hits, as the response documents it. No
+later stage or floor of `memory.search`, `loom_search` or the ops that run `memory.search`
+reorders governed hits, moves one below a hit that is not governed (that row aside), or
+drops one in favour of such a hit, a stage added later included. Governed hits count
+within `top_k`, within a stage's cap on the memory section (the tracker verdict's
+`verdict_leads`, which keeps `VERDICT_MEMORY_MAX` memory hits) and within the token
+budgets (`body_budget_tokens`, `context.pack`'s block budget). A cap cuts governed hits
+last: when more match than fit, the later ones in query order are not served. A budget may
 shorten a body but never reorders the hits.
+
+**Scores.** A governed hit's `similarity` and `distance` are its shared embedding's to the
+query, null when it has none, and its `rank_score` is above the pool's; its
+`below_threshold` flag is never set. A response that serves a governed hit has `abstain`
+false and no `abstain_code`; `retrieval_confidence` and `retrieval_risk` describe the hits
+that are not governed.
+
+**Pages and fields.** The leg runs only on a search's first page. The list a search parks
+for its later pages is the merged one, governed hits first, so the next page starts after
+the rows page one served and no ordinary hit is skipped. The leg is off when a field asks
+for other rows: any `memory_type` (`definition` is not one of its values); `tags` or
+`category` filtering, not with `tags_soft` or `category_soft`; an explicit `agent`,
+`run_id` or `session_ids`; `as_of`; a body `user_id` or `session_id` under a
+whole-namespace read; `min_body_chars`; and `recent_first` or `anchor_first` above 0,
+whose rows are documented to come first. A `user_id` or `session_id` the read scope pins,
+`scope`, `exclude_keys` and `min_similarity` keep it on, as do a soft tag or category and
+`entity_filter`, which only boost rows. It drops any key in `exclude_keys`.
+
+**`term_leg`** says what the leg did: `complete`; `empty` when the namespace holds no
+definition; `capped` or `timed_out` past its bounds; `failed` when any of its reads failed
+(the definitions, or a source that then failed closed and withheld a definition); and
+`off` when a page handle or a field turned it off.
+
+**Read scope.** Governed definitions are served through this leg under any read scope: an
+admin published them for every reader of the namespace, and a user-bounded reader who
+could not see one would read the term as undefined. This narrows the read-scope rule that
+a bounded read serves no namespace-wide row ([read scope inside a
+namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
+governed definitions through this leg only. The implementing pull request updates that
+page, and in `server/identity/domain/read_scope.py` the module docstring and the comment
+on `SCOPED_OPS`, which say every memory read of those ops carries the read scope.
+
+**Stored answers.** A stored `memory.ask` answer (its precedent path) is reused only while
+the namespace's write mark has not moved, and that mark does not cover `loom.shared`
+today. So every write of a definition's shared row (promote, demote, a scrub, an embedding
+retired) moves the namespace's memory write mark, and no answer from before a promotion or
+demotion on N is reused after it; rolling upgrades below covers N-1's. A lapse with no
+write, a source passing its `expires_at` or `valid_to`, does not move the mark, and the
+precedent path's evidence check compares each cited row's live hash (catching a tombstone,
+a redaction or an edit), not its status or validity. An answer that quoted such a
+definition is reused for up to `memory_ask_precedents_fast_max_age_hours`, as for any row
+that expires today.
 
 **Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
 served list is exactly what it was before. The memory-plane rule asks for a paired
@@ -289,11 +301,13 @@ that found nothing a caller could use, recorded by the op the caller invoked, ne
 search another op runs on its behalf:
 
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
-  and served no governed definition, when it read the namespace-wide rows under a read
-  scope of the whole namespace and no field removed candidates (for example a user,
-  session, run, agent, type, filtering tag or category, scope, time, body length,
-  `exclude_keys` or `min_similarity` away from its default; a soft tag or category and
-  `entity_filter` only boost rows);
+  and served no governed definition (before the term leg lands, nothing is governed and
+  the `term_leg` condition below does not apply, so a term an admin promoted earlier can
+  be recorded as a gap meanwhile; the term leg ends that), when it read the namespace-wide
+  rows under a read scope of the whole namespace and no field removed candidates (for
+  example a user, session, run, agent, type, filtering tag or category, scope, time, body
+  length, `exclude_keys` or `min_similarity` away from its default; a soft tag or category
+  and `entity_filter` only boost rows);
 - `knowledge.search` with no hit as close as the close-hit threshold (`_close` in
   `server/knowledge/app/knowledge_search.py`), no exact-key hit and, in `lexical` mode, no
   hit at all, when no field removed candidates (for example `tags`, `uri_prefix`,
@@ -438,7 +452,9 @@ gap holds the drafted definition and the gap's id. The LLM drafts it from nothin
 gap's queries, each asked in that form by at least `knowledge_gaps_min_askers` askers; its
 words are the model's, but nothing else reached the model: that threshold is why it may be
 shown to the namespace's viewers in `learnings.list`, as every learning is, and why it
-outlives a user erasure. The Library page shows a gaps tile for a namespace the viewer
+outlives a user erasure. A gap has at most one pending draft: the candidate's id derives
+from the gap's id, and a second `knowledge.gaps.draft` for it answers the pending draft
+without an LLM call. The Library page shows a gaps tile for a namespace the viewer
 administers, with a **Draft definition** action per gap.
 
 ## Definitions from query history
@@ -456,19 +472,19 @@ databases it covers, so a source on a shared cluster drafts only from its team's
 tables. Each turn:
 
 1. reads finished `SELECT` queries of the source's window whose `databases` are not empty
-   and all lie within the registration's (a query touching any other database, or none, as
-   a health check's `SELECT 1` does, is not read), from every replica when the
-   registration names the cluster (`clusterAllReplicas`) and from the node it connects to
-   otherwise, grouped by `normalized_query_hash`, counting initial queries only
-   (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and then by
-   recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
-   ran. A user here is a ClickHouse account, not a person: the threshold holds only where
-   each person queries under their own account, and a shared account (a BI tool's, a
-   service's) counts as one asker however many people stand behind it, while one person
-   with several accounts counts once per account. The threshold is a floor against
-   drafting from one account's queries, not an anonymity guarantee. Only the normalised
-   text is read, with comments removed and literals replaced (`normalizeQuery`), so no
-   user's literal values reach the LLM or the draft;
+   and all lie within the registration's (a query touching any other database, or none, is
+   not read), from every replica when the registration names the cluster
+   (`clusterAllReplicas`) and from the node it connects to otherwise, grouped by
+   `normalized_query_hash`, counting initial queries only (`is_initial_query = 1`) by
+   `initial_user`, ranked by distinct users and then by recency, and drops a group that
+   fewer than `knowledge_gaps_min_askers` distinct users ran. A user here is a ClickHouse
+   account, not a person: the threshold holds only where each person queries under their
+   own account, and a shared account (a BI tool's, a service's) counts as one asker
+   however many people stand behind it, while one person with several accounts counts once
+   per account. The threshold is a floor against drafting from one account's queries, not
+   an anonymity guarantee. Only the normalised text is read, with comments removed and
+   literals replaced (`normalizeQuery`), so no user's literal values reach the LLM or the
+   draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition for at most a setting's number of groups, and
    queues each (`source_kind = 'query_history'`): the metric's name is the `term`, its
@@ -478,7 +494,10 @@ tables. Each turn:
 `clusterAllReplicas` is a table function: a cluster registration accepts the `REMOTE`
 grant it needs beside the tracker's read-only list, which already allows `CREATE TEMPORARY
 TABLE`, and the read runs under `readonly = 2`, as the tracker's `remoteSecure` reads do.
-Nothing reaches search until an admin promotes a draft.
+Nothing reaches search until an admin promotes a draft. A `query_history` draft holds the
+team's normalised SQL and the tables and columns it reads, which the asker threshold does
+not cover, so `learnings.list` shows those candidates to the namespace's admins only,
+where it shows other learnings to every viewer.
 
 ## Promotion
 
@@ -502,20 +521,28 @@ queue row. A promotion refused after the write (a racing edit, a racing term, or
 `memory.set` answering `PUBLICATION_PENDING`, which today's review path swallows) leaves
 the candidate pending and the namespace-wide row written, which no term leg serves until
 its text is promoted; for a revision, the old definition lapses meanwhile and the admin
-read lists it. Every attempt, the first and each retry, decides from the head it reads and
-keeps no state of its own: a head that is live and `active` and whose text hashes to the
-draft's is promoted without a write; a head holding the governed shared copy's text is
-written with `if_match_sha256` against that head; no head is written with `if_absent`, a
-precondition the implementing pull request adds to `memory.set` that refuses the write
-when a live row holds the key, so a writer who creates the row first is never overwritten;
-any other head is a writer's edit, or a head the read-time check would not serve
-(`conflicted`, `duplicate`, expired), or a pinned head (a pinned key refuses a changed
-value; the admin unpins it with `memory.unpin` and reviews again), and the review is
-refused rather than overwrite or promote it; a demoted term's live row is such a head too,
-since no shared copy is governed, and the admin edits that row to the draft's text and
-promotes it with `memory.promote` and its hash instead. A retry so completes the
-promotion; rejecting the draft instead leaves the written row, which the admin restores
-from the row's history or promotes.
+read lists it.
+
+Every attempt, the first and each retry, decides from the head it reads and keeps no state
+of its own:
+
+- a head that is live and `active` and whose text hashes to the draft's is promoted
+  without a write;
+- a head holding the governed shared copy's text is written with `if_match_sha256` against
+  that head;
+- no head is written with `if_absent`, a precondition the implementing pull request adds
+  to `memory.set` that refuses the write when a live row holds the key, so a writer who
+  creates the row first is never overwritten;
+- a pinned head refuses the review, as a pinned key refuses a changed value; the admin
+  unpins it with `memory.unpin` and reviews again;
+- a demoted term's live row refuses it, since no shared copy is governed; the admin edits
+  that row to the draft's text and promotes it with `memory.promote` and its hash instead;
+- any other head is a writer's edit, or a head the read-time check would not serve
+  (`conflicted`, `duplicate`, expired), and the review is refused rather than overwrite or
+  promote it.
+
+A retry so completes the promotion. Rejecting the draft instead leaves the written row,
+which the admin restores from the row's history or promotes.
 
 `learnings.review` promotes a definition only from a `knowledge_gap` or `query_history`
 candidate. A candidate of another kind whose type is `definition` (a `memory_supporters`
