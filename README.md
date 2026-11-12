@@ -28,8 +28,8 @@ memory: what one agent learns in a session, the next agent or tool can find.
 
 Agents connect through MCP, HTTP, Python or TypeScript. Self-host with Docker or
 [on Kubernetes with the Helm chart](./docs/operations/kubernetes.md); agent context and
-index data live in [ClickHouse](./docs/use-cases/self-hosted-clickhouse.md), and a deployment can choose
-[Postgres at first boot](./docs/operations/postgres.md) for live memory and knowledge
+index data live in [ClickHouse](./docs/use-cases/self-hosted-clickhouse.md), and a
+deployment can choose [Postgres at first boot](./docs/operations/postgres.md) for live memory and knowledge
 state. The dashboard brings memories, repositories, tasks and runs into one place.
 
 ## What Loom is for
@@ -46,7 +46,8 @@ state. The dashboard brings memories, repositories, tasks and runs into one plac
 - **A code index of your repositories** that coding agents query for definitions,
   callers and change impact. [Code index](./docs/use-cases/code-intelligence.md)
 - **Lower model cost for coding agents**: 20% and 21% less on two of three measured
-  Claude Code question sets on the ClickHouse codebase, excluding Loom's own model calls. [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
+  Claude Code question sets on the ClickHouse codebase, excluding Loom's own model calls.
+  [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
 - **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
   extractor service converts. [Document search](./docs/use-cases/document-search.md)
 - **Shared context for multi-agent workflows**: shared memory, task inboxes and
@@ -55,7 +56,8 @@ state. The dashboard brings memories, repositories, tasks and runs into one plac
   [Autonomous agents](./docs/use-cases/autonomous-agents.md)
 - **A record of agent work**, with searchable conversations (when recording is on),
   session briefs to resume from, runs with their goals, outcomes and model costs when
-  supplied, and PR and tracker history. [Runs and PR history](./docs/use-cases/runs-and-pr-history.md)
+  supplied, and PR and tracker history.
+  [Runs and PR history](./docs/use-cases/runs-and-pr-history.md)
 
 Every use case, and when another tool fits better: [use cases](./docs/use-cases/index.md).
 

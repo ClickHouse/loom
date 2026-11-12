@@ -1,8 +1,8 @@
 # Long-term and shared memory for AI agents
 
 Loom is a self-hosted MCP server and HTTP API that gives AI agents long-term memory they
-share: a fact one agent saves in a session, the next session, another agent or a person at
-the dashboard can find. This page shows how that works and where to start.
+share: a fact one agent saves in a session can be found by the next session, by another
+agent, or by a person at the dashboard. This page shows how that works and where to start.
 
 ## What you get
 

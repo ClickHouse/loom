@@ -14,7 +14,8 @@ receive what they process), and what your agents know is queryable with SQL.
 - **ClickHouse OSS or ClickHouse Cloud.** [Choosing the ClickHouse](../operations/deployment.md#choosing-the-clickhouse) ·
   [ClickHouse Cloud and Managed Postgres](../operations/clickhouse-cloud.md)
 - **One store for vectors, text and audit.** Under the default ClickHouse authority,
-  vector, lexical and graph search, filters, audit and erasure are SQL over the same rows. [Storage authority](../architecture/storage-authority.md)
+  vector, lexical and graph search, filters, audit and erasure are SQL in one database.
+  [Storage authority](../architecture/storage-authority.md)
 - **Multi-user.** Orgs, namespaces, roles, tokens and single sign-on.
   [Identities and namespaces](../concepts/identities-and-namespaces.md) ·
   [Single sign-on](../operations/sso.md)
