@@ -343,9 +343,9 @@ How a caller gets a token at all is the deployment's identity mode
 
 - **`single-user`**: no authentication; a call that names no namespace resolves to one
   (`LOOM_DEFAULT_NAMESPACE`, default `local`, in the org `LOOM_SELF_SIGNUP_ORG`, default
-  `dev`) on MCP for every op but `code.*`, and over HTTP on the everyday memory and search
-  ops, where a call with no token also gets the org on every op but `code.*` and
-  `tracker.*`; which ops, and the agent each gets, are in the
+  `dev`) on MCP for every op but `code.*`. Over HTTP, a call with no token gets the org on
+  every op but `code.*` and `tracker.*`, and the namespace on the everyday memory and
+  search ops; which ops, and the agent each gets, are in the
   [HTTP reference](../reference/http-api.md#request). An `all_mine` search also reads the
   namespaces the user registered. For a laptop only.
 - **`trust-network`**: self-signup with email and password; the first principal to

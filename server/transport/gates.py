@@ -190,11 +190,6 @@ SINGLE_USER_FILLED_OPS: Final[dict[str, str]] = {
 }
 
 
-# A filled "*" here also reads every user and session (a list keeps its user and
-# session filters): a call that names a user or session gets no agent filled.
-WIDENS_PAST_USER: Final = frozenset({"memory.history"})
-
-
 async def with_single_user_identity(
     op: Operation, args: dict[str, Any], auth: AuthInfo | None
 ) -> dict[str, Any]:
@@ -217,7 +212,9 @@ async def with_single_user_identity(
     if op.name in SINGLE_USER_FILLED_OPS:
         fill["namespace"] = await default_namespace(None, org)
         names_scope = present(args.get("user_id")) or present(args.get("session_id"))
-        if op.name not in WIDENS_PAST_USER or not names_scope:
+        # A history's "*" also reads every user and session (a list keeps its user
+        # and session filters): a history that names one names its agent.
+        if op.name != "memory.history" or not names_scope:
             fill["agent"] = SINGLE_USER_FILLED_OPS[op.name]
     fields = op.input_model.model_fields
     update = {

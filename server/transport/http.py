@@ -2,7 +2,9 @@
 
 Each request flow:
     1. Extract + verify bearer JWT if present (required when auth_required=True)
-    2. Parse + validate body (Pydantic via op.input_model)
+    2. Parse body; on a single-user server, for a call with no token, fill the
+       install's identity (`gates.with_single_user_identity`); validate it
+       (Pydantic via op.input_model)
     3. Authz: role + namespace ACL check (if auth present + payload has identity)
     4. Run handler
     5. Emit one row to loom.agent_events (success or failure)
