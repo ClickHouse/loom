@@ -1,8 +1,8 @@
 // The plugin's minimum Loom server version. SessionStart compares
 // MIN_SERVER_VERSION with the `version` the server's `GET /v1/health` reports
-// and prints one line when the server is older. Anything unreadable (no
-// manifest, a server without the field, a version that is not SemVer) says
-// nothing: the check never stands between the user and a session.
+// and prints one line when the server is older. Anything unreadable (a server
+// without the field, a version that is not SemVer) says nothing: the check
+// never stands between the user and a session.
 
 import { readFileSync } from "node:fs";
 
@@ -35,27 +35,27 @@ export function isOlder(version, minimum) {
   return false;
 }
 
-/** This plugin's `{ version, minServerVersion }`: the version from its
- *  manifest, empty when no manifest can be read. */
-export function pluginManifest(base = import.meta.url) {
+/** This plugin's version from its manifest; "" when no manifest can be
+ *  read. */
+export function pluginVersion(base = import.meta.url) {
   for (const rel of MANIFESTS) {
     try {
       const m = JSON.parse(readFileSync(new URL(rel, base), "utf8"));
-      return { version: String(m.version || ""), minServerVersion: MIN_SERVER_VERSION };
+      return String(m.version || "");
     } catch {
       // Not this plugin's layout, or unreadable: try the other one.
     }
   }
-  return { version: "", minServerVersion: MIN_SERVER_VERSION };
+  return "";
 }
 
 /** The sentence about a server older than the plugin's minimum, or "". */
-export function serverVersionMessage(health, { serverUrl, manifest = pluginManifest() }) {
+export function serverVersionMessage(health, { serverUrl, plugin = pluginVersion(), minimum = MIN_SERVER_VERSION }) {
   const version = health && typeof health.version === "string" ? health.version : "";
-  if (!isOlder(version, manifest.minServerVersion)) return "";
+  if (!isOlder(version, minimum)) return "";
   return (
-    `the Loom server at ${serverUrl} runs ${version}, older than ${manifest.minServerVersion}, ` +
-    `the oldest this plugin (${manifest.version}) supports; upgrade the server.`
+    `the Loom server at ${serverUrl} runs ${version}, older than ${minimum}, ` +
+    `the oldest this plugin (${plugin}) supports; upgrade the server.`
   );
 }
 

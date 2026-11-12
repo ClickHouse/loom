@@ -92,8 +92,13 @@ jobs:
       - name: Codex session, node off PATH
         if: ${{ !cancelled() && runner.os != 'Windows' }}
         run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs codex --bin "$CODEX_BIN" --node-off-path
-      # Without Git Bash, Claude Code runs hooks under PowerShell. Last step:
-      # it moves Git for Windows away.
+      # With no node anywhere, every Claude Code hook fails without blocking
+      # the turn.
+      - name: Claude Code session, no node
+        if: ${{ !cancelled() }}
+        run: node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin "$CLAUDE_BIN" --expect-tool Bash --no-node
+      # Without Git Bash, Claude Code's shell tool is PowerShell; the hooks
+      # still run with no shell. Last step: it moves Git for Windows away.
       - name: Claude Code session, no Git Bash
         if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: pwsh
@@ -101,6 +106,8 @@ jobs:
           Rename-Item "$env:ProgramFiles\Git" "Git-hidden"
           $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch '\\Git\\' }) -join ';'
           node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin "$env:CLAUDE_BIN" --expect-tool PowerShell
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin "$env:CLAUDE_BIN" --expect-tool PowerShell --no-node
 
   # musl and BusyBox sh, where agents run in containers. JavaScript actions
   # do not run inside an Alpine container, so the job runs one itself.

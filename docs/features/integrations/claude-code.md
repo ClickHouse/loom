@@ -85,12 +85,14 @@ finding.
 ## Requirements
 
 - A reachable Loom server ([quickstart](../../getting-started/quickstart.md)).
+- Claude Code 2.1.319 or newer, the oldest checked with the plugin's hook form.
 - Node.js 18 or newer as `node` on the `PATH` Claude Code starts with. Every hook is
   `node` with the script's path as its argument, which Claude Code spawns with no shell,
   and the MCP header helper is `node "${CLAUDE_PLUGIN_ROOT}/bin/loom-mcp-headers.mjs"`.
-  That `PATH` is Claude Code's own, so Claude Code started from the Dock or a desktop
-  launcher does not see a `node` that a shell profile or a version manager puts on it:
-  add that Node's directory to `PATH` in the `env` block of `~/.claude/settings.json`.
+  That `PATH` is Claude Code's own: started from a terminal it is the shell's, but
+  started from the Dock or a desktop launcher on macOS it is only
+  `/usr/bin:/bin:/usr/sbin:/sbin`, which holds no Node from Homebrew, the nodejs.org
+  installer or a version manager. Then set `PATH` in the `env` block of `~/.claude/settings.json` to the whole search path with that Node's directory first, such as `"PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"`.
   If a hook says `node` was not found, run the `loom-status` skill; it diagnoses
   read-only and offers to install Node, running the installer only when you say yes.
 - Supported platforms: macOS (Apple silicon, Intel), Linux (x86_64, arm64; glibc or musl;
@@ -367,19 +369,18 @@ Start with `/loom:loom-status`; it names the cause in one line. It runs its chec
 `sh`: on Windows without Git Bash, run `node <plugin root>/bin/loom-client-status.mjs`
 instead.
 
-| Symptom                                                                     | Cause                                              | Fix                                                                                                                     |
-| --------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `node: not found` from a hook                                               | the installed plugin predates its Node launcher    | `claude plugin update loom@loom`                                                                                        |
-| a hook prints a `loom:` line about Node.js 18+                              | the launcher found no Node 18+, or only an old one | `LOOM_NODE=/path/to/node`, or the `loom-status` skill; restart                                                          |
-| nothing captured on Windows; `claude --debug` shows `loom: no node on PATH` | no `node` on the `PATH` Claude Code starts with    | install Node.js 18+ on the system `PATH` (the header helper runs through `cmd.exe`, which only finds that one); restart |
-| MCP server "needs authentication"                                           | no Node for the header helper, or no token found   | the `loom-status` skill names which                                                                                     |
-| no primer, nothing captured                                                 | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                                                                              |
-| tools answer, captures do not                                               | the token is viewer-only on the write namespace    | mint a writer token                                                                                                     |
-| Conversations page empty                                                    | conversation logging is off for the namespace      | the **Record conversations** switch on the dashboard's Conversations page, or `conversation.set_logging`                |
-| a hook added in a new release never fires                                   | the installed plugin is older than the server      | `claude plugin update loom@loom`                                                                                        |
-| every tool listed twice                                                     | a user-scope `loom` MCP entry beside the plugin    | `claude mcp remove loom`                                                                                                |
-| reads denied in a repo you work on locally                                  | the checkout is indexed and the file is unmodified | `--config local_first=true` or `LOOM_CODE_LOCAL_FIRST=on`                                                               |
-| `Hook cancelled` at exit                                                    | SessionEnd hooks ran past the client's budget      | update the plugin (its entries declare `timeout: 10`)                                                                   |
+| Symptom                                                      | Cause                                              | Fix                                                                                                                                                                                                                |
+| ------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| a hook error says `node` was not found                       | no `node` on the `PATH` Claude Code starts with    | set `PATH` in the `env` block of settings.json to the whole search path with that Node's directory first, such as `"PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"`, or the `loom-status` skill; restart |
+| hooks fail and nothing is captured, though Node is installed | the first `node` on that `PATH` is older than 18   | put Node.js 18+ first on that `PATH`, or run the `loom-status` skill; restart                                                                                                                                      |
+| MCP server "needs authentication"                            | no Node for the header helper, or no token found   | the `loom-status` skill names which                                                                                                                                                                                |
+| no primer, nothing captured                                  | server unreachable, or no token found              | `loom-status`; check `~/.loom/config.json`                                                                                                                                                                         |
+| tools answer, captures do not                                | the token is viewer-only on the write namespace    | mint a writer token                                                                                                                                                                                                |
+| Conversations page empty                                     | conversation logging is off for the namespace      | the **Record conversations** switch on the dashboard's Conversations page, or `conversation.set_logging`                                                                                                           |
+| a hook added in a new release never fires                    | the installed plugin is older than the server      | `claude plugin update loom@loom`                                                                                                                                                                                   |
+| every tool listed twice                                      | a user-scope `loom` MCP entry beside the plugin    | `claude mcp remove loom`                                                                                                                                                                                           |
+| reads denied in a repo you work on locally                   | the checkout is indexed and the file is unmodified | `--config local_first=true` or `LOOM_CODE_LOCAL_FIRST=on`                                                                                                                                                          |
+| `Hook cancelled` at exit                                     | SessionEnd hooks ran past the client's budget      | update the plugin (its entries declare `timeout: 10`)                                                                                                                                                              |
 
 ## Other clients
 

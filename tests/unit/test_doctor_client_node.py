@@ -100,7 +100,16 @@ def test_a_node_only_on_the_shell_path_warns_for_claude_code(home: Path) -> None
     grade, line = _checks(home, PATH=str(node.parent))["client:claude-code:node"]
     assert grade == dc.WARN
     assert line.startswith(f"Loom hook runtime ready: {node} (v24.0.0), but only with this shell")
-    assert "PATH in the `env` block of ~/.claude/settings.json" in line
+    assert "set PATH in the `env` block of ~/.claude/settings.json" in line
+
+
+def test_an_old_node_on_the_gui_path_warns_for_claude_code(home: Path) -> None:
+    _install(home, ".claude", "1.3.0")
+    node = _node(home / "shell-only", "v24.0.0")
+    _node(Path(dc.GUI_PATH), "v16.20.2")
+    grade, line = _checks(home, PATH=str(node.parent))["client:claude-code:node"]
+    assert grade == dc.WARN
+    assert "finds no Node.js 18+ as `node`" in line
 
 
 def test_a_path_in_claude_settings_counts_for_claude_code_only(home: Path) -> None:

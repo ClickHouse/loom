@@ -4,20 +4,22 @@
 // home, then runs one headless turn against a local fake that answers both
 // the model API and Loom. The model's turn runs one shell command, so the
 // session fires SessionStart, UserPromptSubmit, PreToolUse, PostToolUse and
-// Stop through the shell the agent picks on this platform, and the MCP
-// entry's header helper runs the way the agent runs it. No model provider
-// is called.
+// Stop the way the agent runs hooks on this platform (Claude Code with no
+// shell, Codex through its shell), and the MCP entry's header helper runs the
+// way the agent runs it. No model provider is called.
 //
 //   node agent-session.mjs claude --bin <path to claude>
 //   node agent-session.mjs codex  --bin <path to the native codex binary>
 //     [--port 7777]         the fake's port; the Codex plugin ships localhost:7777
 //     [--expect-tool PowerShell]  Claude Code's shell tool must be this one: without
-//                           Git Bash it is PowerShell, which runs the hooks too
+//                           Git Bash it is PowerShell
 //     [--node-off-path]     the agent's PATH has no node, as for a GUI launch:
 //                           Codex's launcher must find it under a version
 //                           manager; Claude Code gets it from PATH in the env
 //                           block of its settings.json, the documented fix
 //                           (not on Windows: the stand-in nvm node is a sh script)
+//     [--no-node]           Claude Code only: no node at all; every hook fails
+//                           without blocking, and the turn's command still runs
 //
 // Exit 0 when the helper sent the token, each event's own Loom call arrived
 // with it, and (Claude Code, which reports them) every hook exited 0 with
@@ -34,17 +36,18 @@ const TOKEN = "loom-e2e-token";
 const MODEL_KEY = "e2e-model-key";
 
 function parseArgs(argv) {
-  const out = { agent: argv[0], bin: "", port: 7777, nodeOffPath: false, expectTool: "" };
+  const out = { agent: argv[0], bin: "", port: 7777, nodeOffPath: false, noNode: false, expectTool: "" };
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === "--bin") out.bin = argv[++i];
     else if (argv[i] === "--port") out.port = Number(argv[++i]);
     else if (argv[i] === "--node-off-path") out.nodeOffPath = true;
+    else if (argv[i] === "--no-node") out.noNode = true;
     else if (argv[i] === "--expect-tool") out.expectTool = argv[++i];
     else throw new Error(`unknown argument ${argv[i]}`);
   }
-  if (!["claude", "codex"].includes(out.agent) || !out.bin) {
+  if (!["claude", "codex"].includes(out.agent) || !out.bin || (out.noNode && out.agent !== "claude")) {
     throw new Error(
-      "usage: agent-session.mjs claude|codex --bin <path> [--port n] [--node-off-path] [--expect-tool <name>]",
+      "usage: agent-session.mjs claude|codex --bin <path> [--port n] [--node-off-path] [--no-node] [--expect-tool <name>]",
     );
   }
   return out;
@@ -222,19 +225,25 @@ function scratch() {
   return { dir, home, work, checkout };
 }
 
-/** PATH without any directory holding node, and a home where node is found
- *  only as nvm's default install, as for an agent started from the Dock. That
- *  node notes each run's arguments (not its --version probe) in a file.
- *  Returns the directory that holds it. */
-function hideNode(env, home) {
+/** Drops every PATH directory that holds node; returns node's file name. */
+function stripNode(env) {
   const exe = process.platform === "win32" ? "node.exe" : "node";
   const own = path.dirname(process.execPath);
-  if (["/bin", "/usr/bin"].includes(own)) throw new Error(`--node-off-path needs node outside ${own}`);
+  if (["/bin", "/usr/bin"].includes(own)) throw new Error(`hiding node needs node outside ${own}`);
   const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") || "PATH";
   env[key] = env[key]
     .split(path.delimiter)
     .filter((d) => d && !fs.existsSync(path.join(d, exe)))
     .join(path.delimiter);
+  return exe;
+}
+
+/** PATH without any directory holding node, and a home where node is found
+ *  only as nvm's default install, as for an agent started from the Dock. That
+ *  node notes each run's arguments (not its --version probe) in a file.
+ *  Returns the directory that holds it. */
+function hideNode(env, home) {
+  const exe = stripNode(env);
   const bin = path.join(home, ".nvm", "versions", "node", `v${process.versions.node}`, "bin");
   fs.mkdirSync(bin, { recursive: true });
   const used = path.join(home, "nvm-node-used");
@@ -305,6 +314,7 @@ async function claudeSession(opts, box, url) {
     current.env = { ...current.env, PATH: `${nvmBin}${path.delimiter}${env.PATH}` };
     fs.writeFileSync(settings, JSON.stringify(current));
   }
+  if (opts.noNode) stripNode(env);
   const r = await run(
     opts.bin,
     [
@@ -336,18 +346,6 @@ async function claudeSession(opts, box, url) {
   for (const ev of expected) {
     if (!fired.has(ev)) problems.push(`no ${ev} hook ran`);
   }
-  // A hook's stdout reaches the agent through whichever shell ran it: the
-  // primer is SessionStart's.
-  if (!hooks.some((h) => h.hook_event === "SessionStart" && String(h.output || "").includes("# Loom"))) {
-    problems.push("SessionStart's primer never reached Claude Code");
-  }
-  // Under PowerShell every hook command ends in `exit 0`: there only the
-  // empty stderr says the hook itself did not fail.
-  for (const h of hooks) {
-    if (h.exit_code !== 0 || (h.stderr || "").trim()) {
-      problems.push(`${h.hook_name} exited ${h.exit_code} with stderr: ${String(h.stderr || "").trim()}`);
-    }
-  }
   const ran = events.some(
     (e) =>
       e.type === "user" &&
@@ -356,6 +354,22 @@ async function claudeSession(opts, box, url) {
       ),
   );
   if (!ran) problems.push("the shell command did not run");
+  if (opts.noNode) {
+    // Each hook fails on the missing node, and none blocks the turn.
+    for (const h of hooks) {
+      if (h.exit_code === 0 || h.exit_code === 2) problems.push(`${h.hook_name} exited ${h.exit_code} with no node`);
+    }
+    return { problems, transcript: r.stdout + r.stderr };
+  }
+  // A hook's stdout reaches the agent: the primer is SessionStart's.
+  if (!hooks.some((h) => h.hook_event === "SessionStart" && String(h.output || "").includes("# Loom"))) {
+    problems.push("SessionStart's primer never reached Claude Code");
+  }
+  for (const h of hooks) {
+    if (h.exit_code !== 0 || (h.stderr || "").trim()) {
+      problems.push(`${h.hook_name} exited ${h.exit_code} with stderr: ${String(h.stderr || "").trim()}`);
+    }
+  }
   return { problems, transcript: r.stdout + r.stderr };
 }
 
@@ -441,7 +455,7 @@ async function main() {
   try {
     result = await (opts.agent === "claude" ? claudeSession : codexSession)(opts, box, url);
     // Stop hands its posts to a detached flusher: give it time to land.
-    const deadline = Date.now() + 20000;
+    const deadline = opts.noNode ? 0 : Date.now() + 20000;
     while (Date.now() < deadline && !fake.seen.some(EXPECTED_CALLS.Stop)) {
       await new Promise((r) => setTimeout(r, 250));
     }
@@ -451,7 +465,7 @@ async function main() {
       result.problems.push("no hook ran the version manager's node");
     }
     const lookedUp = (s) => s.path === "/v1/code.repos" && JSON.stringify(s.repos || []).includes("example/e2e");
-    if (box.checkout && !fake.seen.some(lookedUp)) {
+    if (box.checkout && !opts.noNode && !fake.seen.some(lookedUp)) {
       result.problems.push("no hook looked the checkout's repository up");
     }
   } finally {
@@ -465,14 +479,15 @@ async function main() {
   }
   const { problems } = result;
   const bearer = `Bearer ${TOKEN}`;
-  if (!fake.seen.some((s) => s.path === "/mcp" && s.auth === bearer)) {
+  if (!opts.noNode && !fake.seen.some((s) => s.path === "/mcp" && s.auth === bearer)) {
     problems.push("the MCP header helper never sent the token");
   }
   for (const [event, call] of Object.entries(EXPECTED_CALLS)) {
-    if (!fake.seen.some((s) => call(s) && s.auth === bearer))
+    if (!opts.noNode && !fake.seen.some((s) => call(s) && s.auth === bearer))
       problems.push(`${event}: its Loom call never came with the token`);
   }
-  const label = `${opts.agent} on ${process.platform}-${process.arch}${opts.nodeOffPath ? " (node off PATH)" : ""}`;
+  const mode = opts.nodeOffPath ? " (node off PATH)" : opts.noNode ? " (no node)" : "";
+  const label = `${opts.agent} on ${process.platform}-${process.arch}${mode}`;
   if (problems.length) {
     console.error(`FAIL ${label}`);
     for (const p of problems) console.error(`  - ${p}`);

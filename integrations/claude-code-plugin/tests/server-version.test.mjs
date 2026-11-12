@@ -9,16 +9,10 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  MIN_SERVER_VERSION,
-  isOlder,
-  parseVersion,
-  pluginManifest,
-  serverVersionLine,
-} from "../lib/server-version.mjs";
+import { MIN_SERVER_VERSION, isOlder, parseVersion, pluginVersion, serverVersionLine } from "../lib/server-version.mjs";
 
 const HOOK = fileURLToPath(new URL("../hooks/loom-session-start.mjs", import.meta.url));
-const MANIFEST = { version: "2.0.0", minServerVersion: "1.2.0" };
+const PLUGIN = { plugin: "2.0.0", minimum: "1.2.0" };
 
 test("parseVersion reads a SemVer core and drops a prerelease or build suffix", () => {
   assert.deepEqual(parseVersion("1.2.3"), [1, 2, 3]);
@@ -43,7 +37,7 @@ test("isOlder compares numerically, and is false whenever either side does not p
 });
 
 test("serverVersionLine: one loom: line naming both versions for an older server, else nothing", () => {
-  const line = serverVersionLine({ version: "1.1.0" }, { serverUrl: "https://loom.example", manifest: MANIFEST });
+  const line = serverVersionLine({ version: "1.1.0" }, { serverUrl: "https://loom.example", ...PLUGIN });
   assert.equal(
     line,
     "loom: the Loom server at https://loom.example runs 1.1.0, older than 1.2.0, " +
@@ -51,29 +45,19 @@ test("serverVersionLine: one loom: line naming both versions for an older server
   );
   assert.equal(line.split("\n").length, 1);
   for (const body of [{ version: "1.2.0" }, { version: "3.0.0" }, { version: "dev" }, { version: 1 }, {}, null]) {
-    assert.equal(
-      serverVersionLine(body, { serverUrl: "https://loom.example", manifest: MANIFEST }),
-      "",
-      JSON.stringify(body),
-    );
+    assert.equal(serverVersionLine(body, { serverUrl: "https://loom.example", ...PLUGIN }), "", JSON.stringify(body));
   }
   assert.equal(
-    serverVersionLine(
-      { version: "0.1.0" },
-      { serverUrl: "https://loom.example", manifest: { version: "2.0.0", minServerVersion: "" } },
-    ),
+    serverVersionLine({ version: "0.1.0" }, { serverUrl: "https://loom.example", plugin: "2.0.0", minimum: "" }),
     "",
   );
 });
 
-test("pluginManifest reads this plugin's own manifest", () => {
+test("pluginVersion reads this plugin's own manifest", () => {
   const m = JSON.parse(fs.readFileSync(new URL("../.claude-plugin/plugin.json", import.meta.url), "utf8"));
-  assert.deepEqual(pluginManifest(), { version: m.version, minServerVersion: MIN_SERVER_VERSION });
+  assert.equal(pluginVersion(), m.version);
   assert.ok(parseVersion(MIN_SERVER_VERSION), MIN_SERVER_VERSION);
-  assert.deepEqual(pluginManifest("file:///nonexistent/lib/x.mjs"), {
-    version: "",
-    minServerVersion: MIN_SERVER_VERSION,
-  });
+  assert.equal(pluginVersion("file:///nonexistent/lib/x.mjs"), "");
 });
 
 /** A fake Loom whose /v1/health answers `health` (`hang` never answers it). */
@@ -132,9 +116,9 @@ function session(url, extraEnv = {}) {
   });
 }
 
-const minimum = pluginManifest().minServerVersion;
+const minimum = MIN_SERVER_VERSION;
 
-test("SessionStart warns once about a server older than the manifest's minimum", async () => {
+test("SessionStart warns once about a server older than the plugin's minimum", async () => {
   const [major, minor, patch] = parseVersion(minimum);
   // One below the minimum, at whichever position is above zero.
   const older =
@@ -189,8 +173,5 @@ test("the Codex copy reads its own manifest", async () => {
   const manifest = JSON.parse(
     fs.readFileSync(new URL("../../codex-plugin/.codex-plugin/plugin.json", import.meta.url), "utf8"),
   );
-  assert.deepEqual(codex.pluginManifest(), {
-    version: manifest.version,
-    minServerVersion: MIN_SERVER_VERSION,
-  });
+  assert.equal(codex.pluginVersion(), manifest.version);
 });

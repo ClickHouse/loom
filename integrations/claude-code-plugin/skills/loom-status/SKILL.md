@@ -28,14 +28,14 @@ Code; in Codex, the newest `~/.codex/plugins/cache/loom/loom/*/` directory.
 ## Check in this order; the first failure is the cause
 
 1. **Local runtime.** `sh "<root>/skills/loom-status/scripts/ensure-node.sh" --check`
-   prints the Node 18+ the hooks and the MCP header helper run under, or one
-   line saying none was found or the one found is too old. A second line
-   names a launch that finds none, with its fix: relay it. On a failure, tell
-   the user the hooks cannot run and offer the fix: Claude Code's hooks need
-   that Node's directory on `PATH` (the `env` block of its settings); under
-   Codex `LOOM_NODE=/path/to/node` reaches the hooks, and the MCP header
-   helper needs that Node on PATH. Else the same script without
-   `--check` installs Node (root or passwordless sudo, then apt/dnf/yum, apk
+   prints the Node 18+ the hooks run under (Claude Code: the `node` on PATH;
+   Codex: the launcher's pick), or one line saying none was found or the one
+   found is too old. A second line names a launch that finds none, with its
+   fix: relay it. On a failure, tell the user the hooks cannot run and offer
+   the fix: Claude Code needs Node 18+ first on the PATH it starts with (the
+   `env` block of its settings); under Codex `LOOM_NODE=/path/to/node` reaches
+   the hooks, and the MCP header helper needs that Node on PATH. Else the same
+   script without `--check` installs Node (root or passwordless sudo, then apt/dnf/yum, apk
    or Homebrew). Run it only when the user says yes; if it exits 2, report its
    blocker line, do not retry. After an install the user restarts the
    session: SessionStart hooks cannot rerun in this one.

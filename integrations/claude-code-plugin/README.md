@@ -66,8 +66,8 @@ its argument, spawned with no shell, and the MCP header helper as
 the PATH Claude Code starts with, on every OS, with or without Git Bash. That
 PATH is the agent's own: an agent started from the Dock or a desktop launcher,
 or a version manager that sets PATH only in interactive shells, leaves `node`
-off it; add that Node's directory to `PATH` in the `env` block of
-`~/.claude/settings.json`. The Codex wiring, `hooks.generic.json` and the
+off it (on macOS a Dock launch gets only `/usr/bin:/bin:/usr/sbin:/sbin`, with
+no Homebrew or nodejs.org Node): set `PATH` in the `env` block of `~/.claude/settings.json` to the whole search path with that Node's directory first, such as `"PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"`. The Codex wiring, `hooks.generic.json` and the
 skills' commands start Node through `sh bin/loom-node`, which runs the first
 Node 18+ among `LOOM_NODE`, `node` on PATH, a version manager's default (or its
 newest install when the default cannot be read or is older than 18), and the

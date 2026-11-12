@@ -152,7 +152,7 @@ test("loom-status Node check warns when only this shell's environment finds Node
     assert.equal(shellOnly.status, 0, shellOnly.stderr);
     assert.match(
       shellOnly.stdout,
-      /ready: .*\nFound only with this shell's environment: Claude Code .*settings\.json\.\n$/,
+      /ready: .*\nFound only with this shell's environment: Claude Code .*such as "\/opt\/homebrew\/bin:\/usr\/bin:\/bin:\/usr\/sbin:\/sbin"\.\n$/,
     );
     // Claude Code's settings env reaches a GUI-started agent: a PATH there
     // counts; LOOM_NODE does not, since its hooks run the node on PATH.
@@ -163,6 +163,30 @@ test("loom-status Node check warns when only this shell's environment finds Node
     // A key that is no variable name is not passed on to the GUI run.
     settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin, "two\nlines": "x", "": "y" });
     assert.doesNotMatch(f.run("--check").stdout, /Found only/);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("loom-status Node check under Claude Code judges the node on PATH, not the launcher's pick", () => {
+  const f = fixture();
+  try {
+    f.put("uname", "echo Linux");
+    f.put("node", "echo v16.20.2");
+    // A version manager's Node 22 behind it: the launcher would pick that one.
+    const nvm = path.join(f.dir, ".nvm", "versions", "node", "v22.1.0", "bin");
+    fs.mkdirSync(nvm, { recursive: true });
+    fs.writeFileSync(path.join(nvm, "node"), "#!/bin/sh\necho v22.1.0\n", { mode: 0o755 });
+    assert.equal(f.run("--check").status, 0, "the launcher finds it for Codex");
+    f.env.CLAUDE_PLUGIN_ROOT = path.join(f.dir, "plugin");
+    const r = f.run("--check");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /^loom: no Node\.js 18\+ as `node` on this PATH; Claude Code's hooks run that one\.\n$/);
+    // The installer does not take the launcher's pick as done either.
+    f.put("id", "echo 1000");
+    const install = f.run();
+    assert.equal(install.status, 2);
+    assert.match(install.stderr, /needs root or passwordless sudo/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }
@@ -196,7 +220,10 @@ test("loom-status Node check knows Claude Code by where it is installed", NEEDS_
     const custom = installAt(path.join(f.env.CLAUDE_CONFIG_DIR, "plugins", "cache", "loom", "loom", "1.2.7"));
     const r = f.runAt(custom, "--check");
     assert.match(r.stdout, /Found only with this shell's environment: Claude Code/);
-    assert.ok(r.stdout.includes(`env block of ${path.join(f.env.CLAUDE_CONFIG_DIR, "settings.json")}.`), r.stdout);
+    assert.ok(
+      r.stdout.includes(`env block of ${path.join(f.env.CLAUDE_CONFIG_DIR, "settings.json")} to the whole search path`),
+      r.stdout,
+    );
     settings(f.env.CLAUDE_CONFIG_DIR, { LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin });
     assert.doesNotMatch(f.runAt(custom, "--check").stdout, /Found only/);
   } finally {
@@ -240,7 +267,7 @@ nodeTest("on Windows the helper checks through the launcher and names no install
       .join(path.delimiter);
     const r = spawnSync(sh, [helper], { encoding: "utf8", env: env(noNode) });
     assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, /No installer for this OS; install Node\.js 18\+, or set LOOM_NODE=/);
+    assert.match(r.stderr, /No installer for this OS; install Node\.js 18\+ on PATH\./);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

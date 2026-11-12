@@ -11,8 +11,8 @@ server URL and the token, and each line says what to do.
 
 Pure functions take their I/O as arguments (`get_json`, `post_json`, `home`,
 `tmp`, `now`) so the unit tests run them offline. `node_checks` is the
-exception: it runs the installed plugin's own launcher, so that one
-implementation decides which Node the hooks get.
+exception: it runs the `node` on Claude Code's PATH, and the installed Codex
+plugin's own launcher, the Node each client's hooks get.
 """
 
 from __future__ import annotations
@@ -940,15 +940,6 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     return out
 
 
-def _predates_launcher(name: str, install: Path, client: str, fix: str) -> Check:
-    return (
-        name,
-        WARN,
-        f"the installed plugin at {install} predates the Node launcher: its hooks need "
-        f"`node` on {client}'s PATH. Fix: {fix}.",
-    )
-
-
 def _path_node(env: dict[str, str]) -> tuple[int, str]:
     """The `node` on env's PATH: (0, its ready line), or (1, why it cannot
     run the hooks). Raises OSError or TimeoutExpired when it does not run."""
@@ -992,8 +983,9 @@ def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
             name,
             WARN,
             f"{line}, but only with this shell's environment: Claude Code started from "
-            "the Dock or a desktop launcher finds no `node`. Fix: add its directory to "
-            "PATH in the `env` block of ~/.claude/settings.json.",
+            "the Dock or a desktop launcher finds no Node.js 18+ as `node`. Fix: set PATH "
+            "in the `env` block of ~/.claude/settings.json to the whole search path with "
+            'that directory first, such as "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin".',
         )
     return (name, PASS, line)
 
@@ -1004,7 +996,12 @@ def _codex_node_check(env: dict[str, str], install: Path) -> Check:
     name = "client:codex:node"
     launcher = install / "bin" / "loom-node"
     if not launcher.is_file():
-        return _predates_launcher(name, install, "Codex", "`codex plugin marketplace upgrade loom`")
+        return (
+            name,
+            WARN,
+            f"the installed plugin at {install} predates the Node launcher: its hooks need "
+            "`node` on Codex's PATH. Fix: `codex plugin marketplace upgrade loom`.",
+        )
     sh = shutil.which("sh")
     if sh is None:
         return (name, FAIL, _NO_SH)
