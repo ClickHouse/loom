@@ -58,7 +58,7 @@ A tag run whose image build failed on a download from outside GitHub (`curl: (7)
 
 A prerelease takes neither Latest nor `:latest` and is not listed in the MCP Registry. Deploy it to a deployment you run (`loom-deploy`; on Kubernetes set `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`) and use it for at least two days. A regression is fixed on `main`, whose files already name `X.Y.Z`; tag `rc.2` on the fix's merge commit (for a patch, on its merge commit on `release/X.Y`, as in §7) and soak again. Never move a tag: once its images are published, the workflow refuses a tag that points elsewhere. Once the final is tagged, a candidate's run is refused (`prepare.py check-tag`), and the message says whether to run the final, do nothing, or delete a stray tag.
 
-A candidate's registry dispatch (`gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z-rc.N`, the owner's go-ahead first) publishes PyPI's `X.Y.ZrcN`, the PEP 440 form the workflow writes into the SDK, and npm's `next` dist-tag, once its `pypi` and `npm` environments are approved (§4). `releases/latest/download/install.sh` serves the Latest release, which a candidate never becomes, so a candidate installs from its own URL: `https://github.com/ClickHouse/loom/releases/download/vX.Y.Z-rc.N/install.sh`.
+A candidate's registry dispatch (`gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z-rc.N`, the owner's go-ahead first) publishes PyPI's `X.Y.ZrcN`, the PEP 440 form the workflow writes into the SDK, and npm's `X.Y.Z-rc.N` under the `next` dist-tag, once its `pypi` and `npm` environments are approved (§4). `releases/latest/download/install.sh` serves the Latest release, which a candidate never becomes, so a candidate installs from its own URL: `https://github.com/ClickHouse/loom/releases/download/vX.Y.Z-rc.N/install.sh`.
 
 ## 4. The final release
 
@@ -79,7 +79,7 @@ tag=vX.Y.Z   # vX.Y.Z-rc.N for a candidate
 # Once the run shows waiting (after github-release): the GET then lists pypi and npm, and mcp-registry for a final.
 dispatch=$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event workflow_dispatch --status waiting -L 1 --json databaseId --jq '.[0].databaseId // empty')
 gh api "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag is waiting yet}/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
-ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag is waiting yet}/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
+ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
 gh api -X POST "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag is waiting yet}/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"   # the owner's go-ahead first
 ```
 
