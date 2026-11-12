@@ -94,12 +94,13 @@ leg, because the term leg serves shared rows to every reader:
   promotion is never signed off as the admin's.
 - **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
   `memory.promote` or `learnings.review`, and so are the queue row's `decided_by` and the
-  audit subject for these candidate kinds, never taken from the body's `approver`.
+  audit subject for these candidate kinds, never taken from the body's `approver`, which
+  both ops then name in `ignored_args`.
 - **`check_against_shared`**, the promotion's conflict check, skips `definition` (only),
   so promoting `MRR` is not refused as a conflict with `ARR`; decisions keep the check.
 - **`memory.promote` refuses a definition whose term or alias** is already another
-  governed definition's, on every promotion path. Names are compared case-folded (the
-  form the key's hash reads), so `SAT` and `Sat` are one name.
+  governed definition's, on every promotion path. Names are compared case-folded (the form
+  the key's hash reads), so `SAT` and `Sat` are one name.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row or whose key is not the slug of its
   `term`, so a revision of a term always lands on the governed row's key. The read-time
@@ -122,7 +123,10 @@ promotes them, but their write-time verdicts change with this design: `definitio
 definitions however alike they read. Unlike a decision, a definition is never judged
 against a close definition under another key: the write-time check neither marks nor
 supersedes it (no merge, duplicate, refinement or pinned-peer refusal, and no supersession
-by the value-update pass of `memory.bulk_set`), and the conflict resolver ([conflicts and
+by the value-update pass of `memory.bulk_set`, and no fold of a `memory.bulk_set` entry
+into a byte-identical row under another key, which [conflicts and
+refusal](../features/memory/conflicts-and-refusal.md) applies to every other type), and
+the conflict resolver ([conflicts and
 refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither flags
 nor retires it, since its key is its term and `MRR` is not a revision of `ARR`. This
 narrows the rule that a pinned row blocks a close write from any user ([read scope inside
@@ -143,13 +147,15 @@ whatever `namespace_scope` fans out over), matches the query against each one's 
 aliases, and places the matched rows at the top of the served list with `governed = true`
 on the hit, removing any other hit under the same key in the addressed namespace, so an
 edited private copy is not served beside the governed text. A term or alias matches where
-it appears in the query with no letter or digit of any script, `_`, `+` or `#` next to it,
-so `рост` does not match inside "простой". A character of a script written without spaces
-(Han, Hiragana, Katakana, Thai, Lao, Khmer, Myanmar) is not a boundary, so a term inside
-Chinese or Japanese text still matches. One written all in capitals, or with a capital
-after its first letter, matches only as written, so `IT` does not match "what is it" and
-`GitHub` stays exact; any other matches case-folded, so `Churn rate` matches "what is our
-churn rate".
+it appears in the query with no character next to it that continues its edge: next to a
+Latin letter (accented ones included), digit, `_`, `+` or `#`, another of those; next to a
+letter of another script written with spaces (Cyrillic, Greek, Hangul), a letter or digit
+that is not Latin; next to a script written without spaces (Han, Kana, Thai, Lao, Khmer,
+Myanmar) or punctuation, nothing. So `рост` does not match inside "простой" and `café` not
+inside "cafés", while `MRR` matches in "什么是MRR" and `ARR` in "ARR은", where a Korean
+particle follows the word. One written all in capitals, or with a capital after its first
+letter, matches only as written, so `IT` does not match "what is it" and `GitHub` stays
+exact; any other matches case-folded, so `Churn rate` matches "what is our churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -175,11 +181,13 @@ defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on`
 points at the documents behind it. `loom_search` serves the leg through its memory
 section, and one rule holds for every later stage of `memory.search`, `loom_search` and
 the ops that run `memory.search` inside them: no stage or floor moves, withholds or
-outranks a hit marked `governed`, a stage added later included. A stage that caps the
-memory section, such as the tracker verdict's (`verdict_leads`, which keeps
-`VERDICT_MEMORY_MAX` memory hits), counts governed hits first and never cuts one. Governed
-hits count within `top_k` and the token budgets (`body_budget_tokens`, `context.pack`'s
-block budget), which may shorten a body but never drop or reorder the hit.
+outranks a hit marked `governed`, a stage added later included. Governed hits come first,
+in the order their names first appear in the query (a tie by the later `version`), and
+count within `top_k`, within a stage's cap on the memory section (the tracker verdict's
+`verdict_leads`, which keeps `VERDICT_MEMORY_MAX` memory hits) and within the token
+budgets (`body_budget_tokens`, `context.pack`'s block budget). When more governed hits
+match than fit, the later ones in that order are not served; a budget may shorten a body
+but never reorders the hits.
 
 **Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
 served list is exactly what it was before. The memory-plane rule asks for a paired
@@ -199,9 +207,11 @@ records no misses, and an unreadable consent counts as a refusal; the setting's 
 values leave recording to the operator's opt-in, so turning gaps on never needs prompt
 capture. No miss is recorded while a replica below N serves (the rollout gate below). A
 gap needs several distinct askers, so a deployment that has one identity for every caller
-(single-user mode, `LOOM_IDENTITY_PROVIDER=single-user`) records no misses, gaps on or
-off. A miss is a search that found nothing a caller could use, recorded by the op the
-caller invoked, never by a search another op runs on its behalf:
+(`effective_identity_provider()` is `single-user`, set explicitly or inferred when
+`auth_required` is off and no provider is set) records no misses, gaps on or off, and a
+request without a token records no miss. A miss is a search that found nothing a caller
+could use, recorded by the op the caller invoked, never by a search another op runs on its
+behalf:
 
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
   and served no governed definition, when it read the namespace-wide rows under a read
@@ -273,24 +283,25 @@ per query text with its sessions, not its people, and only for memory searches.
 ### Grouping
 
 The `knowledge_gaps` worker runs once a day for each namespace with misses or a live
-build. It re-reads the namespace's capture consent, failing closed, and for one that now
-refuses capture writes an empty build and deletes the namespace's stored misses, so a
-later consent does not count them again; otherwise it reads the namespace's misses of the
-last 7 days and groups them by normalised query. **Privacy threshold:** a group with fewer
-than `knowledge_gaps_min_askers` distinct askers (default three, never below three, one
-value for the deployment) is dropped before anything else, so every query a gap shows was
-asked in that form by at least that many askers. The threshold is as strong as the
-principals behind it: it does not bind whoever holds the signing key (`loom mint-token`
-mints any subject), an end-user issuer or a trusted caller (each names its own users), or
-a deployment where principals can be self-created (`LOOM_SELF_SIGNUP=open`), where an
-admin could ask from accounts of their own. There it limits what one ordinary caller
-reveals, not what an admin can learn. On any deployment, an admin who compares two daily
-builds can tell that one more asker reached a query that day, and in a small namespace
-that may say who; the threshold bounds what one build shows, not what a series of builds
-implies. The reading admin's own asks count toward it too, so an admin who asked a query
-learns from its gap that at least `knowledge_gaps_min_askers` minus one others did, which
-in a small namespace narrows who. The worker embeds the remaining groups' queries (at most
-`knowledge_gaps_max_groups`), merges groups whose vectors are at least
+build. It re-reads the namespace's stored consent, uncached. One that now refuses capture
+gets an empty build and its stored misses deleted, so a later consent does not count them
+again; a consent that cannot be read skips the namespace's pass, with no build and no
+delete, so a failed read never deletes misses; otherwise it reads the namespace's misses
+of the last 7 days and groups them by normalised query. **Privacy threshold:** a group
+with fewer than `knowledge_gaps_min_askers` distinct askers (default three, never below
+three, one value for the deployment) is dropped before anything else, so every query a gap
+shows was asked in that form by at least that many askers. The threshold is as strong as
+the principals behind it: it does not bind whoever holds the signing key (`loom
+mint-token` mints any subject), an end-user issuer or a trusted caller (each names its own
+users), or a deployment where principals can be self-created (`LOOM_SELF_SIGNUP=open`),
+where an admin could ask from accounts of their own. There it limits what one ordinary
+caller reveals, not what an admin can learn. On any deployment, an admin who compares two
+daily builds can tell that one more asker reached a query that day, and in a small
+namespace that may say who; the threshold bounds what one build shows, not what a series
+of builds implies. The reading admin's own asks count toward it too, so an admin who asked
+a query learns from its gap that at least `knowledge_gaps_min_askers` minus one others
+did, which in a small namespace narrows who. The worker embeds the remaining groups'
+queries (at most `knowledge_gaps_max_groups`), merges groups whose vectors are at least
 `knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
 namespace in `loom.knowledge_gaps`:
 
@@ -414,15 +425,16 @@ which the admin restores from the row's history or promotes.
   (`spellings` in `server/auth/aliases.py`, unverified ties included, as a revocation
   does), each lower-cased, since the tie may have changed since the miss was recorded; a
   directory that cannot be read fails the step closed (a token subject spelled as the
-  user's id goes too, which costs only a trace row), and a census row; an end user's asker
-  is stored as their id, the form the erasure names.
+  user's id goes too, which costs only a trace row), and a census row counting the step's
+  own predicate, over the asker and `user_id` under every spelling it deletes, so a miss
+  the step left fails the saga's verify; an end user's asker is stored as their id, the
+  form the erasure names.
 - `loom.knowledge_gaps` keeps counts, not askers, so no op or page names who asked: a
-  namespace step, and a user step that reads the namespaces the user has misses in, before
-  the miss step deletes them, and deletes those namespaces' builds (derived rows the next
-  daily pass rebuilds without the user's misses; the cost is a day without gaps there). A
-  gap names no user, so the census counts the table in the namespace scope only, and the
-  user step is a step without a census row (`STEP_ONLY_TABLES`), as for other derived
-  rows; the pass's fence keeps a raced build from coming back.
+  namespace step, and, inside the user's miss step before it deletes the misses, a read of
+  the namespaces the user has misses in and a delete of those namespaces' builds (derived
+  rows the next daily pass rebuilds without the user's misses; the cost is a day without
+  gaps there). A gap names no user, so the census counts the table in the namespace scope
+  only; the pass's fence keeps a raced build from coming back.
 - A query-history registration holds a host and a sealed credential but no memory content:
   a namespace step, and a census classification of `NO_MEMORY_CONTENT`, as for
   `loom.qa_sources` and `loom.knowledge_sources`.
