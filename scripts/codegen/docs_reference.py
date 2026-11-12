@@ -47,6 +47,8 @@ if str(ROOT) not in sys.path:  # run as a file
     sys.path.insert(0, str(ROOT))
 
 from scripts.codegen.common import write_atomic  # noqa: E402
+from scripts.codegen.page_summary import first_sentence as _first_sentence  # noqa: E402
+from scripts.codegen.page_summary import page_summary as _page_summary  # noqa: E402
 from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
 from server.core.errors import (  # noqa: E402
     CLASS_BY_CODE,
@@ -75,21 +77,6 @@ def _cell(text: str) -> str:
 def _code(text: str) -> str:
     """`text` in backticks, or nothing when it is empty."""
     return f"`{_cell(text)}`" if text else ""
-
-
-def _first_sentence(text: str | None, limit: int = 200) -> str:
-    """The first sentence of a docstring or description, on one line."""
-    if not text:
-        return ""
-    para = " ".join(text.strip().split("\n\n")[0].split())
-    # Not after "e.g." or "i.e.", which never end a sentence ("etc." may).
-    m = re.search(r"(?<!\.\.)(?<![eE]\.g\.)(?<![iI]\.e\.)(?<=[.!?])\s+(?=[A-Z`*(])", para)
-    sentence = para[: m.start()] if m else para
-    sentence = sentence.replace("**", "")
-    if len(sentence) > limit:
-        cut = sentence[: limit - 1].rsplit(" ", 1)[0]
-        sentence = cut.rstrip(",;:—- ") + "…"
-    return sentence
 
 
 # --- operations ---------------------------------------------------------------
@@ -412,23 +399,6 @@ _LLMS_SECTIONS = (
     ("Benchmarks", "benchmarks"),
     ("Development", "development"),
 )
-
-
-def _page_summary(path: Path) -> tuple[str, str]:
-    """A page's title and the first sentence of its opening paragraph (the first plain
-    paragraph after the title: not a heading, status note, list, table or code block)."""
-    text = path.read_text(encoding="utf-8")
-    title = next((ln[2:].strip() for ln in text.splitlines() if ln.startswith("# ")), path.stem)
-    body = re.sub(r"^(```|~~~).*?^\1", "", text, flags=re.DOTALL | re.MULTILINE)
-    summary = ""
-    for para in re.split(r"\n\s*\n", body):
-        first = para.lstrip()
-        if not first or first[0] in "#>|-*<!" or first[:2].isdigit() or first.startswith("1."):
-            continue
-        summary = _first_sentence(" ".join(para.split()), 240)
-        break
-    summary = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", summary)  # links are page-relative
-    return title.replace("`", ""), summary
 
 
 def render_llms_txt() -> str:

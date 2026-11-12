@@ -1,0 +1,30 @@
+# The documentation site, built from docs/ by .github/workflows/docs-site.yml.
+site_name: ClickHouse Loom
+site_url: https://clickhouse.github.io/loom/
+site_description: >-
+  Self-hosted MCP server that gives AI agents shared long-term memory, document search
+  with citations and a code index, stored in ClickHouse.
+repo_url: https://github.com/ClickHouse/loom
+edit_uri: edit/main/docs/
+docs_dir: docs
+theme:
+  name: material
+  custom_dir: scripts/docs_site/overrides
+  features: [navigation.sections, search.suggest, content.code.copy]
+markdown_extensions:
+  - tables
+  - admonition
+  - attr_list
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+hooks:
+  - scripts/docs_site/hooks.py
+validation:
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: info
+    unrecognized_links: info
