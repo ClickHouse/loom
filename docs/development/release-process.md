@@ -201,11 +201,10 @@ there costs a candidate number, not a final version.
    - for a final, the one the highest-numbered candidate on the same commit with a published
      bundle was soaked with;
    - the release `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`);
-4. `build` writes the version into the Python (in its PEP 440 form, `X.Y.ZrcN` for a
-   candidate) and TypeScript SDK sources and builds the
-   Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
-   and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
-   `loom-codex-plugin-vX.Y.Z.zip`); it also builds the source-free Compose bundle and its
+4. `build` writes the version into the Python SDK sources (in its PEP 440 form, `X.Y.ZrcN`
+   for a candidate) and the TypeScript SDK sources, and builds the Python SDK wheel and
+   sdist, the npm tarball (after the TypeScript SDK's `check:dist`), and zips of the two
+   plugins (`loom-claude-code-plugin-vX.Y.Z.zip`, `loom-codex-plugin-vX.Y.Z.zip`); it also builds the source-free Compose bundle and its
    SHA-256 file (naming that ClickHouse release), the release's `install.sh`, which installs
    this version, and `agent-setup.txt`, the
    [agent setup contract](../getting-started/agent-setup.md) with this version and commit

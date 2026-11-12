@@ -579,24 +579,46 @@ def test_npm_latest_follows_the_github_releases_latest(
 def test_the_python_sdk_takes_the_tags_pep440_version(
     tmp_path: Path, tag_version: str, python_version: str
 ) -> None:
-    """The wheel's METADATA names the version as written, and the verify step reads the PEP 440 form."""
-    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
-    (step,) = [s for s in jobs["build"]["steps"] if s.get("id") == "sync-python"]
+    """The wheel's METADATA names the version as written, and the verify step and
+    release-check read the PEP 440 form."""
+    workflows = ROOT / ".github/workflows"
+    build = yaml.safe_load((workflows / "release.yml").read_text())["jobs"]["build"]
+    (sync,) = [s for s in build["steps"] if s.get("id") == "sync-python"]
+    check = yaml.safe_load((workflows / "release-check.yml").read_text())["jobs"]["sdks"]
+    (installed,) = [s for s in check["steps"] if s.get("id") == "pip-sdk"]
     sdk = tmp_path / "sdk" / "python"
     (sdk / "loom").mkdir(parents=True)
     (sdk / "pyproject.toml").write_text('[project]\nname = "clickhouse-loom"\nversion = "0.0.0"\n')
     (sdk / "loom" / "_version.py").write_text('__version__ = "0.0.0"\n')
+    (sdk / "loom" / "__init__.py").write_text("from loom._version import __version__\n")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    # pip installs nothing; python is this interpreter, which has packaging.
+    # pip installs nothing; python is this interpreter, and `python -m venv DIR`
+    # makes a venv whose python imports the synced SDK above.
     (bin_dir / "pip").write_text("#!/bin/sh\nexit 0\n")
-    (bin_dir / "python").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    (bin_dir / "python").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = -m ] && [ "$2" = venv ]; then\n'
+        '  mkdir -p "$3/bin"\n'
+        '  printf "#!/bin/sh\\nexit 0\\n" > "$3/bin/pip"\n'
+        f'  printf "#!/bin/sh\\nPYTHONPATH={sdk} exec {sys.executable} \\"\\$@\\"\\n" > "$3/bin/python"\n'
+        '  chmod +x "$3/bin/pip" "$3/bin/python"\n'
+        "  exit 0\n"
+        "fi\n"
+        f'exec "{sys.executable}" "$@"\n'
+    )
     for tool in ("pip", "python"):
         (bin_dir / tool).chmod(0o755)
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "VERSION": tag_version}
-    result = subprocess.run(
-        ["bash", "-e", "-c", step["run"]], env=env, cwd=tmp_path, capture_output=True
-    )
-    assert result.returncode == 0, result.stderr
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "VERSION": tag_version,
+        "RUNNER_TEMP": str(tmp_path / "runner"),
+    }
+    for step in (sync, installed):
+        result = subprocess.run(
+            ["bash", "-e", "-c", step["run"]], env=env, cwd=tmp_path, capture_output=True
+        )
+        assert result.returncode == 0, result.stderr
     assert f'version = "{python_version}"' in (sdk / "pyproject.toml").read_text()
     assert (sdk / "loom" / "_version.py").read_text() == f'__version__ = "{python_version}"\n'

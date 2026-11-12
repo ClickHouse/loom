@@ -107,13 +107,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+      # The Python SDK names a candidate in its PEP 440 form (1.2.0rc1), as the
+      # release build writes it.
       - name: pip install clickhouse-loom
+        id: pip-sdk
         env:
           VERSION: ${{ inputs.version }}
         run: |
           python -m venv "$RUNNER_TEMP/sdk"
           "$RUNNER_TEMP/sdk/bin/pip" install "clickhouse-loom==$VERSION"
-          "$RUNNER_TEMP/sdk/bin/python" -c "import loom, sys; assert loom.__version__ == sys.argv[1], loom.__version__" "$VERSION"
+          "$RUNNER_TEMP/sdk/bin/python" -c "import loom, sys; assert loom.__version__ == sys.argv[1], loom.__version__" "${VERSION/-rc./rc}"
       - name: npm install @clickhouse/loom
         env:
           VERSION: ${{ inputs.version }}
