@@ -1,0 +1,35 @@
+name: plugin scanner
+
+# Scores the repository with the plugin catalog's scanner, the same pinned
+# version the catalog runs, so a change that would drop the listing below its
+# 75-point threshold shows here first. Read-only token, no secrets, checkout
+# credentials not persisted; both actions are pinned to a commit.
+# Guide: https://github.com/hashgraph-online/awesome-ai-plugins/blob/main/SCANNER_GUIDE.md
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: plugin scanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashgraph-online/ai-plugin-scanner-action@c96833de5070fab4e564010b5ab6e3c3d7e07a3e # v1.2.806
+        with:
+          plugin_dir: "."
+          min_score: 75
+          fail_on_severity: none
