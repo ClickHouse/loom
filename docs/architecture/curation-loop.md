@@ -45,9 +45,11 @@ admin's explicit govern or ungovern of a namespace-wide definition (`definition.
 A definition is governed exactly while its record exists and the row's live text hashes to
 the approved one (`live_sha256` in `server/memory/domain/trust.py`). A version that
 changes the text ends that, whoever writes it; one that copies the text (the entity pass,
-a touch, a lock, a restatement) keeps it. A tombstone or a redact on N deletes the record,
-so writing the approved text back after a delete does not make the row governed again; no
-record exists while an N-1 replica serves (the rollout gate below). `definition.list`
+a touch, a lock, a restatement) keeps it. A tombstone or a redact on N, a replayed redact
+included, deletes the record before it commits and is refused when that delete fails, so
+writing the approved text back after a delete never makes the row governed again and the
+record keeps no redacted term; no record exists while an N-1 replica serves (the rollout
+gate below). `definition.list`
 (admin) lists the namespace's records, each governed or lapsed, so the admin sees what to
 govern again. Only namespace-wide rows (`user_id`, `agent` and `session_id` all `'-'`) of
 type `definition` under the `definition/` key can be governed, and the term leg serves one
@@ -59,19 +61,19 @@ another governed definition's is refused, and that check runs on every
 govern, a renewed one included. Should two records still match one name (two governs
 racing), the term leg serves the one governed last.
 
-A caller may already write rows of type `definition`; they stay plain rows, governed only
-once an admin governs them. `definition` joins `KEY_IDENTIFIED_TYPES`, as `decision` is:
-two definitions under different keys are two definitions however alike they read. Unlike a
+A caller may already write rows of type `definition`; they are governed only once an admin
+governs them, but their write-time verdicts change with this design (below): no merge,
+duplicate, refinement or pinned-peer refusal against another definition, which N-1 still
+gives during a rollout. `definition` joins `KEY_IDENTIFIED_TYPES`, as `decision` is: two
+definitions under different keys are two definitions however alike they read. Unlike a
 decision, a definition is never judged against a close definition under another key: the
 write-time check neither marks nor supersedes it, and the conflict resolver ([conflicts
 and refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither
-flags nor retires it, since its key is its term and `MRR` is not a revision of `ARR`. A
-redact of a governed definition's version, replayed ones included, deletes its record, so
-the record keeps no redacted term. Conflict
-surfacing compares a row only with rows of its own `memory_type`, so a learned fact that
-contradicts a definition is not refused by it. The term leg serves the governed definition
-above such a fact; a cross-type check would add a candidate read to every write, and is
-not part of this design.
+flags nor retires it, since its key is its term and `MRR` is not a revision of `ARR`.
+Conflict surfacing compares a row only with rows of its own `memory_type`, so a learned
+fact that contradicts a definition is not refused by it. The term leg serves the governed
+definition above such a fact; a cross-type check would add a candidate read to every
+write, and is not part of this design.
 
 ### The term leg
 
@@ -282,23 +284,27 @@ saga does not know them, so nothing this design writes may exist while an N-1 re
 serves. Every op it adds (`knowledge.gaps.*`, `definition.*`, the query-history
 registration's ops) and a `learnings.review` promotion of a `knowledge_gap` or
 `query_history` candidate answers 503 while any live replica's schema is below N, as
-`namespace.guide_set` does (rule 24). The operator turns `knowledge_gaps_enabled` on only
+`namespace.guide_set` does (rule 24), and the gaps pass and the query-history turn write
+nothing then. The operator turns `knowledge_gaps_enabled` on only
 once no N-1 replica serves, as rule 23 does for assistant-turn learnings. So while N-1
 serves no miss, gap, draft, governed record or registration is written, and N-1 sees a
 `definition` row only as a plain memory row with no term leg.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
-`knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
-`loom.knowledge_gaps`, of `loom.governed_definitions`, and the pending `knowledge_gap`
-and `query_history` rows of `loom.learnings_queue`, as rule 23 does for assistant-turn
-rules: N-1's redact or erasure then leaves no term behind and N-1 promotes no definition
-draft; governance is done again on N, as after a snapshot restore.
+`knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses`,
+`loom.knowledge_gaps` and `loom.governed_definitions`, and every `knowledge_gap` and
+`query_history` row of `loom.learnings_queue` whatever its status, as rule 23 does for
+assistant-turn rules. The first N-1 replica to serve closes the gate, so no op or turn of
+this design writes after it; the operator runs the same delete once more then, for what N
+wrote in between. N-1's redact or erasure then leaves no term behind, N-1 has no
+definition draft to promote, and governance is done again on N, as after a snapshot
+restore.
 Registrations stay, and N-1's namespace erasure does not reach them: a namespace erasure
 run after the rollback is run again once N serves.
 
 ## Invariants
 
-- A gap shows only queries that at least `knowledge_gaps_min_askers` users asked in that
+- A gap shows only queries that at least `knowledge_gaps_min_askers` askers asked in that
   form; a query-history draft only the normalised text of queries that many users ran.
 - A miss is recorded only when the operator opted in; its asker comes from the token,
   never the body.
