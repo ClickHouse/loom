@@ -588,13 +588,12 @@ access through a listing older than the change.
 
 The reader's verified emails are the emails `verified_spellings`
 (`server/auth/aliases.py`) gives its subject: the directory email when
-`VERIFIED_EMAIL_SQL` admits it (an SSO account or a linked one), the set a subject
-erasure follows too; a domain matches only through them. A connection's store email is
-not one of them: a connection admits only through the readers rows of its own listings
-(rule 3). A delegated token (an agent's, the assistant's: a service account with a
-`creator`) reads with its creator's emails and connections. Every other service account,
-bot and end-user token has none, so it sees only `anyone` documents. A deployment
-without SSO admits through connections alone.
+`VERIFIED_EMAIL_SQL` admits it (an SSO account or a linked one); a domain matches only
+through them. A connection's store email is not one of them: a connection admits only
+through the readers rows of its own listings (rule 3). A delegated token (an agent's,
+the assistant's: a service account with a `creator`) reads with its creator's emails and
+connections. Every other service account, bot and end-user token has none, so it sees
+only `anyone` documents. A deployment without SSO admits through connections alone.
 
 Mirrored sources list every file on every turn, metadata only (id, revision,
 permissions). They are full listings because the store does not change a file's
@@ -735,18 +734,15 @@ among what it erases, and before the deployment starts. Under the ClickHouse aut
 subject erasure completed after the point rolls back with its ledger and audit rows and
 leaves no trace in the store, so it is lost and is requested again from the requester's
 own record (or from an audit export kept off the service). The command takes those
-erasures as a file of one JSON object per line, `{"org": …, "scope_value": {…},
-"emails": […], "purge": …}` (`--subject-erasures <file>`; `emails` and `purge` optional,
-`purge` false by default as for a request): each `scope_value` in the request form is
-resolved against the restored directory as a request is, and the line's `emails` join
-the resolved set after the same `SUBJECT_MISMATCH` check (an address the first run
-reached through a tie made after the restore point is excluded only if the line names
-it). It runs them for every org in the file, with no placement check, before it exits,
-so their exclusion rows exist before the deployment starts and before any crawl can be
-added again. `loom reconcile` leaves `acl-` names out of the sources it names for `loom
-rechunk`. Owners connect again and add their sources again, and crawl admins add theirs:
-that loss of every mirrored document and source is the accepted cost of a ClickHouse
-restore.
+erasures as a file of one JSON object per line, `{"org": …, "scope_value": {…}, "purge":
+…}` (`--subject-erasures <file>`; `purge` optional and false by default, as for a
+request), each `scope_value` as a request takes it. It checks every line before it runs
+any, and a malformed line fails the command, naming the line. It runs them for every org
+in the file, with no placement check, before it exits, so their exclusion rows exist
+before the deployment starts and before any crawl can be added again. `loom reconcile`
+leaves `acl-` names out of the sources it names for `loom rechunk`. Owners connect again
+and add their sources again, and crawl admins add theirs: that loss of every mirrored
+document and source is the accepted cost of a ClickHouse restore.
 
 #### Published rows
 
@@ -963,8 +959,8 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   census", then names that set), so a removed source's inactive row does not keep a name
   in use. The set carries a condition per scope, which a purge turns into `1` as it does
   every live condition: `FINAL … AND active` in the namespace scope, and in the
-  `subject` scope none, so every version and every inactive row counts, matching the
-  person's resolved set (below) wherever a source row names a person.
+  `subject` scope none, so every version and every inactive row counts, matching what
+  the request names (below) wherever a source row names a person.
 - `loom.knowledge_sources` also holds a connected source's owner, a crawl's subjects and
   a filter's `owner` email, so `knowledge_sources.retire` clears a retired row's
   credentials, owner, options and items, and a purging erasure deletes its rows.
@@ -986,79 +982,72 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
 - A person's connected accounts and crawl entries are a login subject's, not an end
   user's: a `user_id` erasure names a service's end user (`user:<user_id>`), and no end
   user connects an account (connecting needs a dashboard session). So `erasure.request`
-  and `erasure.export` gain a `subject` scope for an org admin, with a `scope_value` of
-  JSON `{"subject": …, "email": …}` (one or both, each non-empty, no other key). It
-  erases the person's connected accounts and the sources and crawl entries that name
-  them; their memory goes through the existing `user_id` scope. The implementing pull
-  request specifies the steps, leases, statements and census keys against these
-  guarantees, and its tests pin each one:
-  - **Who is the person.** The subject and email as named, plus what a verified tie
-    makes theirs (`verified_spellings`, `server/auth/aliases.py`); an unverified tie is
-    not followed, since an unverified address could be another person's (a self-signup's
-    `contact_email`). The subject's account is the one whose handle (`owner_email`) it
-    is, verified or not, and the email's is the one a verified tie gives it; when both
-    name an account and the two differ the request is refused (`SUBJECT_MISMATCH`, 400,
-    class `input`, a row in `docs/reference/errors.md`), since the erasure cannot be
-    undone. A subject or an email tied to no account is taken as named. The set is
-    resolved once, before the ledger row is written (a directory that cannot be read
-    refuses the request with the read's own error and leaves no row), and kept in a
-    ledger-only column of `loom.erasure_requests` and of the Postgres
-    `loom.erasure_ledger`, never in `scope_value` or an audit subject, so a resume, a
-    replay and `loom erasure-re-verify` match the same set while every audit row keeps
-    the request as named. An export resolves the person the same way. A person who never
-    signed in is erased by naming their email.
-  - **Their connected sources go, with everything they wrote.** Every connected source
-    the person ever owned, however it stopped and whatever later rewrote its registry
-    row (an N-1 `remove` resets `owner_subject`, and a merge keeps only the newest
-    version): its owner is read from the two rows keyed by `source_id` that N-1 never
-    writes, its cleanup row and its `source:<source id>` listing row. Its mirror
-    documents are retired, or under a purge deleted in every version with their chunks
-    and originals; under the Postgres authority its heads and deliveries go first, in a
-    Postgres-only step (one of `PG_ONLY_STEPS`), so a replay after a Postgres restore
-    runs it again. Its readers and listing rows go by `source_id`, so another subject
-    connected to the same store account keeps its rows. The connections end in the order
-    every path uses ([connected accounts](#connected-accounts)).
-  - **No address of theirs stays in a source.** Exclusion rows are written for their
-    addresses; the addresses leave every crawl's `subjects`, `filter` items they own
-    leave every source (a source left with no item stops), a crawl whose
-    `directory_subject` or registrant is the person stops, `created_by` naming them is
-    cleared, and every version of every source row, inactive ones included, no longer
-    names them. Crawl readers, listing and group-members rows keyed by or holding the
-    person go in every version, and their cursor leaves each crawl's sync state, older
-    versions included. A document's list keeps the store's list as read, their email
-    included: it is the file's and goes with the document, and rule 1 still decides who
-    reads it. A crawl's documents are the org's, so a document someone else's listing
-    still reaches stays.
-  - **Every step resumes and yields.** Each step finds the same work again on a resume,
-    takes a source's turn lease in the one lock order above, and fails for
-    `erasure_recovery` to resume when its bounded wait times out. The person's sources
-    are the connected sources whose owner is in the resolved set and the crawls whose
-    `directory_subject` or registrant is; a crawl that only lists the person is not one
-    (its rows are rewritten, not stopped). The cleanup pass and the anti-join skip a
-    source of a person an unfinished `subject` erasure names, read from that row's
-    resolved set sequentially under the source's turn lease, as they skip one in a
-    namespace an unfinished erasure names, so the steps do not race the cleanups of the
-    sources they stop.
+  and `erasure.export` gain a `subject` scope for an org admin. Its `scope_value` is
+  JSON `{"subject": …, "emails": […]}`: a login handle, a list of addresses, or both,
+  each non-empty, with no other key. It erases the person's connected accounts and the
+  sources and crawl entries that name them; their memory goes through the existing
+  `user_id` scope. The implementing pull request specifies the steps, leases, statements
+  and census keys against these guarantees, and its tests pin each one:
+  - **Who is the person.** Exactly what the request names: the handle and the addresses,
+    taken as named. The server follows no directory tie, so it reads nothing that could
+    make two people one, and the record holds only what the admin named. The dashboard's
+    form fills in the addresses the directory verifies for the handle, for the admin to
+    keep or remove. A person who never signed in is erased by naming their addresses.
+  - **Their connected sources go, with everything they wrote.** The person's sources are
+    the connected sources whose owner is the named handle, however they stopped and
+    whatever later rewrote their registry rows (an N-1 `remove` resets `owner_subject`,
+    and a merge keeps only the newest version). Their owner is read from the two rows
+    keyed by `source_id` that N-1 never writes, the cleanup row and the `source:<source
+id>` listing row. The step that stops them records their ids in a ledger-only column
+    of `loom.erasure_requests` and of the Postgres `loom.erasure_ledger`, which every
+    checkpoint repeats and the ledger copy carries, so every later step, a resume, a
+    replay and the census find them after their owner columns are cleared. Their mirror
+    documents, chunks and originals are deleted in every version in either mode, since
+    no token reads or restores an `acl-` name. Under the Postgres authority their heads
+    and deliveries go first, in a Postgres-only step (one of `PG_ONLY_STEPS`), so a
+    replay after a Postgres restore runs it again. Their readers and listing rows go by
+    `source_id`, so another subject connected to the same store account keeps its rows.
+    The connections end in the order every path uses ([connected
+    accounts](#connected-accounts)).
+  - **No address of theirs stays in a source.** Exclusion rows are written for the named
+    addresses. The addresses leave every crawl's `subjects`, and `filter` items whose
+    `owner` is one of them leave every source; a source left with no item stops, and a
+    `namespace` source retires that owner's files at its next listing. A crawl whose
+    `directory_subject` or registrant is the person stops, and its documents go through
+    its ordinary cleanup, since a crawl's documents are the org's. `created_by` naming
+    them is cleared, and every version of every source row, inactive ones included, no
+    longer names them. Crawl readers, listing and group-members rows keyed by or holding
+    the person go in every version, and their cursor leaves each crawl's sync state,
+    older versions included. A document's list keeps the store's list as read, their
+    address included: it is the file's and goes with the document, and rule 1 still
+    decides who reads it. A document someone else's listing still reaches stays.
+  - **Every step resumes and yields.** The first step stops the person's sources and
+    clears their credentials before any document step, so no turn writes back what a
+    later step deletes. Each step finds the same work again on a resume, takes a
+    source's turn lease in the one lock order above, and fails for `erasure_recovery` to
+    resume when its bounded wait times out. The cleanup pass and the anti-join skip a
+    source whose id an unfinished `subject` erasure has recorded, read sequentially
+    under the source's turn lease, as they skip one in a namespace an unfinished erasure
+    names, so the steps do not race the cleanups of the sources they stop.
   - **Its census proves it.** It counts every version of every row the bullets above say
-    leaves or changes, except the exclusion rows and the documents' lists. It counts the
-    documents, chunks, originals and, under the Postgres authority, heads and deliveries
-    of the person's sources by the erasure's mode, as the namespace census does: live
-    rows when it retires, every row when it purges. Each count reopens the step that
-    owns it.
+    leaves or changes, except the exclusion rows and the documents' lists. It counts
+    every version of the documents, chunks, originals and, under the Postgres authority,
+    heads and deliveries of the recorded sources. Each count reopens the step that owns
+    it.
   - **It is a scope of its own everywhere.** Every branch on `scope_type` in
-    `server/erasure/`, and the scope helpers in `server/erasure/domain/scopes.py` with
-    their knowledge-plane callers (the originals move, `knowledge.restore`), gets a
-    `subject` case, tested so none reaches the namespace or `user_id` path: for the
-    fences of the originals move and `knowledge.restore`, a `subject` scope covers every
-    `acl-` name and no other, which the pure helper decides from the name: it holds
-    every mirror of the org for the erasure's run, which fails closed, since the helper
-    cannot know which mirrors hold the person's sources; `purge` is honoured, status,
-    listing and export are an org admin's only, and no `memory.erased` webhook is sent,
-    since no memory is erased. A `subject` export answers the person's connections
-    (kind, store account email, scopes, connection times; never a credential), the
-    sources and crawl entries that name them and the audit rows naming them, and nothing
-    else. The dashboard's Erasures view requests and shows it.
-
+    `server/erasure/` gets a `subject` case, and so do the scope helpers in
+    `server/erasure/domain/scopes.py` and their knowledge-plane callers (the originals
+    move, `knowledge.restore`); tests assert that none reaches the namespace or
+    `user_id` path. For those two fences a `subject` scope covers every `acl-` name and
+    no other, which the pure helper decides from the name; that holds every mirror of
+    the org for as long as the row fences (its ledger life, an abandoned row included),
+    which fails closed, since the helper cannot know which mirrors hold the person's
+    sources. `purge` is honoured for the source rows. Status, listing and export are an
+    org admin's only. No `memory.erased` webhook is sent, since no memory is erased. A
+    `subject` export answers the person's connections (kind, store account email,
+    scopes, connection times; never a credential), the sources and crawl entries that
+    name them and the audit rows naming them, and nothing else. The dashboard's Erasures
+    view requests and shows it.
 - Every new table is classified in `server/erasure/store/census.py`.
 - `erasure.request` refuses an `acl-` scope for every caller but a platform admin, and
   `erasure.export` refuses one for every caller (an export would read the mirror's
@@ -1098,17 +1087,19 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   read a `subject` ledger row at all: it retries an unfinished one every pass without
   counting an attempt, and once its attempts are spent writes an `erasure.abandoned`
   audit row on every pass with no terminal row; its `loom reconcile` fails on a
-  completed one, and its status shows one to any org member. So the rollback's `loom
-knowledge mirror erase --all` refuses while any `subject` row, of any status, is
-  within `LIVE_LEDGER` (89 days, `server/erasure/store/ledger.py`); a deployment that
-  ran one rolls forward instead.
+  completed one, and its status shows one to any org member. Its fences also treat a
+  `subject` row as covering every namespace, for as long as the row lives. So the
+  rollback runs `loom knowledge mirror erase --all --rollback`, which refuses while any
+  `subject` row, of any status, is in `loom.erasure_requests` or `loom.erasure_ledger`;
+  a deployment that ran one rolls forward instead. A restore runs the command without
+  `--rollback`, which never refuses for that.
 - **Rollback.** N-1 reads no mirror, but its gate admits a platform or org admin's
   wildcard token that names one, and nothing on N-1 ages the lists. So the rollback
   procedure ([upgrades](../operations/upgrades.md)) requires, with every replica stopped
   (an N replica still serving could add a mirrored source after the command's stop) and
   before any N-1 replica starts, stopping every mirrored source and erasing the mirrors
-  (`loom knowledge mirror erase --all`, without `--connections`, [restores](#restores));
-  the implementing pull request adds the step.
+  (`loom knowledge mirror erase --all --rollback`, without `--connections`,
+  [restores](#restores)); the implementing pull request adds the step.
 - **Ownership.** One owner per address, found by its tag, is today's model, so N-1 and N
   agree on whose a document is. Both write a retired address again at their next listing
   of the file.
@@ -1131,8 +1122,9 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
   source while an erasure of the namespace is unfinished.
 - `recording` sources lose the `meet` provider.
 - A deployment that has run a `subject` erasure, the restore command's included, cannot
-  roll back to N-1 for `LIVE_LEDGER` (89 days); the implementing pull request adds that
-  to the rollback procedure in `docs/operations/upgrades.md`.
+  roll back to N-1 while the row is in either ledger (up to `LIVE_LEDGER`, 89 days, plus
+  the merge that drops it); the implementing pull request adds that to the rollback
+  procedure in `docs/operations/upgrades.md`.
 - A source whose stored documents plus new files pass
   `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` (default 50,000) writes no new document and
   reports `too_many_documents`, where today it syncs on with a truncated comparison.
@@ -1310,57 +1302,53 @@ The redirect URI to register with each store is
   - The mirror lookup seeing a mirror row inserted through another replica.
   - A `user_id` export returning no `agent_events` row under an `acl-` namespace.
   - A `subject` erasure, one group per guarantee:
-    - Who is the person: a request carrying any key but `subject` and `email`, malformed
-      or empty, refused; a request naming a self-signup whose unverified `contact_email`
-      equals another person's login handle or address, ending none of that person's
-      connections or sources, excluding none of their addresses and stopping no crawl; a
-      self-signup's handle with another person's verified email refused with
-      `SUBJECT_MISMATCH`, and a subject tied to no account with an email tied to one
-      taking both; a person with an unverified or missing directory email taken out of a
-      crawl's `subjects` by the email the request names; a subject and an email of two
-      different accounts refused with `SUBJECT_MISMATCH`, and a subject with an email
-      tied to no account taking both; a directory that cannot be read refusing the
-      request and leaving no ledger row in either store; an email-only request matching
-      on a resume what the first run matched after the person's account was removed in
-      between.
+    - Who is the person: a request carrying any key but `subject` and `emails`,
+      malformed or empty, refused; a request naming a handle and no address touching no
+      crawl `subjects`; a named address that is also another person's unverified
+      `contact_email` excluded and taken out of crawls, ending none of that person's
+      connections or sources.
     - Their connected sources: one an N-1 replica stopped before the worker's anti-join
       read it, found from its `source:` row; the owner found after an `OPTIMIZE … FINAL`
       between an N-1 `remove` (or a same-name `add`) and the erasure, after the worker
       marked the cleanup done or `knowledge_sources.retire` stopped it again midway, and
-      after `namespace.delete` retired the source; a purging erasure after a disconnect
-      and after an N-1 `remove` leaving no document text, chunk or original and, under
-      the Postgres authority, no head or delivery, a parked delivery and a step killed
-      between its Postgres delete and the publisher wait included; a Postgres
-      point-in-time restore from before a completed erasure, then `loom reconcile
---apply`, leaving no head or delivery; two subjects connected to one store
-      account, the other keeping its readers rows; a turn in flight leaving no readers
-      or listing row keyed by the person; a worker cleanup whose lightweight delete has
-      not finished leaving the row open.
-    - No address of theirs: a `filter` item they own removed, a source whose only item
-      it was stopped, a crawl whose `directory_subject` or registrant is the person
-      stopped and `created_by` cleared; a crawl removed before the erasure and a source
-      row whose older versions name them leaving no version that does, read without
-      `FINAL`; no row of their own sources keyed by their pseudonyms but the exclusion
-      rows; `loom.code_index_state` read without `FINAL` holding no cursor of theirs.
-    - Resume and race: a resume after each step finding its work again; a resume and a
-      replay from `loom.erasure_ledger` reading the resolved set back from its column,
-      and an audit row of every erasure event carrying only the request form; a cleanup
-      racing a step finding the turn lease held; the person's sources' cleanups skipped
-      while the erasure runs, so it finishes within the attempt budget.
-    - Census: a retiring erasure passing once its documents are retired, older versions
-      kept; failing while a retirement was cut short, while any version of a cleanup or
-      `source:` row names the person, and on a rewrite with an older version naming
-      them, counted without `FINAL`; passing with no retired connected source's owner
+      after `namespace.delete` retired the source; an erasure in either mode, after a
+      disconnect and after an N-1 `remove`, leaving no document text, chunk or original
+      and, under the Postgres authority, no head or delivery, a parked delivery and a
+      step killed between its Postgres delete and the publisher wait included; a
+      Postgres point-in-time restore from before a completed erasure, then `loom
+reconcile --apply`, leaving no head or delivery; two subjects connected to one
+      store account, the other keeping its readers rows; a turn in flight leaving no
+      readers or listing row keyed by the person; a worker cleanup whose lightweight
+      delete has not finished leaving the row open.
+    - No address of theirs: a `filter` item whose `owner` is a named address removed, a
+      source whose only item it was stopped, and a `namespace` source retiring that
+      owner's files at its next listing; a crawl whose `directory_subject` or registrant
+      is the person stopped, `created_by` cleared, and the crawl's other documents left
+      to its cleanup; a crawl removed before the erasure and a source row whose older
+      versions name them leaving no version that does, read without `FINAL`; no row of
+      their own sources keyed by their pseudonyms but the exclusion rows;
+      `loom.code_index_state` read without `FINAL` holding no cursor of theirs.
+    - Resume and race: a resume after each step, and after several checkpoints, finding
+      the recorded source ids again; a census-reopened document step finding them after
+      the owner columns are cleared; a replay from `loom.erasure_ledger` reading them
+      from its copy; a cleanup racing a step finding the turn lease held; the recorded
+      sources' cleanups skipped while the erasure runs, so it finishes within the
+      attempt budget.
+    - Census: failing while a document step was cut short, while any version of a
+      cleanup or `source:` row names the person, and on a rewrite with an older version
+      naming them, counted without `FINAL`; passing with no connected source's owner
       left.
     - A scope of its own: no `memory.erased` webhook; status refused to an org member
       who is not an org admin; an export answering only its own sections, its audit rows
-      under each resolved spelling; a `subject` erasure in flight fencing no originals
-      move or `knowledge.restore` in an ordinary namespace; a `--subject-erasures` line
-      naming both a subject and an email and extra `emails`, run with no replica
-      heartbeating.
-    - Rollout: `erasure.request` and `erasure.export` answering `OVERLOADED` while a
-      process reports the old schema; the rollback's `loom knowledge mirror erase --all`
-      refusing while a `subject` row of any status is in the ledger window.
+      under the named handle and addresses; a `subject` erasure in flight fencing no
+      originals move or `knowledge.restore` in an ordinary namespace.
+    - Restores and rollout: `erasure.request` and `erasure.export` answering
+      `OVERLOADED` while a process reports the old schema; `loom knowledge mirror erase
+--all --rollback` refusing while a `subject` row is in either ledger, and the
+      command without `--rollback`, run again after a failed run, exiting 0 with
+      `subject` rows in the ledger, its own included; a `--subject-erasures` file with a
+      malformed line refused, naming the line, before any line runs; a line run with no
+      replica heartbeating.
   - A namespace-scope purge census over `loom.knowledge_sources` leaving no inactive
     row.
   - A source added after a Postgres restore point retired by the replayed
