@@ -162,10 +162,14 @@ curl -sX POST "$LOOM/v1/memory.set" \
   `search.query` or `knowledge.search` may leave out `org`, `namespace` and
   `agent`, or send one blank or `"-"`: it runs in the install's org and namespace
   (`LOOM_SELF_SIGNUP_ORG`, `LOOM_DEFAULT_NAMESPACE`), the ones MCP and the
-  dashboard use. A write, `memory.get` and `memory.delete` run as agent `http`;
-  `memory.list`, `memory.history` and `memory.related` read every agent, as on MCP;
-  where the agent is optional, leaving it out still reads every agent. Every other
-  op, a call with a token, and every other identity mode names its own identity.
+  dashboard use. `memory.set` and `memory.bulk_set` write as agent `http`;
+  `memory.get` and `memory.delete` try the key under agent `http`, then under any
+  agent of the same user; `memory.list`, `memory.history` and `memory.related` read
+  every agent, as on MCP. An op whose agent is optional and left out acts across
+  every agent: a search reads every agent's rows, and `memory.update` finds the key
+  in the whole namespace. Every other op, a call with a token (one the SDK finds in
+  `LOOM_API_KEY` or `~/.loom/token` included), and every other identity mode names
+  its own identity.
 - **`consumer`.** Any body may carry `consumer`, a short tag for the product or
   module calling; it is stored on the request and audit ledgers. A token minted
   with a consumer overrides it. See

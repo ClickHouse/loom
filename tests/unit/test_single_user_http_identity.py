@@ -178,3 +178,12 @@ def test_a_token_call_naming_no_namespace_is_refused(
     body = {"org": "", "agent": "bot", "memory_key": "k", "value": "v"}
     assert "namespace" in _missing(_post("memory.set", body, token=token))
     assert seen == []
+
+
+def test_the_http_reference_names_every_filled_op() -> None:
+    """The op list in the HTTP reference is the code's list."""
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[2] / "docs/reference/http-api.md").read_text()
+    identity = page[page.index("- **Identity.**") : page.index("- **`consumer`.**")]
+    assert [op for op in SINGLE_USER_DEFAULT_AGENT if f"`{op}`" not in identity] == []

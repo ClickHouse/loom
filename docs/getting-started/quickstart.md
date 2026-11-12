@@ -407,6 +407,10 @@ pip install clickhouse-loom    # or, from a clone: pip install ./sdk/python
 A release not yet on PyPI installs from its assets
 ([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)).
 
+If you saved a token in step 3, the SDK sends it, and a call with a token names its
+`org` and `namespace`: pass them, as the comment below shows, or `unset LOOM_API_KEY`
+and move `~/.loom/token` aside.
+
 ```python
 import asyncio
 
@@ -414,8 +418,9 @@ from loom import Agent
 
 
 async def main():
-    # Single-user: the server fills in its org and namespace. With a token
-    # (LOOM_API_KEY), name them: Agent(org=..., namespace=..., agent=...).
+    # Single-user with no token: the server fills in its org and namespace.
+    # The SDK sends a token it finds in LOOM_API_KEY or ~/.loom/token (step 3),
+    # and a call with a token names them: Agent(org="dev", namespace="local", ...).
     async with Agent(
         agent="quickstart",  # names the writer in the audit log
         base_url="http://localhost:7777",

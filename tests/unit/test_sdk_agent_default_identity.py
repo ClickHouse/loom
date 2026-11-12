@@ -21,6 +21,7 @@ def _sent_body(agent: Agent) -> dict[str, object]:
         return httpx.Response(200, json={"status": "active"}, headers={"X-Request-Id": "r1"})
 
     async def go() -> None:
+        await agent.transport._client.aclose()
         agent.transport._client = httpx.AsyncClient(
             base_url="http://x", transport=httpx.MockTransport(handler)
         )
