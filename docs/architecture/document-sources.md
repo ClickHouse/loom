@@ -417,10 +417,11 @@ rows ([below](#erasure-and-audit)):
   against the head, which records `chunks_revision`, and it compares the list against
   the head's ([reads under the Postgres
   authority](#reads-under-the-postgres-authority)). The list lives and dies with its
-  document: a retirement, an erasure or (under the ClickHouse authority) the mirror's
-  retention TTL removes it with the row, and no read op returns the column. Only the
-  owning source's turn writes it, under its turn lease, so the document's own version
-  order is the list's.
+  document: a mirror document's retirement writes its tombstone with `access_json` empty
+  (today's tombstone carries every column forward), and an erasure or (under the
+  ClickHouse authority) the mirror's retention TTL removes the row, and no read op
+  returns the column. Only the owning source's turn writes it, under its turn lease, so
+  the document's own version order is the list's.
 - `loom.knowledge_document_readers`, one row per mirrored address, source and reading
   account: the connection (its kind and store account id) for a connected source, or the
   person a crawl listed it as. The `account` column holds a pseudonym of that account,
@@ -449,6 +450,10 @@ rows ([below](#erasure-and-audit)):
   the file is retired or its list marked `unread`, as the deleted readers rows land
   first, and a retirement cut short by the pass bound keeps that listing's older start.
   So no older list outlives the listing.
+- The source row: one more `loom.knowledge_source_listings` row per mirrored source,
+  account `source:<source id>`, written before the source's first account listing row or
+  document and written `deleted` only by its cleanup. Rule 2 does not read it; it keeps
+  the source visible to the anti-join after every account's rows are gone.
 - `loom.knowledge_group_members`, one row per source and group: the members of a group
   the crawl's directory read listed, and `read_at`. A group is stored once, not on every
   file shared with it.
@@ -480,23 +485,18 @@ The anti-join finds what no stop of N recorded: a mirrored source N-1 stopped (i
 inactive, with its `source_id`), and one whose name an N-1 `add` has since reused (its
 row gone from the registry under `FINAL`). It reads, with `FINAL` and live rows only
 (not `deleted`), the distinct `source_id`s of the readers, listing and group-members
-tables, and the source rows below, maps each back to the namespace whose mirror holds it
-(one read of the org's `loom.knowledge_mirrors` rows, which are few) and to its name
-(the readers, listing and group-members rows carry it), and uses that namespace and the
-name for the turn lease's key. It does these reads under `sequential_reads()`, and takes
-each id that no active registry row carries and no cleanup row, open or done, already
-names, at most 100 a pass. For each it reads again, under the source lease, that no
-active registry row carries the `source_id` (skipping it if one does, so a replica's lag
-never retires a live source), and only then opens its cleanup; until it runs, a readers
-row with no live listing row of its source admits nobody under rule 3. N-1 writes no
-mirror document and no row of these tables, so these reads see every mirrored source.
-The implementing pull request measures the anti-join's cost per pass. A source whose
-registry row a purge deleted went with its namespace's erasure, mirror included.
-
-Every mirrored source also has a source row in `loom.knowledge_source_listings`, account
-`source:<source id>`, written at its first turn and written `deleted` only by its
-cleanup; rule 2 ignores it, and it keeps the source visible to the anti-join after every
-account's rows are gone.
+tables (the source row above included), maps each back to the namespace whose mirror
+holds it (one read of the org's `loom.knowledge_mirrors` rows, which are few) and to its
+name (the readers, listing and group-members rows carry it), and uses that namespace and
+the name for the turn lease's key. It does these reads under `sequential_reads()`, and
+takes each id that no active registry row carries and no cleanup row, open or done,
+already names, at most 100 a pass. For each it reads again, under the source lease, that
+no active registry row carries the `source_id` (skipping it if one does, so a replica's
+lag never retires a live source), and only then opens its cleanup; until it runs, a
+readers row with no live listing row of its source admits nobody under rule 3. N-1
+writes no mirror document and no row of these tables, so these reads see every mirrored
+source. The implementing pull request measures the anti-join's cost per pass. A source
+whose registry row a purge deleted went with its namespace's erasure, mirror included.
 
 A person a crawl no longer reads (gone from a group it expands, taken out of `subjects`,
 or excluded) is treated the same way, on positive evidence only, as today's sync retires
@@ -534,11 +534,11 @@ A reader sees a mirrored document when rule 1 holds, and rule 2 or rule 3:
 
 1. The reader holds `viewer` on the source's namespace (the ordinary gate).
 2. The document's list is not `unread`, the oldest `started_at` among the source's live
-   listing rows (a source with none admits nobody through this rule) is within
-   `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` (default 3600) of now, and one of the
-   reader's verified emails is in its `emails`, or in the members of one of its `groups`
-   from an equally fresh members row, or that email's domain is in its `domains`, or its
-   `anyone` is set.
+   account listing rows (not its source row; a source with none admits nobody through
+   this rule) is within `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` (default 3600) of now,
+   and one of the reader's verified emails is in its `emails`, or in the members of one
+   of its `groups` from an equally fresh members row, or that email's domain is in its
+   `domains`, or its `anyone` is set.
 3. A readers row matches the reader (one of the reader's own active connections for a
    connected source, one of its verified emails for a crawl), and the listing row of
    that readers row's own source and account says its last complete listing started
@@ -598,11 +598,11 @@ Each mirror leg first computes the addresses the reader may see: one read of the
 mirror's lists from `loom.documents` and of its three tables with `FINAL`, newest row
 per key: the lists that name the reader through `emails`, `domains`, `anyone` or a group
 the reader's group-members rows hold, the readers rows by the reader's accounts and the
-group-members rows by `members` (`has` and `hasAny`), and the listing rows unfiltered,
-since rule 2 takes the oldest `started_at` over every account of the source; then the
-chunk search, outline or list restricted to those addresses before its `LIMIT`, so a
-page is never cut short by the check, except for an address the head check below drops.
-Any skip index on those tables is read only under
+group-members rows by `members` (`has` and `hasAny`), and the account listing rows
+unfiltered, since rule 2 takes the oldest `started_at` over every account of the source;
+then the chunk search, outline or list restricted to those addresses before its `LIMIT`,
+so a page is never cut short by the check, except for an address the head check below
+drops. Any skip index on those tables is read only under
 `use_skip_indexes_if_final_exact_mode=1`, so a granule skipped for its newest version
 cannot leave an older one that names the reader. No admitted set is cached. The
 implementing pull request measures the leg (rows read, memory, p50) on a mirror of a
@@ -637,18 +637,30 @@ which loses the heads committed after its point while ClickHouse keeps their row
 legs drop such an address (above), and in a mirror the sync's comparison counts a copy
 with no head as not current, where `serves()` would count it served, so the source's
 next complete listing marks it changed and a content phase fetches and writes it again
-with a head. A ClickHouse restore does not restore mirrors. The registry, the mirrors
-rows, the readers, listing, group-members and cleanup rows and the connections live only
-in ClickHouse and roll back, while the heads stay, so what the restore brings back
-cannot be trusted to say who may read, nor can its mirror rows be tied to their
-namespaces again. So `loom reconcile --restored clickhouse` (whose step the implementing
-pull request adds) retires every head under an `acl-` name instead of republishing it,
-erases every mirror `loom.knowledge_mirrors` names, stops every connected and crawl
-source, and clears every connection's credential (`active` false), and it leaves `acl-`
-names out of the sources it names for `loom rechunk`. Owners connect again and add their
-sources again, and crawl admins add theirs; that loss of every mirrored document and
-source is the accepted cost of a ClickHouse restore. Under the ClickHouse authority the
-same step runs over the mirror rows the restore left.
+with a head.
+
+#### Restores
+
+A ClickHouse restore does not restore mirrors, under either authority. The registry, the
+mirrors rows, the readers, listing, group-members and cleanup rows and the connections
+live only in ClickHouse and roll back, while documents and heads written after the point
+may survive, so nothing that comes back can be trusted to say who may read. The
+ClickHouse restore procedure ([backup and
+recovery](../operations/backup-and-recovery.md)) therefore runs `loom knowledge mirror
+erase --all` (the rollback's command, which needs no Postgres authority) before the
+deployment starts, and the implementing pull request extends it to this case: it finds
+every `acl-` namespace in `loom.knowledge_mirrors`, in `loom.documents` and, under the
+Postgres authority, in the heads and deliveries, and erases each (a platform-admin
+namespace erasure, so tombstones keep nothing); it stops every mirrored source, `shared`
+mirrored ones included, keeping each crawl's `excluded`; and it revokes each connection
+at the store (best effort, as a disconnect does) and then clears it (`active` false). A
+crawl added again in a namespace takes the `excluded` of that namespace's stopped
+crawls, so no person erased before the point is read again. `loom reconcile` leaves
+`acl-` names out of the sources it names for `loom rechunk`. Owners connect again and
+add their sources again, and crawl admins add theirs: that loss of every mirrored
+document and source is the accepted cost of a ClickHouse restore.
+
+#### Published rows
 
 Under either authority the admitted set holds only addresses with a live
 `loom.documents` row: an address whose row is absent, superseded or not yet published
@@ -809,17 +821,19 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   delete a grant row of the user) the readers and listing rows keyed by their
   pseudonyms, retires their connected sources with their mirrored documents, and deletes
   the `loom.connected_accounts` rows last. It also takes the person's verified emails
-  out of every crawl of the org: out of `subjects`, and into the crawl's `excluded` list
-  as pseudonyms, which group expansion skips, so no address of the person stays in
-  `loom.knowledge_sources` and the census counts none. It first retires the documents
-  only that person's listing reached, or marks their lists `unread` where a retirement
-  cannot be confirmed, and then deletes outright every crawl readers and listing row
-  keyed by the pseudonym of one of the person's verified emails, since no listing by
-  them runs again to do it, and rewrites each crawl's sync state without that person's
-  cursor; those `DELETE`s are in `_EXPECTED_MUTATIONS`, and the census counts these
-  tables without `FINAL` or the `deleted` filter. A crawl's documents are the org's, so
-  a document someone else's listing still reaches stays. Disconnect and SCIM
-  deactivation clear the credential.
+  out of every crawl of the org, first, under each crawl's source lease: out of
+  `subjects`, and into the crawl's `excluded` list as pseudonyms, which group expansion
+  skips, so no address of the person stays in `loom.knowledge_sources` and the census
+  counts none; the next turn reads the new list. Then, under each crawl's turn lease as
+  a cleanup runs (so a turn in flight finishes first, and what it wrote as the person
+  goes with the deletes below), it retires the documents only that person's listing
+  reached, or marks their lists `unread` where a retirement cannot be confirmed, and
+  then deletes outright every crawl readers and listing row keyed by the pseudonym of
+  one of the person's verified emails, since no listing by them runs again to do it, and
+  rewrites each crawl's sync state without that person's cursor; those `DELETE`s are in
+  `_EXPECTED_MUTATIONS`, and the census counts these tables without `FINAL` or the
+  `deleted` filter. A crawl's documents are the org's, so a document someone else's
+  listing still reaches stays. Disconnect and SCIM deactivation clear the credential.
 - Every new table is classified in `server/erasure/store/census.py`.
 - `erasure.request` and `erasure.export` refuse an `acl-` scope in every auth mode:
   their handlers check it before the auth-on checks, since with auth off those do not
@@ -990,34 +1004,48 @@ The redirect URI to register with each store is
     marking it `unread`, after which a readers row from a listing older than the mark
     admits nobody.
   - A retirement cut by the pass bound leaving the older listing start.
-  - Under the Postgres authority, on every leg with the check, a narrowed list and a
+  - Under the Postgres authority, on every leg with the check: a narrowed list and a
     retirement each committed but not yet published, or held by a parked delivery,
-    already applying, a widening committed but not yet published not applying until it
-    is, a mirror address with no head dropped by every document leg as by the chunk
-    legs, a mirror copy whose head a point-in-time restore removed fetched and written
-    again by the next complete listing, `loom reconcile --restored clickhouse` retiring
-    every `acl-` head (a mirror created and a source added after the point included),
-    erasing the mirrors, stopping every connected and crawl source, clearing every
-    connection and naming no `acl-` source, a crawl that lost every account's listing
-    row still found by the anti-join through its source row, an expansion drop and a
-    user erasure each keeping the dropped person's listing row until their sole
-    documents are retired or `unread`, a rewritten list's `changed_at` being its read's
-    time, rule 3 admitting at equality of `changed_at` and the finding listing's start,
-    a first list differing at fetch from the newest listing's moving `changed_at` to
-    that read, a file found at T0, its list narrowed and listed again at T2 and its
-    content written at T3 admitting nobody the narrowed list removed, a crawl member
-    added mid-life whose first listing spans passes holding rule 2 back until it
-    completes, a source with documents and no listing row admitting nobody through rule
-    2, a namespace's `retention_days` applied to its mirror's `loom.agent_events` rows,
-    a document rule 3 alone admits shown after its account's next complete listing, a
-    reader removed between a listing's start and its read of the file admitted by no
-    readers row of a listing that started before that read, an account whose listing
-    keeps failing holding rule 2 back for the whole source with `inspect` naming it, a
-    fetch that finds every permissions read refused writing `unread`, a new mirror
-    document whose head is committed and whose row is unpublished admitting nobody
-    through rule 3, a head read that fails showing no mirrored document, and
-    `knowledge.inspect` listing no mirrored title on any path where its `served` read
-    falls back to ClickHouse's rows.
+    already applying.
+  - Under the Postgres authority: a widening committed but not yet published not
+    applying until it is.
+  - Under the Postgres authority: a mirror address with no head dropped by every
+    document leg as by the chunk legs.
+  - Under the Postgres authority: a mirror copy whose head a point-in-time restore
+    removed fetched and written again by the next complete listing.
+  - Under the Postgres authority: a new mirror document whose head is committed and
+    whose row is unpublished admitting nobody through rule 3.
+  - Under the Postgres authority: a head read that fails showing no mirrored document,
+    and `knowledge.inspect` listing no mirrored title on any path where its `served`
+    read falls back to ClickHouse's rows.
+  - After a ClickHouse restore, under either authority: `loom knowledge mirror erase
+--all` erasing every `acl-` namespace it finds (a mirror created and a source added
+    after the point included), stopping every mirrored source, `shared` ones included,
+    revoking and clearing every connection, and a crawl added again keeping the
+    namespace's earlier `excluded`, so a person erased before the restore is not read
+    again; `loom reconcile` naming no `acl-` source.
+  - A retired mirror document's tombstone carrying no `access_json`.
+  - A crawl that lost every account's listing row still found by the anti-join through
+    its source row.
+  - An expansion drop and a user erasure each keeping the dropped person's listing row
+    until their sole documents are retired or `unread`, and a user erasure racing a
+    crawl turn in flight leaving no row keyed by the person.
+  - A rewritten list's `changed_at` being its read's time.
+  - Rule 3 admitting at equality of `changed_at` and the finding listing's start.
+  - A first list differing at fetch from the newest listing's moving `changed_at` to
+    that read.
+  - A file found at T0, its list narrowed and listed again at T2 and its content written
+    at T3 admitting nobody the narrowed list removed.
+  - A crawl member added mid-life whose first listing spans passes holding rule 2 back
+    until it completes.
+  - A source with documents and no account listing row admitting nobody through rule 2.
+  - A namespace's `retention_days` applied to its mirror's `loom.agent_events` rows.
+  - A document rule 3 alone admits shown after its account's next complete listing.
+  - A reader removed between a listing's start and its read of the file admitted by no
+    readers row of a listing that started before that read.
+  - An account whose listing keeps failing holding rule 2 back for the whole source,
+    with `inspect` naming it.
+  - A fetch that finds every permissions read refused writing `unread`.
   - Under either authority, an address with no live document row admitting nobody.
   - A rule-2 check that admits nobody through the list when one of the source's accounts
     has a stale listing row and the reader's own is fresh.
