@@ -101,11 +101,14 @@ against a close definition under another key: the write-time check neither marks
 supersedes it (no merge, duplicate, refinement or pinned-peer refusal, and no supersession
 by the value-update pass of `memory.bulk_set`), and the conflict resolver ([conflicts and
 refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither flags
-nor retires it, since its key is its term and `MRR` is not a revision of `ARR`. N-1 still
-gives the old verdicts during a rollout. Conflict surfacing compares a row only with rows
-of its own `memory_type`, so a learned fact that contradicts a definition is not refused
-by it. The term leg serves the governed definition above such a fact; a cross-type check
-would add a candidate read to every write, and is not part of this design.
+nor retires it, since its key is its term and `MRR` is not a revision of `ARR`. This
+narrows the rule that a pinned row blocks a close write from any user ([read scope inside
+a namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
+definitions against definitions only; the implementing pull request updates that page. N-1
+still gives the old verdicts during a rollout. Conflict surfacing compares a row only with
+rows of its own `memory_type`, so a learned fact that contradicts a definition is not
+refused by it. The term leg serves the governed definition above such a fact; a cross-type
+check would add a candidate read to every write, and is not part of this design.
 
 ### The term leg
 
@@ -229,9 +232,12 @@ principals behind it: it does not bind whoever holds the signing key (`loom mint
 mints any subject), an end-user issuer or a trusted caller (each names its own users), or
 a deployment where principals can be self-created (`LOOM_SELF_SIGNUP=open`, unclaimed
 agent sign-ups), where an admin could ask from accounts of their own. There it limits what
-one ordinary caller reveals, not what an admin can learn. The worker embeds the remaining
-groups' queries (at most `knowledge_gaps_max_groups`), merges groups whose vectors are at
-least `knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
+one ordinary caller reveals, not what an admin can learn. On any deployment, an admin who
+compares two daily builds can tell that one more asker reached a query that day, and in a
+small namespace that may say who; the threshold bounds what one build shows, not what a
+series of builds implies. The worker embeds the remaining groups' queries (at most
+`knowledge_gaps_max_groups`), merges groups whose vectors are at least
+`knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
 namespace in `loom.knowledge_gaps`:
 
 | Column            | Meaning                                                         |
@@ -283,13 +289,15 @@ breaker on every read ([tracker plane](../features/tracker/overview.md)). The re
 names the team that owns its definitions. Each turn:
 
 1. reads finished `SELECT` queries of the source's window, from every replica when the
-   registration names the cluster (`clusterAllReplicas`, which needs the `REMOTE` grant: a
-   cluster registration accepts it beside the tracker's read-only list) and from the node
-   it connects to otherwise, grouped by `normalized_query_hash`, counting initial queries
-   only (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and then by
-   recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
-   ran. Only the normalised text is read (`normalizeQuery`, which replaces literals), so
-   no user's literal values reach the LLM or the draft;
+   registration names the cluster (`clusterAllReplicas`, a table function: a cluster
+   registration accepts the `REMOTE` and `CREATE TEMPORARY TABLE` grants it needs beside
+   the tracker's read-only list, and the read runs under `readonly = 2`, as the tracker's
+   `remoteSecure` reads do) and from the node it connects to otherwise, grouped by
+   `normalized_query_hash`, counting initial queries only (`is_initial_query = 1`) by
+   `initial_user`, ranked by distinct users and then by recency, and drops a group that
+   fewer than `knowledge_gaps_min_askers` distinct users ran. Only the normalised text is
+   read (`normalizeQuery`, which replaces literals), so no user's literal values reach the
+   LLM or the draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition for at most a setting's number of groups, and
    queues each (`source_kind = 'query_history'`): the metric's name is the `term`, its
@@ -304,10 +312,11 @@ Nothing reaches search until an admin promotes a draft.
 checks the term and aliases against the other governed definitions and the draft for a
 credential-shaped value (`value_reads_high`), and the rollout gate, so a promotion these
 refuse writes nothing. Then it writes the definition through `memory.set` for the whole
-namespace, with `source_trace = learning:<candidate_id>` so its `source_class` is
-`derived` (an LLM drafted it; the admin's promotion is the approval, not its authorship),
-so the blacklist and the pinned-key check run as for any write, and promotes that row into
-the shared layer through `memory.promote`, with the reviewer's server-stamped actor as
+namespace, declaring `source_class = derived`, the downgrade a caller may declare (an LLM
+drafted it; the admin's promotion is the approval, not its authorship, and the `learning:`
+trace would mark it `extracted`, lifted from a conversation, which it is not), so the
+blacklist and the pinned-key check run as for any write, and promotes that row into the
+shared layer through `memory.promote`, with the reviewer's server-stamped actor as
 `promoted_by` and the candidate's id ([learnings review
 queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). The admin
 promoting a definition is the person standing behind it. A draft for a term already
