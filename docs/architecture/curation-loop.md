@@ -47,18 +47,22 @@ namespace-wide rows (`user_id`, `agent` and `session_id` all `'-'`) of type `def
 under the `definition/` key can be governed, and the term leg serves one only while its
 status is `active`.
 
-No two governed definitions share a term or an alias: governing one whose term or alias
-is already another governed definition's is refused, and that check runs on every
+No two governed definitions share a term or an alias, compared case-folded as the key is
+built, so `SAT` and `Sat` are one name: governing one whose term or alias is already
+another governed definition's is refused, and that check runs on every
 govern, a renewed one included. Should two records still match one name (two governs
 racing), the term leg serves the one governed last.
 
 A caller may already write rows of type `definition`; they stay plain rows, governed only
 once an admin governs them. `definition` joins `KEY_IDENTIFIED_TYPES`, as `decision` is:
 two definitions under different keys are two definitions however alike they read. Unlike a
-decision, a definition is not marked conflicting with a close definition under another
-key, by the write-time check or by the conflict resolver ([conflicts and
-refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)), since its
-key is its term and `MRR` is not a revision of `ARR`. Conflict surfacing compares a row
+decision, a definition is never judged against a close definition under another key: the
+write-time check neither marks nor supersedes it, and the conflict resolver
+([conflicts and refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver))
+neither flags nor retires it, since its key is its term and `MRR` is not a revision of
+`ARR`. Tombstoning or redacting a governed definition ends its record too, so writing the
+approved text back does not make it governed again, and the record keeps no redacted
+term. Conflict surfacing compares a row
 only with rows of its own `memory_type`, so a learned fact that contradicts a definition
 is not refused by it. The term leg serves the governed definition above such a fact; a
 cross-type check would add a candidate read to every write, and is not part of this
@@ -110,21 +114,25 @@ nothing a caller could use, recorded by the op the caller invoked, never by a se
 another op runs on its behalf:
 
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
-  and served no governed definition;
+  and served no governed definition, when it read the namespace's shared rows: no
+  `user_id` or `session_id` filter, and a read scope of the whole namespace;
 - `knowledge.search` with no hit as close as the noise filter's threshold (`_close` in
   `server/knowledge/app/knowledge_search.py`), no exact-key hit and, in `lexical` mode, no
-  hit at all;
+  hit at all (documents are the namespace's under any read scope);
 - `loom_search` (`search.query`) whose memory and knowledge sections both came back empty,
-  with no leg failed. Its own memory and knowledge searches record nothing, so a question
-  that knowledge answers is not a gap because memory abstained.
+  with no leg failed, under a read scope of the whole namespace. Its own memory and
+  knowledge searches record nothing, so a question that knowledge answers is not a gap
+  because memory abstained.
 
-A miss is recorded only for a request that names its end user (`user_id`, or an end-user
-token), since a user erasure finds a person by `user_id` and a miss it could not find is a
-copy of their words nothing erases but the namespace. Each miss writes one row to
+A search that could not answer for another reason is not a miss: an expired page handle
+(`abstain_code = 'page_expired'`), or a degraded answer whose provider fell back.
+
+The **asker** is who the token says asked: the end user of an end-user token, else the
+token's subject; a body field never names it. Each miss writes one row to
 `loom.search_misses` under the namespace the search was addressed to: the identity tuple,
-`actor`, the plane, the query, its normalised form, and the memory keys or document URIs
-of that namespace it came closest to. The table has a 30-day TTL: it is a trace, not
-memory.
+the asker, `actor`, the plane, the query, its normalised form, and the memory keys or
+document URIs of that namespace it came closest to. The table has a 30-day TTL: it is a
+trace, not memory.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
 misses and has no `user_id` to count askers or erase by. `loom.query_nodes` keeps one row
@@ -135,22 +143,19 @@ per query text with its sessions, not its people, and only for memory searches.
 The `knowledge_gaps` worker runs once a day for each namespace with misses. It reads the
 last `knowledge_gaps_window_days` (default 7) of misses and groups them by normalised
 query. **Privacy threshold:** a group with fewer than `knowledge_gaps_min_askers` distinct
-users (default three) is dropped before anything else, so every query a gap shows was
-asked in that form under at least that many `user_id` values. Those values are what the
-callers name: a caller that names many users for one person defeats the count, which is
-why `writers` is shown beside it. The worker embeds the remaining groups'
-queries (at most `knowledge_gaps_max_groups`), merges groups whose vectors are at least
-`knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
-namespace in `loom.knowledge_gaps`:
+askers (default three) is dropped before anything else, so every query a gap shows was
+asked in that form by at least that many tokens' principals. The worker embeds the
+remaining groups' queries (at most `knowledge_gaps_max_groups`), merges groups whose
+vectors are at least `knowledge_gaps_merge_similarity` alike, and writes the result as a
+new build of the namespace in `loom.knowledge_gaps`:
 
-| Column              | Meaning                                                         |
-| ------------------- | --------------------------------------------------------------- |
-| `gap_id`            | A hash of the namespace and the gap's most asked query.         |
-| `head`, `samples`   | The most asked normalised query, and the others merged into it. |
-| `user_ids`          | The users behind it, for erasure.                               |
-| `askers`, `writers` | Distinct users, and distinct token actors that named them.      |
-| `asks`, `last_at`   | How many times, and when it was last asked.                     |
-| `nearest`           | The keys and document URIs the misses came closest to.          |
+| Column            | Meaning                                                         |
+| ----------------- | --------------------------------------------------------------- |
+| `gap_id`          | A hash of the namespace and the gap's most asked query.         |
+| `head`, `samples` | The most asked normalised query, and the others merged into it. |
+| `askers`          | The askers behind it, for erasure.                              |
+| `asks`, `last_at` | How many times, and when it was last asked.                     |
+| `nearest`         | The keys and document URIs the misses came closest to.          |
 
 Every build writes a marker row beside its gaps, and readers take the latest build, so a
 build with no gap left, or one whose gaps an erasure deleted, still replaces the last one.
@@ -205,8 +210,7 @@ Nothing reaches search until an admin promotes a draft.
 `learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate first
 checks the term and aliases against the governed definitions, so a refused promotion
 writes nothing; then it writes the definition through `memory.set` for the whole
-namespace, so the blacklist, the pinned-key check and conflict surfacing run as for any
-write ([learnings review
+namespace, so the blacklist and the pinned-key check run as for any write ([learnings review
 queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). Then the
 same call governs it as the reviewer's server-stamped actor: the admin promoting a
 definition is the person standing behind it. A draft for a term already governed revises
@@ -218,9 +222,11 @@ A rejected draft leaves nothing behind but its queue row.
 
 - Definitions are memory rows and take every path memory takes: tombstone, namespace
   erasure, history, audit.
-- `loom.search_misses`: a user step (`user_id`), a namespace step and a census row.
+- `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
+  `user_id` is the user (a token subject spelled as the user's id goes too, which costs
+  only a trace row), and a census row.
 - `loom.knowledge_gaps`: a namespace step, a user step that deletes every gap whose
-  `user_ids` holds the user, and a census row counting those.
+  `askers` holds the user, and a census row counting those.
 - `loom.governed_definitions` holds terms and aliases, which are definition content: a
   namespace step and a census row.
 - A draft holds no query asked (above), so it is erased with its namespace.
@@ -250,11 +256,12 @@ serves:
 - a user or namespace erasure it runs leaves rows in the tables this design adds; an
   erasure that ran during the rollout is run again once N-1 stops serving;
 - it serves a `definition` row as a plain memory row with no term leg, and gives a close
-  write to another definition today's verdicts: merged into it (not inserted), marked
-  `duplicate`, or marked `conflicted`, at write time and in its conflict resolver. N clears
-  none of these: the term leg serves only an `active` row, so an admin clears a conflict
-  with `conflicts.resolve` (`allow`) and writes a merged or duplicate definition again on
-  N;
+  write to another definition the verdicts it gives any other type: merged into it (not
+  inserted), marked `duplicate` or `conflicted`, or superseded by a refinement, at write
+  time or by its conflict resolver. N clears none of these: the term leg serves only an
+  `active` row, so an admin clears a conflict with `conflicts.resolve` (`allow`), restores
+  a superseded definition (`memory.restore`), and writes a merged or duplicate one again
+  on N, each with its approved text;
 - it never writes `loom.governed_definitions`, so nothing N-1 does makes a row governed;
 - it promotes a `knowledge_gap` or `query_history` candidate as a row under the approver,
   which is never governed, or, with `destination` `knowledge` or `both`, as a
