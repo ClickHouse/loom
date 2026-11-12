@@ -385,10 +385,10 @@ to run, naming them, if it finds any.
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
 check below. Every other read path reads the namespace and finds nothing of the mirror.
 So a new op, a context-pack leg or an export that nobody taught the check shows no
-mirrored document, and neither does an N-1 replica. A permission column on
-`loom.documents` read by every path would make the opposite the default;
-[sharing](sharing.md#alternatives-not-taken) rejected that for collections, since one
-missed path leaks.
+mirrored document; an N-1 replica has no mirror leg, and the rollback procedure keeps it
+off a mirror that holds rows. A permission column on `loom.documents` read by every path
+would make the opposite the default; [sharing](sharing.md#alternatives-not-taken)
+rejected that for collections, since one missed path leaks.
 
 - **Legs with the check:** `knowledge.search`, `get`, `outline`, `list`, `download`,
   `synthesize`, `knowledge.inspect` (titles), `knowledge.source.inspect` (a mirrored
@@ -427,19 +427,23 @@ missed path leaks.
   `ingest-transcript` calls), `conversation.save_message`, the `title` and `metadata` of
   `conversation.create` and `conversation.update`, `memory.set_from_messages`,
   `session.brief_save`, `observe.record` and `observe.crystallize`, `working_memory.set`
-  and `working_memory.append`, `run.begin` and `run.complete`, `cost.record_turns` and
-  `ui.vitals`, and every op added later that fits the rule. Once a session has seen the
-  flag (one resumed, forked or compacted from it included), no Loom hook or client sends
-  anything to them from that session, while reads and the reader's own writes go on; the
-  CLI's `ingest-transcript` refuses a transcript that carries the marker. While
-  `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set or any mirror exists on the
-  deployment, every session-content op refuses a client that does not declare the flag,
-  in every org, whatever mix of clients and tokens a session runs. The condition is
-  deployment state and the check fails closed: a process that cannot read it refuses,
-  and the first mirrored `add` waits until every live process reports the switch on, as
-  the schema check does. The refusal lifts only once the switch is off and the
-  mirror-erase command has run, so it says nothing of when another org's mirrors went.
-  Mirrored sources are off for a deployment until an operator turns them on
+  and `working_memory.append`, `run.begin` and `run.complete`, `code.outcome`,
+  `cost.record_turns` and `ui.vitals`, and every op added later that fits the rule. Once
+  a session has seen the flag, no Loom hook sends any op from it, reads included (a
+  hook's `code.search` or `context.pack` records its prompt too), and no client sends a
+  session-content op; only the calls the agent makes go on. A session resumed, forked or
+  compacted from a flagged one is flagged, and so is one started from a flagged
+  session's process (`claude -p` or `codex exec` run through its shell, a worker an
+  orchestrator starts): the CLI and the hooks set an inherited marker in the environment
+  and read it; the CLI's `ingest-transcript` refuses a transcript that carries the
+  marker. From the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set until it
+  is off again and the mirror-erase command has run, every session-content op refuses a
+  client that does not declare the flag, in every org, whatever mix of clients and
+  tokens a session runs. The condition is deployment state and the check fails closed: a
+  process that cannot read it refuses, and the first mirrored `add` waits until every
+  live process reports the switch on, as the schema check does. Since it lifts only
+  then, it says nothing of when another org's mirrors went. Mirrored sources are off for
+  a deployment until an operator turns them on
   (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`), after every Loom client and hook that
   sends session content honours the flag. Each pull request that adds a mirror leg,
   writer, client or hook lists what it writes and tests each against these rules.
@@ -642,9 +646,11 @@ admits someone the store no longer names.
 Out of scope: response timing; how fast the shared pass gets to a connected owner's own
 source, which its fresh or stale code and per-item status reflect; that a namespace
 erasure is still retrying, which a namespace admin sees whatever its cause; a reader who
-already saw a document and kept its text, their own agent's or conversation's record of
-an answer included, which is that reader's write; the store itself reporting a wrong
-permission list.
+already saw a document and kept its text in a record only they read, or one their agent
+chose to write, which is that reader's write; that a person able to add a file where a
+mirrored source lists can tell, by the file never appearing, that the source is over
+`LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`; the store itself reporting a wrong permission
+list.
 
 ## Meetings through the shared-folder store
 
@@ -784,10 +790,11 @@ statements and census keys against these, and its tests pin each one:
 ## Rolling upgrades
 
 - **Clients.** A client built before `mirrored: true` declares nothing, so a mirror leg
-  answers it nothing until it is upgraded, and while mirrored sources are on or any
-  mirror exists, every session-content op refuses it. Mirrored sources stay off
-  (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`) until the operator has rolled out the
-  plugins, CLI, SDKs and hooks that honour the flag.
+  answers it nothing until it is upgraded, and from the first time
+  `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set until it is off again and the
+  mirror-erase command has run, every session-content op refuses it. Mirrored sources
+  stay off (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`) until the operator has rolled out
+  the plugins, CLI, SDKs and hooks that honour the flag.
 - **N-1 cannot operate on a source it must not.** N-1 reads `kind`, unseals
   `credential_enc` and reads `config_json`, and knows none of the new columns. A source
   stored with `kind` empty is one N-1 cannot use: its `check`, `rotate` and sync turn
@@ -824,8 +831,9 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 
 - Mirrored sources need `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`, which an operator
   sets once every Loom client and hook honours `mirrored: true`.
-- While mirrored sources are on or any mirror exists, every session-content op refuses a
-  client that does not declare `mirrored: true`, in every org.
+- From the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set until it is off
+  again and the mirror-erase command has run, every session-content op refuses a client
+  that does not declare `mirrored: true`, in every org.
 - The source ops no longer answer `NOT_A_CODE_NAMESPACE`; `add` answers
   `NAMESPACE_INACTIVE` for an inactive namespace, `PERSONAL_NAMESPACE` for a person's
   own place and `ERASURE_PENDING` while an erasure of the namespace is unfinished.
@@ -1050,15 +1058,20 @@ Each implementing pull request lists its own; these pin the model:
     - A dashboard view of an admitted mirrored document sending no `ui.vitals`.
     - A forked or resumed session not captured after its parent saw the flag.
     - One test over every op the registry classifies as session content, each refusing a
-      client that does not declare the flag while mirrored sources are on or any mirror
-      exists, in every org, with the switch on and off; and a test that collects every
-      op the shipped hooks, their shared library and the CLI send without the agent
-      choosing the content and asserts each is classed as session content.
+      client that does not declare the flag from the first time
+      `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set until it is off again and the
+      mirror-erase command has run, in every org, with the switch on and off; and a test
+      that collects every op the shipped hooks, their shared library and the CLI send
+      without the agent choosing the content and asserts each is classed as session
+      content.
     - A session with clients holding tokens for two orgs, one reading a mirror,
       capturing nothing into the other.
-      - The session-content refusal holding when `loom.knowledge_mirrors` cannot be
-        read and on a replica whose view lags the first mirror, and lifting only once
-        the switch is off and the mirror-erase command has run.
+    - The session-content refusal holding when `loom.knowledge_mirrors` cannot be read
+      and on a replica whose view lags the first mirror, and lifting only once the
+      switch is off and the mirror-erase command has run.
+    - A session started from a flagged session's process (`claude -p` through its shell)
+      flagged through the inherited marker, and a hook's `code.search` and
+      `context.pack` sending nothing after the flag.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`: for every leg with the check and every id-addressed
   op, a reader the list leaves out sees no mirrored document, its title, its address,
