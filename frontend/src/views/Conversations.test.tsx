@@ -337,7 +337,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     render(<Conversations />);
     expect(await screen.findByRole("heading", { name: "No conversations yet in this namespace" })).toBeInTheDocument();
     expect(
-      screen.getByText(/saves its chat turns, one thread per chat, while Record conversations is on:/),
+      screen.getByText(/saves its chat turns, one thread per chat, while Record conversations is on\./),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
   });
@@ -366,7 +366,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     await emptyWith(true);
     expect(
       screen.getByText(
-        "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on: the Claude Code or Codex plugin, or a transcript hook.",
+        "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/conversation\.append/)).toBeNull();

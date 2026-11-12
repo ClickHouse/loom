@@ -809,7 +809,7 @@ def _rule_set_churn(
     return (
         "set_churn",
         f"{key} was set {n} times this session: a value that changes every turn is "
-        "working_memory.set, not a memory version each time." + _unlisted(("working_memory.set",)),
+        "working_memory.set, not a memory version each time.",
     )
 
 
@@ -881,8 +881,7 @@ def _rule_get_miss(
     return (
         "get_miss",
         f"no row at {key or 'that key'}: memory.search recalls by meaning, memory.list prefix= "
-        "lists the siblings, and a moved key answers with canonical_key (follow=true)."
-        + _unlisted(("memory.list",)),
+        "lists the siblings, and a moved key answers with canonical_key (follow=true).",
     )
 
 
