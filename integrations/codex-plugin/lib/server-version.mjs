@@ -50,12 +50,12 @@ export function pluginVersion(base = import.meta.url) {
 }
 
 /** The sentence about a server older than the plugin's minimum, or "". */
-export function serverVersionMessage(health, { serverUrl, plugin = pluginVersion(), minimum = MIN_SERVER_VERSION }) {
-  const version = health && typeof health.version === "string" ? health.version : "";
-  if (!isOlder(version, minimum)) return "";
+export function serverVersionMessage(health, { serverUrl, version = pluginVersion(), minimum = MIN_SERVER_VERSION }) {
+  const server = health && typeof health.version === "string" ? health.version : "";
+  if (!isOlder(server, minimum)) return "";
   return (
-    `the Loom server at ${serverUrl} runs ${version}, older than ${minimum}, ` +
-    `the oldest this plugin (${plugin}) supports; upgrade the server.`
+    `the Loom server at ${serverUrl} runs ${server}, older than ${minimum}, ` +
+    `the oldest this plugin (${version}) supports; upgrade the server.`
   );
 }
 

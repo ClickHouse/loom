@@ -4,8 +4,9 @@ description: >
   Use when Loom seems quiet or wrong: a loom tool answers "unauthenticated",
   "not available" or an empty result for something the user says was saved;
   the session-start primer did not appear; the user asks "is loom working",
-  "why didn't it remember", "is my token ok", or a Loom hook says `node: not found`
-  or prints a `loom:` line about Node.js 18+.
+  "why didn't it remember", "is my token ok", or a Loom hook says
+  `Executable not found in $PATH: "node"` or `node: not found`, or prints a
+  `loom:` line about Node.js 18+.
   Checks the Node hook runtime, then runs the plugin's client check and reads
   its lines, so the answer names the cause (missing runtime, unreachable
   server, rejected or expired token, no writer grant on the write namespace,

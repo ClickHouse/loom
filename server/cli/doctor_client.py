@@ -875,6 +875,7 @@ def _claude_settings_env(home: Path) -> dict[str, str]:
 # profile has run. (IDEs such as VS Code load the login shell's.)
 GUI_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 WINDOWS = sys.platform == "win32"
+DARWIN = sys.platform == "darwin"
 # Of what Codex passes its MCP header helper (codex-rs rmcp-client
 # DEFAULT_ENV_VARS), the part the launcher reads: no LOOM_NODE, no version
 # manager's variables. LOOM_NODE_SYSTEM_DIRS is kept, as ensure-node.sh keeps
@@ -941,14 +942,17 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
 
 
 def _path_node(env: dict[str, str]) -> tuple[int, str]:
-    """The `node` on env's PATH: (0, its ready line), or (1, why it cannot
-    run the hooks). Raises OSError or TimeoutExpired when it does not run."""
+    """The `node` on env's PATH: (0, its ready line), (1, why it cannot run
+    the hooks), or (2, why it could not be asked)."""
     node = shutil.which("node", path=env.get("PATH", ""))
     if node is None:
         return 1, "no `node` on Claude Code's PATH."
-    r = subprocess.run(
-        [node, "--version"], env=env, capture_output=True, text=True, timeout=10, check=False
-    )
+    try:
+        r = subprocess.run(
+            [node, "--version"], env=env, capture_output=True, text=True, timeout=10, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 2, f"could not run {node}: {e}"
     version = r.stdout.strip()
     major = re.match(r"v(\d+)\.", version)
     if r.returncode != 0 or major is None or int(major.group(1)) < 18:
@@ -969,15 +973,16 @@ def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
             "`claude plugin uninstall loom@loom && claude plugin install loom@loom`.",
         )
     settings = _claude_settings_env(home)
-    try:
-        code, line = _path_node({**env, **settings})
-        if code != 0:
-            return (name, FAIL, f"{line} {_NO_NODE} Fix: /loom:loom-status.")
-        if WINDOWS:  # a Windows GUI app gets the user's PATH
-            return (name, PASS, line)
-        gui_code, _ = _path_node({"HOME": str(home), "PATH": GUI_PATH, **settings})
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return (name, WARN, f"could not run node: {e}")
+    code, line = _path_node({**env, **settings})
+    if code == 2:
+        return (name, WARN, line)
+    if code != 0:
+        return (name, FAIL, f"{line} {_NO_NODE} Fix: /loom:loom-status.")
+    # Only a macOS Dock launch has the bare system PATH: a Windows GUI app
+    # gets the user's PATH, a Linux desktop session its profile's.
+    if not DARWIN:
+        return (name, PASS, line)
+    gui_code, _ = _path_node({"HOME": str(home), "PATH": GUI_PATH, **settings})
     if gui_code != 0:
         return (
             name,

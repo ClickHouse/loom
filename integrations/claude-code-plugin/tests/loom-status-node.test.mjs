@@ -205,7 +205,7 @@ function installAt(root) {
 test("loom-status Node check knows Claude Code by where it is installed", NEEDS_NO_GUI_NODE, () => {
   const f = fixture();
   try {
-    f.put("uname", "echo Linux");
+    f.put("uname", "echo Darwin");
     f.put("node", `if [ "$1" = --version ]; then echo v22.0.0; else exec "${process.execPath}" "$@"; fi`);
     const settings = (dir, env) => {
       fs.mkdirSync(dir, { recursive: true });
@@ -226,6 +226,12 @@ test("loom-status Node check knows Claude Code by where it is installed", NEEDS_
     );
     settings(f.env.CLAUDE_CONFIG_DIR, { LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin });
     assert.doesNotMatch(f.runAt(custom, "--check").stdout, /Found only/);
+    // A Linux desktop session's PATH is not the bare system one: no warning.
+    settings(f.env.CLAUDE_CONFIG_DIR, { LOOM_NODE_SYSTEM_DIRS: "" });
+    f.put("uname", "echo Linux");
+    const linux = f.runAt(custom, "--check");
+    assert.equal(linux.status, 0, linux.stderr);
+    assert.doesNotMatch(linux.stdout, /Found only/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }

@@ -357,7 +357,8 @@ async function claudeSession(opts, box, url) {
   if (opts.noNode) {
     // Each hook fails on the missing node, and none blocks the turn.
     for (const h of hooks) {
-      if (h.exit_code === 0 || h.exit_code === 2) problems.push(`${h.hook_name} exited ${h.exit_code} with no node`);
+      if (h.exit_code === 0 || h.exit_code === 2 || !/node/.test(String(h.stderr || "")))
+        problems.push(`${h.hook_name} exited ${h.exit_code} with no node: ${String(h.stderr || "").trim()}`);
     }
     return { problems, transcript: r.stdout + r.stderr };
   }

@@ -22,17 +22,17 @@ pytestmark = pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSI
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A home whose GUI PATH and fixed directories hold no Node of the host's:
-    Claude Code's settings env and the Codex helper's env both carry
-    LOOM_NODE_SYSTEM_DIRS=""."""
+    """A home on macOS whose GUI PATH holds no Node of the host's; the Codex
+    launcher's fixed directories are switched off in `_checks`."""
     monkeypatch.setattr(dc, "GUI_PATH", str(tmp_path / "gui-path"))
+    monkeypatch.setattr(dc, "DARWIN", True)
     _settings(tmp_path, {})
     return tmp_path
 
 
 def _settings(home: Path, env: dict[str, str]) -> None:
     (home / ".claude").mkdir(exist_ok=True)
-    settings = {"env": {"LOOM_NODE_SYSTEM_DIRS": "", **env}}
+    settings = {"env": env}
     (home / ".claude" / "settings.json").write_text(json.dumps(settings))
 
 
@@ -103,6 +103,18 @@ def test_a_node_only_on_the_shell_path_warns_for_claude_code(home: Path) -> None
     assert "set PATH in the `env` block of ~/.claude/settings.json" in line
 
 
+def test_off_macos_a_shell_path_node_passes_with_no_gui_run(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install(home, ".claude", "1.3.0")
+    node = _node(home / "usr-local-bin", "v22.1.0")
+    monkeypatch.setattr(dc, "DARWIN", False)
+    assert _checks(home, PATH=str(node.parent))["client:claude-code:node"] == (
+        dc.PASS,
+        f"Loom hook runtime ready: {node} (v22.1.0)",
+    )
+
+
 def test_an_old_node_on_the_gui_path_warns_for_claude_code(home: Path) -> None:
     _install(home, ".claude", "1.3.0")
     node = _node(home / "shell-only", "v24.0.0")
@@ -159,6 +171,7 @@ def test_on_windows_codex_is_skipped_and_claude_code_has_no_gui_run(
     _install(home, ".codex", "1.3.0")
     node = _node(home / "shell-only", "v24.0.0")
     monkeypatch.setattr(dc, "WINDOWS", True)
+    monkeypatch.setattr(dc, "DARWIN", False)
     assert _checks(home, PATH=str(node.parent)) == {
         "client:claude-code:node": (dc.PASS, f"Loom hook runtime ready: {node} (v24.0.0)")
     }
@@ -176,7 +189,7 @@ def test_a_node_that_does_not_run_is_a_warning_not_a_verdict(
     monkeypatch.setattr(subprocess, "run", refuse)
     assert _checks(home, PATH=str(node.parent))["client:claude-code:node"] == (
         dc.WARN,
-        "could not run node: [Errno 13] Permission denied",
+        f"could not run {node}: [Errno 13] Permission denied",
     )
 
 

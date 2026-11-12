@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { MIN_SERVER_VERSION, isOlder, parseVersion, pluginVersion, serverVersionLine } from "../lib/server-version.mjs";
 
 const HOOK = fileURLToPath(new URL("../hooks/loom-session-start.mjs", import.meta.url));
-const PLUGIN = { plugin: "2.0.0", minimum: "1.2.0" };
+const PLUGIN = { version: "2.0.0", minimum: "1.2.0" };
 
 test("parseVersion reads a SemVer core and drops a prerelease or build suffix", () => {
   assert.deepEqual(parseVersion("1.2.3"), [1, 2, 3]);
@@ -48,7 +48,7 @@ test("serverVersionLine: one loom: line naming both versions for an older server
     assert.equal(serverVersionLine(body, { serverUrl: "https://loom.example", ...PLUGIN }), "", JSON.stringify(body));
   }
   assert.equal(
-    serverVersionLine({ version: "0.1.0" }, { serverUrl: "https://loom.example", plugin: "2.0.0", minimum: "" }),
+    serverVersionLine({ version: "0.1.0" }, { serverUrl: "https://loom.example", version: "2.0.0", minimum: "" }),
     "",
   );
 });

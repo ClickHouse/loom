@@ -6,6 +6,7 @@
 #   ensure-node.sh --check   report only: exit 0 when ready, 1 when missing
 #   ensure-node.sh           install Node when missing (root or sudo -n);
 #                            exit 2 names what blocks the install
+#   ensure-node.sh --path-node   internal: the `node` on PATH is Node 18+
 set -eu
 
 LAUNCHER="$(dirname "$0")/../../../bin/loom-node"
@@ -99,6 +100,9 @@ if [ "${1:-}" = '--check' ]; then
   # On Windows a GUI app gets the user's PATH, and Codex runs no launcher.
   case "$(uname -s)" in Darwin | Linux) ;; *) exit 0 ;; esac
   if claude_code; then
+    # A Linux desktop session's PATH already holds /usr/local/bin and the
+    # like; only a macOS Dock launch has the bare system PATH.
+    [ "$(uname -s)" = Darwin ] || exit 0
     gui_check || echo 'Found only with this shell'"'"'s environment: Claude Code started from the Dock or a desktop launcher finds no Node.js 18+ as `node`. Fix: '"$GUI_FIX"
   else
     codex_helper_check || echo 'The MCP header helper, which Codex runs without LOOM_NODE or a version manager'"'"'s variables, finds no Node. Put that Node'"'"'s directory on the PATH Codex starts with.'
