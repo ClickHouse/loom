@@ -92,10 +92,11 @@ leg, because the term leg serves shared rows to every reader:
   `memory.promote` (a definition promotion without one is refused), and is refused when
   the source's text no longer has it, so a writer's change between the write and the
   promotion is never signed off as the admin's.
-- **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
+- **`promoted_by`** is stamped from the token's actor on every promotion of a definition
+  (a candidate or source of type `definition`, whatever its `source_kind`), through
   `memory.promote` or `learnings.review`, and so are the queue row's `decided_by` and the
-  audit subject for these candidate kinds, never taken from the body's `approver`, which
-  both ops then name in `ignored_args`.
+  audit subject on such a review, never taken from the body's `approver`, which both ops
+  then name in `ignored_args`.
 - **`check_against_shared`**, the promotion's conflict check, skips `definition` (only),
   so promoting `MRR` is not refused as a conflict with `ARR`; decisions keep the check.
 - **`memory.promote` refuses a definition whose term or alias** is already another
@@ -233,11 +234,10 @@ search another op runs on its behalf:
   question that knowledge answers is not a gap because memory abstained.
 
 Only a search's first page can record a miss (a call with a `page` handle never does), and
-a search that could not answer for another reason is not a miss: an expired page handle
-(`abstain_code = 'page_expired'`), a degraded answer whose provider fell back, one with
-writes still waiting for extraction (`pending_extraction > 0`), one whose fan-out stopped
-short (`namespaces_skipped`), or one whose hits the memory authority dropped
-(`stale_dropped > 0`).
+a search that could not answer for another reason is not a miss: a degraded answer whose
+provider fell back, one with writes still waiting for extraction (`pending_extraction >
+0`), one whose fan-out stopped short (`namespaces_skipped`), or one whose hits the memory
+authority dropped (`stale_dropped > 0`).
 
 The **asker** is the person the token stands for, never a body field: the end user of an
 end-user token; else the token's `creator` claim, the person at the root of a delegated
@@ -284,25 +284,27 @@ per query text with its sessions, not its people, and only for memory searches.
 ### Grouping
 
 The `knowledge_gaps` worker runs once a day for each namespace with misses or a live
-build. It re-reads the namespace's capture level, uncached. A namespace whose level is now
-`off` gets an empty build and its stored misses deleted, so a later consent does not count
-them again; a level that cannot be read skips the namespace's pass, with no build and no
-delete, so a failed read never deletes misses; otherwise it reads the namespace's misses
-of the last 7 days and groups them by normalised query. **Privacy threshold:** a group
-with fewer than `knowledge_gaps_min_askers` distinct askers (default three, never below
-three, one value for the deployment) is dropped before anything else, so every query a gap
-shows was asked in that form by at least that many askers. The threshold is as strong as
-the principals behind it: it does not bind whoever holds the signing key (`loom
-mint-token` mints any subject), an end-user issuer or a trusted caller (each names its own
-users), or a deployment where principals can be self-created (`LOOM_SELF_SIGNUP=open`),
-where an admin could ask from accounts of their own. There it limits what one ordinary
-caller reveals, not what an admin can learn. On any deployment, an admin who compares two
-daily builds can tell that one more asker reached a query that day, and in a small
-namespace that may say who; the threshold bounds what one build shows, not what a series
-of builds implies. The reading admin's own asks count toward it too, so an admin who asked
-a query learns from its gap that at least `knowledge_gaps_min_askers` minus one others
-did, which in a small namespace narrows who. The worker embeds the remaining groups'
-queries (at most `knowledge_gaps_max_groups`), merges groups whose vectors are at least
+build. It re-reads the namespace's capture level through an uncached read that raises when
+the consent cannot be read; `capture_consent.resolve` is not that read, since it caches
+and reads an unreadable consent as `off`. A namespace whose level is now `off` gets an
+empty build and its stored misses deleted, so a later consent does not count them again; a
+level that cannot be read skips the namespace's pass, with no build and no delete, so a
+failed read never deletes misses; otherwise it reads the namespace's misses of the last 7
+days and groups them by normalised query. **Privacy threshold:** a group with fewer than
+`knowledge_gaps_min_askers` distinct askers (default three, never below three, one value
+for the deployment) is dropped before anything else, so every query a gap shows was asked
+in that form by at least that many askers. The threshold is as strong as the principals
+behind it: it does not bind whoever holds the signing key (`loom mint-token` mints any
+subject), an end-user issuer or a trusted caller (each names its own users), or a
+deployment where principals can be self-created (`LOOM_SELF_SIGNUP=open`), where an admin
+could ask from accounts of their own. There it limits what one ordinary caller reveals,
+not what an admin can learn. On any deployment, an admin who compares two daily builds can
+tell that one more asker reached a query that day, and in a small namespace that may say
+who; the threshold bounds what one build shows, not what a series of builds implies. The
+reading admin's own asks count toward it too, so an admin who asked a query learns from
+its gap that at least `knowledge_gaps_min_askers` minus one others did, which in a small
+namespace narrows who. The worker embeds the remaining groups' queries (at most
+`knowledge_gaps_max_groups`), merges groups whose vectors are at least
 `knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
 namespace in `loom.knowledge_gaps`:
 
@@ -404,10 +406,13 @@ queue row. A promotion refused after the write (a racing edit, a racing term, or
 `memory.set` answering `PUBLICATION_PENDING`, which today's review path swallows) leaves
 the candidate pending and the namespace-wide row written, which no term leg serves until
 its text is promoted; for a revision, the old definition lapses meanwhile and the admin
-read lists it. A retried review, idempotent by key, completes it, writing with
-`if_match_sha256` against the head the first attempt wrote, so it refuses rather than
-overwrite a writer's edit made since; rejecting the draft instead leaves the written row,
-which the admin restores from the row's history or promotes.
+read lists it. Every attempt, the first and each retry, decides from the head it reads and
+keeps no state of its own: a head whose text hashes to the draft's is promoted without a
+write; no head, or a head holding the governed shared copy's text, is written with
+`if_match_sha256` against that head (none when there is no head); any other head is a
+writer's edit, and the review is refused rather than overwrite it. A retry so completes
+the promotion; rejecting the draft instead leaves the written row, which the admin
+restores from the row's history or promotes.
 
 ## Erasure and audit
 
@@ -499,13 +504,11 @@ once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
-`loom.knowledge_gaps`, and every `knowledge_gap` and `query_history` row of
-`loom.learnings_queue` whatever its status, as rule 23 does for assistant-turn rules. The
-first N-1 replica to serve closes the gate, so no op or turn of this design writes after
-it; the operator runs the same delete once more then, for what N wrote in between.
-
-Registrations stay through a rollback, and N-1's namespace erasure does not reach them: a
-namespace erasure run after the rollback is run again once N serves.
+`loom.knowledge_gaps`, every query-history registration, and every `knowledge_gap` and
+`query_history` row of `loom.learnings_queue` whatever its status, as rule 23 does for
+assistant-turn rules; a team re-registers its source once N serves again. The first N-1
+replica to serve closes the gate, so no op or turn of this design writes after it; the
+operator runs the same delete once more then, for what N wrote in between.
 
 ## Invariants
 
