@@ -1,10 +1,10 @@
 # Agent runs, traces and PR history
 
-Loom records the work coding agents do (runs with their goals, outcomes and model costs,
-searchable session conversations) and connects it to your code history: merged pull
-requests, review comments and, with a tracker source, issues, incidents and CI runs. An
-agent or a person can then ask what was tried before, what was decided and which change
-introduced a regression.
+Loom records the work coding agents do, as runs and searchable session conversations, and
+connects it to your code history. Runs carry goals, outcomes and model costs; the history
+covers merged pull requests, review comments and, with a tracker source, issues, incidents
+and CI runs. An agent or a person can then ask what was tried before, what was decided and
+which change introduced a regression.
 
 ## What you get
 
@@ -15,7 +15,8 @@ introduced a regression.
   on with `conversation.set_logging(enabled=true)`. [Conversations and sessions](../features/conversations-and-sessions.md) ·
   [Trace and resume long agent runs](../guides/trace-and-resume.md)
 - **PR history.** History of a symbol, path or line, review briefs, a pre-PR duplicate
-  check and bisect candidates. Needs `LOOM_CODE_PR_HISTORY_ENABLED=true`. [History, PRs and releases](../features/code-index/history-and-prs.md)
+  check and bisect candidates. Needs `LOOM_CODE_PR_HISTORY_ENABLED=true`; review comments also need
+  `LOOM_CODE_GITHUB_TOKEN`. [History, PRs and releases](../features/code-index/history-and-prs.md)
 - **Tracker records.** Duplicate issue checks, issue-to-PR links and flaky tests, read live
   from the team's own ClickHouse. [Tracker plane](../features/tracker/overview.md)
 - **Traces and cost.** Loom emits OpenTelemetry and records its own model spend per

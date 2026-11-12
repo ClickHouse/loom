@@ -19,7 +19,7 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
 
 ## Use cases
 
-One page per need, each saying what Loom does for it, what was measured and where to start:
+One page per need, each saying what Loom does for it and where to start:
 [agent memory](use-cases/agent-memory.md) ·
 [document search and RAG](use-cases/document-search.md) ·
 [code index for coding agents](use-cases/code-intelligence.md) ·

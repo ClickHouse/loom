@@ -2,8 +2,8 @@
 
 Loom gives coding agents a shared index of your git repositories, served over MCP, so an
 agent asks a structure question and gets the lines that answer it instead of reading whole
-files. [The code index overview](../features/code-index/overview.md) explains how it is
-built and kept fresh.
+files. How the index is built and kept fresh is in
+[the code index overview](../features/code-index/overview.md).
 
 ## What you get
 
@@ -14,7 +14,7 @@ built and kept fresh.
   `code.grep` finds an exact message or identifier.
 - **History and pull requests.** Merged-PR history with review comments, a pre-PR
   duplicate check and bisect candidates for a regression. Needs
-  `LOOM_CODE_PR_HISTORY_ENABLED=true`.
+  `LOOM_CODE_PR_HISTORY_ENABLED=true`; review comments also need `LOOM_CODE_GITHUB_TOKEN`.
   [History, PRs and releases](../features/code-index/history-and-prs.md)
 - **Freshness you can see.** The index trails the branch by merged commits, and a stale
   answer says so. [Freshness](../features/code-index/freshness.md)
@@ -24,10 +24,10 @@ built and kept fresh.
 
 ## Measured
 
-On the ClickHouse repository, Claude Code with Loom found the right file for 96.4% of 36
-conceptual questions (10 paired runs) against 91.4% without it, at 21% lower model cost.
+On the ClickHouse repository, Claude Code with Loom named the right file among its three for
+96.4% of 36 conceptual questions (10 paired runs) against 91.4% without it, at 21% lower model cost.
 On 200 SWE-bench Verified issues, a changed file was among the first 10 results for 82%,
-against 57% for BM25 over every indexed file and 79% for BM25 over `.py` files only.
+against 57% for BM25 over every indexed file and 79% for BM25 over `.py` files only; the `.py`-only gap is within noise.
 [With and without Loom](../benchmarks/results.md#with-and-without-loom) ·
 [SWE-bench Verified file localization](../benchmarks/results.md#swe-bench-verified-file-localization)
 

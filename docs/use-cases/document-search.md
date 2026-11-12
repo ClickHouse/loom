@@ -15,8 +15,8 @@ model writes the answer from the passages Loom returns.
 - **One search across memory, documents and conversations.** `loom_search` runs the memory,
   knowledge, profile and conversation searches in one call, across the namespaces the
   caller may read. [Unified search](../features/unified-search.md)
-- **Abstention.** Low-confidence retrieval can abstain instead of handing the model a weak
-  passage. [Retrieval and ranking](../concepts/retrieval-and-ranking.md)
+- **A similarity floor.** `loom_search` drops knowledge hits below a similarity floor
+  instead of handing the model a weak passage. [`loom_search`](../features/unified-search.md#loom_search)
 - **Access control on every passage.** Documents live in namespaces with viewer, writer and
   admin roles. [Namespaces and sharing](../features/namespaces-and-sharing.md)
 

@@ -12,8 +12,8 @@ process), and what your agents know is queryable with SQL.
   runs N identical replicas behind one URL. [Deployment](../operations/deployment.md) ·
   [Kubernetes](../operations/kubernetes.md) · [Running N replicas](../operations/replicas.md)
 - **ClickHouse OSS or ClickHouse Cloud.** [ClickHouse Cloud and Managed Postgres](../operations/clickhouse-cloud.md)
-- **One store for vectors, text and audit.** Vector, lexical and graph search, filters,
-  audit and erasure are SQL over the same rows. [Storage authority](../architecture/storage-authority.md)
+- **One store for vectors, text and audit.** Under the default ClickHouse authority,
+  vector, lexical and graph search, filters, audit and erasure are SQL over the same rows. [Storage authority](../architecture/storage-authority.md)
 - **Multi-user.** Orgs, namespaces, roles, tokens and single sign-on.
   [Identities and namespaces](../concepts/identities-and-namespaces.md) ·
   [Single sign-on](../operations/sso.md)

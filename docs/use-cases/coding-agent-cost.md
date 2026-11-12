@@ -1,9 +1,9 @@
 # Lower token and model cost for coding agents
 
 With the Loom plugin and code index, Claude Code answered questions about the ClickHouse
-codebase at a lower model cost than without it: 20% lower on 24 answer-graded questions
-(answer quality 0.84 against 0.78), 21% lower on 36 file-localization questions, and 6%
-lower on 24 multi-hop questions, where tracing a bug to its fix on a release branch cost
+codebase at 6% to 21% lower model cost than without it. The savings were 20% on 24
+answer-graded questions (answer quality 0.84 against 0.78), 21% on 36 conceptual questions
+and 6% on 24 multi-hop questions, where tracing a bug to its fix on a release branch cost
 the same both ways.
 
 ## What was measured
@@ -17,9 +17,8 @@ specific to the tested workloads.
 protocol and the artifacts, and [evaluate Loom](../getting-started/evaluate.md) shows how
 to measure it on your own repository.
 
-For a reader model, Loom's top memories used 91% fewer prompt tokens per LongMemEval-S
-question than the whole chat history. That total excludes building the memory: about
-1.5 M extraction tokens per history, repaid after about 16 questions over the same history.
+For memory read by a model instead of a whole chat history, see
+[agent memory](agent-memory.md#measured).
 
 ## How the plugin is designed to save
 

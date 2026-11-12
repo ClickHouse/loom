@@ -1,7 +1,7 @@
 # Use cases
 
 Each page answers one question people and agents ask when they look for a tool: what Loom
-does for that need, what was measured, and where to start.
+does for that need and where to start.
 
 | Need                                                              | Page                                                   |
 | ----------------------------------------------------------------- | ------------------------------------------------------ |
