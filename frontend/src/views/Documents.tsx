@@ -73,7 +73,7 @@ import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
 
-// Loaded with the Library's place view; SourcesList decides whether its section shows.
+// Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
 
 const FIRST_SCREEN_ROWS = 12;
@@ -217,6 +217,7 @@ export function Documents() {
   // The place's admins manage its sources. An admin claim reaches no collection, so there
   // only the collection's own role decides.
   const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.add", headerRole, whoami);
+  const [sourcesPanel, setSourcesPanel] = useState<HTMLDivElement | null>(null);
   const phone = useMedia(PHONE_QUERY);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
@@ -984,6 +985,25 @@ export function Documents() {
         title="Library"
         actions={
           <>
+            {!resolving && !shown?.personal && (
+              // Where this place's documents are pulled from; SourcesList decides when its
+              // button shows, and opens the list below the header.
+              <Suspense fallback={null}>
+                <SourcesList
+                  key={`${identity.org}/${identity.namespace}`}
+                  org={identity.org}
+                  namespace={identity.namespace}
+                  place={
+                    shown
+                      ? { label: collectionTitle(shown), noun: "collection" }
+                      : { label: identity.namespace, noun: "namespace" }
+                  }
+                  manageable={sourcesAdmin}
+                  section="Sources"
+                  panel={sourcesPanel}
+                />
+              </Suspense>
+            )}
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyLibrary && !resolving && (
               <Unavailable reason={writeReason}>
@@ -1023,24 +1043,9 @@ export function Documents() {
         />
       </div>
 
-      {!resolving && !shown?.personal && (
-        // Where this place's documents are pulled from, above the list; SourcesList decides
-        // when the section shows.
-        <Suspense fallback={null}>
-          <SourcesList
-            key={`${identity.org}/${identity.namespace}`}
-            org={identity.org}
-            namespace={identity.namespace}
-            place={
-              shown
-                ? { label: collectionTitle(shown), noun: "collection" }
-                : { label: identity.namespace, noun: "namespace" }
-            }
-            manageable={sourcesAdmin}
-            section="Sources"
-          />
-        </Suspense>
-      )}
+      {/* The Sources button opens the place's sources here, so a closed list costs the rows
+          no room. */}
+      <div ref={setSourcesPanel} />
 
       {/* The search, the sort and the count, in the one bar that stays at the top as the list
           scrolls, in every state: nothing moves when the rows land. A tag picked from a row

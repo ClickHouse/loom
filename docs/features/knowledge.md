@@ -93,24 +93,26 @@ says whether this deployment runs it (`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENA
 off by default). The design of connected accounts and access that follows the store's
 permissions is in [document sources](../architecture/document-sources.md).
 
-On the dashboard, the Library shows the sources of the shared namespace or collection in
-view under Sources, and an opened repository on the Repositories page shows its sources
-under Sources: each source's kind, last sync and counts, to anyone who reads the
-namespace (or the repository); a place that takes no new source (a person's own, or an
-inactive one) offers no Add, and shows the section only while it still holds a source; a
-reader who cannot add one sees no section on a place that holds none, nor when the list
-cannot be read, where an admin sees the error. A caller with the role the table below
-names gets the verbs: Add a source, Check, Sync now, Rotate credential and Retire. Add a
-source takes a kind, then that kind's `config` fields as listed below (a `gdrive` folder
-or a `notion` page or database may also be given as a pasted link, a `meet` space with
-its `spaces/` prefix, a `zoom` meeting id with the spaces it is shown with) and its
-credential. The form checks the server's rules for those ids before Check is offered;
-Check sends `knowledge.source.add` with `dry_run`, and Add stays off until the form it
-would send is the one that passed. A refused check or add shows the server's error as it
-came back. The credential is typed into a password field, sent with the request and
-never shown again; changing the kind or the `recording` provider clears it, so it only
-goes to the store it was typed for, and changing the provider also clears the ids typed
-for the other one.
+On the dashboard, an opened repository on the Repositories page shows its sources under
+Sources, and the Library's **Sources** button, in the header's actions and counting them
+(its icon alone on a phone), opens the sources of the shared namespace or collection in
+view below the header, so a closed list takes no room from the rows. Both show each
+source's kind, last sync and counts, to anyone who reads the namespace (or the
+repository). The Library's button shows once the list answers; on a place that takes no
+new source (a person's own, or an inactive one) its list offers no Add, and it shows
+only while the place still holds a source; a reader who cannot add one sees no button on
+a place that holds none, nor when the list cannot be read, where an admin sees the
+error. A caller with the role the table below names gets the verbs: Add a source, Check,
+Sync now, Rotate credential and Retire. Add a source takes a kind, then that kind's
+`config` fields as listed below (a `gdrive` folder or a `notion` page or database may
+also be given as a pasted link, a `meet` space with its `spaces/` prefix, a `zoom`
+meeting id with the spaces it is shown with) and its credential. The form checks the
+server's rules for those ids before Check is offered; Check sends `knowledge.source.add`
+with `dry_run`, and Add stays off until the form it would send is the one that passed. A
+refused check or add shows the server's error as it came back. The credential is typed
+into a password field, sent with the request and never shown again; changing the kind or
+the `recording` provider clears it, so it only goes to the store it was typed for, and
+changing the provider also clears the ids typed for the other one.
 
 | Operation                                                                                   | Role   | Does                                                                                                       |
 | ------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |

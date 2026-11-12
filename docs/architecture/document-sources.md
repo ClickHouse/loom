@@ -45,8 +45,8 @@ source of the same name resumes none of an earlier one's listing. It lives where
 [storage layout](storage-layout.md#cursors) places it (`loom.code_index_state` today,
 Postgres `cursors` from wave 3).
 
-On the dashboard, the Library shows a Sources section for the namespace or collection in
-view; the repository card keeps its own.
+On the dashboard, the Library's Sources button opens the sources of the namespace or
+collection in view; the repository card keeps its own.
 
 ## Items and links
 

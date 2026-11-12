@@ -5,10 +5,11 @@
  * (for the namespace in view): a reader sees them and an admin manages them: Add a
  * source, Check, Sync now, Rotate credential, Retire.
  * Read once when the card is opened (a folded card asks nothing) or the Library's place
- * view opens, the read deciding whether its section shows; the dialogs load on first
+ * view opens, the read deciding whether its button shows; the dialogs load on first
  * use. The counts are information only: nothing waits for a person to confirm a row.
  */
-import { lazy, Suspense, useId, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
@@ -26,7 +27,9 @@ import {
   type SyncTone,
 } from "../lib/knowledgeSources";
 import { isOpAbsent } from "../lib/trackerSources";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { Skeleton } from "../components/Skeleton";
+import { IconButton } from "../components/IconButton";
 import { toast } from "../components/Toast";
 import { ListTime, LoadingSkeleton, TipTarget } from "../components/ui";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
@@ -116,6 +119,7 @@ export function SourcesList({
   manageable,
   busy = false,
   section,
+  panel,
 }: {
   org: string;
   /** The namespace the sources live in. */
@@ -125,12 +129,25 @@ export function SourcesList({
   manageable: boolean;
   /** Another change on the page is running: Add waits for it. */
   busy?: boolean;
-  /** Render as the Library's own section under this heading. A section shows only once
-   *  the list has answered, and to a caller who cannot add, only while it lists a source. */
+  /** Render as the Library's own section under this heading: a button named for it, in
+   *  the header's actions, that opens the section in `panel`, so the closed list takes no
+   *  room above the rows. It shows only once the list has answered, and to a caller who
+   *  cannot add, only while it lists a source. */
   section?: string;
+  /** Where the open section goes (below the page header). */
+  panel?: HTMLElement | null;
 }) {
   const [state, setState] = useState<State>({ kind: "loading" });
   const headingId = useId();
+  const panelId = useId();
+  const [open, setOpen] = useState(false);
+  const phone = useMedia(PHONE_QUERY);
+  const heading = useRef<HTMLHeadingElement>(null);
+  // The panel sits below the header, past the page's other controls: opening it moves
+  // the focus to its heading, so the list is next in the tab order.
+  useEffect(() => {
+    if (open) heading.current?.focus();
+  }, [open]);
   const [nonce, setNonce] = useState(0);
   const [adding, setAdding] = useState(false);
   const [acting, setActing] = useState<{ verb: Verb; source: KnowledgeSource } | null>(null);
@@ -291,12 +308,31 @@ export function SourcesList({
     </div>
   );
   if (!section) return list;
+  const count = state.kind === "ready" ? state.sources.length : 0;
+  const name = count > 0 ? `${section} (${count})` : section;
+  const toggle = { "aria-expanded": open, "aria-controls": panelId, onClick: () => setOpen((v) => !v) };
   return (
-    <section aria-labelledby={headingId} className="my-6">
-      <h2 id={headingId} className="mb-2 text-sm font-semibold text-text">
-        {section}
-      </h2>
-      {list}
-    </section>
+    <>
+      {/* A disclosure toggle; its icon alone, with a tooltip, on a phone, where the header
+          has no room for another label. */}
+      {phone ? (
+        <IconButton icon="connect" label={name} {...toggle} />
+      ) : (
+        <Button type="empty" htmlType="button" iconRight={open ? "chevron-up" : "chevron-down"} {...toggle}>
+          {name}
+        </Button>
+      )}
+      {open &&
+        panel &&
+        createPortal(
+          <section id={panelId} aria-labelledby={headingId} className="mb-6">
+            <h2 id={headingId} ref={heading} tabIndex={-1} className="mb-2 text-sm font-semibold text-text">
+              {section}
+            </h2>
+            {list}
+          </section>,
+          panel,
+        )}
+    </>
   );
 }
