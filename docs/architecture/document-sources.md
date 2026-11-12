@@ -67,16 +67,17 @@ service account has no recordings folder of its own.
 
 A source holds at most 300 items (a wire contract, not a setting), and at most
 `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` documents (default 50,000: today's bound on the
-read of a source's stored copies, made a setting). A listing that passes it fails the
-turn with `too_many_documents` and retires nothing, so the read that compares revisions
-never cuts off a stored copy. A listing asks the store about at most 50 parent folders
-per query (not a setting), so a source of many folders lists in several queries; a
-recursive folder's subfolders are walked on every full listing, and a file in a new
-subfolder arrives with the next one. A probe checks a bounded sample: every item while
-there are at most 20, otherwise the 20 items added last, and the answer says `sampled:
-true` with the number checked. Only a refused item of the sample refuses `add` or
-`update`; the next sync turn reports any other as `item <n>: http_404` and goes on with
-the rest.
+read of a source's stored copies, made a setting). The read of a source's stored copies
+asks for one more than the bound, and a turn that gets more fails with
+`too_many_documents` and retires nothing, so that read never cuts off a stored copy,
+whether the copies came from one listing or from new files written while old ones wait
+for retirement. A listing asks the store about at most 50 parent folders per query (not
+a setting), so a source of many folders lists in several queries; a recursive folder's
+subfolders are walked on every full listing, and a file in a new subfolder arrives with
+the next one. A probe checks a bounded sample: every item while there are at most 20,
+otherwise the 20 items added last, and the answer says `sampled: true` with the number
+checked. Only a refused item of the sample refuses `add` or `update`; the next sync turn
+reports any other as `item <n>: http_404` and goes on with the rest.
 
 ### The link parser
 
@@ -366,22 +367,29 @@ because an admin registered a source that makes it so; search answers the addres
 ### Who the store says may read
 
 A mirrored document's own row and three tables under the mirror say who may read; the
-tables are written as new versions with a `deleted` flag (no mutation):
+tables are written as new versions with a `deleted` flag; only a user erasure deletes
+rows ([below](#erasure-and-audit)):
 
 - The document's permission list, in an `access_json` column of the document row
   (`loom.documents`, and the knowledge head under the Postgres authority), as of the
   newest read by the source that owns the document: `emails` (people the store grants
   any role, lower-cased), `groups` (group emails), `domains` (a domain permission the
   store marks discoverable), `anyone` (a public permission the store marks
-  discoverable), `changed_at` (the read time at which the list last differed from the
-  one before it) and `unread` (the last read was refused). A new document is written
-  with the list its fetch reads with the file's metadata. A listing that reads a list
-  unlike the stored one rewrites the document's row with the same content and the new
-  list, as a tag write does today, so no chunk or embedding is rebuilt; an unchanged
-  list costs no write. The list lives and dies with its document: a retirement, an
-  erasure or the mirror's retention removes it with the row, and no read op returns the
-  column. Only the owning source's turn writes it, under its turn lease, so the
-  document's own version order is the list's.
+  discoverable), `changed_at` (when the list last differed from the one before it, or
+  was marked `unread`) and `unread` (no current list is known: the last read was
+  refused, or the source stopped listing the file and its retirement is not confirmed
+  yet). A new document is written with the list its fetch reads with the file's
+  metadata. A listing that reads a list unlike the stored one rewrites the document's
+  row with the same content and the new list, as a tag write does today, so no chunk or
+  embedding is rebuilt; an unchanged list costs no write. The sync's comparison read
+  matches a stored copy's chunks by `(source_uri, revision)`, which the rewrite keeps,
+  so the next turn finds the copy current and fetches nothing. Under the Postgres
+  authority the comparison reads the head, and a rewritten list counts for rule 2 only
+  once it is published: the listing row's new start waits for the publish of every list
+  it rewrote, and a publish still pending keeps the older start. The list lives and dies
+  with its document: a retirement, an erasure or the mirror's retention removes it with
+  the row, and no read op returns the column. Only the owning source's turn writes it,
+  under its turn lease, so the document's own version order is the list's.
 - `loom.knowledge_document_readers`, one row per mirrored address, source and reading
   account: the connection (its kind and store account id) for a connected source, or the
   person a crawl listed it as. The `account` column holds a pseudonym of that account,
@@ -399,9 +407,11 @@ tables are written as new versions with a `deleted` flag (no mutation):
   start, the earliest moment it can have seen a file. A complete listing has read the
   list of every file it listed (each address once per turn, by whichever account lists
   it first) and rewritten every changed one before its row lands, so the oldest start
-  among a source's listing rows is when its documents' lists were last confirmed. A file
-  the source stopped listing whose retirement cannot be confirmed yet has its list
-  marked `unread`, so no older list outlives the listing.
+  among a source's listing rows is when its documents' lists were last confirmed. A
+  listing counts as complete only when every file it stopped listing is retired or has
+  its list marked `unread`, and those writes land before its row, as the deleted readers
+  rows do; a retirement cut short by the pass bound keeps the older start. So no older
+  list outlives the listing.
 - `loom.knowledge_group_members`, one row per source and group: the members of a group
   the crawl's directory read listed, and `read_at`. A group is stored once, not on every
   file shared with it.
@@ -487,8 +497,8 @@ A reader sees a mirrored document when rule 1 holds, and rule 2 or rule 3:
 3. A readers row matches the reader (one of the reader's own active connections for a
    connected source, one of its verified emails for a crawl), and the listing row of
    that readers row's own source and account says its last complete listing started
-   within the stale bound and after the document's list last changed (`changed_at`), or
-   the list is `unread`.
+   within the stale bound and after the document's list last changed (`changed_at`),
+   which a mark of `unread` moves too, so a reader the last list left out stays out.
 
 The newest evidence wins: Alice's and Bob's connected sources that both reach a
 view-only file each prove their own account, and each of them reads it; a re-read that
@@ -647,17 +657,16 @@ base>/settings/connected-accounts?kind=<kind>` to hand back.
 
 ClickHouse, additive migrations:
 
-| Table                              | Key                      | Holds                                                                                                                                                                                                       |
-| ---------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom.knowledge_sources` (columns) | `(org, namespace, name)` | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject`, `subjects` and `excluded`), `secret_enc` |
-| `loom.knowledge_mirrors`           | `(org, namespace)`       | `mirror`, `created_at`                                                                                                                                                                                      |
-| `loom.documents` (column)          | as today                 | `access_json`: a mirrored document's permission list (`emails`, `groups`, `domains`, `anyone`, `changed_at`, `unread`); empty elsewhere; the knowledge head under the Postgres authority gains it too       |
-
-| `loom.knowledge_document_readers` | `(org, namespace, source_uri, source_id, account)` | `name`, `deleted`, `version`; `namespace` is the mirror; `account` is the UUIDv5 pseudonym of `<kind>:<account id>` or of the lower-cased email |
-| `loom.knowledge_source_listings` | `(org, namespace, source_id, account)` | `name`, `started_at`, `deleted`, `version`; `account` is the pseudonym, or `shared:<source id>`; the start of the account's last complete listing; `namespace` is the mirror |
-| `loom.knowledge_group_members` | `(org, namespace, source_id, group)` | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror |
-| `loom.knowledge_source_cleanups` | `(org, namespace, source_id)` | `name`, `mirror`, `done`, `version`; a stopped mirrored source whose documents and rows wait to be cleaned |
-| `loom.connected_accounts` | `(org, subject, kind)` | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version` |
+| Table                              | Key                                                | Holds                                                                                                                                                                                                       |
+| ---------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.knowledge_sources` (columns) | `(org, namespace, name)`                           | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject`, `subjects` and `excluded`), `secret_enc` |
+| `loom.knowledge_mirrors`           | `(org, namespace)`                                 | `mirror`, `created_at`                                                                                                                                                                                      |
+| `loom.documents` (column)          | as today                                           | `access_json`: a mirrored document's permission list (`emails`, `groups`, `domains`, `anyone`, `changed_at`, `unread`); empty elsewhere; the knowledge head under the Postgres authority gains it too       |
+| `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `name`, `deleted`, `version`; `namespace` is the mirror; `account` is the UUIDv5 pseudonym of `<kind>:<account id>` or of the lower-cased email                                                             |
+| `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `name`, `started_at`, `deleted`, `version`; `account` is the pseudonym, or `shared:<source id>`; the start of the account's last complete listing; `namespace` is the mirror                                |
+| `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`               | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                               |
+| `loom.knowledge_source_cleanups`   | `(org, namespace, source_id)`                      | `name`, `mirror`, `done`, `version`; a stopped mirrored source whose documents and rows wait to be cleaned                                                                                                  |
+| `loom.connected_accounts`          | `(org, subject, kind)`                             | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                           |
 
 A source N-1 can operate on (`shared`, `access: namespace`, with items today's config
 can express) keeps today's columns as they are: `kind`, its credential in
@@ -771,6 +780,9 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 - The source ops no longer answer `NOT_A_CODE_NAMESPACE`; `add` answers
   `NAMESPACE_INACTIVE` for an inactive namespace.
 - `recording` sources lose the `meet` provider.
+- A source with more stored documents than `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`
+  (default 50,000) fails every turn with `too_many_documents`, where today it syncs on
+  with a truncated comparison.
 - The gate of `add`, `update`, `check`, `sync_now` and `remove` takes `writer`, with
   `admin` checked by the handler for shared and crawl sources; `rotate` is refused for a
   connected source.
@@ -780,7 +792,7 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 | Setting                                              | Default | Meaning                                                                              |
 | ---------------------------------------------------- | ------- | ------------------------------------------------------------------------------------ |
 | `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS`            | 3600    | a source's lists, group members row or account listing older than this admits nobody |
-| `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`                | 50000   | a source's documents; a listing past it fails the turn and retires nothing           |
+| `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`                | 50000   | a source's stored documents; a turn past it fails and retires nothing                |
 | `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_PERSON`    | 8       | a person's connected sources in one namespace                                        |
 | `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_NAMESPACE` | 64      | a namespace's connected sources                                                      |
 | `LOOM_CONNECT_GDRIVE_CLIENT_ID`, `_SECRET`           | unset   | the shared-folder store's OAuth client; unset, those connections are off             |
@@ -861,15 +873,18 @@ The redirect URI to register with each store is
   source reused before its cleanup ran, whose cleanup retires only the mirror's
   documents of its own id; a mirrored source stopped before its first listing completed,
   found by the anti-join through its documents' `source-id` tag; a changed list
-  rewriting the document's row with its content and chunks unchanged, and an unchanged
-  list writing nothing; a list read refused marking it `unread`, which admits only
-  through readers rows; a file the source stopped listing whose retirement cannot be
-  confirmed marked `unread`; a listing past `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`
-  failing the turn and retiring nothing; a cleanup killed mid-retirement, whose rerun
-  finds the documents still tagged and retires them; an anti-join over a mirrored source
-  N-1 removed, whose lease key and re-check use the source's namespace; no readers,
-  listing or group-members row left by a turn that starts after a cleanup; a `remove`
-  without `delete_documents` on a `namespace` source keeping its documents, also when a
+  rewriting the document's row with its content and chunks unchanged, and the next turn
+  fetching and embedding nothing; an unchanged list writing nothing; a list read
+  refused, and a file the source stopped listing whose retirement fails, marking it
+  `unread`, after which a readers row from a listing older than the mark admits nobody;
+  a retirement cut by the pass bound leaving the older listing start; under the Postgres
+  authority, a narrowed list committed but not yet published keeping the older listing
+  start; stored copies past `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` failing the turn and
+  retiring nothing; a cleanup killed mid-retirement, whose rerun finds the documents
+  still tagged and retires them; an anti-join over a mirrored source N-1 removed, whose
+  lease key and re-check use the source's namespace; no readers, listing or
+  group-members row left by a turn that starts after a cleanup; a `remove` without
+  `delete_documents` on a `namespace` source keeping its documents, also when a
   same-named mirrored source's cleanup runs; a connected source N-1 removed during its
   first listing leaving no readers row after the anti-join's cleanup; a new document
   written with the list its fetch read; no read op returning `access_json`; a mirrored
