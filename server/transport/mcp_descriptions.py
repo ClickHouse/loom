@@ -636,7 +636,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "memory.move": (
         "Rename a memory key and leave the old key readable: the new key is "
         "written through memory.set (optionally with a rewritten value), and "
-        "the old key becomes a redirect — memory.get(old) still answers with "
+        "the old key becomes a redirect — memory.get on the old key still answers with "
         "canonical_key = new, follow: true serves the new row, search and list "
         "hide the old one. Use instead of set + delete when another writer "
         "may still read the old key. keep_redirect: false tombstones it."
@@ -701,8 +701,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "strongest neighbours and the walk stops at max_nodes.\n"
         "WHEN: Multi-hop reasoning — 'what's connected to X', "
         "'who works on the same projects as Y', 'walk the relationships "
-        "of entity Z'. Heavier than a one-hop lookup; use it when one hop "
-        "is not enough.\n"
+        "of entity Z'. facts.related is single-hop only. "
+        "Heavier than facts.related; use when single-hop isn't enough.\n"
         "ARGS: `seed_entity` is required. `max_hops` (default 2, max 4) "
         "controls walk depth. `top_k_per_hop` (default 20) caps the "
         "frontier per step so a hub entity doesn't blow up the walk. "
@@ -727,8 +727,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "on the typed graph) so the route can be cited, not just asserted.\n"
         "WHEN: 'how is X related to Y', 'what links this incident to that "
         "PR', a question that names TWO entities. Distinct from "
-        "facts.traverse (everything around ONE seed). Bidirectional search "
-        "meets in the middle, so max_hops=4 "
+        "facts.traverse (everything around ONE seed) and facts.related "
+        "(one hop). Bidirectional search meets in the middle, so max_hops=4 "
         "explores two hops from each end, not four from one.\n"
         "ARGS: `entity_a` and `entity_b` required (canonicalised like the "
         "write path, so casing and possessives do not matter). `max_hops` "
@@ -1509,7 +1509,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "The set-wide backport report: which merged fixes labelled for backport "
         "does a release branch still owe? Rows come from loom.code_backport_gaps, "
         "written nightly by the code_backport_gaps worker — one "
-        "`code.backport_gap(exact, history)` per labelled fix (`pr-must-backport*` "
+        "`code.backport_gap` (exact, history) per labelled fix (`pr-must-backport*` "
         "on the ledger, QA's `backport_required`) of the last 90 days. `branch` "
         "names one release-branch namespace or version ('26.6'); unset reads "
         "every configured release branch. Rows gaps first, the fixes a "
@@ -1912,7 +1912,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "ingest jobs by state, sources with a job and no live document (a first "
         "ingest, or one after a delete, queued or failed), and per listed document its "
         "extraction coverage (unit, total, extracted, failed, lost) and its jobs (newest, "
-        "and the open one's ingestion_id); ingest findings that "
+        "and the open one's ingestion_id for knowledge.ingest_status); ingest findings that "
         "keep apart a backlog, an extractor unavailable, missing access and a job failed on "
         "the server's side (system_state), "
         "a file the extractor rejected (contract_violation) and an extraction that lost "
@@ -2367,6 +2367,21 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
         "path and span it returns. `uses_brief: true` adds the top call sites."
     ),
 }
+
+# The assistant listing has no facts.related and no ingest ops, so these drop the
+# pointers the shared texts give (derived, so the rest cannot drift).
+ASSISTANT_TOOL_DESCRIPTIONS["facts.traverse"] = TOOL_DESCRIPTIONS["facts.traverse"].replace(
+    "facts.related is single-hop only. Heavier than facts.related; use when single-hop "
+    "isn't enough.",
+    "Heavier than a one-hop lookup; use it when one hop is not enough.",
+    1,
+)
+ASSISTANT_TOOL_DESCRIPTIONS["facts.path"] = TOOL_DESCRIPTIONS["facts.path"].replace(
+    " and facts.related (one hop)", "", 1
+)
+ASSISTANT_TOOL_DESCRIPTIONS["knowledge.inspect"] = TOOL_DESCRIPTIONS["knowledge.inspect"].replace(
+    " for knowledge.ingest_status", "", 1
+)
 
 TOOL_DESCRIPTIONS["insights.catalog"] = (
     "List the tables `insights.query` can read: each column with its type and "

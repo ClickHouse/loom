@@ -16624,7 +16624,7 @@ class NamespaceRegisterInput(TypedDict, total=False):
 
 
 class NamespaceRetrievalDefaults(TypedDict, total=False):
-    "What an unpinned memory.search on this namespace runs."
+    "What an unpinned memory search on this namespace runs."
 
     search_mode: NotRequired[
         Optional[

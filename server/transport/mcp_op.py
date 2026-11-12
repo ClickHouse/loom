@@ -271,7 +271,7 @@ _NEEDS_AN_OPERATOR = (
 _WRITE_ALTERNATIVE = frozenset({"memory.bulk_set", "memory.delete_version"})
 _READ_ONLY_CONNECTION = (
     "this connection is read-only: tell the user the change needs a connection that "
-    "is not. Don't look for another route, token or credential to do it yourself"
+    "can write. Don't look for another route, token or credential to do it yourself"
 )
 
 
@@ -338,15 +338,15 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
         return req, _result(req.get("id"), catalog(str(args.get("query") or ""), toolset=toolset))
     by_name = {op.name: op for op in _ops()}
     op = by_name.get(name) or by_name.get(name.replace("_", ".", 1))
+    writes = routes_writes(toolset)
     hidden = hidden_refusal(name, toolset)
     if op is None and hidden is not None:
         emit_token_refusal(name, auth, error_code="OP_NOT_ON_MCP")
         return req, _result(req.get("id"), hidden, error=True)
-    if op is None or not reachable(op, toolset):
+    if op is None or not _routed(op, writes):
         if op is not None:  # a write on a read-only connection
             emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP)
         # suggest only ops this connection routes, never the write it refused
-        writes = routes_writes(toolset)
         routed = [n for n, o in by_name.items() if _routed(o, writes) and n != name]
         near = difflib.get_close_matches(name, routed, n=5, cutoff=0.6)
         body = {

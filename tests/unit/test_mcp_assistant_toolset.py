@@ -465,10 +465,13 @@ def test_the_endpoint_ledgers_a_screened_refusal_as_the_connections(
 
 
 def _model_fields(model: Any, out: set[str], seen: set[Any]) -> set[str]:
-    """Every field name of `model` and of the models nested in its fields."""
+    """Every field name of `model` and of the models nested in its fields, and
+    every literal value a field takes (a text may name an enum value)."""
     from pydantic import BaseModel
 
     for arg in get_args(model):
+        if isinstance(arg, str):
+            out.add(arg)
         _model_fields(arg, out, seen)
     if isinstance(model, type) and issubclass(model, BaseModel) and model not in seen:
         seen.add(model)

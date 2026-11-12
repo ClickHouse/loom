@@ -150,27 +150,6 @@ def _op_refs(text: str) -> set[str]:
     return refs
 
 
-@pytest.mark.parametrize(
-    ("toolset", "code"),
-    [
-        ("core", False),
-        ("core", True),
-        ("coding", False),
-        ("atomic", False),
-        ("tasks", False),
-        ("tracker", False),
-        ("all", False),
-        ("all", True),
-    ],
-)
-def test_no_listed_description_names_a_hidden_op(toolset: str, code: bool):
-    """A hidden op is refused by tools/call — naming it as a fallback sends
-    the model down a dead path."""
-    for t in _listing(toolset, code):
-        hidden = sorted(_op_refs(t["description"]) & _MCP_HIDDEN_OPS)
-        assert not hidden, f"{toolset}: {t['name']} names hidden {hidden}"
-
-
 _TOOLSETS = [
     ("core", False),
     ("core", True),
@@ -183,6 +162,18 @@ _TOOLSETS = [
     ("all", True),
     ("coding+tracker", False),
 ]
+
+
+@pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
+def test_no_listed_text_names_a_hidden_op(toolset: str, code: bool):
+    """A hidden op is refused by tools/call — naming it as a fallback sends
+    the model down a dead path. `assistant` lists two hidden searches."""
+    tools = _listing(toolset, code)
+    listed = {TOOL_TO_OP.get(t["name"], t["name"]) for t in tools}
+    for t in tools:
+        for text in _texts(t):
+            hidden = sorted((_op_refs(text) & _MCP_HIDDEN_OPS) - listed)
+            assert not hidden, f"{toolset}: {t['name']} names hidden {hidden}"
 
 
 def _texts(tool: dict) -> list[str]:
@@ -240,17 +231,30 @@ def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code:
                     )
 
 
-@pytest.mark.parametrize("toolset", ["assistant"])
-def test_a_listing_without_loom_op_names_only_its_own_tools(toolset: str):
+def test_the_assistant_listing_names_only_its_own_tools():
     """With no loom_op to reach the rest, a text may name only tools the listing carries."""
-    tools = _listing(toolset, False)
+    tools = _listing("assistant", False)
     names = {t["name"] for t in tools}
     listed = {TOOL_TO_OP.get(n, n) for n in names}
     assert "loom_op" not in names
     for t in tools:
         for text in _texts(t):
-            unlisted = _op_refs(text) - listed - _MCP_HIDDEN_OPS
-            assert not unlisted, f"{toolset}: {t['name']} names {sorted(unlisted)}"
+            unlisted = _op_refs(text) - listed
+            assert not unlisted, f"assistant: {t['name']} names {sorted(unlisted)}"
+
+
+def test_no_source_text_writes_an_op_as_a_call():
+    """`op(args)` would put the "(via loom_op)" marker between the name and `(`."""
+    from server.transport.mcp_descriptions import (
+        ASSISTANT_TOOL_DESCRIPTIONS,
+        CODING_TOOL_DESCRIPTIONS,
+    )
+
+    sources = (TOOL_DESCRIPTIONS, ATOMIC_TOOL_DESCRIPTIONS, CODING_TOOL_DESCRIPTIONS)
+    for texts in (*sources, ASSISTANT_TOOL_DESCRIPTIONS, mcp_op._INSTEAD):
+        for name, text in texts.items():
+            calls = [m for m in re.findall(rf"\b({mcp_op.OP_MENTION})\(", text) if m in OPS]
+            assert not calls, f"{name}: {calls}"
 
 
 def test_naming_marks_only_what_loom_op_routes():
