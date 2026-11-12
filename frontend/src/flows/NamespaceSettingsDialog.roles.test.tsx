@@ -183,10 +183,24 @@ describe("NamespaceSettingsDialog on a restricted namespace, before and beside t
     expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
   });
 
-  it("tells a caller with no admin claim and no admin grant the role it needs", async () => {
+  it("tells a writer both what its token misses and the direct grant", async () => {
     await openRestricted(["WRITER"], [grant("writer")]);
     expect(screen.getByTestId("settings-locked")).toHaveTextContent(
-      "Needs admin on team. An admin of it can grant that.",
+      "To change its settings, your token must carry an admin claim, and you need a direct admin grant on team.",
+    );
+  });
+
+  it("tells a `*` writer it must name the namespace and carry an admin claim, and needs the grant", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: ["WRITER"], namespaces: ["*"] },
+      identity: { org: "dev", namespace: "team", agent: "loom-ui" },
+      myNamespaces: [grant("writer")],
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...info, classification: "restricted" });
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await act(async () => undefined);
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(
+      "To change its settings, your token must name team and carry an admin claim, and you need a direct admin grant on team.",
     );
   });
 
