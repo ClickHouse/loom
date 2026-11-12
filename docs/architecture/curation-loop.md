@@ -134,12 +134,15 @@ into a byte-identical row under another key, which [conflicts and
 refusal](../features/memory/conflicts-and-refusal.md) applies to every other type), and
 the conflict resolver ([conflicts and
 refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither flags
-nor retires it, since its key is its term and `MRR` is not a revision of `ARR`. This
-narrows the rule that a pinned row blocks a close write from any user ([read scope inside
-a namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
+nor retires it, and `memory.consolidate` leaves rows of type `definition` out of its
+clusters (today it groups every active row of one type by similarity and tombstones the
+merged keys), since a definition's key is its term and `MRR` is not a revision of `ARR`.
+This narrows the rule that a pinned row blocks a close write from any user ([read scope
+inside a
+namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
 definitions against definitions only; the implementing pull request updates that page, the
-memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check in [memory
-architecture](memory-architecture.md) and [conflicts and
+memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check and
+consolidation in [memory architecture](memory-architecture.md) and [conflicts and
 refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the old verdicts
 during a rollout. Conflict surfacing compares a row only with rows of its own
 `memory_type`, so a learned fact that contradicts a definition is not refused by it. The
@@ -251,7 +254,9 @@ Only a search's first page can record a miss (a call with a `page` handle never 
 a search that could not answer for another reason is not a miss: a degraded answer whose
 provider fell back, one with writes still waiting for extraction (`pending_extraction >
 0`), one whose fan-out stopped short (`namespaces_skipped`), or one whose hits the memory
-authority dropped (`stale_dropped > 0`).
+authority dropped (`stale_dropped > 0`), or one whose term leg did not finish (`term_leg`
+other than `complete`, or a source read that failed closed), so a defined term is never
+recorded as a gap because its leg was cut.
 
 The **asker** is the person the token stands for, never a body field: the end user of an
 end-user token; else the token's `creator` claim, the person at the root of a delegated
@@ -416,14 +421,15 @@ Nothing reaches search until an admin promotes a draft.
 ## Promotion
 
 `learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate first
-checks the term and aliases against the other governed definitions and the draft for a
-credential-shaped value (`value_reads_high`), and the rollout gate, so a promotion these
-refuse writes nothing. Then it writes the definition through `memory.set` for the whole
-namespace, declaring `source_class = derived`, the downgrade a caller may declare (an LLM
-drafted it; the admin's promotion is the approval, not its authorship, and the `learning:`
-trace would mark it `extracted`, lifted from a conversation, which it is not), so the
-blacklist and the pinned-key check run as for any write, and promotes that row into the
-shared layer through `memory.promote`, with the reviewer's server-stamped actor as
+checks the term and aliases against every other live shared row of type `definition` (the
+set `memory.promote` refuses on) and the draft for a credential-shaped value
+(`value_reads_high`), and the rollout gate, so a promotion these refuse writes nothing.
+Then it writes the definition through `memory.set` for the whole namespace (today's review
+path writes under the approver's `user_id`; the implementing pull request writes the
+namespace-wide row), declaring `source_class = derived`, the downgrade a caller may
+declare (an LLM drafted it; the admin's promotion is the approval, not its authorship), so
+the blacklist and the pinned-key check run as for any write, and promotes that row into
+the shared layer through `memory.promote`, with the reviewer's server-stamped actor as
 `promoted_by` and the candidate's id ([learnings review
 queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). The admin
 promoting a definition is the person standing behind it. A draft for a term already
@@ -535,11 +541,12 @@ listed by `memory.auto_retirements` (reasons `conflict_resolver`,
 `newest_wins_contradiction`, `value_update` and `same_key_newest_wins`), restored with its
 Undo, and promoted again; a source it marked `conflicted` is cleared with
 `conflicts.resolve`, one it marked `duplicate` with `memory.dedup_resolve`, and promoted
-again; a write it merged was never stored and is written again. An N-1 relabel of a
-definition's source to `high` leaves its shared copy served by the ordinary legs: once N
-serves, an admin demotes every definition the admin read lists as lapsed for `high`. N-1's
-redact and namespace erasure do not reach the shared row's text, as today: one run during
-the rollout or after a rollback is run again once N serves.
+again; a write it merged was never stored and is written again; a source an N-1
+`memory.consolidate` tombstoned is brought back with `memory.restore` and promoted again.
+An N-1 relabel of a definition's source to `high` leaves its shared copy served by the
+ordinary legs: once N serves, an admin demotes every definition the admin read lists as
+lapsed for `high`. N-1's redact and namespace erasure do not reach the shared row's text,
+as today: one run during the rollout or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
