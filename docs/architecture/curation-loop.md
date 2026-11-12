@@ -54,18 +54,22 @@ layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-share
 came from (`promoted_from_candidate_id`), `memory.lineage` walks it back, and every build
 knows it. So governance needs no table or state of its own. An edit, a relabel to `high`,
 a redact or a tombstone of the source, by any writer or worker on any build, ends
-governance until an admin promotes the source again; a copy that keeps the text (the
-entity pass, a touch) keeps it. `memory.demote` ends governance. Only `memory.promote`
-promotes into `loom.shared` (the op and `learnings.review`'s path through it; demote,
-erasure, a redact and a relabel to `high` only retire or scrub there, as the changes below
-say); no worker promotes on its own. An admin read lists the namespace's shared
-definitions with the read-time check's verdict on each and the reason a lapsed one lapsed
-(its text changed, it is `high`, gone, expired, past its `valid_to`, under a key that is
-not its term's slug, or no longer `active`). A changed text is promoted again; a source
-that is no longer `active` is first restored (Undo in `memory.auto_retirements`, whose
-reasons include `same_key_newest_wins` for a later write of the same key under
-`newest_wins`) or cleared (`conflicts.resolve` for a `conflicted` mark,
-`memory.dedup_resolve` for a `duplicate` one), then promoted again.
+governance while the source differs from what the admin approved; a copy that keeps the
+text (the entity pass, a touch) keeps it, and a source that returns to the approved state
+(a restore, an edit reverted byte for byte) is governed again with no new promotion. A
+relabel back from `high` does not bring back the shared embedding it retired: the term leg
+serves the definition again, and an admin promotes it again to restore the copy's search
+row. `memory.demote` ends governance. Only `memory.promote` promotes into `loom.shared`
+(the op and `learnings.review`'s path through it; demote, erasure, a redact and a relabel
+to `high` only retire or scrub there, as the changes below say); no worker promotes on its
+own. An admin read lists the namespace's shared definitions with the read-time check's
+verdict on each and the reason a lapsed one lapsed (its text changed, it is `high`, gone,
+expired, past its `valid_to`, under a key that is not its term's slug, or no longer
+`active`). A changed text is promoted again; a source that is no longer `active` is
+restored (Undo in `memory.auto_retirements`, whose reasons include `same_key_newest_wins`
+for a later write of the same key under `newest_wins`) or cleared (`conflicts.resolve` for
+a `conflicted` mark, `memory.dedup_resolve` for a `duplicate` one), which governs it again
+when its text is the approved one, and is promoted again otherwise.
 
 The shared layer needs eight changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
@@ -155,15 +159,15 @@ governed definitions through this leg only. The leg runs only on a search's firs
 (the governed keys it served there stay out of every later page of that search), and is
 off when a field asks for other rows (any `memory_type`; `tags`; `category`; an explicit
 `agent`, `run_id` or `session_ids`; `as_of`; a body `user_id` or `session_id` under a
-whole-namespace read; `entity_filter`; `min_body_chars`). A `user_id` or `session_id` the
-read scope pins, `scope`, `exclude_keys` and `min_similarity` keep it on; it drops any key
-in `exclude_keys`. It serves no definition whose source is `sensitivity = 'high'` (the
-read-time check above). Its read is bounded by a setting; past the bound, the most
-recently promoted definitions (by `version`) are read and the response says the leg was
-cut. It runs beside the others under the same time budget, and its latency is measured
-against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
-request that adds it. `governed` is an added output field: the SDKs and the MCP schema
-carry it.
+whole-namespace read; `entity_filter`; `min_body_chars`; a `legs` without `memory`). A
+`user_id` or `session_id` the read scope pins, `scope`, `exclude_keys` and
+`min_similarity` keep it on; it drops any key in `exclude_keys`. It serves no definition
+whose source is `sensitivity = 'high'` (the read-time check above). Its read is bounded by
+a setting; past the bound, the most recently promoted definitions (by `version`) are read
+and the response says the leg was cut. It runs beside the others under the same time
+budget, and its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
+`server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
+output field: the SDKs and the MCP schema carry it.
 
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
@@ -172,7 +176,9 @@ section, and one rule holds for every later stage of `memory.search`, `loom_sear
 the ops that run `memory.search` inside them: no stage or floor moves, withholds or
 outranks a hit marked `governed` (in `loom_search` today: `drop_flagged_hits`,
 `floor_mode`, `quality_filter`, the answer-first precision floor and home margin, and the
-repository-decision merge; a stage added later follows the same rule).
+repository-decision merge; a stage added later follows the same rule). Governed hits count
+within `top_k` and the token budgets (`body_budget_tokens`, `context.pack`'s block
+budget), which may shorten a body but never drop or reorder the hit.
 
 **Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
 served list is exactly what it was before. The memory-plane rule asks for a paired
@@ -226,10 +232,10 @@ token or service account ([tokens and grants](../guides/tokens-and-grants.md)); 
 a service account's token minted without the claim, the first subject that is not a
 service account in its creator chain as the registry records it (`created_by` and its
 lineage, `server/auth/service_accounts.py`), and no miss when the chain has none; else the
-token's subject. An agent of a machine trust (`sa:<trust>:<agent>`) and an agent sign-up's
-service account (whose `created_by` names a namespace, not a person) stand for no person
-and record no miss. Tokens a person mints for themselves therefore count as that person.
-An asker that cannot be resolved (the registry unreadable, or a service account with no
+token's subject. An agent of a bot (`sa:<bot>:<agent>`) and an agent sign-up's service
+account (whose `created_by` names a namespace, not a person) stand for no person and
+record no miss. Tokens a person mints for themselves therefore count as that person. An
+asker that cannot be resolved (the registry unreadable, or a service account with no
 creator) records no miss: an unknown principal is never counted as a separate person. The
 asker is stored in the form a user erasure names: an end user as their id, without the
 `user:` prefix, and an email lower-cased and folded onto the spelling the directory ties
@@ -268,7 +274,9 @@ admin could ask from accounts of their own. There it limits what one ordinary ca
 reveals, not what an admin can learn. On any deployment, an admin who compares two daily
 builds can tell that one more asker reached a query that day, and in a small namespace
 that may say who; the threshold bounds what one build shows, not what a series of builds
-implies. The worker embeds the remaining groups' queries (at most
+implies. The reading admin's own asks count toward it too, so an admin who asked a query
+learns from its gap that at least `knowledge_gaps_min_askers` minus one others did, which
+in a small namespace narrows who. The worker embeds the remaining groups' queries (at most
 `knowledge_gaps_max_groups`), merges groups whose vectors are at least
 `knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
 namespace in `loom.knowledge_gaps`:
