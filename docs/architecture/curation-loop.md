@@ -53,7 +53,7 @@ a redact or a tombstone of the source, by any writer or worker on any build, end
 governance until an admin promotes the source again; a copy that keeps the text (the
 entity pass, a touch) keeps it. `memory.demote` ends governance.
 
-The shared layer needs eight changes for this, each in the pull request that adds the term
+The shared layer needs seven changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
 
 - **Namespace erasure** gains a step and a census row for `loom.shared`. Today only user
@@ -63,10 +63,10 @@ leg, because the term leg serves shared rows to every reader:
   redact of the source does not reach today, and blanks the text of the learnings
   candidate it was promoted from (`promoted_from_candidate_id`), which `learnings.list`
   shows to viewers.
-- **A promotion of a definition carries the content hash it approves**, the one
-  `memory.set` returned on the review path or one the caller passes to `memory.promote`,
-  and is refused when the source's text no longer has it, so a writer's change between the
-  write and the promotion is never signed off as the admin's.
+- **A promotion of a definition carries the content hash it approves**, the hash of the
+  candidate's drafted value on the review path, or one the caller passes to
+  `memory.promote`, and is refused when the source's text no longer has it, so a writer's
+  change between the write and the promotion is never signed off as the admin's.
 - **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
   `memory.promote` or `learnings.review`, never taken from the body's `approver`.
 - **`check_against_shared`**, the promotion's conflict check, skips `definition` (only),
@@ -133,7 +133,9 @@ output field: the SDKs and the MCP schema carry it.
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
 points at the documents behind it. `loom_search` serves the leg through its memory
-section.
+section, and two of its later stages change with it: the repository-decision merge and the
+answer-first rules (precision floor, home margin) never move, withhold or outrank a hit
+marked `governed`.
 
 **Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
 served list is exactly what it was before. The memory-plane rule asks for a paired
@@ -283,9 +285,10 @@ promoting a definition is the person standing behind it. A draft for a term alre
 governed revises that definition: the promotion replaces its shared row. A definition
 promotes to memory only; a `destination` of `knowledge` or `both` is refused for these
 candidates. A rejected draft leaves nothing behind but its queue row. A promotion refused
-after the write (a racing edit, a racing term, the rollout gate) leaves the candidate
-pending and the namespace-wide row written, which no term leg serves until its text is
-promoted; a retried review, idempotent by key, completes it.
+after the write (a racing edit, a racing term, the rollout gate, or `memory.set` answering
+`PUBLICATION_PENDING`, which today's review path swallows) leaves the candidate pending
+and the namespace-wide row written, which no term leg serves until its text is promoted; a
+retried review, idempotent by key, completes it.
 
 ## Erasure and audit
 
