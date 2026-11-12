@@ -37,15 +37,15 @@ def test_plugin_plus_user_scope_entry_warns_registered_twice(tmp_path: Path) -> 
     assert _grades(checks)["client:claude-code:mcp-duplicate"] == "WARN"
     d = _detail(checks, "client:claude-code:mcp-duplicate")
     assert "registered twice" in d and "claude mcp remove loom -s user" in d
-    assert "toolset=core: 41 more tools" in d
+    assert "toolset=core: a second roster" in d
 
 
-def test_the_warning_sizes_the_entry_by_its_own_roster(tmp_path: Path) -> None:
+def test_the_warning_names_the_entry_s_own_toolset(tmp_path: Path) -> None:
     _plugin_and_entry(tmp_path, "https://loom.test/mcp?toolset=all")
     d = _detail(
         dc.claude_code_checks(tmp_path, "https://loom.test"), "client:claude-code:mcp-duplicate"
     )
-    assert "toolset=all: 109 more tools" in d
+    assert "toolset=all: a second roster" in d
 
 
 def test_entry_without_plugin_or_plugin_without_entry_is_not_a_duplicate(tmp_path: Path) -> None:
