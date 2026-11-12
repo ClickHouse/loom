@@ -29,8 +29,8 @@ A definition is a memory row with `memory_type = 'definition'` under the key
 
 1. The term is normalised to NFKC, trimmed, every run of whitespace made one space, and
    case-folded (`str.casefold`). This folded form is the term's name wherever two names
-   are compared (the key, the promotion's name check); matching against a query keeps
-   the case rule below.
+   are compared (the key, the promotion's name check); matching against a query keeps the
+   case rule below.
 2. Every run of characters other than letters and digits becomes one `-`, and a `-` at
    either end is dropped.
 3. A `-` is appended.
@@ -257,15 +257,18 @@ make room, so the leg reads every one. `loom.shared` stores a value as one strin
 leg reads every definition's full `value`, `rests_on` included, to match its `term` and
 `aliases`; the ceiling is what bounds that read. It computes the served hash and reads the
 source for the matched rows only. A read that still finds more (a race, or rows promoted
-through an older build) reads the most recently promoted (by `promoted_at`) and
-reports `term_leg` `capped`, which also keeps a `memory.search` from recording a miss. It
-runs concurrently with the other legs under its own time bound
-(`memory_term_leg_timeout_ms`), which never shortens theirs; a leg past its bound adds
-nothing. Its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
-`server/settings/catalog.py`) in the pull request that adds it.
+through an older build) reads the most recently promoted (by `promoted_at`) and reports
+`term_leg` `capped`, which also keeps a `memory.search` from recording a miss. It runs
+concurrently with the other legs under its own time bound (`memory_term_leg_timeout_ms`),
+which never shortens theirs; a leg past its bound adds nothing. Its latency is measured
+against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
+request that adds it.
 
-**Matching.** A term or alias matches where it appears in the query with no character next
-to it that continues its edge:
+**Matching.** The query is NFKC-normalised and its runs of whitespace made one space, as a
+name is, so `MRR` matches the full-width `什么是ＭＲＲ` and `churn rate` matches a query that
+puts two spaces between the words; only case follows the per-word rule below. A term or
+alias matches where it appears in the query with no character next to it that continues
+its edge:
 
 - next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
   those;
@@ -583,8 +586,8 @@ gap holds the drafted definition and the gap's id. The LLM drafts it from nothin
 gap's queries, each asked in that form by at least `knowledge_gaps_min_askers` askers. Its
 words are the model's, but nothing else reached the model, which is why it outlives a user
 erasure. The model may repeat a query word for word, so `learnings.list` shows a
-`knowledge_gap` draft to the namespace's admins only, the readers of the gaps list.
-A gap's id has at most one draft: the candidate's id derives from the gap's id, and the
+`knowledge_gap` draft to the namespace's admins only, the readers of the gaps list. A
+gap's id has at most one draft: the candidate's id derives from the gap's id, and the
 draft claims that id before its LLM call (a claim row, as `run.begin` claims a run), so a
 second `knowledge.gaps.draft` for it, sent alongside or later, answers the claimed
 candidate, pending or decided, without an LLM call or a new queue row, and a decision is
@@ -760,7 +763,9 @@ from text drawn from a conversation, which no slug or hash check covers.
   credential but no memory content, so it gets no census row. A namespace erasure still
   deletes it, through the step `query_history_sources.delete`, since a registration that
   outlived its namespace would keep reading that team's queries into a namespace being
-  erased. A step with no census row must be listed under its step in `STEP_ONLY_TABLES`
+  erased. `server/erasure/store/census.py` holds the three lists: the census substrates
+  (`_CENSUS`), `STEP_ONLY_TABLES` and `NO_MEMORY_CONTENT`. A step with no census row must
+  be listed under its step in `STEP_ONLY_TABLES`
   (`tests/unit/test_erasure_resume_reopens_steps.py`), and the three lists stay disjoint
   (`tests/unit/test_every_table_is_classified.py`), so the table goes there and not in
   `NO_MEMORY_CONTENT`. `loom.qa_sources`, the tracker's registration, has no step and is
@@ -811,14 +816,12 @@ the op budgets before they ship it.
   pass or turn ends early, and the next one resumes.
 - A query-history turn's read of `system.query_log` is bounded by its own window (at most
   `knowledge_query_history_window_days`) and time limit
-  (`knowledge_query_history_read_timeout_s`), separate from the tracker's
-  live-read budget, and a timeout counts against the source's breaker like any tracker
-  read.
-- The term leg is one bounded read of the namespace's shared definitions per search
-  (their full values, `rests_on` included, at most `memory_term_leg_max_definitions`), one
-  read of the matched definitions' source rows, and a grading of each matched source's
-  value, on every `memory.search`, every `context.pack` turn and every `memory.ask`
-  sub-search.
+  (`knowledge_query_history_read_timeout_s`), separate from the tracker's live-read
+  budget, and a timeout counts against the source's breaker like any tracker read.
+- The term leg is one bounded read of the namespace's shared definitions per search (their
+  full values, `rests_on` included, at most `memory_term_leg_max_definitions`), one read
+  of the matched definitions' source rows, and a grading of each matched source's value,
+  on every `memory.search`, every `context.pack` turn and every `memory.ask` sub-search.
 - A definition's promotion reads the namespace's definition rows, at most
   `memory_term_leg_max_definitions`, to check its term and aliases.
   `memory.definitions.list` reads one page of them, with a limit and a cursor, and reads
