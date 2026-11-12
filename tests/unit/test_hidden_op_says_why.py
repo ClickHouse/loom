@@ -39,9 +39,9 @@ def test_a_refusal_names_ops_as_the_callers_listing_does() -> None:
     assert (
         instead["readonly"] == "call loom_memory_get per key, or loom_memory_list with a key prefix"
     )
-    # a write loom_op cannot route on readonly is left as written, unmarked
+    # a hidden write on readonly names no write: the connection cannot make one
     assert mcp_op.hidden_refusal("memory.bulk_set", "readonly")["instead"].startswith(
-        "call memory.set once per fact"
+        "this connection is read-only"
     )
 
 
@@ -52,11 +52,11 @@ def test_a_readonly_deployment_default_routes_reads_only(monkeypatch) -> None:
 
     monkeypatch.setattr(settings, "mcp_toolset", "readonly")
     assert not mcp_op.routes_writes(None)
-    assert "reads only" in mcp_op.loom_op_description(set(), None)
+    assert "read ops only" in mcp_op.loom_op_description(set(), None)
     body = _call("memory.set", {"memory_key": "k", "value": "v"})["structuredContent"]
     assert body["code"] == "UNKNOWN_OP" and "read-only" in body["error"]
     assert mcp_op.hidden_refusal("memory.bulk_set", None)["instead"].startswith(
-        "call memory.set once"
+        "this connection is read-only"
     )
     # a request that names another toolset keeps that toolset's routing
     assert mcp_op.routes_writes("core")

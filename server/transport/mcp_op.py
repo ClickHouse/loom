@@ -29,7 +29,7 @@ from typing import Any
 
 from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
-from server.operations.toolsets import _MCP_HIDDEN_OPS
+from server.operations.toolsets import _MCP_HIDDEN_OPS, resolve_toolset
 from server.transport.mcp_config import _ok
 from server.transport.mcp_ledger import emit_token_refusal
 
@@ -83,7 +83,6 @@ def routes_writes(toolset: str | None) -> bool:
     (a read-only connection routes read ops only). Resolved as the listing is,
     so a deployment whose default is `readonly` routes reads only too."""
     from server.settings import settings
-    from server.transport.mcp_tools import resolve_toolset
 
     return resolve_toolset(toolset, settings.mcp_toolset) != "readonly"
 
@@ -99,8 +98,9 @@ TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERAT
 # A dotted op name as prose spells it (`memory.set`, `knowledge.source.add`).
 OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
 # An op named in prose: its tool name or its dotted op name, and a closing
-# backtick, which the "(via loom_op)" marker goes after.
-_NAMED_OP = re.compile(rf"\b(loom_[a-z_]+|{OP_MENTION})\b(`?)")
+# backtick, which the "(via loom_op)" marker goes after. A name followed by `#`
+# is a citation tag (`[knowledge.query#1]`), not a reference.
+_NAMED_OP = re.compile(rf"\b(loom_[a-z_]+|{OP_MENTION})\b(`?)(?!#)")
 
 
 def name_ops_for_listing(text: str, listed: Set[str], toolset: str | None) -> str:
@@ -148,7 +148,7 @@ def loom_op_description(listed: Set[str], toolset: str | None) -> str:
     if shown:
         examples = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
         such_as = f" It reaches, for example, {examples}."
-    reads = "" if routes_writes(toolset) else " On this read-only connection it runs reads only."
+    reads = "" if routes_writes(toolset) else " On this connection it runs read ops only."
     # Discovery and the call shape lead: compact keeps the first paragraph cut near
     # 280 chars, so both must fit in the first sentence.
     return (
@@ -257,6 +257,11 @@ _NEEDS_AN_OPERATOR = (
     "this needs the user or an operator, outside this chat. Don't look for another "
     "route, token or credential to do it yourself"
 )
+# A hidden write on a connection whose loom_op routes reads only.
+_READ_ONLY_CONNECTION = (
+    "this connection is read-only: tell the user the change needs a connection that "
+    "is not. Don't look for another route, token or credential to do it yourself"
+)
 
 
 def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
@@ -268,13 +273,18 @@ def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
     op = OPERATIONS_BY_NAME.get(name)
     if op is None or name not in _MCP_HIDDEN_OPS:
         return None
-    default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
+    if not _is_read(op) and not routes_writes(toolset):
+        # its alternative is a write too, which this connection does not route
+        instead = _READ_ONLY_CONNECTION
+    else:
+        default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
+        instead = name_ops_for_listing(
+            _INSTEAD.get(name, default), listed_tool_names(toolset), toolset
+        )
     return {
         "error": f"{name} exists but is not callable on this MCP connection",
         "code": "OP_NOT_ON_MCP",
-        "instead": name_ops_for_listing(
-            _INSTEAD.get(name, default), listed_tool_names(toolset), toolset
-        ),
+        "instead": instead,
     }
 
 

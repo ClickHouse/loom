@@ -260,6 +260,10 @@ def test_naming_marks_only_what_loom_op_routes():
     )
     # a dotted name that is no op, such as a response field path, stays
     assert mcp_op.name_ops_for_listing("`memory.next_page`", listed, "core") == "`memory.next_page`"
+    # a citation tag is not an op mention
+    assert mcp_op.name_ops_for_listing("[knowledge.query#1]", listed, "core") == (
+        "[knowledge.query#1]"
+    )
     # a field path under a listed op is not an op mention and stays whole
     assert mcp_op.name_ops_for_listing("`memory.set.value`", listed, "core") == "`memory.set.value`"
 
