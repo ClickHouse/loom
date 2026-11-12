@@ -88,7 +88,6 @@ STATE_TABLES: dict[str, str] = {
     "loom.qa_sources": "FINAL WHERE org = {org:String} AND active"
     " AND JSONHas(namespaces_json, {ns:String})",
     "loom.collections": f"FINAL WHERE {_AT} AND NOT deleted",
-    "loom.shared": f"WHERE {_AT}",
     "loom.sso_links": f"FINAL WHERE {_AT} AND linked = 1",
     # A SQL user granted the name would read a new owner's rows through the SQL surface.
     "loom.sql_access": f"FINAL WHERE {_AT} AND granted",

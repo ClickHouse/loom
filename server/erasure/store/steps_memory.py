@@ -302,6 +302,19 @@ async def tombstone_embeddings_by_namespace(
     )
 
 
+async def tombstone_shared_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Every promoted row of the namespace; its `scope = 'shared'` search rows go in
+    `memory_embeddings.tombstone`."""
+    return await tombstone_scoped(
+        "loom.shared", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
 async def tombstone_working_memory_by_namespace(
     org: str,
     namespace: str | Sequence[str],

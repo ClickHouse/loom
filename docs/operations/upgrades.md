@@ -214,6 +214,64 @@ checkout.
     nothing here: its final census finds the documents and decisions its source wrote
     back and reopens their steps, so the saga completes only once they are gone.
 
+14. Moving to a build whose namespace erasure reaches `loom.shared`, a roll forward after a
+    rollback included: once the newer build serves alone, clear the promoted rows an older
+    build's namespace erasure left ([rolling upgrades](../architecture/rolling-upgrades.md),
+    rule 45). The query below lists each namespace that a `namespace` or `namespace_list`
+    erasure in the ledger (kept 90 days) reached and that holds a promoted row, with the
+    time the last one without a purge (`erased_at`) and with one (`purged_at`) ran its
+    census. The statements below take rows promoted before that second, so a row promoted
+    after the census stays, and so may one promoted earlier in the census's own second,
+    which `promoted_at`'s whole seconds cannot tell apart; the newer build's step already
+    took such a row in an erasure it ran.
+    Only a `namespace_list` purges, and an older build's `namespace` row may hold the flag
+    it was asked for.
+
+    ```sql
+    SELECT org, namespace,
+           maxIf(counted_at, NOT purged) AS erased_at,
+           maxIf(counted_at, purged) AS purged_at
+    FROM (
+        -- The census's time: a row promoted after it was never in the erasure's reach.
+        SELECT org, ifNull(verified_at, completed_at) AS counted_at,
+               scope_type = 'namespace_list' AND purge AS purged,
+               arrayJoin(if(scope_type = 'namespace', [scope_value],
+                            if(JSONType(scope_value) = 'Array',
+                               JSONExtract(scope_value, 'Array(String)'),
+                               JSONExtract(scope_value, 'namespaces', 'Array(String)')))) AS namespace
+        FROM loom.erasure_requests FINAL
+        WHERE scope_type IN ('namespace', 'namespace_list') AND status = 'completed'
+    )
+    -- Only a namespace that holds a promoted row has anything to clear.
+    WHERE (org, namespace) IN (SELECT org, namespace FROM loom.shared)
+    GROUP BY org, namespace
+    ```
+
+    For each, run what the newer build's step runs, over every version promoted before the
+    erasure's census, a version a later promotion of the same key hides from `FINAL`
+    included. Where `purged_at` is set, delete them:
+
+    ```sql
+    ALTER TABLE loom.shared DELETE
+    WHERE org = '<org>' AND namespace = '<namespace>' AND promoted_at < '<purged_at>'
+    SETTINGS mutations_sync = 2
+    ```
+
+    and where `erased_at` is set, tombstone the live ones left:
+
+    ```sql
+    ALTER TABLE loom.shared UPDATE tombstoned_at = toDateTime('<the time you run it>')
+    WHERE org = '<org>' AND namespace = '<namespace>' AND tombstoned_at IS NULL
+      AND promoted_at < '<erased_at>'
+    SETTINGS mutations_sync = 2
+    ```
+
+    The setting waits for each statement on every replica. The time is written as a
+    literal, as the step binds it, because a replicated table refuses a mutation that calls
+    a non-deterministic function such as `now()`. A namespace erasure requested
+    before the ledger's 90 days is not listed, and the promoted rows it left cannot be told
+    apart from a live namespace's; they stay as the older build left them.
+
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
 [rolling upgrades](../architecture/rolling-upgrades.md).
@@ -230,7 +288,9 @@ its bot. To prevent that, delete the documents tagged `source-kind:assistant_tur
 `knowledge.delete` before rolling back; otherwise accept the wider serving.
 A namespace erasure the previous build runs once namespace guides exist leaves that
 namespace's guide; run the erasure again once the newer build serves
-([rolling upgrades](../architecture/rolling-upgrades.md), rule 24).
+([rolling upgrades](../architecture/rolling-upgrades.md), rule 24). A namespace erasure
+the previous build runs leaves the namespace's promoted rows live; step 14 of the upgrade
+procedure lists them once the newer build serves again (rule 45).
 After a rollback to a build without bot token maximums, every bot's tokens last an hour,
 and a bot that build saves keeps 3600 as its maximum; reapply a shorter or longer one
 once the newer build serves

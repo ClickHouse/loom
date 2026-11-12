@@ -1255,7 +1255,9 @@ names the resuming process); the body's `requester` goes in their subject.
 `erasure_recovery` replays sagas stuck `in_progress` and names itself on the
 `erasure.recovered` row; after `max_attempts` it marks the request `failed` and emits
 `erasure.abandoned`. Configured external backends (Langfuse traces and ClickStack rows)
-are steps too and fail the saga closed.
+are steps too and fail the saga closed. A namespace erasure tombstones the namespace's
+promoted rows in `loom.shared` (`shared.tombstone`); a user erasure matches them by
+provenance.
 
 The last step is a residue census over every table the read paths touch and, with a
 document bucket configured, the bucket objects left under the erased namespaces
@@ -1263,11 +1265,11 @@ document bucket configured, the bucket objects left under the erased namespaces
 namespace); a non-zero count re-opens `documents.tombstone`. The registry is in
 `server/erasure/store/census.py`:
 
-| List                | Holds                                                                                                                                                 |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `_CENSUS`           | One `Substrate(table, live, user_pred, ns_step, user_step, final)` per table that can hold content in scope. Any live row in scope fails the saga.    |
-| `STEP_ONLY_TABLES`  | Tables a step clears that the census does not count (shared and consolidated tombstones, term aggregates, session outcomes, the code index purge, …). |
-| `NO_MEMORY_CONTENT` | Every other table, each with the reason it holds no content in scope.                                                                                 |
+| List                | Holds                                                                                                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_CENSUS`           | One `Substrate(table, live, user_pred, ns_step, user_step, final)` per table that can hold content in scope. Any live row in scope fails the saga.                                          |
+| `STEP_ONLY_TABLES`  | Tables a step clears that the census does not count (the shared embeddings a user erasure tombstones, consolidated tombstones, term aggregates, session outcomes, the code index purge, …). |
+| `NO_MEMORY_CONTENT` | Every other table, each with the reason it holds no content in scope.                                                                                                                       |
 
 The row links (`entity_triple_rows`, `entity_edge_rows`) carry the row's writer as
 `user_id`, so a user's erasure finds them after the row itself is gone.
@@ -1325,7 +1327,7 @@ treat those summaries as the user's rows, and the census counts them the same wa
 A `src:` tag names a key, not its writer: where two users of a namespace hold the same
 key, erasing one also takes a summary built from the other's row, with its history,
 chunks, entity vectors and graph links, the graph rows only those links held, and the
-org-wide copies promoted from it, which nothing promotes again. A copy of a summary
+namespace-wide copies promoted from it, which nothing promotes again. A copy of a summary
 rebuilt without the user goes too, as its history still names the user: a copy does not
 record which version it took. The erasure takes every summary that may quote the user;
 the summary's current row is only tombstoned outside a purge, and consolidation rebuilds
@@ -1340,8 +1342,9 @@ revisions there. The user-scope census counts a summary's row, not its
 `loom.memory_embeddings` or `loom.memory_code_links` rows or its `loom.shared` copies,
 which `consolidated.tombstone`, `shared_embeddings.tombstone`, `shared.tombstone` and
 `memory.retire` retire with it. A copy an older build promoted with `agent="*"` names
-`*` for its source agent and the request's user: no erasure finds one of a summary,
-and one of a user's own row is found only by the user the request named.
+`*` for its source agent and the request's user: no user erasure finds one of a
+summary, and one of a user's own row is found only by the user the request named; a
+namespace erasure takes either with the namespace's other promoted rows.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no

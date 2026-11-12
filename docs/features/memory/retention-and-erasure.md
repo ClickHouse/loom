@@ -132,7 +132,7 @@ A `user_id` erasure also retires the consolidated summaries built from the user'
 memories, under whatever identity wrote them
 ([which ones](../../architecture/memory-architecture.md#background-passes)), with what
 was derived from them: their version history, their verbatim chunks and entity vectors,
-the graph rows extracted from them and the org-wide copies promoted from them. It
+the graph rows extracted from them and the namespace-wide copies promoted from them. It
 deletes the cached `memory.ask` answers and precedents that quoted them too.
 
 ### The saga

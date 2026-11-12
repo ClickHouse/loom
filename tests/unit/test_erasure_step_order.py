@@ -163,6 +163,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
 NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
+    ("shared.tombstone", ((U, "loom.shared"),)),
     ("memory_versions.delete", ((D, "loom.memory_versions"),)),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((U, "loom.working_memory"),)),
@@ -266,6 +267,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
 NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((D, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
+    ("shared.tombstone", ((D, "loom.shared"),)),
     ("memory_versions.delete", ((D, "loom.memory_versions"),)),
     ("code_links.delete", _CODE_LINKS),
     ("working_memory.tombstone", ((D, "loom.working_memory"),)),

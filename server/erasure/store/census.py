@@ -89,6 +89,9 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate(
         "loom.memory", LIVE, f"({UID} OR {USER_SUMMARIES})", "memory.tombstone", "memory.retire"
     ),
+    # Counted in the namespace scope, where `shared.tombstone` takes every promoted row of
+    # the namespace; a user erasure's `shared.tombstone` matches by provenance, uncounted.
+    Substrate("loom.shared", LIVE, None, "shared.tombstone", None),
     Substrate(
         "loom.memory_embeddings",
         LIVE,
@@ -449,8 +452,8 @@ _CENSUS: tuple[Substrate, ...] = (
 #   agent_events.scrub               — identity scrubbed, rows kept for cost.
 #   subject_last_seen.delete         — an end user's newest-call row: an
 #                                       identifier, no memory content.
-#   shared*.tombstone                — org-wide promoted rows, matched by
-#                                       provenance not by scope.
+#   shared_embeddings.tombstone      — in the user scope, the search rows of the
+#                                       promoted rows matched by provenance.
 #   consolidated.tombstone           — loom.memory rows under another identity,
 #                                       their search rows and code links. The
 #                                       memory row counts the summaries in both
@@ -506,7 +509,6 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "entity_canonical_map.tombstone": ("loom.entity_canonical_map",),
     "agent_events.scrub": ("loom.agent_events",),
     "subject_last_seen.delete": ("loom.subject_last_seen",),
-    "shared.tombstone": ("loom.shared",),
     "shared_embeddings.tombstone": ("loom.memory_embeddings",),
     "consolidated.tombstone": ("loom.memory", "loom.memory_embeddings", "loom.memory_code_links"),
     "procedure_runs.delete": ("loom.procedure_runs",),
