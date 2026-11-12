@@ -58,7 +58,7 @@ Once Loom answers, the installer:
    tokens come from.
 3. **Offers to connect your coding agents.** On a terminal it asks, for each one it finds:
    Claude Code and Codex through their plugins, VS Code through `code --add-mcp`.
-   `LOOM_CONNECT` answers instead, for a run without a terminal too: a comma list of
+   `LOOM_CONNECT` answers instead, for a run without a terminal too, and only the clients it names are looked at: a comma list of
    `claude-code`, `codex` and `vscode`, `all`, or `none` alone; any other value stops the
    install. Without a terminal and without `LOOM_CONNECT`, no agent is looked at or
    changed. A plugin or MCP server set up before (by the plugin, `claude mcp add`,
@@ -71,7 +71,7 @@ Once Loom answers, the installer:
    remote session or WSL. A client `LOOM_CONNECT` names that is not on PATH is named.
 4. **Opens the dashboard** on a desktop; `LOOM_NO_OPEN=1` skips that.
 
-Ctrl-C stops the run at any step.
+Ctrl-C stops the run at any step; a clone an agent CLI started for its plugin may still finish in the background.
 
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
 self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its

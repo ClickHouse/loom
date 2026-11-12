@@ -88,7 +88,7 @@ main() {
 
   # LOOM_CONNECT: which coding agents to connect without asking, as a comma list.
   case ${LOOM_CONNECT:-} in
-    *[!a-z,-]*) fail "LOOM_CONNECT takes claude-code, codex, vscode, all or none, separated by commas and no spaces: $LOOM_CONNECT" ;;
+    *[!a-z,-]* | ,* | *, | *,,*) fail "LOOM_CONNECT takes claude-code, codex, vscode, all or none, in lowercase, separated by single commas: $LOOM_CONNECT" ;;
   esac
   case ,${LOOM_CONNECT:-}, in
     ,none,) ;;
@@ -515,9 +515,10 @@ main() {
   org=${org:-dev}
   namespace=$(get_env LOOM_DEFAULT_NAMESPACE)
   namespace=${namespace:-local}
-  # api OP BODY: POST to the server, the body to $tmp_dir/api.out; prints the status.
+  # api OP BODY [SECONDS]: POST to the server (20 s unless given), the body to
+  # $tmp_dir/api.out; prints the status, 000 when no answer came.
   api() {
-    curl -s --noproxy '*' --max-time 20 -o "$tmp_dir/api.out" -w '%{http_code}' -X POST \
+    curl -s --noproxy '*' --max-time "${3:-20}" -o "$tmp_dir/api.out" -w '%{http_code}' -X POST \
       -H 'Content-Type: application/json' -d "$2" "http://$host:$port/v1/$1" || true
   }
   found() {
@@ -535,19 +536,32 @@ main() {
     *)
       http_status=$(api memory.get "{$memory}")
       if [ "$http_status" = 200 ] && [ -f "$pending" ]; then
-        api memory.set "{$memory,\"value\":\"A check the installer saves and deletes.\"}" >/dev/null
-        http_status=$(api memory.get "{$memory}")
-        read_back=
-        [ "$http_status" != 200 ] || ! found || read_back=1
-        # Deleted whatever the read answered: a save that landed late stays no live memory.
-        deleted=$(api memory.delete "{$memory}")
-        if [ -n "$read_back" ] && [ "$deleted" = 200 ]; then
-          rm -f "$pending"
-          printf '\nSaved, read back and deleted a test memory: writes and reads work.\n'
-        elif [ -n "$read_back" ]; then
-          printf '\nSaved and read back a test memory, but could not delete loom/installer-check; the next run tries again.\n'
-        elif [ "$http_status" = 200 ]; then
-          printf '\nCould not save a test memory; `docker compose --project-directory %s logs loom` says why.\n' "$INSTALL_DIR"
+        # A first save on a cold server can take a while (its first embedding).
+        saved=$(api memory.set "{$memory,\"value\":\"A check the installer saves and deletes.\"}" 60)
+        if [ "$saved" != 200 ]; then
+          # It may still land: the marker stays, and the next run deletes it.
+          printf '\nCould not confirm a test memory saved (HTTP %s); the next run checks again and deletes it. `docker compose --project-directory %s logs loom` says why.\n' "$saved" "$INSTALL_DIR"
+        else
+          # A replicated ClickHouse can answer the first read before it has the row.
+          tries=0
+          while :; do
+            http_status=$(api memory.get "{$memory}")
+            [ "$http_status" = 200 ] && found && break
+            tries=$((tries + 1))
+            [ "$tries" -lt 3 ] || break
+            sleep 1
+          done
+          read_back=
+          [ "$http_status" != 200 ] || ! found || read_back=1
+          deleted=$(api memory.delete "{$memory}")
+          if [ -n "$read_back" ] && [ "$deleted" = 200 ]; then
+            rm -f "$pending"
+            printf '\nSaved, read back and deleted a test memory: writes and reads work.\n'
+          elif [ -n "$read_back" ]; then
+            printf '\nSaved and read back a test memory, but could not delete loom/installer-check; the next run tries again.\n'
+          elif [ "$http_status" = 200 ]; then
+            printf '\nSaved a test memory but could not read it back; `docker compose --project-directory %s logs loom` says why.\n' "$INSTALL_DIR"
+          fi
         fi
       fi
       case $http_status in
@@ -605,6 +619,12 @@ main() {
     read -r answer || return 1
     case $answer in '' | [Yy]*) return 0 ;; *) return 1 ;; esac
   }
+  # considered CLIENT: whether this run looks at CLIENT at all: LOOM_CONNECT names it
+  # (or all), or it is unset and a terminal may be asked.
+  considered() {
+    case ",${LOOM_CONNECT:-}," in *,all,* | *",$1,"*) return 0 ;; esac
+    [ -z "${LOOM_CONNECT:-}" ]
+  }
   # node_ok: Node.js 18 or later on PATH. Both plugins' MCP header helper and hooks
   # run on it; their own launcher also looks in nvm, fnm, Volta and the like, so a
   # miss here is a hint, not a refusal.
@@ -628,7 +648,7 @@ main() {
     [ "$host" = 127.0.0.1 ] || server_url=http://$host:$port
     # The plugins' own server URL, which a plugin installed before keeps.
     default_url=http://localhost:7777
-    if command -v claude >/dev/null 2>&1; then
+    if considered claude-code && command -v claude >/dev/null 2>&1; then
       # A plugin installed before, or a loom MCP entry added without it, is left
       # as it is, with the server it was set up for; reading the plugin list and
       # Claude Code's config starts nothing.
@@ -648,19 +668,18 @@ main() {
         if bounded 60 claude plugin install loom@loom --config "server_url=$server_url" >/dev/null; then
           printf 'Claude Code: connected to %s (the plugin'"'"'s other settings are optional)\n' "$server_url"
           agents="$agents, Claude Code"
-          node_ok || printf 'Claude Code: the plugin runs on Node.js 18 or later, which is not on PATH here; without one it finds, add the MCP server alone instead: claude mcp add --transport http loom "%s/mcp?toolset=coding" -s user\n' "$server_url"
+          node_ok || printf 'Claude Code: the plugin runs on Node.js 18 or later, which is not on PATH here; without one it finds, use the MCP server alone instead: claude plugin uninstall loom@loom && claude mcp add --transport http loom "%s/mcp?toolset=coding" -s user\n' "$server_url"
         else
           printf 'Claude Code: could not install the plugin (above); the README has the two commands\n'
         fi
       fi
     fi
-    if command -v codex >/dev/null 2>&1; then
+    if considered codex && command -v codex >/dev/null 2>&1; then
       if [ "$server_url" != "$default_url" ]; then
         # Codex plugins take no install options: the URL is fixed in the plugin.
         printf 'Codex: its Loom plugin always uses %s; to reach %s, see https://github.com/%s/blob/main/docs/features/integrations/codex.md\n' "$default_url" "$server_url" "$REPOSITORY"
       else
         codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
-        codex_loom=
         if bounded 60 codex plugin list >"$tmp_dir/codex.plugins"; then
           # Its STATUS column: "installed, enabled", "installed, disabled" or, with
           # only the marketplace added, "not installed".
@@ -681,7 +700,7 @@ main() {
           if bounded 60 codex plugin add loom@loom >/dev/null; then
             printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
             agents="$agents, Codex"
-            node_ok || printf 'Codex: the plugin runs on Node.js 18 or later, which is not on PATH here; without one it finds, add the MCP server alone instead: codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
+            node_ok || printf 'Codex: the plugin runs on Node.js 18 or later, which is not on PATH here; without one it finds, use the MCP server alone instead: codex plugin remove loom@loom && codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
           else
             printf 'Codex: could not add the plugin (above); the README has the two commands\n'
           fi
@@ -691,9 +710,11 @@ main() {
     # VS Code's own CLI adds an MCP server by name; a `loom` entry the user has (for
     # a team server, say) is left as it is. Inside a remote session or WSL, `code`
     # is another machine's, so it is not offered there.
-    vscode_mcp="$HOME/.config/Code/User/mcp.json"
+    vscode_mcp="${XDG_CONFIG_HOME:-$HOME/.config}/Code/User/mcp.json"
     [ "$(uname -s)" != Darwin ] || vscode_mcp="$HOME/Library/Application Support/Code/User/mcp.json"
-    if command -v code >/dev/null 2>&1 && [ -n "${REMOTE_CONTAINERS:-}${CODESPACES:-}${SSH_CONNECTION:-}${WSL_DISTRO_NAME:-}" ]; then
+    if ! considered vscode; then
+      :
+    elif command -v code >/dev/null 2>&1 && [ -n "${REMOTE_CONTAINERS:-}${CODESPACES:-}${SSH_CONNECTION:-}${WSL_DISTRO_NAME:-}" ]; then
       case ",${LOOM_CONNECT:-}," in
         *,vscode,* | *,all,*) printf 'VS Code: not offered in a remote session or WSL, where `code` is another machine'"'"'s\n' ;;
       esac
@@ -711,10 +732,11 @@ main() {
       fi
     fi
     # A client LOOM_CONNECT names that this machine does not have.
-    for client in claude-code:claude codex:codex vscode:code; do
+    for client in "claude-code:claude:Claude Code" "codex:codex:Codex" "vscode:code:VS Code"; do
+      name=${client%%:*} rest=${client#*:}
       case ",${LOOM_CONNECT:-}," in
-        *",${client%%:*},"*) command -v "${client#*:}" >/dev/null 2>&1 \
-          || printf '%s: `%s` is not on PATH\n' "${client%%:*}" "${client#*:}" ;;
+        *",$name,"*) command -v "${rest%%:*}" >/dev/null 2>&1 \
+          || printf '%s: `%s` is not on PATH\n' "${rest#*:}" "${rest%%:*}" ;;
       esac
     done
     if [ -n "$agents" ]; then
@@ -723,11 +745,11 @@ main() {
     elif [ -n "$kept" ]; then
       printf '\nYour agents keep the Loom setup they had.\n'
     else
-      printf '\nConnect an agent: https://github.com/%s/blob/main/docs/getting-started/connect-a-coding-agent.md\n' "$REPOSITORY"
+      skip_agents=quiet
     fi
-  elif [ "$skip_agents" = quiet ]; then
-    printf '\nConnect an agent: https://github.com/%s/blob/main/docs/getting-started/connect-a-coding-agent.md\n' "$REPOSITORY"
   fi
+  [ "$skip_agents" != quiet ] \
+    || printf '\nConnect an agent: https://github.com/%s/blob/main/docs/getting-started/connect-a-coding-agent.md\n' "$REPOSITORY"
 
   # The dashboard, on a desktop: a terminal, no SSH session and a way to open a
   # browser there.

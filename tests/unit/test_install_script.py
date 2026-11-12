@@ -941,6 +941,7 @@ def _start_stubs(
     found: bool = False,
     set_saves: bool = True,
     delete_status: int = 200,
+    set_status: int | None = None,
 ) -> tuple[Path, Path]:
     """Stubs for a started install: a curl whose port probe prints `connect_time` and
     exits `probe_exit`, whose /v1/health calls print `health`, and whose memory calls
@@ -960,7 +961,8 @@ def _start_stubs(
         f"case \"$*\" in *v1/health*) echo '{health}'; exit 0 ;;\n"
         f"  *v1/memory.get*) if [ -f {saved} ]; then echo '{{\"found\":true}}'; "
         f'else echo \'{{"found":false}}\'; fi > "$out"; printf {memory_status}; exit 0 ;;\n'
-        f"  *v1/memory.set*) {on_set}echo '{{}}' > \"$out\"; printf {memory_status}; exit 0 ;;\n"
+        f"  *v1/memory.set*) {on_set}echo '{{}}' > \"$out\"; "
+        f"printf {set_status if set_status is not None else memory_status}; exit 0 ;;\n"
         f"  *v1/memory.delete*) rm -f {saved}; echo '{{}}' > \"$out\"; printf {delete_status}; exit 0 ;;\n"
         "esac\n"
         f"printf %s {connect_time}\nexit {probe_exit}\n"
@@ -1296,7 +1298,7 @@ def test_a_first_memory_that_does_not_read_back_is_named(
     _start_stubs(installer_env, set_saves=False)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 0, result.stderr
-    assert "Could not save a test memory" in result.stdout
+    assert "Saved a test memory but could not read it back" in result.stdout
     assert (target / ".memory-check-pending").exists()
 
 
@@ -1660,4 +1662,57 @@ def test_a_client_loom_connect_names_but_this_machine_lacks_is_named(
     (bin_dir / "code").unlink()
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", PATH=f"{bin_dir}:/usr/bin:/bin")
     assert result.returncode == 0, result.stderr
-    assert "vscode: `code` is not on PATH" in result.stdout
+    assert "VS Code: `code` is not on PATH" in result.stdout
+
+
+def test_a_save_without_a_200_keeps_the_marker_and_deletes_nothing_yet(
+    install, installer_env: dict[str, str]
+) -> None:
+    """A slow first save may still land: the next run checks again and deletes it."""
+    run, target = install
+    curl_log, _ = _start_stubs(installer_env, set_status=0)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "Could not confirm a test memory saved" in result.stdout
+    assert (target / ".memory-check-pending").exists()
+    assert not any("memory.delete" in c for c in curl_log.read_text().splitlines())
+
+
+def test_loom_connect_naming_one_client_leaves_the_others_alone(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude", "  ❯ loom@loom")
+    codex = _agent_cli(installer_env, "codex")
+    code = _agent_cli(installer_env, "code")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode")
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text() == "" and codex.read_text() == ""
+    assert any(c.startswith("--add-mcp ") for c in code.read_text().splitlines())
+
+
+@pytest.mark.parametrize("value", [",codex", "codex,", "claude-code,,codex"])
+def test_an_empty_loom_connect_item_is_refused(install, value: str) -> None:
+    run, _ = install
+    result = run(LOOM_CONNECT=value)
+    assert result.returncode == 1
+    assert "separated by single commas" in result.stderr
+
+
+def test_xdg_config_home_holds_the_vscode_mcp_json(
+    install, installer_env: dict[str, str], tmp_path: Path
+) -> None:
+    import platform
+
+    if platform.system() == "Darwin":
+        pytest.skip("macOS keeps VS Code's user data under ~/Library")
+    run, _ = install
+    _start_stubs(installer_env)
+    code = _agent_cli(installer_env, "code")
+    mcp = tmp_path / "xdg/Code/User/mcp.json"
+    mcp.parent.mkdir(parents=True)
+    mcp.write_text('{"servers": {"loom": {"type": "http"}}}')
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", XDG_CONFIG_HOME=str(tmp_path / "xdg"))
+    assert result.returncode == 0, result.stderr
+    assert code.read_text() == ""
