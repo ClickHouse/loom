@@ -78,12 +78,12 @@ The registry dispatch's `pypi`, `npm` and `mcp-registry` jobs (only `pypi` and `
 tag=vX.Y.Z   # vX.Y.Z-rc.N for a candidate
 # Once the run shows waiting (after github-release): the GET then lists pypi and npm, and mcp-registry for a final.
 dispatch=$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event workflow_dispatch --status waiting -L 1 --json databaseId --jq '.[0].databaseId // empty')
-gh api "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag yet}/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
-ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag yet}/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
-gh api -X POST "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag yet}/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"   # the owner's go-ahead first
+gh api "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag is waiting yet}/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
+ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag is waiting yet}/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
+gh api -X POST "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag is waiting yet}/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"   # the owner's go-ahead first
 ```
 
-To publish only the images and the GitHub Release, as for a `clickhouse_image` or `allow_clickhouse_downgrade` dispatch that stands in for a stopped tag run ([when the clickhouse job stops](../../../docs/development/release-process.md#when-the-clickhouse-job-stops)), send the POST with `-f state=rejected -f comment="Registries not published for $tag"`. The run then ends failed on those jobs, while the images and the GitHub Release stay published.
+To publish only the images and the GitHub Release, as for a `clickhouse_image` or `allow_clickhouse_downgrade` dispatch that stands in for a stopped tag run ([when the clickhouse job stops](../../../docs/development/release-process.md#when-the-clickhouse-job-stops)), send the POST with `-f state=rejected -f comment="Registries not published for $tag"`. The run then fails on those jobs, while the images and the GitHub Release stay published.
 
 The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
 
