@@ -40,14 +40,15 @@ whole in `value` and in `value_json` (the embedding reads its excerpt, as for an
 A definition is **governed** while three things hold, checked when the term leg reads it:
 a live `loom.shared` row of type `definition` under a `definition/` key exists; its
 provenance (`promoted_from`) names exactly one source, the namespace-wide row under that
-key (`user_id`, `agent` and `session_id` all `'-'`); and that source is live (`status =
-'active'`, not tombstoned, superseded or past its `expires_at`), not `sensitivity =
-'high'`, and holds the same text as the shared copy. The source is read from the memory
-authority (Postgres when it holds live memory, [storage authority](storage-authority.md)),
-and a source whose head cannot be read fails closed: the definition is not served. A
-read-time check covers every path into that state that it can see, rows promoted before
-this design and through N-1 included; what it cannot see is named under rolling upgrades.
-The shared layer already is the namespace's admin-approved copy of a fact ([the shared
+key, which is the slug of the value's `term` (`user_id`, `agent` and `session_id` all
+`'-'`); and that source is live (`status = 'active'`, not tombstoned, superseded, or past
+its `expires_at` or `valid_to`), not `sensitivity = 'high'`, and holds the same text as
+the shared copy. The source is read from the memory authority (Postgres when it holds live
+memory, [storage authority](storage-authority.md)), and a source whose head cannot be read
+fails closed: the definition is not served. A read-time check covers every path into that
+state that it can see, rows promoted before this design and through N-1 included; what it
+cannot see is named under rolling upgrades. The shared layer already is the namespace's
+admin-approved copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records the candidate it
 came from (`promoted_from_candidate_id`), `memory.lineage` walks it back, and every build
@@ -59,11 +60,12 @@ promotes into `loom.shared` (the op and `learnings.review`'s path through it; de
 erasure, a redact and a relabel to `high` only retire or scrub there, as the changes below
 say); no worker promotes on its own. An admin read lists the namespace's shared
 definitions with the read-time check's verdict on each and the reason a lapsed one lapsed
-(its text changed, it is `high`, gone, expired, or no longer `active`). A changed text is
-promoted again; a source that is no longer `active` is first restored (Undo in
-`memory.auto_retirements`, whose reasons include `same_key_newest_wins` for a later write
-of the same key under `newest_wins`) or cleared (`conflicts.resolve` for a `conflicted`
-mark, `memory.dedup_resolve` for a `duplicate` one), then promoted again.
+(its text changed, it is `high`, gone, expired, past its `valid_to`, under a key that is
+not its term's slug, or no longer `active`). A changed text is promoted again; a source
+that is no longer `active` is first restored (Undo in `memory.auto_retirements`, whose
+reasons include `same_key_newest_wins` for a later write of the same key under
+`newest_wins`) or cleared (`conflicts.resolve` for a `conflicted` mark,
+`memory.dedup_resolve` for a `duplicate` one), then promoted again.
 
 The shared layer needs eight changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
@@ -189,8 +191,10 @@ Recording is an operator opt-in (`knowledge_gaps_enabled`, off by default), as
 records no misses, and an unreadable consent counts as a refusal; the setting's other
 values leave recording to the operator's opt-in, so turning gaps on never needs prompt
 capture. No miss is recorded while a replica below N serves (the rollout gate below). A
-miss is a search that found nothing a caller could use, recorded by the op the caller
-invoked, never by a search another op runs on its behalf:
+gap needs several distinct askers, so a deployment that has one identity for every caller
+(single-user mode, `LOOM_IDENTITY_PROVIDER=single-user`) records no misses, gaps on or
+off. A miss is a search that found nothing a caller could use, recorded by the op the
+caller invoked, never by a search another op runs on its behalf:
 
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
   and served no governed definition, when it read the namespace-wide rows under a read
@@ -466,9 +470,10 @@ namespace erasure run after the rollback is run again once N serves.
 - A miss is recorded only when the operator opted in and the namespace did not refuse
   capture; its asker comes from the token, never the body.
 - A definition is governed only while an admin's promotion of its namespace-wide row into
-  the shared layer is live and the source still holds that text, active, live and
-  unlabelled `high`; the term leg serves at most one definition per name, the last one
-  promoted; only governed definitions are placed above the served list.
+  the shared layer is live and the source still holds that text under its term's slug,
+  active, live, within its validity and unlabelled `high`; the term leg serves at most one
+  definition per name, the last one promoted; only governed definitions are placed above
+  the served list.
 - A query naming no governed term is served exactly as without the term leg.
 
 ## Source entry points
