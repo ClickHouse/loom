@@ -99,9 +99,10 @@ Authentication, tokens and identity providers.
 | `LOOM_ROUTER_PLACEMENTS_PER_MINUTE` | `int` | `60` |  | Placement calls one cell may make in a minute, counted by each router replica. |
 | `LOOM_ROUTER_DIRECTORY_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) a router replica keeps the cells' credential hashes and a placed org's lookup answer before reading again; a new credential or host works within this. |
 | `LOOM_ROUTER_LOOKUPS_PER_MINUTE` | `int` | `60` |  | Org lookups one client address may make in a minute, counted by each router replica (`GET /cells/lookup`). |
-| `LOOM_ROUTER_SHARED_HOST` | `str` | `''` |  | The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4, beside the first cell's own host and aliases; "" = only those, once it is registered. |
-| `LOOM_ROUTER_UPSTREAM_URL` | `str` | `''` |  | The address the router forwards the shared host to before a first cell is registered (the deployment it was put in front of); "" = none: those answer 503. |
-| `LOOM_ROUTER_OPERATOR_SHA256` | `str` | `''` |  | SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell limit` and `loom cell credential` call its operator API with; "" = that API refuses. |
+| `LOOM_ROUTER_SHARED_HOST` | `str` | `''` |  | The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4, beside the first cell's own host and aliases; "" = no cell registers (registration tells the first cell by this host), and once one has, only its own host and aliases. |
+| `LOOM_ROUTER_UPSTREAM_URL` | `str` | `''` |  | Where the router forwards the shared host until a first cell registers, which copies it into its row; "" = 503 there and no first cell registers. |
+| `LOOM_ROUTER_UPSTREAM_PROBE_URL` | `str` | `''` |  | The probe listener address of the deployment behind the shared host, at which the first cell's registration is checked; "" = no first cell can be registered. |
+| `LOOM_ROUTER_OPERATOR_SHA256` | `str` | `''` |  | SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell limit`, `loom cell credential` and a cell's registration call its operator API with; "" = that API refuses. |
 | `LOOM_ROUTER_OPERATOR_TOKEN` | `str` | *(unset)* |  | The operator credential itself, for the CLI that calls the router's operator API: `lco_` then `openssl rand -hex 64` (`loom cell credential new --operator`). "" = none. |
 | `LOOM_JWT_ISSUER` | `str` | `'loom'` |  | The `iss` Loom stamps on every token it mints; a verified token carries it or one of `jwt_trusted_issuers`. |
 | `LOOM_JWT_AUDIENCE` | `str` | `'loom-platform'` |  | The `aud` claim stamped on minted tokens and required on every verified token. |

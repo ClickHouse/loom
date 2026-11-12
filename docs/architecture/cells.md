@@ -51,14 +51,15 @@ directory in its own Postgres database:
   `serving`), when attach started (`attach_started_at`, which attach writes under the
   directory's lock only after all its refusals have passed, before it writes any row in
   the cell other than its probes and `--revoke-unprovisioned`'s revocations, and which a
-  resumed attach reads), the highest tenancy mode attach has raised or tried to raise in
-  it and when, whether it is closed to new orgs and its placement quota
-  (`placements_max`), the SHA-256 of the credential it calls the router with (`current`,
-  and during a rotation `next`), its root-secret fingerprint (`keys_fp`), a later cell's
-  `probe_url`, the names and key thumbprints of its break-glass bots, and its
-  configuration fingerprint (`current` and, during a change, `next`; the fields named
-  under "Checked continuously"), which attach and `loom cell update` write together with
-  the cell's own copy of that fingerprint (`loom.cell_self`);
+  resumed attach reads), its tenancy mode and when it was set (prepare writes the first,
+  and attach records each it raises or tries to raise), whether it is closed to new orgs
+  and its placement quota (`placements_max`), the SHA-256 of the credential it calls the
+  router with (`current`, and during a rotation `next`), its root-secret fingerprint
+  (`keys_fp`), its `probe_url` (the router's own for the first cell), the names and key
+  thumbprints of its break-glass bots, and its configuration fingerprint (`current` and,
+  during a change, `next`; the fields named under "Checked continuously"), which attach
+  and `loom cell update` write together with the cell's own copy of that fingerprint
+  (`loom.cell_self`);
 - `placements`: org, cell. One row per org, written once and never deleted;
 - `hosts`: every cell's host and the shared host's aliases (below).
 
@@ -77,13 +78,14 @@ included, to `attaching` and `serving` cells alike, in order:
 
 1. **By host.** A request to another cell's own host goes to that cell. The shared host,
    and any alias of it recorded in `hosts`, are the router's own configuration and are
-   handled by rules 2 to 4 (rule 4's cell is the pass-through upstream before any cell
-   is attached), never answered 421; any other host that no `cells` row names
-   answers 421. Every URL a cell hands out names its own host: its OAuth and OIDC
-   endpoints, the device flow's verification URI, the sign-in callback
-   (`LOOM_OAUTH_ISSUER`, registered at the identity provider per cell), its JWKS, the
-   dashboard's pages and assets, and its MCP resource metadata. MCP clients of a cell
-   other than the first use the cell's host, which the cell's setup lines print.
+   handled by rules 2 to 4 (rule 4's cell is the pass-through upstream, before the first
+   cell is registered and after, since prepare registers it at that address), never
+   answered 421; any other host that no `cells` row names answers 421. Every URL a cell
+   hands out names its own host: its OAuth and OIDC endpoints, the device flow's
+   verification URI, the sign-in callback (`LOOM_OAUTH_ISSUER`, registered at the
+   identity provider per cell), its JWKS, the dashboard's pages and assets, and its MCP
+   resource metadata. MCP clients of a cell other than the first use the cell's host,
+   which the cell's setup lines print.
 2. **SCIM** goes by host, as rule 1 does: each cell's identity provider application
    provisions it at its own host (below); SCIM on the shared host is the first cell's,
    except a `/scim/v2/Groups` request carrying a JWT, which goes by its issuer as rule 3
@@ -106,24 +108,26 @@ included, to `attaching` and `serving` cells alike, in order:
    in at). The shared host's discovery documents are the first cell's.
 
 The router reaches a cell at the `upstream_url` its directory row records, an address
-inside the deployment's network that attach writes, never at the cell's public host,
-which names the router itself; before the first cell is registered, rule 4's cell is the
-deployment it was put in front of (`LOOM_ROUTER_UPSTREAM_URL`). The shared host is
-`LOOM_ROUTER_SHARED_HOST`, the first cell's own host and that cell's `hosts` aliases. It
-forwards each request as the client sent it (its raw path and query, its own `Host`)
-with the router's own view of the client's address, scheme and host in
-`X-Forwarded-For`, `-Proto` and `-Host`, replacing what the client claims there (so each
-cell lists the router's addresses in `LOOM_TRUSTED_PROXIES`, or it counts every client
-as the router for its sign-in limits and reads the scheme as the router's), drops the
-headers that describe one connection (and those `Connection` names), keeps every header
-line of the answer (a second `Set-Cookie` included), streams both bodies (a server-sent
-event stream included), answers 502 when the cell cannot be reached, and never forwards
-a path under `/cells/` (one it does not serve answers 404). A registered first cell with
-no upstream address answers 503, as any cell's does. It reads the cells, their issuers
-and hosts once per `LOOM_ROUTER_DIRECTORY_CACHE_S`, answering from the last table while
-a stale one is read again behind it, so a directory that hangs or cannot be read delays
-no request; before its first read, it answers 503. An issuer two cells list (which
-attach refuses) routes to neither.
+inside the deployment's network (the first cell's is `LOOM_ROUTER_UPSTREAM_URL`, written
+by prepare, so registering it changes no route; a later cell's attach writes), never at
+the cell's public host, which names the router itself; before the first cell is
+registered, rule 4's cell is the deployment it was put in front of
+(`LOOM_ROUTER_UPSTREAM_URL`). The shared host is `LOOM_ROUTER_SHARED_HOST`, the first
+cell's own host and that cell's `hosts` aliases. It forwards each request as the client
+sent it (its raw path and query, its own `Host`) with the router's own view of the
+client's address, scheme and host in `X-Forwarded-For`, `-Proto` and `-Host`, replacing
+what the client claims there (so each cell lists the router's addresses in
+`LOOM_TRUSTED_PROXIES`, or it counts every client as the router for its sign-in limits
+and reads the scheme as the router's), drops the headers that describe one connection
+(and those `Connection` names), keeps every header line of the answer (a second
+`Set-Cookie` included), streams both bodies (a server-sent event stream included),
+answers 502 when the cell cannot be reached, and never forwards a path under `/cells/`
+(one it does not serve answers 404). A registered first cell with no upstream address
+answers 503, as any cell's does. It reads the cells, their issuers and hosts once per
+`LOOM_ROUTER_DIRECTORY_CACHE_S`, answering from the last table while a stale one is read
+again behind it, so a directory that hangs or cannot be read delays no request; before
+its first read, it answers 503. An issuer two cells list (which attach refuses) routes
+to neither.
 
 A client finds an org's cell with `GET /cells/lookup?org=<org>`, unauthenticated and
 rate-limited; an org with no placement answers the first cell with the same body as an
@@ -250,17 +254,28 @@ section says how it proves it was given the right cell.
 **Which cell is first** is never a setting and never the order of preparation. Prepare
 grants it only to the cell whose host is the router's shared host and whose deployment
 id is the one the router's pass-through upstream reports at the upstream's probe
-address. That address is the router's own configuration (`upstream_probe_url`) and the
-first cell's `probe_url`, never one of prepare's arguments; prepare, and every rerun of
-it, reads it there and refuses an upstream that reports none. Prepare refuses every
-other cell until the first is registered.
+address. That address is the router's own configuration
+(`LOOM_ROUTER_UPSTREAM_PROBE_URL`) and the first cell's `probe_url`, never one of
+prepare's arguments: the router reads it there at every prepare and rerun, and refuses
+an answer with another deployment id or none. The router also asks its pass-through
+upstream's main port (`LOOM_ROUTER_UPSTREAM_URL`, which registration copies into the
+row) and refuses one that reports another deployment id, so the row never names two
+deployments. Prepare refuses every other cell until the first is registered.
 
 **The stores are the live ones.** Before writing anything, prepare writes a random nonce
 into the target Postgres, under a reserved key of the target ClickHouse's
 `loom._migration_lock`, and as a probe object under the target bucket prefix. The cell's
 probe route must echo each back as it reads it from its own connection to the primary on
 that request. The nonces are then deleted; their rows hold no memory and no org and are
-classified so. A copy with the same deployment id is refused.
+classified so. A copy with the same deployment id is refused. Prepare sends the router
+the three nonces with the registration (`POST /cells/v1/operator/cells/<cell>/register`,
+with the operator credential); the router reads the probe listener itself and registers
+the cell only when it answers the cell's deployment id, those nonces, and the bucket and
+prefix the registration names (so one naming no bucket cannot pass for a cell that has
+one). The router answers a listener past its rate (429) as `PROBE_BUSY`, and one it
+cannot reach or that cannot read a store, or a first cell's upstream main port it cannot
+reach yet, as `PROBE_UNREACHABLE`, both 503, and prepare waits for them within `--wait`.
+A rerun whose addresses differ from the row's is refused before the probe.
 
 **The probe route**, `GET /v1/health/deployment`, takes no credential and is outside the
 fingerprint gate:
@@ -284,20 +299,24 @@ fingerprint gate:
   port that publishes unready addresses and changes no NetworkPolicy. Who may reach the
   port is the operator's network policy, as it is for ClickHouse's: with the chart's own
   policy on, which admits only the `http` port, the operator adds a policy admitting the
-  probe port from where the CLI runs (policies add up), and without one any pod can
-  reach it. Likewise the cell's egress to the router's placement address and to Postgres
-  is the operator's, through `networkPolicy.extraEgress` where the chart's policy is on.
-- Prepare, attach and `loom cell update --probe-url` retry a 429 for at most `--wait`
-  (default 10 minutes) and then name it, and name an unreachable `probe_url` as a
-  connection failure.
+  probe port from the router's pods (prepare's registration is probed by the router) and
+  from where the CLI runs (policies add up), and without one any pod can reach it.
+  Likewise the cell's egress to the router's placement address and to Postgres is the
+  operator's, through `networkPolicy.extraEgress` where the chart's policy is on.
+- Prepare retries the router's `PROBE_BUSY` and `PROBE_UNREACHABLE`, and attach and
+  `loom cell update --probe-url` a 429 from the listener they probe, for at most
+  `--wait` (default 10 minutes), and then name it.
 
 A later cell's `probe_url` is given to prepare, normalised (`http` or `https`, no
 userinfo), and accepted only when it reports the deployment id prepare reads from the
 target stores; attach then checks that the cell's own host reports the same id. Prepare
 refuses a probe address argument for the first cell. `loom cell update --probe-url`
 replaces a later cell's under the directory lock after the same check and a fresh nonce
-echo, and refuses the first cell, whose address changes only in the router's
-configuration.
+echo. The first cell's probe and upstream addresses are copied from the router's
+configuration at registration, and `loom cell update` replaces them from it, once every
+router replica runs the new values, after the same probe and a check that the new
+upstream reports the cell's deployment id. A prepare rerun never moves an address: it
+refuses while the router replica it reaches is configured with others.
 
 **The `first` row.** Prepare writes an explicit, immutable `first` row into every cell's
 Postgres (`loom.cell_first`: a row trigger refuses its update and delete and a statement
@@ -1270,13 +1289,18 @@ An integration test with two cells and a router in CI's Postgres job:
   pods in a one-row state reaches their probe route and writes the missing row back;
   prepare refuses a later cell's `probe_url` that reports an id other than its stores',
   attach refuses a cell whose host reports an id other than its `probe_url`'s, and
-  prepare refuses a probe address argument for the first cell and reads only
-  `upstream_probe_url`; a later cell's first prepare succeeds;
+  prepare refuses a probe address argument for the first cell, and the router probes
+  only `LOOM_ROUTER_UPSTREAM_PROBE_URL`; a later cell's first prepare succeeds;
   `loom cell update --probe-url` refuses an address that reports another deployment id
-  or fails the nonce echo, and refuses the first cell; `probe_url` with userinfo or
-  another scheme is refused; the main port answers only the in-memory id, with any Host,
-  reading no store; the probe listener answers 429 past its rate; and a prepare given a
-  copy of the first cell's stores is refused by the nonce;
+  or fails the nonce echo, and refuses the first cell; `loom cell update` moves the
+  first cell's probe and upstream addresses only once every router replica runs them,
+  after their probe and the upstream's id check, and a prepare rerun through a replica
+  still on the old values (or the new, before the move) is refused, naming the row's
+  address; `probe_url` with userinfo or another scheme is refused; the main port answers
+  only the in-memory id, with any Host, reading no store; the router probes an https
+  `probe_url` whose certificate a CA in its `SSL_CERT_FILE` signs; the probe listener
+  answers 429 past its rate; and a prepare given a copy of the first cell's stores is
+  refused by the nonce;
 - the default first cell (`LOOM_JWT_ISSUER=loom`, an empty `LOOM_OAUTH_ISSUER`)
   attaches; a cell redeployed with the shared host as its public URL becomes unready;
 - a placement inserted at a cell's quota whose call timed out is retried and answers its
@@ -1375,9 +1399,9 @@ An integration test with two cells and a router in CI's Postgres job:
   is served before prepare, between prepare and attach, and during attach;
 - the chart renders no probe listener by default, and with it on renders the probe
   Service and changes no NetworkPolicy, so with the chart's policy on no rule of its own
-  admits the probe port; prepare names an unreachable `probe_url` as a connection
-  failure and a 429 that outlasts `--wait` as a rate refusal; a flood on the main port
-  leaves the probe listener's rate untouched;
+  admits the probe port; prepare names the router's `PROBE_UNREACHABLE` and `PROBE_BUSY`
+  once `--wait` runs out; a flood on the main port leaves the probe listener's rate
+  untouched;
 - a later cell started from the first cell's environment, with its bucket and prefix,
   runs gated from its first boot and deletes no original; prepare refuses a later cell
   while a live process lacks `LOOM_CELL`;

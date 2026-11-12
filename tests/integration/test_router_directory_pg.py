@@ -13,10 +13,11 @@ import os
 import uuid
 from typing import Any
 from unittest.mock import ANY
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
-from server.router import directory
+from server.router import directory, routing
 from server.settings import settings
 
 
@@ -26,6 +27,28 @@ def dsn(monkeypatch: pytest.MonkeyPatch) -> str:
     monkeypatch.setattr(settings, "router_pg_dsn", value)
     monkeypatch.setattr(directory, "_pool", None)
     return value
+
+
+@pytest.fixture
+async def own_dsn(dsn: str, monkeypatch: pytest.MonkeyPatch):
+    """A directory database of the test's own: a test that registers a first cell sees no
+    other test's first cell, and no other test sees its."""
+    import asyncpg
+
+    name = f"loom_router_t{uuid.uuid4().hex[:12]}"
+    admin = await asyncpg.connect(dsn)
+    try:
+        await admin.execute(f'CREATE DATABASE "{name}"')
+        own = urlunsplit(urlsplit(dsn)._replace(path=f"/{name}"))  # its query kept
+        monkeypatch.setattr(settings, "router_pg_dsn", own)
+        monkeypatch.setattr(directory, "_pool", None)
+        try:
+            yield own
+        finally:
+            await directory.close()
+            await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+    finally:
+        await admin.close()
 
 
 async def _cell(conn, name: str, *, limit: int | None = None) -> None:
@@ -286,6 +309,188 @@ async def test_operator_changes_write_the_row_and_its_audit(dsn: str) -> None:
     finally:
         await conn.close()
         await directory.close()
+
+
+@pytest.mark.asyncio
+async def test_prepare_registers_a_cell_once_and_refuses_what_another_holds(own_dsn: str) -> None:
+    import asyncpg
+
+    await directory.migrate()
+    first, later, third = (f"rg-{uuid.uuid4().hex[:8]}" for _ in range(3))
+    names = (first, later, third)
+
+    def reg(name: str, **over: Any) -> directory.Registration:
+        fields: dict[str, Any] = {
+            "cell": name,
+            "host": f"{name}.example.test",
+            "deployment_id": f"dep-{name}",
+            "credential_sha256": hashlib.sha256(name.encode()).hexdigest(),
+            "bucket": f"docs-{first}",
+            "bucket_prefix": f"cells/{name}",
+            "probe_url": f"http://{name}.internal:7790",
+            "is_first": name == first,
+            "upstream_url": "http://upstream.internal:7777" if name == first else "",
+        }
+        return directory.Registration(**{**fields, **over})
+
+    conn = await asyncpg.connect(own_dsn)
+    try:
+        # A later cell before the first is refused; then the first registers.
+        # Named before the probe too: a later cell before the first, a first with no upstream.
+        assert "registered before any other" in await directory.refusal_before_probe(reg(later))
+        no_upstream = reg(first, upstream_url="")
+        assert "LOOM_ROUTER_UPSTREAM_URL" in await directory.refusal_before_probe(no_upstream)
+        with pytest.raises(directory.OperatorRefused, match="first cell is registered before"):
+            await directory.register(reg(later))
+        with pytest.raises(directory.OperatorRefused, match="LOOM_ROUTER_UPSTREAM_URL"):
+            await directory.register(reg(first, upstream_url=""))
+        row, written = await directory.register(reg(first))
+        assert written and (row.is_first, row.state, row.mode) == (True, "attaching", "recording")
+        stored = await conn.fetchrow(
+            "SELECT is_first, host, state, mode, mode_set_at IS NOT NULL AS mode_set, "
+            "credential_sha256, credential_next_sha256, deployment_id, bucket, bucket_prefix, "
+            "probe_url, upstream_url, closed, placements_max, placed "
+            "FROM loom_router.cells WHERE cell = $1",
+            first,
+        )
+        assert dict(stored) == {
+            "is_first": True,
+            "host": f"{first}.example.test",
+            "state": "attaching",
+            "mode": "recording",
+            "mode_set": True,
+            "credential_sha256": hashlib.sha256(first.encode()).hexdigest(),
+            "credential_next_sha256": None,
+            "deployment_id": f"dep-{first}",
+            "bucket": f"docs-{first}",
+            "bucket_prefix": f"cells/{first}",
+            "probe_url": f"http://{first}.internal:7790",
+            "upstream_url": "http://upstream.internal:7777",
+            "closed": False,
+            "placements_max": None,
+            "placed": 0,
+        }
+        # The shared host still reaches the deployment the router fronts.
+        cells, aliases = await directory.routing()
+        table = routing.build(cells, aliases, shared_host="shared.example.test", passthrough="")
+        assert table.rule4() == "http://upstream.internal:7777"
+        assert (
+            await conn.fetchval(
+                "SELECT cell FROM loom_router.hosts WHERE host = $1", f"{first}.example.test"
+            )
+            == first
+        )
+        # A rerun answers the row and writes nothing; another hash or id is refused.
+        again, wrote = await directory.register(reg(first))
+        assert (again.cell, wrote) == (first, False)
+        # A rerun needs no upstream: only a new row copies it.
+        again, wrote = await directory.register(reg(first, upstream_url=""))
+        assert (again.cell, wrote) == (first, False)
+        with pytest.raises(directory.OperatorRefused, match="not cell"):
+            await directory.register(reg(first, credential_sha256="c" * 64))
+        # During a rotation the cell's next credential reruns it too.
+        await conn.execute(
+            "UPDATE loom_router.cells SET credential_next_sha256 = $2 WHERE cell = $1",
+            first,
+            "d" * 64,
+        )
+        again, wrote = await directory.register(reg(first, credential_sha256="d" * 64))
+        assert (again.cell, wrote) == (first, False)
+        await conn.execute(
+            "UPDATE loom_router.cells SET credential_next_sha256 = NULL WHERE cell = $1", first
+        )
+        with pytest.raises(directory.OperatorRefused, match="another deployment id or host"):
+            await directory.register(reg(first, deployment_id="dep-other"))
+        with pytest.raises(directory.OperatorRefused, match="no longer the shared host"):
+            await directory.register(reg(first, is_first=False))
+        with pytest.raises(directory.OperatorRefused, match="bucket or prefix"):
+            await directory.register(reg(first, bucket_prefix="cells/moved"))
+        # A router replica configured with other addresses (a rollout not finished) is
+        # refused, and the row keeps the ones registration wrote.
+        with pytest.raises(directory.OperatorRefused, match="set this router replica's LOOM"):
+            await directory.register(reg(first, probe_url="http://moved.internal:7790"))
+        with pytest.raises(directory.OperatorRefused, match="LOOM_ROUTER_UPSTREAM_URL"):
+            await directory.register(reg(first, upstream_url="http://moved-up.internal:7777"))
+        assert tuple(
+            await conn.fetchrow(
+                "SELECT probe_url, upstream_url FROM loom_router.cells WHERE cell = $1", first
+            )
+        ) == (f"http://{first}.internal:7790", "http://upstream.internal:7777")
+        # The read before the probe answers exactly what register refuses, and nothing for a
+        # new cell or a rerun that passes.
+        for over in (
+            {"credential_sha256": "c" * 64},
+            {"deployment_id": "dep-other"},
+            {"is_first": False},
+            {"bucket_prefix": "cells/moved"},
+            {"probe_url": "http://moved.internal:7790"},
+            {"upstream_url": "http://moved-up.internal:7777"},
+        ):
+            with pytest.raises(directory.OperatorRefused) as refused:
+                await directory.register(reg(first, **over))
+            assert await directory.refusal_before_probe(reg(first, **over)) == refused.value.reason
+        assert await directory.refusal_before_probe(reg(first)) == ""
+        assert await directory.refusal_before_probe(reg(later)) == ""
+        # A second first cell, and a later cell holding what the first holds, are refused.
+        with pytest.raises(directory.OperatorRefused, match="first cell already"):
+            await directory.register(reg(later, is_first=True))
+        for over, why in (
+            ({"credential_sha256": hashlib.sha256(first.encode()).hexdigest()}, "credential"),
+            ({"deployment_id": f"dep-{first}"}, "deployment id"),
+            ({"host": f"{first}.example.test"}, "names cell"),
+            ({"bucket_prefix": f"cells/{first}/sub"}, "shares objects"),
+            ({"bucket_prefix": "cells"}, "shares objects"),
+            ({"bucket_prefix": ""}, "shares objects"),
+        ):
+            with pytest.raises(directory.OperatorRefused, match=why):
+                await directory.register(reg(later, **over))
+        # A new cell's refusals are named before the probe too, as register names them.
+        for over in (
+            {"credential_sha256": hashlib.sha256(first.encode()).hexdigest()},
+            {"deployment_id": f"dep-{first}"},
+            {"host": f"{first}.example.test"},
+            {"bucket_prefix": f"cells/{first}/sub"},
+            {"bucket_prefix": "cells"},
+            {"bucket_prefix": ""},
+            {"is_first": True},
+        ):
+            with pytest.raises(directory.OperatorRefused) as refused:
+                await directory.register(reg(later, **over))
+            assert await directory.refusal_before_probe(reg(later, **over)) == refused.value.reason
+        # A sibling prefix (not under the first's) and another bucket both register.
+        row, written = await directory.register(reg(later, bucket_prefix=f"cells/{first}x"))
+        assert written and (row.is_first, row.mode) == (False, "enforced")
+        with pytest.raises(directory.OperatorRefused, match="register with that probe_url"):
+            await directory.register(
+                reg(later, bucket_prefix=f"cells/{first}x", probe_url="http://moved:7790")
+            )
+        # The shared host moved to a later cell: its rerun is not taken for the first's.
+        with pytest.raises(directory.OperatorRefused, match="names cell .* as the first"):
+            await directory.register(
+                reg(later, bucket_prefix=f"cells/{first}x", is_first=True, probe_url="x")
+            )
+        _, written = await directory.register(
+            reg(third, bucket=f"own-{third}", bucket_prefix="cells/x")
+        )
+        assert written
+        audit = await conn.fetch(
+            "SELECT detail FROM loom_router.audit WHERE action = 'register' "
+            "AND detail->>'cell' = ANY($1::text[]) ORDER BY id",
+            list(names),
+        )
+        assert [json.loads(a["detail"])["cell"] for a in audit] == [first, later, third]
+        assert json.loads(audit[0]["detail"]) == {
+            "cell": first,
+            "host": f"{first}.example.test",
+            "deployment_id": f"dep-{first}",
+            "is_first": True,
+            "bucket": f"docs-{first}",
+            "bucket_prefix": f"cells/{first}",
+            "probe_url": f"http://{first}.internal:7790",
+            "upstream_url": "http://upstream.internal:7777",
+        }
+    finally:
+        await conn.close()
 
 
 @pytest.mark.asyncio

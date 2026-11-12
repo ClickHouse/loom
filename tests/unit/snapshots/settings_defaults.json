@@ -1046,6 +1046,7 @@
  "router_operator_sha256": "",
  "router_placements_per_minute": 60,
  "router_shared_host": "",
+ "router_upstream_probe_url": "",
  "router_upstream_url": "",
  "runtime_dir": "",
  "runtime_overrides_refresh_seconds": 10.0,

@@ -9,16 +9,26 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import json
 import logging
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpx
+
 from server.core.cell import normalise_host
 
 log = logging.getLogger("loom.router")
+# A label `inet_aton` reads as a number (decimal, octal or hex).
+_NUMBER = re.compile(r"0[xX][0-9a-fA-F]*|[0-9]+")
+_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?"
+# A DNS name (IDNA-encoded, a fully qualified one's final dot kept) or an IPv4 address, or
+# an IPv6 address (httpx drops its brackets).
+_HOST = re.compile(rf"(?:{_LABEL}\.)*{_LABEL}\.?|[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*")
 
 
 @dataclass(frozen=True)
@@ -44,8 +54,8 @@ class Table:
         return self.first is not None and self.first.state == "serving"
 
     def rule4(self) -> str:
-        """The first cell's address once it is registered ('' until attach writes it),
-        else the pass-through upstream."""
+        """The first cell's address once it is registered (prepare writes the pass-through
+        upstream into its row), else the pass-through upstream."""
         return self.first.upstream if self.first else self.passthrough
 
 
@@ -102,18 +112,45 @@ def build(
 
 def usable_upstream(url: str) -> bool:
     """Whether `url` is `http(s)://host[:port]` (a trailing `/` at most), the only shape
-    the forward appends a request's path to."""
-    try:
-        parts = urlsplit(url)
-        _ = parts.port
-    except ValueError:
+    the forward appends a request's path to, read as httpx reads it: the forward sends
+    with httpx. The host is a DNS name or an IP address, and a port 1 to 65535 in ASCII
+    digits (httpx would take `-1`, `1_0` or another script's digits)."""
+    if not url.isprintable() or "?" in url or "#" in url:
         return False
+    try:
+        u = httpx.URL(url)
+        port = urlsplit(url).port
+        # A non-ASCII IPv6 zone id passes httpx's parse and fails here (a ValueError).
+        host = u.raw_host.decode("ascii")
+    except (httpx.InvalidURL, ValueError):
+        return False
+    if port == 0:
+        return False
+    # A host of numbers (`10.1`, `0xa.0.0.1`, `010.0.0.1`, `10.0.0.1.`) resolves as an
+    # IPv4 address: it is one only in dotted decimal, so one address has one spelling.
+    if all(_NUMBER.fullmatch(label) for label in host.removesuffix(".").split(".")):
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError:
+            return False
     return (
-        parts.scheme in ("http", "https")
-        and bool(parts.hostname)
-        and parts.path in ("", "/")
-        and not (parts.query or parts.fragment or parts.username or parts.password)
+        u.scheme in ("http", "https")
+        and _HOST.fullmatch(host) is not None
+        and u.path in ("", "/")
+        and not u.userinfo
     )
+
+
+def usable_host(host: str) -> bool:
+    """Whether `host`, as `normalise_host` writes it, may be a cell's or the shared host:
+    the address rule, label by label, and an IPv6 address only in its compressed spelling
+    (as `normalise_host` leaves it as given), so one address has one directory row."""
+    if not host or not usable_upstream(f"https://{host}"):
+        return False
+    if not host.startswith("["):
+        return True
+    bare = host[1:].split("]", 1)[0]
+    return ipaddress.ip_address(bare).compressed == bare
 
 
 def issuer(token: str) -> str:

@@ -709,6 +709,14 @@ HTTP 503, raised as `server.core.pg.PostgresUnavailableError`. 503 — Postgres,
 
 HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch, or an erasure that landed while a `namespace.restore` ran. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
 
+#### `PROBE_BUSY`
+
+Raised in `server/router/app.py`. Category `capacity`, retryable: yes.
+
+#### `PROBE_UNREACHABLE`
+
+Raised in `server/router/app.py`. Category `dependency`, retryable: yes.
+
 #### `PROJECTION_BEHIND`
 
 HTTP 503, raised as `server.memory.app.pg_admission.ProjectionBehindError`. 503 — earlier commits in this namespace are not yet in ClickHouse, so a read of ClickHouse that must see every write the namespace committed would miss them. Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran.

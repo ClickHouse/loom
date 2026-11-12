@@ -487,6 +487,10 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     "NO_CELL": ("configuration", False),
     # The router's operator API with no LOOM_ROUTER_OPERATOR_SHA256: nothing was done.
     "NO_OPERATOR_CREDENTIAL": ("configuration", False),
+    # A registration's probe: the listener is past its rate, unreachable, or unable to
+    # read a store; or the first cell's upstream (its main port) cannot be reached yet.
+    "PROBE_BUSY": ("capacity", True),
+    "PROBE_UNREACHABLE": ("dependency", True),
     # Listed, not left to the status: the MCP screen's refusals carry none.
     "RATE_LIMITED": ("capacity", True),
     "AUTH_INVALID": ("auth", False),
