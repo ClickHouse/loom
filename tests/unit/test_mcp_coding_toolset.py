@@ -3,7 +3,8 @@ of one `core` for two. Membership derives from the frozensets; the toolset is
 selectable per deployment and per request; the code tools ride it without the
 deployment flag; the catalogue says which toolsets list an op; the coding-tier
 descriptions are the core texts with the unlisted op marked callable by name;
-the listing stays under its measured ceiling.
+each description stays under its budget (the listing's ceiling is in
+test_mcp_listing_budget.py).
 
 Hermetic: `_caller_default_context` (which can hit ClickHouse) is patched."""
 

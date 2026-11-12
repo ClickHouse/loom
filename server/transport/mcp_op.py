@@ -140,8 +140,13 @@ def catalog(
 # source, a wrong argument name.
 _INSTEAD: dict[str, str] = {
     "memory.bulk_set": "call loom_memory_set once per fact; a batch saves no round trip here",
-    "memory.bulk_get": "call loom_memory_get per key, or memory.list (loom_op) with a key prefix",
-    "memory.keys": "call memory.list (loom_op), which pages the namespace",
+    "memory.bulk_get": (
+        "call loom_memory_get per key, or memory.list (via loom_op where it is not listed) "
+        "with a key prefix"
+    ),
+    "memory.keys": (
+        "call memory.list (via loom_op where it is not listed), which pages the namespace"
+    ),
     "memory.delete_version": "call loom_memory_delete",
     # An owner-only op names the person, never a route: naming the SDK/HTTP
     # op sends a model probing env vars and token files for a way around it.
@@ -152,7 +157,7 @@ _INSTEAD: dict[str, str] = {
     "memory.search": "call loom_search (memory, profile, knowledge and conversations in one call)",
     "knowledge.search": "call loom_search",
     "conversation.search": "call loom_search",
-    "namespace.list": "call namespace.list_mine (loom_op)",
+    "namespace.list": "call namespace.list_mine (via loom_op where it is not listed)",
     "run.list": "call run.get with a run id (loom_op)",
     "code.context_packs": "call code.context_pack (loom_op) with the pr_number you want",
     "memory.extraction_status": (
