@@ -26,6 +26,13 @@ change introduced a regression.
   [Telemetry](../features/observability/telemetry.md) ·
   [Cost and usage](../features/observability/cost-and-usage.md)
 
+## Measured
+
+On public ClickHouse issues closed as duplicates, `tracker.duplicate_check` ranked the
+older issue first for 0.875 of 104 duplicates and called 0.02 of 100 issues with no recorded
+link a duplicate. The result is one tracker's, whose issues are easier than many.
+[Duplicate check on public ClickHouse issues](../benchmarks/results.md#duplicate-check-on-public-clickhouse-issues)
+
 ## Start
 
 [Connect a coding agent](../getting-started/connect-a-coding-agent.md) installs the
