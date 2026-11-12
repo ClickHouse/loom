@@ -198,8 +198,9 @@ async def with_single_user_identity(
     The org (`caller_org`) on every op but code and tracker ones; the namespace
     (`default_namespace`, as MCP asks it) and the agent on a SINGLE_USER_FILLED_OPS
     op. A field is filled when missing, null, or a string the gates read as absent."""
-    from server.identity.app.caller_home import caller_org, default_namespace
+    from server.identity.app.caller_home import default_namespace
     from server.settings import settings
+    from server.transport.arg_check import did_you_mean
 
     if auth is not None or settings.effective_identity_provider() != "single-user":
         return args
@@ -207,7 +208,7 @@ async def with_single_user_identity(
     # their org and namespace name the index, never the install's memory.
     if op.name.startswith(("code.", "tracker.")):
         return args
-    org = caller_org(None) or ""
+    org = settings.self_signup_org  # what caller_org answers a single-user call with no token
     fill = {"org": org}
     if op.name in SINGLE_USER_FILLED_OPS:
         fill["namespace"] = await default_namespace(None, org)
@@ -217,14 +218,18 @@ async def with_single_user_identity(
         if op.name != "memory.history" or not names_scope:
             fill["agent"] = SINGLE_USER_FILLED_OPS[op.name]
     fields = op.input_model.model_fields
+    # A key that misspells a field this would fill (`namepsace`) means the call
+    # named one: it is not filled, so validation names it instead of the call
+    # running in the install's namespace.
+    meant = set(did_you_mean(op.input_model, [k for k in args if k not in fields]).values())
     update = {
         name: value
         for name, value in fill.items()
-        if value and name in fields and _absent(args.get(name))
+        if value and name in fields and name not in meant and _absent(args.get(name))
     }
     namespace = fields.get("namespace")
     if (
-        "namespace" not in fill
+        "namespace" not in update
         and namespace is not None
         and namespace.is_required()
         and isinstance(args.get("namespace"), str)

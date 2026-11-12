@@ -170,10 +170,11 @@ curl -sX POST "$LOOM/v1/memory.set" \
   every agent's, user's and session's versions of the key, as on MCP; a
   `memory.history` that names a `user_id` or `session_id` names its agent too. An op
   whose agent is optional and left out acts across every agent: a search reads every
-  agent's rows, and `memory.update` finds the key in the whole namespace. Every other
-  op names its own namespace and agent, and so does a call with a token (one the
-  Python SDK finds by itself included: [Credentials](python-sdk.md#credentials)) and
-  every call in another identity mode.
+  agent's rows, and `memory.update` finds the key in the whole namespace. A key that
+  misspells one of these (`namepsace`) is taken as naming it, so the call is refused
+  rather than filled. Every other op names its own namespace and agent, and so does a
+  call with a token (one the Python SDK finds by itself included:
+  [Credentials](python-sdk.md#credentials)) and every call in another identity mode.
 - **`consumer`.** Any body may carry `consumer`, a short tag for the product or
   module calling; it is stored on the request and audit ledgers. A token minted
   with a consumer overrides it. See
@@ -191,12 +192,13 @@ A request passes these gates in order, and the first that refuses answers:
 
 ```mermaid
 flowchart LR
-  A["token"] --> B["JSON parse"] --> C["misspelled write field"] --> D["input validation"]
+  A["token"] --> B["JSON parse"] --> C["misspelled write field"] --> C2["single-user fill"] --> D["input validation"]
   D --> E["role + namespace authz"] --> F["history policy"] --> G["rate limit"]
   G --> H["idempotency replay"] --> I["handler"]
 ```
 
-MCP `tools/call` runs the same sequence. Consequences worth knowing:
+MCP `tools/call` runs the same sequence, but for the single-user fill, which is HTTP's
+(MCP fills a call's identity from its own defaults). Consequences worth knowing:
 
 - A deployment that requires a token answers an anonymous request 401 whatever
   its body holds, and the anonymous check runs before the rate limiter, so an

@@ -283,3 +283,10 @@ def test_a_blank_namespace_on_another_op_is_a_missing_one(seen: Seen, blank: str
     body = {"namespace": blank, "agent": "a", "content": "c"}
     assert "namespace" in _missing(_post("working_memory.set", body))
     assert seen == []
+
+
+def test_a_misspelled_namespace_is_not_filled(seen: Seen) -> None:
+    """`namepsace` named one: the call is refused rather than run in the install's."""
+    response = _post("memory.search", {"namepsace": "team", "query": "q"})
+    assert "namespace" in _missing(response)
+    assert seen == []
