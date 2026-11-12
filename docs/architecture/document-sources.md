@@ -90,14 +90,14 @@ answers reachability, the items checked and codes, never a count, a sample of ti
 a summary that names a file, since it lists as the owner or as crawled people. Every
 mirrored source's probe and status, to anyone but a connected source's owner and a
 platform admin, answer only source-level codes (whether the credential and its scopes
-work, `rate_limited`, `owner_inactive`, `provider_removed`): an item refusal, a per-file
-or per-item code (`item <n>: http_404`, `meet_recordings: not found`, `too_large`,
+work, `rate_limited`, `owner_inactive`): an item refusal, a per-file or per-item code
+(`item <n>: http_404`, `meet_recordings: not found`, `too_large`,
 `extraction_failed:<code>`) and the oldest listing start are not answered there, since
-each depends on what a person can read. On a `namespace` source, and on a connected
-source probed by its owner, only a refused item of the sample refuses `add` or `update`,
-and the next sync turn reports any other as `item <n>: http_404` and goes on with the
-rest; on a mirrored source probed by anyone else, items never refuse `add`, `update` or
-`rotate`, and only the source-level codes do.
+each depends on what a person can read. A refused item of the sample refuses `add` or
+`update` only on a `namespace` source and on a connected source probed by its owner; on
+any other mirrored probe, a platform admin's included, items never refuse, and only the
+source-level codes do. The next sync turn reports a refused item as `item <n>: http_404`
+and goes on with the rest.
 
 ### The link parser
 
@@ -157,12 +157,14 @@ a document's `source_uri` is its address with the source id appended (`<address>
 id>`; the address is the part before the last `#`, and citations and answers use it), so
 each mirrored source writes its own copy with its own list under the table's key, heads
 and document machinery as they are, and no source's write or retirement touches
-another's copy. The legs answer the address itself, dropping duplicates after the check,
-and a `get` or `download` of an address answers the newest copy the reader may see. Only
-the owning source's turn writes a mirror document's list; any other writer of a mirror
-row (a retention or tier move, a sweep, a reindex) writes a tombstone or `unread`, never
-a list it carried. How a stopped source's documents and rows are found and cleaned when
-several sources, builds or names meet is the implementing pull request's to specify.
+another's copy. The legs answer the address itself, dropping duplicates after the check
+([below](#the-mirror)), and a `get` or `download` of an address answers the newest copy
+the reader may see. Only the owning source's turn writes a mirror document's list; any
+other writer of a mirror row (a retention or tier move, a sweep, a reindex) writes a
+tombstone or `unread`, never a list it carried. Only those writers and the erasure write
+rows under a mirror's name; no request does. How a stopped source's documents and rows
+are found and cleaned when several sources, builds or names meet is the implementing
+pull request's to specify.
 
 In a namespace, a second source that lists a file at an address where a document is
 counts it `skipped`, as today, and fetches no content. No source reads whether another
@@ -180,11 +182,12 @@ file, the document is missing; that gap is the cost of keeping one owner per add
 there. A mirror pays duplicate chunks for a file two mirrored sources reach instead.
 
 A mirrored predecessor never makes `add` of its name answer `SOURCE_DELETE_PENDING`,
-since mirror ownership goes by source id, and its pending retirement shows to a platform
-admin only. `remove` with `delete_documents` retires the source's documents, as today,
-and without it they stay as kept documents, which `add` of the same name refuses to take
-over (`SOURCE_DOCUMENTS_KEPT`, as today). A mirrored source's documents are always
-retired ([below](#the-mirror)).
+since mirror ownership goes by source id, and it counts toward no source quota while it
+waits; its pending retirement shows to a platform admin only. `remove` with
+`delete_documents` retires the source's documents, as today, and without it they stay as
+kept documents, which `add` of the same name refuses to take over
+(`SOURCE_DOCUMENTS_KEPT`, as today). A mirrored source's documents are always retired
+([below](#the-mirror)).
 
 ## Credentials
 
@@ -291,8 +294,8 @@ read lists at each turn, at most 2000 people (not a setting). For each person th
 exchanges the key for a token that impersonates them (the JWT bearer grant with `sub`)
 and lists the source's items as them. A typical config is one `meet_recordings` item and
 a `filter` with `kinds: [docs]`, over a group: every member's meeting notes, without
-anyone connecting. Every crawl's expansion skips the people an erasure excluded
-([erasure](#erasure-and-audit)).
+anyone connecting. Every list and members row the sync writes, a crawl's expansion
+included, leaves out the people an erasure excluded ([erasure](#erasure-and-audit)).
 
 The probe checks that the delegation grants no write on what the crawl reads: it asks
 for each of the three scopes, which must be granted, and for
@@ -358,10 +361,14 @@ return included, and `namespace.register` and `restore` refuse the form.
 admin with auth on, and `erasure.export` for every caller; with auth off both refuse it
 for everyone. So no token searches, reads or exports a mirror, and the threat model's
 rows hold for every token. A mirror has no directory row and appears in no namespace
-listing or usage view; a namespace name keeps one mirror for life, so a name deleted and
-registered again inherits it, and a name with a `loom.knowledge_mirrors` row counts as
-in use (`namespace_census.in_use`), whatever its mirror holds, answered with the same
-code as any other in-use reason.
+listing or usage view; a namespace name keeps one mirror while its directory row lives,
+so a name deleted and registered again inherits it, and a name with a
+`loom.knowledge_mirrors` row counts as in use (`namespace_census.in_use`), whatever its
+mirror holds, answered with the same code as any other in-use reason. A namespace
+erasure deletes that row last, after the mirror's rows (the table is classified as
+holding no memory content), so an erased name can be registered again and gets a new
+mirror. The implementing pull request checks for existing namespaces of the reserved
+form before it enables the refusal.
 
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
 check below. Every other read path reads the namespace and finds nothing of the mirror.
@@ -385,9 +392,12 @@ missed path leaks.
   request-scoped flag, as the query tag is), and nothing the request writes outside the
   mirror carries what the leg answered: no cache shared across readers stores the answer
   (the repository-docs listing cache, `memory.ask`'s precedents, the provider response
-  cache), its `agent_events` row keeps no argument and no result-side field, the search
-  trace and exposure rows leave mirrored hits out, and a generation captures no prompt
-  or completion text, whatever the namespace's `capture_generation_io` says. Each pull
+  cache), its `agent_events` row keeps no argument and no result-side field, no field of
+  its search trace or exposure rows (`returned_keys`, `result_count`, `abstain`,
+  `retrieval_risk`, the scores) depends on the mirror leg, and a generation captures no
+  prompt or completion text, whatever the namespace's `capture_generation_io` says. Its
+  answer carries `mirrored: true`, and Loom's own capture hooks (the coding-agent
+  plugins' conversation capture) record no turn that used such an answer. Each pull
   request that adds a mirror leg lists the writes its request makes and tests each
   against the flag.
 - **The sync writes nothing outside the mirror.** A mirrored source's sync state, audit
@@ -399,13 +409,13 @@ missed path leaks.
   `resolve_org_scope`, ahead of its auth-off return, `every_namespace_scope` and
   `rollup_member_namespaces` (`server/auth/context.py`) leave out the `acl-[0-9a-f]{24}`
   form for a request's caller (the sync, the erasure saga and the mirror-erase command
-  reach a mirror through the stores, never the gate), and so do `sql_v1_agent_events`
-  and `sql_v1_usage_daily` (replaced by a migration), the analytics export's statements
-  and the org-wide reads of `erasure.export` and of a `user_id` erasure's steps and
-  census (their `Shown.hidden` always carries the form), so `audit.list`, the insights,
-  usage and cost reads, the SQL surface and a person's export name no mirror.
-  `row_reach` refuses the form before its auth-off return, so no id-addressed check or
-  `audit.list` of a named namespace opens one.
+  reach a mirror through the stores, never the gate), and so does every `sql_v1_` view,
+  `sql_v1_agent_events` and `sql_v1_usage_daily` (replaced by a migration), the
+  analytics export's statements and the org-wide reads of `erasure.export` and of a
+  `user_id` erasure's steps and census (their `Shown.hidden` always carries the form),
+  so `audit.list`, the insights, usage and cost reads, the SQL surface and a person's
+  export name no mirror. `row_reach` refuses the form before its auth-off return, so no
+  id-addressed check or `audit.list` of a named namespace opens one.
 
 A mirrored source's documents are never kept past it: `remove` retires every one it owns
 (`delete_documents` is implied), and so do a disconnect, a SCIM deactivation, the owner
@@ -416,8 +426,8 @@ overrides give each mirror its namespace's `retention_days` and `warm_days`.
 A namespace source and a mirrored source that reach the same file own two documents, one
 in the namespace and one in its mirror. The namespace copy is readable by every reader,
 because an admin registered a source that makes it so; search answers the address once,
-dropping the duplicate after the check, so a reader the mirror copy does not admit keeps
-the namespace copy.
+dropping duplicates after the check, so a reader a mirror copy does not admit keeps the
+namespace copy.
 
 ### The permission list
 
@@ -466,28 +476,31 @@ The reader's verified emails are its subject's directory emails that
 is not one, and neither is a connection's store email. The predicate's first arm admits
 any password-less row's `contact_email`; the implementing pull request confirms that
 only an SSO sign-in or a link writes such a row's `contact_email`, or narrows the
-predicate for this check. A domain matches only through them. A delegated token (an
-agent's, the assistant's: one carrying `AuthInfo.creator`) reads with its creator's
-emails. Every other token, a service account that inherits its creator's grants, a bot
-and an end-user token included, has none, so it sees only `anyone` documents.
+predicate for this check. A domain matches only through an SSO account's email, never a
+linked one's. A delegated token (an agent's, the assistant's: one carrying
+`AuthInfo.creator`) reads with its creator's emails. Every other token, a service
+account that inherits its creator's grants, a bot and an end-user token included, has
+none, so it sees only `anyone` documents.
 
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
-a link-only permission and a permission type the sync does not know admit nobody. A leg
-that cannot read the lists, the members rows, the listing row or the owning source's
-registry row shows no mirrored document and marks the answer `degraded: mirror_unread`.
-Each leg reads the registry row and the listing row first and then the members rows and
-the lists, under `sequential_reads()`, so a lagging replica cannot pair a fresh listing
-row with an older list. It computes the addresses the reader may see before its `LIMIT`,
-so a page is never cut short by the check, and caches no admitted set. No score depends
-on a document the reader may not see: a mirror's chunks add nothing to any corpus
-statistic (the lexical leg's document counts, lengths and term frequencies), and a
-mirror leg scores its lexical hits with fixed corpus constants, which depend on no
-document, so a namespace fed only by mirrored sources still ranks by both legs. Under
-the Postgres authority each leg judges the addresses it is about to answer by their
-heads, so a narrowing or a retirement committed and not yet published already applies,
-and a missing head drops the address; a leg that cannot read the heads shows no mirrored
-document. The implementing pull request measures the leg on a mirror of a million
-documents under both storage authorities and puts the figures here.
+a link-only permission and a permission type the sync does not know admit nobody. A
+missing registry or listing row admits nobody. A leg that cannot read the mirror's
+tables shows no mirrored document and marks the answer `degraded: mirror_unread`, from
+reads it runs for every request on the mirror whether or not anything matched, so the
+marker says nothing about what matched. Each leg reads the registry row and the listing
+row first and then the members rows and the lists, under `sequential_reads()`, so a
+lagging replica cannot pair a fresh listing row with an older list. It computes the
+addresses the reader may see before its `LIMIT`, so a page is never cut short by the
+check, and caches no admitted set. No score depends on a document the reader may not
+see: a mirror's chunks add nothing to any corpus statistic (the lexical leg's document
+counts, lengths and term frequencies), and a mirror leg scores its lexical hits with
+fixed corpus constants, which depend on no document, so a namespace fed only by mirrored
+sources still ranks by both legs. Under the Postgres authority each leg judges the
+addresses it is about to answer by their heads, so a narrowing or a retirement committed
+and not yet published already applies, and a missing head drops the address; a leg that
+cannot read the heads shows no mirrored document. The implementing pull request measures
+the leg on a mirror of a million documents under both storage authorities and puts the
+figures here.
 
 ### Every turn reads the lists again
 
@@ -507,14 +520,15 @@ so a fetch the pass bound deferred never writes an older list; a listing row lan
 once every document written during that listing carries a list it read.
 
 A pass runs the listings first, rotating across the mirrored sources, and gives them at
-most a third of the pass deadline (`knowledge_source_sync_max_pass_seconds`); a listing
-that does not finish goes on from its cursor in the next pass, and until it completes
-the source's listing row keeps its older start, so a large source needs a stale bound
-longer than the time to list it all. `inspect` and `loom doctor` report each source's
-oldest listing start, a mirrored source's to its connected owner and a platform admin
-only. A stopped sync hides every mirrored document once the stale bound passes. The
-implementing pull request measures the writes of a crawl over 2000 people and puts the
-figures here.
+most a third of the pass deadline (`knowledge_source_sync_max_pass_seconds`), while the
+namespace sources' content starts at a fixed point of the pass whatever the listings
+used, so their progress says nothing about a mirror's size; a listing that does not
+finish goes on from its cursor in the next pass, and until it completes the source's
+listing row keeps its older start, so a large source needs a stale bound longer than the
+time to list it all. `inspect` and `loom doctor` report each source's oldest listing
+start, a mirrored source's to its connected owner and a platform admin only. A stopped
+sync hides every mirrored document once the stale bound passes. The implementing pull
+request measures the writes of a crawl over 2000 people and puts the figures here.
 
 How lists from several accounts of one source, a person a crawl stops reading, a stopped
 source's rows, and restores of either store are handled is the implementing pull
@@ -845,6 +859,14 @@ Each implementing pull request lists its own; these pin the model:
     `erasure.list` and `erasure.status` treating an `acl-`-scoped saga as not found for
     an org admin; `add` of a removed mirrored source's name answering as for a fresh
     name.
+  - The same `degraded` marker for a query that matches a hidden document and one that
+    matches nothing while a mirror read fails; a marked request's trace and exposure
+    rows unchanged by a hidden mirrored hit; no row carrying a reader's `user_id` under
+    an `acl-` name after an admitted reader's `get`, `search` and `ask`; a capture hook
+    recording no turn whose answer carries `mirrored: true`; after a person's erasure,
+    no source's next turn writing a list or members row that names them; a namespace
+    source's per-pass progress unchanged by a mirror's size; an erased namespace's name
+    registered again with a new mirror.
   - `row_reach`, `row_in_scope` and `namespace_for_id` opening nothing of a mirror with
     auth off; a mirrored source's document counts shown to nobody.
   - A turn that finds a narrowed list rewriting the row without rebuilding a chunk, and
