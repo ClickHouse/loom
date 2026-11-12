@@ -246,8 +246,11 @@ of them is refused (`CREDENTIAL_REFUSED`). It cannot prove the delegation grants
 else (a mail scope, say), and the page says so to the admin who registers it. The audit
 rows of `add`, `update` and `rotate` record the configured subjects as keyed hashes (an
 HMAC under the root secret, as SCIM's audit rows hash a subject, so a list of the org's
-addresses does not reverse them), the scopes granted and the number of members resolved:
-the audit trail outlives erasure and keeps no crawled person's address.
+addresses does not reverse them). `excluded` and the readers and listing `account` keys
+are unkeyed UUIDv5s instead, for the reason SCIM's ids are: they must still match after
+the root secret is rotated, which an HMAC would not; the audit hash never has to match
+anything later. Audit rows also record the scopes granted and the number of members
+resolved: the audit trail outlives erasure and keeps no crawled person's address.
 
 ## Access follows the source
 
@@ -378,12 +381,16 @@ row. The sync writes `deleted` its readers, listing and group-members rows and t
 drops its holds, retiring the documents no other source holds. So no row of a source
 that no longer lists can admit anyone, and none names an account in any form other than
 its pseudonym, even for a source that never reached a file. A document's rows are
-written `deleted` when the document is retired. A pass finds such sources in
-`loom.knowledge_sources` itself: inactive rows whose sync state has no `cleaned_at`, at
-most 100 a pass, oldest first. It cleans each one's holds wherever they live (the
-namespace or its mirror) and its rows, then records `cleaned_at` in the source's sync
-state, which an N-1 turn merges into and keeps. A source whose registry row a purge
-deleted went with its namespace's erasure, mirror included.
+written `deleted` when the document is retired. Every stop N makes writes, under the
+source lease, a row of `loom.knowledge_source_cleanups` (the source's id, namespace and
+mirror), so a source added later under the same name, which replaces the stopped row in
+the registry, cannot hide it. A pass cleans at most 100 open cleanup rows, oldest first:
+the source's holds wherever they live (the namespace or its mirror) and its rows, then
+marks the cleanup done. It also reads `loom.knowledge_sources` for inactive rows N-1
+stopped, which wrote no cleanup row, and opens one for each. An N-1 `add` that reuses
+the name of a source N-1 removed before any N pass saw it leaves that source's rows
+until the namespace's erasure; they admit nobody once stale. A source whose registry row
+a purge deleted went with its namespace's erasure, mirror included.
 
 A person a crawl no longer reads (gone from a group it expands, taken out of `subjects`,
 or excluded) is treated the same way, on positive evidence only, as today's sync retires
@@ -452,9 +459,12 @@ own: a `loom.code_index_state` row under org and namespace `-` and the key
 (`knowledge_source_sync_max_pass_seconds`) and sit outside the pass's document bound,
 which counts fetches and writes of content. Content keeps today's start bound of three
 quarters of the deadline from the pass start, so when listings use their third, content
-has five twelfths instead of three quarters; decision mining keeps its tail and its read
-share (`_FULL_READ_SHARE`) unchanged. That slower drain of a content backlog is the
-accepted cost of keeping every mirrored source's permissions fresh. Content is still
+has five twelfths instead of three quarters; decision mining keeps its tail. Its give-up
+rule (`_FULL_READ_SHARE`, a document given up at once when it ran out of time with three
+quarters of the read time) assumed the sync before it rarely takes a quarter; with
+listings first it would never fire, so the implementing pull request measures that share
+against the read time left after the listings. That slower drain of a content backlog is
+the accepted cost of keeping every mirrored source's permissions fresh. Content is still
 fetched only for a file whose revision changed: a listing records each file's revision
 against the stored copy's, and the files it finds changed wait in the source's sync
 state for the content phase of this or a later pass. Groups are expanded on every turn,
@@ -590,6 +600,7 @@ ClickHouse, additive migrations:
 | `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `deleted`, `version`; `namespace` is the mirror; `account` is the UUIDv5 pseudonym of `<kind>:<account id>` or of the lower-cased email                                                                     |
 | `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `started_at`, `deleted`, `version`; `account` is the pseudonym, or `shared:<source id>`; the start of the account's last complete listing; `namespace` is the mirror                                        |
 | `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`               | `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                                       |
+| `loom.knowledge_source_cleanups`   | `(org, namespace, source_id)`                      | `mirror`, `done`, `version`; a stopped source whose holds and rows wait to be cleaned                                                                                                                       |
 | `loom.connected_accounts`          | `(org, subject, kind)`                             | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                           |
 
 A source N-1 can operate on (`shared`, `access: namespace`, with items today's config
@@ -622,13 +633,14 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   holds a connected source's owner, a crawl's subjects and a filter's `owner` email, so
   `knowledge_sources.retire` clears a retired row's credentials, owner, options and
   items, and a purging erasure deletes its rows.
-- `loom.knowledge_source_holds` and the four access tables are keyed by namespace and
-  erased with it. `loom.knowledge_document_access` and `loom.knowledge_group_members`
-  hold people's emails copied from the store's permission lists and directory, people
-  who are not Loom users among them; their rows are written `deleted` with their
-  document or when their source stops or no longer reads that person, and otherwise
-  mirror the store's current lists, so an erasure by `user_id` does not select them; the
-  crawl rows that name an erased person go as the next bullet says.
+- `loom.knowledge_source_holds`, `loom.knowledge_source_cleanups` and the four access
+  tables are keyed by namespace and erased with it. `loom.knowledge_document_access` and
+  `loom.knowledge_group_members` hold people's emails copied from the store's permission
+  lists and directory, people who are not Loom users among them; their rows are written
+  `deleted` with their document or when their source stops or no longer reads that
+  person, and otherwise mirror the store's current lists, so an erasure by `user_id`
+  does not select them; the crawl rows that name an erased person go as the next bullet
+  says.
 - A user erasure (`user_id`) reaches the connections of every subject that spelling maps
   to (`server/auth/aliases.py` `spellings`, `user:<id>` included). Its step reads those
   connections first, then deletes outright (a `DELETE`, every version, as the user steps
@@ -779,19 +791,20 @@ The redirect URI to register with each store is
   refusal; the erasure's retire step running again on resume and its census reopening
   the steps for a source added mid-saga; the deleted readers rows landing before a
   listing row's new start, with the sync killed between them; a stopped crawl, with or
-  without holds, leaving no listing or group-members row; a person dropped from a
-  crawl's expansion leaving no readers or listing row; a directory read that fails
-  mid-group, or returns over the cap, dropping nobody; a user erasure leaving no row, of
-  any version, keyed by the person's pseudonyms; `erasure.request` refusing an `acl-`
-  scope for an org admin and a namespace admin and admitting a platform admin; a user
-  erasure leaving no address of the person in `loom.knowledge_sources`, nor a crawl
-  readers or listing row naming them; `erasure.request` and `erasure.export` refusing an
-  `acl-` scope with auth off; the mirror cache after an erasure followed by a new
-  mirrored `add`; a connected `notion` page shown to its owner only; a consent callback
-  without the starting browser's cookie, or in another subject's session, storing
-  nothing; an admin's `update` adding items to someone else's connected source refused;
-  scope refusals on the connect callback and a crawl's probe; today's `check`, `rotate`,
-  `remove` and turn over a row N wrote with `kind` empty.
+  without holds, leaving no listing or group-members row, also when its name is added
+  again before the cleanup pass; a person dropped from a crawl's expansion leaving no
+  readers or listing row; a directory read that fails mid-group, or returns over the
+  cap, dropping nobody; a user erasure leaving no row, of any version, keyed by the
+  person's pseudonyms; `erasure.request` refusing an `acl-` scope for an org admin and a
+  namespace admin and admitting a platform admin; a user erasure leaving no address of
+  the person in `loom.knowledge_sources`, nor a crawl readers or listing row naming
+  them; `erasure.request` and `erasure.export` refusing an `acl-` scope with auth off;
+  the mirror cache after an erasure followed by a new mirrored `add`; a connected
+  `notion` page shown to its owner only; a consent callback without the starting
+  browser's cookie, or in another subject's session, storing nothing; an admin's
+  `update` adding items to someone else's connected source refused; scope refusals on
+  the connect callback and a crawl's probe; today's `check`, `rotate`, `remove` and turn
+  over a row N wrote with `kind` empty.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`, seeds mirrored documents with canary text and reads
   every knowledge read op, `knowledge.reads`, `knowledge.query` and
