@@ -48,3 +48,19 @@ def test_an_anonymous_agent_name_passed_on_purpose_still_warns(
         body = _sent_body(Agent("dev", "local", "*", base_url="http://x", coalesce_sets=False))
     assert body["org"] == "dev" and str(body["agent"]).startswith("sdk-python:")
     assert "anonymous" in caplog.text
+
+
+def test_an_upload_or_download_needs_the_identity_named() -> None:
+    """They run outside the op routes, where no server fills an identity in."""
+
+    async def go() -> None:
+        agent = Agent(base_url="http://x")
+        try:
+            with pytest.raises(ValueError, match="org and namespace"):
+                await agent.knowledge.upload(b"x", "a.txt")
+            with pytest.raises(ValueError, match="org and namespace"):
+                await agent.knowledge.download("doc://a")
+        finally:
+            await agent.close()
+
+    asyncio.run(go())

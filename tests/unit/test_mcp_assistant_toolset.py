@@ -26,7 +26,7 @@ from server.operations.toolsets import (
     is_toolset,
 )
 from server.settings import settings
-from server.transport import gates, mcp_call, mcp_op, mcp_primer
+from server.transport import mcp_call, mcp_op, mcp_primer
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
@@ -601,7 +601,7 @@ def test_every_roster_read_of_one_writer_is_named() -> None:
     for name in MCP_ASSISTANT_OPS:
         field = OPERATIONS_BY_NAME[name].input_model.model_fields.get("agent")
         exact = field is not None and field.is_required()
-        exempt = name in gates.CROSS_AGENT_READS | gates.FALLBACK_READS
+        exempt = name in mcp_call._MCP_CROSS_AGENT_READS or name == "memory.get"
         assert (exact and not exempt) == (name in ASSISTANT_NAMED_AGENT_OPS), name
 
 

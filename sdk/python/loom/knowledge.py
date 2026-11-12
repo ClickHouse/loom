@@ -60,6 +60,16 @@ class KnowledgeClient:
     def _scope(self) -> dict[str, Any]:
         return {"org": self._agent.org, "namespace": self._agent.namespace}
 
+    def _file_scope(self) -> dict[str, Any]:
+        """The scope of an upload or a download, which run outside the op routes
+        and so get no identity filled in by the server: both must be named."""
+        if not self._agent.org or not self._agent.namespace:
+            raise ValueError(
+                "knowledge.upload and knowledge.download need the Agent's org and "
+                "namespace: build it with Agent(org=..., namespace=..., agent=...)"
+            )
+        return self._scope()
+
     async def add(
         self,
         content: str,
@@ -240,7 +250,7 @@ class KnowledgeClient:
         `{"upload_id", "namespace", "sha256", "size", "filename", "format",
         "expires_at"}`."""
         params = {
-            **self._scope(),
+            **self._file_scope(),
             "filename": filename,
             "content_type": content_type,
             "sha256": hashlib.sha256(data).hexdigest(),
@@ -337,7 +347,7 @@ class KnowledgeClient:
         """The document as uploaded, or its stored text as Markdown when no
         original file was kept."""
         resp = await self._agent.transport.request(
-            "GET", "/v1/knowledge.download", params={**self._scope(), "source_uri": source_uri}
+            "GET", "/v1/knowledge.download", params={**self._file_scope(), "source_uri": source_uri}
         )
         return resp.content
 

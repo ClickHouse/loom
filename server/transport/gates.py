@@ -165,71 +165,58 @@ def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None
     return {**args, **update} if update else args
 
 
-# Reads that name a key or a query, not a writer: with no agent named they read
-# every agent's rows ("*"), on MCP and on a single-user HTTP call alike. Another
-# client's key would otherwise answer empty under the caller's own agent.
-CROSS_AGENT_READS: Final = frozenset(
-    {"memory.search", "memory.list", "memory.search_trace", "memory.history", "memory.related"}
-)
-
-# Reads that name a key and try it under the call's own agent, then under any
-# agent: an agent of their own narrows nothing.
-FALLBACK_READS: Final = frozenset({"memory.get"})
-
-# The writer an HTTP call with no token and no agent is recorded as.
-SINGLE_USER_HTTP_AGENT: Final = "http"
-
-# Writes that act on a whole namespace and name no row of it: one left out stays a
-# missing namespace, never the install's. Loom deletes only what was asked for.
-NAMESPACE_WIDE_WRITES: Final = frozenset(
-    {"memory.consolidate", "memory.dedup_collapse", "memory.resolve_orphan_duplicates"}
-)
+# The ops a single-user HTTP call with no token may send without its identity, and
+# the agent each runs as when it names none: "http" for a write (the writer it is
+# recorded as) and for a key read or delete that falls back to any agent's row;
+# "*" for the reads MCP also reads across agents; "" where the agent is optional,
+# so leaving it out still reads every agent. Every other op names its identity:
+# for many of them the namespace or agent is what they act on, and filling it
+# would act on something the call did not name.
+SINGLE_USER_DEFAULT_AGENT: Final[dict[str, str]] = {
+    "memory.set": "http",
+    "memory.bulk_set": "http",
+    "memory.get": "http",
+    "memory.delete": "http",
+    "memory.list": "*",
+    "memory.history": "*",
+    "memory.related": "*",
+    "memory.search": "",
+    "memory.search_trace": "",
+    "memory.ask": "",
+    "memory.update": "",
+    "search.query": "",
+    "knowledge.search": "",
+}
 
 
 def with_single_user_identity(
     op: Operation, args: dict[str, Any], auth: AuthInfo | None
 ) -> dict[str, Any]:
-    """The arguments with the single-user install's identity where a call left a
-    required field out, as MCP fills it: the org MCP and the dashboard use
-    (`caller_org`) and the install's one namespace (`LOOM_DEFAULT_NAMESPACE`, which
-    `default_namespace` answers for a caller with no token). A write, and a read that
-    falls back to any agent (FALLBACK_READS), is made as agent `http`; a cross-agent
-    read reads every agent. Only a call with no token on
-    a single-user server is filled, the one caller such a server has; any token, and
-    every other identity mode, names its own.
-
-    Left as sent, so that what was missing stays a 422: an optional namespace or
-    agent (left out, it reads every one), the agent of any other read, code and
-    tracker ops (their plane defaults), and every op whose namespace is the thing
-    it acts on: the admin ops, `namespace.*` and NAMESPACE_WIDE_WRITES. A copy,
-    like `with_resolved_org`."""
+    """The arguments of a SINGLE_USER_DEFAULT_AGENT op with the install's identity
+    where the call left it out: the org MCP and the dashboard use (`caller_org`),
+    the install's one namespace (`LOOM_DEFAULT_NAMESPACE`, which `default_namespace`
+    answers for a caller with no token) and the op's default agent. Only a call with
+    no token on a single-user server is filled, the one caller such a server has;
+    any token, and every other identity mode, names its own. A copy, like
+    `with_resolved_org`."""
     from server.identity.app.caller_home import caller_org
-    from server.operations.base import Role
     from server.settings import settings
 
     if auth is not None or settings.effective_identity_provider() != "single-user":
         return args
-    if (
-        op.required_role >= Role.ADMIN
-        or op.name.startswith(("code.", "tracker.", "namespace."))
-        or op.name in NAMESPACE_WIDE_WRITES
-    ):
+    if op.name not in SINGLE_USER_DEFAULT_AGENT:
         return args
-    agent = ""
-    if op.name in CROSS_AGENT_READS:
-        agent = "*"
-    elif op.required_role >= Role.WRITER or op.name in FALLBACK_READS:
-        agent = SINGLE_USER_HTTP_AGENT
-    fill = {"org": caller_org(None) or "", "namespace": settings.default_namespace, "agent": agent}
+    fill = {
+        "org": caller_org(None) or "",
+        "namespace": settings.default_namespace,
+        "agent": SINGLE_USER_DEFAULT_AGENT[op.name],
+    }
     fields = op.input_model.model_fields
-    update: dict[str, str] = {}
-    for name, value in fill.items():
-        field = fields.get(name)
-        if field is None or not value or present(args.get(name)) is not None:
-            continue
-        # An org is filled where the op takes one; an absent org is never "every org".
-        if name == "org" or field.is_required():
-            update[name] = value
+    update = {
+        name: value
+        for name, value in fill.items()
+        if value and name in fields and present(args.get(name)) is None
+    }
     return {**args, **update} if update else args
 
 
