@@ -406,13 +406,13 @@ main() {
   case "$own_ports " in
     *" $port "*) ;;
     *)
-      # Curl's exit says what listens: 7 is a refused connection, so the port is
-      # free; 0 (an answer), 1 and 8 (a reply that is not HTTP), 18 (a body cut
-      # short), 52 (an empty reply), 55 and 56 (a reset while sending or
-      # receiving) come only from a listener, and so does any exit after a
-      # connect time above zero. A timeout with none is either a listener that
-      # never answers (curl 7.29 prints a fast connect as 0.000) or an address
-      # that does not reach this host.
+      # Curl's exit says what listens: 7 is a connection that could not be made
+      # (refused, or no route to the address), taken as free; 0 (an answer), 1
+      # and 8 (a reply that is not HTTP), 18 (a body cut short), 52 (an empty
+      # reply), 55 and 56 (a reset while sending or receiving) come only from a
+      # listener, and so does any exit after a connect time above zero. A
+      # timeout with none is either a listener that never answers (curl 7.29
+      # prints a fast connect as 0.000) or an address whose connect times out.
       probe=0
       connected=$(LC_ALL=C curl -s --noproxy '*' -o /dev/null -w '%{time_connect}' \
         --connect-timeout 3 --max-time 5 "http://$host:$port/" 2>/dev/null) || probe=$?
