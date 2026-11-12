@@ -54,15 +54,16 @@ layer already is the namespace's admin-approved copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records its source
 (`promoted_from`) and, on the review path, the candidate it came from
-(`promoted_from_candidate_id`, which a direct `memory.promote` leaves to its caller),
-`memory.lineage` walks it back, and every build knows it. So governance needs no table or
-state of its own. An edit, a relabel to `high` or a tombstone of the source, by any writer
-or worker on any build, ends governance while the source differs from what the admin
-approved; a copy that keeps the text (the entity pass, a touch) keeps it, and a source
-that returns to the approved state (a restore, an edit reverted byte for byte) is governed
-again with no new promotion. A relabel back from `high` does not bring back the shared
-embedding it retired: the term leg serves the definition again, and an admin promotes it
-again to restore the copy's search row. `memory.demote` ends governance. Only
+(`promoted_from_candidate_id`; for a definition a direct `memory.promote` ignores the
+field and names it in `ignored_args`, as it does `approver`, so only a review records a
+candidate), `memory.lineage` walks it back, and every build knows it. So governance needs
+no table or state of its own. An edit, a relabel to `high` or a tombstone of the source,
+by any writer or worker on any build, ends governance while the source differs from what
+the admin approved; a copy that keeps the text (the entity pass, a touch) keeps it, and a
+source that returns to the approved state (a restore, an edit reverted byte for byte) is
+governed again with no new promotion. A relabel back from `high` does not bring back the
+shared embedding it retired: the term leg serves the definition again, and an admin
+promotes it again to restore the copy's search row. `memory.demote` ends governance. Only
 `memory.promote` promotes into `loom.shared` (the op and `learnings.review`'s path through
 it; demote, erasure, a redact and a relabel to `high` only retire or scrub there, as the
 changes below say); no worker promotes on its own. An admin read,
@@ -126,12 +127,13 @@ reader:
 The changes break existing callers of two ops. `memory.promote` refuses a `definition`
 promotion without the approved hash, from a row that is not namespace-wide, or under a key
 that is not its term's slug, and one whose term or alias another live shared definition
-already holds, where today only an embedding-close shared row refuses it.
-`learnings.review` refuses a `definition` candidate that is not a `knowledge_gap` or
-`query_history` draft (a `memory_supporters` one is promoted today) with
-`VALIDATION_FAILED`. On both, `approver` no longer names a definition's promoter, reviewer
-or audit subject (the response names it in `ignored_args`). The SDKs and the MCP schema
-carry the hash field, and the implementing pull request names each break.
+already holds, where today only an embedding-close shared row refuses it. `memory.promote`
+also ignores a definition's `promoted_from_candidate_id`. `learnings.review` refuses a
+`definition` candidate that is not a `knowledge_gap` or `query_history` draft (a
+`memory_supporters` one is promoted today) with `VALIDATION_FAILED`. On both, `approver`
+no longer names a definition's promoter, reviewer or audit subject (the response names it
+in `ignored_args`). The SDKs and the MCP schema carry the hash field, and the implementing
+pull request names each break.
 
 Should two shared rows match one name despite that refusal (two promotions racing, or one
 promoted through a build without the check), the term leg serves, among the rows the
@@ -177,25 +179,30 @@ path) is reused only while the namespace's write mark has not moved, and that ma
 not cover `loom.shared` today, so every write of a definition's shared row (promote,
 demote, a scrub, an embedding retired) moves the namespace's memory write mark, and no
 answer from before a promotion or demotion on N is reused after it (rolling upgrades below
-covers N-1's). It reads the addressed namespace's live `loom.shared` rows of type
-`definition` under a `definition/` key (only that namespace, whatever `namespace_scope`
-fans out over), matches the query against each one's term and aliases, and places the
-matched rows at the top of the served list with `governed = true` on the hit (its
-`similarity` and `distance` its shared embedding's to the query, null when it has none,
-and a `rank_score` above the pool's; the response's `abstain`, `below_threshold`,
-`retrieval_confidence` and `retrieval_risk` read the first hit that is not governed, and a
-response that serves a governed hit does not abstain), removing any other hit under the
-same key in the addressed namespace, so an edited private copy is not served beside the
-governed text. A term or alias matches where it appears in the query with no character
-next to it that continues its edge: next to a Latin letter (accented ones included),
-digit, `_`, `+` or `#`, another of those; next to a letter of another script written with
-spaces (Cyrillic, Greek), a letter or digit that is not Latin; next to Hangul, whose
-particles attach to the word before them, or a script written without spaces (Han, Kana,
-Thai, Lao, Khmer, Myanmar) or punctuation, nothing. So `рост` does not match inside
-"простой" and `café` not inside "cafés", while `MRR` matches in "什么是MRR", `ARR` in "ARR은"
-and `매출` in "매출은 얼마야". One written all in capitals, or with a capital after its first
-letter, matches only as written, so `IT` does not match "what is it" and `GitHub` stays
-exact; any other matches case-folded, so `Churn rate` matches "what is our churn rate".
+covers N-1's). A lapse with no write, a source passing its `expires_at` or `valid_to`,
+does not move the mark, and the precedent path's evidence check reads only tombstones and
+redactions, so an answer that quoted such a definition is reused for up to
+`memory_ask_precedents_fast_max_age_hours`, as for any row that expires today. It reads
+the addressed namespace's live `loom.shared` rows of type `definition` under a
+`definition/` key (only that namespace, whatever `namespace_scope` fans out over), matches
+the query against each one's term and aliases, and places the matched rows at the top of
+the served list with `governed = true` on the hit (its `similarity` and `distance` its
+shared embedding's to the query, null when it has none, and a `rank_score` above the
+pool's; the response's `abstain`, `abstain_code`, `retrieval_confidence` and
+`retrieval_risk` read the first hit that is not governed, a governed hit's own
+`below_threshold` flag is never set, and a response that serves a governed hit does not
+abstain), removing any other hit under the same key in the addressed namespace, so an
+edited private copy is not served beside the governed text. A term or alias matches where
+it appears in the query with no character next to it that continues its edge: next to a
+Latin letter (accented ones included), digit, `_`, `+` or `#`, another of those; next to a
+letter of another script written with spaces (Cyrillic, Greek), a letter or digit that is
+not Latin; next to Hangul, whose particles attach to the word before them, or a script
+written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or punctuation, nothing. So
+`рост` does not match inside "простой" and `café` not inside "cafés", while `MRR` matches
+in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". One written all in capitals, or with a
+capital after its first letter, matches only as written, so `IT` does not match "what is
+it" and `GitHub` stays exact; any other matches case-folded, so `Churn rate` matches "what
+is our churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -281,7 +288,7 @@ behalf:
   session, run, agent, type, filtering tag or category, scope, time, body length,
   `exclude_keys` or `min_similarity` away from its default; a soft tag or category and
   `entity_filter` only boost rows);
-- `knowledge.search` with no hit as close as the noise filter's threshold (`_close` in
+- `knowledge.search` with no hit as close as the close-hit threshold (`_close` in
   `server/knowledge/app/knowledge_search.py`), no exact-key hit and, in `lexical` mode, no
   hit at all, when no field removed candidates (for example `tags`, `uri_prefix`,
   `since_seconds`, `session_ids`, `source_classes`, `formats` or `block_types` away from
@@ -580,31 +587,32 @@ saga does not know `loom.search_misses`, `loom.knowledge_gaps` or the query-hist
 registration, so none of them may hold rows while an N-1 replica serves. Every op the
 design adds (`knowledge.gaps.*`, `memory.definitions.list`, `knowledge.query_history.*`)
 and a `learnings.review` promotion of a `knowledge_gap` or `query_history` candidate
-answer 503 while any live replica's schema is below N, as `namespace.guide_set` does (rule
-24); the gaps pass and the query-history turn write nothing then, and no miss is recorded.
-The operator turns `knowledge_gaps_enabled` on only once no N-1 replica serves, as rule 23
-does for assistant-turn learnings. Governed definitions are memory and shared rows, which
-N-1 knows: it serves them as plain rows with no term leg. What N-1 does to them is caught
-by the read-time check: a promotion from another source, or an edit, relabel or tombstone
-of the source, leaves a row the term leg does not serve, and the term leg's last-promoted
-rule covers a promotion that skipped the term check. A promotion on N-1 also skips the
-approved-hash check and takes `promoted_by` from the body, which no read-time check can
-tell, and an N-1 `memory.set` ignores `if_absent`, a field it does not know, and writes
-over a live row; the review path that sends it answers 503 while N-1 serves, and a direct
-caller relies on it only once no N-1 replica serves. Once none does, an admin promotes
-again every definition promoted before then, through N-1 or before this design
-(`loom.shared` rows of type `definition` by promotion time), since none of those carried
-the hash check or a token-stamped `promoted_by`; that promotion on N also moves the write
-mark, which N-1's promotions and demotions never move, so a stored `memory.ask` answer
-from the rollout is not reused past it (until then such an answer lives at most
-`memory_ask_precedents_fast_max_age_hours`, with no bound when it is 0). N-1, which does
-not know `definition` as key-identified, can merge, supersede or retire one definition's
-source while writing another; the rows it retired are listed by `memory.auto_retirements`
-(reasons `conflict_resolver`, `newest_wins_contradiction`, `value_update` and
-`same_key_newest_wins`), restored with its Undo (or `memory.restore` past its 30-day
-window), and promoted again; a source it marked `conflicted` is cleared with
-`conflicts.resolve`, one it marked `duplicate` with `memory.dedup_resolve`, and promoted
-again; a write it merged was never stored and is written again; a source an N-1
+answer 503 while any live replica's schema is below N, as `namespace.guide_set` does (the
+namespace-guide rule of [rolling upgrades](rolling-upgrades.md)); the gaps pass and the
+query-history turn write nothing then, and no miss is recorded. The operator turns
+`knowledge_gaps_enabled` on only once no N-1 replica serves, as the assistant-turn
+learnings rule does for `memory_extract_agent_learnings`. Governed definitions are memory
+and shared rows, which N-1 knows: it serves them as plain rows with no term leg. What N-1
+does to them is caught by the read-time check: a promotion from another source, or an
+edit, relabel or tombstone of the source, leaves a row the term leg does not serve, and
+the term leg's last-promoted rule covers a promotion that skipped the term check. A
+promotion on N-1 also skips the approved-hash check and takes `promoted_by` from the body,
+which no read-time check can tell, and an N-1 `memory.set` ignores `if_absent`, a field it
+does not know, and writes over a live row; the review path that sends it answers 503 while
+N-1 serves, and a direct caller relies on it only once no N-1 replica serves. Once none
+does, an admin promotes again every definition promoted before then, through N-1 or before
+this design (`loom.shared` rows of type `definition` by promotion time), since none of
+those carried the hash check or a token-stamped `promoted_by`; that promotion on N also
+moves the write mark, which N-1's promotions and demotions never move, so a stored
+`memory.ask` answer from the rollout is not reused past it (until then such an answer
+lives at most `memory_ask_precedents_fast_max_age_hours`, with no bound when it is 0).
+N-1, which does not know `definition` as key-identified, can merge, supersede or retire
+one definition's source while writing another; the rows it retired are listed by
+`memory.auto_retirements` (reasons `conflict_resolver`, `newest_wins_contradiction`,
+`value_update` and `same_key_newest_wins`), restored with its Undo (or `memory.restore`
+past its 30-day window), and promoted again; a source it marked `conflicted` is cleared
+with `conflicts.resolve`, one it marked `duplicate` with `memory.dedup_resolve`, and
+promoted again; a write it merged was never stored and is written again; a source an N-1
 `memory.consolidate` tombstoned is brought back with `memory.restore` within its 14 days
 and promoted again; past them, the definition is written again from its shared copy's text
 and promoted. An N-1 relabel of a definition's source to `high` leaves its shared copy's
@@ -618,10 +626,11 @@ or after a rollback is run again once N serves.
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
 `loom.knowledge_gaps`, every query-history registration, and every `knowledge_gap` and
-`query_history` row of `loom.learnings_queue` whatever its status, as rule 23 does for
-assistant-turn rules; a team re-registers its source once N serves again. The first N-1
-replica to serve closes the gate, so no op or turn of this design writes after it; the
-operator runs the same delete once more then, for what N wrote in between.
+`query_history` row of `loom.learnings_queue` whatever its status, as the assistant-turn
+learnings rule does for assistant-turn rules; a team re-registers its source once N serves
+again. The first N-1 replica to serve closes the gate, so no op or turn of this design
+writes after it; the operator runs the same delete once more then, for what N wrote in
+between.
 
 ## Invariants
 
