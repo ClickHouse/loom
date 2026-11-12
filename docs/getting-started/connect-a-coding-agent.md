@@ -76,7 +76,7 @@ config file, with the token in it. For any other MCP client, copy the entry from
 (`pip install -e .` from a clone of the repository), one command writes the entry instead:
 
 ```bash
-loom install --client cursor --toolset coding --server-url https://loom.example.com --token "$LOOM_API_KEY"
+loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"
 ```
 
 Restart the client afterwards. `--client` also takes `claude-desktop`, `vscode`, `cline`,
