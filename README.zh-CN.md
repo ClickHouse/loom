@@ -63,7 +63,7 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 
 单用户模式请保持仅本机访问；需要共享访问时，按照[团队部署指南](./docs/operations/deployment.md#identity-modes)配置，包括 TLS。
 
-默认安装无需密钥或网络即可启动：存储、控制台、代码结构索引和语义检索都可用，使用镜像自带的小型本地嵌入模型；默认的 `fake-echo-1` LLM 不会生成 AI 回答。在控制台的 **Settings → Models & keys** 中为嵌入模型和 LLM 分别选择提供商与模型、填写密钥，然后点击 **Test & apply**，无需重启 Docker；更换嵌入模型会重建已有索引。一个 OpenAI 密钥可以同时用于两者；在控制台中使用 Claude 作为 LLM 时，还需另选一个嵌入模型提供商。
+默认安装无需密钥或网络即可启动：存储、控制台、代码结构索引和语义检索都可用，使用镜像自带的小型本地嵌入模型；默认的 `fake-echo-1` LLM 不会生成 AI 回答。在控制台的 **Settings → Models & keys** 中为嵌入模型和 LLM 分别选择提供商与模型、填写密钥，然后点击 **Test & apply**，无需重启 Docker；更换嵌入模型会重建已有索引。一个 OpenAI 密钥可以同时用于两者；在控制台中使用 Claude 作为 LLM 时，还需另选一个嵌入模型提供商。编程智能体的登录或订阅不会为 Loom 提供模型密钥。
 
 控制台的嵌入模型选项均为托管服务；如需保留 `local` 并添加 LLM，请改为在 `~/.loom/.env` 中只设置 LLM 相关的几行，然后重建容器（[Models and keys](./docs/getting-started/models-and-keys.md#claude-for-the-llm)）：
 
@@ -71,7 +71,7 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
 ```
 
-只填写密钥不会切换已固定的模型（本地嵌入模型和 fake LLM），还需设置提供商与模型；控制台中保存的设置优先于 `.env`。编程智能体的登录或订阅不会为 Loom 提供模型密钥。
+只填写密钥不会切换已固定的模型（本地嵌入模型和 fake LLM），还需设置提供商与模型；控制台中保存的设置优先于 `.env`。
 
 在运行个人安装的机器上，插件无需 token：
 
