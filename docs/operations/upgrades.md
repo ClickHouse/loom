@@ -217,53 +217,63 @@ checkout.
 14. Moving to a build whose namespace erasure reaches `loom.shared`, a roll forward after a
     rollback included: once the newer build serves alone, clear the promoted rows an older
     build's namespace erasure left ([rolling upgrades](../architecture/rolling-upgrades.md),
-    rule 45). The rows promoted before a namespace erasure requested within the ledger's 90
-    days, live ones and, for a purge, demoted ones too, once each:
+    rule 45). The erasure ledger lists erasures requested within its 90 days; only a
+    `namespace_list` purges, and an older build's `namespace` row may hold the flag it was
+    asked for.
+
+    The live rows an erasure that did not purge left, to demote with `memory.demote`:
 
     ```sql
-    SELECT s.org, s.namespace, s.memory_key, groupArray(e.id) AS erasures,
-           max(e.purged)::UInt8 AS purged, (any(s.tombstoned_at) IS NULL)::UInt8 AS live,
-           max(e.completed_at) AS erased_at
+    SELECT DISTINCT s.org, s.namespace, s.memory_key
     FROM (
-        SELECT org, namespace, memory_key, promoted_at, tombstoned_at
-        FROM loom.shared FINAL
+        SELECT org, namespace, memory_key, promoted_at
+        FROM loom.shared FINAL WHERE tombstoned_at IS NULL
     ) AS s
     INNER JOIN (
-        SELECT id, org, completed_at,
-               -- Only a namespace list purges; an older build's row may hold the flag asked for.
-               scope_type = 'namespace_list' AND purge AS purged,
+        SELECT org, completed_at,
                arrayJoin(if(scope_type = 'namespace', [scope_value],
                             if(JSONType(scope_value) = 'Array',
                                JSONExtract(scope_value, 'Array(String)'),
                                JSONExtract(scope_value, 'namespaces', 'Array(String)')))) AS namespace
         FROM loom.erasure_requests FINAL
         WHERE scope_type IN ('namespace', 'namespace_list') AND status = 'completed'
+          AND NOT (scope_type = 'namespace_list' AND purge)
     ) AS e ON s.org = e.org AND s.namespace = e.namespace
-    WHERE s.promoted_at <= e.completed_at AND (s.tombstoned_at IS NULL OR e.purged)
-    GROUP BY s.org, s.namespace, s.memory_key
+    WHERE s.promoted_at <= e.completed_at
     ```
 
-    For a row whose erasure did not purge (`purged = 0`), demote it when live (`live = 1`)
-    with `memory.demote`, with a token that holds `admin` on the namespace: a grant on it,
-    a platform admin's token for a collection (an org admin's role opens none), or, for a
-    restricted namespace, a token that names it and a direct grant. For a row whose erasure
-    purged (`purged = 1`), delete it instead, live or demoted, since a demotion keeps the
-    text. The older build's purge removed the namespace's other rows, so the listed keys are
-    all there is to delete, and `promoted_at` keeps a row promoted since:
+    Demote each with a token that holds `admin` on the namespace: a grant on it, a platform
+    admin's token for a collection (an org admin's role opens none), or, for a restricted
+    namespace, a token that names it and a direct grant.
+
+    The namespaces a purge erased, with the time it completed:
+
+    ```sql
+    SELECT org, namespace, max(completed_at) AS erased_at
+    FROM (
+        SELECT org, completed_at,
+               arrayJoin(if(JSONType(scope_value) = 'Array',
+                            JSONExtract(scope_value, 'Array(String)'),
+                            JSONExtract(scope_value, 'namespaces', 'Array(String)'))) AS namespace
+        FROM loom.erasure_requests FINAL
+        WHERE scope_type = 'namespace_list' AND purge AND status = 'completed'
+    )
+    GROUP BY org, namespace
+    ```
+
+    A demotion keeps a row's text, so delete these instead, every version promoted before
+    the purge, live or demoted, including one a later promotion of the same key hides from
+    `FINAL`; a row promoted since stays:
 
     ```sql
     ALTER TABLE loom.shared DELETE
-    WHERE org = '<org>' AND namespace = '<namespace>' AND memory_key IN ('<key>', ...)
-      AND promoted_at <= '<erased_at>'
+    WHERE org = '<org>' AND namespace = '<namespace>' AND promoted_at <= '<erased_at>'
     SETTINGS mutations_sync = 2
     ```
 
-    The setting waits for the delete on every replica, so a second run of the listing shows
-    what is left.
-
-    A namespace erasure requested before the ledger's 90 days is not listed, and the
-    promoted rows it left cannot be told apart from a live namespace's; they stay as the
-    older build left them.
+    The setting waits for the delete on every replica. A namespace erasure requested before
+    the ledger's 90 days is not listed, and the promoted rows it left cannot be told apart
+    from a live namespace's; they stay as the older build left them.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in

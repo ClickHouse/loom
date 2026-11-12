@@ -457,8 +457,8 @@ schema. These rules keep that safe. The operator procedure is in
     N-1's user saga and census reach only the user's own, so a user erasure N-1 runs
     leaves the summary's rows and records `completed`. Outside a purge, a saga N-1 left
     in progress that N resumes fails N's census when N-1 ran those rows' steps, and the
-    recovery worker's next resume runs them again; the shared copies, which the census
-    does not count, stay when N-1 passed `memory.retire`. In a purge, N's
+    recovery worker's next resume runs them again; the shared copies, which the
+    user-scope census does not count, stay when N-1 passed `memory.retire`. In a purge, N's
     `memory.retire` runs them again, except for the search rows of shared copies of the
     user's own memories when N-1 ran its `shared.tombstone`, which deleted the rows they
     are found by.
@@ -623,11 +623,11 @@ schema. These rules keep that safe. The operator procedure is in
     namespace's promoted rows live, and so did every one an older build completed. Their
     search rows are gone (`memory_embeddings.tombstone`), but `memory.lineage` and the
     shared reads still return them. Once N serves alone, the [upgrade
-    procedure](../operations/upgrades.md#upgrade-procedure), step 14, lists those of the
-    erasures the ledger still holds (90 days) for `memory.demote`, or, where the erasure
-    purged, for a delete of the listed keys;
-    an older erasure's rows cannot be found and stay. No gate holds the rollout, and the
-    mixed-version gate does not check this rule.
+    procedure](../operations/upgrades.md#upgrade-procedure), step 14, lists what the
+    erasures the ledger still holds (90 days) left: live rows to demote with
+    `memory.demote`, and the namespaces a purge erased, whose rows promoted before it are
+    deleted. An older erasure's rows cannot be found and stay. No gate holds the rollout,
+    and the mixed-version gate does not check this rule.
 
 ## What checks them
 
