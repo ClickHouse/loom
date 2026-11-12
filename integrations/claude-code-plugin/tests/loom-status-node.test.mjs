@@ -160,7 +160,7 @@ test("loom-status Node check warns when only this shell's environment finds Node
     assert.match(f.run("--check").stdout, /Found only/);
     settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin });
     assert.doesNotMatch(f.run("--check").stdout, /Found only/);
-    // A settings PATH that holds only Node's directory, no other tool.
+    // The Dock check itself needs nothing but Node on the settings PATH.
     const onlyNode = path.join(f.dir, "only-node");
     fs.mkdirSync(onlyNode);
     fs.copyFileSync(path.join(f.bin, "node"), path.join(onlyNode, "node"));
