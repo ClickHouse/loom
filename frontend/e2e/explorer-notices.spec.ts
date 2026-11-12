@@ -2,7 +2,15 @@ import { expect, test, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { boxOf, installApi, pickOption, SMALL_HOP1, SMALL_SEED, taxonomyWithCommunities } from "./fixtures";
+import {
+  boxOf,
+  dockAssistant,
+  installApi,
+  pickOption,
+  SMALL_HOP1,
+  SMALL_SEED,
+  taxonomyWithCommunities,
+} from "./fixtures";
 
 // A result that changed nothing still says so where you are looking. An expand's outcome
 // is a toast and a line in the inspector's live region; the Communities / Colour facet
@@ -26,6 +34,30 @@ function collectErrors(page: Page): string[] {
   page.on("pageerror", (e) => errors.push(String(e)));
   return errors;
 }
+
+// Beside the assistant docked at the push minimum (1280 px, the page keeping 592 px) the
+// Explorer's three panes still sit side by side, none under another or the panel.
+test("with the assistant docked, the Explorer's panes fit beside it", async ({ page }) => {
+  await installApi(page);
+  await dockAssistant(page);
+  await page.goto(`/graph?seed=${SMALL_SEED}`);
+  await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1);
+  const panel = page.locator("[data-assistant-panel]");
+  await expect(panel).toHaveAttribute("data-mode", "push");
+  const panes = [
+    page.getByRole("complementary", { name: "Facets" }),
+    page.getByRole("tree", { name: "Walk outline" }),
+    page.getByRole("complementary", { name: "Inspector" }),
+  ];
+  const edge = (await boxOf(panel)).x;
+  for (const pane of panes) {
+    await expect(pane).toBeVisible();
+    const box = await boxOf(pane);
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(edge + 1);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+});
 
 test("an expand's result is a toast and an inspector line — also when it changed nothing", async ({ page }) => {
   const calls = await installApi(page);

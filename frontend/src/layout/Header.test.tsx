@@ -147,6 +147,13 @@ describe("Header", () => {
     expect(search).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByLabelText("Search Loom")).toHaveFocus();
   });
+
+  it("holds no assistant launcher: the edge and the bottom nav carry it", () => {
+    listMine.mockResolvedValue(jwtOnly);
+    render(<Header />);
+    expect(document.querySelector('[data-focus-key="assistant-launcher"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Assistant/ })).toBeNull();
+  });
 });
 
 // A dialog is mounted while it is open — closed, AddMemoryDialog/AddDocumentDialog ran

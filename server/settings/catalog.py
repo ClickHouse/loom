@@ -49,7 +49,8 @@ class AssistantSettings(BaseModel):
     """The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it."""
 
     # LibreChat's internal address (http://librechat:3080), reachable only from Loom. ""
-    # = no assistant: no service setup at boot.
+    # = no assistant: no service setup at boot, and the panel's chat is off; its starters
+    # still read.
     assistant_librechat_url: str = ""
     # Email of the LibreChat service user that owns the agent, read once, when the first
     # boot writes loom.assistant_service; LibreChat sends it no mail.

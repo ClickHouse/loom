@@ -14,7 +14,6 @@ export type View =
   | "sessions"
   | "runs"
   | "graph"
-  | "assistant"
   | "help"
   | "browse"
   | "code"
@@ -39,7 +38,6 @@ export const ALL_VIEWS: View[] = [
   "sessions",
   "runs",
   "graph",
-  "assistant",
   "help",
   "browse",
   "code",
@@ -210,9 +208,7 @@ function pushView(v: View, opts: NavOptions = {}, remember = true): void {
     rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent, owner: s.inspectedOwner }, opts.focusKey);
   // A navigation's entry is made in the current namespace.
   const namespace = s.identity?.namespace ?? null;
-  // `loomFromApp`: Back from this entry stays in the app (the assistant's Collapse).
   const state = {
-    loomFromApp: true,
     ...(opts.back ? { loomBack: opts.back } : {}),
     ...(namespace !== null ? { loomNamespace: namespace } : {}),
   };

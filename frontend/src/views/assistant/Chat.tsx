@@ -4,7 +4,7 @@ import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { CopyButton } from "../../components/CopyButton";
 import { Alert, Chip, Unavailable } from "../../components/ui";
 import { fieldError } from "../../components/ui/fieldError";
-import { useDock } from "../../lib/assistantDock";
+import { chatOff, useDock } from "../../lib/assistantDock";
 import { useStore } from "../../lib/state";
 import { AnswerText } from "./AnswerText";
 import {
@@ -75,16 +75,7 @@ function StepsList({ turn }: { turn: Turn }) {
  * panel, a change of its mode or a navigation never stops an answer; the question being
  * typed is the panel's (lib/assistantDock.ts). `blocked` says why nothing can be asked now.
  */
-export function AssistantChat({
-  namespace,
-  blocked,
-  cardLevel = 3,
-}: {
-  namespace: string;
-  blocked: string | null;
-  /** The level of a card's heading: one under the panel's title. */
-  cardLevel?: 2 | 3;
-}) {
+export function AssistantChat({ namespace, blocked }: { namespace: string; blocked: string | null }) {
   const turns = useChat((s) => s.turns);
   const trimmed = useChat((s) => s.trimmed);
   const answering = useChat((s) => s.answering);
@@ -184,172 +175,194 @@ export function AssistantChat({
           : tooLong);
   const error = fieldError("assistant-question-error", tooLong);
   return (
-    <div className="flex flex-col min-h-0 flex-1">
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-4" data-testid="assistant-transcript">
-        {trimmed && <p className="text-xs text-text-muted">Earlier turns were not kept.</p>}
-        {turns.length > 0 && (
-          <ol className="space-y-4" aria-label="Conversation">
-            {turns.map((t, i) => {
-              // What the turn offers: Copy on a finished answer; Retry and "Ask again with
-              // sources" on the last one, outside an edit.
-              const again = last?.id === t.id && !edited && !waiting;
-              const canCopy = t.state === "done" && !!t.answer.trim();
-              const canRetry = again && retryOffered(t);
-              const canAskWithSources =
-                again &&
-                !t.withSources &&
-                withContext(sentQuestion(t.question, true), t.context).length <= MAX_MESSAGE_CHARS;
-              return (
-                <li key={t.id} className="space-y-2">
-                  <div className="rounded-lg bg-surface-2 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="section-label">You</p>
-                      {last?.id === t.id && edited?.id !== t.id && !draft && editable && (
-                        <Button type="secondary" htmlType="button" aria-label="Edit your question" onClick={edit}>
-                          Edit
-                        </Button>
+    // No min-h-0: the question form keeps its height inside the panel, the starters above
+    // giving way first; the transcript's size containment leaves its turns out of that floor.
+    <div className="flex flex-col flex-1">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 [contain:size]" data-testid="assistant-transcript">
+        <div className="assistant-column space-y-4">
+          {trimmed && <p className="text-xs text-text-muted">Earlier turns were not kept.</p>}
+          {turns.length > 0 && (
+            <ol className="space-y-4" aria-label="Conversation">
+              {turns.map((t, i) => {
+                // What the turn offers: Copy on a finished answer; Retry and "Ask again with
+                // sources" on the last one, outside an edit.
+                // With the chat off a stored conversation is read-only: nothing asks again.
+                const again = !chatOff() && last?.id === t.id && !edited && !waiting;
+                const canCopy = t.state === "done" && !!t.answer.trim();
+                const canRetry = again && retryOffered(t);
+                const canAskWithSources =
+                  again &&
+                  !t.withSources &&
+                  withContext(sentQuestion(t.question, true), t.context).length <= MAX_MESSAGE_CHARS;
+                return (
+                  <li key={t.id} className="space-y-2">
+                    <div className="rounded-lg bg-surface-2 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="section-label">You</p>
+                        {last?.id === t.id && edited?.id !== t.id && !draft && editable && (
+                          <Button type="secondary" htmlType="button" aria-label="Edit your question" onClick={edit}>
+                            Edit
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-sm text-text whitespace-pre-wrap break-words">{t.question}</p>
+                      {(t.context || t.withSources) && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {t.context && <Chip label={`Includes: ${t.context.chip}`} />}
+                          {t.withSources && <Chip label="With sources" />}
+                        </div>
                       )}
                     </div>
-                    <p className="text-sm text-text whitespace-pre-wrap break-words">{t.question}</p>
-                    {(t.context || t.withSources) && (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {t.context && <Chip label={`Includes: ${t.context.chip}`} />}
-                        {t.withSources && <Chip label="With sources" />}
+                    {t.card && (
+                      <Suspense fallback={null}>
+                        <Card turn={t} />
+                      </Suspense>
+                    )}
+                    {t.state !== "card" && (
+                      <div className="px-3" aria-busy={t.state === "answering" || undefined}>
+                        <p className="section-label">Assistant</p>
+                        {t.answer && <AnswerText text={t.answer} />}
+                        {/* The working line: the latest step while the answer reads, never blank. */}
+                        {t.state === "answering" && (!t.answer || latestStep(t)) && (
+                          <p className={t.answer ? "text-xs text-text-muted" : "text-sm text-text-muted"}>
+                            {latestStep(t) ?? "Answering…"}
+                          </p>
+                        )}
+                        {/* The label's slot: one line while the answer's sources are checked. */}
+                        {t.state === "done" && checkingSources === t.id && (
+                          <p className="mt-2 text-xs text-text-muted">Checking sources…</p>
+                        )}
+                        {t.state === "done" && checkingSources !== t.id && (
+                          <Sources
+                            citations={t.citations ?? []}
+                            support={t.support}
+                            checkLost={t.checkLost}
+                            unknownNames={t.unknownNames ?? []}
+                            answer={i + 1}
+                            blocked={blocked}
+                            askAgain={canAskWithSources ? () => askAgain(t, true) : undefined}
+                          />
+                        )}
+                        {t.state === "done" && <StepsList turn={t} />}
+                        {t.state === "stopped" && <p className="text-xs text-text-muted mt-1">Stopped.</p>}
+                        {t.error && (
+                          <div className="mt-2">
+                            <Alert role="alert" state="danger" size="small" text={t.error} />
+                          </div>
+                        )}
+                        {(canCopy || canRetry) && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {canCopy && (
+                              <CopyButton
+                                text={t.answer}
+                                label="Copy"
+                                ariaLabel={`Copy answer ${i + 1}`}
+                                className=""
+                              />
+                            )}
+                            {canRetry && (
+                              <Unavailable reason={blocked}>
+                                <Button
+                                  type="secondary"
+                                  htmlType="button"
+                                  iconLeft="refresh"
+                                  onClick={() => askAgain(t)}
+                                >
+                                  Retry
+                                </Button>
+                              </Unavailable>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
-                  </div>
-                  {t.card && (
-                    <Suspense fallback={null}>
-                      <Card turn={t} level={cardLevel} />
-                    </Suspense>
-                  )}
-                  {t.state !== "card" && (
-                    <div className="px-3" aria-busy={t.state === "answering" || undefined}>
-                      <p className="section-label">Assistant</p>
-                      {t.answer && <AnswerText text={t.answer} />}
-                      {/* The working line: the latest step while the answer reads, never blank. */}
-                      {t.state === "answering" && (!t.answer || latestStep(t)) && (
-                        <p className={t.answer ? "text-xs text-text-muted" : "text-sm text-text-muted"}>
-                          {latestStep(t) ?? "Answering…"}
-                        </p>
-                      )}
-                      {/* The label's slot: one line while the answer's sources are checked. */}
-                      {t.state === "done" && checkingSources === t.id && (
-                        <p className="mt-2 text-xs text-text-muted">Checking sources…</p>
-                      )}
-                      {t.state === "done" && checkingSources !== t.id && (
-                        <Sources
-                          citations={t.citations ?? []}
-                          support={t.support}
-                          checkLost={t.checkLost}
-                          unknownNames={t.unknownNames ?? []}
-                          answer={i + 1}
-                          blocked={blocked}
-                          askAgain={canAskWithSources ? () => askAgain(t, true) : undefined}
-                        />
-                      )}
-                      {t.state === "done" && <StepsList turn={t} />}
-                      {t.state === "stopped" && <p className="text-xs text-text-muted mt-1">Stopped.</p>}
-                      {t.error && (
-                        <div className="mt-2">
-                          <Alert role="alert" state="danger" size="small" text={t.error} />
-                        </div>
-                      )}
-                      {(canCopy || canRetry) && (
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          {canCopy && (
-                            <CopyButton text={t.answer} label="Copy" ariaLabel={`Copy answer ${i + 1}`} className="" />
-                          )}
-                          {canRetry && (
-                            <Unavailable reason={blocked}>
-                              <Button type="secondary" htmlType="button" iconLeft="refresh" onClick={() => askAgain(t)}>
-                                Retry
-                              </Button>
-                            </Unavailable>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </div>
-      <form
-        className="space-y-2 px-4 py-3 border-t border-border shrink-0"
-        aria-label="Ask the assistant"
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-      >
-        {context && (
-          <div className="flex min-w-0 flex-wrap items-center gap-2" data-testid="assistant-page-chip">
-            <Chip
-              label={`Includes: ${context.chip}`}
-              removeLabel="Don't include this page"
-              onRemove={() => {
-                useDock.setState({ pageOff: true, item: null });
-                if (hint) hintSeen();
-                field.current?.focus();
-              }}
-            />
-          </div>
-        )}
-        {context && hint && <p className="text-xs text-text-muted">Your question names this page. Remove it here.</p>}
-        {edited && (
-          <div className="flex flex-wrap items-center gap-2" data-testid="assistant-editing">
-            <p className="text-xs text-text-muted">
-              {editing?.withSources
-                ? "Editing your last question: Ask replaces its answer, asking with sources."
-                : "Editing your last question: Ask replaces its answer."}
-            </p>
-            <Button
-              type="secondary"
-              htmlType="button"
-              onClick={() => {
-                cancelEdit();
-                field.current?.focus();
-              }}
-            >
-              Cancel edit
-            </Button>
-          </div>
-        )}
-        <TextAreaField
-          ref={field}
-          id="assistant-question"
-          label="Question"
-          placeholder="What does this namespace know about invoices?"
-          rows={3}
-          value={draft}
-          onChange={(v) => {
-            useDock.setState({ draft: v });
-            draftEdited();
-          }}
-          onKeyDown={onKeyDown}
-          {...error}
-          aria-describedby={["assistant-question-hint", error["aria-describedby"]].filter(Boolean).join(" ")}
-        />
-        <p id="assistant-question-hint" className="text-xs text-text-muted">
-          Enter asks and Shift+Enter adds a line; in an empty field, the up arrow edits the last question. Each answer's
-          citations are checked against Loom as you when it ends.
-        </p>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {stoppable && (
-            <Button type="secondary" htmlType="button" onClick={stop}>
-              Stop
-            </Button>
+                  </li>
+                );
+              })}
+            </ol>
           )}
-          <Unavailable reason={sendBlocked}>
-            <Button type="primary" htmlType="submit">
-              Ask
-            </Button>
-          </Unavailable>
         </div>
-      </form>
+      </div>
+      {/* With the chat off nothing can be asked: the panel is its starters. */}
+      {!chatOff() && (
+        <form
+          className="px-4 py-3 border-t border-border shrink-0"
+          aria-label="Ask the assistant"
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
+          }}
+        >
+          <div className="assistant-column space-y-2">
+            {context && (
+              <div className="flex min-w-0 flex-wrap items-center gap-2" data-testid="assistant-page-chip">
+                <Chip
+                  label={`Includes: ${context.chip}`}
+                  removeLabel="Don't include this page"
+                  onRemove={() => {
+                    useDock.setState({ pageOff: true, item: null });
+                    if (hint) hintSeen();
+                    field.current?.focus();
+                  }}
+                />
+              </div>
+            )}
+            {context && hint && (
+              <p className="text-xs text-text-muted">Your question names this page. Remove it here.</p>
+            )}
+            {edited && (
+              <div className="flex flex-wrap items-center gap-2" data-testid="assistant-editing">
+                <p className="text-xs text-text-muted">
+                  {editing?.withSources
+                    ? "Editing your last question: Ask replaces its answer, asking with sources."
+                    : "Editing your last question: Ask replaces its answer."}
+                </p>
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  onClick={() => {
+                    cancelEdit();
+                    field.current?.focus();
+                  }}
+                >
+                  Cancel edit
+                </Button>
+              </div>
+            )}
+            <TextAreaField
+              ref={field}
+              id="assistant-question"
+              label="Question"
+              placeholder="What does this namespace know about invoices?"
+              rows={3}
+              value={draft}
+              onChange={(v) => {
+                useDock.setState({ draft: v });
+                draftEdited();
+              }}
+              onKeyDown={onKeyDown}
+              {...error}
+              aria-describedby={["assistant-question-hint", error["aria-describedby"]].filter(Boolean).join(" ")}
+            />
+            <p id="assistant-question-hint" className="text-xs text-text-muted">
+              Enter asks and Shift+Enter adds a line; in an empty field, the up arrow edits the last question. Each
+              answer's citations are checked against Loom as you when it ends.
+            </p>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {stoppable && (
+                <Button type="secondary" htmlType="button" onClick={stop}>
+                  Stop
+                </Button>
+              )}
+              <Unavailable reason={sendBlocked}>
+                <Button type="primary" htmlType="submit">
+                  Ask
+                </Button>
+              </Unavailable>
+            </div>
+          </div>
+        </form>
+      )}
     </div>
   );
 }

@@ -2,11 +2,12 @@ import { Suspense, lazy, useEffect, useRef, type KeyboardEvent, type PointerEven
 import { FocusScope } from "@radix-ui/react-focus-scope";
 import { IconButton } from "../components/IconButton";
 import { SkeletonCard } from "../components/Skeleton";
-import { LoadingSkeleton, PageHeader } from "../components/ui";
+import { LoadingSkeleton } from "../components/ui";
 import { SectionHeading } from "../components/ui/SectionHeading";
 import { useDock } from "../lib/assistantDock";
-import { PANEL_MIN, SPLIT_STEP, isModal, layoutOf } from "../lib/assistantLayout";
+import { EXPAND_MIN, PANEL_MIN, SPLIT_STEP, dockLayout, isModal, layoutOf } from "../lib/assistantLayout";
 import { closeAssistant, collapseAssistant, expandAssistant, setPanelWidth } from "../lib/assistantDockRuntime";
+import { useMedia } from "../lib/useMedia";
 
 // The chat, its stored conversations and the readiness read: a chunk of their own, loaded
 // the first time the panel opens.
@@ -15,12 +16,13 @@ const DockBody = lazy(() => import("../views/assistant/Dock").then((m) => ({ def
 const prevent = (e: Event) => e.preventDefault();
 
 /**
- * The assistant panel: one element in every mode (lib/assistantDock.ts). Modal at overlay
- * and phone widths (role="dialog", aria-modal, the focus trapped and Tab wrapping, the page
- * inert); beside the page in push mode, where Tab flows in and out. The FocusScope never
- * moves the focus itself: the shell places it (the question field on an open the person
- * starts, the launcher on a close they start, the arrival's target after a navigation).
- * Esc closes the panel from inside it, unless a layer above it (a popover, a menu) took it.
+ * The assistant panel: one element in every mode (lib/assistantDock.ts). Modal over the page
+ * (the overlay, the phone sheet and the expanded window: role="dialog", aria-modal, the
+ * focus trapped and Tab wrapping, the page inert); beside the page in push mode, where Tab
+ * flows in and out. The FocusScope never moves the focus itself: the shell places it (the
+ * question field on an open the person starts, the launcher on a close they start, the
+ * arrival's target after a navigation). Esc from inside closes the panel, or collapses the
+ * window, unless a layer above it (a popover, a menu) took it.
  */
 export function AssistantPanel() {
   const mounted = useDock((s) => s.mounted);
@@ -29,28 +31,44 @@ export function AssistantPanel() {
   const mode = useDock((s) => layoutOf(s).mode);
   const width = useDock((s) => layoutOf(s).width);
   const max = useDock((s) => layoutOf(s).max);
+  const entering = useDock((s) => !!s.entering);
+  // Under the window, the docked panel's place while it was beside the page and still would
+  // be: <main> keeps its width.
+  const spacer = useDock((s) => {
+    const docked = dockLayout(s.viewport, s.collapsed, s.prefWidth);
+    return s.expandedFromPush && docked.mode === "push" ? docked.width : 0;
+  });
+  const wide = useMedia(`(min-width: ${EXPAND_MIN}px)`);
+  const expired = useDock((s) => s.expired);
   const dragging = useRef(false);
   const element = useRef<HTMLDivElement | null>(null);
-  // Esc from anywhere inside closes the panel, as a dialog's does; a layer above it (a
-  // popover, a menu) that took the key has prevented it first.
   useEffect(() => {
     const el = element.current;
     if (!el) return;
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
-      // On /assistant the panel is the page: Esc closes nothing.
-      if (e.key !== "Escape" || e.defaultPrevented || useDock.getState().expanded) return;
+      if (e.key !== "Escape" || e.defaultPrevented) return;
       if (e.target instanceof Element && e.target.closest("[data-radix-popper-content-wrapper]")) return;
       e.preventDefault();
-      closeAssistant("person");
+      if (useDock.getState().expanded) collapseAssistant();
+      else closeAssistant("person");
+    };
+    // The slide-in has played (the panel's own, not a child's animation).
+    const onAnimationEnd = (e: Event) => {
+      if (e.target === el) useDock.setState({ entering: false });
     };
     el.addEventListener("keydown", onKeyDown);
-    return () => el.removeEventListener("keydown", onKeyDown);
+    el.addEventListener("animationend", onAnimationEnd);
+    el.addEventListener("animationcancel", onAnimationEnd);
+    return () => {
+      el.removeEventListener("keydown", onKeyDown);
+      el.removeEventListener("animationend", onAnimationEnd);
+      el.removeEventListener("animationcancel", onAnimationEnd);
+    };
   }, [mounted]);
   if (!mounted) return null;
   const expanded = mode === "expanded";
-  const shown = open || expanded;
 
-  // The panel is at the right edge: left makes it wider.
+  // The panel is at the right: left makes it wider.
   const resizeBy = (e: KeyboardEvent<HTMLDivElement>) => {
     const to: Record<string, number> = {
       ArrowLeft: width + SPLIT_STEP,
@@ -67,8 +85,10 @@ export function AssistantPanel() {
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
-    if (!dragging.current) return;
-    setPanelWidth(Math.min(max, Math.max(PANEL_MIN, window.innerWidth - e.clientX)));
+    if (!dragging.current || !element.current) return;
+    // Measured from the panel's own right edge: the assistant edge sits right of it in push.
+    const right = element.current.getBoundingClientRect().right;
+    setPanelWidth(Math.min(max, Math.max(PANEL_MIN, right - e.clientX)));
   };
   const onPointerUp = () => {
     dragging.current = false;
@@ -76,9 +96,15 @@ export function AssistantPanel() {
 
   return (
     <>
-      {open && mode === "overlay" && !!modal && (
-        // A pointer on the dimmed page closes the panel, as a click outside closes a dialog.
-        <div className="assistant-scrim" aria-hidden="true" onClick={() => closeAssistant("person")} />
+      {spacer > 0 && <div aria-hidden="true" data-assistant-spacer="" className="shrink-0" style={{ width: spacer }} />}
+      {open && modal && (mode === "overlay" || expanded) && (
+        // A pointer on the dimmed page closes the overlay and collapses the window (one step
+        // back), as a click outside closes a dialog.
+        <div
+          className="assistant-scrim animate-fade-in"
+          aria-hidden="true"
+          onClick={() => (expanded ? collapseAssistant() : closeAssistant("person"))}
+        />
       )}
       <FocusScope asChild trapped={modal} loop={modal} onMountAutoFocus={prevent} onUnmountAutoFocus={prevent}>
         {/* A region beside the page, a dialog over it. */}
@@ -87,13 +113,12 @@ export function AssistantPanel() {
           id="assistant-panel"
           data-assistant-panel=""
           data-mode={mode}
-          data-open={shown ? "" : undefined}
-          hidden={!shown}
+          data-open={open ? "" : undefined}
+          data-entering={entering ? "" : undefined}
+          hidden={!open}
           {...(modal
             ? { role: "dialog", "aria-modal": "true", "aria-labelledby": "assistant-panel-title" }
-            : expanded
-              ? { role: "region", "aria-label": "Assistant" }
-              : { role: "region", "aria-labelledby": "assistant-panel-title" })}
+            : { role: "region", "aria-labelledby": "assistant-panel-title" })}
           tabIndex={-1}
           className="assistant-panel"
           style={mode === "sheet" || expanded ? undefined : { width }}
@@ -120,29 +145,26 @@ export function AssistantPanel() {
           )}
           {/* SectionHeading keeps 6 px under itself: the bottom padding makes up the rest. */}
           <div className="px-4 pt-2 pb-0.5 border-b border-border shrink-0">
-            {expanded ? (
-              // The page's title row, as every page's: it also titles the document.
-              <div className="pt-1">
-                <PageHeader
-                  title="Assistant"
-                  actions={<IconButton icon="popin" label="Collapse the assistant" onClick={collapseAssistant} />}
-                />
-              </div>
-            ) : (
-              <SectionHeading
-                label="Assistant"
-                level={2}
-                id="assistant-panel-title"
-                actions={
-                  <>
-                    {mode !== "sheet" && (
-                      <IconButton icon="popout" label="Expand the assistant" onClick={expandAssistant} />
-                    )}
-                    <IconButton icon="cross" label="Close the assistant" onClick={() => closeAssistant("person")} />
-                  </>
-                }
-              />
-            )}
+            <SectionHeading
+              label="Assistant"
+              level={2}
+              id="assistant-panel-title"
+              actions={
+                <>
+                  {/* One button whose label swaps, so the focus stays on it. */}
+                  {wide && !expired && (
+                    <span className="contents" data-expand-toggle="">
+                      <IconButton
+                        icon={expanded ? "popin" : "popout"}
+                        label={expanded ? "Collapse the assistant" : "Expand the assistant"}
+                        onClick={expanded ? collapseAssistant : expandAssistant}
+                      />
+                    </span>
+                  )}
+                  <IconButton icon="cross" label="Close the assistant" onClick={() => closeAssistant("person")} />
+                </>
+              }
+            />
           </div>
           <Suspense
             fallback={

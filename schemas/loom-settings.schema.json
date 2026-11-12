@@ -77,7 +77,7 @@
         "assistant_librechat_url": {
           "default": "",
           "type": "string",
-          "description": "LibreChat's internal address (http://librechat:3080), reachable only from Loom. \"\" = no assistant: no service setup at boot."
+          "description": "LibreChat's internal address (http://librechat:3080), reachable only from Loom. \"\" = no assistant: no service setup at boot, and the panel's chat is off; its starters still read."
         },
         "assistant_model": {
           "default": "",

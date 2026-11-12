@@ -277,7 +277,9 @@ export function LibraryCollections({
           triggerProps={{ "aria-label": "Show the documents of" }}
           // A long list is found by typing a name or a description.
           showSearch
-          className="min-w-0 flex-1 sm:flex-none sm:w-96"
+          // 20rem: the path, the select, the role and New collection fit one line in the page
+          // beside the assistant edge at 1400 px.
+          className="min-w-0 flex-1 sm:flex-none sm:w-80"
         >
           {namespace !== null && <Select.Item value={NAMESPACE_SHELF}>{`Namespace ${namespace}`}</Select.Item>}
           {ordered.map(({ c, depth }) => (

@@ -628,6 +628,18 @@ schema. These rules keep that safe. The operator procedure is in
     step runs: rows promoted before the erasure are tombstoned, or deleted after a
     purge. An older erasure's rows cannot be found and stay. No gate holds the rollout,
     and the mixed-version gate does not check this rule.
+46. **An `/assistant` history entry** (the dashboard's expanded assistant window has no
+    address): an N-1 tab pushed `/assistant` entries, and after the ReloadBar's reload
+    on N, Back or Forward onto one reaches N in the same document. N answers it: the
+    address becomes the landing page's (`landingTarget` for the tab's namespace; the
+    view the tab shows when that is Setup), the page arrives there, and the assistant
+    opens over it (expanded from 1024 px; nothing opens on Setup, on a namespace the tab
+    cannot read, or at phone widths). The server keeps serving the `assistant` page
+    segment for bookmarks, which N answers the same way at boot (except that on a phone
+    the sheet opens over the landing page), so this answer stays as long as the segment
+    is served. The mixed-version gate does not check this rule;
+    `frontend/e2e/assistant-edge.spec.ts` ("an entry an earlier build pushed opens the
+    assistant on Back after a reload") does.
 
 ## What checks them
 
@@ -650,6 +662,6 @@ more (N+1). It checks:
   higher schema version (rule 6).
 
 It does not check new enum values (rule 3), wire formats (rule 4), signing keys other
-than `default` (rule 5), new revocation keys (rule 18), or a process killed
-mid-migration. It skips with exit 0 where docker is unreachable; CI passes `--require`,
-which fails there instead.
+than `default` (rule 5), new revocation keys (rule 18), an `/assistant` history entry
+(rule 46), or a process killed mid-migration. It skips with exit 0 where docker is
+unreachable; CI passes `--require`, which fails there instead.

@@ -1,16 +1,27 @@
 import { expect, test } from "@playwright/test";
-import { installApi } from "./fixtures";
+import { dockAssistant, installApi } from "./fixtures";
 
 // A task row beside the open detail panel, at the widths where the two share the page:
 // the title keeps its room and no two parts of the row overlap.
 
-for (const width of [1280, 1400, 1440]) {
-  test(`at ${width} px a task row beside the open panel keeps its title and no two parts overlap`, async ({ page }) => {
+for (const [width, docked] of [
+  [1280, false],
+  [1400, false],
+  [1440, false],
+  // The assistant docked at the push minimum too: the page keeps 592 px.
+  [1280, true],
+] as const) {
+  test(`at ${width} px${docked ? " with the assistant docked, the detail a sheet over the list," : ", the detail beside the list,"} a task row keeps its title and no two parts overlap`, async ({
+    page,
+  }) => {
     await page.setViewportSize({ width, height: 900 });
     await installApi(page);
+    if (docked) await dockAssistant(page);
     await page.goto("/tasks");
     await page.getByRole("row", { name: /^Task 1/ }).click();
-    await expect(page.getByRole("complementary", { name: "Task detail" })).toBeVisible();
+    // Beside the docked assistant the page is too narrow for the column: the panel is a sheet.
+    if (docked) await expect(page.locator(".tq-panel[data-sheet]")).toBeVisible();
+    else await expect(page.getByRole("complementary", { name: "Task detail" })).toBeVisible();
     const problems = await page.evaluate(() => {
       const out: string[] = [];
       const box = (e: Element) => e.getBoundingClientRect();

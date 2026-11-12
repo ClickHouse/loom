@@ -7,7 +7,7 @@ import type { InspectSubject } from "../../../api";
 import { Unavailable } from "../../../components/ui";
 import { INSPECTED_AS, SUBJECT_COPY, shownName } from "../subjects";
 import { useChat } from "../chatStore";
-import { useDock } from "../../../lib/assistantDock";
+import { chatOff, useDock } from "../../../lib/assistantDock";
 import { ROLE_LOADING } from "../../../lib/callReason";
 import { lastInventory, startStarter, useCardGate } from "./cardStore";
 import { askState, setAlsoAsk, useStarterPrefs } from "./prefs";
@@ -22,7 +22,8 @@ const SUBJECT_OPTIONS = (Object.keys(SUBJECT_COPY) as InspectSubject[]).map((val
 /**
  * The starters: one button per question Loom's own reads answer. Choosing one reads its card
  * with the person's token and, while "Also ask the assistant" is on and the assistant can
- * answer, asks the assistant its question too (which spends a model answer). A starter that
+ * answer, asks the assistant its question too (which spends a model answer); with the chat
+ * off there is no such box, and a starter reads only Loom. A starter that
  * takes an id or an entity opens a small form first. On the phone sheet four show, and
  * "More starters" shows the rest in place.
  */
@@ -51,6 +52,15 @@ export function Starters({
     setFocusFirstNew(false);
   }, [focusFirstNew]);
 
+  // With the chat off the panel has no question field: an open's focus is the first
+  // starter's, taken once it renders.
+  const focusField = useDock((s) => s.focusField);
+  useEffect(() => {
+    if (!focusField || !chatOff()) return;
+    list.current?.querySelector<HTMLElement>("[data-starter]")?.focus();
+    useDock.setState({ focusField: false });
+  }, [focusField]);
+
   // An old link to the Memories Insights tab: the audit's card, read once the role is known,
   // with nothing asked (lib/assistantDock.ts).
   const startersAudit = useDock((s) => s.startersAudit);
@@ -77,23 +87,26 @@ export function Starters({
 
   return (
     <div className="space-y-2" data-testid="assistant-starters">
-      <div className="space-y-1">
-        <Checkbox
-          label="Also ask the assistant"
-          checked={asks}
-          disabled={cannotAnswer !== null}
-          onCheckedChange={(c) => setAlsoAsk(c === true)}
-          aria-describedby={costId}
-        />
-        <p id={costId} className="text-xs text-text-muted">
-          {cannotAnswer && `The assistant can't answer: ${cannotAnswer}. `}
-          {asks
-            ? "Each answer calls a model, which counts against this namespace's model budget. The card is Loom's own read and costs nothing."
-            : cannotAnswer
-              ? "A starter reads only Loom: no model is called."
-              : "A starter then reads only Loom: no model is called. A question typed below still calls one."}
-        </p>
-      </div>
+      {/* With the chat off nothing asks a model, and nothing costs one. */}
+      {!chatOff() && (
+        <div className="space-y-1">
+          <Checkbox
+            label="Also ask the assistant"
+            checked={asks}
+            disabled={cannotAnswer !== null}
+            onCheckedChange={(c) => setAlsoAsk(c === true)}
+            aria-describedby={costId}
+          />
+          <p id={costId} className="text-xs text-text-muted">
+            {cannotAnswer && `The assistant can't answer: ${cannotAnswer}. `}
+            {asks
+              ? "Each answer calls a model, which counts against this namespace's model budget. The card is Loom's own read and costs nothing."
+              : cannotAnswer
+                ? "A starter reads only Loom: no model is called."
+                : "A starter then reads only Loom: no model is called. A question typed below still calls one."}
+          </p>
+        </div>
+      )}
       <ul ref={list} className="space-y-1.5" aria-label="Starters">
         {shown.map((s) => (
           <li key={s.id} className="space-y-2">

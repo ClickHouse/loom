@@ -2,7 +2,7 @@ import { expect, test, type Page, type Request } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi, NAMESPACE } from "./fixtures";
 
-// The assistant panel's chat, opened from the header's launcher, against a fake chat route: the answer arrives as the
+// The assistant panel's chat, opened from its launcher, against a fake chat route: the answer arrives as the
 // server-sent chunks `POST /v1/assistant/chat/completions` streams (OpenAI's chunk shape,
 // ending at `data: [DONE]`), a refusal before the stream as Loom's error envelope. The
 // answer carries every Markdown form the chat draws, a table wider than a phone, HTML and
@@ -231,9 +231,11 @@ test("an unavailable assistant is a plain state, not a crash", async ({ page }) 
   // A refusal that names no reason reads as not set up; a platform admin is sent to Health.
   const why = panel(page).getByTestId("assistant-unavailable");
   await expect(why).toHaveAttribute("data-reason", "not_configured");
-  await expect(why).toContainText("Set up the assistant: see Health");
+  await expect(why).toContainText("Set up chat: see Health");
   await expect(page.getByRole("button", { name: "Ask", exact: true })).toHaveAttribute("aria-disabled", "true");
-  await expect(launcher(page)).toHaveAccessibleName("Assistant, unavailable");
+  // Chat not set up is no broken mark on the launcher: its starters still read.
+  await expect(launcher(page)).toHaveAccessibleName("Assistant");
+  await expect(launcher(page)).toHaveAttribute("data-launcher-state", "normal");
   // The rest of the page still works.
   await expect(page.locator("main h1").first()).toBeVisible();
   expect(await violations(page)).toEqual([]);
@@ -243,65 +245,44 @@ for (const width of [360, 400]) {
   test.describe(`phone ${width}, coarse pointer`, () => {
     test.use({ viewport: { width, height: 800 }, hasTouch: true, isMobile: true });
 
-    test("the header's buttons fit one row with the launcher, a 44 px target", async ({ page }) => {
+    test("the bottom nav holds four items with the launcher, each a 44 px target, nothing overflowing", async ({
+      page,
+    }) => {
       await installApi(page);
       await page.goto("/memories");
       await expect(page.locator("main h1").first()).toBeVisible();
       await expect(launcher(page)).toBeVisible();
+      await expect(page.locator("header").locator('[data-focus-key="assistant-launcher"]')).toHaveCount(0);
       const fit = await page.evaluate(() => {
-        // The header's right cluster: the row of buttons the launcher sits in.
-        const cluster = document
-          .querySelector('[data-focus-key="assistant-launcher"]')
-          ?.closest("header > div") as HTMLElement;
-        const shown = Array.from(cluster.children).filter((c) => (c as HTMLElement).offsetWidth > 0);
+        const nav = document.querySelector('[data-focus-key="assistant-launcher"]')?.closest("nav") as HTMLElement;
         return {
           overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-          rows: new Set(shown.map((c) => Math.round(c.getBoundingClientRect().top))).size,
+          items: Array.from(nav.children).map((c) => {
+            const r = c.getBoundingClientRect();
+            return { text: c.textContent?.trim(), big: r.width >= 44 && r.height >= 44 };
+          }),
         };
       });
-      expect(fit).toEqual({ overflow: 0, rows: 1 });
-      const box = await launcher(page).boundingBox();
-      expect(Math.round(box?.width ?? 0)).toBeGreaterThanOrEqual(44);
-      expect(Math.round(box?.height ?? 0)).toBeGreaterThanOrEqual(44);
+      expect(fit).toEqual({
+        overflow: 0,
+        items: ["Memories", "Library", "Assistant", "More"].map((text) => ({ text, big: true })),
+      });
     });
   });
 }
 
-// The styles.css rule that makes the launcher 32 px below xl overrides Click UI's button
-// padding only while its layer comes after Click UI's: a fine pointer at 1100 px shows it.
-test("below xl, under a fine pointer, the launcher is a 32 px icon", async ({ page }) => {
-  await page.setViewportSize({ width: 1100, height: 900 });
+test("at 390 px the nav item opens the sheet, and Back returns the focus to it", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 });
   await installApi(page);
-  await page.goto("/memories");
-  await expect(page.locator("main h1").first()).toBeVisible();
-  await expect(launcher(page)).toBeVisible();
-  const box = await launcher(page).boundingBox();
-  expect(Math.round(box?.width ?? 0)).toBe(32);
-  expect(Math.round(box?.height ?? 0)).toBe(32);
-  await expect(launcher(page).getByText("Assistant", { exact: true })).toBeHidden();
-});
-
-// The muted look of an unavailable launcher is the components layer's colour over Click
-// UI's button colour: the computed colour shows which layer wins.
-test("at 1440 px an unavailable launcher takes the muted text colour", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await installApi(page);
-  await page.route("**/v1/health/ready", (r) =>
-    r.fulfill({ status: 503, json: { ready: false, checks: { assistant: { ok: false, reason: "failing" } } } }),
-  );
   await page.goto("/memories");
   await expect(page.locator("main h1").first()).toBeVisible();
   await launcher(page).click();
-  await expect(launcher(page)).toHaveAttribute("data-launcher-state", "unavailable");
-  const colours = await launcher(page).evaluate((el) => {
-    const probe = document.createElement("span");
-    probe.style.color = "var(--color-text-muted)";
-    document.body.append(probe);
-    const muted = getComputedStyle(probe).color;
-    probe.remove();
-    return { launcher: getComputedStyle(el).color, muted };
-  });
-  expect(colours.launcher).toBe(colours.muted);
+  await expect(panel(page)).toHaveAttribute("data-mode", "sheet");
+  await expect(page.getByRole("textbox", { name: "Question" })).toBeFocused();
+  await page.goBack();
+  await expect(panel(page)).toBeHidden();
+  await expect(launcher(page)).toBeFocused();
+  await expect(launcher(page).locator("xpath=ancestor::nav")).toHaveCount(1);
 });
 
 // "Ask about this" in the memory drawer: the drawer closes, the panel opens in the mode the

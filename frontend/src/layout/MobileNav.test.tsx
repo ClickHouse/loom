@@ -1,10 +1,12 @@
-import { render, screen, within } from "../test/rtl";
+import { act, render, screen, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { MyNamespaceEntry } from "../api";
 import { useStore, viewHref } from "../lib/state";
+import { useDock } from "../lib/assistantDock";
 import { MAIN, ADMIN_BASE, ADMIN_OPERATOR_ONLY } from "./Sidebar";
-import { MobileNav, mobileMoreItems } from "./MobileNav";
+import { MobileNav } from "./MobileNav";
+import { mobileMoreItems } from "./MobileMore";
 
 // The phone's "More" sheet is generated from the sidebar's nav arrays, so every route the
 // sidebar offers is reachable on a phone under the same label.
@@ -112,5 +114,26 @@ describe("MobileNav", () => {
     render(<MobileNav />);
     expect(screen.getByRole("link", { name: "Library" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Memories" })).not.toHaveAttribute("aria-current");
+  });
+});
+
+describe("the Assistant item", () => {
+  it("sits between Library and More, a button with the launcher's marks, never the current tab", () => {
+    render(<MobileNav />);
+    const nav = screen.getByRole("navigation", { name: "Sections" });
+    expect([...nav.children].map((e) => e.textContent?.trim())).toEqual(["Memories", "Library", "Assistant", "More"]);
+    const item = within(nav).getByRole("button", { name: "Assistant" });
+    expect(item).toHaveAttribute("data-focus-key", "assistant-launcher");
+    expect(item).toHaveAttribute("aria-expanded", "false");
+    expect(item).not.toHaveAttribute("aria-current");
+    expect(item).not.toHaveAttribute("aria-haspopup");
+    expect(item).not.toHaveAttribute("aria-controls");
+    act(() => useDock.setState({ working: true, mounted: true, open: true }));
+    expect(item).toHaveAccessibleName("Assistant, answering");
+    expect(item).toHaveAttribute("aria-expanded", "true");
+    expect(item).toHaveAttribute("aria-controls", "assistant-panel");
+    act(() => useDock.setState({ working: false, reason: { kind: "failing" } }));
+    expect(item).toHaveAccessibleName("Assistant, unavailable");
+    act(() => useDock.setState({ reason: null, open: false, mounted: false }));
   });
 });

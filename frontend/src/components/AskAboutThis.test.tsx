@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { clip, exact, quoted } from "./AskAboutThis";
+import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "../test/rtl";
+import { useStore } from "../lib/state";
+import { AskAboutThis, clip, exact, quoted } from "./AskAboutThis";
 
 // The names "Ask about this" puts in the assistant's context line: one line, cut, quoted.
 
@@ -38,5 +40,23 @@ describe("exact", () => {
     const long = `k/${"x".repeat(300)}`;
     expect(exact(long)).toBe(JSON.stringify(long));
     expect(exact("a\tb  c")).toBe('"a\\tb  c"');
+  });
+});
+
+describe("the button", () => {
+  afterEach(() => {
+    cleanup();
+    window.__LOOM_ASSISTANT = undefined;
+  });
+
+  it("is absent where the deployment's chat is off: it only ever asks a model", () => {
+    useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" } });
+    const item = { chip: "key a", line: 'memory "a"' };
+    const { unmount } = render(<AskAboutThis what="memory" item={item} />);
+    expect(screen.getByRole("button", { name: "Ask the assistant about this memory" })).toBeInTheDocument();
+    unmount();
+    window.__LOOM_ASSISTANT = false;
+    render(<AskAboutThis what="memory" item={item} />);
+    expect(screen.queryByRole("button", { name: "Ask the assistant about this memory" })).toBeNull();
   });
 });

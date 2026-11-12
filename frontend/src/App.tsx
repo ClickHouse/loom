@@ -51,7 +51,16 @@ import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
 import { shortcutOff } from "./lib/shortcuts";
-import { assistantPopstate, bootDock, onAssistantShortcut, showExpanded, useDock } from "./lib/assistantDock";
+import {
+  assistantAddress,
+  assistantPopstate,
+  bootDock,
+  loadDockRuntime,
+  onAssistantShortcut,
+  openAssistantSoon,
+  useDock,
+} from "./lib/assistantDock";
+import { AssistantEdge } from "./layout/AssistantLauncher";
 
 import { reloadPage } from "./lib/navigation";
 import { endSession, lostReason, sessionEndedNote, whoamiWhenReady } from "./lib/session";
@@ -129,6 +138,10 @@ const ProblemsBanner = lazy<() => ReactElement | null>(() =>
     () => ({ default: () => null }),
   ),
 );
+
+// The skip controls, shown on focus.
+const SKIP =
+  "sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:px-3 focus:py-1.5 focus:bg-accent focus:text-on-accent focus:rounded-sm focus:shadow-lg text-xs font-medium";
 
 // The assistant panel and its behaviour load the first time it opens (lib/assistantDock.ts).
 const AssistantPanel = lazy(() => import("./layout/AssistantPanel").then((m) => ({ default: m.AssistantPanel })));
@@ -265,7 +278,11 @@ export default function App() {
       // (the sheet put the focus back on its launcher), and an overlay closes on Back.
       if (assistantPopstate(e.state)) return;
       const v = pathnameView();
-      if (!v) return;
+      if (!v) {
+        // An /assistant entry (an earlier build pushed it): the landing page, the assistant over it.
+        if (assistantAddress()) void loadDockRuntime().then((m) => m.openFromAssistantAddress(true));
+        return;
+      }
       const changed = v !== useStore.getState().view;
       const place = readPlace(e.state);
       if (!changed && !place) return addressPageNamespace();
@@ -287,11 +304,6 @@ export default function App() {
     return () => document.removeEventListener("keydown", onAssistantShortcut);
   }, [shellDrawn]);
   const dockMounted = useDock((s) => s.mounted);
-  // /assistant is the panel itself, in <main>'s place (lib/assistantDock.ts).
-  useEffect(() => {
-    if (shellDrawn) showExpanded(view === "assistant");
-  }, [shellDrawn, view]);
-  const expanded = useDock((s) => s.expanded) && view === "assistant";
 
   // Goto-prefix: `g` then a letter within 1.2s jumps view (vim/Gmail convention).
   useEffect(() => {
@@ -663,13 +675,12 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-bg text-text">
-      <a
-        href={expanded ? "#assistant-panel" : "#main"}
-        data-dock-inert=""
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:px-3 focus:py-1.5 focus:bg-accent focus:text-on-accent focus:rounded-sm focus:shadow-lg text-xs font-medium"
-      >
+      <a href="#main" data-dock-inert="" className={SKIP}>
         Skip to main content
       </a>
+      <button type="button" data-dock-inert="" className={SKIP} onClick={openAssistantSoon}>
+        Go to the assistant
+      </button>
       {/* `data-dock-inert`: what a modal assistant panel makes inert (lib/assistantDock.ts);
           the wrappers are `display: contents`, so the layout is the children's. */}
       <div className="flex flex-1 min-h-0">
@@ -691,7 +702,6 @@ export default function App() {
               data-dock-inert=""
               className="relative isolate flex-1 min-w-0 overflow-y-auto"
               ref={mainRef}
-              hidden={expanded}
             >
               <Suspense fallback={null}>
                 <ProblemsBanner />
@@ -725,6 +735,10 @@ export default function App() {
           <div className="contents" data-dock-inert="">
             <MobileNav />
           </div>
+        </div>
+        {/* The assistant edge, from md: its column at the window's right. */}
+        <div className="contents" data-dock-inert="">
+          <AssistantEdge />
         </div>
       </div>
       {/* Where a navigation went, said once (lib/place.ts `announce`). */}
@@ -825,9 +839,6 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
       return <Spending />; // file unchanged, just relabelled
     case "admin:agents":
       return <Agents />;
-    case "assistant":
-      // The assistant panel is this page (layout/AssistantPanel.tsx, expanded).
-      return null;
     case "help":
       return <Help />;
     case "admin:users":

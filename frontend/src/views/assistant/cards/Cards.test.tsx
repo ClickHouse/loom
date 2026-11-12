@@ -1283,6 +1283,16 @@ describe("Assistant: relationships", () => {
     expect(useStore.getState().view).toBe("graph");
   });
 
+  it("names the page under the panel for the graph's way back, not the assistant", async () => {
+    window.history.replaceState(null, "", "/library");
+    useStore.setState({ view: "knowledge" });
+    render(<InsightsHarness />);
+    await userEvent.click(await screen.findByRole("button", { name: "How are an entity and its neighbours related?" }));
+    await userEvent.click(screen.getByRole("button", { name: "Show relationships" }));
+    await userEvent.click(within(cardOf("graph")).getByRole("button", { name: "Open the graph" }));
+    expect(history.state).toMatchObject({ loomBack: "Library" });
+  });
+
   it("opens the graph from an entity typed in", async () => {
     render(<InsightsHarness />);
     await userEvent.click(await screen.findByRole("button", { name: "How are an entity and its neighbours related?" }));

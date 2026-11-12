@@ -3,6 +3,7 @@
 // with storage refused it lasts the tab), and why the assistant cannot answer now when it
 // cannot (set by the panel's body).
 import { create } from "zustand";
+import { chatOff } from "../../../lib/assistantDock";
 
 const KEY = "loom_assistant_also_ask";
 
@@ -21,7 +22,11 @@ interface StarterPrefs {
   cannotAnswer: string | null;
 }
 
-export const useStarterPrefs = create<StarterPrefs>(() => ({ alsoAsk: readAlsoAsk(), cannotAnswer: null }));
+// With the chat off nothing asks a model: the box is not shown and reads off.
+export const useStarterPrefs = create<StarterPrefs>(() => ({
+  alsoAsk: !chatOff() && readAlsoAsk(),
+  cannotAnswer: null,
+}));
 
 export function setAlsoAsk(on: boolean): void {
   useStarterPrefs.setState({ alsoAsk: on });

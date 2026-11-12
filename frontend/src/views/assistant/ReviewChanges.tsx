@@ -155,7 +155,7 @@ function SampleStats({ stats }: { stats: ChunkStats }) {
       rows={PREVIEW_ROWS.map(([label, value]) => ({
         id: label,
         items: [
-          { label: <span className="whitespace-normal">{label}</span> },
+          { label: <span className="whitespace-normal [overflow-wrap:anywhere]">{label}</span> },
           { label: <span className="tabular">{value(stats)}</span> },
         ],
       }))}
@@ -172,8 +172,9 @@ function ChunkPreview({ title, before, after }: { title: string; before: ChunkSt
       rows={PREVIEW_ROWS.map(([label, value]) => ({
         id: label,
         items: [
-          // A cell keeps to one line; a label this long wraps instead of widening the card.
-          { label: <span className="whitespace-normal">{label}</span> },
+          // A cell keeps to one line; a label this long wraps instead of widening the card,
+          // inside a word where the docked panel is at its narrowest.
+          { label: <span className="whitespace-normal [overflow-wrap:anywhere]">{label}</span> },
           { label: <span className="tabular">{value(before)}</span> },
           { label: <span className="tabular">{value(after)}</span> },
         ],
@@ -205,17 +206,21 @@ function ProposalCard({ proposal: p, actions }: { proposal: TuneProposal; action
         {TARGET_LABEL[p.target] ?? p.target} · {p.scope}
       </p>
       <p className="text-text">{p.rationale}</p>
-      <div className="grid gap-2 md:grid-cols-2">
-        <figure>
-          <figcaption className="text-xs text-text-muted">
-            Current{p.current_revision ? ` (revision ${p.current_revision})` : ""}
-          </figcaption>
-          <CodeBlock side="current">{p.current || "(empty)"}</CodeBlock>
-        </figure>
-        <figure>
-          <figcaption className="text-xs text-text-muted">Proposed</figcaption>
-          <CodeBlock side="proposed">{p.proposed}</CodeBlock>
-        </figure>
+      {/* Side by side where the card is wide (the window), not by the screen's width: the
+          docked panel is narrow on any screen. */}
+      <div className="@container">
+        <div className="grid gap-2 @md:grid-cols-2">
+          <figure>
+            <figcaption className="text-xs text-text-muted">
+              Current{p.current_revision ? ` (revision ${p.current_revision})` : ""}
+            </figcaption>
+            <CodeBlock side="current">{p.current || "(empty)"}</CodeBlock>
+          </figure>
+          <figure>
+            <figcaption className="text-xs text-text-muted">Proposed</figcaption>
+            <CodeBlock side="proposed">{p.proposed}</CodeBlock>
+          </figure>
+        </div>
       </div>
       <p className="text-xs text-text-muted">
         Evidence: {p.evidence.finding_codes.length > 0 && `${p.evidence.finding_codes.join(", ")} · `}

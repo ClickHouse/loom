@@ -83,7 +83,7 @@ function filterOf({ tags, agent }: SearchQuery): TagAgentFilter {
 }
 
 /** Memories: the list. What the namespace's usage says, read as a whole (the audit, the
- *  mentor, the inventory), is the assistant's starters: the header's Insights button. */
+ *  mentor, the inventory), is the assistant's starters: the page's Insights button. */
 export function Recent() {
   return <MemoryList />;
 }
@@ -691,7 +691,7 @@ function MemoryList() {
         actions={
           <>
             {/* Not on a phone, where the title row keeps the first memory inside the first
-                screen: there the header's Assistant button opens the panel, which shows the
+                screen: there the bottom nav's Assistant item opens the panel, which shows the
                 starters on an empty conversation (New conversation starts one). */}
             {!phone && <InsightsButton />}
             <NamespaceGuideButton identity={identity} compact={phone} />

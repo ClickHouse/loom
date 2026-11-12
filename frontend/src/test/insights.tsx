@@ -25,7 +25,7 @@ export function InsightsHarness({
   return (
     <div>
       <Starters namespace={namespace} phone={phone} cannotAnswer={cannotAnswer} />
-      {turns.map((t) => t.card && <Card key={t.id} turn={t} level={3} />)}
+      {turns.map((t) => t.card && <Card key={t.id} turn={t} />)}
     </div>
   );
 }

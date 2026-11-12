@@ -9,10 +9,7 @@ import { boxOf, installApi, MIN_TARGET_PX, ROUTES } from "./fixtures";
 async function open(page: Page, path: string) {
   await installApi(page, { memoryRows: 8, knowledgeRows: 4, runRows: 6 });
   await page.goto(path);
-  // On /assistant the page is the expanded assistant panel, in <main>'s place.
-  await expect(
-    page.locator("main:not([hidden]) h1, [data-assistant-panel][data-mode='expanded'] h1").first(),
-  ).toBeVisible();
+  await expect(page.locator("main h1").first()).toBeVisible();
   await page.waitForLoadState("networkidle"); // late rows, counts and badges
   await page.waitForTimeout(300); // their entry animation
 }

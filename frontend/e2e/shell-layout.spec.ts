@@ -3,9 +3,8 @@ import { installApi, ROUTES } from "./fixtures";
 
 // The shell scrolls only its content: the header, sidebar and phone nav stay put, so the
 // document itself never scrolls, on any route, at either width. Each route's title and
-// tab rows are checked here too, on the same render, and the heading type below. On
-// /assistant the page is the assistant panel, in <main>'s place.
-const PAGE = "main:not([hidden]), [data-assistant-panel][data-mode='expanded']";
+// tab rows are checked here too, on the same render, and the heading type below.
+const PAGE = "main";
 for (const width of [1400, 375]) {
   test.describe(`${width} px`, () => {
     test.use({ viewport: { width, height: 900 } });

@@ -2,11 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi } from "./fixtures";
 
-// /assistant is the assistant panel, expanded in the page's place. Its starters read the
-// cards the old Assistant page's panels showed, each with the person's own token and no
-// model call (the "Also ask the assistant" box off). This spec draws every card, with the
-// server's full-length text and a long subject id, and checks it at desktop and phone width:
-// no horizontal scroll, no axe violation.
+// The assistant panel's starters read Loom's own cards, each with the person's own token and
+// no model call (the "Also ask the assistant" box off). This spec draws every card, with the
+// server's full-length text and a long subject id, in the docked panel at its narrowest, in
+// the expanded window and on the phone sheet: no horizontal scroll, no axe violation.
 
 const LONG_ID = `user-${"x".repeat(200)}`;
 const OWN_USER =
@@ -627,7 +626,9 @@ const STARTERS = {
   subject: "What does a user, agent or session remember?",
 };
 
-async function installAssistant(page: Page, path = "/assistant") {
+/** The panel opened from its launcher on Memories; `width` is its stored width, `expand`
+ *  makes it the window over the page. */
+async function installAssistant(page: Page, { width = 420, expand = false } = {}) {
   await installApi(page);
   // Routes added after installApi answer first.
   for (const [op, body] of [
@@ -638,8 +639,13 @@ async function installAssistant(page: Page, path = "/assistant") {
   ] as const)
     await page.route(`**/v1/${op}`, (r) => r.fulfill({ json: body }));
   // The cards alone: no model is asked here.
-  await page.addInitScript(() => localStorage.setItem("loom_assistant_also_ask", "false"));
-  await page.goto(path);
+  await page.addInitScript((w) => {
+    localStorage.setItem("loom_assistant_also_ask", "false");
+    localStorage.setItem("loom_assistant_panel", JSON.stringify({ open: false, width: w }));
+  }, width);
+  await page.goto("/memories");
+  await page.locator('[data-focus-key="assistant-launcher"]').click();
+  if (expand) await page.getByRole("button", { name: "Expand the assistant" }).click();
   await expect(page.getByRole("list", { name: "Starters" })).toBeVisible();
 }
 
@@ -683,12 +689,16 @@ async function fits(page: Page) {
   expect(await violations(page)).toEqual([]);
 }
 
-for (const width of [1400, 375]) {
-  test.describe(`${width} px`, () => {
+for (const [name, width, opts] of [
+  ["docked at 360 px", 1400, { width: 360 }],
+  ["the window", 1400, { expand: true }],
+  ["the phone sheet", 375, {}],
+] as const) {
+  test.describe(name, () => {
     test.use({ viewport: { width, height: 900 } });
 
     test("every card fits the page width and has no WCAG A/AA violations", async ({ page }) => {
-      await installAssistant(page);
+      await installAssistant(page, opts);
       await choose(page, STARTERS.inventory);
       await expect(page.getByTestId("assistant-populations")).toBeVisible();
       // The longest user id, picked from the inventory card: its memories' card follows.
@@ -774,19 +784,6 @@ test("a listed or cited row opens in the inspector under its whole writer identi
     .click();
   await expect.poll(() => gets.length).toBeGreaterThan(before);
   expect(gets.at(-1)).toMatchObject({ memory_key: key, agent: "claude-code", user_id: "ada", session_id: "-" });
-});
-
-test("Collapse leaves /assistant for Memories with the panel open, and Expand comes back", async ({ page }) => {
-  await page.setViewportSize({ width: 1400, height: 900 });
-  await installAssistant(page);
-  await expect(page.getByRole("heading", { level: 1, name: "Assistant" })).toBeVisible();
-  await expect(page.locator("main")).toBeHidden();
-  await page.getByRole("button", { name: "Collapse the assistant" }).click();
-  await expect(page).toHaveURL(/\/memories/);
-  await expect(page.getByRole("textbox", { name: "Question" })).toBeFocused();
-  await page.getByRole("button", { name: "Expand the assistant" }).click();
-  await expect(page).toHaveURL(/\/assistant/);
-  await expect(page.getByRole("heading", { level: 1, name: "Assistant" })).toBeVisible();
 });
 
 test("an old link to the Memories Insights tab opens the audit card, nothing asked", async ({ page }) => {

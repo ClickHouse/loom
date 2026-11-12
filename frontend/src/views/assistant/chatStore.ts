@@ -7,7 +7,7 @@ import { type ChatMessage, type Support, streamAssistantChat } from "../../api/a
 import { ApiError } from "../../lib/errors";
 import { humanizeError } from "../../lib/errorWords";
 import type { Owner } from "../../lib/assistantStorage";
-import { useDock } from "../../lib/assistantDock";
+import { chatOff, useDock } from "../../lib/assistantDock";
 import { SHORT_REASON, type AssistantReason } from "../../lib/assistantLayout";
 import { announceAssistant } from "../../lib/assistantDockRuntime";
 import { NOT_CHECKED, supportLabel } from "./Sources";
@@ -205,10 +205,12 @@ function mergeStored(answering: "omit" | "stopped" = "omit"): boolean {
 /** Save the conversation shown, merged with the stored copy first, unless storage is
  *  refused here. A stored turn still answering that this tab does not hold is written back
  *  as it is (another tab may be answering it). `held`: the lock holder's save, where such a
- *  turn was cut off and is kept as stopped; `drop`: the holder's turn taken back. */
+ *  turn was cut off and is kept as stopped; `drop`: the holder's turn taken back. Nothing is
+ *  saved while the chat is off. */
 export function save({ held = false, drop }: { held?: boolean; drop?: string } = {}): void {
   const s = useChat.getState();
-  if (!s.id || !s.owner || s.storageOff) return;
+  // With the chat off a conversation reopened from History is read-only.
+  if (!s.id || !s.owner || s.storageOff || chatOff()) return;
   const stored = readConversation(s.id, s.owner, { answering: held ? "stopped" : "kept" });
   const theirs = (stored?.turns ?? []).filter((t) => t.id !== drop);
   // Shown: the finished turns; written: those and the stored turns still answering.

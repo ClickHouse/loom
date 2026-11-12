@@ -192,9 +192,10 @@ for (const [width, searchFloor, kind] of [
   });
 }
 
-// From xl the assistant launcher shows its word: with the longest namespace the header still
-// leaves the search its floor, so a later header item that crowds it fails here.
-test("at 1280 px the launcher shows its word and the header search keeps its floor", async ({ page }) => {
+// The assistant's launcher is the edge at the window's right, never in the header: with the
+// longest namespace the header still leaves the search its floor, so a later header item that
+// crowds it fails here.
+test("at 1280 px the header search keeps its floor beside the longest namespace", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const long = `team-${"0123abcd-".repeat(8)}end`;
   await installApi(page, { mine: [row(long, "memory", "admin")], claims: [long], savedNamespace: long });
@@ -202,7 +203,7 @@ test("at 1280 px the launcher shows its word and the header search keeps its flo
   await expect(page.locator("main h1").first()).toBeVisible();
   const launcher = page.locator('[data-focus-key="assistant-launcher"]');
   await expect(launcher).toHaveAccessibleName("Assistant");
-  await expect(launcher.getByText("Assistant", { exact: true })).toBeVisible();
+  await expect(page.locator("header").locator('[data-focus-key="assistant-launcher"]')).toHaveCount(0);
   expect((await boxOf(page.locator("#header-search"))).width).toBeGreaterThanOrEqual(160);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
