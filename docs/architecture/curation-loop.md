@@ -37,14 +37,14 @@ whole in `value` and in `value_json` (the embedding reads its excerpt, as for an
 A definition is **governed** while three things hold, checked when the term leg reads it:
 a live `loom.shared` row of type `definition` under a `definition/` key exists; its
 provenance (`promoted_from`) names exactly one source, the namespace-wide row under that
-key (`user_id`, `agent` and `session_id` all `'-'`); and that source is live (not
-tombstoned and not past its `expires_at`), not `sensitivity = 'high'`, and holds the same
-text as the shared copy. The source is read from the memory authority (Postgres when it
-holds live memory, [storage authority](storage-authority.md)), and a source whose head
-cannot be read fails closed: the definition is not served. A read-time check covers every
-path into that state that it can see, rows promoted before this design and through N-1
-included; what it cannot see is named under rolling upgrades. The shared layer already is
-the namespace's admin-approved copy of a fact ([the shared
+key (`user_id`, `agent` and `session_id` all `'-'`); and that source is live (`status =
+'active'`, not tombstoned, superseded or past its `expires_at`), not `sensitivity =
+'high'`, and holds the same text as the shared copy. The source is read from the memory
+authority (Postgres when it holds live memory, [storage authority](storage-authority.md)),
+and a source whose head cannot be read fails closed: the definition is not served. A
+read-time check covers every path into that state that it can see, rows promoted before
+this design and through N-1 included; what it cannot see is named under rolling upgrades.
+The shared layer already is the namespace's admin-approved copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records the candidate it
 came from (`promoted_from_candidate_id`), `memory.lineage` walks it back, and every build
@@ -90,8 +90,8 @@ promotes them, but their write-time verdicts change with this design: `definitio
 `KEY_IDENTIFIED_TYPES`, as `decision` is, so two definitions under different keys are two
 definitions however alike they read. Unlike a decision, a definition is never judged
 against a close definition under another key: the write-time check neither marks nor
-supersedes it (no merge, duplicate, refinement or pinned-peer refusal), and the conflict
-resolver ([conflicts and
+supersedes it (no merge, duplicate, refinement or pinned-peer refusal, and no supersession
+by the value-update pass of `memory.bulk_set`), and the conflict resolver ([conflicts and
 refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither flags
 nor retires it, since its key is its term and `MRR` is not a revision of `ARR`. N-1 still
 gives the old verdicts during a rollout. Conflict surfacing compares a row only with rows
@@ -183,7 +183,8 @@ The **asker** is the person the token stands for, never a body field: the end us
 end-user token; else the token's `creator` claim, the person at the root of a delegated
 token or service account ([tokens and grants](../guides/tokens-and-grants.md)); else, for
 a service account's token minted without the claim, its creator as the registry records it
-(`sa_creator` in `server/auth/service_accounts.py`); else the token's subject. Tokens a
+(`sa_creator` in `server/auth/service_accounts.py`); else the token's subject. An agent of
+a machine trust (`sa:<trust>:<agent>`) stands for no person and records no miss. Tokens a
 person mints for themselves therefore count as that person. An asker that cannot be
 resolved (the registry unreadable, or a service account with no creator) records no miss:
 an unknown principal is never counted as a separate person. The asker is stored in the
@@ -272,10 +273,11 @@ names the team that owns its definitions. Each turn:
 1. reads finished `SELECT` queries of the source's window, from every replica when the
    registration names the cluster (`clusterAllReplicas`, which needs the `REMOTE` grant: a
    cluster registration accepts it beside the tracker's read-only list) and from the node
-   it connects to otherwise, grouped by `normalized_query_hash`, ranked by distinct users
-   and then by recency, and drops a group that fewer than `knowledge_gaps_min_askers`
-   distinct users ran. Only the normalised text is read (`normalizeQuery`, which replaces
-   literals), so no user's literal values reach the LLM or the draft;
+   it connects to otherwise, grouped by `normalized_query_hash`, counting initial queries
+   only (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and then by
+   recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
+   ran. Only the normalised text is read (`normalizeQuery`, which replaces literals), so
+   no user's literal values reach the LLM or the draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition for at most a setting's number of groups, and
    queues each (`source_kind = 'query_history'`): the metric's name is the `term`, its
@@ -366,10 +368,10 @@ tell; once no N-1 replica serves, an admin promotes again the definitions promot
 the rollout (`loom.shared` rows of type `definition` by promotion time). N-1, which does
 not know `definition` as key-identified, can merge, supersede or retire one definition's
 source while writing another; the rows it retired are listed by `memory.auto_retirements`
-(reasons `conflict_resolver` and `newest_wins_contradiction`), restored with its Undo, and
-promoted again; a write it merged was never stored and is written again. N-1's redact and
-namespace erasure do not reach the shared row's text, as today: one run during the rollout
-or after a rollback is run again once N serves.
+(reasons `conflict_resolver`, `newest_wins_contradiction` and `value_update`), restored
+with its Undo, and promoted again; a write it merged was never stored and is written
+again. N-1's redact and namespace erasure do not reach the shared row's text, as today:
+one run during the rollout or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
@@ -388,9 +390,9 @@ namespace erasure run after the rollback is run again once N serves.
 - A miss is recorded only when the operator opted in and the namespace did not refuse
   capture; its asker comes from the token, never the body.
 - A definition is governed only while an admin's promotion of its namespace-wide row into
-  the shared layer is live and the source still holds that text, live and unlabelled
-  `high`; the term leg serves at most one definition per name, the last one promoted; only
-  governed definitions are placed above the served list.
+  the shared layer is live and the source still holds that text, active, live and
+  unlabelled `high`; the term leg serves at most one definition per name, the last one
+  promoted; only governed definitions are placed above the served list.
 - A query naming no governed term is served exactly as without the term leg.
 
 ## Source entry points
