@@ -1004,7 +1004,7 @@ def test_a_timeout_with_no_connect_time_names_both_causes(
     assert "a program may hold it" in result.stderr and "firewall" in result.stderr
 
 
-@pytest.mark.parametrize("code", [0, 52, 1])
+@pytest.mark.parametrize("code", [0, 1, 18, 52, 55])
 def test_a_listener_is_named_by_curls_exit_alone(
     install, installer_env: dict[str, str], code: int
 ) -> None:
