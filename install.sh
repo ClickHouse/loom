@@ -90,6 +90,10 @@ main() {
   case ${LOOM_CONNECT:-} in
     *[!a-z,-]*) fail "LOOM_CONNECT takes claude-code, codex, vscode, all or none, separated by commas and no spaces: $LOOM_CONNECT" ;;
   esac
+  case ,${LOOM_CONNECT:-}, in
+    ,none,) ;;
+    *,none,*) fail "LOOM_CONNECT=none connects no agent, so it takes no other name: $LOOM_CONNECT" ;;
+  esac
   rest=${LOOM_CONNECT:-}
   while [ -n "$rest" ]; do
     client=${rest%%,*}
@@ -343,7 +347,7 @@ main() {
       -e "s/__LOOM_DOCUMENT_EXTRACTOR_TOKEN__/$extractor_token/" \
       "$bundle/env.example" >"$INSTALL_DIR/.env"
     printf 'Created %s/.env\n' "$INSTALL_DIR"
-    # A new install gets a first memory once it is up (below); an upgrade does not.
+    # A new install gets the memory check once it is up (below); an upgrade does not.
     : >"$INSTALL_DIR/.memory-check-pending"
   else
     printf 'Preserved existing %s/.env\n' "$INSTALL_DIR"
@@ -500,11 +504,12 @@ main() {
   # --profile bundled also stops a bundled server left from before a switch.
   printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"
 
-  # The first memory: a test memory saved, read back and deleted with no token,
+  # The memory check: a test memory saved, read back and deleted with no token,
   # proof that writes and reads work, once per new install (the marker its .env
-  # came with). Nothing stays: a kept row would read as the user's first memory
-  # (the dashboard's first-run checklist counts them). The read is also how this
-  # run learns that sign-in is off.
+  # came with). It leaves no live memory: a kept row would read as the user's
+  # first (the dashboard's first-run checklist counts live memories); its deleted
+  # version shows under Recently deleted. The read is also how this run learns
+  # that sign-in is off.
   org=$(get_env LOOM_SELF_SIGNUP_ORG)
   org=${org:-dev}
   namespace=$(get_env LOOM_DEFAULT_NAMESPACE)
@@ -532,9 +537,12 @@ main() {
         api memory.set "{$memory,\"value\":\"A check the installer saves and deletes.\"}" >/dev/null
         http_status=$(api memory.get "{$memory}")
         if [ "$http_status" = 200 ] && found; then
-          api memory.delete "{$memory}" >/dev/null
-          rm -f "$pending"
-          printf '\nSaved, read back and deleted a test memory: writes and reads work.\n'
+          if [ "$(api memory.delete "{$memory}")" = 200 ]; then
+            rm -f "$pending"
+            printf '\nSaved, read back and deleted a test memory: writes and reads work.\n'
+          else
+            printf '\nSaved and read back a test memory, but could not delete loom/installer-check; the next run tries again.\n'
+          fi
         elif [ "$http_status" = 200 ]; then
           printf '\nCould not save a test memory; `docker compose --project-directory %s logs loom` says why.\n' "$INSTALL_DIR"
         fi
@@ -553,8 +561,10 @@ main() {
       ;;
   esac
 
-  # bounded CMD...: CMD, stopped after 60 seconds (macOS has no `timeout`). Run in
-  # this shell, not in a pipeline or $(...), so that Ctrl-C reaches what it started.
+  # bounded CMD...: CMD, stopped after $bound_s seconds, 60 unless the caller sets
+  # it (macOS has no `timeout`). Run in this shell, not in a pipeline or $(...), so
+  # that Ctrl-C reaches what it started.
+  bound_s=60
   bounded() {
     "$@" &
     cmd_pid=$!
@@ -562,7 +572,7 @@ main() {
     (
       nap=
       trap '[ -z "$nap" ] || kill "$nap" 2>/dev/null; exit 0' TERM
-      sleep 60 &
+      sleep "$bound_s" &
       nap=$!
       wait "$nap" && kill "$cmd_pid" 2>/dev/null
     ) >/dev/null 2>&1 &
@@ -573,7 +583,7 @@ main() {
     kill "$dog_pid" 2>/dev/null || true
     dog_pid=
     # 143: the watchdog stopped it.
-    [ "$cmd_status" != 143 ] || printf '%s did not finish within 60 seconds\n' "$1" >&2
+    [ "$cmd_status" != 143 ] || printf '%s did not finish within %s seconds\n' "$1" "$bound_s" >&2
     return "$cmd_status"
   }
   # wants CLIENT NAME: whether to connect CLIENT. LOOM_CONNECT (a comma list of
@@ -589,6 +599,14 @@ main() {
     read -r answer || return 1
     case $answer in '' | [Yy]*) return 0 ;; *) return 1 ;; esac
   }
+  # node_ok: Node.js 18 or later on PATH, which both plugins' MCP header helper and
+  # hooks run on.
+  node_ok() {
+    major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null) || return 1
+    case $major in '' | *[!0-9]*) return 1 ;; esac
+    [ "$major" -ge 18 ]
+  }
+
   # Agents on this machine, connected the way the README does it, with no token:
   # only a server without sign-in takes that. LOOM_CONNECT=none looks for none.
   agents=
@@ -607,15 +625,17 @@ main() {
       elif grep -Eq '(^|[[:space:]])loom@loom$' "$tmp_dir/claude.plugins"; then
         printf 'Claude Code: the Loom plugin is installed already; `claude mcp list` shows the server it uses, and `claude plugin install loom@loom --config server_url=%s` points it here\n' "$server_url"
         kept=1
-      elif grep -q '"loom"[[:space:]]*:' "$HOME/.claude.json" 2>/dev/null; then
-        printf 'Claude Code: a loom MCP server is set up already (~/.claude.json); the plugin would list its tools twice\n'
+      elif grep -q '"loom"[[:space:]]*:' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" 2>/dev/null; then
+        printf 'Claude Code: a loom MCP server is set up already (%s); the plugin would list its tools twice\n' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
         kept=1
-      elif ! command -v node >/dev/null 2>&1; then
-        # The plugin's MCP header helper and its hooks run on Node.js.
+      elif ! node_ok; then
         printf 'Claude Code: the Loom plugin needs Node.js 18 or later; install it and run this again, or add the MCP server alone: claude mcp add --transport http loom "%s/mcp?toolset=coding" -s user\n' "$server_url"
       elif wants claude-code "Claude Code"; then
         # A marketplace added before is no error: the install below says what fails.
+        # It clones the repository: the slowest call, so it gets 5 minutes.
+        bound_s=300
         bounded claude plugin marketplace add ClickHouse/loom >/dev/null || true
+        bound_s=60
         # The URL is always given: the plugin's default reads LOOM_BASE_URL.
         if bounded claude plugin install loom@loom --config "server_url=$server_url" >/dev/null; then
           printf 'Claude Code: connected to %s (the plugin'"'"'s other settings are optional)\n' "$server_url"
@@ -647,8 +667,12 @@ main() {
         elif grep -q '^\[mcp_servers\.loom\]' "$codex_config" 2>/dev/null; then
           printf 'Codex: a loom MCP server is set up already (%s)\n' "$codex_config"
           kept=1
+        elif ! node_ok; then
+          printf 'Codex: the Loom plugin needs Node.js 18 or later; install it and run this again, or add the MCP server alone: codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
         elif wants codex Codex; then
+          bound_s=300
           bounded codex plugin marketplace add ClickHouse/loom >/dev/null || true
+          bound_s=60
           if bounded codex plugin add loom@loom >/dev/null; then
             printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
             agents="$agents, Codex"

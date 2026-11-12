@@ -936,6 +936,7 @@ def _start_stubs(
     memory_status: int = 200,
     found: bool = False,
     set_saves: bool = True,
+    delete_status: int = 200,
 ) -> tuple[Path, Path]:
     """Stubs for a started install: a curl whose port probe prints `connect_time` and
     exits `probe_exit`, whose /v1/health calls print `health`, and whose memory calls
@@ -956,7 +957,7 @@ def _start_stubs(
         f"  *v1/memory.get*) if [ -f {saved} ]; then echo '{{\"found\":true}}'; "
         f'else echo \'{{"found":false}}\'; fi > "$out"; printf {memory_status}; exit 0 ;;\n'
         f"  *v1/memory.set*) {on_set}echo '{{}}' > \"$out\"; printf {memory_status}; exit 0 ;;\n"
-        f"  *v1/memory.delete*) rm -f {saved}; echo '{{}}' > \"$out\"; printf {memory_status}; exit 0 ;;\n"
+        f"  *v1/memory.delete*) rm -f {saved}; echo '{{}}' > \"$out\"; printf {delete_status}; exit 0 ;;\n"
         "esac\n"
         f"printf %s {connect_time}\nexit {probe_exit}\n"
     )
@@ -1191,8 +1192,7 @@ def test_a_failed_run_checks_on_the_next_one(install, installer_env: dict[str, s
 
 
 def test_a_rerun_writes_no_memory_again(install, installer_env: dict[str, str]) -> None:
-    """The marker is gone once the memory read back: a deleted or edited welcome
-    memory stays as the user left it."""
+    """The marker is gone once the check passed: a rerun saves no test memory again."""
     run, _ = install
     curl_log, _ = _start_stubs(installer_env)
     assert run(LOOM_SKIP_START="0").returncode == 0
@@ -1431,7 +1431,7 @@ def test_a_codex_marketplace_without_the_plugin_is_offered_the_plugin(
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
     assert result.returncode == 0, result.stderr
     assert "plugin add loom@loom" in codex.read_text().splitlines()
-    assert "not enabled" not in result.stdout
+    assert "Codex: connected" in result.stdout
 
 
 def test_a_client_loom_connect_does_not_know_is_refused(install) -> None:
@@ -1561,3 +1561,65 @@ def test_claude_code_without_node_gets_the_mcp_entry_instead(
     assert 'claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding"' in (
         result.stdout
     )
+
+
+def test_a_test_memory_that_does_not_delete_is_tried_again(
+    install, installer_env: dict[str, str]
+) -> None:
+    """A live test memory would turn the dashboard's first-run checklist off."""
+    run, target = install
+    _start_stubs(installer_env, delete_status=500)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "could not delete loom/installer-check; the next run tries again" in result.stdout
+    assert (target / ".memory-check-pending").exists()
+
+
+@pytest.mark.skipif(Path("/usr/bin/node").exists(), reason="Node.js is in /usr/bin here")
+def test_codex_without_node_gets_the_mcp_entry_instead(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex")
+    bin_dir = installer_env["PATH"].split(":")[0]
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex", PATH=f"{bin_dir}:/usr/bin:/bin")
+    assert result.returncode == 0, result.stderr
+    assert codex.read_text().splitlines() == ["plugin list"]
+    assert 'codex mcp add loom --url "http://localhost:7777/mcp?toolset=coding"' in result.stdout
+
+
+def test_node_before_18_does_not_count(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    node = Path(installer_env["PATH"].split(":")[0]) / "node"
+    node.write_text("#!/bin/sh\necho 16\n")
+    node.chmod(0o755)
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]
+    assert "needs Node.js 18 or later" in result.stdout
+
+
+@pytest.mark.parametrize("value", ["none,claude-code", "codex,none"])
+def test_none_with_another_name_is_refused(install, value: str) -> None:
+    run, _ = install
+    result = run(LOOM_CONNECT=value)
+    assert result.returncode == 1
+    assert "LOOM_CONNECT=none connects no agent, so it takes no other name" in result.stderr
+
+
+def test_claude_config_dir_is_read_for_an_mcp_entry(
+    install, installer_env: dict[str, str], tmp_path: Path
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    config_dir = tmp_path / "claude-config"
+    config_dir.mkdir()
+    (config_dir / ".claude.json").write_text('{"mcpServers": {"loom": {"type": "http"}}}')
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", CLAUDE_CONFIG_DIR=str(config_dir))
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]
+    assert "a loom MCP server is set up already" in result.stdout
