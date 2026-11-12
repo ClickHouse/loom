@@ -56,7 +56,7 @@ gh run watch -R ClickHouse/loom "$run" --exit-status
 
 A prerelease takes neither Latest nor `:latest` and is not listed in the MCP Registry. Deploy it to a deployment you run (`loom-deploy`; on Kubernetes set `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`) and use it for at least two days. A regression is fixed on `main`, whose files already name `X.Y.Z`; tag `rc.2` on the fix's merge commit (for a patch, on its merge commit on `release/X.Y`, as in §7) and soak again. Never move a tag: once its images are published, the workflow refuses a tag that points elsewhere. Once the final is tagged, a candidate's run is refused (`prepare.py check-tag`), and the message says whether to run the final, do nothing, or delete a stray tag.
 
-A candidate's registry dispatch (`gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z-rc.N`, the owner's go-ahead first) publishes PyPI's `X.Y.ZrcN`, the PEP 440 form the workflow writes into the SDK, and npm's `next` dist-tag, once its `pypi` and `npm` environments are approved (§4). `releases/latest/download/install.sh` keeps serving the previous final until the final is published, so a candidate installs from its own URL: `https://github.com/ClickHouse/loom/releases/download/vX.Y.Z-rc.N/install.sh`.
+A candidate's registry dispatch (`gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z-rc.N`, the owner's go-ahead first) publishes PyPI's `X.Y.ZrcN`, the PEP 440 form the workflow writes into the SDK, and npm's `next` dist-tag, once its `pypi` and `npm` environments are approved (§4). `releases/latest/download/install.sh` serves the Latest release, which a candidate never becomes, so a candidate installs from its own URL: `https://github.com/ClickHouse/loom/releases/download/vX.Y.Z-rc.N/install.sh`.
 
 ## 4. The final release
 
@@ -70,17 +70,18 @@ gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z   # the owner's go-a
 git push origin "vX.Y.Z^{commit}:refs/heads/release/X.Y"      # X.Y.0 only: the line's patch branch; the owner's go-ahead first
 ```
 
+A tag run whose image build failed on a download from outside GitHub (`curl: (7) Failed to connect` from an apt or key server) is re-run with `gh run rerun "$run" -R ClickHouse/loom --failed`, `$run` being the tag run's id from the watch in §3, which builds again only the jobs that did not succeed. Never re-run it once another run has tagged the version ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)).
+
 The registry dispatch's `pypi`, `npm` and `mcp-registry` jobs (only `pypi` and `npm` for a candidate) wait for a required reviewer of their environments once `github-release` passes. The owner approves them on the run's page, or with `gh`:
 
 ```bash
 tag=vX.Y.Z   # vX.Y.Z-rc.N for a candidate
-run=$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event workflow_dispatch -L 1 --json databaseId --jq '.[0].databaseId // empty')
-gh api "repos/ClickHouse/loom/actions/runs/$run/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
-ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/$run/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
-gh api -X POST "repos/ClickHouse/loom/actions/runs/$run/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"
+# Run this once the dispatch shows `waiting`; a new dispatch takes a few seconds to appear, so re-run the next line until it prints an id.
+dispatch=$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event workflow_dispatch -L 1 --json databaseId --jq '.[0].databaseId // empty')
+gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
+ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
+gh api -X POST "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"
 ```
-
-A tag run whose image build failed on a download from outside GitHub (`curl: (7) Failed to connect` from an apt or key server) is re-run with `gh run rerun "$run" -R ClickHouse/loom --failed`, `$run` being the tag run's id from the watch in §3, which builds again only the jobs that did not succeed, unless another run has tagged the version since ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)).
 
 The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
 
@@ -100,7 +101,7 @@ npm view @clickhouse/loom dist-tags   # latest names the highest final
 curl -fsS -o /dev/null https://pypi.org/integrity/clickhouse-loom/X.Y.Z/clickhouse_loom-X.Y.Z-py3-none-any.whl/provenance   # exits 0: PyPI holds the wheel's provenance
 ```
 
-npm can take several minutes to list a version it has just accepted ("Your package is being processed"), so read `dist-tags` again before calling the publish missing. Both SDKs publish through trusted publishing, with no token in the workflow, which is why PyPI holds the wheel's provenance and `npm audit signatures` finds an attestation.
+npm can take several minutes to list a version it has just accepted ("Your package is being processed"), so re-run a failed `sdks` job of `release-check` and read `dist-tags` again before calling the publish missing. Both SDKs publish through trusted publishing, with no token in the workflow, which is why PyPI holds the wheel's provenance and `npm audit signatures` finds an attestation.
 
 The plugins, in a throwaway `HOME`: `claude plugin marketplace add ClickHouse/loom && claude plugin install loom@loom`, and `codex plugin marketplace add ClickHouse/loom` then install `loom` from it; each lists the plugin version on `main`, and its SessionStart against this server prints no `loom:` line about the server's version. Post what you checked, with the run links, on the release pull request (the owner's go-ahead first).
 
