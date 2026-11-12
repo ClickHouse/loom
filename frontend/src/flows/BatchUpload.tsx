@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import type { Identity, KnowledgeFormats } from "../api";
+import type { CollectionEntry, Identity, KnowledgeFormats } from "../api";
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast } from "../components/Toast";
 import { Alert } from "../components/ui/Alert";
@@ -15,18 +15,40 @@ import {
   capBatch,
   existingSources,
   foldersNotRead,
+  inTurn,
+  type KeptFields,
   MAX_BATCH_BYTES,
   MAX_BATCH_FILES,
   MAX_CHECKED,
   type PickedEntry,
   planBatch,
+  quietRetry,
   retryFailed,
   runBatch,
 } from "../lib/batchIngest";
+import { invalidateSharedCollections } from "../lib/collectionPlaces";
 import { errorLine } from "../lib/errorWords";
 import { tagsFrom } from "../lib/fileIngest";
 import { formatBytesShort } from "../lib/format";
+import {
+  afterPlacing,
+  collectionsMade,
+  FolderCollections,
+  type FolderPlan,
+  folderLabel,
+  folderOf,
+  MAX_DEPTH,
+  MAX_FOLDERS,
+  placeFolders,
+} from "../lib/folderUpload";
 import { AllowPartial } from "./FileIngest";
+import { useFolderPlan } from "./useFolderPlan";
+
+/** Collections read only in part, in words. */
+function cutLine(names: string[]): string {
+  const n = MAX_CHECKED.toLocaleString();
+  return `${names.join(", ")} ${names.length === 1 ? "holds" : "each hold"} over ${n} documents, so only the first ${n} were checked. A file that matches an unchecked document is skipped, not replaced.`;
+}
 
 /** A short name per state, so no two read the same. */
 const BADGE: Record<BatchRow["state"], { text: string; state: "success" | "danger" | "warning" | "neutral" | "info" }> =
@@ -73,9 +95,28 @@ type Choice = "replace" | "skip";
 
 /** A batch most of whose files to send are already here is most likely sent again: Skip is
  *  picked first then, unless the person has picked. */
-function firstChoice(rows: BatchRow[]): Choice {
-  const waiting = rows.filter((r) => r.state === "waiting" || r.state === "next");
+function firstChoice(rows: BatchRow[], twins: ReadonlySet<number>): Choice {
+  const waiting = rows.filter((r) => (r.state === "waiting" || r.state === "next") && !twins.has(r.id));
   return waiting.filter((r) => r.replaces).length * 2 > waiting.length ? "skip" : "replace";
+}
+
+/** A folder's file's line while its collection is made, before any file goes. */
+const MAKING = "Making its collection…";
+
+/** The folder files the check predicts into the same collection as an earlier one of their
+ *  name (`where`): twins the upload skips, so they are counted once. */
+function twinIds(rows: BatchRow[], where: (r: BatchRow) => string): Set<number> {
+  const seen = new Set<string>();
+  const out = new Set<number>();
+  // The one this upload sends is kept over one held for the next, as the upload keeps it.
+  for (const state of ["waiting", "next"] as const)
+    for (const r of rows) {
+      if (r.state !== state || !r.folder || !where(r)) continue;
+      const key = `${where(r)}\0${r.sourceUri}`;
+      if (seen.has(key)) out.add(r.id);
+      else seen.add(key);
+    }
+  return out;
 }
 
 /** One file's line. Memoised: Click UI's Badge measures its text on every render, and the
@@ -95,6 +136,53 @@ const FileRow = memo(function FileRow({ row, place, choice }: { row: BatchRow; p
   );
 });
 
+/** Lines of the folder preview before "and N more". */
+const PREVIEW_LINES = 10;
+
+/** One folder's line in the preview: its path by collection names, its files, and whether
+ *  its collection is there already. */
+function previewLine(p: FolderPlan, label: (path: string) => string): string {
+  const parts = p.path.split("/");
+  const path = parts.map((_, i) => label(parts.slice(0, i + 1).join("/"))).join(" › ");
+  const files = p.files ? ` · ${p.files} file${p.files === 1 ? "" : "s"}` : "";
+  const there = p.existing ? (p.files ? " · exists — files added to it" : " · exists") : "";
+  return `${path}${files}${there}`;
+}
+
+/** What a folder upload will make: each folder, nested, with its files, and whether its
+ *  collection is there already. */
+function FolderPreview({
+  plans,
+  place,
+  label,
+}: {
+  plans: FolderPlan[];
+  /** "in Team" for the collection shown; "" for the top level. */
+  place: string;
+  label: (path: string) => string;
+}) {
+  const made = plans.filter((p) => !p.existing).length;
+  // At the top level only the dropped folders sit there; the folders inside them nest.
+  const tops = plans.filter((p) => !p.existing && !p.parentPath).length;
+  const where = place ? ` ${place}` : tops === made ? " at the top level" : tops ? `, ${tops} at the top level` : "";
+  const shown = plans.slice(0, PREVIEW_LINES);
+  return (
+    <div className="space-y-1 text-sm">
+      <p>
+        {made
+          ? `Creates ${made} collection${made === 1 ? "" : "s"}${where}:`
+          : `Adds the files to collections already ${place || "at the top level"}:`}
+      </p>
+      <ul aria-label="Collections the folders go to" className="space-y-0.5 text-text-muted">
+        {shown.map((p) => (
+          <li key={p.path}>{previewLine(p, label)}</li>
+        ))}
+        {plans.length > PREVIEW_LINES && <li>{`and ${plans.length - PREVIEW_LINES} more`}</li>}
+      </ul>
+    </div>
+  );
+}
+
 /**
  * Many files into one place: each its own upload and ingest, `BATCH_OPEN` at a time, with
  * a line per file saying where it is. Files already there are replaced or skipped, as the
@@ -106,6 +194,8 @@ export function BatchUpload({
   place: placeProp,
   entries,
   folders = 0,
+  foldersLater = false,
+  readNote = "",
   formats,
   formatsRead,
   tags = "",
@@ -115,6 +205,7 @@ export function BatchUpload({
   onStarted,
   onDestination,
   closeWith,
+  tree: treeProp,
   onClose,
 }: {
   identity: Pick<Identity, "org" | "namespace">;
@@ -123,6 +214,10 @@ export function BatchUpload({
   entries: PickedEntry[];
   /** Folders dropped beside the files, which are not read. */
   folders?: number;
+  /** Those folders wait for the Library's whole list of collections. */
+  foldersLater?: boolean;
+  /** What reading a folder left out (hidden folders, unreadable items), in words. */
+  readNote?: string;
   formats: KnowledgeFormats | null;
   /** Whether the formats read has answered (`formats` null then: it could not be read). */
   formatsRead: boolean;
@@ -141,39 +236,81 @@ export function BatchUpload({
   /** Hands the dialog this batch's own close (it asks first when files failed), for the
    *  modal's close button and Escape. */
   closeWith?: (close: () => void) => void;
+  /** The collections the person reads and the one shown (null for a namespace), for
+   *  picked folders to become collections; none means folders keep only their paths. */
+  tree?: { rows: CollectionEntry[]; shown: CollectionEntry | null; onMade: (first: string) => void };
   onClose: () => void;
 }) {
-  // Where the files go, as it was when the dialog opened: the place the page shows may
-  // change meanwhile (Back), and these files still go where they were picked for.
+  // Where the files go, as it was when the dialog opened: the Library reloads its list
+  // after an upload, and the place it shows meanwhile is not where these files go.
   const [identity] = useState(identityProp);
   const [place] = useState(placeProp);
-  // Held to one upload's limits from the first render, before the check answers.
-  const [rows, setRows] = useState<BatchRow[]>(() =>
-    capBatch(
-      planBatch(entries, formats, () => identity),
-      false,
-    ),
+  const [tree] = useState(treeProp);
+  // Folders become collections inside the collection shown; on "My files" or a namespace,
+  // the person picks: a new top-level collection per folder, or the files kept here with
+  // their folder paths.
+  const plan = (mode: boolean, readable: KnowledgeFormats | null) =>
+    planBatch(
+      entries,
+      readable,
+      () => identity,
+      (e) =>
+        mode && e.path.includes("/")
+          ? { folder: folderOf(e.path), sourceUri: e.file.name }
+          : { folder: "", sourceUri: e.path || e.file.name },
+    );
+  // The formats the files were last planned with: they change only before the first upload.
+  const [plannedWith, setPlannedWith] = useState(formats);
+  // The files of folders that are sent, as folders: one left out (by its format) makes no
+  // collection. `plan` reads the pick, which a dialog never changes.
+  const folderFiles = useMemo(
+    () => plan(true, plannedWith).filter((r) => r.folder && r.state !== "skipped"),
+    [plannedWith],
   );
+  const folderish = folderFiles.length > 0;
+  const nestable = !!tree?.shown && !tree.shown.personal;
+  // A folder of folders sent starts as collections, until the person picks.
+  const nestFor = (readable: KnowledgeFormats | null) =>
+    plan(true, readable).some((r) => r.folder.includes("/") && r.state !== "skipped") ? "collections" : "flat";
+  const [nest, setNest] = useState<"collections" | "flat">(() => nestFor(formats));
+  const nestPicked = useRef(false);
+  const asCollections = !!tree && folderish && (nestable || nest === "collections");
+  // Held to one upload's limits from the first render, before the check answers.
+  const [rows, setRows] = useState<BatchRow[]>(() => capBatch(plan(asCollections, formats), false));
   // "partial": too many documents to read them all; "failed": why is in `checkError`.
   const [checked, setChecked] = useState<"checking" | "ok" | "partial" | "failed">("checking");
   const [checkError, setCheckError] = useState("");
+  // The collections the check could not read whole.
+  const [cut, setCut] = useState<string[]>([]);
+  // The same, by name, of the collections an upload read that the check had not.
+  const [lateCut, setLateCut] = useState<string[]>([]);
   const [checks, setChecks] = useState(0);
   // Set by the first Upload: a run that only skipped files has started all the same.
   const [started, setStarted] = useState(false);
   const [choice, setChoice] = useState<Choice>("replace");
+  // The twins the last render found, for a re-plan that runs before this render's.
+  const twinsSeen = useRef<ReadonlySet<number>>(new Set());
   // The person's own Replace or Skip, which a later check does not undo.
   const chosen = useRef<Choice | null>(null);
   // The formats may arrive after the pick: what is left out is decided again then, while
   // nothing has been sent, each file keeping what the check found of it.
-  const [plannedWith, setPlannedWith] = useState(formats);
   if (formats !== plannedWith && !started) {
     setPlannedWith(formats);
-    const found = new Map(rows.map((r) => [r.sourceUri, r]));
-    const replanned = planBatch(entries, formats, () => identity).map((r) => {
-      const was = found.get(r.sourceUri);
-      return was ? { ...r, replaces: was.replaces, kept: was.kept } : r;
+    const nowNest = nestPicked.current ? nest : nestFor(formats);
+    if (nowNest !== nest) setNest(nowNest);
+    const nowFolders = plan(true, formats).some((r) => r.folder && r.state !== "skipped");
+    const mode = !!tree && nowFolders && (nestable || nowNest === "collections");
+    // By row: in a folder upload two folders' files may share a source URI. A switch between
+    // collections and paths changes where each file goes: its marks are checked again.
+    const found = new Map(rows.map((r) => [r.id, r]));
+    const switched = mode !== asCollections;
+    const replanned = plan(mode, formats).map((r) => {
+      const was = found.get(r.id);
+      return was && !switched ? { ...r, replaces: was.replaces, kept: was.kept } : r;
     });
-    const use = chosen.current ?? firstChoice(replanned);
+    if (switched) setChecks((n) => n + 1);
+    // Twins as the last render found them: a row keeps its id across a re-plan.
+    const use = chosen.current ?? firstChoice(replanned, twinsSeen.current);
     setChoice(use);
     setRows(capBatch(replanned, use === "skip"));
   }
@@ -184,6 +321,20 @@ export function BatchUpload({
   const [stopping, setStopping] = useState(false);
   const [status, setStatus] = useState("");
   const ctrl = useRef<AbortController | null>(null);
+  // The collections this dialog's uploads made, for the Library to list once it closes.
+  const madeHere = useRef<string[]>([]);
+  // A folder upload ran: the Library lists its collections again once the dialog closes,
+  // whatever it made, titled, or a Stop cut short.
+  const foldersSent = useRef(false);
+  // What the check read of each collection it read whole, for the upload to start from.
+  const checkedSources = useRef(new Map<string, Map<string, KeptFields>>());
+  // Where each folder's file goes, once its collection is known.
+  const placeNames = useRef(new Map<number, string>());
+  const leave = () => {
+    const first = madeHere.current[0];
+    if (first || foldersSent.current) tree?.onMade(first ?? "");
+    onClose();
+  };
   const cancelling = useRef(false);
   const retryRef = useRef<HTMLButtonElement | null>(null);
   const uploadRef = useRef<HTMLButtonElement | null>(null);
@@ -200,22 +351,49 @@ export function BatchUpload({
   const latest = useRef(rows);
   latest.current = rows;
 
+  const { root, treeRows, plans, byFolder, planOf, repeated, topPlans, folderPlace, cutNames, wentTo, deep } =
+    useFolderPlan(tree, folderFiles, nestable, asCollections);
+
   // What is already there: those files are replaced or skipped. Past MAX_CHECK_PAGES the
   // rest is not looked for, and a file whose source exists is skipped (a new source
-  // publishes only while none is live). The upload waits for a check that succeeds.
+  // publishes only while none is live). The upload waits for a check that succeeds. A
+  // folder's collection that is new holds nothing yet; one it already is is read.
   const { org, namespace } = identity;
-  // Each change of `checks` (Check again) reads again.
+  // The place itself only when some file goes there (a loose one, or one kept by its path).
+  const toPlace = rows.some((r) => r.state !== "skipped" && !r.folder);
+  // A folder that holds only folders gets no file: its collection is not read.
+  const targets = [
+    ...(toPlace ? [namespace] : []),
+    ...plans.filter((p) => p.existing && p.files > 0).map((p) => p.existing),
+  ];
+  const targetKey = [...new Set(targets)].sort().join(",");
+  // The place itself, or the collections the folders' files go to.
+  const checkedWhere = targetKey === namespace ? `in ${place}` : "there";
+  const where = (r: BatchRow) => (r.folder ? (planOf(r.folder)?.existing ?? "") : namespace);
+  // Each change of `checks` (Check again) or of the collections to read reads again; never
+  // once files are sent.
+  const startedRef = useRef(started);
+  startedRef.current = started;
   useEffect(() => {
+    if (startedRef.current) return;
     const c = new AbortController();
     setChecked("checking");
-    existingSources({ org, namespace }, { signal: c.signal, onPage: setPage })
-      .then(({ uris, complete }) => {
-        const marked = latest.current.map((r) => ({
-          ...r,
-          replaces: uris.has(r.sourceUri),
-          kept: uris.get(r.sourceUri),
-        }));
-        const use = chosen.current ?? firstChoice(marked);
+    const names = targetKey.split(",").filter(Boolean);
+    // Three collections read at a time, each page sent again while the server says it may be.
+    inTurn(names, BATCH_OPEN, (ns) =>
+      existingSources({ org, namespace: ns }, { signal: c.signal, onPage: setPage, retry: quietRetry(c.signal) }),
+    )
+      .then((found) => {
+        const byNs = new Map(names.map((ns, i) => [ns, found[i]]));
+        const complete = found.every((f) => f.complete);
+        // Kept for the upload whole or cut: read again, a cut read stops at the same place.
+        for (const [ns, f] of byNs) checkedSources.current.set(ns, f.uris);
+        setCut(names.filter((ns) => !byNs.get(ns)?.complete));
+        const marked = latest.current.map((r) => {
+          const uris = byNs.get(where(r))?.uris;
+          return { ...r, replaces: !!uris?.has(r.sourceUri), kept: uris?.get(r.sourceUri) };
+        });
+        const use = chosen.current ?? firstChoice(marked, twinIds(marked, where));
         setChoice(use);
         setRows(capBatch(marked, use === "skip"));
         setChecked(complete ? "ok" : "partial");
@@ -224,6 +402,7 @@ export function BatchUpload({
       })
       .catch((e) => {
         if (c.signal.aborted) return;
+        c.abort(); // the other collections' reads stop too
         // A list only reads: nothing can have been saved.
         setCheckError(errorLine(e, { read: true }));
         setChecked("failed");
@@ -231,7 +410,7 @@ export function BatchUpload({
         refocus.current = false;
       });
     return () => c.abort();
-  }, [org, namespace, checks]);
+  }, [org, targetKey, checks]);
 
   const pick = (next: Choice) => {
     chosen.current = next;
@@ -270,15 +449,22 @@ export function BatchUpload({
   }, [running]);
 
   const held = rows.filter((r) => r.state === "next").length;
-  const existing = rows.filter((r) => r.replaces && (r.state === "waiting" || r.state === "next")).length;
-  const toSend = rows.filter((r) => r.state === "waiting" && !(choice === "skip" && r.replaces)).length;
+  // `where` reads the plan, which follows the rows' pick.
+  const twins = useMemo(() => twinIds(rows, where), [rows, plans]);
+  twinsSeen.current = twins;
+  const existing = rows.filter(
+    (r) => r.replaces && (r.state === "waiting" || r.state === "next") && !twins.has(r.id),
+  ).length;
+  const toSend = rows.filter(
+    (r) => r.state === "waiting" && !(choice === "skip" && r.replaces) && !twins.has(r.id),
+  ).length;
   const failed = rows.filter((r) => r.state === "failed").length;
   const bytes = useMemo(
     () =>
       rows
-        .filter((r) => r.state === "waiting" && !(choice === "skip" && r.replaces))
+        .filter((r) => r.state === "waiting" && !(choice === "skip" && r.replaces) && !twins.has(r.id))
         .reduce((n, r) => n + r.file.size, 0),
-    [rows, choice],
+    [rows, choice, twins],
   );
 
   // `only`: send again the rows in that state (the failed ones), or, for "next", the ones
@@ -287,23 +473,71 @@ export function BatchUpload({
     const c = new AbortController();
     ctrl.current = c;
     cancelling.current = false;
-    const start =
-      only === "next"
-        ? capBatch(latest.current, choice === "skip")
-        : only === "failed"
-          ? retryFailed(latest.current, choice === "skip")
-          : latest.current;
-    // Under "Skip them" the files already there end now, so the count of what is sent
-    // holds still while the batch runs.
     const skipping = choice === "skip";
-    const begin = start.map((r) =>
-      skipping && r.state === "waiting" && r.replaces ? { ...r, state: "skipped" as const, line: "Already here" } : r,
-    );
-    setRows(begin);
+    let start =
+      only === "next"
+        ? capBatch(latest.current, skipping)
+        : only === "failed"
+          ? retryFailed(latest.current, skipping)
+          : latest.current;
     setStarted(true);
     setRunning(true);
     requestAnimationFrame(() => statusRef.current?.focus());
     const tags = tagsFrom(tagsInput);
+    // What a collection holds, read once per upload (what the check read first); a read that
+    // fails fails that collection's files, which Retry failed sends again.
+    const reread = new Map<string, Promise<Map<string, KeptFields>>>();
+    const readCut = new Set<string>();
+    const sourcesOf = (namespace: string) => {
+      let read = reread.get(namespace);
+      if (!read) {
+        const known = checkedSources.current.get(namespace);
+        read = known
+          ? Promise.resolve(known)
+          : existingSources({ org, namespace }, { signal: c.signal, retry: quietRetry(c.signal) }).then((r) => {
+              if (!r.complete) readCut.add(namespace);
+              return r.uris;
+            });
+        reread.set(namespace, read);
+      }
+      return read;
+    };
+    // The folders' files this upload placed in their collections.
+    const placedIds = new Set<number>();
+    // Folders: their collections are made first, so each file goes where the server put it.
+    if (asCollections && start.some((r) => r.state === "waiting" && r.folder)) {
+      foldersSent.current = true;
+      setRows(start.map((r) => (r.state === "waiting" && r.folder ? { ...r, line: MAKING } : r)));
+      const folders = new FolderCollections(org, byFolder, root, quietRetry(c.signal), madeHere.current);
+      const placed = await placeFolders(start, folders, sourcesOf, wentTo, c.signal);
+      madeHere.current.push(...folders.created);
+      invalidateSharedCollections(); // collections were made or titled: other views read again
+      const cutHere = new Set<string>();
+      for (const p of placed) {
+        if (!p.placed) continue;
+        placeNames.current.set(p.row.id, p.where);
+        placedIds.add(p.row.id);
+        if (readCut.has(p.row.target.namespace)) cutHere.add(p.where);
+      }
+      if (cutHere.size) setLateCut((was) => [...new Set([...was, ...cutHere])]);
+      const sending = new Set(start.filter((r) => r.state === "waiting").map((r) => r.id));
+      start = afterPlacing(
+        placed.map((p) => p.row),
+        placedIds,
+        sending,
+        where,
+        {
+          asked: chosen.current !== null,
+          skip: skipping,
+        },
+      );
+    }
+    // Under "Skip them" the files already there end now, so the count of what is sent holds
+    // still while the batch runs.
+    const begin = start.map((r) =>
+      skipping && r.state === "waiting" && r.replaces ? { ...r, state: "skipped" as const, line: "Already here" } : r,
+    );
+    setRows(begin);
     // Each row as the run left it, kept here: the rendered rows may lag the last update.
     const final = new Map(begin.map((r) => [r.id, r]));
     await runBatch(begin, {
@@ -364,7 +598,7 @@ export function BatchUpload({
       });
       if (!ok) return;
     }
-    onClose();
+    leave();
   };
   // What "Upload the next files" sends: the next upload's share, by count and by size.
   const nextCount = useMemo(
@@ -377,14 +611,29 @@ export function BatchUpload({
     [rows, choice, failed],
   );
 
-  const finish = started ? () => void done() : onClose;
+  const finish = started ? () => void done() : leave;
   useEffect(() => onStarted?.(started), [started, onStarted]);
-  const destination = `to ${place}`;
-  useEffect(() => onDestination?.(destination), [destination, onDestination]);
   useEffect(() => closeWith?.(finish));
 
   const checking = checked === "checking";
   const checkFailed = checked === "failed";
+  const badNames = plans.filter((p) => p.refused);
+  const refusedNames = `${badNames
+    .slice(0, 3)
+    .map((p) => `${p.path} (${p.refused})`)
+    .join(", ")}${badNames.length > 3 ? ` and ${badNames.length - 3} more` : ""}`;
+  // One plan per collection (a folder that is a sibling's is not one); `making` counts the
+  // new ones, not the ones the list says are there already.
+  const madePlans = useMemo(() => collectionsMade(plans), [plans]);
+  const making = madePlans.filter((p) => !p.existing).length;
+  const refused = deep.length > 0 || making > MAX_FOLDERS || badNames.length > 0;
+  // Where the button says the files go: the place shown, or, for folders that become new
+  // top-level collections, those collections.
+  const destination =
+    asCollections && !nestable
+      ? `${topPlans.length === 1 ? `into ${folderPlace(topPlans[0].path)}` : `into ${topPlans.length} collections`}${toPlace ? ` and ${place}` : ""}`
+      : `to ${place}`;
+  useEffect(() => onDestination?.(destination), [destination, onDestination]);
   const upload = (
     <Button ref={uploadRef} type="primary" htmlType="button" onClick={() => void send()}>
       {`Upload ${toSend} file${toSend === 1 ? "" : "s"} ${destination}`}
@@ -397,7 +646,8 @@ export function BatchUpload({
           {`${toSend} file${toSend === 1 ? "" : "s"} · ${formatBytesShort(bytes)}, each its own document. ${BATCH_OPEN} are sent at a time, so agents adding to ${place} are not held up; keep this open until they are sent.`}
         </p>
       )}
-      {folders > 0 && <Alert state="info" text={foldersNotRead(folders)} />}
+      {readNote && <Alert state="info" text={readNote} />}
+      {folders > 0 && <Alert state="info" text={foldersNotRead(folders, foldersLater)} />}
       {/* Once started, the files go as they were planned, whatever a later read says. */}
       {!started && formatsRead && !formats && (
         <Alert
@@ -405,18 +655,66 @@ export function BatchUpload({
           text="Couldn't read which formats this deployment reads: every file is sent, and one it can't read fails on its own."
         />
       )}
-      {checking && (
-        <p className="text-xs text-text-muted">{`Checking which files are already in ${place}${page > 1 ? ` (page ${page})` : ""}…`}</p>
-      )}
-      {checked === "partial" && (
-        <Alert
-          state="warning"
-          text={`${place} holds over ${MAX_CHECKED.toLocaleString()} documents, so only the first ${MAX_CHECKED.toLocaleString()} were checked. A file that matches an unchecked document is skipped, not replaced.`}
+      {tree && folderish && !nestable && !started && (
+        <ChoiceGroup
+          label="The folders"
+          value={nest}
+          onChange={(v) => {
+            nestPicked.current = true;
+            setNest(v);
+            setRows(capBatch(plan(v === "collections", plannedWith), false));
+            setChecks((n) => n + 1);
+          }}
+          options={[
+            {
+              value: "collections",
+              // As New collection says it: people take one to sit in the namespace shown.
+              hint: `A top-level collection belongs to the org${tree?.shown ? "" : `, not to ${place}`}: only the members you add read it.`,
+              label:
+                topPlans.length !== 1
+                  ? "Make each dropped folder a top-level collection, its folders inside it"
+                  : topPlans[0].existing
+                    ? `Add the files to ${folderLabel(topPlans[0], treeRows, repeated)}, its folders inside it`
+                    : `Make ${topPlans[0].title} a top-level collection`,
+            },
+            { value: "flat", label: `Add the files to ${place}, keeping folder paths in their source` },
+          ]}
         />
       )}
+      {asCollections && plans.length > 0 && (
+        <FolderPreview plans={madePlans} place={nestable ? `in ${place}` : ""} label={folderPlace} />
+      )}
+      {making > MAX_FOLDERS && (
+        <Alert
+          role="alert"
+          state="danger"
+          text={`${making} new collections: one pick of folders makes at most ${MAX_FOLDERS}. Pick a folder with fewer folders inside.`}
+        />
+      )}
+      {badNames.length > 0 && (
+        <Alert
+          role="alert"
+          state="danger"
+          text={`These folder names can't be collection titles: ${refusedNames}. Rename them, then pick the folder again.`}
+        />
+      )}
+      {deep.length > 0 && (
+        <Alert
+          role="alert"
+          state="danger"
+          text={`Collections nest at most ${MAX_DEPTH} deep. These folders are too deep here: ${deep.slice(0, 3).join(", ")}${deep.length > 3 ? ` and ${deep.length - 3} more` : ""}. Pick a folder further down, or upload into a collection nearer the top.`}
+        />
+      )}
+      {checking && (
+        <p className="text-xs text-text-muted">{`Checking which files are already ${checkedWhere}${page > 1 && !targetKey.includes(",") ? ` (page ${page})` : ""}…`}</p>
+      )}
+      {checked === "partial" && (
+        <Alert state="warning" text={cutLine(cut.map((ns) => (ns === namespace ? place : (cutNames.get(ns) ?? ns))))} />
+      )}
+      {lateCut.length > 0 && <Alert state="warning" text={cutLine(lateCut)} />}
       {checkFailed && (
         <div className="space-y-2">
-          <Alert state="warning" text={`Couldn't check which files are already in ${place}: ${checkError}`} />
+          <Alert state="warning" text={`Couldn't check which files are already ${checkedWhere}: ${checkError}`} />
           <Button
             ref={checkAgainRef}
             type="secondary"
@@ -443,7 +741,11 @@ export function BatchUpload({
       )}
       {!started && existing > 0 && (
         <ChoiceGroup
-          label={`${existing} file${existing === 1 ? " is" : "s are"} already in ${place}`}
+          label={
+            targetKey === namespace
+              ? `${existing} file${existing === 1 ? " is" : "s are"} already in ${place}`
+              : `${existing} file${existing === 1 ? " is" : "s are"} already there`
+          }
           value={choice}
           onChange={pick}
           options={[
@@ -484,12 +786,17 @@ export function BatchUpload({
         className="max-h-80 divide-y divide-border overflow-y-auto rounded-md border border-border"
       >
         {rows.map((r) => (
-          <FileRow key={r.id} row={r} place={place} choice={choice} />
+          <FileRow
+            key={r.id}
+            row={r}
+            place={placeNames.current.get(r.id) ?? (r.folder ? folderPlace(r.folder) : place)}
+            choice={choice}
+          />
         ))}
       </ul>
       <ModalFooter>
         {!started && (
-          <Button type="secondary" htmlType="button" onClick={onClose}>
+          <Button type="secondary" htmlType="button" onClick={leave}>
             Cancel
           </Button>
         )}
@@ -523,12 +830,14 @@ export function BatchUpload({
               !formatsRead
                 ? "Reading which formats this deployment reads…"
                 : checking
-                  ? `Checking which files are already in ${place}…`
+                  ? `Checking which files are already ${checkedWhere}…`
                   : checkFailed
                     ? "Check again first."
                     : toSend === 0
                       ? "No file to send: every one is left out or skipped."
-                      : null
+                      : refused
+                        ? "These folders can't be uploaded as they are: see above."
+                        : null
             }
           >
             {upload}

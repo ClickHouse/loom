@@ -15,6 +15,7 @@ import {
   type KnowledgeIngestStatus,
   listKnowledge,
 } from "../api";
+import { titleKey } from "./collections";
 import { ApiError } from "./errors";
 import { errorLine, humanizeError } from "./errorWords";
 import { FollowLost, fileVerdict, ingestClock, ingestFile, titleFromName } from "./fileIngest";
@@ -52,10 +53,14 @@ export interface BatchRow {
   /** What it is shown as: the path it was picked or dropped with. */
   key: string;
   file: File;
-  /** Where it goes. */
+  /** Where it goes: the place shown, or, once its folder's collection is made, that. */
   target: Pick<Identity, "org" | "namespace">;
-  /** The source it publishes as. The same as `key` here; a file that a picked folder files
-   *  into a collection keeps its path as `key` and goes by its own name. */
+  /** That collection was made a moment ago: other replicas may not know it yet. */
+  fresh?: boolean;
+  /** The folder whose collection it goes into; "" for the place shown. */
+  folder: string;
+  /** The source it publishes as: the same as `key` for a loose file; a file a picked folder
+   *  files into a collection keeps its path as `key` and goes by its own name. */
   sourceUri: string;
   title: string;
   state: RowState;
@@ -82,10 +87,15 @@ export interface PickedEntry {
   path: string;
 }
 
+/** Why a folder is not read while the Library has not listed all its collections. */
+const FOLDERS_LATER =
+  "folders are taken once the Library has listed its collections, and not when it holds too many to list";
+
 /** What a drop left unread, in words; "" for none. */
-export function foldersNotRead(folders: number): string {
+export function foldersNotRead(folders: number, later = false): string {
   if (!folders) return "";
-  return `${folders} folder${folders === 1 ? " was" : "s were"} not read: drop or pick the files inside ${folders === 1 ? "it" : "them"}.`;
+  const why = later ? ` (${FOLDERS_LATER})` : "";
+  return `${folders} folder${folders === 1 ? " was" : "s were"} not read${why}: drop or pick the files inside ${folders === 1 ? "it" : "them"}.`;
 }
 
 /** `rows` held to one upload's limits, counted over the files it will send (with `skip`,
@@ -149,16 +159,37 @@ export function planBatch(
   entries: PickedEntry[],
   formats: KnowledgeFormats | null,
   target: (entry: PickedEntry) => Pick<Identity, "org" | "namespace">,
+  /** The folder a file's collection is made from ("" for none), and the source it gets
+   *  there; by default every file goes to the place shown, its path its source. */
+  into: (entry: PickedEntry) => { folder: string; sourceUri: string } = (entry) => ({
+    folder: "",
+    sourceUri: entry.path || entry.file.name,
+  }),
 ): BatchRow[] {
   const seen = new Set<string>();
   return entries.map((entry, id) => {
     const key = entry.path || entry.file.name;
     const where = target(entry);
-    const sourceUri = key;
+    const { folder, sourceUri } = into(entry);
     const title = titleFromName(entry.file.name);
-    const row: BatchRow = { id, key, file: entry.file, target: where, sourceUri, title, state: "waiting", line: "" };
+    const row: BatchRow = {
+      id,
+      key,
+      file: entry.file,
+      target: where,
+      folder,
+      sourceUri,
+      title,
+      state: "waiting",
+      line: "",
+    };
     const why = skipReason(entry, formats);
-    const place = `${where.namespace}\0${sourceUri}`;
+    // Folders whose names differ only in case become one collection (a title names one
+    // collection), so their files are one place too. A folder's place and a namespace are
+    // kept apart: a folder may be named as the namespace is.
+    const place = folder
+      ? `folder\0${folder.split("/").map(titleKey).join("/")}\0${sourceUri}`
+      : `namespace\0${where.namespace}\0${sourceUri}`;
     if (why) return { ...row, state: "skipped", line: why };
     if (seen.has(place))
       return {
@@ -181,24 +212,57 @@ export const MAX_CHECKED = MAX_CHECK_PAGES * CHECK_PAGE;
  *  whether that is all of them: past `MAX_CHECK_PAGES` pages the read stops. */
 export async function existingSources(
   id: Pick<Identity, "org" | "namespace">,
-  opts: { signal?: AbortSignal; onPage?: (page: number) => void } = {},
+  opts: {
+    signal?: AbortSignal;
+    onPage?: (page: number) => void;
+    /** Wraps each page's read, to send it again when the server allows. */
+    retry?: <T>(step: () => Promise<T>) => Promise<T>;
+  } = {},
 ): Promise<{ uris: Map<string, KeptFields>; complete: boolean }> {
+  const retry = opts.retry ?? ((step) => step());
   const uris = new Map<string, KeptFields>();
   let cursor: string | undefined;
   for (let page = 1; page <= MAX_CHECK_PAGES; page++) {
     opts.onPage?.(page);
-    const r = await listKnowledge(id, {
-      fields: ["source_uri", "title", "description", "tags"],
-      limit: CHECK_PAGE,
-      cursor,
-      signal: opts.signal,
-    });
+    const r = await retry(() =>
+      listKnowledge(id, {
+        fields: ["source_uri", "title", "description", "tags"],
+        limit: CHECK_PAGE,
+        cursor,
+        signal: opts.signal,
+      }),
+    );
     for (const row of r.rows)
       uris.set(row.source_uri, { title: row.title ?? "", description: row.description ?? "", tags: row.tags ?? [] });
     if (!r.next_cursor) return { uris, complete: true };
     cursor = r.next_cursor;
   }
   return { uris, complete: false };
+}
+
+/** How long a step into a collection this upload made waits for other replicas to learn
+ *  of it (acl_watermark_max_stale_seconds' default). */
+const NEW_COLLECTION_WAIT_MS = 10_000;
+
+/** Whether a refusal may pass once other replicas learn of a collection made a moment ago. */
+function notSeenYet(e: unknown): boolean {
+  return e instanceof ApiError && (e.code === "AUTH_INSUFFICIENT" || e.code === "RESOURCE_NOT_FOUND");
+}
+
+/** `step`, sent again for a few seconds while it is refused only because other replicas
+ *  have not learned of a collection this upload made (`fresh`); never once stopped. */
+export async function whileNew<T>(step: () => Promise<T>, fresh: boolean, signal?: AbortSignal): Promise<T> {
+  const until = Date.now() + NEW_COLLECTION_WAIT_MS;
+  for (;;) {
+    try {
+      return await step();
+    } catch (e) {
+      if (!fresh || !notSeenYet(e)) throw e;
+      signal?.throwIfAborted(); // stopped while waiting: it ends as a Stop, not as this refusal
+      if (Date.now() > until) throw e;
+      await ingestClock.sleep(1000, signal);
+    }
+  }
 }
 
 /** Whether the server said the request may be sent again unchanged, and after how long. */
@@ -229,6 +293,54 @@ export async function withRetry<T>(
   }
 }
 
+/** `withRetry` with no line to show: for a read, or a step whose row says nothing of a wait. */
+export function quietRetry(signal?: AbortSignal): <T>(step: () => Promise<T>) => Promise<T> {
+  return (step) => withRetry(step, () => {}, signal);
+}
+
+/** `run` over `items`, `limit` at a time, answering in their order. */
+export async function inTurn<T, R>(items: T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (let i = next++; i < items.length; i = next++) out[i] = await run(items[i]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+/** The line of a file another of its name goes to the same collection ahead of. */
+export const REPEAT = "Same name as another file going to that collection";
+
+/** Each source a collection gets once (`where`; "" for one not known yet): two folders the
+ *  server answers with one collection (an untitled one both their names spell) would
+ *  otherwise each send, or replace, the same document. */
+export function skipRepeats(rows: BatchRow[], where: (r: BatchRow) => string): BatchRow[] {
+  const keyOf = (r: BatchRow) => {
+    const ns = where(r);
+    return (r.state === "waiting" || r.state === "next") && ns ? `${ns}\0${r.sourceUri}` : "";
+  };
+  // One of each: a file an earlier upload from this dialog sent there holds its name (it went
+  // where its target says); then the first of those still to go.
+  const kept = new Map<string, number>();
+  for (const r of rows)
+    if (SENT.has(r.state)) {
+      const key = `${r.target.namespace}\0${r.sourceUri}`;
+      if (!kept.has(key)) kept.set(key, r.id);
+    }
+  for (const r of rows) {
+    const key = keyOf(r);
+    if (key && !kept.has(key)) kept.set(key, r.id);
+  }
+  return rows.map((r) => {
+    const key = keyOf(r);
+    return key && kept.get(key) !== r.id ? { ...r, state: "skipped", line: REPEAT } : r;
+  });
+}
+
+/** The states of a file that went to its collection. */
+const SENT: ReadonlySet<RowState> = new Set(["done", "partial", "working", "goes_on"]);
+
 export interface BatchOptions {
   fields: { tags: string[]; allow_partial: boolean };
   /** Sends no more files. A job already queued goes on, unless `cancelling` says the
@@ -240,17 +352,11 @@ export interface BatchOptions {
 
 /** Send every waiting row, `BATCH_OPEN` at a time, reporting each change with `onRow`. */
 export async function runBatch(rows: BatchRow[], opts: BatchOptions): Promise<void> {
-  const queue = rows.filter((r) => r.state === "waiting");
-  const worker = async () => {
-    for (let row = queue.shift(); row; row = queue.shift()) {
-      if (opts.signal.aborted) {
-        opts.onRow({ ...row, state: "not_sent", line: "" });
-        continue;
-      }
-      await sendRow(row, opts);
-    }
-  };
-  await Promise.all(Array.from({ length: BATCH_OPEN }, worker));
+  await inTurn(
+    rows.filter((r) => r.state === "waiting"),
+    BATCH_OPEN,
+    async (row) => (opts.signal.aborted ? opts.onRow({ ...row, state: "not_sent", line: "" }) : sendRow(row, opts)),
+  );
 }
 
 async function sendRow(start: BatchRow, opts: BatchOptions): Promise<void> {
@@ -261,6 +367,7 @@ async function sendRow(start: BatchRow, opts: BatchOptions): Promise<void> {
     row = { ...row, ...patch };
     opts.onRow(row);
   };
+  const fresh = !!row.fresh;
   // A row sent again (Retry failed) may carry the job of its last run: that one is over.
   set({ state: "sending", line: "Uploading…", ingestionId: undefined });
   try {
@@ -287,7 +394,16 @@ async function sendRow(start: BatchRow, opts: BatchOptions): Promise<void> {
       {
         signal: opts.signal,
         onQueued: (ingestionId) => set({ ingestionId }),
-        retry: (step) => withRetry(step, (line) => set({ line }), opts.signal),
+        // Into a collection made a moment ago, a refusal can mean another replica has not
+        // learned of it yet.
+        retry: (step) =>
+          withRetry(
+            () => whileNew(step, fresh, opts.signal),
+            (line) => set({ line }),
+            opts.signal,
+          ),
+        // A poll of a job in that collection too: missed polls count only once it passes.
+        poll: (step) => whileNew(step, fresh, opts.signal),
       },
     );
     set({ ingestionId: undefined, ...ended(status, row) });

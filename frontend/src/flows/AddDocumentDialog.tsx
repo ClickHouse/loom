@@ -4,7 +4,7 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { addKnowledge, cancelIngestion, type Identity, type IngestCancelResult } from "../api";
+import { addKnowledge, cancelIngestion, type CollectionEntry, type Identity, type IngestCancelResult } from "../api";
 import { toast, toastError } from "../components/Toast";
 import { humanizeError, toastCommitted } from "../lib/errorWords";
 import { isPublicationPending } from "../lib/errors";
@@ -21,6 +21,7 @@ import {
   tagsFrom,
   titleFromName,
 } from "../lib/fileIngest";
+import { FolderTooLarge, pickedFolder, type ReadSkips, readFolders, skipsLine, takeDropped } from "../lib/folderUpload";
 import { BatchUpload } from "./BatchUpload";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormatsRead } from "./FileIngest";
 
@@ -32,6 +33,11 @@ interface Props {
   onBatchStarted?: (started: boolean) => void;
   /** What the place the files go to is called on screen; its namespace when unset. */
   place?: string;
+  /** The Library's collections and the one shown, so a folder becomes collections. */
+  tree?: { rows: CollectionEntry[]; shown: CollectionEntry | null; onMade: (first: string) => void };
+  /** The Library has not listed all its collections yet (or holds too many to list): a
+   *  folder is taken once it has. Without it and without `tree`, folders are not taken here. */
+  foldersLater?: boolean;
   onAdded: () => void;
   /** When set, the dialog opens in Replace mode: the source_uri is
    *  locked to this value (the new file or text is the document's next
@@ -45,6 +51,9 @@ interface Props {
     tags?: string[];
   };
 }
+
+/** Whether this browser offers a folder to the file input. */
+const canPickFolder = typeof document !== "undefined" && "webkitdirectory" in document.createElement("input");
 
 /** What a job the dialog stops following does: it goes on, and a reload shows it (a
  *  replaced document shows its new revision). */
@@ -71,6 +80,8 @@ export function AddDocumentDialog({
   onBatchStarted,
   identity,
   place,
+  tree,
+  foldersLater = false,
   onAdded,
   replaceMode,
 }: Props) {
@@ -79,6 +90,9 @@ export function AddDocumentDialog({
   const [file, setFile] = useState<File | null>(null);
   // More than one file picked or dropped: each goes as its own document (BatchUpload).
   const [batch, setBatch] = useState<PickedEntry[] | null>(null);
+  // The Library's collections as they were at the pick: a folder read that takes a while
+  // keeps them, though the Library may reload its list meanwhile.
+  const [batchTree, setBatchTree] = useState<Props["tree"]>(undefined);
   // Folders dropped beside the files, which are not read.
   const [droppedFolders, setDroppedFolders] = useState(0);
   // A batch sending: the dialog closes only through its own Close, which asks first.
@@ -89,6 +103,13 @@ export function AddDocumentDialog({
   const batchClose = useRef<(() => void) | null>(null);
   // What a drop left unused, said beside the form.
   const [note, setNote] = useState("");
+  // Files read so far from a dropped folder, while it is read; null otherwise.
+  const [reading, setReading] = useState<number | null>(null);
+  // Counts folder reads: a read whose dialog closed, or that a newer pick replaced, is dropped.
+  const readSeq = useRef(0);
+  const readStop = useRef<AbortController | null>(null);
+  // What reading a folder left out, said beside the batch.
+  const [readNote, setReadNote] = useState("");
   const [sourceUri, setSourceUri] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -101,14 +122,22 @@ export function AddDocumentDialog({
   const [step, setStep] = useState("");
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const folderRef = useRef<HTMLInputElement | null>(null);
   const following = useRef<AbortController | null>(null);
   // The job being followed, for Stop.
   const [jobId, setJobId] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const { formats, settled: formatsRead } = useKnowledgeFormatsRead(identity, open);
   const verdict = file ? fileVerdict(file, formats) : null;
-  // Leaving the page stops the following, as closing does; the job goes on on the server.
-  useEffect(() => () => following.current?.abort(), []);
+  // Leaving the page stops the following and a folder read, as closing does; the job goes on
+  // on the server.
+  useEffect(
+    () => () => {
+      following.current?.abort();
+      readStop.current?.abort();
+    },
+    [],
+  );
   // A file dropped beside the drop zone would open in the tab, leaving the dialog and its
   // batch: while the dialog is up, only the zone takes a file. Text dropped into a field is
   // the browser's, as everywhere.
@@ -141,11 +170,15 @@ export function AddDocumentDialog({
   }, [open, replaceMode]);
 
   const reset = () => {
+    readSeq.current++;
+    readStop.current?.abort();
+    setReading(null);
     following.current?.abort();
     following.current = null;
     setMode("file");
     setFile(null);
     setBatch(null);
+    setBatchTree(undefined);
     setBatchRunning(false);
     setBatchHeading("");
     batchClose.current = null;
@@ -162,41 +195,72 @@ export function AddDocumentDialog({
     setJobId(null);
   };
 
+  // A picked or dropped folder: its files, with their paths, go as a batch.
+  const onPickEntries = (entries: PickedEntry[], skips: ReadSkips | undefined, at: Props["tree"]) => {
+    setDroppedFolders(0);
+    setReading(null);
+    setNote("");
+    setReadNote(skips ? skipsLine(skips) : "");
+    if (entries.length === 0) {
+      // What reading left out may be why: a folder that is itself hidden, say.
+      const left = skips ? skipsLine(skips) : "";
+      setError(`The folder holds no files the Library could take.${left ? ` ${left}` : ""}`);
+      return;
+    }
+    setError(null);
+    setBatchTree(at);
+    setBatch(entries);
+  };
+
   // One file fills the form below; several go as a batch. Replace takes one.
   const onPickFiles = (files: File[], folders = 0) => {
     setDroppedFolders(folders);
-    const unread = foldersNotRead(folders);
+    setReadNote("");
+    const unread = foldersNotRead(folders, foldersLater && !replaceMode);
     const unused = replaceMode && files.length > 1 ? "Replace takes one file; the others were not used." : "";
     setNote([unused, unread].filter(Boolean).join(" "));
     if (files.length > 1 && !replaceMode) {
       setError(null);
+      setBatchTree(tree);
       setBatch(files.map((f) => ({ file: f, path: "" })));
       return;
     }
     onPickFile(files[0] ?? null);
   };
 
-  // Files dropped on the picker. A dropped folder is not read (its entries would need the
-  // folder APIs); the files beside it are.
+  // The entries are taken while the drop lasts: the browser empties the list once it returns.
   const onDrop = (e: React.DragEvent) => {
-    const files: File[] = [];
-    let folders = 0;
-    // Read now: the browser empties the list once this handler returns.
-    for (const item of Array.from(e.dataTransfer.items ?? [])) {
-      if (item.kind !== "file") continue;
-      if (item.webkitGetAsEntry?.()?.isDirectory) {
-        folders++;
-        continue;
-      }
-      const f = item.getAsFile();
-      if (f) files.push(f);
-    }
+    const { entries, files } = takeDropped(e.dataTransfer.items ?? []);
     if (!e.dataTransfer.items?.length) files.push(...Array.from(e.dataTransfer.files ?? []));
-    if (folders && !files.length) {
-      setError("Folders are not taken here: drop or pick the files inside them.");
+    if (entries.length === 0 || replaceMode || !tree) {
+      if (entries.length && !files.length) {
+        setError(
+          foldersLater && !replaceMode
+            ? foldersNotRead(entries.length, true)
+            : "Folders are not taken here: drop or pick the files inside them.",
+        );
+        return;
+      }
+      onPickFiles(files, entries.length);
       return;
     }
-    onPickFiles(files, folders);
+    const seq = ++readSeq.current;
+    const current = () => seq === readSeq.current;
+    readStop.current?.abort();
+    const stop = new AbortController();
+    readStop.current = stop;
+    const atDrop = tree;
+    setReading(0);
+    // Every 50 files: the count is a status line a screen reader speaks on each change.
+    void readFolders(entries, (n) => current() && (n === 1 || n % 50 === 0) && setReading(n), stop.signal)
+      .then(({ picked, skips }) => {
+        if (current()) onPickEntries([...files.map((f) => ({ file: f, path: "" })), ...picked], skips, atDrop);
+      })
+      .catch((err) => {
+        if (!current()) return;
+        setReading(null);
+        setError(err instanceof FolderTooLarge ? err.message : humanizeError(err));
+      });
   };
 
   const onPickFile = (f: File | null) => {
@@ -210,7 +274,10 @@ export function AddDocumentDialog({
 
   const tags = () => tagsFrom(tagsInput);
   const canSubmit =
-    sourceUri.trim() !== "" && busy === null && (mode === "file" ? !!file && !verdict?.refusal : content.trim() !== "");
+    sourceUri.trim() !== "" &&
+    busy === null &&
+    reading === null &&
+    (mode === "file" ? !!file && !verdict?.refusal : content.trim() !== "");
 
   // Added: the list reads again and the dialog closes, whichever line said so.
   const closeAdded = () => {
@@ -355,6 +422,9 @@ export function AddDocumentDialog({
           place={placeName}
           entries={batch}
           folders={droppedFolders}
+          foldersLater={foldersLater && !replaceMode}
+          readNote={readNote}
+          tree={batchTree}
           formats={formats}
           formatsRead={formatsRead}
           tags={tagsInput}
@@ -379,7 +449,10 @@ export function AddDocumentDialog({
           }}
         >
           <div className="space-y-4">
-            <Tabs value={mode} onValueChange={(v) => busy === null && setMode(v === "paste" ? "paste" : "file")}>
+            <Tabs
+              value={mode}
+              onValueChange={(v) => busy === null && reading === null && setMode(v === "paste" ? "paste" : "file")}
+            >
               <Tabs.TriggersList aria-label="How to add it">
                 <TabTrigger value="file">Upload a file</TabTrigger>
                 <TabTrigger value="paste">Paste text</TabTrigger>
@@ -396,19 +469,60 @@ export function AddDocumentDialog({
                     e.target.value = ""; // the same files picked again still fire
                   }}
                 />
-                <DropZone data-testid="add-doc-drop" busy={busy !== null} onDrop={onDrop} className="space-y-2 p-3">
+                {canPickFolder && !replaceMode && tree && (
+                  <input
+                    aria-label="Choose a folder to upload"
+                    ref={(el) => {
+                      folderRef.current = el;
+                      // React passes no `webkitdirectory`: set it on the element.
+                      el?.setAttribute("webkitdirectory", "");
+                    }}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      try {
+                        const { picked, skips } = pickedFolder(Array.from(e.target.files ?? []));
+                        onPickEntries(picked, skips, tree);
+                      } catch (err) {
+                        setError(err instanceof FolderTooLarge ? err.message : humanizeError(err));
+                      }
+                      e.target.value = "";
+                    }}
+                  />
+                )}
+                <DropZone
+                  data-testid="add-doc-drop"
+                  busy={busy !== null || reading !== null}
+                  onDrop={onDrop}
+                  className="space-y-2 p-3"
+                >
                   {file && verdict && <PickedFile file={file} verdict={verdict} />}
                   <div className="flex flex-wrap items-center justify-center gap-2">
-                    {!replaceMode && <span className="drop-hint text-sm text-text-muted">Drop files here, or</span>}
+                    {!replaceMode && (
+                      <span className="drop-hint text-sm text-text-muted">
+                        {tree ? "Drop files or folders here, or" : "Drop files here, or"}
+                      </span>
+                    )}
                     <Button
                       type="secondary"
                       htmlType="button"
                       iconLeft="upload"
-                      disabled={busy !== null}
+                      disabled={busy !== null || reading !== null}
                       onClick={() => fileRef.current?.click()}
                     >
                       {file ? "Choose another file" : replaceMode ? "Choose the new file" : "Choose files"}
                     </Button>
+                    {canPickFolder && !replaceMode && tree && (
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        iconLeft="folder-closed"
+                        disabled={busy !== null || reading !== null}
+                        onClick={() => folderRef.current?.click()}
+                      >
+                        Choose a folder
+                      </Button>
+                    )}
                   </div>
                 </DropZone>
                 <p className="text-xs text-text-muted">
@@ -417,6 +531,10 @@ export function AddDocumentDialog({
                 </p>
                 {verdict?.refusal && <Alert role="alert" state="danger" text={verdict.refusal} />}
                 {note && <Alert state="info" text={note} />}
+                {/* Always on the page, so a screen reader hears its first line. */}
+                <p aria-live="polite" className="text-sm text-text-muted empty:mb-0">
+                  {reading === null ? "" : `Reading the folder… ${reading} file${reading === 1 ? "" : "s"}`}
+                </p>
                 <AllowPartial checked={allowPartial} onChange={setAllowPartial} disabled={busy !== null} />
               </Tabs.Content>
               <Tabs.Content value="paste" className="pt-4">

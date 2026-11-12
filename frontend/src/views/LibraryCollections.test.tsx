@@ -401,6 +401,112 @@ describe("the Library on a collection", () => {
     expect(screen.getByText(/Couldn't load collections/)).toBeInTheDocument();
   });
 
+  const folderDrop = (name: string, files: string[]) => ({
+    dataTransfer: {
+      items: [
+        {
+          kind: "file",
+          getAsFile: () => null,
+          webkitGetAsEntry: () => ({
+            isFile: false,
+            isDirectory: true,
+            name,
+            createReader: () => {
+              const left = [
+                files.map((n) => ({
+                  isFile: true,
+                  isDirectory: false,
+                  name: n,
+                  file: (ok: (f: File) => void) => ok(new File([n], n)),
+                })),
+                [],
+              ];
+              return { readEntries: (ok: (es: unknown[]) => void) => ok(left.shift() ?? []) };
+            },
+          }),
+        },
+      ],
+      files: [],
+    },
+  });
+  const MARKDOWN = {
+    formats: [{ format: "markdown", extensions: ["md"], media_types: [], available: true }],
+    max_upload_bytes: 1_000_000,
+    refused_extensions: [],
+    default_format: "text",
+  };
+
+  it("lists the collections a folder upload made once its dialog closes", async () => {
+    const q4 = entry("col-q4", { parent: "col-q3", title: "Q4" });
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.knowledgeFormats.mockResolvedValue(MARKDOWN);
+    api.createCollection.mockImplementation(async () => {
+      api.listCollections.mockResolvedValue({ collections: [...ROWS, q4], next_cursor: null });
+      return { namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" };
+    });
+    api.uploadKnowledgeFile.mockImplementation(async (_id: unknown, f: File) => ({ upload_id: f.name }));
+    api.ingestKnowledge.mockImplementation(async (_id: unknown, o: { source_uri: string }) => ({
+      ingestion_id: o.source_uri,
+    }));
+    api.knowledgeIngestStatus.mockImplementation(async (_id: unknown, job: string) => ({
+      found: true,
+      ingestion_id: job,
+      source_uri: job,
+      state: "ready",
+      revision: 1,
+    }));
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />);
+    await settle();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    fireEvent.drop(screen.getByTestId("add-doc-drop"), folderDrop("Q4", ["a.md"]));
+    const upload = await screen.findByRole("button", { name: "Upload 1 file to col-q3" });
+    await waitFor(() => expect(upload).not.toHaveAttribute("aria-disabled"));
+    await user.click(upload);
+    const reads = api.listCollections.mock.calls.length;
+    await user.click(await screen.findByRole("button", { name: "Done" }));
+    await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads));
+    expect(
+      await within(await screen.findByRole("region", { name: /Collections/ })).findByRole("link", { name: "Q4" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says on an empty collection that a folder can be uploaded there", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />);
+    expect(await screen.findByText("This collection is empty")).toBeInTheDocument();
+    expect(screen.getByText(/text file, or a folder of them: the server extracts each/)).toBeInTheDocument();
+  });
+
+  it("says folders wait for the list when the Library's collections failed to load", async () => {
+    api.listCollections.mockRejectedValue(new Error("offline"));
+    api.knowledgeFormats.mockResolvedValue(MARKDOWN);
+    render(<Documents />);
+    await settle();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    fireEvent.drop(screen.getByTestId("add-doc-drop"), folderDrop("Q4", ["a.md"]));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "1 folder was not read (folders are taken once the Library has listed its collections",
+    );
+  });
+
+  it("takes no folder until the Library has listed its collections", async () => {
+    api.listCollections.mockReturnValue(new Promise(() => {}));
+    api.knowledgeFormats.mockResolvedValue(MARKDOWN);
+    render(<Documents />);
+    await settle();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    fireEvent.drop(screen.getByTestId("add-doc-drop"), folderDrop("Q4", ["a.md"]));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "1 folder was not read (folders are taken once the Library has listed its collections",
+    );
+  });
+
   it("keeps an upload going when the page moves to a namespace with no documents", async () => {
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
     api.listKnowledge.mockResolvedValue({ rows: [], next_cursor: null });

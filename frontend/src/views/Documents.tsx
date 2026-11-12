@@ -887,6 +887,12 @@ export function Documents() {
     />
   );
 
+  // The Library's collections and the one shown, when the list is whole: only then can a
+  // folder be placed where the person looks, so the dialog takes one.
+  const folderTree =
+    collections.rows && !collections.truncated && (!collection || shown)
+      ? { rows: collections.rows, shown, onMade: (first: string) => collections.reload(first) }
+      : undefined;
   // Mounted while open, beside either page, so a batch outlives a page move.
   const addDialog = addOpen && (
     <AddDocumentDialog
@@ -900,6 +906,10 @@ export function Documents() {
       }}
       identity={{ org: identity.org, namespace: identity.namespace }}
       place={shown ? distinctTitle(shown, repeatedTitles(collections.rows ?? [])) : identity.namespace}
+      tree={folderTree}
+      // Folders wait for a list still being read (or read again after it failed), or one too
+      // long to show; a collection not in a whole list takes none.
+      foldersLater={!folderTree && (collections.rows === null || collections.truncated)}
       onAdded={reload}
     />
   );
@@ -1161,7 +1171,9 @@ export function Documents() {
           description={
             readOnly
               ? "Nothing has been added yet. Its members who write can add documents."
-              : "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file: the server extracts it, your agents search it, and you can download the original back any time."
+              : folderTree
+                ? "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file, or a folder of them: the server extracts each, your agents search them, and you can download the originals back any time."
+                : "Upload a PDF, Word, slide deck, spreadsheet, Markdown or text file: the server extracts it, your agents search it, and you can download the original back any time."
           }
           action={readOnly ? undefined : { label: "Add document", onClick: () => setAddOpen(true) }}
         />

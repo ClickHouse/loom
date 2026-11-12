@@ -42,6 +42,7 @@ import {
 } from "../api";
 import { ingestClock } from "../lib/fileIngest";
 import { ApiError } from "../lib/errors";
+import { MAX_READ } from "../lib/folderUpload";
 import { AddDocumentDialog } from "./AddDocumentDialog";
 
 const realSleep = ingestClock.sleep;
@@ -493,6 +494,7 @@ describe("AddDocumentDialog", () => {
       const zone = within(dialog).getByTestId("add-doc-drop");
       fireEvent.drop(zone, { dataTransfer: { types: ["Files"], items: [item(null)], files: [] } });
       dropping = false;
+      // A dialog given no collection list (the header's New): folders are not taken here.
       expect(await within(dialog).findByRole("alert")).toHaveTextContent("Folders are not taken here");
       dropping = true;
       fireEvent.drop(zone, {
@@ -591,5 +593,291 @@ describe("AddDocumentDialog", () => {
     ]);
     expect(await screen.findByLabelText("Tags for every file (comma-separated, optional)")).toHaveValue("q3, plans");
     expect(screen.getByLabelText(/Publish what could be read/)).toBeChecked();
+  });
+
+  it("takes a dropped folder into the collection shown, showing what it makes first", async () => {
+    vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+    const team = { namespace: "col-team", parent: "", personal: false, role: "writer" as const, title: "Team" };
+    render(
+      <AddDocumentDialog
+        open
+        onOpenChange={() => {}}
+        identity={{ org: "o", namespace: "col-team" }}
+        place="Team"
+        tree={{ rows: [team], shown: team, onMade: () => {} }}
+        onAdded={() => {}}
+      />,
+    );
+    await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    const file = (name: string) => ({
+      isFile: true,
+      isDirectory: false,
+      name,
+      file: (ok: (f: File) => void) => ok(new File(["x"], name)),
+    });
+    const folder = {
+      isFile: false,
+      isDirectory: true,
+      name: "Q3",
+      createReader: () => {
+        const left = [[file("a.pdf")], []];
+        return { readEntries: (ok: (es: unknown[]) => void) => ok(left.shift() ?? []) };
+      },
+    };
+    fireEvent.drop(screen.getByTestId("add-doc-drop"), {
+      dataTransfer: { items: [{ kind: "file", webkitGetAsEntry: () => folder, getAsFile: () => null }], files: [] },
+    });
+    expect(await screen.findByText("Creates 1 collection in Team:")).toBeInTheDocument();
+    expect(screen.getByText("Q3 · 1 file")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Add documents to Team" })).toBeInTheDocument();
+  });
+
+  describe("a folder that cannot be taken", () => {
+    const team = { namespace: "col-team", parent: "", personal: false, role: "writer" as const, title: "Team" };
+    const file = (name: string) => ({
+      isFile: true,
+      isDirectory: false,
+      name,
+      file: (ok: (f: File) => void) => ok(new File(["x"], name)),
+    });
+    const dir = (name: string, children: unknown[]) => ({
+      isFile: false,
+      isDirectory: true,
+      name,
+      createReader: () => {
+        const left = [children, []];
+        return { readEntries: (ok: (es: unknown[]) => void) => ok(left.shift() ?? []) };
+      },
+    });
+    const dropFolder = (folder: unknown) =>
+      fireEvent.drop(screen.getByTestId("add-doc-drop"), {
+        dataTransfer: { items: [{ kind: "file", webkitGetAsEntry: () => folder, getAsFile: () => null }], files: [] },
+      });
+    const mountTree = async () => {
+      vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+      render(
+        <AddDocumentDialog
+          open
+          onOpenChange={() => {}}
+          identity={{ org: "o", namespace: "col-team" }}
+          place="Team"
+          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          onAdded={() => {}}
+        />,
+      );
+      await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+    };
+
+    it("keeps the collections it was dropped with when the Library reloads its list during the read", async () => {
+      vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+      const props = {
+        open: true,
+        onOpenChange: () => {},
+        identity: { org: "o", namespace: "col-team" },
+        place: "Team",
+        onAdded: () => {},
+      };
+      const { rerender } = render(
+        <AddDocumentDialog {...props} tree={{ rows: [team], shown: team, onMade: () => {} }} />,
+      );
+      await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+      let release: () => void = () => {};
+      const later = new Promise<void>((r) => {
+        release = r;
+      });
+      const slow = {
+        isFile: false,
+        isDirectory: true,
+        name: "Q3",
+        createReader: () => {
+          const left = [[file("a.pdf")], []];
+          return {
+            readEntries: (ok: (es: unknown[]) => void) => void later.then(() => ok(left.shift() ?? [])),
+          };
+        },
+      };
+      dropFolder(slow);
+      rerender(<AddDocumentDialog {...props} />); // the list reloads: no collections for now
+      release();
+      expect(await screen.findByText("Creates 1 collection in Team:")).toBeInTheDocument();
+    });
+
+    it("takes no add from the form while a dropped folder is read", async () => {
+      vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+      render(
+        <AddDocumentDialog
+          open
+          onOpenChange={() => {}}
+          identity={{ org: "o", namespace: "col-team" }}
+          place="Team"
+          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          onAdded={() => {}}
+        />,
+      );
+      await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+      const user = userEvent.setup({ applyAccept: false });
+      await user.upload(screen.getByLabelText("Choose a file to upload"), new File(["%PDF-1.7"], "one.pdf"));
+      const add = await screen.findByRole("button", { name: "Upload" });
+      await waitFor(() => expect(add).toBeEnabled());
+      let release: () => void = () => {};
+      const later = new Promise<void>((r) => {
+        release = r;
+      });
+      dropFolder({
+        isFile: false,
+        isDirectory: true,
+        name: "Q3",
+        createReader: () => {
+          const left = [[file("a.pdf")], []];
+          return { readEntries: (ok: (es: unknown[]) => void) => void later.then(() => ok(left.shift() ?? [])) };
+        },
+      });
+      expect(add).toBeDisabled();
+      await user.click(screen.getByRole("tab", { name: "Paste text" }));
+      expect(screen.getByRole("tab", { name: "Upload a file" })).toHaveAttribute("aria-selected", "true");
+      release();
+      expect(await screen.findByText("Creates 1 collection in Team:")).toBeInTheDocument();
+    });
+
+    it("stops reading a dropped folder when the dialog goes away", async () => {
+      vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+      const { unmount } = render(
+        <AddDocumentDialog
+          open
+          onOpenChange={() => {}}
+          identity={{ org: "o", namespace: "col-team" }}
+          place="Team"
+          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          onAdded={() => {}}
+        />,
+      );
+      await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+      let release: () => void = () => {};
+      const later = new Promise<void>((r) => {
+        release = r;
+      });
+      const opened = vi.fn((ok: (f: File) => void) => ok(new File(["x"], "a.pdf")));
+      dropFolder({
+        isFile: false,
+        isDirectory: true,
+        name: "Q3",
+        createReader: () => {
+          const left = [[{ isFile: true, isDirectory: false, name: "a.pdf", file: opened }], []];
+          return { readEntries: (ok: (es: unknown[]) => void) => void later.then(() => ok(left.shift() ?? [])) };
+        },
+      });
+      unmount(); // the Library moved on while the folder was read
+      release();
+      await act(async () => {
+        await later;
+      });
+      expect(opened).not.toHaveBeenCalled();
+    });
+
+    it("says why folders dropped beside files are not read while the Library still lists its collections", async () => {
+      render(
+        <AddDocumentDialog
+          open
+          onOpenChange={() => {}}
+          identity={{ org: "o", namespace: "col-team" }}
+          place="Team"
+          foldersLater
+          onAdded={() => {}}
+        />,
+      );
+      await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+      const folder = { isFile: false, isDirectory: true, name: "Q3", createReader: () => ({ readEntries: () => {} }) };
+      const loose = new File(["%PDF-1.7"], "one.pdf");
+      fireEvent.drop(screen.getByTestId("add-doc-drop"), {
+        dataTransfer: {
+          items: [
+            { kind: "file", webkitGetAsEntry: () => folder, getAsFile: () => null },
+            {
+              kind: "file",
+              webkitGetAsEntry: () => ({ isFile: true, isDirectory: false, name: "one.pdf" }),
+              getAsFile: () => loose,
+            },
+          ],
+          files: [loose],
+        },
+      });
+      expect(
+        await screen.findByText(
+          "1 folder was not read (folders are taken once the Library has listed its collections, and not when it holds too many to list): drop or pick the files inside it.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("drops the note of an earlier pick when a later folder gives no files", async () => {
+      vi.mocked(listKnowledge).mockResolvedValue({ rows: [], next_cursor: null } as never);
+      const props = {
+        open: true,
+        onOpenChange: () => {},
+        identity: { org: "o", namespace: "col-team" },
+        place: "Team",
+        onAdded: () => {},
+      };
+      const { rerender } = render(<AddDocumentDialog {...props} foldersLater />);
+      await waitFor(() => expect(knowledgeFormats).toHaveBeenCalled());
+      const loose = new File(["%PDF-1.7"], "one.pdf");
+      fireEvent.drop(screen.getByTestId("add-doc-drop"), {
+        dataTransfer: {
+          items: [
+            { kind: "file", webkitGetAsEntry: () => dir("Q3", []), getAsFile: () => null },
+            {
+              kind: "file",
+              webkitGetAsEntry: () => ({ isFile: true, isDirectory: false, name: "one.pdf" }),
+              getAsFile: () => loose,
+            },
+          ],
+          files: [loose],
+        },
+      });
+      expect(await screen.findByText(/^1 folder was not read/)).toBeInTheDocument();
+      rerender(<AddDocumentDialog {...props} tree={{ rows: [team], shown: team, onMade: () => {} }} />);
+      dropFolder(dir(".notes", [file("a.md")]));
+      expect(await screen.findByText(/^The folder holds no files the Library could take/)).toBeInTheDocument();
+      expect(screen.queryByText(/^1 folder was not read/)).not.toBeInTheDocument();
+    });
+
+    it("says a folder is too large to read here", async () => {
+      await mountTree();
+      dropFolder(
+        dir(
+          "Big",
+          Array.from({ length: MAX_READ + 1 }, (_, i) => file(`f${i}.pdf`)),
+        ),
+      );
+      expect(
+        await screen.findByText(
+          `The folder holds more than ${MAX_READ} files; pick a folder further down.`,
+          {},
+          { timeout: 20_000 },
+        ),
+      ).toBeInTheDocument();
+    }, 30_000);
+
+    it("says why a folder that is itself hidden gives no files", async () => {
+      await mountTree();
+      dropFolder(dir(".notes", [file("a.md")]));
+      expect(
+        await screen.findByText("The folder holds no files the Library could take. Hidden folders not read: .notes."),
+      ).toBeInTheDocument();
+    });
+
+    it("drops what reading a folder left out once plain files are picked", async () => {
+      await mountTree();
+      dropFolder(dir("x", [dir(".git", [file("HEAD")])]));
+      expect(
+        await screen.findByText("The folder holds no files the Library could take. Hidden folders not read: x/.git."),
+      ).toBeInTheDocument();
+      const user = userEvent.setup({ applyAccept: false });
+      await user.upload(screen.getByLabelText("Choose a file to upload"), [
+        new File(["%PDF-1.7"], "a.pdf"),
+        new File(["%PDF-1.7"], "b.pdf"),
+      ]);
+      expect(await screen.findByRole("list", { name: "Files" })).toBeInTheDocument();
+      expect(screen.queryByText(/Hidden folders not read/)).toBeNull();
+    });
   });
 });
