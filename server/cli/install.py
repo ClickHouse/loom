@@ -355,7 +355,7 @@ def _install_one(
     goes through `claude mcp add`."""
     import json as _json
 
-    # A client in CODING_CLIENTS lists the coding tier unless --toolset names another.
+    # The client set the dashboard and the token setup give the coding tier.
     toolset = toolset or (CODING_TOOLSET if client in CODING_CLIENTS else "")
     if client == "claude-code":
         return _install_claude_code_mcp(
