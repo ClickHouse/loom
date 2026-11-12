@@ -241,7 +241,7 @@ def _write_rules(tool: dict[str, str | None]) -> str:
             "anything through Loom.\n\n"
         )
     doc = tool["knowledge.add"] or save
-    scratch = tool["working_memory.set"] or "working memory"
+    scratch = tool["working_memory.set"]
     return (
         "**3. Save.** On any remember/save/store intent, call "
         f"{save}. Loom persists across Claude Desktop, "

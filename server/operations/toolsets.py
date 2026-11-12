@@ -86,7 +86,7 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
         # Namespace backup/restore — operator-only; exposing tempts mis-fire.
         "namespace.snapshot",
         "namespace.restore",
-        # Erasure status polling (request + export stay visible — users ask).
+        # Erasure status polling (request and export stay callable through loom_op).
         "erasure.status",
         # Audit + cost dashboards.
         "audit.list",

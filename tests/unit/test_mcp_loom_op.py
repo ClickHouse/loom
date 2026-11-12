@@ -190,7 +190,7 @@ def test_the_example_op_is_unlisted_wherever_loom_op_is(toolset: str, monkeypatc
     monkeypatch.setattr(settings, "mcp_code_tools", True)
     names = {d["name"] for d in asyncio.run(_tools_descriptor(toolset=toolset))}
     assert "loom_op" in names
-    examples = re.findall(r"such as ([a-z_]+\.[a-z_.]+)", mcp_op.DESCRIPTOR["description"])
+    examples = re.findall(r"such as ([a-z_]+(?:\.[a-z_]+)+)", mcp_op.DESCRIPTOR["description"])
     assert examples
     for op in examples:
         assert "loom_" + op.replace(".", "_") not in names, (toolset, op)

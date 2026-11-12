@@ -159,9 +159,7 @@ def test_registered_as_callable_by_name_with_a_description() -> None:
     op = OPERATIONS_BY_NAME["namespace.validate"]
     assert op.idempotent is True and op.audit is False
     assert op.required_role.name == "VIEWER"
-    # Listed under `all`, callable by name on the core listing.
-    assert "namespace.validate" not in toolsets._MCP_CORE_OPS
-    assert "namespace.validate" not in toolsets._MCP_HIDDEN_OPS
+    assert "all" in toolsets.op_toolsets("namespace.validate")
     assert "healthy" in mcp_descriptions.TOOL_DESCRIPTIONS["namespace.validate"]
 
 

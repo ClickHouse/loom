@@ -566,8 +566,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: a read (memory.get or loom_search) returned this key and the "
         "user now states a new value, a correction, or a more precise version "
         "of it — 'the deploy day moved to Thursday', 'the budget is actually "
-        "40k'. It keeps the "
-        "row's tags, confidence, expiry, lock and history; memory.set would "
+        "40k'. It keeps the row's tags, confidence, expiry, lock and history; "
+        "memory.set would "
         "write a new version blind. " + revision_policy("memory.update") + " "
         "Do NOT use it for a genuinely new fact — call memory.set.\n\n"
         "Resolves the key across the namespace; pass agent/user_id/session_id "
@@ -1234,7 +1234,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "blacklist.add": (
         "WHAT: Refuse future saves of matching content: every later memory "
-        "write in the namespace whose value matches `pattern` is refused.\n"
+        "write in the namespace (the default `scope`) whose value matches `pattern` is refused.\n"
         "WHEN: An explicit 'never remember X' or 'don't store anything about "
         "Y'. `sweep=true` also tombstones the rows already saved that match.\n"
         "WHEN NOT: Forgetting one saved fact is memory.delete. Refused to a "
