@@ -290,9 +290,12 @@ def test_switching_an_install_to_an_outside_clickhouse(install) -> None:
     assert list(env).count("LOOM_CH_HOST") == 1
 
 
-def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
-    """Run the installer on a pseudo-terminal, type `answer` at the prompt and
-    wait for it to finish, all within a deadline."""
+def _on_terminal(
+    env: dict[str, str], args: list[str], prompt: bytes, answer: bytes, *, every: bool = False
+) -> bytes:
+    """Run the installer on a pseudo-terminal, type `answer` at the first `prompt`
+    (at each one, with `every`) and wait for it to finish, within a deadline; the
+    run must exit 0. Returns what the terminal showed."""
     import pty
     import select
     import signal
@@ -300,9 +303,9 @@ def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
 
     pid, fd = pty.fork()
     if pid == 0:
-        os.execvpe("sh", ["sh", str(ROOT / "install.sh"), "--clickhouse", url], env)
-    deadline = time.monotonic() + 30
-    seen, answered, status = b"", False, None
+        os.execvpe("sh", ["sh", str(ROOT / "install.sh"), *args], env)
+    deadline = time.monotonic() + 60
+    seen, answered, status = b"", 0, None
     try:
         while status is None and time.monotonic() < deadline:
             if select.select([fd], [], [], 0.2)[0]:
@@ -310,10 +313,9 @@ def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
                     seen += os.read(fd, 1024)
                 except OSError:  # the child closed the terminal
                     pass
-            if not answered and b"password for" in seen:
-                assert b"(Enter keeps the one saved in .env)" in seen, seen
+            if seen.count(prompt) > answered and (every or not answered):
                 os.write(fd, answer)
-                answered = True
+                answered += 1
             done, code = os.waitpid(pid, os.WNOHANG)
             if done:
                 status = code
@@ -324,6 +326,12 @@ def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
         os.close(fd)
     assert answered, seen
     assert status is not None and os.waitstatus_to_exitcode(status) == 0, seen
+    return seen
+
+
+def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
+    seen = _on_terminal(env, ["--clickhouse", url], b"password for", answer)
+    assert b"(Enter keeps the one saved in .env)" in seen, seen
 
 
 def test_enter_at_a_rerun_prompt_keeps_the_saved_password(install, installer_env) -> None:
@@ -1388,38 +1396,8 @@ def test_a_server_error_connects_no_agent(install, installer_env: dict[str, str]
 
 
 def _answer_connect_prompts(env: dict[str, str], answer: bytes) -> bytes:
-    """Run a started install on a pseudo-terminal and answer every "[Y/n]" prompt
-    with `answer`; returns what the terminal showed."""
-    import pty
-    import select
-    import signal
-    import time
-
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.execvpe("sh", ["sh", str(ROOT / "install.sh")], env)
-    deadline = time.monotonic() + 60
-    seen, answered, status = b"", 0, None
-    try:
-        while status is None and time.monotonic() < deadline:
-            if select.select([fd], [], [], 0.2)[0]:
-                try:
-                    seen += os.read(fd, 1024)
-                except OSError:  # the child closed the terminal
-                    pass
-            if seen.count(b"[Y/n]") > answered:
-                os.write(fd, answer)
-                answered += 1
-            done, code = os.waitpid(pid, os.WNOHANG)
-            if done:
-                status = code
-    finally:
-        if status is None:
-            os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
-        os.close(fd)
-    assert status is not None and os.waitstatus_to_exitcode(status) == 0, seen
-    return seen
+    """Run a started install on a pseudo-terminal and answer every "[Y/n]" prompt."""
+    return _on_terminal(env, [], b"[Y/n]", answer, every=True)
 
 
 @pytest.mark.parametrize(("answer", "installs"), [(b"\n", True), (b"n\n", False)])
@@ -1570,23 +1548,22 @@ def _node_reports(installer_env: dict[str, str], body: str) -> None:
 
 
 @pytest.mark.parametrize("node", ["exit 127", "echo 16"])
-def test_claude_code_without_node_18_on_path_gets_the_mcp_line_too(
+def test_claude_code_without_node_18_on_path_gets_the_mcp_line_instead(
     install, installer_env: dict[str, str], node: str
 ) -> None:
-    """The plugin's own launcher may still find one (nvm and the like): it is
-    installed, with the MCP-only line beside it."""
+    """Its hooks and MCP header helper run the `node` on PATH: no plugin is
+    installed, and the MCP-only line is printed."""
     run, _ = install
     _start_stubs(installer_env)
     claude = _agent_cli(installer_env, "claude")
     _node_reports(installer_env, node)
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
     assert result.returncode == 0, result.stderr
-    assert "plugin install loom@loom --config server_url=http://localhost:7777" in (
-        claude.read_text().splitlines()
-    )
+    assert claude.read_text().splitlines() == ["plugin list"]
     assert 'claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding"' in (
         result.stdout
     )
+    assert "Connected:" not in result.stdout
 
 
 def test_a_test_memory_that_does_not_delete_is_tried_again(
@@ -1735,3 +1712,19 @@ def test_a_read_a_lagging_replica_misses_is_tried_again(
     assert not (target / ".memory-check-pending").exists()
     gets = [c for c in curl_log.read_text().splitlines() if "memory.get" in c]
     assert len(gets) == 4  # the sign-in read, then two misses and a hit
+
+
+def test_a_codex_mcp_entry_on_another_port_is_kept(
+    install, installer_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Set up by its docs' override (in CODEX_HOME here): not told to do it again."""
+    run, _ = install
+    _start_stubs(installer_env)
+    _agent_cli(installer_env, "codex")
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text('[mcp_servers.loom]\nurl = "http://localhost:28977/mcp"\n')
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex", LOOM_PORT="28977", CODEX_HOME=str(home))
+    assert result.returncode == 0, result.stderr
+    assert "Codex: a loom MCP server is set up already" in result.stdout
+    assert "always uses" not in result.stdout

@@ -347,6 +347,7 @@ main() {
       -e "s/__LOOM_DOCUMENT_EXTRACTOR_TOKEN__/$extractor_token/" \
       "$bundle/env.example" >"$INSTALL_DIR/.env"
     printf 'Created %s/.env\n' "$INSTALL_DIR"
+    new_env=1
     # A new install gets the memory check once it is up (below); an upgrade does not.
     : >"$INSTALL_DIR/.memory-check-pending"
   else
@@ -504,13 +505,8 @@ main() {
   # --profile bundled also stops a bundled server left from before a switch.
   printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"
 
-  # The memory check: a test memory saved, read back and deleted with no token,
-  # as agent "-" (no agent: the dashboard lists no connected agent for it),
-  # proof that writes and reads work, once per new install (the marker its .env
-  # came with). It leaves no live memory: a kept row would read as the user's
-  # first (the dashboard's first-run checklist counts live memories); its deleted
-  # version shows under Recently deleted. The read is also how this run learns
-  # that sign-in is off.
+  # The memory check: once per new install, a test memory saved, read back and
+  # deleted with no token, as agent "-"; the read also says whether sign-in is on.
   org=$(get_env LOOM_SELF_SIGNUP_ORG)
   org=${org:-dev}
   namespace=$(get_env LOOM_DEFAULT_NAMESPACE)
@@ -552,7 +548,7 @@ main() {
             sleep 1
           done
           read_back=
-          [ "$http_status" != 200 ] || ! found || read_back=1
+          if [ "$http_status" = 200 ] && found; then read_back=1; fi
           deleted=$(api memory.delete "{$memory}")
           if [ -n "$read_back" ] && [ "$deleted" = 200 ]; then
             rm -f "$pending"
@@ -625,9 +621,9 @@ main() {
     case ",${LOOM_CONNECT:-}," in *,all,* | *",$1,"*) return 0 ;; esac
     [ -z "${LOOM_CONNECT:-}" ]
   }
-  # node_ok: Node.js 18 or later on PATH. Both plugins' MCP header helper and hooks
-  # run on it; their own launcher also looks in nvm, fnm, Volta and the like, so a
-  # miss here is a hint, not a refusal.
+  # node_ok: Node.js 18 or later on PATH. Claude Code's plugin runs that `node`;
+  # Codex's runs it through a launcher that also looks in nvm, fnm, Volta and the
+  # like, so for Codex a miss is only a hint.
   node_ok() {
     major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null) || return 1
     case $major in '' | *[!0-9]*) return 1 ;; esac
@@ -641,7 +637,7 @@ main() {
   # Without a terminal and without LOOM_CONNECT no client can be connected, so
   # none is looked at either.
   if [ -z "${LOOM_CONNECT:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; then
-    skip_agents=${skip_agents:-quiet}
+    skip_agents=1 guide=1
   fi
   if [ -z "$skip_agents" ] && [ "${LOOM_CONNECT:-}" != none ]; then
     server_url=http://localhost:$port
@@ -660,6 +656,9 @@ main() {
       elif grep -q '"loom"[[:space:]]*:' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" 2>/dev/null; then
         printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s), and is left as it is; to use the plugin instead: claude mcp remove loom, then claude plugin install loom@loom --config server_url=%s\n' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" "$server_url"
         kept=1
+      elif ! node_ok; then
+        # Its hooks and MCP header helper run the `node` on PATH, with no search.
+        printf 'Claude Code: the Loom plugin runs the Node.js 18 or later on PATH, which is not there; install it and run this again, or add the MCP server alone: claude mcp add --transport http loom "%s/mcp?toolset=coding" -s user\n' "$server_url"
       elif wants claude-code "Claude Code"; then
         # A marketplace added before is no error: the install below says what fails.
         # It clones the repository: the slowest call, so it gets 5 minutes.
@@ -668,42 +667,39 @@ main() {
         if bounded 60 claude plugin install loom@loom --config "server_url=$server_url" >/dev/null; then
           printf 'Claude Code: connected to %s (the plugin'"'"'s other settings are optional)\n' "$server_url"
           agents="$agents, Claude Code"
-          node_ok || printf 'Claude Code: the plugin runs on Node.js 18 or later, which is not on PATH here; without one it finds, use the MCP server alone instead: claude plugin uninstall loom@loom && claude mcp add --transport http loom "%s/mcp?toolset=coding" -s user\n' "$server_url"
         else
           printf 'Claude Code: could not install the plugin (above); the README has the two commands\n'
         fi
       fi
     fi
     if considered codex && command -v codex >/dev/null 2>&1; then
-      if [ "$server_url" != "$default_url" ]; then
+      codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
+      if bounded 60 codex plugin list >"$tmp_dir/codex.plugins"; then
+        # Its STATUS column: "installed, enabled", "installed, disabled" or, with
+        # only the marketplace added, "not installed".
+        codex_loom=$(awk '$1 == "loom@loom" { print $2; exit }' "$tmp_dir/codex.plugins")
+      else
+        codex_loom=unknown
+      fi
+      if [ "$codex_loom" = unknown ]; then
+        printf 'Codex: could not list its plugins (above), so it is left as it is\n'
+      elif [ "$codex_loom" = installed, ]; then
+        printf 'Codex: the Loom plugin is installed already; `codex plugin list` shows whether it is enabled\n'
+        kept=1
+      elif grep -q '^\[mcp_servers\.loom\]' "$codex_config" 2>/dev/null; then
+        printf 'Codex: a loom MCP server is set up already (%s)\n' "$codex_config"
+        kept=1
+      elif [ "$server_url" != "$default_url" ]; then
         # Codex plugins take no install options: the URL is fixed in the plugin.
         printf 'Codex: its Loom plugin always uses %s; to reach %s, see https://github.com/%s/blob/main/docs/features/integrations/codex.md\n' "$default_url" "$server_url" "$REPOSITORY"
-      else
-        codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
-        if bounded 60 codex plugin list >"$tmp_dir/codex.plugins"; then
-          # Its STATUS column: "installed, enabled", "installed, disabled" or, with
-          # only the marketplace added, "not installed".
-          codex_loom=$(awk '$1 == "loom@loom" { print $2; exit }' "$tmp_dir/codex.plugins")
+      elif wants codex Codex; then
+        bounded 300 codex plugin marketplace add ClickHouse/loom >/dev/null || true
+        if bounded 60 codex plugin add loom@loom >/dev/null; then
+          printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
+          agents="$agents, Codex"
+          node_ok || printf 'Codex: the plugin runs on Node.js 18 or later, which is not on PATH here; without one its launcher finds, use the MCP server alone instead: codex plugin remove loom@loom && codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
         else
-          codex_loom=unknown
-        fi
-        if [ "$codex_loom" = unknown ]; then
-          printf 'Codex: could not list its plugins (above), so it is left as it is\n'
-        elif [ "$codex_loom" = installed, ]; then
-          printf 'Codex: the Loom plugin is installed already; `codex plugin list` shows whether it is enabled\n'
-          kept=1
-        elif grep -q '^\[mcp_servers\.loom\]' "$codex_config" 2>/dev/null; then
-          printf 'Codex: a loom MCP server is set up already (%s)\n' "$codex_config"
-          kept=1
-        elif wants codex Codex; then
-          bounded 300 codex plugin marketplace add ClickHouse/loom >/dev/null || true
-          if bounded 60 codex plugin add loom@loom >/dev/null; then
-            printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
-            agents="$agents, Codex"
-            node_ok || printf 'Codex: the plugin runs on Node.js 18 or later, which is not on PATH here; without one it finds, use the MCP server alone instead: codex plugin remove loom@loom && codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
-          else
-            printf 'Codex: could not add the plugin (above); the README has the two commands\n'
-          fi
+          printf 'Codex: could not add the plugin (above); the README has the two commands\n'
         fi
       fi
     fi
@@ -745,15 +741,15 @@ main() {
     elif [ -n "$kept" ]; then
       printf '\nYour agents keep the Loom setup they had.\n'
     else
-      skip_agents=quiet
+      guide=1
     fi
   fi
-  [ "$skip_agents" != quiet ] \
+  [ -z "${guide:-}" ] \
     || printf '\nConnect an agent: https://github.com/%s/blob/main/docs/getting-started/connect-a-coding-agent.md\n' "$REPOSITORY"
 
-  # The dashboard, on a desktop: a terminal, no SSH session and a way to open a
-  # browser there.
-  if [ "${LOOM_NO_OPEN:-0}" != 1 ] && [ -t 1 ] && [ -z "${SSH_CONNECTION:-}" ]; then
+  # The dashboard, for a new install on a desktop: a terminal, no SSH session and
+  # a way to open a browser there.
+  if [ -n "${new_env:-}" ] && [ "${LOOM_NO_OPEN:-0}" != 1 ] && [ -t 1 ] && [ -z "${SSH_CONNECTION:-}" ]; then
     if [ "$(uname -s)" = Darwin ] && command -v open >/dev/null 2>&1; then
       open "$dashboard" >/dev/null 2>&1 || true
     elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null 2>&1; then

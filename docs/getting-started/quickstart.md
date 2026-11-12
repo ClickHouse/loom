@@ -65,13 +65,14 @@ Once Loom answers, the installer:
    `LOOM_CONNECT`, no agent is looked at or changed. A plugin or MCP server set up before
    (by the plugin, `claude mcp add`, `codex mcp add` or `loom install`) is left as it is;
    for a Claude Code plugin the installer prints the command that points it at this
-   install. Both plugins run on Node.js 18 or later, which their launcher also finds
-   through nvm and the like; when `node` on PATH is missing or older, the installer prints
-   the `claude mcp add` or `codex mcp add` line for the MCP server alone. Codex's plugin
-   always uses `http://localhost:7777`, so for an install elsewhere it gets a link to its
-   setup page instead. VS Code is not offered in a remote session or WSL. A client
-   `LOOM_CONNECT` names that is not on PATH is named.
-4. **Opens the dashboard** on a desktop; `LOOM_NO_OPEN=1` skips that.
+   install. Claude Code's plugin runs the Node.js 18 or later on PATH, so without one the
+   installer installs no plugin and prints the `claude mcp add` line for the MCP server
+   alone; Codex's finds Node.js through nvm and the like too, so it is installed, with the
+   `codex mcp add` line beside it. Codex's plugin always uses `http://localhost:7777`, so
+   for an install elsewhere it gets a link to its setup page instead. VS Code is not
+   offered in a remote session or WSL. A client `LOOM_CONNECT` names that is not on PATH
+   is named.
+4. **Opens the dashboard** on a desktop, for a new install; `LOOM_NO_OPEN=1` skips that.
 
 Ctrl-C stops the run at any step; a clone an agent CLI started for its plugin may still
 finish in the background.
@@ -472,6 +473,8 @@ The client surfaces are in the [Python SDK](../reference/python-sdk.md) and
 [TypeScript SDK](../reference/typescript-sdk.md) references.
 
 ## 6. First memory from a coding agent
+
+If the installer connected your agent, skip to the last paragraph of this section.
 
 For Claude Code, install the Loom plugin. It adds hooks (context at session start,
 capture at the end) and skills on top of the MCP tools:
