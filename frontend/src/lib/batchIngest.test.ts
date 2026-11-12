@@ -32,6 +32,9 @@ import {
   planBatch,
   retryFailed,
   runBatch,
+  whileNew,
+  REPEAT,
+  skipRepeats,
 } from "./batchIngest";
 import { ApiError } from "./errors";
 import { ingestClock } from "./fileIngest";
@@ -108,6 +111,19 @@ describe("planBatch", () => {
       ["a.pdf", "skipped", "Same name as another file here"],
     ]);
     expect(rows[0]).toMatchObject({ sourceUri: "a.pdf", title: "a", target: ID });
+  });
+
+  it("keeps a folder's file apart from a loose one when the folder is named as the namespace", () => {
+    const rows = planBatch(
+      [
+        { file: file("README.md"), path: "" },
+        { file: file("README.md"), path: "Docs/README.md" },
+      ],
+      FORMATS,
+      () => ({ org: "o", namespace: "docs" }),
+      (e) => (e.path ? { folder: "Docs", sourceUri: e.file.name } : { folder: "", sourceUri: e.file.name }),
+    );
+    expect(rows.map((r) => r.state)).toEqual(["waiting", "waiting"]);
   });
 
   it("keeps a file's own name in the line that refuses it", () => {
@@ -409,5 +425,59 @@ describe("existingSources", () => {
       fields: ["source_uri", "title", "description", "tags"],
       limit: 500,
     });
+  });
+});
+
+describe("whileNew", () => {
+  const notYet = () => new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "cannot add" });
+  afterEach(() => {
+    ingestClock.sleep = realSleep;
+    vi.restoreAllMocks();
+  });
+
+  it("does not send again a refusal into a collection that is not new", async () => {
+    const step = vi.fn().mockRejectedValue(notYet());
+    await expect(whileNew(step, false)).rejects.toMatchObject({ code: "AUTH_INSUFFICIENT" });
+    expect(step).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up on a collection made a moment ago once ten seconds have gone", async () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    ingestClock.sleep = async (ms: number) => {
+      now += ms;
+    };
+    const step = vi.fn().mockRejectedValue(notYet());
+    await expect(whileNew(step, true)).rejects.toMatchObject({ code: "AUTH_INSUFFICIENT" });
+    expect(step).toHaveBeenCalledTimes(12); // at 0 s, then each second until past ten
+  });
+});
+
+describe("skipRepeats", () => {
+  it("leaves out a file of a name an earlier upload already sent into that collection", () => {
+    const [sent, later] = plan(["a.pdf", "b.pdf"]).map((r) => ({
+      ...r,
+      sourceUri: "a.pdf",
+      target: { org: "o", namespace: "col-x" },
+    }));
+    const rows = [{ ...sent, state: "done" as const }, later];
+    expect(skipRepeats(rows, () => "col-x").map((r) => [r.state, r.line])).toEqual([
+      ["done", sent.line],
+      ["skipped", REPEAT],
+    ]);
+  });
+
+  it("sends a source once per collection, leaving out the later ones and leaving alone rows of no known collection", () => {
+    const rows = plan(["a.pdf", "b.pdf", "c.pdf", "d.pdf"]).map((r, i) => ({
+      ...r,
+      sourceUri: i < 2 ? "a.pdf" : "c.pdf",
+    }));
+    const where = (r: BatchRow) => (r.sourceUri === "c.pdf" ? "" : "col-foo-bar");
+    expect(skipRepeats(rows, where).map((r) => [r.state, r.line])).toEqual([
+      ["waiting", rows[0].line],
+      ["skipped", REPEAT],
+      ["waiting", rows[2].line],
+      ["waiting", rows[3].line],
+    ]);
   });
 });

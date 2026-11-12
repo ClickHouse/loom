@@ -170,10 +170,13 @@ export async function ingestFile(
     onQueued?: (ingestionId: string) => void;
     /** Wraps the upload and the ingest call, to send each again when the server allows. */
     retry?: <T>(step: () => Promise<T>) => Promise<T>;
+    /** Wraps each poll of the job, to wait out a refusal the server lets pass soon. */
+    poll?: <T>(step: () => Promise<T>) => Promise<T>;
   } = {},
 ): Promise<KnowledgeIngestStatus> {
   const { signal } = opts;
   const retry = opts.retry ?? ((step) => step());
+  const poll = opts.poll ?? ((step) => step());
   onStep("Uploading…", "upload");
   const up = await retry(() => uploadKnowledgeFile(id, file, signal));
   signal?.throwIfAborted(); // cancelled while the bytes went: nothing is queued
@@ -185,7 +188,7 @@ export async function ingestFile(
     signal?.throwIfAborted();
     let status: KnowledgeIngestStatus;
     try {
-      status = await knowledgeIngestStatus(id, job.ingestion_id);
+      status = await poll(() => knowledgeIngestStatus(id, job.ingestion_id));
       missed = 0;
     } catch (e) {
       // A poll that fails (a replica restarting, a rate limit, a dropped connection) is

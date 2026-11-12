@@ -1147,6 +1147,48 @@ tags, or skip them (picked first when most of the files to send are already ther
 check reads the place's first 10,000 documents; past them, a file whose source exists is
 skipped.
 
+### A folder from the dashboard
+
+A folder picked or dropped on **Add document** keeps its shape: the folder and each folder
+inside it become [collections](../architecture/sharing.md), nested as the folders are,
+inside the collection shown, and each file goes into its folder's collection as its own
+document. Folders are taken once the Library has listed every collection the person can
+read, and not while it holds too many to list.
+
+- **Preview.** Before sending, the dialog lists the collections it will make and the ones
+  the list says are there already.
+- **Refusals.** It refuses folders nested deeper than collections may (at most eight
+  collections above any folder's collection, the collection shown and the ones above it
+  that the person can read included; a deeper tree past one they cannot read is refused
+  when its collection is made), folder names that cannot be collection titles (over 200
+  characters, an invisible character, or only spaces), and more than 100 collections its
+  preview lists as new in one pick of folders.
+- **Made by title, before the files.** A collection is made by its title
+  (`collection.create` with `derive_name`), so a folder sent again reuses its collections.
+  An upload makes the collections of its folders first, then sends their files: files held
+  past one upload's limits, or a **Stop** while the collections are made, make none. A
+  folder whose collection cannot be made fails its files with the reason, and the others go
+  on.
+- **My files and namespaces.** These hold no collections, so the person picks: make each
+  dropped folder a top-level collection, its folders inside it (one of the person's own
+  with that title is reused; a top-level collection belongs to the org, and only the members
+  added read it), or add the files there with their folder paths as their sources.
+- **Files already there.** Before the upload, the dialog reads the collections it expects
+  the folders to reuse and offers to replace or skip the files found there. Once a
+  folder's collection is made, what it holds decides: the person's choice applies to the
+  files found in the collection the server answered with, which may not be the one
+  expected (at the top level the server reuses only the person's own). A file found in a
+  collection the check did not read for it is skipped, since no one was asked about it,
+  unless the person picked Replace or Skip, which then applies. Two folders the server
+  answers with one collection send a file of a name once.
+- **Reading.** At most 2,000 files are read from the folders. Hidden folders are not read
+  and are listed (a picked one with how many files it holds), and a browser does not read
+  an empty folder. Sibling folders whose names differ only in case or spacing become one
+  collection; a file whose path then repeats is skipped and listed.
+
+A document stays in the collection it was added to: to move one, add it again where it
+belongs and delete the old one, which leaves its earlier revisions behind.
+
 ## Datasets
 
 An ingested CSV, XLSX or Parquet file's tables are also typed **datasets**: each sheet (a
