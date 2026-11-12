@@ -29,6 +29,8 @@ Loom 是一个开源、自托管的 MCP 服务器，为你的智能体提供长�
 - **自主智能体的记忆、召回、审计与擦除。**[Autonomous agents](./docs/use-cases/autonomous-agents.md)
 - **智能体工作记录**：可检索的对话记录（开启记录时）、可用于恢复工作的会话摘要、包含目标、结果及模型成本（如有上报）的运行记录，以及 PR 与 issue 历史。[Runs and PR history](./docs/use-cases/runs-and-pr-history.md)
 
+全部场景，以及更适合其他工具的情况：[Use cases](./docs/use-cases/index.md)
+
 Loom 不是供单个智能体在进程内使用的短期记忆库，也不是智能体框架。[何时不适合使用 Loom](./docs/getting-started/overview.md#when-it-does-not-fit)
 
 ## 实测结果
@@ -45,7 +47,7 @@ Loom 不是供单个智能体在进程内使用的短期记忆库，也不是智
 
 **另外，Loom 的 `memory.ask` 配置在 LongMemEval-S 全部 500 个问题上取得 96.6% 的回答准确率。** 这是一项使用其自身配置的作答模型的产品评测，不同于上面固定作答模型的对比。
 
-结果仅适用于所测试的工作负载。详情见 [Measured results](./README.md#measured-results)。
+结果仅适用于所测试的工作负载。协议、模型与可复现的结果文件见[结果台账](./docs/benchmarks/results.md)。
 
 ## 快速开始
 
@@ -61,13 +63,15 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 
 单用户模式请保持仅本机访问；需要共享访问时，按照[团队部署指南](./docs/operations/deployment.md#identity-modes)配置，包括 TLS。
 
-默认安装无需密钥或网络即可启动：存储、控制台、代码结构索引和语义检索都可用，使用镜像自带的小型本地嵌入模型；默认的 `fake-echo-1` LLM 不会生成 AI 回答。在控制台的 **Settings → Models & keys** 中为嵌入模型和 LLM 分别选择提供商与模型、填写密钥，然后点击 **Test & apply**，无需重启 Docker；更换嵌入模型会重建已有索引。一个 OpenAI 密钥可以同时用于两者；在控制台中使用 Claude 作为 LLM 时，还需另选一个嵌入模型提供商。
+默认安装无需密钥或网络即可启动：存储、控制台、代码结构索引和语义检索都可用，使用镜像自带的小型本地嵌入模型；默认的 `fake-echo-1` LLM 不会生成 AI 回答。在控制台的 **Settings → Models & keys** 中为嵌入模型和 LLM 分别选择提供商与模型、填写密钥，然后点击 **Test & apply**，无需重启 Docker；更换嵌入模型会重建已有索引。一个 OpenAI 密钥可以同时用于两者；在控制台中使用 Claude 作为 LLM 时，还需另选一个嵌入模型提供商。编程智能体的登录或订阅不会为 Loom 提供模型密钥。
 
 控制台的嵌入模型选项均为托管服务；如需保留 `local` 并添加 LLM，请改为在 `~/.loom/.env` 中只设置 LLM 相关的几行，然后重建容器（[Models and keys](./docs/getting-started/models-and-keys.md#claude-for-the-llm)）：
 
 ```bash
 docker compose --project-directory "$HOME/.loom" up -d --force-recreate loom
 ```
+
+只填写密钥不会切换已固定的模型（本地嵌入模型和 fake LLM），还需设置提供商与模型；控制台中保存的设置优先于 `.env`。
 
 在运行个人安装的机器上，插件无需 token：
 

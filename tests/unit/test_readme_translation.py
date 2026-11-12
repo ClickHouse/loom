@@ -1,8 +1,9 @@
-"""README.zh-CN.md carries the English README's measured numbers and install command."""
+"""README.zh-CN.md carries the English README's measured numbers, commands and caveat code names."""
 
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,15 +27,21 @@ def test_the_chinese_readme_shows_the_same_commands() -> None:
     chinese = (ROOT / "README.zh-CN.md").read_text()
     install = re.compile(r"curl -fsSL \S+install\.sh[^\n]*")
     assert install.findall(english) and install.findall(chinese) == install.findall(english)[:1]
-    plugins = re.compile(r"^(?:claude|codex) plugin [^\n]+$", re.MULTILINE)
-    assert plugins.findall(english) and plugins.findall(chinese) == plugins.findall(english)
+    for lines in (
+        re.compile(r"^(?:claude|codex) plugin [^\n]+$", re.MULTILINE),
+        re.compile(r"^docker compose [^\n]+$", re.MULTILINE),
+    ):
+        assert lines.findall(english) and lines.findall(chinese) == lines.findall(english)
 
 
-def test_the_results_caveats_name_the_same_models() -> None:
-    def models(readme: str, heading: str) -> set[str]:
-        prose = readme.split(heading, 1)[1].split("\n\n", 2)[2]
-        return set(re.findall(r"`([a-z0-9.-]+)`", prose.split("\n## ", 1)[0]))
+def _results_prose(readme: str, heading: str) -> str:
+    return readme.split(heading, 1)[1].split("\n\n", 2)[2].split("\n## ", 1)[0]
 
-    english = models((ROOT / "README.md").read_text(), "## Measured results")
-    chinese = models((ROOT / "README.zh-CN.md").read_text(), "## 实测结果")
-    assert english and english <= chinese
+
+def test_the_results_caveats_carry_the_same_numbers_and_code_names() -> None:
+    english = _results_prose((ROOT / "README.md").read_text(), "## Measured results")
+    chinese = _results_prose((ROOT / "README.zh-CN.md").read_text(), "## 实测结果")
+    # The sentences order their numbers differently, so they compare as multisets.
+    assert Counter(NUMBER.findall(chinese)) == Counter(NUMBER.findall(english))
+    code_spans = re.compile(r"`([a-z0-9.-]+)`")
+    assert set(code_spans.findall(chinese)) == set(code_spans.findall(english))
