@@ -64,3 +64,23 @@ describe("MembersDialog for a member who is not an admin", () => {
     expect(await screen.findByLabelText(/member to add/)).toBeInTheDocument();
   });
 });
+
+describe("MembersDialog for a repository", () => {
+  it("tells a reader each control needs a maintainer, naming the repository", async () => {
+    signIn("viewer-me", ["VIEWER"]);
+    render(
+      <MembersDialog
+        open
+        onOpenChange={() => {}}
+        org="dev"
+        namespace="code-acme-api-main"
+        kind="code"
+        label="acme/api @ main"
+      />,
+    );
+    await screen.findByRole("button", { name: /^Approve as/ });
+    const line = "Needs maintainer on acme/api @ main. A maintainer of it can grant that.";
+    for (const name of [/^Approve as/, /^Reject$/, /^Remove carol$/, /^Add reader$/])
+      expect(screen.getByRole("button", { name })).toHaveAccessibleDescription(line);
+  });
+});

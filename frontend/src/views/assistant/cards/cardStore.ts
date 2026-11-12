@@ -48,9 +48,10 @@ export function lastInventory(turns = useChat.getState().turns): NamespaceInvent
 
 /** Why a card's read cannot run for this person, or null. Each read is gated on its own op:
  *  all are viewer reads, so a refusal says why the role is missing (`callReason`: still
- *  loading, a request waiting, list_mine unread, or no access). The server refuses
- *  memory.inspect and namespace.tune to a token pinned to one user or session, and a scoped
- *  read that needs its user or session in the request, which a card does not send. */
+ *  loading, a request waiting, list_mine failed, a `*` claim the server decides, or no
+ *  access). The server refuses memory.inspect and namespace.tune to a token pinned to one
+ *  user or session, and a scoped read that needs its user or session in the request, which a
+ *  card does not send. */
 export function useCardGate(namespace: string): (op: CardOp) => string | null {
   const whoami = useStore((s) => s.whoami);
   const roleRead = useNamespaceRoleRead(namespace);

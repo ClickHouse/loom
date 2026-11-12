@@ -7,10 +7,11 @@ import { useStore } from "../lib/state";
 import * as api from "../api";
 import type { MyNamespaceEntry, NamespaceInfo } from "../api";
 import { confirmAction } from "../components/ConfirmDialog";
+import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
-  return { ...actual, getNamespace: vi.fn() };
+  return { ...actual, getNamespace: vi.fn(), listMine: vi.fn() };
 });
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => false) }));
 
@@ -49,7 +50,10 @@ async function open(role: MyNamespaceEntry["role"]) {
   await act(async () => undefined);
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetNamespaceRoleCache();
+});
 
 describe("NamespaceSettingsDialog roles", () => {
   it("locks the fields for a writer, says what changes them, and shows Delete unavailable", async () => {
@@ -96,5 +100,53 @@ describe("NamespaceSettingsDialog on a restricted namespace", () => {
     await act(async () => undefined);
     expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
     expect(screen.getByLabelText("Description")).toBeDisabled();
+  });
+});
+
+describe("NamespaceSettingsDialog on a restricted namespace, before and beside the token", () => {
+  const openRestricted = async (roles: string[], myNamespaces: MyNamespaceEntry[] | null) => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles, namespaces: ["team"] },
+      identity: { org: "dev", namespace: "team", agent: "loom-ui" },
+      myNamespaces,
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...info, classification: "restricted" });
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await act(async () => undefined);
+  };
+
+  it("asks for a direct admin grant when the caller's is inherited", async () => {
+    await openRestricted(["ADMIN"], [{ ...grant("admin"), inherited: true }]);
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(
+      "Changing its settings needs a direct admin grant on team.",
+    );
+  });
+
+  it("says the role is still loading while list_mine is read", async () => {
+    vi.mocked(api.listMine).mockReturnValue(new Promise(() => {}));
+    await openRestricted([], null);
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent("Your role on this namespace is still loading.");
+  });
+
+  it("says list_mine failed, rather than what the change needs", async () => {
+    vi.mocked(api.listMine).mockRejectedValue(new Error("down"));
+    await openRestricted([], null);
+    await act(async () => undefined);
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent("Couldn't check your access to team.");
+  });
+});
+
+describe("NamespaceSettingsDialog for a repository", () => {
+  it("says a change needs a maintainer", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: [] },
+      myNamespaces: [grant("viewer")],
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...info, kind: "code" } as NamespaceInfo);
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await act(async () => undefined);
+    const line = "Needs maintainer on team. A maintainer of it can grant that.";
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
+    expect(screen.getByRole("button", { name: "Delete namespace" })).toHaveAccessibleDescription(line);
   });
 });

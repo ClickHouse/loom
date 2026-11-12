@@ -16,6 +16,7 @@ import {
 import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
 import { needsRole } from "../lib/namespaceRole";
+import { needsMaintainer } from "../lib/callReason";
 import { toast, toastError, toastErrorLine } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
@@ -137,7 +138,8 @@ export function MembersDialog({
     );
   // What a member who is not an admin here sees on each control an admin uses: the control,
   // unavailable, with the role it needs. Null while the grants are unread.
-  const manageReason = canManage || rows === null ? null : needsRole("admin", namespace);
+  const manageReason =
+    canManage || rows === null ? null : isCode ? needsMaintainer(label ?? namespace) : needsRole("admin", namespace);
 
   const onAdd = async () => {
     const subj = newSubject.trim();

@@ -13,7 +13,8 @@ import {
 } from "../api";
 import { useStore } from "../lib/state";
 import { canUpdateNamespace, hasAdminClaim, isNamespaceAdmin } from "../lib/role";
-import { needsRole } from "../lib/namespaceRole";
+import { needsRole, useNamespaceRoleRead } from "../lib/namespaceRole";
+import { needsMaintainer, roleGap } from "../lib/callReason";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { useAbortableEffect } from "../lib/hooks";
@@ -89,27 +90,34 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
   // namespace.delete needs ADMIN on the namespace.
   const canManage = canUpdateNamespace(whoami, myNamespaces, namespace, ns);
   const canDelete = isNamespaceAdmin(whoami, myNamespaces, namespace);
-  // Why the fields are locked: a restricted namespace also wants the token itself to be of
-  // its org (never `*`), name it and carry an admin claim, which an admin grant alone does
-  // not give (`canUpdateNamespace`). The line names only the parts the token misses.
-  const grant = myNamespaces?.find((m) => m.namespace === namespace);
+
+  // Repository mode: a code index shows only what applies to read-only source —
+  // description, the join rule, danger zone.
+  const isRepo = ns?.kind === "code";
+  // A repository's admins are its maintainers.
+  const needsAdmin = isRepo ? needsMaintainer(namespace) : needsRole("admin", namespace);
+
+  // Why the fields are locked. A restricted namespace wants a direct admin grant (not one
+  // inherited through a creator) and a token of its org (never `*`) that names it and carries
+  // an admin claim (`canUpdateNamespace`): the line names only what is missing, and while
+  // the grants are unread, why.
+  const roleRead = useNamespaceRoleRead(namespace);
+  const rows = myNamespaces ?? roleRead.rows;
+  const grant = rows?.find((m) => m.namespace === namespace);
   const tokenMisses = [
     whoami?.org === org ? null : `be of ${org}`,
     whoami?.namespaces?.includes(namespace) ? null : `name ${namespace}`,
     hasAdminClaim(whoami) ? null : "carry an admin claim",
   ].filter((p): p is string => p !== null);
-  const lockedReason =
-    ns?.classification === "restricted" &&
-    grant?.role === "admin" &&
-    grant.status !== "pending" &&
-    !grant.inherited &&
-    tokenMisses.length > 0
-      ? `To change its settings, your token must ${andList(tokenMisses)}.`
-      : needsRole("admin", namespace);
-
-  // Repository mode: a code index shows only what applies to read-only source —
-  // description, the join rule, danger zone.
-  const isRepo = ns?.kind === "code";
+  const adminGrant = grant?.role === "admin" && grant.status !== "pending";
+  let lockedReason = needsAdmin;
+  if (ns?.classification === "restricted") {
+    if (rows === null) lockedReason = roleGap({ ...roleRead, role: null }, whoami, namespace) ?? needsAdmin;
+    else if (adminGrant && grant.inherited)
+      lockedReason = `Changing its settings needs a direct admin grant on ${namespace}.`;
+    else if (adminGrant && tokenMisses.length > 0)
+      lockedReason = `To change its settings, your token must ${andList(tokenMisses)}.`;
+  }
 
   const save = async (patch: Partial<NamespaceRegisterFields>) => {
     if (!ns) return;
@@ -368,7 +376,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                   Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run an
                   erasure.request separately.
                 </p>
-                <Unavailable reason={canDelete ? null : needsRole("admin", namespace)}>
+                <Unavailable reason={canDelete ? null : needsAdmin}>
                   <Button
                     type="danger"
                     htmlType="button"
