@@ -520,6 +520,7 @@ PG_NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.authority": "the deployment's recorded authority and epoch; no tenant data.",
     "loom.cell_first": "whether this cell is the deployment's first, and its name; no tenant data.",
     "loom.tenancy_mode": "the cell's tenancy mode (recording or enforced); no tenant data.",
+    "loom.cell_probe": "a nonce `loom cell prepare` writes and deletes; no tenant data.",
     "loom.tenancy": (
         "the orgs this cell holds, by name and since when; no memory content, and kept "
         "after an erasure so an org's name never comes free for another cell."

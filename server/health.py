@@ -348,6 +348,17 @@ async def health_live() -> dict[str, object]:
     return {"status": "ok"}
 
 
+@health_router.get("/v1/health/deployment")
+async def health_deployment(response: Response) -> dict[str, object]:
+    """The deployment id this process verified at boot ('' before), from memory: no
+    store is read and no credential asked, so `loom cell prepare` and attach can check
+    which deployment a host or probe address reaches (`server.core.cell_probe`)."""
+    from server.core import cell_probe
+
+    response.headers["Cache-Control"] = "no-store"
+    return cell_probe.answer()
+
+
 @health_router.get("/v1/health/ready")
 async def health_ready(response: Response) -> dict[str, object]:
     """Readiness: 200 only when every required check passes (ClickHouse,

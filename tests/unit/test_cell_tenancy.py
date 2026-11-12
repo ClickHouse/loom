@@ -400,6 +400,7 @@ ROUTES: dict[str, str] = {
     "/v1/health GET": "health probe",
     "/v1/health/live GET": "health probe",
     "/v1/health/ready GET": "health probe",
+    "/v1/health/deployment GET": "health probe",
     "/v1/knowledge.download GET": "named",
     "/v1/knowledge.upload POST": "named",
     "/v1/me/service_accounts GET": "token",

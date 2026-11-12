@@ -241,6 +241,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # This process verifies tokens: it loads the revoked set and the signing
     # keyring now and keeps both fresh.
     auth_loops = await boot.start_token_state()
+    probe_listener = boot.start_probe_listener()
     overrides_loop = boot.start_runtime_overrides()
     await probe_reader_user(ch)
     from server.insights.app import analysis as _analysis
@@ -294,6 +295,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             lease_loop.cancel()
         for loop in (*auth_loops, overrides_loop):
             loop.cancel()
+        if probe_listener is not None:
+            await probe_listener.stop()
         tracker_sources_loop.cancel()
         code_repos_loop.cancel()
         analysis_loop.cancel()

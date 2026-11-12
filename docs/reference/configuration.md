@@ -90,6 +90,7 @@ Authentication, tokens and identity providers.
 | `LOOM_JWT_SECRET_PREVIOUS` | `str` | *(unset)* |  | The root secret LOOM_JWT_SECRET replaced, while a rotation is under way: credentials and signing keys sealed under it still open (tokens it signed as kid `default` do not verify: a leaked root mints nothing). `loom secrets reseal` rewrites the stored ones under the new root; then remove this. "" = none. |
 | `LOOM_JWT_KEYRING_REFRESH_SECONDS` | `float` | `30.0` |  | Seconds between re-reads of loom.signing_keys in every process (at least 1); `loom signing-key rotate` waits out two of the slowest process's. |
 | `LOOM_CELL` | `str` | `''` |  | This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set, the process serves only while its cell's rows accept it (docs/architecture/cells.md). |
+| `LOOM_CELL_PROBE_PORT` | `int` | `0` |  | The port of the probe listener, which answers the deployment id and the values under `loom cell prepare`'s nonce keys (docs/architecture/cells.md); 0 = off. |
 | `LOOM_CELL_ROUTER_URL` | `str` | `''` |  | The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; "" = none: in `enforced`, a new org answers 503. |
 | `LOOM_CELL_ROUTER_TOKEN` | `str` | *(unset)* |  | The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64` (never the length of a SHA-256); any other form is refused at boot. "" = none. |
 | `LOOM_CELL_ROUTER_TIMEOUT_S` | `float` | `5.0` |  | Seconds a whole placement call to the router may take before the request answers 503. |

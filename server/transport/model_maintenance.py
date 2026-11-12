@@ -10,7 +10,7 @@ from server.core.errors import classified
 from server.core.model_work_gate import ModelChangeInProgress, ModelWorkGate, get_model_work_gate
 
 # The probes a load balancer or orchestrator reads: every gate here lets them through.
-_HEALTH_PATHS = ("/v1/health", "/v1/health/live", "/v1/health/ready")
+_HEALTH_PATHS = ("/v1/health", "/v1/health/live", "/v1/health/ready", "/v1/health/deployment")
 
 
 def _control_request(scope: Scope) -> bool:

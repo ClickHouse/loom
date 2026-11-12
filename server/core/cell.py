@@ -344,7 +344,14 @@ def start_refresh_loop() -> asyncio.Task[None]:
 
 
 def settings_problem() -> str:
-    """Why this process must not start as a cell ('' when it may). Run in the lifespan."""
+    """Why this process must not start with its cell settings ('' when it may). Run in
+    the lifespan."""
+    if settings.cell_probe_port and settings.storage_authority != "postgres":
+        return "LOOM_CELL_PROBE_PORT needs LOOM_STORAGE_AUTHORITY=postgres"
+    if settings.cell_probe_port and not settings.auth_actually_required():
+        # With auth off the main port answers only its own hosts (DNS rebinding), so the
+        # probe route would not answer attach's host check; a cell needs auth anyway.
+        return "LOOM_CELL_PROBE_PORT needs authentication on (a cell needs it)"
     name = settings.cell
     if not name:
         return ""

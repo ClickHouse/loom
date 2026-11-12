@@ -702,6 +702,10 @@ settings:
   # (docs/architecture/cells.md). [restart]
   # cell: ""
 
+  # The port of the probe listener, which answers the deployment id and the values under
+  # `loom cell prepare`'s nonce keys (docs/architecture/cells.md); 0 = off. [restart]
+  # cell_probe_port: 0
+
   # The router's base URL a cell calls to place a new org, and the `loom cell` commands'
   # default router; "" = none: in `enforced`, a new org answers 503. [restart]
   # cell_router_url: ""

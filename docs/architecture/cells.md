@@ -262,14 +262,19 @@ probe route must echo each back as it reads it from its own connection to the pr
 that request. The nonces are then deleted; their rows hold no memory and no org and are
 classified so. A copy with the same deployment id is refused.
 
-**The probe route** takes no credential and is outside the fingerprint gate:
+**The probe route**, `GET /v1/health/deployment`, takes no credential and is outside the
+fingerprint gate:
 
 - On the main port it answers only the deployment id each process verified at boot, held
   in memory, whatever the request's Host. It reads no store and is not rate-limited, so
   no flood on the main port stalls attach's host check.
 - In full, with the values under prepare's reserved nonce keys, it is served only on a
-  separate probe listener port. Neither value is secret. It answers 429 past a fixed
-  rate per process on that listener.
+  separate probe listener port (`LOOM_CELL_PROBE_PORT`, `0` for off; it needs the
+  Postgres authority and authentication on, and binds every address of the host): the
+  Postgres row `loom.cell_probe` and the KeeperMap key, each named `cell-probe`, and the
+  object `<prefix>/_cell_probe`; it also names the bucket and prefix it stores under.
+  None of these values is secret. It answers 429 past a fixed rate per process on that
+  listener.
 - Only the cell's probe address (`probe_url`) targets the listener: an internal address
   that no ingress exposes and the router never routes to, which the deployment sends to
   every live process, ready or not, so prepare and attach reach a process the gate holds
@@ -1020,11 +1025,13 @@ wait on the router's.
 
 ## Source entry points
 
+- `server/core/cell_probe.py`: the probe route and the probe listener, which every web
+  process accepts on and the workers child never opens;
 - `server/core/cell.py`: the cell's own state (`loom.cell_first`, `loom.tenancy_mode`,
   `loom.cell_self`), its fingerprint and `gate_reason`, which the request middleware
   (`server/transport/model_maintenance.py`), `verify_token`, readiness, the workers'
   lease and the heartbeat read;
-- `schemas/pg_migrations/008_cells.sql` and
+- `schemas/pg_migrations/008_cells.sql`, `schemas/pg_migrations/009_cell_probe.sql` and
   `schemas/migrations/094_cell_heartbeats.sql`: the cell's tables;
 - `server/auth/tenancy.py` (`ensure_held`): the tenancy check and the placement call,
   run by the op gate (`server/transport/gates.py`), `check_authorized`, `admit_org` and

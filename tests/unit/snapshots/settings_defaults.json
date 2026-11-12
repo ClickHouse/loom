@@ -38,6 +38,7 @@
  "bulk_conflict_check_max_entries": 200,
  "calibration_refresh_seconds": 60.0,
  "cell": "",
+ "cell_probe_port": 0,
  "cell_router_timeout_s": 5.0,
  "cell_router_url": "",
  "ch_analysis_max_concurrent": 8,

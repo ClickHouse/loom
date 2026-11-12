@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from server import boot, worker_main
 from server.auth import jwt
-from server.core import cell, instances, pg, pg_profile
+from server.core import cell, cell_probe, instances, pg, pg_profile
 from server.core import ch as ch_mod
 from server.settings import Settings, settings
 from server.transport.model_maintenance import ModelMaintenanceMiddleware
@@ -269,7 +269,9 @@ async def test_a_gated_cell_closes_a_websocket_before_it_is_accepted(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/v1/health", "/v1/health/live", "/v1/health/ready"])
+@pytest.mark.parametrize(
+    "path", ["/v1/health", "/v1/health/live", "/v1/health/ready", "/v1/health/deployment"]
+)
 async def test_a_gated_cell_still_answers_its_health_probes(
     monkeypatch: pytest.MonkeyPatch, path: str
 ) -> None:
@@ -622,6 +624,30 @@ def test_a_process_without_the_deployment_id_reads_it_before_its_rows(
     monkeypatch.setattr(cell, "start_refresh_loop", lambda: "loop")
     assert asyncio.run(boot.start_cell_state()) == ["loop"]
     assert cell.deployment_id() == (known or "dep-pg")
+
+
+def test_the_lifespan_step_listens_only_with_the_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The web lifespan's step listens with the port set and not without it."""
+    monkeypatch.setattr(settings, "cell_probe_port", 7790)
+    monkeypatch.setattr(cell_probe, "start_listener", lambda: "listener")
+    assert boot.start_probe_listener() == "listener"
+    monkeypatch.setattr(settings, "cell_probe_port", 0)
+    monkeypatch.setattr(cell_probe, "start_listener", lambda: pytest.fail("bound the port"))
+    assert boot.start_probe_listener() is None
+
+
+def test_the_probe_port_needs_the_postgres_authority_and_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "cell", "")
+    monkeypatch.setattr(settings, "cell_probe_port", 7790)
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
+    assert "LOOM_CELL_PROBE_PORT needs LOOM_STORAGE_AUTHORITY=postgres" in cell.settings_problem()
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda _self: False)
+    assert "LOOM_CELL_PROBE_PORT needs authentication" in cell.settings_problem()
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda _self: True)
+    assert cell.settings_problem() == ""
 
 
 @pytest.mark.parametrize(
