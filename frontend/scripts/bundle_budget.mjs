@@ -3,11 +3,11 @@
 // fails when the chunk is over budget or carries a surface that opens on a click (a flow
 // dialog, the header search's body, a view), or when the stylesheets or the scripts every
 // page loads at boot are over their budgets. Run from frontend/: node scripts/bundle_budget.mjs
-import { execSync } from "node:child_process";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
+import { build } from "vite";
 
 const INDEX_BUDGET_BYTES = 120 * 1024;
 // The stylesheets block first paint on every route; gzipped, as served: Click UI's light
@@ -22,7 +22,8 @@ const FORBIDDEN_IN_INDEX = [/^flows\/.*Dialog\.tsx$/, /^components\/HeaderSearch
 
 const out = path.resolve("dist-budget");
 fs.rmSync(out, { recursive: true, force: true });
-execSync(`npx vite build --sourcemap --outDir ${JSON.stringify(out)} --emptyOutDir`, { stdio: "inherit" });
+// Vite's API reads vite.config.ts as its CLI does, and no shell parses the output path.
+await build({ build: { sourcemap: true, outDir: out, emptyOutDir: true } });
 const assets = path.join(out, "assets");
 // The entry is the module script index.html loads, not the first index-*.js on disk: other
 // modules named index (a Radix package's) become chunks with the same prefix.
