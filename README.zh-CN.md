@@ -53,6 +53,11 @@ Loom 不是供单个智能体在进程内使用的短期记忆库，也不是智
 
 默认的个人安装：无需登录，仅允许本机访问，使用 `dev/local` 命名空间；一个人可以接入多个智能体。团队使用（账号与命名空间权限）见[多用户模式](./docs/getting-started/quickstart.md#start-in-multi-user-mode)。
 
+无需在本机安装任何东西，也可以在 Codespaces 中试用：
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ClickHouse/loom?quickstart=1)
+（[它运行什么、谁能访问](./docs/getting-started/quickstart.md#try-it-in-github-codespaces)）
+
 装好 Docker 后运行：
 
 ```bash
