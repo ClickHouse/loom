@@ -1240,7 +1240,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: An explicit 'never remember X' or 'don't store anything about "
         "Y'. Pass `sweep=true` only when the user also asks to forget what is "
         "already saved: it tombstones up to 5,000 matching rows, other writers' "
-        "too (`swept_truncated` says more remain).\n"
+        "too. `swept_truncated: true` means more remain: tell the user, and do "
+        "not add the pattern again.\n"
         "WHEN NOT: Forgetting one saved fact is memory.delete.\n"
         "ARGS: pattern; optional pattern_type (substring | regex), reason, sweep."
     ),
