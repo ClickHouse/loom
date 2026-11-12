@@ -99,7 +99,8 @@ listing start are not answered there, since each depends on what a person can re
 refused item of the sample refuses `add` or `update` only on a `namespace` source and on
 a connected source probed by its owner; on any other mirrored probe, a platform admin's
 included, items never refuse, and only the source-level codes do. The next sync turn
-reports a refused item as `item <n>: http_404` and goes on with the rest.
+reports a refused item as `item <n>: http_404`, to those who see per-item codes, and
+goes on with the rest.
 
 ### The link parser
 
@@ -344,7 +345,8 @@ same code for any cause. The exceptions are these:
    rows out. A viewer can still subtract the finer groups and their own spend from the
    daily total; on a namespace where one other marked request runs that day, that
    difference is its spend, which is accepted. Its work figures (statements, rows and
-   bytes read, chunks injected, `llm_calls`) go to a platform admin only.
+   bytes read, chunks injected, `llm_calls`, the stored duration) go to a platform admin
+   only.
 3. A connected source's per-item status and `too_many_documents`, to its owner, and its
    listing age, to its owner as a code (fresh or stale).
 4. A platform admin's view of a mirror's sources (every mirrored source's status, the
@@ -373,8 +375,8 @@ for everyone. So no token searches, reads or exports a mirror, and the threat mo
 rows hold for every token. A mirror has no directory row and appears in no namespace
 listing or usage view; a deleted name keeps its mirror and counts as in use
 (`namespace_census.in_use`, with the same code as any other reason, whatever the mirror
-holds) until a namespace erasure, or the cleanup of its last mirrored source, deletes
-the `loom.knowledge_mirrors` row. A namespace erasure deletes that row last, after the
+holds) until a namespace erasure, or the mirror-erase command, deletes the
+`loom.knowledge_mirrors` row. A namespace erasure deletes that row last, after the
 mirror's rows (the table is classified as holding no memory content), so an erased name
 can be registered again and gets a new mirror. The migration that enables the refusal
 first looks for namespaces of the reserved form, registered or holding rows, and refuses
@@ -420,32 +422,34 @@ missed path leaks.
   derived from it, that a hook or client sends without the agent choosing it; an op the
   agent calls with text it chose (`memory.set`, `knowledge.add`, a task op) is the
   reader's own write. Each op declares its class in the op registry
-  (`server/operations/registry.py`). Today the session-content ops are
-  `conversation.append` (which the CLI's `ingest-transcript` calls),
-  `conversation.save_message`, the `title` and `metadata` of `conversation.create` and
-  `conversation.update`, `memory.set_from_messages`, `session.brief_save`,
-  `observe.record` and `observe.crystallize`, `working_memory.set`, `run.complete`,
-  `cost.record_turns` and `ui.vitals`, and every op added later that fits the rule. Once
-  a session has seen the flag (one resumed, forked or compacted from it included), no
-  Loom hook or client sends anything to them from that session, while reads and the
-  reader's own writes go on; the CLI's `ingest-transcript` refuses a transcript that
-  carries the marker. While `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set or any
-  mirror exists on the deployment, every session-content op refuses a client that does
-  not declare the flag, in every org, whatever mix of clients and tokens a session runs;
-  the condition is deployment state, so the refusal tells no tenant anything about
-  another's mirrors. A mirror ends when its last mirrored source's cleanup leaves it
-  holding no rows, which drops its `loom.knowledge_mirrors` row; a later mirrored source
-  makes a new one. Mirrored sources are off for a deployment until an operator turns
-  them on (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`), after every Loom client and hook
-  that sends session content honours the flag. Each pull request that adds a mirror leg,
+  (`server/operations/registry.py`), and an op both a hook and an agent call is session
+  content. Today the session-content ops are `conversation.append` (which the CLI's
+  `ingest-transcript` calls), `conversation.save_message`, the `title` and `metadata` of
+  `conversation.create` and `conversation.update`, `memory.set_from_messages`,
+  `session.brief_save`, `observe.record` and `observe.crystallize`, `working_memory.set`
+  and `working_memory.append`, `run.begin` and `run.complete`, `cost.record_turns` and
+  `ui.vitals`, and every op added later that fits the rule. Once a session has seen the
+  flag (one resumed, forked or compacted from it included), no Loom hook or client sends
+  anything to them from that session, while reads and the reader's own writes go on; the
+  CLI's `ingest-transcript` refuses a transcript that carries the marker. While
+  `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set or any mirror exists on the
+  deployment, every session-content op refuses a client that does not declare the flag,
+  in every org, whatever mix of clients and tokens a session runs. The condition is
+  deployment state and the check fails closed: a process that cannot read it refuses,
+  and the first mirrored `add` waits until every live process reports the switch on, as
+  the schema check does. The refusal lifts only once the switch is off and the
+  mirror-erase command has run, so it says nothing of when another org's mirrors went.
+  Mirrored sources are off for a deployment until an operator turns them on
+  (`LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED`), after every Loom client and hook that
+  sends session content honours the flag. Each pull request that adds a mirror leg,
   writer, client or hook lists what it writes and tests each against these rules.
 - **The sync and the workers write nothing outside the mirror.** The mirrored sync's
   spend charges no namespace's cap, and
   `LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS` bounds it. A mirrored source's sync
-  state, audit rows, error text and per-file wait state are filed under the mirror's
-  namespace and go with it when it is erased; whatever of a mirror leaves it (a source's
-  status, a worker's pass notes, logs, spans and metrics, the extractor service's logs
-  and traces) carries codes only (exceptions 3 and 4 apart).
+  state, the sync's audit rows, error text and per-file wait state are filed under the
+  mirror's namespace and go with it when it is erased; whatever of a mirror leaves it (a
+  source's status, a worker's pass notes, logs, spans and metrics, the extractor
+  service's logs and traces) carries codes only (exceptions 3 and 4 apart).
 - **No scope reaches a mirror.** Every statement a request runs that reads a table
   holding mirror rows other than by a namespace the caller names leaves out the
   `acl-[0-9a-f]{24}` form; the workers named here are the exception, since they must
@@ -578,7 +582,7 @@ head drops the address; a leg that cannot read the heads shows no mirrored docum
 implementing pull request measures the leg on a mirror of a million documents under both
 storage authorities and puts the figures here.
 
-### Every turn reads the lists again
+### Every complete listing reads the lists again
 
 Every complete listing of a mirrored source reads every file, metadata only (id,
 revision, permissions): the store does not change a file's modification time when its
@@ -622,7 +626,7 @@ admits someone the store no longer names.
 | An admin points someone's connected account at files they did not choose          | Only a connected source's owner adds its items or changes `include`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `update`                                                                               |
 | A link-only share becomes a search hit for everyone                               | A permission the store marks not discoverable admits nobody.                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | the access check                                                                       |
 | A person stops reading a file and Loom keeps showing it (stale ACL)               | Every complete listing of a mirrored source reads every file's list and rewrites a changed one; a source whose last complete listing is older than the stale bound admits nobody.                                                                                                                                                                                                                                                                                                                                                       | the sync's mirrored listing; the access check                                          |
-| A person leaves a group and keeps reading through it (group churn)                | Groups are read on every turn into a members row with its `read_at`; a stale or unread group admits nobody.                                                                                                                                                                                                                                                                                                                                                                                                                             | the access check                                                                       |
+| A person leaves a group and keeps reading through it (group churn)                | Groups are read with every complete listing into a members row with its `read_at`; a stale or unread group admits nobody.                                                                                                                                                                                                                                                                                                                                                                                                               | the access check                                                                       |
 | Auth is switched off after mirrors exist                                          | The `acl-` refusal runs before the auth-off return; mirror legs answer nothing and the sync skips mirrored sources while auth is off.                                                                                                                                                                                                                                                                                                                                                                                                   | `check_authorized`; the mirror legs                                                    |
 | A person leaves the org and their connected sources keep syncing                  | SCIM deactivation and disconnect stop the sources and clear the credential, then revoke it at the store; each turn's owner check skips a source whose owner is revoked, deactivated or no longer a writer.                                                                                                                                                                                                                                                                                                                              | `server/auth/scim.py`; the sync's turn                                                 |
 | A crawl reads more than its registrant meant, or can write                        | An org-wide role to register, update or rotate; the probe requires the store to refuse a write scope; subjects and scopes in the audit row.                                                                                                                                                                                                                                                                                                                                                                                             | the crawl probe; `loom.audit_log`                                                      |
@@ -1047,23 +1051,24 @@ Each implementing pull request lists its own; these pin the model:
     - A forked or resumed session not captured after its parent saw the flag.
     - One test over every op the registry classifies as session content, each refusing a
       client that does not declare the flag while mirrored sources are on or any mirror
-      exists, in every org, with the switch on and off; and a test over every registered
-      op asserting each declares its class.
+      exists, in every org, with the switch on and off; and a test that collects every
+      op the shipped hooks, their shared library and the CLI send without the agent
+      choosing the content and asserts each is classed as session content.
     - A session with clients holding tokens for two orgs, one reading a mirror,
       capturing nothing into the other.
-    - A mirror's `loom.knowledge_mirrors` row dropped once its last mirrored source's
-      cleanup leaves it empty, and the refusal lifting once the switch is off and no
-      mirror remains.
+      - The session-content refusal holding when `loom.knowledge_mirrors` cannot be
+        read and on a replica whose view lags the first mirror, and lifting only once
+        the switch is off and the mirror-erase command has run.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`: for every leg with the check and every id-addressed
-  op, a reader the list leaves out sees no mirrored document, its title, its count or
-  its existence, through the legs, `knowledge.reads`, `audit.list`, the org-wide rollups
-  or a source's status (an admin who is not the owner included), under both storage
-  authorities; a reader the list names sees it; a reader removed from the store's list
-  stops seeing it after the next listing of every source that holds a copy; one mirrored
-  source's retirement leaving another source's copy of the same address readable; a
-  `shared` mirrored source's status, read by a viewer no list names, showing no per-file
-  code.
+  op, a reader the list leaves out sees no mirrored document, its title, its address,
+  its count or its existence, through the legs, `knowledge.reads`, `audit.list`, the
+  org-wide rollups or a source's status (an admin who is not the owner included), under
+  both storage authorities; a reader the list names sees it; a reader removed from the
+  store's list stops seeing it after the next listing of every source that holds a copy;
+  one mirrored source's retirement leaving another source's copy of the same address
+  readable; a `shared` mirrored source's status, read by a viewer no list names, showing
+  no per-file code.
 - Integration: a `connected` source is mirrored wherever it writes; a SCIM deactivation
   and a disconnect stop the person's sources and retire their mirrored documents;
   `namespace.delete` and `collection.delete` retire the namespace's sources and clear
