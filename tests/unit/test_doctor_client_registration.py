@@ -40,7 +40,7 @@ def test_plugin_plus_user_scope_entry_warns_registered_twice(tmp_path: Path) -> 
     assert "toolset=core: a second roster" in d
 
 
-def test_the_warning_names_the_entry_s_own_toolset(tmp_path: Path) -> None:
+def test_the_warning_names_the_entry_toolset(tmp_path: Path) -> None:
     _plugin_and_entry(tmp_path, "https://loom.test/mcp?toolset=all")
     d = _detail(
         dc.claude_code_checks(tmp_path, "https://loom.test"), "client:claude-code:mcp-duplicate"
