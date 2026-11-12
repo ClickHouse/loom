@@ -889,13 +889,13 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   Today's resume, reopen and residue rules then cover the mirror, and a step added later
   covers it too.
 - An unfinished erasure is a ledger row not `completed` whose `failure_reason` does not
-  start with `ABANDONED_REASON_PREFIX`, matched to the namespace as
-  `ledger.unfinished_reaching` matches its scope (a `namespace_list` included) and read
-  sequentially; like the ledger's other fences it does not stop at `LIVE_LEDGER`, so a
-  stale unfinished row keeps refusing, which fails closed. A replay-pending row counts,
-  and only an operator's `loom reconcile` ends it, which `ERASURE_PENDING`'s message
-  says; this differs from `namespace_census`'s open-erasure branch, which also counts an
-  abandoned saga.
+  start with `ABANDONED_REASON_PREFIX`, whose scope is a `namespace` equal to the name
+  or a `namespace_list` that holds it, read sequentially; like the ledger's other fences
+  it does not stop at `LIVE_LEDGER`, so a stale unfinished row keeps refusing, which
+  fails closed. A replay-pending row counts, and only an operator's `loom reconcile`
+  ends it, so under one the refusal is `ERASURE_REPLAY_PENDING` (class `state`, not
+  retryable) rather than `ERASURE_PENDING`; this differs from `namespace_census`'s
+  open-erasure branch, which also counts an abandoned saga.
 - One lock order holds for turns, cleanups, the anti-join, `knowledge_sources.retire`
   and `knowledge_sources.forget_user`: a source's turn lease outer, the namespace's
   source lease inner, as a sync turn takes them today. `knowledge_sources.retire` writes
@@ -938,11 +938,11 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   `loom.knowledge_sources` goes there: it leaves `NO_MEMORY_CONTENT`, and stays in the
   state tables with its `active` condition (whose comment, "tables outside the erasure
   census", then names that set), so a removed source's inactive row does not keep a name
-  in use. The set carries a condition per scope: `FINAL … AND active` in the namespace
-  scope, and in the user scope none, so every version and every inactive row counts,
-  matching `owner_subject` and `created_by` against the person's `spellings`, and the
-  person's verified emails in `subjects`, a `filter` item's `owner` and
-  `directory_subject`.
+  in use. The set carries a condition per scope, which a purge turns into `1` as it does
+  every live condition: `FINAL … AND active` in the namespace scope, and in the user
+  scope none, so every version and every inactive row counts, matching `owner_subject`
+  and `created_by` against the person's `spellings`, and the person's verified emails in
+  `subjects`, a `filter` item's `owner` and `directory_subject`.
 - `loom.knowledge_sources` also holds a connected source's owner, a crawl's subjects and
   a filter's `owner` email, so `knowledge_sources.retire` clears a retired row's
   credentials, owner, options and items, and a purging erasure deletes its rows.
@@ -951,61 +951,70 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   `server/erasure/store/census.py` classifies it in `NO_MEMORY_CONTENT`: pseudonyms
   only, kept on purpose.
 - `loom.knowledge_source_cleanups` and the three access tables are keyed by namespace
-  and erased with it, and a document's list goes with its row. The lists and
-  `loom.knowledge_group_members` hold people's emails copied from the store's permission
-  lists and directory, people who are not Loom users among them; a list goes with its
-  document and a members row is written `deleted` when its source stops or no longer
-  reads that person, and otherwise mirror the store's current lists, so an erasure by
-  `user_id` does not select them; the crawl rows that name an erased person go as the
-  next bullet says.
-- A user erasure (`user_id`) reaches the connections of every subject that spelling maps
-  to (`server/auth/aliases.py` `spellings`, `user:<id>` included). Its step,
-  `connections.forget_user`, owns `loom.connected_accounts` and the readers and listing
-  rows keyed by those connections in the user-scope census; it and
-  `knowledge_sources.forget_user` (which owns `loom.knowledge_sources`, the crawl
-  readers and listing rows and the group-members rows) sit in `USER_STEPS` after the
-  Postgres steps and before `chunks.supersede` and `documents.tombstone`, so the
-  mirrored documents they retire are covered by the document steps that follow, under
-  either authority. The connections step reads those connections first, then deletes
-  outright (a `DELETE`, every version, as the user steps delete a grant row of the user)
-  the readers and listing rows keyed by their pseudonyms, retires their connected
-  sources with their mirrored documents, ends each connection in the order every such
-  path uses ([connected accounts](#connected-accounts): clear, then revoke at the
-  store), and deletes the `loom.connected_accounts` rows last.
-- A user erasure's crawl part runs in this order. First it writes the person's exclusion
-  rows (one per verified email) and, in `knowledge_sources.forget_user`, under each
-  namespace's source lease: takes the emails out of every crawl's `subjects`; removes
-  every `filter` item whose `owner` is one of them, on any source, and stops a source
-  left with no item (a mirrored one through its cleanup, a `namespace` one keeping its
-  documents, as a `remove` without `delete_documents` does); and stops a crawl whose
-  `directory_subject` names the person, since the address may not stay in
-  `loom.knowledge_sources`, which retires every mirrored document that crawl wrote
-  (erasing a directory administrator empties the crawls they served). The connected
-  sources it retires have their `owner_subject` cleared, as the namespace scope's
-  retirement clears it. It then rewrites in place every version of every source row that
-  names the person, inactive rows included (a source removed earlier keeps its options
-  and items), through `count_then_mutate` with `final=False` (the source rows it just
-  wrote are clean, so a count under `FINAL` would find nothing and skip the older
-  versions), over the census's own predicate: the address out of `subjects`, the
-  person's `filter` items dropped, and `owner_subject`, `created_by` and a
-  `directory_subject` naming them cleared. A crawl or shared source whose registrant was
-  the person then fails the turn's registrant check and stops, as one whose
-  `directory_subject` named them does. So no address of the person stays in
-  `loom.knowledge_sources`, in any version; and the next turn reads the new lists. Then,
-  under each crawl's turn lease as a cleanup runs (so a turn in flight finishes first,
-  and what it wrote as the person goes with the deletes below), it retires the documents
-  only that person's listing reached, or marks their lists `unread` where a retirement
-  cannot be confirmed, and then deletes outright every crawl readers and listing row
-  keyed by the pseudonym of one of the person's verified emails, since no listing by
-  them runs again to do it, and rewrites each crawl's sync state without that person's
-  cursor and deletes the older versions of that state row (they hold the cursor until a
-  merge), and deletes outright every version of a group-members row whose `members`
-  holds one of the emails (the next turn writes the group again, the excluded person
-  left out); a document's list keeps the store's list as read, the person's email
-  included, because it is the file's and goes with the document, and rule 1 still
-  decides who reads it; those deletes go through `delete_scoped`, and the census counts
-  these tables without `FINAL` or the `deleted` filter. A crawl's documents are the
-  org's, so a document someone else's listing still reaches stays.
+  and erased with it by the namespace step `knowledge_access.delete`, which owns them in
+  the census (over the namespace and its mirror, with the census's live condition), and
+  a document's list goes with its row. The lists and `loom.knowledge_group_members` hold
+  people's emails copied from the store's permission lists and directory, people who are
+  not Loom users among them; a list goes with its document and a members row is written
+  `deleted` when its source stops or no longer reads that person, and otherwise mirror
+  the store's current lists, so an erasure by `user_id` does not select them; the crawl
+  rows that name an erased person go as the next bullet says.
+- A user erasure (`user_id`) runs two steps of its own in `USER_STEPS`, after the
+  Postgres steps and before `chunks.supersede` and `documents.tombstone`,
+  `connections.forget_user` first, since the other clears the `owner_subject` the first
+  finds the person's sources by. The person's addresses are the email-shaped
+  `spellings(org, user_id)` (`server/auth/aliases.py`, unverified ones included, as a
+  revocation reaching further fails closed) plus their verified emails; both steps and
+  their census raise when the directory cannot be read.
+- `connections.forget_user` owns `loom.connected_accounts` and the person's connected
+  sources:
+  1. It reads the person's connections and records, in its step's detail on the ledger
+     row, their pseudonyms and the ids of the connected sources they back, which the
+     census keys on once the rows are gone.
+  2. Under each namespace's source lease it stops those sources and clears their
+     `owner_subject`, then waits, outside that lease, for each one's turn lease, so a
+     turn in flight finishes.
+  3. It retires their mirrored documents (by their `source-id:<id>` tags, to completion)
+     and deletes outright, every version, through `delete_scoped`, the readers and
+     listing rows keyed by the recorded pseudonyms.
+  4. It ends each connection in the order every such path uses ([connected
+     accounts](#connected-accounts): clear, then revoke at the store) and deletes the
+     `loom.connected_accounts` rows last.
+
+  Its census counts, without `FINAL`, the recorded sources' live mirror documents, the
+  readers and listing rows of the recorded pseudonyms, and the connection rows of the
+  person's spellings.
+
+- `knowledge_sources.forget_user` owns `loom.knowledge_sources` and the crawl rows that
+  name the person:
+  1. It writes the person's exclusion rows, one per address.
+  2. Under each namespace's source lease it takes the addresses out of every crawl's
+     `subjects`; removes every `filter` item an address owns, on any source, and stops a
+     source left with no item (a mirrored one through its cleanup, a `namespace` one
+     keeping its documents, as a `remove` without `delete_documents` does); stops a
+     crawl whose `directory_subject` or `created_by` names the person (the crawl's
+     registrant check, which only crawls have, would stop it anyway; it retires every
+     mirrored document that crawl wrote, so erasing a directory administrator empties
+     the crawls they served); and clears `created_by` on any other source.
+  3. It rewrites in place every version of every source row that names the person,
+     inactive rows included, through `count_then_mutate` with `final=False` (the rows it
+     just wrote are clean, so a count under `FINAL` would find nothing and skip the
+     older versions), over the census's own predicate.
+  4. Under each crawl's turn lease, as a cleanup runs (so a turn in flight finishes
+     first), it retires the documents only the person's listing reached, or marks their
+     lists `unread` where a retirement cannot be confirmed; deletes outright, every
+     version, through `delete_scoped`, the crawl readers and listing rows keyed by the
+     pseudonym of one of the addresses and every group-members row whose `members` holds
+     one (the next turn writes the group again without them); and rewrites the crawl's
+     sync state without the person's cursor, deleting the older versions of that state
+     row.
+
+  Its census counts these tables without `FINAL` or the `deleted` and `active` filters.
+  A document's list keeps the store's list as read, the person's email included, because
+  it is the file's and goes with the document, and rule 1 still decides who reads it. A
+  crawl's documents are the org's, so a document someone else's listing still reaches
+  stays.
+
 - Every new table is classified in `server/erasure/store/census.py`.
 - `erasure.request` refuses an `acl-` scope for every caller but a platform admin, and
   `erasure.export` refuses one for every caller (an export would read the mirror's
@@ -1065,8 +1074,9 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 ## Breaks
 
 - The source ops no longer answer `NOT_A_CODE_NAMESPACE`; `add` answers
-  `NAMESPACE_INACTIVE` for an inactive namespace, and `ERASURE_PENDING` (retryable) for
-  a first mirrored source while an erasure of the namespace is unfinished.
+  `NAMESPACE_INACTIVE` for an inactive namespace, and `ERASURE_PENDING` (retryable) or
+  `ERASURE_REPLAY_PENDING` (until an operator's `loom reconcile`) for a first mirrored
+  source while an erasure of the namespace is unfinished.
 - `recording` sources lose the `meet` provider.
 - A source whose stored documents plus new files pass
   `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` (default 50,000) writes no new document and
@@ -1146,8 +1156,9 @@ The redirect URI to register with each store is
   - The `acl-` gate in `check_authorized` and `CachedGate`, with auth on and off, and
     for a platform admin on a read op.
   - The mixed-version refusal.
-  - The erasure's retire step running again on resume and its census reopening the steps
-    for a source added mid-saga.
+  - The erasure's retire step skipped on resume once completed, reopened by a census
+    that finds a source added after it and its census reopening the steps for a source
+    added mid-saga.
   - The deleted readers rows landing before a listing row's new start, with the sync
     killed between them.
   - A stopped crawl leaving no listing or group-members row, also when an N-1 `add`
@@ -1256,6 +1267,11 @@ The redirect URI to register with each store is
   - The `forget_user` rewrite counting without `FINAL`, with a version older than the
     newest naming the person; a user erasure of a source's registrant clearing
     `created_by` and stopping a crawl it registered.
+  - A turn in flight on a connected source during `connections.forget_user` leaving no
+    readers or listing row keyed by the person; a retirement of a connected source's
+    mirror documents cut short failing the census; a person with an unverified or
+    missing directory email still taken out of a crawl's `subjects`; a namespace-scope
+    purge census over `loom.knowledge_sources` leaving no inactive row.
   - A retired mirror document's tombstone carrying no `access_json`.
   - A crawl that lost every account's listing row still found by the anti-join through
     its source row.
