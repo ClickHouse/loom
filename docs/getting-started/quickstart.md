@@ -120,10 +120,9 @@ Code to it. The first start downloads about 3 GB of images and takes a few minut
 the dashboard at the address the creation log's last lines print (`Loom is running in the
 codespace. Dashboard: https://<codespace name>-7777.app.github.dev`, the **Ports** tab's
 forwarded address for port 7777); the installer's `http://127.0.0.1:7777/` above it is the
-codespace's own address. In the codespace's terminal, run
-`cd ~ && claude` (outside the checkout, whose instructions are for working on Loom
-itself), sign in, and say "Remember that I deploy only on Tuesdays"; in a new `claude`
-session, ask "When do I deploy?".
+codespace's own address. In the codespace's terminal, run `cd ~ && claude` (outside the
+checkout, whose instructions are for working on Loom itself), sign in, and say "Remember
+that I deploy only on Tuesdays"; in a new `claude` session, ask "When do I deploy?".
 
 The try-out runs single-user, with no sign-in. In the browser, port 7777 is forwarded
 privately: its address answers only your GitHub account. Keep it private: public, or
@@ -138,12 +137,13 @@ browser address: from the laptop's `localhost:7777` the page opens, but the serv
 its requests, so it shows no data; only the forwarded address is this server's own page.
 
 The install lives in `/workspaces/.loom`, so a rebuilt codespace keeps its `.env` and
-Compose project, though its memories live in Docker volumes a rebuild may not keep; a rebuild also runs the latest release's installer over it, which moves it
-to that release. Wherever these docs name `~/.loom` or `"$HOME/.loom"`, a codespace uses
+Compose project, though its memories live in Docker volumes a rebuild may not keep; a
+rebuild also runs the latest release's installer over it, which moves it to that release.
+Wherever these docs name `~/.loom` or `"$HOME/.loom"`, a codespace uses
 `/workspaces/.loom`. Codespaces offers to open port 7777 as soon as it listens; the
-dashboard answers once the creation log prints "Loom is running in the codespace". If the log ends with an
-error instead, run `sh .devcontainer/start-loom.sh` in the codespace's terminal: it keeps
-what the first run set up.
+dashboard answers once the creation log prints "Loom is running in the codespace". If the
+log ends with an error instead, run `sh .devcontainer/start-loom.sh` in the codespace's
+terminal: it keeps what the first run set up.
 
 ### Start in multi-user mode
 
