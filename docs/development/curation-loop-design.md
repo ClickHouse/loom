@@ -283,13 +283,14 @@ describe the hits that are not governed.
 **Pages and fields.** The leg runs only on a search's first page. The list a search parks
 for its later pages is the merged one, governed hits first, so the next page starts after
 the rows page one served and no ordinary hit is skipped. The leg is off when a field asks
-for other rows: any `memory_type` (`definition` is not one of its values); `tags` or
-`category` filtering, not with `tags_soft` or `category_soft`; an explicit `agent`,
-`run_id` or `session_ids`; `as_of`; a body `user_id` or `session_id` under a
-whole-namespace read; `min_body_chars`; and `recent_first` or `anchor_first` above 0,
-whose rows are documented to come first. A `user_id` or `session_id` the read scope pins,
-`scope`, `exclude_keys` and `min_similarity` keep it on, as do a soft tag or category and
-`entity_filter`, which only boost rows. It drops any key in `exclude_keys`.
+for other content: any `memory_type` (`definition` is not one of its values); `tags` or
+`category` filtering, not with `tags_soft` or `category_soft`; `as_of`; `min_body_chars`;
+and `recent_first` or `anchor_first` above 0, whose rows are documented to come first. A
+field that only says whose rows to read keeps it on, since a definition is the
+namespace's: an `agent`, `run_id`, `session_ids`, or a `user_id` or `session_id` in the
+body or pinned by the read scope, as `context.pack`'s per-prompt recall sends. So do
+`scope`, `exclude_keys` and `min_similarity`, a soft tag or category and `entity_filter`,
+which only boost rows. It drops any key in `exclude_keys`.
 
 **`term_leg`** says what the leg did: `complete`; `empty` when the namespace holds no
 definition; `capped` or `timed_out` past its bounds; `failed` when any of its reads failed
@@ -754,7 +755,8 @@ while any live replica's schema is below N, as `namespace.guide_set` does (the
 namespace-guide rule of [rolling upgrades](../architecture/rolling-upgrades.md)); the gaps
 pass and the query-history turn write nothing then, and no miss is recorded.
 `memory.definitions.list` reads only `loom.shared` and the source rows, which N-1 knows,
-so it serves throughout and shows the lapses N-1 causes. The operator turns
+so the N replicas serve it throughout and it shows the lapses N-1 causes; a call that
+lands on an N-1 replica is answered as an unknown op. The operator turns
 `knowledge_gaps_enabled` on only once no N-1 replica serves, as the assistant-turn
 learnings rule does for `memory_extract_agent_learnings`. Governed definitions are memory
 and shared rows, which N-1 knows: it serves them as plain rows with no term leg. What N-1
@@ -802,7 +804,9 @@ the gaps pass, drafts and query-history turns, and deletes the rows of
 `loom.search_misses` and `loom.knowledge_gaps`, every query-history registration, and
 every `knowledge_gap` and `query_history` row of `loom.learnings_queue` whatever its
 status, as the assistant-turn learnings rule does for assistant-turn rules; a team
-re-registers its source once N serves again. The first N-1 replica to serve closes the
+re-registers its source once N serves again, and the next turns draft again the groups
+whose candidates were deleted, those already governed included: an admin rejects such a
+draft, or promoting it revises the definition. The first N-1 replica to serve closes the
 gate, so no op or turn of this design writes after it; the operator runs the same delete
 once more then, for what N wrote in between.
 
