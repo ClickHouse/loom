@@ -15,6 +15,9 @@ model writes the answer from the passages Loom returns.
 - **One search across memory, documents and conversations.** `loom_search` runs the memory,
   knowledge, profile and conversation searches in one call, across the caller's memory
   namespaces. [Unified search](../features/unified-search.md)
+- **Document sources.** A namespace's admins can register sources Loom pulls documents
+  from; the sync worker needs `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`.
+  [Document sources](../features/knowledge.md#document-sources)
 - **A similarity floor.** `loom_search` drops knowledge hits below a similarity floor
   instead of handing the model a weak passage. [`loom_search`](../features/unified-search.md#loom_search)
 - **Access control on every passage.** Documents live in namespaces with viewer, writer and
@@ -33,4 +36,4 @@ The [quickstart](../getting-started/quickstart.md) runs the stack with the extra
 service. Add a document from the dashboard's Library page, with `knowledge.add` for text, or with
 `knowledge.ingest` for a file the extractor converts.
 
-Ops marked experimental may change between releases: see [status](../reference/status.md).
+Some ops on this page are marked experimental on the [status page](../reference/status.md).

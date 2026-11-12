@@ -2,7 +2,7 @@
 
 > Loom is a self-hosted MCP server that gives AI agents shared long-term memory, document search with citations and a code index. It keeps its data in ClickHouse, with Postgres as an option for live memory and knowledge state, and serves it over MCP, HTTP and the Python and TypeScript SDKs.
 
-Start with docs/index.md (the map). To install Loom, a coding agent reads docs/getting-started/agent-setup.md and follows the agent-setup.txt each release attaches, with its pins filled in. To connect to a running server: docs/getting-started/connect-a-coding-agent.md. To decide whether Loom fits: docs/getting-started/overview.md; for one need, docs/use-cases/. Every operation's fields are in docs/reference/operations/.
+Start with docs/index.md (the map). To install Loom, a coding agent reads docs/getting-started/agent-setup.md and follows the agent-setup.txt each release attaches, with its pins filled in. To connect to a running server: docs/getting-started/connect-a-coding-agent.md. To decide whether Loom fits: docs/getting-started/overview.md; for one need, docs/use-cases/index.md. Every operation's fields are in docs/reference/operations/.
 
 ## Getting started
 
@@ -16,12 +16,12 @@ Start with docs/index.md (the map). To install Loom, a coding agent reads docs/g
 
 ## Use cases
 
+- [Use cases](docs/use-cases/index.md): Each page answers one question people and agents ask when they look for a tool: what Loom does for that need and where to start.
 - [Long-term and shared memory for AI agents](docs/use-cases/agent-memory.md): Loom is a self-hosted MCP server and HTTP API that gives AI agents long-term memory they share: a fact one agent saves in a session, the next session, another agent or a person at the dashboard can find.
 - [Memory, recall, audit and erasure for autonomous agents](docs/use-cases/autonomous-agents.md): Loom gives autonomous agents memory they recall later, an audit record of who wrote what, and erasure of a scope everywhere Loom keeps it.
 - [A code index for coding agents](docs/use-cases/code-intelligence.md): Loom gives coding agents a shared index of your git repositories, served over MCP, so an agent asks a structure question and gets the lines that answer it instead of reading whole files.
 - [Lower model cost for coding agents](docs/use-cases/coding-agent-cost.md): With the Loom plugin and code index, Claude Code answered questions about the ClickHouse codebase at 20% and 21% lower model cost than without it on two of three measured question sets.
 - [Document search and RAG for agents](docs/use-cases/document-search.md): Loom indexes your documents (Markdown and text, and PDF, `.docx` and `.pptx` files that its extractor service converts) and lets agents search them with citations over MCP, HTTP or the SDKs.
-- [Use cases](docs/use-cases/index.md): Each page answers one question people and agents ask when they look for a tool: what Loom does for that need and where to start.
 - [Shared context for multi-agent workflows](docs/use-cases/multi-agent.md): Loom gives the agents in a multi-agent workflow one place to share context: memory every agent in a namespace reads, task inboxes for handing work from one agent to another, and a record of decisions.
 - [Agent runs, traces and PR history](docs/use-cases/runs-and-pr-history.md): Loom records the work coding agents do, as runs and searchable session conversations, and connects it to your code history; conversation recording, PR history and the tracker are each off until turned on.
 - [Self-hosted agent memory on ClickHouse](docs/use-cases/self-hosted-clickhouse.md): Loom runs on your own infrastructure, with Docker or on Kubernetes with its Helm chart, and stores agent memory, documents, conversations and code indexes as tables in ClickHouse.
@@ -87,13 +87,13 @@ Start with docs/index.md (the map). To install Loom, a coding agent reads docs/g
 
 ## Reference
 
+- [Reference](docs/reference/index.md): Reference pages say what exists and what each option means.
 - [CLI reference](docs/reference/cli.md): `loom` is the one command-line entry point for running, maintaining and connecting to a Loom deployment.
 - [Configuration reference](docs/reference/configuration.md): Every setting is declared in one file, `server/settings/catalog.py`, and is an environment variable `LOOM_<FIELD>` read at startup into `server.settings.settings`.
 - [Environment variables reference](docs/reference/environment.md): Almost everything Loom is configured with is a settings field: the environment variable `LOOM_<FIELD>` of a field on `server.settings.Settings`, listed with its default and meaning in the generated [configuration…
 - [Errors reference](docs/reference/errors.md): Every refusal Loom makes carries a stable, upper-case `code`.
 - [Extractor contract](docs/reference/extractor-contract.md): An extractor is an HTTP service the Loom server sends an original file to and gets its extraction artifact back from.
 - [HTTP API reference](docs/reference/http-api.md): Every Loom operation is one HTTP endpoint, `POST /v1/<operation>`, generated from the operation registry in `server/operations/` (`server/transport/http.py`, `build_router`).
-- [Reference](docs/reference/index.md): Reference pages say what exists and what each option means.
 - [MCP reference](docs/reference/mcp.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
 - [Operations reference](docs/reference/operations.md): An operation (op) is one named unit of work on the Loom wire, such as `memory.set` or `code.search`.
 - [Python SDK reference](docs/reference/python-sdk.md): The Python SDK (`clickhouse-loom`, source in `sdk/python/loom/`) is an async client over the HTTP API.

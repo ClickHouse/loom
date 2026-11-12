@@ -17,9 +17,9 @@ what was decided and which change introduced a regression.
   on with `conversation.set_logging(enabled=true)`. [Conversations and sessions](../features/conversations-and-sessions.md) ·
   [Trace and resume long agent runs](../guides/trace-and-resume.md)
 - **PR history.** History of a symbol, path or line, review briefs, a pre-PR duplicate
-  check and bisect candidates. Needs `LOOM_CODE_PR_HISTORY_ENABLED=true`; review comments,
-  GitHub issues and open PRs also need a GitHub token (`LOOM_CODE_GITHUB_TOKEN` or the
-  repository entry's `github_token`). [History, PRs and releases](../features/code-index/history-and-prs.md)
+  check and bisect candidates. These need PR history turned on and a GitHub token;
+  [History, PRs and releases](../features/code-index/history-and-prs.md) says what each
+  needs.
 - **Tracker records.** Duplicate issue checks, issue-to-PR links and flaky tests, read live
   from the team's own ClickHouse. Needs `LOOM_TRACKER_ORG` and a registered tracker
   source. [Tracker plane](../features/tracker/overview.md)
@@ -34,4 +34,4 @@ what was decided and which change introduced a regression.
 plugins that capture sessions once recording is on; the [code index](code-intelligence.md)
 needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`.
 
-Ops marked experimental may change between releases: see [status](../reference/status.md).
+Some ops on this page are marked experimental on the [status page](../reference/status.md).

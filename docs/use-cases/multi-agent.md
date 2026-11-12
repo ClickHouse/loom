@@ -28,4 +28,4 @@ learn and hand over.
 agent sends and what to write; [tokens and grants](../guides/tokens-and-grants.md) gives
 each agent its own token.
 
-Ops marked experimental may change between releases: see [status](../reference/status.md).
+Some ops on this page are marked experimental on the [status page](../reference/status.md).

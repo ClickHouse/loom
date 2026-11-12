@@ -16,8 +16,9 @@ the dashboard can find. This page shows how that works and where to start.
   against a pinned fact is refused.
   [Conflicts and refusal](../features/memory/conflicts-and-refusal.md) ·
   [History and provenance](../features/memory/history-and-provenance.md)
-- **Search that abstains.** When nothing clears the similarity floor, search answers
-  `abstain=true` with a reason code and labels each weak hit `below_threshold`. [Search and ask](../features/memory/search-and-ask.md)
+- **Search that abstains.** When nothing clears the similarity floor, `memory.search`
+  answers `abstain=true` with a reason code and labels each weak hit `below_threshold`;
+  `loom_search` drops them. [Search and ask](../features/memory/search-and-ask.md)
 - **Memory across coding agents.** The Claude Code and Codex plugins load relevant
   context at session start and capture the session as it runs; Cursor and other MCP
   clients connect to the same server. [Connect a coding agent](../getting-started/connect-a-coding-agent.md)
@@ -38,4 +39,4 @@ difference is not statistically established.
 memory over HTTP, Python and MCP. [When Loom does not fit](../getting-started/overview.md#when-it-does-not-fit)
 covers the cases an in-process memory library serves better.
 
-Ops marked experimental may change between releases: see [status](../reference/status.md).
+Some ops on this page are marked experimental on the [status page](../reference/status.md).

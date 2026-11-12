@@ -18,9 +18,8 @@ receive what they process), and what your agents know is queryable with SQL.
 - **Multi-user.** Orgs, namespaces, roles, tokens and single sign-on.
   [Identities and namespaces](../concepts/identities-and-namespaces.md) ·
   [Single sign-on](../operations/sso.md)
-- **Local models.** The released stack embeds on CPU with a bundled local model, the
-  embedding provider accepts an OpenAI-compatible endpoint, and chat and embedding calls
-  can go through a gateway (`LOOM_OPENAI_BASE_URL`).
+- **Local models.** The released stack embeds on CPU with a bundled local model, and
+  the embedding provider accepts an OpenAI-compatible endpoint you run.
   [Models and API keys](../getting-started/models-and-keys.md)
 
 ## Start

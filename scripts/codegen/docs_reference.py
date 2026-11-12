@@ -446,12 +446,16 @@ def render_llms_txt() -> str:
         "docs/getting-started/agent-setup.md and follows the agent-setup.txt each release "
         "attaches, with its pins filled in. To connect to a running server: "
         "docs/getting-started/connect-a-coding-agent.md. To decide whether Loom fits: "
-        "docs/getting-started/overview.md; for one need, docs/use-cases/. "
+        "docs/getting-started/overview.md; for one need, docs/use-cases/index.md. "
         "Every operation's fields are in docs/reference/operations/.",
         "",
     ]
     for heading, sub in _LLMS_SECTIONS:
-        pages = sorted(p for p in (docs / sub).rglob("*.md") if p.parent != GROUP_DIR)
+        # A section's own index.md comes first, the rest by path.
+        pages = sorted(
+            (p for p in (docs / sub).rglob("*.md") if p.parent != GROUP_DIR),
+            key=lambda p: (p != docs / sub / "index.md", p),
+        )
         if not pages:
             continue
         out.append(f"## {heading}\n")

@@ -13,11 +13,9 @@ built and kept fresh is in [the code index overview](../features/code-index/over
 - **Search by meaning and by exact string.** `code.search` finds where a mechanism lives;
   `code.grep` finds an exact message or identifier.
 - **History and pull requests.** Merged-PR history with review comments, a pre-PR
-  duplicate check and bisect candidates for a regression. Needs
-  `LOOM_CODE_PR_HISTORY_ENABLED=true`; review comments, GitHub issues
-  and open PRs also need a GitHub token (`LOOM_CODE_GITHUB_TOKEN` or the repository
-  entry's `github_token`).
-  [History, PRs and releases](../features/code-index/history-and-prs.md)
+  duplicate check and bisect candidates for a regression. These need PR history turned on
+  and a GitHub token; [History, PRs and releases](../features/code-index/history-and-prs.md)
+  says what each needs.
 - **Freshness you can see.** The index trails the branch by merged commits, and a stale
   answer says so. [Freshness](../features/code-index/freshness.md)
 - **Plugins.** The Claude Code and Codex plugins connect on the `coding` toolset, which
@@ -41,4 +39,4 @@ indexed file and 79% for BM25 over `.py` files only; the `.py`-only gap is withi
 repository; [the code index overview](../features/code-index/overview.md) explains the
 tiers.
 
-Ops marked experimental may change between releases: see [status](../reference/status.md).
+Some ops on this page are marked experimental on the [status page](../reference/status.md).
