@@ -84,15 +84,18 @@ folders per query (not a setting), so a source of many folders lists in several 
 a recursive folder's subfolders are walked on every full listing, and a file in a new
 subfolder arrives with the next one. A probe checks a bounded sample: every item while
 there are at most 20, otherwise the 20 items added last, and the answer says `sampled:
-true` with the number checked (on a mirrored source, for its owner only, below). A
-mirrored source's probe answers reachability, the items checked and codes, never a
-count, a sample of titles or a summary that names a file, since it lists as the owner or
-as crawled people. A crawl's probe and status, for any caller, and a connected source's
-to anyone but its owner, answer only whether the credential and its scopes work: an item
-refusal, a per-item turn code (`item <n>: http_404`, `meet_recordings: not found`) and
-the oldest listing start are not answered there, since each depends on what a person can
-read. Only a refused item of the sample refuses `add` or `update`; the next sync turn
-reports any other as `item <n>: http_404` and goes on with the rest.
+true` with the number checked (on a mirrored source, for a connected source's owner and
+a platform admin only, below). A mirrored source's probe answers reachability, the items
+checked and codes, never a count, a sample of titles or a summary that names a file,
+since it lists as the owner or as crawled people. Every mirrored source's probe and
+status, to anyone but a connected source's owner and a platform admin, answer only
+source-level codes (whether the credential and its scopes work, `rate_limited`,
+`owner_inactive`, `provider_removed`): an item refusal, a per-file or per-item code
+(`item <n>: http_404`, `meet_recordings: not found`, `too_large`,
+`extraction_failed:<code>`) and the oldest listing start are not answered there, since
+each depends on what a person can read. Only a refused item of the sample refuses `add`
+or `update`; the next sync turn reports any other as `item <n>: http_404` and goes on
+with the rest.
 
 ### The link parser
 
@@ -148,18 +151,20 @@ document also carries `source-id:<id>`, the id of the source that wrote it, and 
 mirror that tag, not the name, decides ownership: a later source of the same name owns
 none of an earlier one's documents, and the cleanup of a stopped mirrored source retires
 by it. Only N writes a mirror, so every mirror document carries the tag. Inside a mirror
-a document is keyed by its address and its source id, so each mirrored source writes its
-own copy with its own list and no source's write depends on what another source holds;
-the legs drop the duplicate after the check. How a stopped source's documents and rows
-are found and cleaned when several sources, builds or names meet is the implementing
-pull request's to specify.
+a document's `source_uri` is its address with the source id appended (`<address>#<source
+id>`), so each mirrored source writes its own copy with its own list under the table's
+key, heads and document machinery as they are, and no source's write or retirement
+touches another's copy. The legs answer the address itself, dropping duplicates after
+the check, and a `get` or `download` of an address reads the copies the reader may see.
+How a stopped source's documents and rows are found and cleaned when several sources,
+builds or names meet is the implementing pull request's to specify.
 
 In a namespace, a second source that lists a file at an address where a document is
 counts it `skipped`, as today, and fetches no content. No source reads whether another
 is live: an address is free exactly when no document is there. Once the owner's document
 is retired (by today's [retirement rule](../features/knowledge.md#document-sources), its
-`remove` with `delete_documents`, or any stop of a mirrored source), the next source
-that lists the file writes it as a new file under its own tag at its next full listing
+`remove` with `delete_documents`), the next source that lists the file writes it as a
+new file under its own tag at its next full listing
 (`knowledge_source_sync_full_interval_seconds`). A kept document (one a `remove` without
 `delete_documents` left) is skipped by every source until `knowledge.delete` removes it,
 as today.
@@ -313,12 +318,16 @@ checked leg's answer to its reader and the request's spend, which counts against
 namespace's `daily_cost_cap_usd`. So an op that is not a checked leg (a source's probe,
 status or `remove`, a namespace erasure's receipt) answers codes for what a mirror
 holds: no count, title, file id or address, and a code that depends on the mirror's rows
-(a residue failure) reads as the same code for any cause. One more exception: a
+(a residue failure) reads as the same code for any cause. Two more exceptions: a
+connected source's owner and a platform admin see the source's per-item status; and a
 namespace erasure keeps its mirror's step and census counts in a separate part of its
 ledger row, which `erasure.status` and `erasure.list` show only to a platform admin. The
 sync of a mirrored source is no request: its spend counts against no namespace's cap and
 appears in no per-namespace row; its own pass budget bounds it, and only a platform
-admin sees its total, a third exception.
+admin sees its total, a fourth exception. That budget is
+`LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS`, apart from the namespace sources'
+`knowledge_source_sync_documents_per_pass`, so many connected sources cannot starve the
+others.
 
 A deployment with auth off (`LOOM_AUTH_REQUIRED=false`) has no reader identity to check.
 It refuses to add a mirrored source (`AUTH_REQUIRED`), and when auth is switched off
@@ -445,21 +454,21 @@ creator's grants, a bot and an end-user token included, has none, so it sees onl
 
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
 a link-only permission and a permission type the sync does not know admit nobody. A leg
-that cannot read the lists, the members rows or the listing row shows no mirrored
-document and marks the answer `degraded: mirror_unread`. Each leg reads the listing row
-first and then the members rows and the lists, under `sequential_reads()`, so a lagging
-replica cannot pair a fresh listing row with an older list. It computes the addresses
-the reader may see before its `LIMIT`, so a page is never cut short by the check, and
-caches no admitted set. No score depends on a document the reader may not see: a
-mirror's chunks add nothing to any corpus statistic (the lexical leg's document counts,
-lengths and term frequencies), and a mirror leg scores its lexical hits with fixed
-corpus constants, which depend on no document, so a namespace fed only by mirrored
-sources still ranks by both legs. Under the Postgres authority each leg judges the
-addresses it is about to answer by their heads, so a narrowing or a retirement committed
-and not yet published already applies, and a missing head drops the address; a leg that
-cannot read the heads shows no mirrored document. The implementing pull request measures
-the leg on a mirror of a million documents under both storage authorities and puts the
-figures here.
+that cannot read the lists, the members rows, the listing row or the owning source's
+registry row shows no mirrored document and marks the answer `degraded: mirror_unread`.
+Each leg reads the registry row and the listing row first and then the members rows and
+the lists, under `sequential_reads()`, so a lagging replica cannot pair a fresh listing
+row with an older list. It computes the addresses the reader may see before its `LIMIT`,
+so a page is never cut short by the check, and caches no admitted set. No score depends
+on a document the reader may not see: a mirror's chunks add nothing to any corpus
+statistic (the lexical leg's document counts, lengths and term frequencies), and a
+mirror leg scores its lexical hits with fixed corpus constants, which depend on no
+document, so a namespace fed only by mirrored sources still ranks by both legs. Under
+the Postgres authority each leg judges the addresses it is about to answer by their
+heads, so a narrowing or a retirement committed and not yet published already applies,
+and a missing head drops the address; a leg that cannot read the heads shows no mirrored
+document. The implementing pull request measures the leg on a mirror of a million
+documents under both storage authorities and puts the figures here.
 
 ### Every turn reads the lists again
 
@@ -599,14 +608,14 @@ base>/settings/connected-accounts?kind=<kind>` to hand back.
 
 ClickHouse, additive migrations:
 
-| Table                              | Key                                  | Holds                                                                                                                                                                                                    |
-| ---------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom.knowledge_sources` (columns) | `(org, namespace, name)`             | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject` and `subjects`), `secret_enc`          |
-| `loom.knowledge_mirrors`           | `(org, namespace)`                   | `mirror`, `created_at`                                                                                                                                                                                   |
-| `loom.documents` (column)          | as today                             | `access_json`: a mirrored document's permission list (`emails`, `groups`, `domains`, `anyone`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration |
-| `loom.knowledge_source_listings`   | `(org, namespace, source_id)`        | `name`, `started_at` (the start of the source's last complete listing), `version`; `namespace` is the mirror                                                                                             |
-| `loom.knowledge_group_members`     | `(org, namespace, source_id, group)` | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                            |
-| `loom.connected_accounts`          | `(org, subject, kind)`               | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                        |
+| Table                              | Key                                                           | Holds                                                                                                                                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.knowledge_sources` (columns) | `(org, namespace, name)`                                      | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject` and `subjects`), `secret_enc`          |
+| `loom.knowledge_mirrors`           | `(org, namespace)`                                            | `mirror`, `created_at`                                                                                                                                                                                   |
+| `loom.documents` (column)          | as today; in a mirror `source_uri` is `<address>#<source id>` | `access_json`: a mirrored document's permission list (`emails`, `groups`, `domains`, `anyone`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration |
+| `loom.knowledge_source_listings`   | `(org, namespace, source_id)`                                 | `name`, `started_at` (the start of the source's last complete listing), `version`; `namespace` is the mirror                                                                                             |
+| `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`                          | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                            |
+| `loom.connected_accounts`          | `(org, subject, kind)`                                        | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                        |
 
 A source N-1 can operate on (`shared`, `access: namespace`, with items today's config
 can express) keeps today's columns as they are: `kind`, its credential in
@@ -673,8 +682,8 @@ statements and census keys against these, and its tests pin each one:
   starts, since a restored copy cannot be trusted to say who may read; owners connect
   and add their sources again. The implementing pull request adds both steps and
   specifies the command.
-- **Ownership.** One owner per address, found by its tag, is today's model, so N-1 and N
-  agree on whose a document is.
+- **Ownership.** In a namespace, one owner per address, found by its tag, is today's
+  model, so N-1 and N agree on whose a document is; N-1 reads no mirror.
 - **`meet`.** N-1 still syncs a stored `meet` source on its turns; N skips it.
 - **Erasure.** N-1's erasure misses the mirror and the new tables (rule 14): run again
   with N every erasure completed while an N-1 replica served.
@@ -698,15 +707,16 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
 
 ## Settings
 
-| Setting                                              | Default | Meaning                                                                             |
-| ---------------------------------------------------- | ------- | ----------------------------------------------------------------------------------- |
-| `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS`            | 3600    | a source's listing or group members row older than this admits nobody               |
-| `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`                | 50000   | a source's stored documents plus new files; past it a turn holds back new documents |
-| `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_PERSON`    | 8       | a person's connected sources in one namespace                                       |
-| `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_NAMESPACE` | 64      | a namespace's connected sources                                                     |
-| `LOOM_CONNECT_GDRIVE_CLIENT_ID`, `_SECRET`           | unset   | the shared-folder store's OAuth client; unset, those connections are off            |
-| `LOOM_CONNECT_NOTION_CLIENT_ID`, `_SECRET`           | unset   | the page store's public integration                                                 |
-| `LOOM_CONNECT_LINEAR_CLIENT_ID`, `_SECRET`           | unset   | the project tracker's OAuth application                                             |
+| Setting                                              | Default | Meaning                                                                                                    |
+| ---------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS`            | 3600    | a source's listing or group members row older than this admits nobody                                      |
+| `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`                | 50000   | a source's stored documents plus new files; past it a turn holds back new documents                        |
+| `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_PERSON`    | 8       | a person's connected sources in one namespace                                                              |
+| `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_NAMESPACE` | 64      | a namespace's connected sources                                                                            |
+| `LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS`    | 40      | documents a pass fetches, writes and retires for mirrored sources, apart from the namespace sources' bound |
+| `LOOM_CONNECT_GDRIVE_CLIENT_ID`, `_SECRET`           | unset   | the shared-folder store's OAuth client; unset, those connections are off                                   |
+| `LOOM_CONNECT_NOTION_CLIENT_ID`, `_SECRET`           | unset   | the page store's public integration                                                                        |
+| `LOOM_CONNECT_LINEAR_CLIENT_ID`, `_SECRET`           | unset   | the project tracker's OAuth application                                                                    |
 
 The redirect URI to register with each store is
 `<LOOM_PUBLIC_BASE_URL>/v1/connect/<kind>/callback`.
@@ -720,8 +730,10 @@ The redirect URI to register with each store is
   the document, its chunks and embeddings on each change.
 - **A mirror name derived from the namespace.** Anyone could compute it, and an N-1 gate
   admits a wildcard admin token to a computed name.
-- **A permission list per reading account.** An account that read the list before a
-  reader was removed would keep admitting them until its row aged out.
+- **A permission list per reading account within a source.** An account that read the
+  list before a reader was removed would keep admitting them until its row aged out.
+  Across sources each copy keeps its own list, bounded by the stale bound and dropped at
+  its own source's next listing.
 - **Resolving the store's groups through Loom's SCIM groups.** They hold a service's end
   users (`user:<id>`), not people's emails.
 - **A separate meeting-store path.** The meeting store already saves transcripts and
@@ -811,9 +823,9 @@ Each implementing pull request lists its own; these pin the model:
   - A turn that finds a narrowed list rewriting the row without rebuilding a chunk, and
     one that finds the same list writing nothing; a listing row landing only after its
     changed lists.
-  - A leg that cannot read the lists, the members rows, the listing row or (under the
-    Postgres authority) the heads showing no mirrored document, marked `degraded:
-mirror_unread`.
+    - A leg that cannot read the lists, the members rows, the listing row, the owning
+      source's registry row or (under the Postgres authority) the heads showing no
+      mirrored document, marked `degraded: mirror_unread`.
   - The mixed-version refusal, and N-1's `check`, `rotate`, `remove` and sync turn over
     a row N wrote with `kind` empty.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
@@ -822,7 +834,10 @@ mirror_unread`.
   its existence, through the legs, `knowledge.reads`, `audit.list`, the org-wide rollups
   or a source's status (an admin who is not the owner included), under both storage
   authorities; a reader the list names sees it; a reader removed from the store's list
-  stops seeing it after the next listing.
+  stops seeing it after the next listing of every source that holds a copy; one mirrored
+  source's retirement leaving another source's copy of the same address readable; a
+  `shared` mirrored source's status, read by a viewer no list names, showing no per-file
+  code.
 - Integration: a `connected` source is mirrored wherever it writes; a SCIM deactivation
   and a disconnect stop the person's sources and retire their mirrored documents;
   `namespace.delete` and `collection.delete` retire the namespace's sources and clear
