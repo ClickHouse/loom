@@ -20,7 +20,7 @@ import {
   whileNew,
 } from "./batchIngest";
 import { errorLine } from "./errorWords";
-import { distinctTitle, placeholderName, plainName, titleKey } from "./collections";
+import { distinctTitle, plainName, titleKey } from "./collections";
 
 /** Ancestors a collection may have (server/auth/sharing.py MAX_DEPTH). */
 export const MAX_DEPTH = 8;
@@ -353,13 +353,11 @@ export class FolderCollections {
       ? await this.target(plan.parentPath, signal)
       : { namespace: this.root, fresh: false };
     signal.throwIfAborted(); // Stop makes no more collections
-    // The plain name is only what a server a release behind creates (derive_name).
-    const name = plainName(plan.title) || placeholderName(plan.title);
     let r: Awaited<ReturnType<typeof createCollection>>;
     try {
       r = await this.retry(() =>
         whileNew(
-          () => createCollection(this.org, name, { parent: parent.namespace, title: plan.title, deriveName: true }),
+          () => createCollection(this.org, "", { parent: parent.namespace, title: plan.title, deriveName: true }),
           parent.fresh,
           signal,
         ),

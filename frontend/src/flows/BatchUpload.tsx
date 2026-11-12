@@ -263,18 +263,19 @@ export function BatchUpload({
   const [plannedWith, setPlannedWith] = useState(formats);
   // The files of folders that are sent, as folders: one left out (by its format) makes no
   // collection. `plan` reads the pick, which a dialog never changes.
-  const folderFiles = useMemo(
-    () => plan(true, plannedWith).filter((r) => r.folder && r.state !== "skipped"),
-    [plannedWith],
-  );
-  const folderish = folderFiles.length > 0;
+  const foldersIn = (readable: KnowledgeFormats | null) =>
+    plan(true, readable).filter((r) => r.folder && r.state !== "skipped");
+  const folderFiles = useMemo(() => foldersIn(plannedWith), [plannedWith]);
   const nestable = !!tree?.shown && !tree.shown.personal;
+  // Whether the folders go as collections: on My files or a namespace, as the person picks.
+  const asCollectionsFor = (files: BatchRow[], choice: "collections" | "flat") =>
+    !!tree && files.length > 0 && (nestable || choice === "collections");
   // A folder of folders sent starts as collections, until the person picks.
   const nestFor = (readable: KnowledgeFormats | null) =>
     plan(true, readable).some((r) => r.folder.includes("/") && r.state !== "skipped") ? "collections" : "flat";
   const [nest, setNest] = useState<"collections" | "flat">(() => nestFor(formats));
   const nestPicked = useRef(false);
-  const asCollections = !!tree && folderish && (nestable || nest === "collections");
+  const asCollections = asCollectionsFor(folderFiles, nest);
   // Held to one upload's limits from the first render, before the check answers.
   const [rows, setRows] = useState<BatchRow[]>(() => capBatch(plan(asCollections, formats), false));
   // "partial": too many documents to read them all; "failed": why is in `checkError`.
@@ -302,7 +303,7 @@ export function BatchUpload({
   // A folder upload ran: the Library lists its collections again once the dialog closes,
   // whatever it made, titled, or a Stop cut short.
   const foldersSent = useRef(false);
-  // What the check read of each collection it read whole, for the upload to start from.
+  // What the check read of each collection, whole or cut at its limit, for the upload to start from.
   const checkedSources = useRef(new Map<string, Map<string, KeptFields>>());
   const leave = () => {
     const first = madeHere.current[0];
@@ -350,17 +351,20 @@ export function BatchUpload({
     setPlannedWith(formats);
     const nowNest = nestPicked.current ? nest : nestFor(formats);
     if (nowNest !== nest) setNest(nowNest);
-    const nowFolders = plan(true, formats).some((r) => r.folder && r.state !== "skipped");
-    const mode = !!tree && nowFolders && (nestable || nowNest === "collections");
+    const nowFolderFiles = foldersIn(formats);
+    const mode = asCollectionsFor(nowFolderFiles, nowNest);
     // By row: in a folder upload two folders' files may share a source URI. A switch between
-    // collections and paths changes where each file goes: its marks are checked again.
+    // collections and paths changes where each file goes, and so can a folder left out (its
+    // collection may now be a sibling's): the marks are checked again.
     const found = new Map(rows.map((r) => [r.id, r]));
     const switched = mode !== asCollections;
+    const folderSet = (files: BatchRow[]) => [...new Set(files.map((r) => r.folder))].sort().join("\0");
+    const moved = mode && folderSet(nowFolderFiles) !== folderSet(folderFiles);
     const replanned = plan(mode, formats).map((r) => {
       const was = found.get(r.id);
       return was && !switched ? { ...r, replaces: was.replaces, kept: was.kept } : r;
     });
-    if (switched) setChecks((n) => n + 1);
+    if (switched || moved) setChecks((n) => n + 1);
     const use = chosen.current ?? firstChoice(replanned, twinIds(replanned, where));
     setChoice(use);
     setRows(capBatch(replanned, use === "skip"));
@@ -648,7 +652,7 @@ export function BatchUpload({
           text="Couldn't read which formats this deployment reads: every file is sent, and one it can't read fails on its own."
         />
       )}
-      {tree && folderish && !nestable && !started && (
+      {tree && folderFiles.length > 0 && !nestable && !started && (
         <ChoiceGroup
           label="The folders"
           value={nest}

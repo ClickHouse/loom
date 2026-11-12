@@ -1698,6 +1698,31 @@ describe("BatchUpload", () => {
       expect(screen.getByText("Already in Docs: replaced")).toBeInTheDocument();
     });
 
+    it("checks again when the formats leave out the folder a collection was predicted for", async () => {
+      // Untitled, the person its admin: "Notes" takes it, "Notes." is new, until Notes goes.
+      const notes = { ...team, namespace: "col-notes", parent: "col-team", title: "", role: "admin" as const };
+      vi.mocked(listKnowledge).mockImplementation(
+        async (id) =>
+          ({
+            rows: id.namespace === "col-notes" ? [{ source_uri: "b.md", title: "Old b" }] : [],
+            next_cursor: null,
+          }) as never,
+      );
+      const props = {
+        identity: { org: "o", namespace: "col-team" },
+        place: "Team",
+        entries: folderEntries(["Notes/a.png", "Notes./b.md"]),
+        onAdded: () => {},
+        onClose: () => {},
+        tree: { rows: [team, notes], shown: team, onMade: () => {} },
+      };
+      const { rerender } = render(<BatchUpload {...props} formats={null} formatsRead={false} />);
+      await waitFor(() => expect(vi.mocked(listKnowledge)).toHaveBeenCalled());
+      expect(screen.queryByText(/^Already in /)).toBeNull();
+      rerender(<BatchUpload {...props} formats={FORMATS} formatsRead />);
+      expect(await screen.findByText(/^Already in col-notes: /)).toBeInTheDocument();
+    });
+
     it("refuses an upload that makes more collections than one may, or a folder name the server refuses", async () => {
       const many = folderEntries([...Array.from({ length: 101 }, (_, i) => `F${i}/a.md`), `${"x".repeat(201)}/b.md`]);
       render(
