@@ -378,10 +378,12 @@ row. The sync writes `deleted` its readers, listing and group-members rows and t
 drops its holds, retiring the documents no other source holds. So no row of a source
 that no longer lists can admit anyone, and none names an account in any form other than
 its pseudonym, even for a source that never reached a file. A document's rows are
-written `deleted` when the document is retired. A pass finds such sources with one
-bounded read per mirror: the distinct `source_id`s of the four tables under the mirror
-(a key prefix), `LIMIT 100`, compared with the namespace's active sources; a pass cleans
-at most that many.
+written `deleted` when the document is retired. A pass finds such sources in
+`loom.knowledge_sources` itself: inactive rows whose sync state has no `cleaned_at`, at
+most 100 a pass, oldest first. It cleans each one's holds wherever they live (the
+namespace or its mirror) and its rows, then records `cleaned_at` in the source's sync
+state, which an N-1 turn merges into and keeps. A source whose registry row a purge
+deleted went with its namespace's erasure, mirror included.
 
 A person a crawl no longer reads (gone from a group it expands, taken out of `subjects`,
 or excluded) is treated the same way, on positive evidence only, as today's sync retires
@@ -443,25 +445,27 @@ permissions). They are full listings because the store does not change a file's
 modification time when its sharing changes, so an incremental listing would miss a
 permission removed. A pass runs those listings first, rotating across the mirrored
 sources from where the previous pass's listings stopped, by a listings position of its
-own, kept with the content position in the one resume cursor the pass already stores on
-its `loom.worker_status` row (`pass_context`). Listings take at most a third of the pass
-deadline (`knowledge_source_sync_max_pass_seconds`) and sit outside the pass's document
-bound, which counts fetches and writes of content. Content's start bound, today three
-quarters of the deadline from the pass start, is measured from where the listings ended,
-over the time left; decision mining keeps the tail it has today. When listings use their
-third, content keeps half of the deadline instead of three quarters: that slower drain
-of a content backlog is the accepted cost of keeping every mirrored source's permissions
-fresh. Content is still fetched only for a file whose revision changed: a listing
-records each file's revision against the stored copy's, and the files it finds changed
-wait in the source's sync state for the content phase of this or a later pass. Groups
-are expanded on every turn, once per group per turn. A listing that does not finish in a
-pass keeps one cursor per account in the source's sync state, keyed by the account's
-pseudonym (the item it reached and the page token), and goes on from it in the next
-pass; until it completes, that account's listing row keeps its older start, so every
-file it alone proves ages together, and a file whose list it alone reads keeps its older
-`read_at`. A large mirrored source therefore needs a stale bound longer than the time to
-list it all; `inspect` and `loom doctor` report the oldest listing start and the oldest
-`read_at` each source has. The cost per turn is the listing pages (1000 files each), one
+own: a `loom.code_index_state` row under org and namespace `-` and the key
+`knowledge_source_listings`, holding the `org/namespace/name` of the next source to list
+(no personal data; an N-1 pass never reads it, so its own resume cursor on
+`loom.worker_status` is untouched). Listings take at most a third of the pass deadline
+(`knowledge_source_sync_max_pass_seconds`) and sit outside the pass's document bound,
+which counts fetches and writes of content. Content keeps today's start bound of three
+quarters of the deadline from the pass start, so when listings use their third, content
+has five twelfths instead of three quarters; decision mining keeps its tail and its read
+share (`_FULL_READ_SHARE`) unchanged. That slower drain of a content backlog is the
+accepted cost of keeping every mirrored source's permissions fresh. Content is still
+fetched only for a file whose revision changed: a listing records each file's revision
+against the stored copy's, and the files it finds changed wait in the source's sync
+state for the content phase of this or a later pass. Groups are expanded on every turn,
+once per group per turn. A listing that does not finish in a pass keeps one cursor per
+account in the source's sync state, keyed by the account's pseudonym (the item it
+reached and the page token), and goes on from it in the next pass; until it completes,
+that account's listing row keeps its older start, so every file it alone proves ages
+together, and a file whose list it alone reads keeps its older `read_at`. A large
+mirrored source therefore needs a stale bound longer than the time to list it all;
+`inspect` and `loom doctor` report the oldest listing start and the oldest `read_at`
+each source has. The cost per turn is the listing pages (1000 files each), one
 permissions read per file the listing leaves it out for, one access row per listed file
 whose list was read, one directory read and one members row per group, and readers
 writes only for a file an account starts or stops listing. The implementing pull request
@@ -583,8 +587,8 @@ ClickHouse, additive migrations:
 | `loom.knowledge_mirrors`           | `(org, namespace)`                                 | `mirror`, `created_at`                                                                                                                                                                                      |
 | `loom.knowledge_source_holds`      | `(org, namespace, source_uri, source_id)`          | `held`, `version`; `namespace` is where the document lives (the mirror for a mirrored source)                                                                                                               |
 | `loom.knowledge_document_access`   | `(org, namespace, source_uri)`                     | `emails`, `groups`, `domains`, `anyone`, `read_at`, `changed_at`, `deleted`, `version`; `namespace` is the mirror                                                                                           |
-| `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `deleted`, `version`; `namespace` is the mirror; `account` is `<kind>:<account id>` or a crawled person's email                                                                                             |
-| `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `started_at`, `deleted`, `version`; the start of the account's last complete listing; `namespace` is the mirror                                                                                             |
+| `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `deleted`, `version`; `namespace` is the mirror; `account` is the UUIDv5 pseudonym of `<kind>:<account id>` or of the lower-cased email                                                                     |
+| `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `started_at`, `deleted`, `version`; `account` is the pseudonym, or `shared:<source id>`; the start of the account's last complete listing; `namespace` is the mirror                                        |
 | `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`               | `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                                       |
 | `loom.connected_accounts`          | `(org, subject, kind)`                             | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                           |
 
@@ -619,12 +623,12 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   `knowledge_sources.retire` clears a retired row's credentials, owner, options and
   items, and a purging erasure deletes its rows.
 - `loom.knowledge_source_holds` and the four access tables are keyed by namespace and
-  erased with it. The access tables hold people's emails copied from the store's
-  permission lists, people who are not Loom users among them; their rows are written
-  `deleted` with their document or when their source stops or no longer reads that
-  person, and otherwise mirror the store's current lists, so an erasure by `user_id`
-  does not select them; the crawl rows that name an erased person go as the next bullet
-  says.
+  erased with it. `loom.knowledge_document_access` and `loom.knowledge_group_members`
+  hold people's emails copied from the store's permission lists and directory, people
+  who are not Loom users among them; their rows are written `deleted` with their
+  document or when their source stops or no longer reads that person, and otherwise
+  mirror the store's current lists, so an erasure by `user_id` does not select them; the
+  crawl rows that name an erased person go as the next bullet says.
 - A user erasure (`user_id`) reaches the connections of every subject that spelling maps
   to (`server/auth/aliases.py` `spellings`, `user:<id>` included). Its step reads those
   connections first, then deletes outright (a `DELETE`, every version, as the user steps
@@ -634,12 +638,13 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   out of every crawl of the org: out of `subjects`, and into the crawl's `excluded` list
   as pseudonyms, which group expansion skips, so no address of the person stays in
   `loom.knowledge_sources` and the census counts none. It deletes outright every crawl
-  readers and listing row, and every crawl cursor, keyed by the pseudonym of one of the
-  person's verified emails, since no listing by them runs again to do it; those
-  `DELETE`s are in `_EXPECTED_MUTATIONS`, and the census counts these tables without
-  `FINAL` or the `deleted` filter. Documents only that person's listing held are
-  retired. A crawl's documents are the org's, so a document someone else's listing still
-  holds stays. Disconnect and SCIM deactivation clear the credential.
+  readers and listing row keyed by the pseudonym of one of the person's verified emails,
+  since no listing by them runs again to do it, and rewrites each crawl's sync state
+  without that person's cursor; those `DELETE`s are in `_EXPECTED_MUTATIONS`, and the
+  census counts these tables without `FINAL` or the `deleted` filter. Documents only
+  that person's listing held are retired. A crawl's documents are the org's, so a
+  document someone else's listing still holds stays. Disconnect and SCIM deactivation
+  clear the credential.
 - Every new table is classified in `server/erasure/store/census.py`.
 - `erasure.request` and `erasure.export` refuse an `acl-` scope in every auth mode:
   their handlers check it before the auth-on checks, since with auth off those do not
@@ -686,7 +691,7 @@ knowledge mirror erase --all`, a server CLI command that reads
   of the other holder writes it again. The cost is a document missing for up to one
   interval.
 - **State.** Sync state stays in `loom.code_index_state`; N-1 ignores the per-account
-  cursors N keeps in it and the listings position in the pass cursor (its own turns
+  cursors and `cleaned_at` N keeps in it and the listings position row (its own turns
   merge into the state and leave them).
 - **`meet`.** N-1 still syncs a stored `meet` source on its turns; N skips it.
 - **Erasure.** N-1's erasure misses the mirror and the new tables (rule 14): run again
