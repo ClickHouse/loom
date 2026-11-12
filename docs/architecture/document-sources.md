@@ -121,8 +121,8 @@ row names the namespace, the name and the items added and removed, with a `filte
 `owner` email and a crawl's `subjects` and `readmit` emails as keyed hashes (below).
 Removing every item is refused (`BAD_CONFIG`); `remove` ends a source. Changing `access`
 is a new source. For a `crawl`, `update` also takes `subjects` (the new list, probed
-like added items) and `readmit` (emails whose pseudonyms leave `excluded`, for a person
-who comes back), under the same roles as `add`.
+like added items) and `readmit` (emails whose exclusion rows an org admin deletes, for a
+person who comes back), under the same roles as `add`.
 
 ### One document, one owner
 
@@ -252,15 +252,18 @@ directory, so it expands no group ([below](#who-the-store-says-may-read)).
 A `crawl` source's credential is a service-account key whose client id the org's
 workspace administrator granted domain-wide delegation for `drive.readonly`,
 `admin.directory.group.member.readonly` and `admin.directory.user.readonly`. Its config
-holds `directory_subject` (a workspace administrator the directory reads impersonate),
-`excluded` (people a user erasure took out, each as a UUIDv5 of the lower-cased email,
-as SCIM keys a user: a pseudonym the directory read compares, not the address) and
-`subjects`: people (emails) and groups (group emails), whose members the directory read
-lists at each turn, at most 2000 people (not a setting). For each person the sync
+holds `directory_subject` (a workspace administrator the directory reads impersonate)
+and `subjects`: people (emails) and groups (group emails), whose members the directory
+read lists at each turn, at most 2000 people (not a setting). For each person the sync
 exchanges the key for a token that impersonates them (the JWT bearer grant with `sub`)
 and lists the source's items as them. A typical config is one `meet_recordings` item and
 a `filter` with `kinds: [docs]`, over a group: every member's meeting notes, without
-anyone connecting.
+anyone connecting. Every crawl's expansion skips the org's exclusions:
+`loom.knowledge_crawl_exclusions` rows, keyed by org and account, each a UUIDv5 of a
+lower-cased email, as SCIM keys a user (a pseudonym the directory read compares, not the
+address). A user erasure writes them whether or not any crawl is live, and no source
+write replaces or resets them, so a crawl added later, a same-name `add`, a namespace's
+retirement and an N-1 `remove` all leave them.
 
 The probe checks that the delegation grants no write on what the crawl reads: it asks
 for each of the three scopes, which must be granted, and for
@@ -270,11 +273,12 @@ of them is refused (`CREDENTIAL_REFUSED`). It cannot prove the delegation grants
 else (a mail scope, say), and the page says so to the admin who registers it. The audit
 rows of `add`, `update` and `rotate` record the configured subjects as keyed hashes (an
 HMAC under the root secret, as SCIM's audit rows hash a subject, so a list of the org's
-addresses does not reverse them). `excluded` and the readers and listing `account` keys
-are unkeyed UUIDv5s instead, for the reason SCIM's ids are: they must still match after
-the root secret is rotated, which an HMAC would not; the audit hash never has to match
-anything later. Audit rows also record the scopes granted and the number of members
-resolved: the audit trail outlives erasure and keeps no crawled person's address.
+addresses does not reverse them). The exclusions and the readers and listing `account`
+keys are unkeyed UUIDv5s instead, for the reason SCIM's ids are: they must still match
+after the root secret is rotated, which an HMAC would not; the audit hash never has to
+match anything later. Audit rows also record the scopes granted and the number of
+members resolved: the audit trail outlives erasure and keeps no crawled person's
+address.
 
 ## Access follows the source
 
@@ -426,13 +430,14 @@ rows ([below](#erasure-and-audit)):
   account: the connection (its kind and store account id) for a connected source, or the
   person a crawl listed it as. The `account` column holds a pseudonym of that account,
   never an address: a UUIDv5 of `<kind>:<account id>`, or of the person's lower-cased
-  email (the form `excluded` uses), which a reader's own connections and verified emails
-  are mapped to before the check compares them. Listing a file proves that account reads
-  it. It is written when the account's listing finds no live readers row for that
-  address, source and account (its first listing of the file, or the first after a
-  retirement deleted the row), and written `deleted` when a complete listing by that
-  account no longer has it, so an unchanged file costs no write. A `shared` mirrored
-  source writes none: its service account's listing proves no person reads anything.
+  email (the form the exclusions use), which a reader's own connections and verified
+  emails are mapped to before the check compares them. Listing a file proves that
+  account reads it. It is written when the account's listing finds no live readers row
+  for that address, source and account (its first listing of the file, or the first
+  after a retirement deleted the row), and written `deleted` when a complete listing by
+  that account no longer has it, so an unchanged file costs no write. A `shared`
+  mirrored source writes none: its service account's listing proves no person reads
+  anything.
 - `loom.knowledge_source_listings`, one row per source and reading account, keyed by the
   same pseudonym (and `shared:<source id>` for a `shared` source): when that account's
   last complete listing started. A listing that spans several passes counts from its
@@ -599,16 +604,16 @@ mirror's lists from `loom.documents` and of its three tables with `FINAL`, newes
 per key: the lists that name the reader through `emails`, `domains`, `anyone` or a group
 the reader's group-members rows hold, the readers rows by the reader's accounts and the
 group-members rows by `members` (`has` and `hasAny`), and the account listing rows
-unfiltered, since rule 2 takes the oldest `started_at` over every account of the source;
-then the chunk search, outline or list restricted to those addresses before its `LIMIT`,
-so a page is never cut short by the check, except for an address the head check below
-drops. Any skip index on those tables is read only under
-`use_skip_indexes_if_final_exact_mode=1`, so a granule skipped for its newest version
-cannot leave an older one that names the reader. No admitted set is cached. The
-implementing pull request measures the leg (rows read, memory, p50) on a mirror of a
-million documents, under both storage authorities, and puts the figures here. A leg that
-cannot read the tables shows no mirrored document and marks the answer `degraded:
-mirror_unread`.
+unfiltered (the source rows left out; a source row has no `started_at`), since rule 2
+takes the oldest `started_at` over every account of the source; then the chunk search,
+outline or list restricted to those addresses before its `LIMIT`, so a page is never cut
+short by the check, except for an address the head check below drops. Any skip index on
+those tables is read only under `use_skip_indexes_if_final_exact_mode=1`, so a granule
+skipped for its newest version cannot leave an older one that names the reader. No
+admitted set is cached. The implementing pull request measures the leg (rows read,
+memory, p50) on a mirror of a million documents, under both storage authorities, and
+puts the figures here. A leg that cannot read the tables shows no mirrored document and
+marks the answer `degraded: mirror_unread`.
 
 #### Reads under the Postgres authority
 
@@ -641,24 +646,38 @@ with a head.
 
 #### Restores
 
-A ClickHouse restore does not restore mirrors, under either authority. The registry, the
-mirrors rows, the readers, listing, group-members and cleanup rows and the connections
-live only in ClickHouse and roll back, while documents and heads written after the point
-may survive, so nothing that comes back can be trusted to say who may read. The
-ClickHouse restore procedure ([backup and
-recovery](../operations/backup-and-recovery.md)) therefore runs `loom knowledge mirror
-erase --all` (the rollback's command, which needs no Postgres authority) before the
-deployment starts, and the implementing pull request extends it to this case: it finds
-every `acl-` namespace in `loom.knowledge_mirrors`, in `loom.documents` and, under the
-Postgres authority, in the heads and deliveries, and erases each (a platform-admin
-namespace erasure, so tombstones keep nothing); it stops every mirrored source, `shared`
-mirrored ones included, keeping each crawl's `excluded`; and it revokes each connection
-at the store (best effort, as a disconnect does) and then clears it (`active` false). A
-crawl added again in a namespace takes the `excluded` of that namespace's stopped
-crawls, so no person erased before the point is read again. `loom reconcile` leaves
-`acl-` names out of the sources it names for `loom rechunk`. Owners connect again and
-add their sources again, and crawl admins add theirs: that loss of every mirrored
-document and source is the accepted cost of a ClickHouse restore.
+After a ClickHouse restore Loom erases every mirror, under either authority: a design
+choice, not a property of the restore. The registry, the mirrors rows, the readers,
+listing, group-members and cleanup rows, the exclusions and the connections live only in
+ClickHouse and roll back, while rows written after the point may survive in other tables
+(`BACKUP` is not consistent across tables, and under the Postgres authority the heads
+and deliveries live apart), so nothing that comes back can be trusted to say who may
+read.
+
+`loom knowledge mirror erase --all` does it, and the implementing pull request extends
+the command it adds for rollback. It finds every `acl-` namespace in any census table
+with a namespace column (`server/erasure/store/census.py`), plus
+`loom.knowledge_mirrors` and, under the Postgres authority, the heads and deliveries,
+and runs a platform-admin purging erasure of each, so no tombstone keeps content or a
+list; it stops every mirrored source, `shared` mirrored ones included. With
+`--connections` it also revokes each connection at the store (best effort, as a
+disconnect does) and then clears it as a disconnect does: the sealed credential cleared
+and the row marked inactive. A connection made after the point is gone from the restored
+copy, so its owner revokes it at the store. Rollback runs the command without
+`--connections`; a restore runs it with.
+
+The implementing pull request adds the step to the restore procedures ([backup and
+recovery](../operations/backup-and-recovery.md)), including a ClickHouse-authority
+procedure, which that page does not have yet: stop every replica, restore, run the
+command, start. Under the Postgres authority the command runs after `loom reconcile
+--apply`, which publishes the heads committed after the point, so their mirror rows are
+among what it erases, and before the deployment starts. A user erasure completed after
+the point rolls back with its ledger row under the ClickHouse authority; as for every
+erasure under that authority, the operator requests it again from the restore
+procedure's list, and its exclusion rows return with it. `loom reconcile` leaves `acl-`
+names out of the sources it names for `loom rechunk`. Owners connect again and add their
+sources again, and crawl admins add theirs: that loss of every mirrored document and
+source is the accepted cost of a ClickHouse restore.
 
 #### Published rows
 
@@ -750,8 +769,9 @@ requests. That design has to answer what this page found:
   error text, which can name an item. Python and TypeScript SDKs are regenerated.
 - **CLI.** `loom knowledge source add|update|list --namespace <ns> --link <url>...`
   (`--credential-file`, `--connected`), `loom connect gdrive|notion|linear`, `loom
-connection list|disconnect`, `loom knowledge mirror erase --all` (the rollback step),
-  and `loom doctor`'s line for the oldest access read of each mirrored source.
+connection list|disconnect`, `loom knowledge mirror erase --all`
+  ([restores](#restores)), and `loom doctor`'s line for the oldest access read of each
+  mirrored source.
 - **Dashboard.** The Library's Sources section: paste many links, a preview of what each
   resolves to and which could not be read, Check, Add, edit items, the access mode, and
   each source's last sync. Settings → Connected accounts: connect, see, disconnect. The
@@ -768,12 +788,13 @@ ClickHouse, additive migrations:
 
 | Table                              | Key                                                | Holds                                                                                                                                                                                                                  |
 | ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom.knowledge_sources` (columns) | `(org, namespace, name)`                           | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject`, `subjects` and `excluded`), `secret_enc`            |
+| `loom.knowledge_sources` (columns) | `(org, namespace, name)`                           | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject` and `subjects`), `secret_enc`                        |
 | `loom.knowledge_mirrors`           | `(org, namespace)`                                 | `mirror`, `created_at`                                                                                                                                                                                                 |
 | `loom.documents` (column)          | as today                                           | `access_json`: a mirrored document's permission list (`emails`, `groups`, `domains`, `anyone`, `changed_at`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration |
 | `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `name`, `deleted`, `version`; `namespace` is the mirror; `account` is the UUIDv5 pseudonym of `<kind>:<account id>` or of the lower-cased email                                                                        |
 | `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `name`, `started_at`, `deleted`, `version`; `account` is the pseudonym, `shared:<source id>`, or `source:<source id>` (the source row); the start of the account's last complete listing; `namespace` is the mirror    |
 | `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`               | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                                          |
+| `loom.knowledge_crawl_exclusions`  | `(org, account)`                                   | `deleted`, `version`; `account` is the UUIDv5 pseudonym of a lower-cased email a user erasure took out of every crawl                                                                                                  |
 | `loom.knowledge_source_cleanups`   | `(org, namespace, source_id)`                      | `name`, `mirror`, `done`, `version`; a stopped mirrored source whose documents and rows wait to be cleaned                                                                                                             |
 | `loom.connected_accounts`          | `(org, subject, kind)`                             | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                                      |
 
@@ -801,12 +822,17 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   runs again on every resume, never skipped as completed. The saga then reads the
   namespace's mirror from `loom.knowledge_mirrors`, which is never deleted, and every
   namespace-keyed step and census entry runs over the mirror's name too, so a step added
-  later covers it by the same rule. A census that finds a live source or a mirrored
-  document added after those steps reopens them (`steps_to_reopen`).
+  later covers it by the same rule. The mirror's rows are always purged, whether or not
+  the namespace's erasure purges: a superseded mirror row would keep its text and its
+  list. A census that finds a live source or a mirrored document added after those steps
+  reopens them (`steps_to_reopen`).
 - `loom.knowledge_sources` moves from `NO_MEMORY_CONTENT` into the namespace steps: it
   holds a connected source's owner, a crawl's subjects and a filter's `owner` email, so
   `knowledge_sources.retire` clears a retired row's credentials, owner, options and
   items, and a purging erasure deletes its rows.
+- `loom.knowledge_crawl_exclusions` is keyed by org and holds pseudonyms only; it is the
+  record a user erasure leaves so no crawl reads the person again, and the census counts
+  it as holding no content.
 - `loom.knowledge_source_cleanups` and the three access tables are keyed by namespace
   and erased with it, and a document's list goes with its row. The lists and
   `loom.knowledge_group_members` hold people's emails copied from the store's permission
@@ -820,20 +846,23 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   connections first, then deletes outright (a `DELETE`, every version, as the user steps
   delete a grant row of the user) the readers and listing rows keyed by their
   pseudonyms, retires their connected sources with their mirrored documents, and deletes
-  the `loom.connected_accounts` rows last. It also takes the person's verified emails
-  out of every crawl of the org, first, under each crawl's source lease: out of
-  `subjects`, and into the crawl's `excluded` list as pseudonyms, which group expansion
-  skips, so no address of the person stays in `loom.knowledge_sources` and the census
-  counts none; the next turn reads the new list. Then, under each crawl's turn lease as
-  a cleanup runs (so a turn in flight finishes first, and what it wrote as the person
-  goes with the deletes below), it retires the documents only that person's listing
-  reached, or marks their lists `unread` where a retirement cannot be confirmed, and
-  then deletes outright every crawl readers and listing row keyed by the pseudonym of
-  one of the person's verified emails, since no listing by them runs again to do it, and
-  rewrites each crawl's sync state without that person's cursor; those `DELETE`s are in
-  `_EXPECTED_MUTATIONS`, and the census counts these tables without `FINAL` or the
-  `deleted` filter. A crawl's documents are the org's, so a document someone else's
-  listing still reaches stays. Disconnect and SCIM deactivation clear the credential.
+  the `loom.connected_accounts` rows last.
+- A user erasure's crawl part runs in this order. First it writes the person's exclusion
+  rows (one per verified email) and, under each crawl's source lease, takes the emails
+  out of every crawl's `subjects`, so no address of the person stays in
+  `loom.knowledge_sources`, the census counts none and the next turn reads the new
+  lists. Then, under each crawl's turn lease as a cleanup runs (so a turn in flight
+  finishes first, and what it wrote as the person goes with the deletes below), it
+  retires the documents only that person's listing reached, or marks their lists
+  `unread` where a retirement cannot be confirmed, and then deletes outright every crawl
+  readers and listing row keyed by the pseudonym of one of the person's verified emails,
+  since no listing by them runs again to do it, and rewrites each crawl's sync state
+  without that person's cursor, and deletes outright every version of a group-members
+  row whose `members` holds one of the emails (the next turn writes the group again
+  without them); those `DELETE`s are in `_EXPECTED_MUTATIONS`, and the census counts
+  these tables without `FINAL` or the `deleted` filter. A crawl's documents are the
+  org's, so a document someone else's listing still reaches stays. Disconnect and SCIM
+  deactivation clear the credential.
 - Every new table is classified in `server/erasure/store/census.py`.
 - `erasure.request` and `erasure.export` refuse an `acl-` scope in every auth mode:
   their handlers check it before the auth-on checks, since with auth off those do not
@@ -871,8 +900,8 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   wildcard token that names one, and nothing on N-1 ages the lists. So the rollback
   procedure ([upgrades](../operations/upgrades.md)) requires, before any N-1 replica
   starts, stopping every mirrored source and erasing the mirrors (`loom knowledge mirror
-erase --all`, a server CLI command that reads `loom.knowledge_mirrors` and runs a
-  platform-admin erasure of each mirror); the implementing pull request adds the step.
+erase --all`, without `--connections`, [restores](#restores)); the implementing pull
+  request adds the step.
 - **Ownership.** One owner per address, found by its tag, is today's model, so N-1 and N
   agree on whose a document is. Both write a retired address again at their next listing
   of the file.
@@ -1021,9 +1050,11 @@ The redirect URI to register with each store is
   - After a ClickHouse restore, under either authority: `loom knowledge mirror erase
 --all` erasing every `acl-` namespace it finds (a mirror created and a source added
     after the point included), stopping every mirrored source, `shared` ones included,
-    revoking and clearing every connection, and a crawl added again keeping the
-    namespace's earlier `excluded`, so a person erased before the restore is not read
-    again; `loom reconcile` naming no `acl-` source.
+    with `--connections` revoking and clearing every connection, purging so no tombstone
+    keeps content or a list, finding a mirror named only in `loom.chunks` or
+    `loom.agent_events`, running after `loom reconcile --apply` under the Postgres
+    authority, and a crawl added again skipping the org's exclusions, so a person erased
+    before the restore is not read again; `loom reconcile` naming no `acl-` source.
   - A retired mirror document's tombstone carrying no `access_json`.
   - A crawl that lost every account's listing row still found by the anti-join through
     its source row.
