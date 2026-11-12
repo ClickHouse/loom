@@ -49,10 +49,13 @@ It refuses a prerelease, an older or an already tagged version before the notes,
 git fetch origin main release/X.Y   # release/X.Y for a patch
 git tag vX.Y.Z-rc.1 <the release pull request's merge commit>
 git push origin vX.Y.Z-rc.1          # the owner's go-ahead first
-# The tag's run may take a few seconds to appear: re-run this line until it prints an id.
+# The tag's run may take a few seconds to appear: re-run these two lines until the echo prints an id.
 run=$(gh run list -R ClickHouse/loom --workflow release.yml --branch vX.Y.Z-rc.1 -L 1 --json databaseId --jq '.[0].databaseId // empty')
+echo "${run:?no run for the tag yet}"
 gh run watch -R ClickHouse/loom "$run" --exit-status
 ```
+
+A tag run whose image build failed on a download from outside GitHub (`curl: (7) Failed to connect` from an apt or key server), for a candidate or a final, is re-run with `gh run rerun "$run" -R ClickHouse/loom --failed`, which re-runs only the failed jobs and the jobs after them. Never re-run it once another run has tagged the version ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)).
 
 A prerelease takes neither Latest nor `:latest` and is not listed in the MCP Registry. Deploy it to a deployment you run (`loom-deploy`; on Kubernetes set `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`) and use it for at least two days. A regression is fixed on `main`, whose files already name `X.Y.Z`; tag `rc.2` on the fix's merge commit (for a patch, on its merge commit on `release/X.Y`, as in §7) and soak again. Never move a tag: once its images are published, the workflow refuses a tag that points elsewhere. Once the final is tagged, a candidate's run is refused (`prepare.py check-tag`), and the message says whether to run the final, do nothing, or delete a stray tag.
 
@@ -70,18 +73,19 @@ gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z   # the owner's go-a
 git push origin "vX.Y.Z^{commit}:refs/heads/release/X.Y"      # X.Y.0 only: the line's patch branch; the owner's go-ahead first
 ```
 
-A tag run whose image build failed on a download from outside GitHub (`curl: (7) Failed to connect` from an apt or key server) is re-run with `gh run rerun "$run" -R ClickHouse/loom --failed`, `$run` being the tag run's id from the watch in §3, which builds again only the jobs that did not succeed. Never re-run it once another run has tagged the version ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)).
-
 The registry dispatch's `pypi`, `npm` and `mcp-registry` jobs (only `pypi` and `npm` for a candidate) wait for a required reviewer of their environments once `github-release` passes. The owner approves them on the run's page, or with `gh`:
 
 ```bash
 tag=vX.Y.Z   # vX.Y.Z-rc.N for a candidate
-# Run this once the dispatch shows `waiting`; a new dispatch takes a few seconds to appear, so re-run the next line until it prints an id.
+# Run this once the dispatch shows `waiting`; a new dispatch takes a few seconds to appear, so re-run these two lines until the echo prints an id.
 dispatch=$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event workflow_dispatch -L 1 --json databaseId --jq '.[0].databaseId // empty')
+echo "${dispatch:?no dispatch run for the tag yet}"
 gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
 ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
 gh api -X POST "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"
 ```
+
+To publish only the images and the GitHub Release, as when a dispatch recovers images, send the same POST with `-f state=rejected`.
 
 The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
 
