@@ -540,7 +540,11 @@ the answer and the chunks it cited. With the fake LLM it prints the top
 | The dashboard returns 503                         | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                                               |
 | Released stack does not become healthy            | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                                               |
 | Adding a repository answers `SANDBOX_UNAVAILABLE` | The stack runs without the repository-job sandbox. Index the repository through `LOOM_CODE_REPOS_JSON` ([Index a repository](#optional-index-a-repository-on-the-released-stack)).             |
-| Port `8123`, `9000` or `7777` is taken            | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack-from-a-clone)).                                                                                         |
+| The installer says port `7777` is in use          | Another program, or another Loom, listens there. Stop it, or run the install command again with `LOOM_PORT=7778` in front of `sh loom-install.sh`; `.env` keeps the port.                      |
+| The installer says port `7777` does not answer    | A program holds it without answering, or `LOOM_BIND_HOST`, `LOOM_PORT` or a firewall keeps this host from reaching it.                                                                         |
+| The installer could not check port `7777`         | Curl failed for the reason its exit code names; check `LOOM_BIND_HOST` and `LOOM_PORT`.                                                                                                        |
+| A clone's port `8123` or `9000` is taken          | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack-from-a-clone)).                                                                                         |
+| The installer could not pull the images           | Docker reaches the registry itself: behind a proxy, give the Docker daemon the [proxy settings](https://docs.docker.com/engine/daemon/proxy/).                                                 |
 
 ## Next
 

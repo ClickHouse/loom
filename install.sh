@@ -383,8 +383,60 @@ main() {
       -f "$INSTALL_DIR/compose.yaml" "$@"
   }
 
+  port=$(get_env LOOM_PORT)
+  port=${port:-7777}
+  # Loom listens where it is published: loopback unless LOOM_BIND_HOST names an address.
+  case $(get_env LOOM_BIND_HOST) in
+    '' | 0.0.0.0) host=127.0.0.1 ;;
+    ::) host='[::1]' ;; # Docker publishes [::] on IPv6 only
+    *:*) host="[$(get_env LOOM_BIND_HOST)]" ;;
+    *) host=$(get_env LOOM_BIND_HOST) ;;
+  esac
+
+  # A port held by another program fails `up` only after the pull and the
+  # ClickHouse start, with Docker's bind error: say so before either. The probes
+  # bypass any proxy the shell names, which would otherwise answer for the port.
+  # This install's own server, running or restarting, may hold the port: `up`
+  # keeps or recreates it, so it is not probed when it is published on this port.
+  own=$(compose ps -q --status running --status restarting loom 2>/dev/null) || own=
+  own_ports=
+  [ -z "$own" ] || own_ports=$(docker inspect -f \
+    '{{range $p, $b := .HostConfig.PortBindings}}{{range $b}} {{.HostPort}}{{end}}{{end}}' \
+    $own 2>/dev/null) || own_ports=
+  case "$own_ports " in
+    *" $port "*) ;;
+    *)
+      # Curl's exit says what listens: 7 is a connection that could not be made
+      # (refused, or no route to the address), taken as free; 0 (an answer), 1
+      # and 8 (a reply that is not HTTP), 18 (a body cut short), 52 (an empty
+      # reply), 55 and 56 (a reset while sending or receiving) come only from a
+      # listener, and so does any exit after a connect time above zero. A
+      # timeout with none is either a listener that never answers (curl 7.29
+      # prints a fast connect as 0.000) or an address whose connect times out.
+      probe=0
+      connected=$(LC_ALL=C curl -s --noproxy '*' -o /dev/null -w '%{time_connect}' \
+        --connect-timeout 3 --max-time 5 "http://$host:$port/" 2>/dev/null) || probe=$?
+      case $probe,$connected in
+        7,*) ;;
+        28,0.000 | 28,0.000000) fail "port $port on $host does not answer: a program may hold it without answering, or LOOM_BIND_HOST, LOOM_PORT or a firewall keeps this host from reaching it" ;;
+        0,* | 1,* | 8,* | 18,* | 52,* | 55,* | 56,* | *,*[1-9]*)
+          other_port=$((port + 1))
+          [ "$port" -lt 65535 ] || other_port=7778
+          holder="another program"
+          # A Loom answers health with its schema version, 503 included.
+          curl -s --noproxy '*' --max-time 3 "http://$host:$port/v1/health" 2>/dev/null \
+            | grep -q '"schema_version"' \
+            && holder="another Loom server (another install, or one started from a checkout)"
+          fail "port $port on $host is in use by $holder: stop it, or run the install command again with LOOM_PORT=$other_port in front of sh"
+          ;;
+        *) fail "could not check port $port on $host (curl exit $probe): check LOOM_BIND_HOST and LOOM_PORT" ;;
+      esac
+      ;;
+  esac
+
   printf 'Starting Loom %s (the first pull can take a few minutes)…\n' "$version"
-  compose pull
+  compose pull \
+    || fail "could not pull the Loom images (above); behind a proxy, give the Docker daemon its proxy settings: https://docs.docker.com/engine/daemon/proxy/"
   case ",$(get_env COMPOSE_PROFILES)," in
     *,bundled,*) ;;
     *)
@@ -401,19 +453,10 @@ main() {
   esac
   compose up -d
 
-  port=$(get_env LOOM_PORT)
-  port=${port:-7777}
-  # Loom listens where it is published: loopback unless LOOM_BIND_HOST names an address.
-  case $(get_env LOOM_BIND_HOST) in
-    '' | 0.0.0.0) host=127.0.0.1 ;;
-    ::) host='[::1]' ;; # Docker publishes [::] on IPv6 only
-    *:*) host="[$(get_env LOOM_BIND_HOST)]" ;;
-    *) host=$(get_env LOOM_BIND_HOST) ;;
-  esac
   health="http://$host:$port/v1/health"
   attempt=0
   while [ "$attempt" -lt 90 ]; do
-    if curl -fsS "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
+    if curl -fsS --noproxy '*' "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
       printf '\nLoom is ready.\n'
       printf 'Dashboard: http://%s:%s/\n' "$host" "$port"
       printf 'Files:     %s\n' "$INSTALL_DIR"
