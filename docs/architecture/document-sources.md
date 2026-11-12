@@ -28,8 +28,9 @@ register which kind is in [credentials](#credentials). The refusal
 document `repo:<id>`, so the repository's `code.context` and `loom_search` legs read
 them as today; on any other namespace, a branch namespace included, it does not. A
 person's own collection and `personal-` namespace hold no source
-(`PERSONAL_COLLECTION`): a user erasure erases what the person wrote, and a source's
-documents are the sync worker's. The sync skips a source whose namespace is inactive.
+(`PERSONAL_COLLECTION`): a `user_id` erasure erases what the person wrote, and a
+source's documents are the sync worker's. The sync skips a source whose namespace is
+inactive.
 
 A source ends with its namespace: `code.repo.remove`, `namespace.delete`,
 `collection.delete` and a namespace erasure each retire the namespace's sources under
@@ -500,18 +501,19 @@ batch of document, readers, listing and group-members writes first checks the so
 registration (`require_current`, one read per batch), so a turn that starts after the
 cleanup writes nothing either, and no such row lands after it. It removes the readers,
 listing and group-members rows of the pass's cleaned sources with one lightweight delete
-per table, filtered by `(org, namespace, source_id)` over those sources, submitted with
-a tag derived from the sources' ids and polled within the pass's remaining time, so a
-later pass that finds the same delete pending waits for it instead of submitting
-another. The submit-and-poll helper moves from `server/erasure/store/mutations.py` to
-`server/core`, where both planes reach it. A delete that does not finish leaves those
-cleanups open for the next pass; the implementing pull request measures the delete's
-duration. Then it retires the mirror's documents carrying its `source-id:<id>` tag,
-re-checking that tag on each document before its retirement, so a document another
-source wrote is never retired. It then marks the cleanup done; a run cut short is run
-again from its open row and finds the documents still tagged. So no row of a stopped
-source can admit anyone, and none names an account in any form other than its pseudonym,
-even for a source that never reached a file.
+per table, filtered by `(org, namespace, source_id)` over those sources, one tag per
+source id, polled within the pass's remaining time, so a later pass that finds a
+source's delete pending waits for it instead of submitting another (the helper takes an
+explicit tag outside a saga). The submit-and-poll helper moves from
+`server/erasure/store/mutations.py` to `server/core`, where both planes reach it. A
+delete that does not finish leaves those cleanups open for the next pass; the
+implementing pull request measures the delete's duration. Then it retires the mirror's
+documents carrying its `source-id:<id>` tag, re-checking that tag on each document
+before its retirement, so a document another source wrote is never retired. It then
+marks the cleanup done; a run cut short is run again from its open row and finds the
+documents still tagged. So no row of a stopped source can admit anyone, and none names
+an account in any form other than its pseudonym, even for a source that never reached a
+file.
 
 The anti-join finds what no stop of N recorded: a mirrored source N-1 stopped (its row
 inactive, with its `source_id`), and one whose name an N-1 `add` has since reused (its
@@ -941,20 +943,20 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   row and skips. A cleanup after the erasure finds nothing left to retire and marks its
   row done; an abandoned erasure leaves the rows open, so the cleanup still runs.
 - `loom.knowledge_sources` becomes a census table owned by `knowledge_sources.retire` in
-  the namespace scope and by `knowledge_sources.forget_user` in the user scope, so a
-  census that finds a live source added after the step reopens it (`steps_to_reopen`),
-  as one that finds a mirrored document does for the documents step.
-  `server/erasure/store/census.py` gains a set of its own for census tables whose live
-  condition `namespace_census.in_use` reads from its state tables, and
-  `loom.knowledge_sources` goes there: it leaves `NO_MEMORY_CONTENT`, and stays in the
-  state tables with its `active` condition (whose comment, "tables outside the erasure
-  census", then names that set), so a removed source's inactive row does not keep a name
-  in use. The set carries a condition per scope, which a purge turns into `1` as it does
-  every live condition: `FINAL … AND active` in the namespace scope, and in the user
-  scope none, so every version and every inactive row counts, matching `owner_subject`
-  and `created_by` against the person's `verified_spellings` and lower-cased subject,
-  and the person's verified emails in `subjects`, a `filter` item's `owner` and
-  `directory_subject`, the same emails the steps change.
+  the namespace scope and by `knowledge_sources.forget_user` in the `subject` scope (it
+  has no condition in the `user_id` scope), so a census that finds a live source added
+  after the step reopens it (`steps_to_reopen`), as one that finds a mirrored document
+  does for the documents step. `server/erasure/store/census.py` gains a set of its own
+  for census tables whose live condition `namespace_census.in_use` reads from its state
+  tables, and `loom.knowledge_sources` goes there: it leaves `NO_MEMORY_CONTENT`, and
+  stays in the state tables with its `active` condition (whose comment, "tables outside
+  the erasure census", then names that set), so a removed source's inactive row does not
+  keep a name in use. The set carries a condition per scope, which a purge turns into
+  `1` as it does every live condition: `FINAL … AND active` in the namespace scope, and
+  in the `subject` scope none, so every version and every inactive row counts, matching
+  `owner_subject` and `created_by` against the person's `verified_spellings` and
+  lower-cased subject, and the person's verified emails in `subjects`, a `filter` item's
+  `owner` and `directory_subject`, the same emails the steps change.
 - `loom.knowledge_sources` also holds a connected source's owner, a crawl's subjects and
   a filter's `owner` email, so `knowledge_sources.retire` clears a retired row's
   credentials, owner, options and items, and a purging erasure deletes its rows.
@@ -976,13 +978,15 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
 - A person's connected accounts and crawl entries are a login subject's, not an end
   user's: a `user_id` erasure names a service's end user (`user:<user_id>`, as every
   user step today treats it), and no end user connects an account (connecting needs a
-  dashboard session). So `erasure.request` gains a `subject` scope, which an org admin
-  requests for a login subject or an email: its saga runs the steps a `user_id` erasure
-  runs for that principal, plus two of its own, `connections.forget_user` then
-  `knowledge_sources.forget_user`, right after `pg_knowledge.delete` and before
-  `memory.tombstone`. The connections step goes first because the other rewrites the
-  `owner_subject` it finds active sources by. What they must guarantee, and the census
-  checks:
+  dashboard session). So `erasure.request` and `erasure.export` gain a `subject` scope,
+  which an org admin requests with a `scope_value` of JSON `{"subject": …, "email": …}`
+  (either or both): its saga runs only two steps, `connections.forget_user` then
+  `knowledge_sources.forget_user`, and their census; a person's memory goes through the
+  existing `user_id` scope, whose steps match end users. `applied_purge` honours `purge`
+  for the scope, and its ledger status, listing and export follow `user_id`'s rules (org
+  admin only); the SDKs and the CLI gain it. The connections step goes first because the
+  other rewrites the `owner_subject` it finds active sources by. What they must
+  guarantee, and the census checks:
   - **Who is the person.** The subject the request names and the email it names, both
     taken as given (an org admin named them), plus what a verified tie makes theirs:
     `verified_spellings` (`server/auth/aliases.py`) and the person's verified emails. An
@@ -993,16 +997,19 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   - **Their connected sources go, with everything they wrote.** Every connected source
     the person ever owned, whatever stopped it and whatever later wrote its registry row
     (an N-1 `remove` resets `owner_subject`, and a merge keeps only the newest version).
-    The guarantee rests on the source's cleanup row, keyed by `source_id`, which N-1
-    never writes and no merge collapses across sources: it carries an `owner` column,
-    written at every stop of a connected source, copied by the anti-join from the
-    `source:<source id>` listing row (which carries the owner until its cleanup) into
-    the cleanup row it opens, carried forward by every later write, and cleared only by
-    this step. The source's mirror documents are retired, or under a purge deleted in
-    every version with their chunks and originals; under the Postgres authority their
-    heads and deliveries are found in Postgres by the `source-id:<id>` tag and deleted
-    first, with `loom.erased_documents` evidence and the publisher wait, as
-    `pg_knowledge.delete` does for the person's own, so nothing lands after the
+    The guarantee rests on the source's cleanup row and its `source:<source id>` listing
+    row, both keyed by `source_id`, which N-1 never writes and no merge collapses across
+    sources; the step reads both, and opens or takes over a cleanup, under the source
+    lease, for a `source:` row whose owner is the person and that has none yet (a source
+    N-1 stopped before the anti-join reached it). The cleanup row it carries an `owner`
+    column, written at every stop of a connected source, copied by the anti-join from
+    the `source:<source id>` listing row (which carries the owner until its cleanup)
+    into the cleanup row it opens, carried forward by every later write, and cleared
+    only by this step. The source's mirror documents are retired, or under a purge
+    deleted in every version with their chunks and originals; under the Postgres
+    authority their heads and deliveries are found in Postgres by the `source-id:<id>`
+    tag and deleted first, with `loom.erased_documents` evidence and the publisher wait,
+    as `pg_knowledge.delete` does for the person's own, so nothing lands after the
     ClickHouse rows go. Its readers and listing rows go in every version, by
     `source_id`, so another subject connected to the same store account keeps its rows.
     The connections end in the order every path uses ([connected
@@ -1023,13 +1030,15 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
     column, carried forward by every later write. It waits, outside any source lease,
     for each source's turn lease before it writes, and holds it while it does, so a turn
     or a cleanup in flight finishes first; a bounded wait that times out fails the step
-    for `erasure_recovery` to resume, and while a long cleanup holds a turn lease that
+    for `erasure_recovery` to resume, and while a long cleanup holds a turn lease,
     failing and resuming is the expected path.
   - **Its census proves it.** A residue key of its own (as `OBJECT_RESIDUE` has for
     originals), so no table gets a second owner. It finds the sources by every version
-    of a cleanup row carrying this erasure's `erasure_id`, and counts, every version,
-    the rows above that name the person and those sources' documents, chunks, originals
-    and, under the Postgres authority, heads and deliveries.
+    of a cleanup row carrying this erasure's `erasure_id`, and independently counts
+    every version of a cleanup row or `source:` listing row whose `owner` names the
+    person, and counts, every version, the rows above that name the person and those
+    sources' documents, chunks, originals and, under the Postgres authority, heads and
+    deliveries.
 
   The implementing pull request specifies each step's sub-steps, leases and statements
   against these guarantees, and its tests pin each one; the `subject` scope's request,
@@ -1040,7 +1049,7 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   `erasure.export` refuses one for every caller (an export would read the mirror's
   chunks with no permission check); both refuse it with auth off too, checking before
   the auth-on checks, since with auth off those do not run. `erasure.export` of a
-  `user_id` gains a connections section (kind, store account email, scopes, connection
+  `subject` gains a connections section (kind, store account email, scopes, connection
   times; never a credential).
 - Audit rows: `add`, `update`, `rotate`, `remove`, `sync_now` as today, plus `update`'s
   item changes; `connect` and `disconnect` (subject, kind, scopes, never a credential);
@@ -1098,7 +1107,8 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
   `ERASURE_REPLAY_PENDING` (until an operator's `loom reconcile`) for a first mirrored
   source while an erasure of the namespace is unfinished.
 - `recording` sources lose the `meet` provider.
-- `erasure.request` gains a `subject` scope (org admin only) for a person's connected accounts and crawl entries; a `user_id` erasure keeps naming a service's end user.
+- `erasure.request` gains a `subject` scope (org admin only) for a person's connected
+  accounts and crawl entries; a `user_id` erasure keeps naming a service's end user.
 - A source whose stored documents plus new files pass
   `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` (default 50,000) writes no new document and
   reports `too_many_documents`, where today it syncs on with a truncated comparison.
@@ -1277,8 +1287,11 @@ The redirect URI to register with each store is
     claim.
   - The mirror lookup seeing a mirror row inserted through another replica.
   - A `user_id` export returning no `agent_events` row under an `acl-` namespace.
-  - `forget_user` on a source whose only item is the person's filter, and a user-scope
+  - `forget_user` on a source whose only item is the person's filter, and a `subject`
     census finding no retired connected source's owner.
+  - A `subject` erasure of a person whose connected source an N-1 replica stopped before
+    the step's anti-join read it: the step opens its cleanup from the `source:` listing
+    row, and the census counts that row until the cleanup is done.
   - A subject erasure over a crawl removed before it, and over a source row whose older
     versions name the person, leaving no version that names them;
     `loom.code_index_state` read without `FINAL` after it holding no cursor of theirs.
