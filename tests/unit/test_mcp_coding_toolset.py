@@ -41,9 +41,6 @@ from server.transport.mcp_descriptions import (
 OPS = {op.name: op for op in ALL_OPERATIONS}
 TOOL_TO_OP = {op.mcp_tool_name: op.name for op in ALL_OPERATIONS}
 SYNTHETIC = {"loom_search", "loom_activate", "loom_op"}
-# The prose the tier authors: a derived text may exceed the core text it is
-# built from by a small slack (≤ 8 tokens).
-DERIVED_TEXT_SLACK_TOKENS = 8
 
 
 @pytest.fixture(autouse=True)
@@ -259,12 +256,10 @@ def test_coding_descriptions_stay_under_budget():
     total ceiling is in test_mcp_listing_budget.py."""
     for t in _listing("coding", False):
         assert len(t["description"]) // 4 <= 480, f"{t['name']} description is over budget"
-    # the coding-authored prose: never longer than the core text it derives
-    # from, beyond the slack
+    # a derived text is never longer than the core text it is built from
     for op, text in CODING_TOOL_DESCRIPTIONS.items():
         if op in TOOL_DESCRIPTIONS:
-            grown = (len(text) - len(TOOL_DESCRIPTIONS[op])) // 4
-            assert grown <= DERIVED_TEXT_SLACK_TOKENS, (op, grown)
+            assert len(text) <= len(TOOL_DESCRIPTIONS[op]), op
 
 
 # ---------------------------------------------------------------- catalogue
