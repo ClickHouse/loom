@@ -34,23 +34,25 @@ class _Upstream:
         self.server.listen(128)
         self.held: list[socket.socket] = []
         self.arrived = threading.Semaphore(0)
+        self.stop = threading.Event()
         self.accepting = threading.Thread(target=self._accept, daemon=True)
         self.accepting.start()
 
     def _accept(self) -> None:
-        while True:
+        self.server.settimeout(0.05)
+        while not self.stop.is_set():
             try:
                 conn, _ = self.server.accept()
-            except OSError:
-                return
+            except TimeoutError:
+                continue
+            conn.settimeout(None)
             self.held.append(conn)
             self.arrived.release()
 
     def close(self) -> None:
-        with contextlib.suppress(OSError):
-            self.server.shutdown(socket.SHUT_RDWR)  # wakes the blocked accept
-        self.server.close()
+        self.stop.set()
         self.accepting.join(timeout=5)
+        self.server.close()
         for conn in self.held:
             conn.close()
 
@@ -113,7 +115,9 @@ def _relay(
         listener.sock.close()
         # every bridge has ended once each slot is back
         bridges_done = all(slots_left.acquire(timeout=5) for _ in range(slots))
-    assert not loop.is_alive() and not upstream.accepting.is_alive() and bridges_done
+    assert not loop.is_alive()
+    assert not upstream.accepting.is_alive()
+    assert bridges_done
 
 
 def _thread_failing_on(start: int) -> types.SimpleNamespace:

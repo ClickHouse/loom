@@ -22,13 +22,13 @@ import threading
 import time
 from collections.abc import Callable
 
-# How long a client may stay silent once the proxy has ended its tunnel. Not a
-# setting: the relay runs inside the sandbox on the standard library alone.
+# How long a client may stay silent once the proxy has ended its tunnel.
+# not a setting: the relay runs inside the sandbox on the standard library alone
 _LINGER_S = 1.0
 
 
 def _to_client(src: socket.socket, dst: socket.socket, proxy_done: threading.Event) -> None:
-    """Proxy to client, to the proxy's EOF."""
+    """Proxy to client, to the proxy's EOF or a failed write to the client."""
     try:
         while data := src.recv(65536):
             dst.sendall(data)

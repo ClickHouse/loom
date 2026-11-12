@@ -295,6 +295,7 @@ async def test_a_tunnel_whose_client_sent_eof_closes_when_the_server_goes_quiet(
     monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 1.0)
     proxy, server, reader, writer = await _tunnel_to(never_closes, sock_dir, monkeypatch)
     try:
+        writer.write(b"request")
         writer.write_eof()
         # the server's last bytes still arrive, then the proxy hangs up
         assert await asyncio.wait_for(reader.read(), timeout=5) == b"bye"
@@ -303,6 +304,7 @@ async def test_a_tunnel_whose_client_sent_eof_closes_when_the_server_goes_quiet(
         done.set()
         await proxy.close()
         server.close()
+        await asyncio.wait_for(server.wait_closed(), timeout=5)
 
 
 async def test_a_server_still_sending_after_the_clients_eof_keeps_its_tunnel(
@@ -321,6 +323,7 @@ async def test_a_server_still_sending_after_the_clients_eof_keeps_its_tunnel(
     monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.5)
     proxy, server, reader, writer = await _tunnel_to(streams, sock_dir, monkeypatch)
     try:
+        writer.write(b"request")
         writer.write_eof()
         assert await asyncio.wait_for(reader.read(), timeout=5) == b"0123456789abcdefghij"
         writer.close()
@@ -328,6 +331,7 @@ async def test_a_server_still_sending_after_the_clients_eof_keeps_its_tunnel(
         done.set()
         await proxy.close()
         server.close()
+        await asyncio.wait_for(server.wait_closed(), timeout=5)
 
 
 async def test_a_slow_client_after_its_eof_still_gets_the_whole_response(
@@ -348,6 +352,7 @@ async def test_a_slow_client_after_its_eof_still_gets_the_whole_response(
     monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.3)
     proxy, server, reader, writer = await _tunnel_to(sends_a_lot, sock_dir, monkeypatch)
     try:
+        writer.write(b"request")
         writer.write_eof()
         await asyncio.sleep(1.0)  # past three half-close timeouts before reading
         assert len(await asyncio.wait_for(reader.read(), timeout=10)) == len(body)
@@ -356,6 +361,7 @@ async def test_a_slow_client_after_its_eof_still_gets_the_whole_response(
         done.set()
         await proxy.close()
         server.close()
+        await asyncio.wait_for(server.wait_closed(), timeout=5)
 
 
 async def test_a_client_that_never_reads_frees_its_slot_at_the_idle_timeout(
@@ -372,10 +378,13 @@ async def test_a_client_that_never_reads_frees_its_slot_at_the_idle_timeout(
         writer.close()
 
     monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.2)
-    monkeypatch.setattr(settings, "code_egress_idle_timeout_s", 0.6)
+    monkeypatch.setattr(settings, "code_egress_idle_timeout_s", 1.5)
     proxy, server, _reader, writer = await _tunnel_to(sends_a_lot, sock_dir, monkeypatch)
     try:
+        writer.write(b"request")
         writer.write_eof()
+        await asyncio.sleep(0.6)
+        assert proxy._tunnels  # past the half-close timeout, bytes still wait
         for _ in range(50):  # the client never reads
             if not proxy._tunnels:
                 break
@@ -386,6 +395,7 @@ async def test_a_client_that_never_reads_frees_its_slot_at_the_idle_timeout(
         done.set()
         await asyncio.wait_for(proxy.close(), timeout=5)
         server.close()
+        await asyncio.wait_for(server.wait_closed(), timeout=5)
 
 
 async def test_close_ends_a_tunnel_in_its_half_close_wait(
@@ -393,22 +403,52 @@ async def test_close_ends_a_tunnel_in_its_half_close_wait(
 ) -> None:
     done = asyncio.Event()
 
+    client_eof = asyncio.Event()
+
     async def quiet(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         await reader.read()
+        client_eof.set()
         await done.wait()
         writer.close()
 
     monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 30.0)
     proxy, server, reader, writer = await _tunnel_to(quiet, sock_dir, monkeypatch)
     try:
+        writer.write(b"hello")  # a byte, so the proxy waits for the server
         writer.write_eof()
-        await asyncio.sleep(0.2)  # in the half-close wait
+        await asyncio.wait_for(client_eof.wait(), timeout=5)  # in the half-close wait
         await asyncio.wait_for(proxy.close(), timeout=5)
         assert await asyncio.wait_for(reader.read(), timeout=5) == b""
         writer.close()
     finally:
         done.set()
         server.close()
+        await asyncio.wait_for(server.wait_closed(), timeout=5)
+
+
+async def test_a_client_that_gives_up_before_a_byte_frees_its_slot_at_once(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A connection a client abandoned in the relay's backlog: its CONNECT and then
+    EOF. A TLS server says nothing until it has a ClientHello."""
+    done = asyncio.Event()
+
+    async def tls_server(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read()
+        await done.wait()
+        writer.close()
+
+    monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 30.0)
+    proxy, server, reader, writer = await _tunnel_to(tls_server, sock_dir, monkeypatch)
+    try:
+        writer.write_eof()
+        assert await asyncio.wait_for(reader.read(), timeout=5) == b""
+        writer.close()
+    finally:
+        done.set()
+        await proxy.close()
+        server.close()
+        await asyncio.wait_for(server.wait_closed(), timeout=5)
 
 
 async def test_close_ends_an_open_tunnel_and_its_server_side(
@@ -428,3 +468,4 @@ async def test_close_ends_an_open_tunnel_and_its_server_side(
     finally:
         writer.close()
         server.close()
+        await asyncio.wait_for(server.wait_closed(), timeout=5)

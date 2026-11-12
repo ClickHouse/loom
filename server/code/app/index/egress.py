@@ -157,11 +157,13 @@ class EgressProxy:
             await writer.drain()
             return
         writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
-        last_active = [time.monotonic()]
+        opened = time.monotonic()
+        last_active = [opened]
         server_side = asyncio.create_task(_splice(up_reader, writer, last_active))
         try:
             await _splice(reader, up_writer, last_active)
-            await _until_server_quiet(server_side, last_active, writer)
+            if last_active[0] != opened:  # else the client gave up before a byte
+                await _until_server_quiet(server_side, last_active, writer)
         finally:
             up_writer.close()
             server_side.cancel()
