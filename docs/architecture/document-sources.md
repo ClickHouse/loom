@@ -94,17 +94,17 @@ shown wherever the item count is.
 On a mirrored source, the probe and the status hold back what depends on what a person
 can read:
 
-- A mirrored source's probe answers reachability, the items checked and codes, never a
-  count, a sample of titles or a summary that names a file, since it lists as the owner
-  or as crawled people.
-- To anyone but a connected source's owner and a platform admin, a mirrored source's
-  probe and status answer only source-level codes: whether the credential and its scopes
-  work, and `owner_inactive`. `rate_limited`, which grows with how much a source lists,
-  an item refusal, a per-file or per-item code (`item <n>: http_404`,
-  `meet_recordings: not found`, `too_large`, `extraction_failed:<code>`) and the oldest
-  listing start go only to the owner and a platform admin.
-- Every other caller's status and `sync_now` answer depend only on source-level
-  conditions, so a held-back code reads as a clean sync.
+- A mirrored source's probe answers reachability, the number of items checked and codes,
+  never a count, a sample of titles or a summary that names a file, since it lists as
+  the owner or as crawled people; which items were checked goes only to a connected
+  source's owner and a platform admin.
+- To anyone else, a mirrored source's probe, status and `sync_now` answer only
+  source-level codes, whether the credential and its scopes work and `owner_inactive`,
+  and depend only on source-level conditions, so a held-back code reads as a clean sync.
+  `rate_limited`, which grows with how much a source lists, an item refusal, a per-file
+  or per-item code (`item <n>: http_404`, `meet_recordings: not found`, `too_large`,
+  `extraction_failed:<code>`), the oldest listing start and every last-sync time go only
+  to the owner and a platform admin.
 - A refused item of the sample refuses `add` or `update` only on a `namespace` source
   and on a connected source probed by its owner; on any other mirrored probe, a platform
   admin's included, items never refuse, and only the source-level codes do. The next
@@ -411,8 +411,8 @@ rejected that for collections, since one missed path leaks.
   `synthesize`, `knowledge.inspect` (titles), `knowledge.source.inspect` (a mirrored
   source's documents), the `search.query` knowledge and repository-docs legs,
   `code.context`'s docs section, `context.pack`, `memory.stack`, `memory.ask` and the
-  assistant (which calls the same handlers under a token that carries the person's
-  subject). A `get`, `outline` or `download` of a mirrored address the reader may not
+  assistant (which calls the same handlers under its answer token, delegated from the
+  caller's). A `get`, `outline` or `download` of a mirrored address the reader may not
   see answers `found=false`, as for an absent one.
 - **Nothing to read:** decision mining and dataset extraction skip mirrored documents,
   since a decision row is a memory every reader of the namespace reads and a dataset is
@@ -494,10 +494,10 @@ A namespace source and a mirrored source that reach the same file own two docume
 in the namespace and one in its mirror. The namespace copy is readable by every reader,
 because an admin registered a source that makes it so; every leg answers the address
 once, dropping duplicates after the check: the namespace copy wins whenever the reader
-may see it, and the hit then carries only the namespace copy's own chunks and scores (a
-hit only the mirror copy produced keeps the flag), so a reader a mirror copy does not
-admit keeps it, and a reader who sees both gets no `mirrored: true` for text every
-reader of the namespace sees.
+may see it, and the hit then carries only the namespace copy's own chunks and scores (an
+address only the mirror copy matched keeps the flag; otherwise the mirror copy's chunks
+are dropped), so a reader a mirror copy does not admit keeps it, and a reader who sees
+both gets no `mirrored: true` for text every reader of the namespace sees.
 
 ### The session rule
 
@@ -533,17 +533,18 @@ the flag, or whose session's state records it.
 The refusal: from the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set until
 it is off again and the mirror-erase command has run, every session-content op refuses a
 client that does not declare the flag, in every org, whatever mix of clients and tokens
-a session runs; a client that cannot declare it (a third-party MCP client connected
-straight to Loom) is refused like any other. The condition is the one row of
-`loom.knowledge_mirror_latch` or the process's own switch: a process refuses while its
-switch is on, row or no row, and writes the row whenever it reads the switch on and
-finds it absent, so neither a lost write nor a restore of a copy without it lifts the
-refusal. Only the mirror-erase command deletes the row, last, once no namespace of the
-`acl-` form holds rows in any store, and it refuses while any live process reports the
-switch on. The check fails closed: a process that cannot read the row refuses, and the
-first mirrored `add` waits until every live process reports the switch on, as the schema
-check does. Since the refusal lifts only then, it says nothing of when another org's
-mirrors went.
+a session runs; the declaration is the client's promise, carried by the transport and
+never by an op argument a model fills in, and a client that does not make it (a
+third-party MCP client connected straight to Loom) is refused like any other. The
+condition is the one row of `loom.knowledge_mirror_latch` or the process's own switch: a
+process refuses while its switch is on, row or no row, and writes the row whenever it
+reads the switch on and finds it absent, so neither a lost write nor a restore of a copy
+without it lifts the refusal. Only the mirror-erase command deletes the row, last, once
+no namespace of the `acl-` form holds rows in any store, and it refuses while any live
+process reports the switch on. The check fails closed: a process that cannot read the
+row refuses, and the first mirrored `add` waits until every live process reports the
+switch on, as the schema check does. Since the refusal lifts only then, it says nothing
+of when another org's mirrors went.
 
 Mirrored sources are off for a deployment until an operator turns them on, after every
 Loom client and hook that sends session content honours the flag. Each pull request that
@@ -608,19 +609,21 @@ The reader's verified emails are its subject's directory emails that
 is not one, and neither is a connection's store email. The predicate's first arm admits
 any password-less row's `contact_email`; the implementing pull request confirms that
 only an SSO sign-in or a link writes such a row's `contact_email`, or narrows the
-predicate for this check. A domain matches only through an SSO sign-in whose identity
-provider vouches for that domain (the store's hosted-domain claim, or the org's
-configured SSO domain), never a linked account's email or a bare verified address. A
-token reads as one person, for both the `owner` entry and the emails, or as nobody:
+predicate for this check. A domain matches only through the person's SSO account record,
+whose identity provider vouches for that domain (the store's hosted-domain claim, or the
+org's configured SSO domain), never a linked account's email or a bare verified address.
+A token reads as one person, for both the `owner` entry and the emails, or as nobody:
 
-- a person's own session token (one carrying a sign-in session, `sid`) reads as that
-  person; a token minted for a subject without one reads as nobody;
+- a person's own session token (a primary token whose own `sid` claim names a sign-in
+  session, with no `creator` claim) reads as that person; a token minted for a subject
+  without one reads as nobody;
 - a token minted for one person alone that says so (a `reads_as_creator` claim, which
   only the person's own signed-in session can mint, through the dashboard's flow that
   connects their own agent, which the coding-agent plugins use; delegation never copies
   it) reads as its creator;
 - the assistant's answer token, delegated from the caller's for that answer alone, reads
-  as the caller, and no token delegated from it reads as anyone; the conversation the
+  as whomever the caller's own token reads as (so as nobody for a token that reads as
+  nobody), and no token delegated from it reads as anyone; the conversation the
   assistant's front end stores is the reader's own record;
 - every other token (a service account made for tools, CI or a team, a bot, an end-user
   token, whatever their `creator`) and a request sent on behalf of another person
@@ -629,24 +632,25 @@ token reads as one person, for both the `owner` entry and the emails, or as nobo
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
 a link-only permission, a permission the store marks deleted or pending (its address may
 now belong to someone else) and a permission type the sync does not know admit nobody. A
-missing registry or listing row admits nobody. A leg whose per-request reads of the
-mirror (the statements it issues whatever matched) fail shows no mirrored document and
-marks the answer `degraded: mirror_unread`; a read it issues only for candidates (the
-lists, the members rows, the heads) that fails drops every mirrored result without the
-marker, so the marker says nothing about what matched. Each leg reads the registry row
-and the listing row first and then the members rows and the lists, under
-`sequential_reads()`, so a lagging replica cannot pair a fresh listing row with an older
-list. It computes the addresses the reader may see before its `LIMIT`, so a page is
-never cut short by the check, and caches no admitted set. No score depends on a document
-the reader may not see: a mirror's chunks add nothing to any corpus statistic (the
-lexical leg's document counts, lengths and term frequencies), and a mirror leg scores
-its lexical hits with fixed corpus constants, which depend on no document, so a
-namespace fed only by mirrored sources still ranks by both legs. Under the Postgres
-authority each leg judges the addresses it is about to answer by their heads, so a
-narrowing or a retirement committed and not yet published already applies, and a missing
-head drops the address; a leg that cannot read the heads shows no mirrored document. The
-implementing pull request measures the leg on a mirror of a million documents under both
-storage authorities and puts the figures here.
+missing registry or listing row admits nobody. A leg whose per-request reads (the
+statements it issues whatever matched, the reader's canonical subject and verified
+emails among them) fail shows no mirrored document and marks the answer
+`degraded: mirror_unread`; a read it issues only for candidates (the lists, the members
+rows, the heads) that fails drops every mirrored result without the marker, so the
+marker says nothing about what matched. Each leg reads the registry row and the listing
+row first and then the members rows and the lists, under `sequential_reads()`, so a
+lagging replica cannot pair a fresh listing row with an older list. It computes the
+addresses the reader may see before its `LIMIT`, so a page is never cut short by the
+check, and caches no admitted set. No score depends on a document the reader may not
+see: a mirror's chunks add nothing to any corpus statistic (the lexical leg's document
+counts, lengths and term frequencies), and a mirror leg scores its lexical hits with
+fixed corpus constants, which depend on no document, so a namespace fed only by mirrored
+sources still ranks by both legs. Under the Postgres authority each leg judges the
+addresses it is about to answer by their heads, so a narrowing or a retirement committed
+and not yet published already applies, and a missing head drops the address; a leg that
+cannot read the heads shows no mirrored document. The implementing pull request measures
+the leg on a mirror of a million documents under both storage authorities and puts the
+figures here.
 
 ### Every complete listing reads the lists again
 
@@ -996,7 +1000,13 @@ Each implementing pull request lists its own; these pin the model:
     - The query builder escaping every field.
     - A non-owner admin's `list` and `inspect` of a connected source showing `config`
       `{}`.
-    - A connected source's items and counts hidden from an admin who is not its owner.
+      - A connected source's items, and its counts other than what the check admits,
+        hidden from an admin who is not its owner; a non-owner admin's `check` of a
+        connected source answering no item ids.
+    - An assistant answer token delegated from a Settings-made service-account token
+      refused an `emails` document.
+    - A failed read of the reader's canonical subject or emails giving the same marker
+      whether or not a candidate exists.
     - A mirrored source's probe (`check`, and the `add`, `update` and `rotate` probes,
       by a non-owner admin and a crawl registrant), status, `remove` answer and a
       namespace erasure's receipt carrying no count, title, file id or address of what
