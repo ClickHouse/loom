@@ -27,4 +27,4 @@ validation:
     not_found: warn
     anchors: warn
     absolute_links: info
-    unrecognized_links: info
+    unrecognized_links: warn

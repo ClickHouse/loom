@@ -23,35 +23,39 @@ from scripts.codegen.page_summary import page_summary  # noqa: E402
 
 BLOB = "https://github.com/ClickHouse/loom/blob/main/"
 RAW = "https://raw.githubusercontent.com/ClickHouse/loom/main/"
-# Fenced blocks and code spans, kept verbatim; everything between them is rewritten.
-_CODE = re.compile(r"^(```|~~~).*?^\1[^\n]*$|`[^`\n]+`", re.DOTALL | re.MULTILINE)
-_LINK = re.compile(r"(!?)(\[[^\]]*\]\()([^)\s#]+)(#[^)\s]*)?((?:\s+\"[^\"]*\")?\))")
+# Scanned left to right: a fenced block (indented ones too) or a code span is kept as
+# written, an inline link or image may be rewritten. A link's text may hold code spans.
+_TOKEN = re.compile(
+    r"(?P<fence>^[ \t]*(?P<mark>```|~~~)[^\n]*\n.*?^[ \t]*(?P=mark)[^\n]*$)"
+    r"|(?P<link>(?P<bang>!?)(?P<text>\[(?:`[^`\n]*`|[^\]`])*\]\()"
+    r"(?P<target>[^)\s#]+)(?P<anchor>#[^)\s]*)?(?P<tail>(?:\s+\"[^\"]*\")?\)))"
+    r"|(?P<code>`[^`\n]+`)",
+    re.DOTALL | re.MULTILINE,
+)
 
 
 def on_page_markdown(markdown, page, config, files):
     _title, summary = page_summary(Path(page.file.abs_src_path))
-    if summary:
-        # Neither MkDocs nor the theme escapes the description into its attribute.
-        page.meta.setdefault("description", html.escape(summary.replace("`", "")))
+    description = page.meta.get("description") or summary.replace("`", "")
+    if description:
+        # The theme writes the description into its <meta> attribute unescaped.
+        page.meta["description"] = html.escape(description)
     page_dir = posixpath.dirname("docs/" + page.file.src_uri)
 
-    def outside(m: re.Match[str]) -> str:
-        bang, text, target, anchor, tail = m.groups()
+    def rewrite(m: re.Match[str]) -> str:
+        if not m.group("link"):
+            return m.group(0)
+        target = m.group("target")
         if "://" in target or target.startswith(("mailto:", "/")):
             return m.group(0)
         resolved = posixpath.normpath(posixpath.join(page_dir, target))
         if resolved.startswith("docs/"):
             return m.group(0)
-        base = RAW if bang else BLOB
-        return f"{bang}{text}{base}{resolved}{anchor or ''}{tail}"
+        base = RAW if m.group("bang") else BLOB
+        anchor = m.group("anchor") or ""
+        return f"{m.group('bang')}{m.group('text')}{base}{resolved}{anchor}{m.group('tail')}"
 
-    out, pos = [], 0
-    for code in _CODE.finditer(markdown):
-        out.append(_LINK.sub(outside, markdown[pos : code.start()]))
-        out.append(code.group(0))
-        pos = code.end()
-    out.append(_LINK.sub(outside, markdown[pos:]))
-    return "".join(out)
+    return _TOKEN.sub(rewrite, markdown)
 
 
 def on_post_build(config):

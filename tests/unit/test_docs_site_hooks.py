@@ -32,12 +32,12 @@ def test_the_description_is_the_first_sentence_escaped_without_backticks(tmp_pat
     )
 
 
-def test_a_description_set_in_front_matter_is_kept(tmp_path: Path) -> None:
+def test_a_description_set_in_front_matter_is_kept_and_escaped(tmp_path: Path) -> None:
     src = tmp_path / "page.md"
     src.write_text("# Page\n\nThe first sentence.\n")
-    page = _page(src, "features/page.md", {"description": "Set by hand."})
+    page = _page(src, "features/page.md", {"description": 'Set "by" hand.'})
     hooks.on_page_markdown("", page, None, None)
-    assert page.meta["description"] == "Set by hand."
+    assert page.meta["description"] == "Set &quot;by&quot; hand."
 
 
 def test_links_outside_docs_point_at_github_and_others_stay(tmp_path: Path) -> None:
@@ -47,6 +47,8 @@ def test_links_outside_docs_point_at_github_and_others_stay(tmp_path: Path) -> N
         "[a](../../server/x.py#L1) [b](memory/writing.md#key) [c](https://example.com/y) "
         '[d](../../server/y.py "title") ![e](../../frontend/a.png) `[f](../../server/z.py)`\n'
         "```\n[g](../../server/w.py)\n```\n"
+        "[`schema.sql`](../../schemas/schema.sql)\n"
+        "- item\n\n  ```\n  [h](../../server/v.py)\n  ```\n"
     )
     out = hooks.on_page_markdown(markdown, _page(src, "features/runs.md"), None, None)
     assert "[a](https://github.com/ClickHouse/loom/blob/main/server/x.py#L1)" in out
@@ -56,6 +58,8 @@ def test_links_outside_docs_point_at_github_and_others_stay(tmp_path: Path) -> N
     assert "![e](https://raw.githubusercontent.com/ClickHouse/loom/main/frontend/a.png)" in out
     assert "`[f](../../server/z.py)`" in out
     assert "[g](../../server/w.py)" in out
+    assert "[`schema.sql`](https://github.com/ClickHouse/loom/blob/main/schemas/schema.sql)" in out
+    assert "  [h](../../server/v.py)" in out
 
 
 def test_robots_txt_allows_crawlers_and_names_the_sitemap(tmp_path: Path) -> None:
