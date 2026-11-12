@@ -91,8 +91,8 @@ describe("Flow: collections", () => {
     const heading = await screen.findByRole("heading", { name: "Collections" });
     const section = heading.closest("section") as HTMLElement;
     const open = await within(section).findByRole("button", { name: "Research" });
-    // Where it sits is the link's description.
-    expect(open).toHaveAccessibleDescription("Library");
+    // Where it sits is the link's description, filled in once the collection rows load.
+    await waitFor(() => expect(open).toHaveAccessibleDescription("Library"));
     const sharing = screen.getByRole("heading", { name: "What you're sharing" }).closest("section") as HTMLElement;
     expect(within(sharing).getByText("team")).toBeInTheDocument();
     expect(within(sharing).queryByText("col-r")).toBeNull();
