@@ -7,7 +7,7 @@ import { CopyButton } from "../../../components/CopyButton";
 import { toast, toastError } from "../../../components/Toast";
 import { Unavailable } from "../../../components/ui";
 import { GuideDialog } from "../../../flows/GuideDialog";
-import { canWrite, useNamespaceRoleRead } from "../../../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../../../lib/namespaceRole";
 import { callReason } from "../../../lib/callReason";
 import { useStore } from "../../../lib/state";
 import { ReviewChanges } from "../ReviewChanges";
@@ -30,7 +30,6 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
   const roleRead = useNamespaceRoleRead(tune.namespace);
-  const { role } = roleRead;
   const [guideDraft, setGuideDraft] = useState<TuneProposal | null>(null);
   if (!identity) return null;
   const scope = { org: identity.org, namespace: tune.namespace };
@@ -89,7 +88,7 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
           }}
           org={scope.org}
           namespace={scope.namespace}
-          canEdit={canWrite(role)}
+          canEdit={callReason("namespace.guide_set", roleRead, whoami, tune.namespace) === null}
           initialContent={String(guideDraft.apply.args.content ?? guideDraft.proposed)}
           baseRevision={
             typeof guideDraft.apply.args.expected_revision === "number"

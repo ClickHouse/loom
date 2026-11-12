@@ -230,11 +230,31 @@ describe("NamespaceSettingsDialog while the grants are unread", () => {
     expect(screen.queryByText(/^Needs admin/)).toBeNull();
   });
 
-  it("says list_mine failed, on the line and on Delete", async () => {
-    vi.mocked(api.listMine).mockRejectedValue(new Error("down"));
+  it("still says loading once list_mine answers, while whoami has not", async () => {
+    vi.mocked(api.listMine).mockResolvedValue([]);
     await openUnread();
     await act(async () => undefined);
-    const line = "Couldn't check your access to team.";
+    const line = "Your role on this namespace is still loading.";
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
+    expect(screen.getByRole("button", { name: "Delete namespace" })).toHaveAccessibleDescription(line);
+  });
+
+  it("names a restricted repository by its label when its grants could not be read", async () => {
+    vi.mocked(api.listMine).mockRejectedValue(new Error("down"));
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: ["ADMIN"], namespaces: ["team"] },
+      identity: { org: "dev", namespace: "team", agent: "loom-ui" },
+      myNamespaces: null,
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue({
+      ...info,
+      kind: "code",
+      classification: "restricted",
+    } as NamespaceInfo);
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" label="acme/api @ main" />);
+    await act(async () => undefined);
+    await act(async () => undefined);
+    const line = "Couldn't check your access to acme/api @ main.";
     expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
     expect(screen.getByRole("button", { name: "Delete namespace" })).toHaveAccessibleDescription(line);
   });

@@ -1,5 +1,5 @@
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { canCall, OP_MIN_ROLE, RANK, type GatedOp } from "./canCall";
+import { canCall, OP_MIN_ROLE, RANK, type NamespaceOp } from "./canCall";
 import { needsRole, type NamespaceRole, type NamespaceRoleRead } from "./namespaceRole";
 
 // Apart from canCall.ts and namespaceRole.ts, which the boot chunk holds: only in-page
@@ -85,7 +85,7 @@ export function needsMaintainer(repository: string): string {
  * row caps a scoped token, so its role keeps "Needs".
  */
 export function callReason(
-  op: GatedOp,
+  op: NamespaceOp,
   read: NamespaceRoleRead,
   whoami: WhoAmI | null,
   namespace: string,

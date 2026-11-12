@@ -136,13 +136,15 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
   // (`restrictedMisses`, the same list `canUpdateNamespace` admits on), and while the grants
   // are unread, why.
   // Grants not read yet (or a failed read): say so, never a role the caller may well hold.
-  let lockedReason = rows === null ? unreadLine(mineLoading, namespace) : needsAdmin;
+  // Before whoami loads, the grants alone settle nothing either: still loading.
+  const unread = rows === null || !whoami;
+  let lockedReason = unread ? unreadLine(mineLoading || !whoami, name) : needsAdmin;
   const restricted = ns?.classification === "restricted";
   // namespace.delete passes the restricted gate too, which an admin grant alone does not.
   const canDelete = restricted
     ? restrictedMisses(whoami, rows, { org, namespace }).length === 0
     : isNamespaceAdmin(whoami, rows, namespace);
-  if (restricted && rows !== null) {
+  if (restricted && !unread) {
     const misses = restrictedMisses(whoami, rows, { org, namespace });
     const grant = rows.find((m) => m.namespace === namespace);
     const tokenMisses = [
@@ -417,7 +419,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                   Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run an
                   erasure.request separately.
                 </p>
-                <Unavailable reason={canDelete ? null : restricted || rows === null ? lockedReason : needsAdmin}>
+                <Unavailable reason={canDelete ? null : restricted || unread ? lockedReason : needsAdmin}>
                   <Button
                     type="danger"
                     htmlType="button"
