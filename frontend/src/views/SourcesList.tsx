@@ -129,8 +129,8 @@ export function SourcesList({
   manageable: boolean;
   /** Another change on the page is running: Add waits for it. */
   busy?: boolean;
-  /** Render as the Library's own section under this heading: a button named for it, beside
-   *  the page's actions, that opens the section in `panel`, so the closed list takes no
+  /** Render as the Library's own section under this heading: a button named for it, in
+   *  the header's actions, that opens the section in `panel`, so the closed list takes no
    *  room above the rows. It shows only once the list has answered, and to a caller who
    *  cannot add, only while it lists a source. */
   section?: string;

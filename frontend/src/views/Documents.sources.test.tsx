@@ -36,7 +36,7 @@ function show(role: MyNamespaceEntry["role"] | null) {
   render(<Documents />);
 }
 
-// The section opens from its button beside the page's actions.
+// The section opens from its button in the header's actions.
 async function openSources(): Promise<void> {
   await userEvent.setup().click(await screen.findByRole("button", { name: /^Sources/ }));
 }
@@ -72,6 +72,7 @@ describe("Library sources", () => {
     sources.listKnowledgeSources.mockResolvedValue(LISTED);
   });
   afterEach(() => {
+    vi.unstubAllGlobals();
     history.replaceState(null, "", "/");
     cleanup();
     vi.clearAllMocks();
@@ -299,6 +300,5 @@ describe("Library sources", () => {
     await userEvent.setup().click(button);
     expect(button).toHaveAttribute("aria-expanded", "true");
     expect(await screen.findByText("team-notes")).toBeInTheDocument();
-    vi.unstubAllGlobals();
   });
 });

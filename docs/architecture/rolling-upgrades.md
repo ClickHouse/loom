@@ -599,23 +599,23 @@ schema. These rules keep that safe. The operator procedure is in
 44. **Document sources on any namespace** (`knowledge.source.*` without the trunk
     check): N-1 still refuses `add`, `check`, `rotate` and `sync_now` on a namespace
     that is not a repository's trunk (`NOT_A_CODE_NAMESPACE`), so while it serves, the
-    dashboard's Add (the Library's Sources button offers it on every shared namespace),
-    Check, Sync now and Rotate of such a source fail on the replicas it answers from,
-    and its sync worker skips such a source until N leads the workers. N-1's
-    `namespace.delete`, `collection.delete` and erasure do not retire a namespace's
-    sources. A source whose namespace N-1 deleted stays active with its credential, and
-    the sync skips it (its namespace is inactive); one whose namespace N-1 erased keeps
-    syncing, and its next full listing writes the namespace's documents back. An erasure
-    N-1 started and N finished runs `knowledge_sources.retire` late, and its final
-    census reopens the steps for what the source wrote back meanwhile;
+    dashboard's Add (the list the Library's Sources button opens offers it on every
+    shared namespace), Check, Sync now and Rotate of such a source fail on the replicas
+    it answers from, and its sync worker skips such a source until N leads the workers.
+    N-1's `namespace.delete`, `collection.delete` and erasure do not retire a
+    namespace's sources. A source whose namespace N-1 deleted stays active with its
+    credential, and the sync skips it (its namespace is inactive); one whose namespace
+    N-1 erased keeps syncing, and its next full listing writes the namespace's documents
+    back. An erasure N-1 started and N finished runs `knowledge_sources.retire` late,
+    and its final census reopens the steps for what the source wrote back meanwhile;
     `loom erasure-re-verify` (rule 14) runs no step. N-1's `add` does not read the
     ledger, so a source it adds during an erasure N runs, after N's
-    `knowledge_sources.retire`, stays active and syncs after the erasure completes.
-    Once N serves alone, the
-    [upgrade procedure](../operations/upgrades.md#upgrade-procedure), step 13, lists
-    what N-1 left, with its queries and cleanup. No gate holds the rollout: the cost is
-    those refusals and that cleanup, and it ends once no N-1 replica serves. The
-    mixed-version gate does not check this rule.
+    `knowledge_sources.retire`, stays active and syncs after the erasure completes. Once
+    N serves alone, the [upgrade
+    procedure](../operations/upgrades.md#upgrade-procedure), step 13, lists what N-1
+    left, with its queries and cleanup. No gate holds the rollout: the cost is those
+    refusals and that cleanup, and it ends once no N-1 replica serves. The mixed-version
+    gate does not check this rule.
 
 ## What checks them
 
