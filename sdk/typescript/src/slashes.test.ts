@@ -1,19 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { trimSlashes } from "./slashes.js";
+import { trimSlashes, trimTrailingSlashes } from "./slashes.js";
 
-describe("trimSlashes", () => {
-  it("drops the trailing run, and the leading one when asked", () => {
-    expect(trimSlashes("https://loom.example/api///")).toBe("https://loom.example/api");
-    expect(trimSlashes("//a/b//")).toBe("//a/b");
-    expect(trimSlashes("//a/b//", true)).toBe("a/b");
-    expect(trimSlashes("///", true)).toBe("");
-    expect(trimSlashes("")).toBe("");
+/** Every string of up to `n` characters drawn from "/" and "a". */
+function allStrings(n: number): string[] {
+  let level = [""];
+  const out = [""];
+  for (let i = 0; i < n; i++) {
+    level = level.flatMap((s) => [`${s}/`, `${s}a`]);
+    out.push(...level);
+  }
+  return out;
+}
+
+describe("slash trims", () => {
+  it("give what the regexes they replace give, for every short string", () => {
+    for (const s of allStrings(7)) {
+      expect(trimTrailingSlashes(s)).toBe(s.replace(/\/+$/, ""));
+      expect(trimSlashes(s)).toBe(s.replace(/^\/+|\/+$/g, ""));
+    }
   });
 
-  it("is linear in a long run of slashes", () => {
+  it("are linear in a long run of slashes", () => {
     const long = `${"/".repeat(200_000)}x`;
     const started = Date.now();
-    expect(trimSlashes(long, true)).toBe("x");
+    expect(trimTrailingSlashes(long)).toBe(long);
+    expect(trimSlashes(long)).toBe("x");
     expect(Date.now() - started).toBeLessThan(1000);
   });
 });

@@ -78,7 +78,7 @@ export class LoomMemoryStore {
     this.memoryType = opts.memoryType ?? "semantic";
     this.tags = [...(opts.tags ?? [])];
     this.honourAbstain = opts.honourAbstain ?? true;
-    this.keyPrefix = trimSlashes(opts.keyPrefix ?? "strands", true) || "strands";
+    this.keyPrefix = trimSlashes(opts.keyPrefix ?? "strands") || "strands";
     this.scope = opts.scope ?? {};
   }
 

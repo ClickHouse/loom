@@ -67,7 +67,7 @@ import {
 } from "./retry.js";
 import { retryAfterFrom, retryHint } from "./retry-after.js";
 import { envVar, isBrowser, runtimeIdent } from "./runtime.js";
-import { trimSlashes } from "./slashes.js";
+import { trimTrailingSlashes } from "./slashes.js";
 import { decodeTokenClaims, type TokenClaims } from "./token.js";
 import { SDK_IDENT } from "./version.js";
 
@@ -186,7 +186,7 @@ export class Transport {
   readonly consumer: string;
 
   constructor(opts: TransportOptions) {
-    this.baseUrl = trimSlashes(opts.baseUrl);
+    this.baseUrl = trimTrailingSlashes(opts.baseUrl);
     // A URL fetch cannot send fails before it leaves, which would read as a lost call.
     if (!isSendable(this.baseUrl))
       throw classed(

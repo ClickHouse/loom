@@ -33,7 +33,7 @@ import {
 } from "./errors.js";
 import type { TokenProvider } from "./machine.js";
 import { envVar, proc } from "./runtime.js";
-import { trimSlashes } from "./slashes.js";
+import { trimTrailingSlashes } from "./slashes.js";
 
 export const DEFAULT_SERVER = "http://localhost:7777";
 export const CLIENT_ID = "loom-cli";
@@ -588,7 +588,7 @@ function origin(url: string): string | undefined {
 export function sameServer(a: string, b: string): boolean {
   try {
     const [x, y] = [new URL(a), new URL(b)];
-    return x.origin === y.origin && trimSlashes(x.pathname) === trimSlashes(y.pathname);
+    return x.origin === y.origin && trimTrailingSlashes(x.pathname) === trimTrailingSlashes(y.pathname);
   } catch {
     return false;
   }
@@ -711,7 +711,7 @@ function hex(n: NodeModules, bytes: number): string {
  */
 export async function login(server?: string, opts: LoginOptions = {}): Promise<WhoAmI> {
   const n = await nodeOrThrow();
-  const base = trimSlashes((server || envVar("LOOM_BASE_URL") || DEFAULT_SERVER).trim());
+  const base = trimTrailingSlashes((server || envVar("LOOM_BASE_URL") || DEFAULT_SERVER).trim());
   const profile = opts.profile || defaultProfile();
   const echo = opts.echo ?? ((line: string) => console.log(line));
   const meta = await endpoints(opts.fetch, base);
@@ -998,7 +998,7 @@ export class StoredLogin implements TokenProvider {
 
   constructor(profile: string, server: string, opts: CredentialOptions = {}) {
     this.profile = profile;
-    this.server = trimSlashes(server);
+    this.server = trimTrailingSlashes(server);
     this.label = `login:${profile}`;
     this.origin = new URL(this.server).origin;
     this.#fetch = opts.fetch;
