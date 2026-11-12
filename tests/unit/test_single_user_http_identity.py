@@ -5,6 +5,7 @@ op, any token, and every other identity mode names its own identity as before.""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from typing import Any
 
@@ -20,6 +21,8 @@ from tests.unit.ch_fake import RecordingCH
 
 Seen = list[tuple[str, str, str, str | None]]
 _SEEN: Seen = []
+# The bodies the request ledger was handed.
+_LEDGER: list[dict[str, Any]] = []
 
 
 async def _record(inp: Any) -> Any:
@@ -37,7 +40,10 @@ def seen(monkeypatch: pytest.MonkeyPatch) -> Seen:
     monkeypatch.setattr(settings, "auth_required", False)
     monkeypatch.setattr(settings, "self_signup_org", "dev")
     monkeypatch.setattr(settings, "default_namespace", "local")
-    monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
+    _LEDGER.clear()
+    monkeypatch.setattr(
+        http_mod, "_emit_event", lambda op, rid, body, *a, **k: _LEDGER.append(body)
+    )
     RecordingCH(strict=False).install(monkeypatch)
     _SEEN.clear()
     return _SEEN
@@ -207,7 +213,8 @@ def test_a_code_or_tracker_op_keeps_its_plane_org(seen: Seen) -> None:
 
     for name in ("tracker.item", "code.search"):
         args = {"number": 1, "query": "q"}
-        assert with_single_user_identity(OPERATIONS_BY_NAME[name], args, None) is args
+        filled = asyncio.run(with_single_user_identity(OPERATIONS_BY_NAME[name], args, None))
+        assert filled is args
 
 
 @pytest.mark.parametrize("value", [0, False, [], {}])
@@ -228,3 +235,27 @@ def test_a_listed_delete_or_bulk_write_runs_as_http(
 ) -> None:
     _post(op, body)
     assert len(seen) == 1 and seen[0][1:] == ("dev", "local", "http")
+
+
+def test_the_ledger_records_the_identity_the_call_ran_as(seen: Seen) -> None:
+    _post("memory.set", {"memory_key": "k", "value": "v"})
+    assert _LEDGER, "no ledger row"
+    row = _LEDGER[-1]
+    assert (row["org"], row["namespace"], row["agent"]) == ("dev", "local", "http")
+
+
+@pytest.mark.parametrize(
+    ("op", "body"),
+    [
+        ("memory.update", {"memory_key": "k", "value": "v2"}),
+        ("memory.ask", {"query": "when?"}),
+        ("memory.search_trace", {"query": "q"}),
+        ("search.query", {"query": "q"}),
+        ("knowledge.search", {"query": "q"}),
+    ],
+)
+def test_a_listed_op_with_an_optional_agent_gets_the_installs_namespace(
+    seen: Seen, op: str, body: dict[str, Any]
+) -> None:
+    _post(op, body)
+    assert len(seen) == 1 and seen[0][1:3] == ("dev", "local")

@@ -363,7 +363,7 @@ namespaces](../concepts/identities-and-namespaces.md) and their settings in
 machine: auth is off. Its one caller is also why a single-user HTTP call with no token may
 leave out `org`, and on an everyday memory or search op (`SINGLE_USER_FILLED_OPS` in
 `server/transport/gates.py`) `namespace` and `agent` too: they are filled with the
-install's own before validation and authorization, (`with_single_user_identity`), as MCP
+install's own before validation and authorization (`with_single_user_identity`), as MCP
 fills them (`_caller_defaults`). Every other op names its namespace and agent, since for
 many of them the namespace or agent is what they act on: an admin or namespace op that
 leaves its namespace out is refused, never run on the install's. The one listed delete,

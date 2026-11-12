@@ -155,8 +155,9 @@ def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None
     reads the org (an inbox's webhook secret names it), then see the tenant the
     gate authorizes, never the literal "-" every token reaches or a padded name
     an erasure of the org would miss. A copy: validation, and its own refusal
-    row, read it; every later refusal's ledger row reads the raw arguments as
-    sent. A missing, null or non-string value is left for validation."""
+    row, read it; every later refusal's ledger row reads the arguments as
+    admitted (as sent, plus `with_single_user_identity`'s fill over HTTP). A
+    missing, null or non-string value is left for validation."""
     update: dict[str, str] = {}
     if isinstance(args.get("org"), str):
         org = resolve_org(op, args["org"], auth)
@@ -169,14 +170,10 @@ def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None
     return {**args, **update} if update else args
 
 
-# The ops a single-user HTTP call with no token may send without a namespace or
-# agent (being a key turns on the namespace fill), and the agent each runs as when
-# it names none: "http" for a write (the writer it is
-# recorded as) and for a key read or delete that falls back to any agent's row;
-# "*" for the reads MCP also reads across agents; "" where the agent is optional,
-# so leaving it out still reads every agent. Every other op names its identity:
-# for many of them the namespace or agent is what they act on, and filling it
-# would act on something the call did not name.
+# Ops whose namespace a no-token single-user call may leave out, mapped to the agent
+# filled when it names none ("": none, so the op reads every agent). Each value is
+# checked against the op: "http" where it is the writer, or a key read or delete
+# that falls back to any agent; "*" where MCP also reads across agents.
 SINGLE_USER_FILLED_OPS: Final[dict[str, str]] = {
     "memory.set": "http",
     "memory.bulk_set": "http",
@@ -193,15 +190,15 @@ SINGLE_USER_FILLED_OPS: Final[dict[str, str]] = {
 }
 
 
-def with_single_user_identity(
+async def with_single_user_identity(
     op: Operation, args: dict[str, Any], auth: AuthInfo | None
 ) -> dict[str, Any]:
     """The body every later phase of an HTTP call reads, with the install's identity
     where the call left it out: only for a call with no token on a single-user server.
     The org (`caller_org`) on every op but code and tracker ones; the namespace
-    (`LOOM_DEFAULT_NAMESPACE`) and the agent on a SINGLE_USER_FILLED_OPS op. A
-    field is filled when missing, null, or a string the gates read as absent."""
-    from server.identity.app.caller_home import caller_org
+    (`default_namespace`, as MCP asks it) and the agent on a SINGLE_USER_FILLED_OPS
+    op. A field is filled when missing, null, or a string the gates read as absent."""
+    from server.identity.app.caller_home import caller_org, default_namespace
     from server.settings import settings
 
     if auth is not None or settings.effective_identity_provider() != "single-user":
@@ -210,9 +207,10 @@ def with_single_user_identity(
     # their org and namespace name the index, never the install's memory.
     if op.name.startswith(("code.", "tracker.")):
         return args
-    fill = {"org": caller_org(None) or ""}
+    org = caller_org(None) or ""
+    fill = {"org": org}
     if op.name in SINGLE_USER_FILLED_OPS:
-        fill["namespace"] = settings.default_namespace
+        fill["namespace"] = await default_namespace(None, org)
         fill["agent"] = SINGLE_USER_FILLED_OPS[op.name]
     fields = op.input_model.model_fields
     update = {
