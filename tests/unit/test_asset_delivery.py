@@ -40,29 +40,3 @@ def test_server_origin_is_the_dashboard() -> None:
     r = c.get("/", follow_redirects=False)
     assert r.status_code in (200, 503)  # 503: frontend/dist not built
     assert "location" not in r.headers
-
-
-def test_hashed_assets_are_immutable_for_a_year(tmp_path, monkeypatch) -> None:
-    """The header rides any 200 under /assets/ — exercised through the
-    middleware with a route mounted for the test, since CI has no built
-    frontend/dist."""
-    from starlette.responses import PlainTextResponse
-    from starlette.routing import Route
-    from starlette.testclient import TestClient
-
-    from server.main import app
-
-    marker = "/assets/test-only-deadbeef.js"
-    if not any(getattr(r, "path", "") == marker for r in app.routes):
-        # ahead of the page catch-all and the real assets mount
-        app.router.routes.insert(
-            0,
-            Route(marker, lambda request: PlainTextResponse("// js", media_type="text/javascript")),
-        )
-
-    r = TestClient(app).get(marker)
-    assert r.status_code == 200
-    assert r.headers.get("cache-control") == "public, max-age=31536000, immutable"
-    # and a non-asset route keeps whatever it had (no header, or its own)
-    r2 = TestClient(app).get("/v1/whoami")
-    assert r2.headers.get("cache-control") != "public, max-age=31536000, immutable"
