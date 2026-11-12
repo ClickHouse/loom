@@ -976,6 +976,18 @@ def test_a_listener_that_never_answers_holds_the_port(
     assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
 
 
+def test_a_listener_that_resets_or_answers_nothing_holds_the_port(
+    install, installer_env: dict[str, str]
+) -> None:
+    """Curl's 52 (an empty reply) and 56 (a reset) come from a listener."""
+    run, _ = install
+    for code in (52, 56):
+        _start_stubs(installer_env, probe_exit=code, connect_time="0.000150")
+        result = run(LOOM_SKIP_START="0")
+        assert result.returncode == 1
+        assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
+
+
 def test_a_port_that_does_not_connect_in_time_is_not_called_in_use(
     install, installer_env: dict[str, str]
 ) -> None:

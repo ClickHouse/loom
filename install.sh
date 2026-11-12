@@ -416,7 +416,7 @@ main() {
       [ "$port" != 7778 ] || other_port=7779
       case $probe,$connected in
         7,*) ;;
-        28,0.000000 | 28,0 | 28,) fail "cannot reach $host:$port within 3 seconds: check LOOM_BIND_HOST and LOOM_PORT, or a firewall on this host" ;;
+        28,0.000000) fail "cannot reach $host:$port within 3 seconds: check LOOM_BIND_HOST and LOOM_PORT, or a firewall on this host" ;;
         *)
           holder="another program"
           # A Loom answers health with its schema version, 503 included.
@@ -431,7 +431,7 @@ main() {
 
   printf 'Starting Loom %s (the first pull can take a few minutes)…\n' "$version"
   compose pull \
-    || fail "could not pull the Loom images (above). Behind a proxy, Docker needs it in its own settings: https://docs.docker.com/engine/daemon/proxy/"
+    || fail "could not pull the Loom images (above); behind a proxy, give the Docker daemon its proxy settings: https://docs.docker.com/engine/daemon/proxy/"
   case ",$(get_env COMPOSE_PROFILES)," in
     *,bundled,*) ;;
     *)
