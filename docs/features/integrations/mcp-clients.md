@@ -68,8 +68,6 @@ The two entry shapes:
 { "url": "https://loom.example.com/mcp", "headers": { "Authorization": "Bearer <JWT>" } }
 ```
 
-Cursor's URL carries `?toolset=coding`; see `--toolset` above.
-
 ```json
 {
   "command": "npx",
