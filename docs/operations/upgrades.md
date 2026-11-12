@@ -102,9 +102,11 @@ checkout.
 8. Turn on a feature the previous build cannot honour only once every replica runs
    the new build: `memory_extract_agent_learnings`, since the previous build does not
    erase `loom.learnings_supporters`
-   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 23); and
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 23);
    `LOOM_DOCUMENT_OBJECT_STORE=s3`, since the previous build reads a bucket row's empty
-   `data` and answers its download `410 BLOB_GONE` (rule 9).
+   `data` and answers its download `410 BLOB_GONE` (rule 9); and
+   `LOOM_PG_PAYLOAD_CLEAR_ENABLED`, no sooner than one clearing horizon after the new
+   build serves alone, since the previous build does not stamp a late delivery (rule 43).
 9. A deployment with `LOOM_CODE_ASK_MEMORY_NAMESPACE` set, now or at any time before,
    that moves from a build whose cached `code.ask` answers do not name the memory they
    quoted (one before `086_code_answer_memory_scope.sql`) to one that does, a roll
@@ -194,6 +196,24 @@ After a rollback to a build before `086_code_answer_memory_scope.sql` with a mem
 namespace bound to `code.ask`, clear the answer cache as in step 9 twice: once the older
 build serves alone, and again once the newer build serves again. The migration is already
 in the ledger, so the roll forward applies nothing that would prompt the second.
+Turn `LOOM_PG_PAYLOAD_CLEAR_ENABLED` off before rolling back, and on again no sooner
+than one clearing horizon after the newer build serves alone again; once a clearing pass
+has run, run `loom reconcile` only with a build that carries
+`010_revision_delivered_at.sql`, start the deployment on that build after it, and roll
+back only once the newer build owes no claimable delivery for a cleared revision, which
+this returns as 0 (rule 43):
+
+```sql
+SELECT count(*) FROM loom.memory_deliveries d
+JOIN loom.memory_revisions r USING (org, namespace, seq)
+WHERE r.row IS NULL AND NOT d.settled AND d.lease_until <> 'infinity';
+```
+
+Until it does, let the newer build deliver them. The previous build never claims a
+parked delivery, so a parked one may stay. While the previous build serves, a retry
+leaves out the cleared revisions
+([Postgres operations](postgres.md#what-the-boot-checks)), and no `loom reconcile` runs:
+it would release reconcile's holds to the previous build.
 There is no migration to undo: the previous build reads and writes the newer schema.
 Its version writes to `loom.memory` and the other `ReplacingMergeTree` memory tables
 keep the columns it does not know

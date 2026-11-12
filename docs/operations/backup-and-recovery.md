@@ -213,6 +213,13 @@ which runs again what the restored store lost of the other's record.
 
 ### Restoring one store
 
+Before a ClickHouse restore with `LOOM_PG_PAYLOAD_CLEAR_ENABLED` on, stop the payload
+clearing and choose the backup as
+[the Postgres journal and a ClickHouse restore](#the-postgres-journal-and-a-clickhouse-restore)
+says. Once a clearing pass has run, run step 3's `loom reconcile` with a build that
+carries `010_revision_delivered_at.sql`, and start the deployment on that build in step 4
+(rolling-upgrade [rule 43](../architecture/rolling-upgrades.md#the-rules)); then:
+
 1. Stop every server and worker of the deployment.
 2. Restore the store from its backup, and note the backup's time from the backup's own
    metadata (for ClickHouse, the start of `BACKUP`; for Postgres, the recovery target).
@@ -232,9 +239,13 @@ On the Helm chart ([Kubernetes](kubernetes.md)), with release `loom`:
    `helm upgrade ... --set replicaCount=0 --set workers.replicaCount=0 --set autoscaling.enabled=false`
    (and the new `clickhouse.host` or `postgres.host`), so no pod starts. The point is the
    start time the service lists for the backup, or the Postgres recovery target.
-3. Run the reconcile in a Job made from the web pod's own spec, so it has the release's
-   environment, Secret and Postgres CA, its own component label (the NetworkPolicy
-   selects it, the Service does not), and no probes:
+3. The Job below runs the release's image. Once a clearing pass has run and the release
+   is on a build without `010_revision_delivered_at.sql`, first
+   `helm upgrade ... --set image.tag=<a build that carries it>` (or `image.digest`, which
+   wins when set) with step 2's new host and its three `--set` overrides, so no pod
+   starts, and keep that image in step 4. Run the reconcile in a Job made from the web
+   pod's own spec, so it has the release's environment, Secret and Postgres CA, its own
+   component label (the NetworkPolicy selects it, the Service does not), and no probes:
 
    ```bash
    kubectl get deploy/loom -o json | jq '{apiVersion: "batch/v1", kind: "Job",
@@ -257,7 +268,8 @@ On the Helm chart ([Kubernetes](kubernetes.md)), with release `loom`:
    `"--apply"` appended.
 
 4. Start it again: `helm upgrade` with the release's values file, carrying step 2's new
-   host and without its three `--set` overrides, and resume the analytics export. Run
+   host and step 3's `image.tag` or `image.digest` if step 3 set one, and without step
+   2's three `--set` overrides, and resume the analytics export. Run
    each `loom rechunk` the reconcile printed with
    `kubectl exec deploy/loom -- loom rechunk ...`, and upload and ingest again each
    source it names under "to ingest again".
@@ -349,6 +361,90 @@ again whole before the deployment starts; deliveries it held are listed as parke
 On a single self-managed OSS node, schedule `BACKUP DATABASE` (or `clickhouse-backup`)
 to storage off the host. ClickHouse Cloud replicates and backs up the service itself, so
 the portable dump there is for moving data, not for durability.
+
+## The Postgres journal and a ClickHouse restore
+
+Under the Postgres authority, `loom.memory_revisions` holds every revision. After a
+ClickHouse restore, the versions committed since the backup are in the journal and not
+in the restored `memory_versions`; their content survives only while their payload
+(`row`) is still in the journal. With `LOOM_PG_PAYLOAD_CLEAR_ENABLED`, the
+`pg_payload_clear` worker clears the payloads of the versions every usable backup holds
+([payload clearing](../architecture/storage-authority.md#payload-clearing)). Leave it off
+when ClickHouse is not backed up: the journal then keeps every payload.
+
+**The horizon.** Set `LOOM_CH_BACKUP_INTERVAL_MINUTES` to how often a ClickHouse
+backup starts. The pass clears a version only once it was delivered to ClickHouse more
+than the horizon ago. The horizon is `LOOM_PG_PAYLOAD_RESTORE_HORIZON_MINUTES`:
+
+- At 0 (the default), it is twice the interval plus 60. A restore can then fall back one
+  backup when the newest one failed, if the one before started on schedule.
+- It is never under the interval plus 60, nor under the insert bound plus 60. A value set
+  lower is raised to the larger of the two.
+- A value from the interval plus 60 to just under twice the interval plus 60 covers the
+  newest backup only, if it started on schedule.
+
+Both settings are LIVE. A change takes effect at the first pass after the process
+re-reads the overrides (every `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS`); a pass already
+running keeps the horizon it started with.
+
+**Why the margin.** The 60 minutes cover what a backup's start time does not show:
+
+- the replica a backup reads lagging the replica that took the insert;
+- clock skew between Postgres and the backup host.
+
+Every cleared version was delivered more than the horizon before clearing stopped, so a
+backup that started less than the horizon minus 60 minutes before that moment holds
+every cleared version while lag and skew together stay under 60 minutes. A backup that
+started late shows it in its own start time, which step 4 below checks: at the smallest
+horizon the newest backup passes when it started on schedule, and a late one may not.
+`BACKUP ... ON CLUSTER` takes every shard at once. With a per-node tool, count a
+backup's start as its earliest node's start.
+
+**Before a restore, stop the clearing.** Do this before choosing the backup, while
+ClickHouse may still hold versions the backup lacks:
+
+1. Set `LOOM_PG_PAYLOAD_CLEAR_ENABLED=false` in the deployment's env. The setting is not
+   LIVE, and a restore of `loom.runtime_overrides` cannot turn it back on.
+2. Restart every Loom process with that env. Remove any stopped instance that could be
+   started again, or recreate it with the new env.
+3. Confirm from the orchestrator that every Loom process running or able to start has
+   the switch explicitly `false`. Left unset, the switch takes its value from a dotenv
+   file (`LOOM_ENV_FILE`, by default `.env` in the working directory) or a settings file
+   the environment or that dotenv names (`LOOM_SETTINGS_FILE`), either of which can turn
+   it on.
+4. Choose the backup only then, one that started less than the horizon minus 60 minutes
+   before the confirmation in step 3 above (the time the clearing stopped). If the
+   horizon was lowered, use the smallest horizon that was in force at any time in the
+   last horizon. With the default horizon that allows the newest backup or the one
+   before, if they started on schedule. An older backup may lack a version whose payload
+   is already cleared, and that version's content is then lost.
+5. Turn the switch back on when the deployment starts again at step 4 of
+   [restoring one store](#restoring-one-store), and not before: by then
+   `loom reconcile --apply` has owed a delivery again for every revision committed after
+   the point, and a revision keeps its payload while it owes a delivery. First check
+   `LOOM_CH_BACKUP_INTERVAL_MINUTES` and `LOOM_PG_PAYLOAD_RESTORE_HORIZON_MINUTES`
+   against the backup schedule: the restore brought back their overrides from the
+   backup's time, so re-apply any changed since. A version ClickHouse still lacks after
+   the restore keeps its payload, and each pass that reaches it counts it in
+   `missing_in_clickhouse`, which can stay above zero. When step 4 of
+   [restoring one store](#restoring-one-store) starts a build that carries
+   `010_revision_delivered_at.sql` on a deployment that served one without it,
+   the switch stays off until one clearing horizon after that build serves alone
+   ([rule 43](../architecture/rolling-upgrades.md#the-rules)).
+
+On the [zero-downtime pair](./deployment.md#zero-downtime-pair):
+
+1. Edit `.env`.
+2. Run `./redeploy.sh --force` from a checkout that is not behind `origin/main`.
+3. Whether the redeploy succeeded or failed, stop and `docker rm` every
+   `loom-*-workers` container, running or exited, whose
+   `docker inspect -f '{{.Config.Env}}'` does not show
+   `LOOM_PG_PAYLOAD_CLEAR_ENABLED=false`. The web containers run no workers, and with the
+   previous colour's workers container gone, `--rollback` keeps the current workers.
+4. If that leaves no workers container, fix the cause and run step 2 again.
+
+A restore that skips these steps can lose the content of the versions committed between
+the backup and the restore; their metadata stays in the journal.
 
 ## The rollback colour
 

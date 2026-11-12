@@ -19,7 +19,7 @@ import math
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -867,6 +867,31 @@ _HELD_LIST = (
 _HELD_MATCH = "(d.org, d.namespace, d.seq, d.lease_token) = (k.org, k.namespace, k.seq, k.token)"
 
 
+# A completion that delivers a revision more than this long after its commit stamps its
+# `delivered_at`; one within it leaves the journal untouched, and the payload clearing
+# pass counts such a revision delivered this long after `committed_at`
+# (`010_revision_delivered_at.sql`).
+# not a setting: unstamped revisions are judged by it, so a change breaks the stored bound
+LATE_DELIVERY_S = 15 * 60.0
+# The `last_error` of a delivery parked because its revision's payload was cleared and
+# the revision is no longer its key's head.
+PAYLOAD_CLEARED = "payload cleared, nothing to send"
+# The row a delivery of revision `r` sends: its own payload, or for a cleared revision
+# that is still its key's head, the head's row of the same version (read only then,
+# through the `memory_current_by_id` index).
+_SENT_ROW = (
+    "coalesce(r.row, (SELECT c.row FROM loom.memory_current c WHERE c.org = r.org "
+    "AND c.memory_id = r.memory_id AND c.namespace = r.namespace AND c.seq = r.seq))"
+)
+# The revisions `emptied` (org, namespace, seq) delivered late ($6: LATE_DELIVERY_S),
+# stamped at this statement's time.
+_STAMP_LATE = (
+    "UPDATE loom.memory_revisions r SET delivered_at = statement_timestamp() FROM emptied e "
+    "WHERE (r.org, r.namespace, r.seq) = (e.org, e.namespace, e.seq) "
+    "AND r.committed_at < statement_timestamp() - make_interval(secs => $6)"
+)
+
+
 async def _lock_held(conn: Any, keys: tuple[list[Any], ...]) -> None:
     """Lock the deliveries these claims still hold, in seq order: a second completer of
     one (a row and its search document landing apart) waits, then reads what is left."""
@@ -905,21 +930,29 @@ async def _complete_in(
         f"WHERE {_HELD_MATCH} ORDER BY d.org, d.namespace, d.seq FOR UPDATE OF d",
         *keys,
     )
-    # Deleted when nothing is left, else updated: one dead row per delivery, not two.
+    # Deleted when nothing is left, else updated: one dead row per delivery, not two. The
+    # revision a completion delivers late gets its `delivered_at` (`_STAMP_LATE`).
     await conn.execute(
+        "WITH emptied AS ("
         f"DELETE FROM loom.memory_deliveries d USING {_HELD_LIST} WHERE {_HELD_MATCH} "
-        f"AND d.targets & ~$5::smallint = 0 AND d.lease_token = {COMMIT_TOKEN}",
+        f"AND d.targets & ~$5::smallint = 0 AND d.lease_token = {COMMIT_TOKEN} "
+        f"RETURNING d.org, d.namespace, d.seq) {_STAMP_LATE}",
         *keys,
         done,
+        LATE_DELIVERY_S,
     )
     await conn.execute(
+        "WITH settled AS ("
         "UPDATE loom.memory_deliveries d SET targets = d.targets & ~$5::smallint, "
         "lease_until = CASE WHEN d.targets & ~$5::smallint = 0 THEN now() "
         f"ELSE d.lease_until END FROM {_HELD_LIST} WHERE {_HELD_MATCH} "
         # No dead row for a delivery that owed none of them.
-        "AND d.targets & $5::smallint <> 0",
+        "AND d.targets & $5::smallint <> 0 "
+        "RETURNING d.org, d.namespace, d.seq, d.targets), "
+        f"emptied AS (SELECT org, namespace, seq FROM settled WHERE targets = 0) {_STAMP_LATE}",
         *keys,
         done,
+        LATE_DELIVERY_S,
     )
     searchable = []
     for r in locked:  # a revision whose last search target this cleared
@@ -955,8 +988,10 @@ class Claimed:
 async def claim_due(limit: int, *, scope: tuple[str, str] | None = None) -> list[Claimed]:
     """Take up to `limit` deliveries whose lease ran out, oldest first, under a new
     lease token each, skipping locked and parked ones; one out of attempts is parked
-    here or comes back for its stub (storage-authority.md, "Delivery"). `scope`: only
-    those of one (org, namespace), in journal order."""
+    here or comes back for its stub, and one whose revision's payload was cleared sends
+    its head's row, or is parked here when the revision is no longer the head
+    (storage-authority.md, "Delivery"). `scope`: only those of one (org, namespace), in
+    journal order."""
     started = time.monotonic()
     # Any delivery still owing a target; one out of attempts is parked here or comes back
     # for its stub (`pg_delivery._last_attempt`).
@@ -989,17 +1024,23 @@ async def claim_due(limit: int, *, scope: tuple[str, str] | None = None) -> list
         SET lease_token = d.lease_token + 1,
             attempts = d.attempts + d.held::int,
             held = false,
-            -- Parked: the last holder's send may still land within its lease.
-            fenced_until = CASE WHEN due.parks THEN GREATEST(d.fenced_until, d.lease_until)
+            -- Parked: the last holder's send may still land within its lease. A revision
+            -- whose payload was cleared sends its head's row when it is still the head;
+            -- one superseded has nothing to send: parked, with that reason.
+            fenced_until = CASE WHEN due.parks OR s.sent IS NULL
+                                THEN GREATEST(d.fenced_until, d.lease_until)
                                 ELSE d.fenced_until END,
-            lease_until = CASE WHEN due.parks THEN 'infinity'::timestamptz
+            lease_until = CASE WHEN due.parks OR s.sent IS NULL
+                               THEN 'infinity'::timestamptz
                                ELSE now() + make_interval(secs => $2) END,
-            last_error = CASE WHEN d.held THEN 'stopped mid-publish' ELSE d.last_error END
-        FROM due, loom.memory_revisions r
+            last_error = CASE WHEN s.sent IS NULL THEN '{PAYLOAD_CLEARED}'
+                              WHEN d.held THEN 'stopped mid-publish' ELSE d.last_error END
+        FROM due, loom.memory_revisions r CROSS JOIN LATERAL (SELECT {_SENT_ROW} AS sent) s
         WHERE (d.org, d.namespace, d.seq) = (due.org, due.namespace, due.seq)
           AND (r.org, r.namespace, r.seq) = (d.org, d.namespace, d.seq)
         RETURNING d.org, d.namespace, d.seq, d.targets, d.lease_token, d.attempts,
-                  due.parks AS parked, due.held AS taken_over, r.row, r.audit,
+                  due.parks OR s.sent IS NULL AS parked, due.held AS taken_over,
+                  s.sent AS row, r.audit,
                   due.claim_order, due.replaced_lease_s
         )
         -- An UPDATE returns its rows in no order: the claims come back in the order taken.
@@ -1008,7 +1049,15 @@ async def claim_due(limit: int, *, scope: tuple[str, str] | None = None) -> list
         *args,
     )
     for r in rows:
-        if r["parked"]:
+        if r["parked"] and r["row"] is None:
+            log.error(
+                "pg_delivery: %s/%s seq %s parked: %s",
+                r["org"],
+                r["namespace"],
+                r["seq"],
+                PAYLOAD_CLEARED,
+            )
+        elif r["parked"]:
             log.error(
                 "pg_delivery: %s/%s seq %s parked after %s attempts%s",
                 r["org"],
@@ -1156,9 +1205,12 @@ async def outbox_backlog(cap: int) -> pg_pipeline.Backlog:
 
 
 async def parked_count() -> int:
-    """Deliveries past LOOM_PG_DELIVERY_MAX_ATTEMPTS: revisions ClickHouse keeps refusing
-    (or, owing only DECISION_RECORD or OLD_VECTORS, a retirement), left out of claims and
-    watermarks; an operator reads `last_error`."""
+    """Parked deliveries, every one with an endless lease: those past
+    LOOM_PG_DELIVERY_MAX_ATTEMPTS (revisions ClickHouse keeps refusing, or, owing only
+    DECISION_RECORD or OLD_VECTORS, a retirement), those parked at their claim with
+    PAYLOAD_CLEARED, and those `loom reconcile` holds until it releases them
+    (HELD_BY_RECONCILE); left out of claims and watermarks; an operator reads
+    `last_error`."""
     return int(
         await pg.fetchval(
             # Parked is an endless lease (`claim_due`, `record_failure`) on a delivery still
@@ -1182,6 +1234,89 @@ async def sweep_settled(limit: int) -> int:
         "SELECT count(*) FROM gone",
         pg.insert_bound_s(),
         limit,
+    )
+    return int(n)
+
+
+# A revision whose payload (`row`) the clearing pass may clear: one it has not cleared,
+# other than a profile revision, which keeps its payload (the redaction's reach into the
+# profiles matches on it). The predicate of `memory_revisions_payload`, word for word, so
+# the reads below use that index (`010_revision_delivered_at.sql`).
+CLEARABLE = "row IS NOT NULL AND NOT (row->>'agent' = '-' AND row->>'memory_type' = 'profile')"
+# When ClickHouse held the revision at the latest: its stamp, or for an unstamped one its
+# commit (delivered within LATE_DELIVERY_S of it, which the cut below adds).
+_DELIVERED = "coalesce(delivered_at, committed_at)"
+# Delivered more than $1 seconds ago (the cut adds LATE_DELIVERY_S, which an unstamped
+# revision's commit may precede its delivery by), and with no delivery row: a parked,
+# repaired or settled one keeps its payload until the delivery is gone.
+_PAST_HORIZON = (
+    f"{_DELIVERED} < statement_timestamp() - make_interval(secs => $1 + {LATE_DELIVERY_S}) "
+    "AND NOT EXISTS (SELECT 1 FROM loom.memory_deliveries d "
+    "WHERE (d.org, d.namespace, d.seq) = (r.org, r.namespace, r.seq))"
+)
+
+
+@dataclass(frozen=True)
+class Clearable:
+    """A revision the clearing pass may clear once ClickHouse's history shows it holds
+    it: the key `memory_versions` sorts by, and what the version must match."""
+
+    delivered: datetime
+    org: str
+    namespace: str
+    seq: int
+    agent: str
+    user_id: str
+    session_id: str
+    memory_key: str
+    version: int
+    memory_id: str
+    content_sha256: str
+
+    @property
+    def cursor(self) -> tuple[datetime, str, str, int]:
+        return (self.delivered, self.org, self.namespace, self.seq)
+
+
+async def clearable_revisions(
+    horizon_s: float, after: tuple[datetime, str, str, int] | None, limit: int
+) -> list[Clearable]:
+    """Up to `limit` revisions whose payload may be cleared, delivered more than
+    `horizon_s` ago, in the order of `memory_revisions_payload` from past `after`."""
+    rows = await pg.fetch(
+        f"SELECT {_DELIVERED} AS delivered, r.org, r.namespace, r.seq, r.user_id, "
+        f"{_meta('agent', 'r')} AS agent, {_meta('session_id', 'r')} AS session_id, "
+        f"{_meta('memory_key', 'r')} AS memory_key, r.version, r.memory_id::text AS memory_id, "
+        f"r.content_sha256 FROM loom.memory_revisions r WHERE {CLEARABLE} AND {_PAST_HORIZON} "
+        f"AND ({_DELIVERED}, r.org, r.namespace, r.seq) > ($2, $3, $4, $5) "
+        f"ORDER BY {_DELIVERED}, r.org, r.namespace, r.seq LIMIT $6",
+        float(horizon_s),
+        *(after or (datetime.min.replace(tzinfo=UTC), "", "", -1)),
+        limit,
+    )
+    return [Clearable(**dict(r)) for r in rows]
+
+
+async def clear_payloads(horizon_s: float, held: Sequence[Clearable]) -> int:
+    """Clear the payloads of `held`, revisions ClickHouse's history holds, that are still
+    clearable; one a writer holds locked (a redaction, an erasure) is left for a later
+    pass. Returns how many were cleared. The metadata stays in the typed columns
+    (`003_revision_metadata.sql`)."""
+    if not held:
+        return 0
+    n = await pg.fetchval(
+        "WITH c AS (SELECT r.org, r.namespace, r.seq FROM loom.memory_revisions r, "
+        "unnest($2::text[], $3::text[], $4::bigint[]) AS k(org, namespace, seq) "
+        f"WHERE (r.org, r.namespace, r.seq) = (k.org, k.namespace, k.seq) AND {CLEARABLE} "
+        f"AND {_PAST_HORIZON} ORDER BY r.org, r.namespace, r.seq "
+        "FOR NO KEY UPDATE OF r SKIP LOCKED), "
+        "gone AS (UPDATE loom.memory_revisions r SET row = NULL FROM c "
+        "WHERE (r.org, r.namespace, r.seq) = (c.org, c.namespace, c.seq) RETURNING 1) "
+        "SELECT count(*) FROM gone",
+        float(horizon_s),
+        [h.org for h in held],
+        [h.namespace for h in held],
+        [h.seq for h in held],
     )
     return int(n)
 
@@ -2188,8 +2323,10 @@ def republish_targets(row: Mapping[str, Any], *, is_head: bool) -> int:
 async def hold_for_republish(after: datetime, *, batch: int = 1000) -> int:
     """Owe again every revision committed after `after`, as deliveries held parked
     (`lease_until` infinity, `fenced_until` now, so an erasure waits nothing for them) and
-    marked `HELD_BY_RECONCILE`; merged into a delivery the revision still owes. Returns
-    how many it marked."""
+    marked `HELD_BY_RECONCILE`; merged into a delivery the revision still owes. A revision
+    whose payload was cleared is left out (one committed after a backup the restore
+    runbook allows is not cleared yet; a head left out here `hold_heads_behind` holds).
+    Returns how many it held."""
     marked = 0
     last: tuple[str, str, int] = ("", "", -1)
     while True:
@@ -2210,33 +2347,38 @@ async def hold_for_republish(after: datetime, *, batch: int = 1000) -> int:
             head = heads.get(identity_key(d))
             is_head = head is not None and int(head["version"]) == int(d["version"])
             targets.append(republish_targets(d, is_head=is_head))
-        await hold([(r["org"], r["namespace"], int(r["seq"])) for r in rows], targets)
-        marked += len(rows)
+        marked += await hold([(r["org"], r["namespace"], int(r["seq"])) for r in rows], targets)
         tail = rows[-1]
         last = (tail["org"], tail["namespace"], int(tail["seq"]))
 
 
-async def hold(seqs: Sequence[tuple[str, str, int]], targets: Sequence[int]) -> None:
+async def hold(seqs: Sequence[tuple[str, str, int]], targets: Sequence[int]) -> int:
     """Owe these revisions `targets` again, as deliveries held parked (`lease_until`
     infinity, `fenced_until` now, so an erasure waits nothing for them) and marked
     `HELD_BY_RECONCILE`, merged into a delivery a revision still owes, its attempts
     counted from none again: one parked out of attempts before the restore is sent in
-    full, not as the last attempt's stub."""
-    await pg.execute(
-        "INSERT INTO loom.memory_deliveries AS d (org, namespace, seq, targets, lease_token, "
-        "lease_until, fenced_until, last_error) "
-        "SELECT org, namespace, seq, targets, 1, 'infinity', now(), $5 "
-        "FROM unnest($1::text[], $2::text[], $3::bigint[], $4::smallint[]) "
-        "AS t(org, namespace, seq, targets) "
-        "ON CONFLICT (org, namespace, seq) DO UPDATE SET "
-        "targets = d.targets | EXCLUDED.targets, lease_until = 'infinity', "
-        "fenced_until = GREATEST(d.fenced_until, now()), last_error = EXCLUDED.last_error, "
-        "attempts = 0, held = false",
-        [s[0] for s in seqs],
-        [s[1] for s in seqs],
-        [s[2] for s in seqs],
-        list(targets),
-        pg_lease.HELD_BY_RECONCILE,
+    full, not as the last attempt's stub. A revision whose payload was cleared and that
+    is no longer its key's head has nothing to send and is left out, as is one whose
+    revision is gone (erased); returns how many were held."""
+    return int(
+        await pg.fetchval(
+            "WITH h AS (INSERT INTO loom.memory_deliveries AS d (org, namespace, seq, targets, "
+            "lease_token, lease_until, fenced_until, last_error) "
+            "SELECT t.org, t.namespace, t.seq, t.targets, 1, 'infinity', now(), $5 "
+            "FROM unnest($1::text[], $2::text[], $3::bigint[], $4::smallint[]) "
+            "AS t(org, namespace, seq, targets) JOIN loom.memory_revisions r "
+            "ON (r.org, r.namespace, r.seq) = (t.org, t.namespace, t.seq) "
+            f"WHERE {_SENT_ROW} IS NOT NULL "
+            "ON CONFLICT (org, namespace, seq) DO UPDATE SET "
+            "targets = d.targets | EXCLUDED.targets, lease_until = 'infinity', "
+            "fenced_until = GREATEST(d.fenced_until, now()), last_error = EXCLUDED.last_error, "
+            "attempts = 0, held = false RETURNING 1) SELECT count(*) FROM h",
+            [s[0] for s in seqs],
+            [s[1] for s in seqs],
+            [s[2] for s in seqs],
+            list(targets),
+            pg_lease.HELD_BY_RECONCILE,
+        )
     )
 
 

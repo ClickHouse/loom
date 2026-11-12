@@ -38,6 +38,8 @@ _started_with: dict[str, Any] = {}
 _applied: dict[str, Any] = {}
 # Stored rows already reported as unusable, said once each.
 _warned: set[tuple[str, str]] = set()
+# Set by the first `adopt` in this process.
+_adopted = False
 # source -> the fields code outside this module set on `settings` (`register_source`).
 _assigned: dict[str, Callable[[], Iterable[str]]] = {}
 
@@ -114,8 +116,18 @@ async def change(
     return before, row(name) if known else None
 
 
+def adopted() -> bool:
+    """Whether this process took the deployment's setting overrides once: before that, a
+    LIVE setting reads the value the process started with, even where an operator
+    overrode it. Readiness keeps its own flag (`boot._OVERRIDES_ADOPTED`): this one also
+    turns on when an admin change refreshes the setting overrides alone, before the
+    rate-limit and latency-budget ones were ever read."""
+    return _adopted
+
+
 def adopt(snapshot: ro.Snapshot) -> None:
     """Take the deployment's setting overrides (a `runtime_overrides.load()` snapshot)."""
+    global _adopted
     wanted: dict[str, Any] = {}
     for key, raw in snapshot.get(KIND, {}).items():
         name = key[0] if len(key) == 1 else repr(key)
@@ -129,6 +141,7 @@ def adopt(snapshot: ro.Snapshot) -> None:
         _apply(name, value)
     for name in _applied.keys() - wanted.keys():
         _restore(name)
+    _adopted = True
 
 
 def _apply(name: str, value: Any) -> None:

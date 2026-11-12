@@ -316,6 +316,12 @@
           "type": "number",
           "description": "Seconds between two probes of the analyst user in each web process; a problem an admin fixes, or a repair a write makes, shows within one interval."
         },
+        "ch_backup_interval_minutes": {
+          "default": 1440,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Minutes between the starts of scheduled ClickHouse backups. The clearing horizon is never under it plus 60."
+        },
         "ch_batched_insert_background_wait_max_ms": {
           "default": 200,
           "exclusiveMinimum": 0,
@@ -5496,7 +5502,7 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Deliveries one pass of each delivery worker publishes; also the expired deletion evidence and settled knowledge deliveries one pass sweeps."
+          "description": "Deliveries one delivery pass publishes; also the expired deletion evidence and settled knowledge deliveries one pass sweeps, and the revisions one payload clearing batch checks."
         },
         "pg_delivery_enabled": {
           "default": true,
@@ -5551,6 +5557,23 @@
           "minimum": 0,
           "type": "number",
           "description": "Seconds before its lease ends that a publisher stops sending, for clock drift and the time a send takes to leave the process; under Postgres, shorter than both leases (`LOOM_PG_REQUEST_LEASE_SECONDS`, `LOOM_PG_DELIVERY_LEASE_SECONDS`)."
+        },
+        "pg_payload_clear_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "The pg_payload_clear worker: clears a revision's payload once every usable ClickHouse backup holds it. Turn it off before a ClickHouse restore (backup-and-recovery.md)."
+        },
+        "pg_payload_clear_interval_seconds": {
+          "default": 60,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Seconds between payload clearing passes."
+        },
+        "pg_payload_restore_horizon_minutes": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Minutes a delivered revision keeps its payload: 0 is twice the backup interval plus 60; under the interval plus 60 or the insert bound plus 60, it is raised to the larger."
         },
         "pg_pool_max_size": {
           "default": 20,

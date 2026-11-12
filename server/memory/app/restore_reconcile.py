@@ -58,11 +58,17 @@ async def hold_heads_behind(ch: Any, *, page: int = 2000) -> int:
             h for h, k in zip(heads, keys, strict=True) if published.get(k, -1) < int(h["version"])
         ]
         if behind:
-            await pg_memory.hold(
+            n = await pg_memory.hold(
                 [(h["org"], h["namespace"], int(h["seq"])) for h in behind],
                 [pg_memory.republish_targets(h, is_head=True) for h in behind],
             )
-            held += len(behind)
+            if n < len(behind):
+                log.warning(
+                    "loom reconcile: heads ClickHouse lacks or holds older that cannot be sent "
+                    "again (the revision erased, or superseded with its payload cleared): %d",
+                    len(behind) - n,
+                )
+            held += n
         after = keys[-1]
 
 

@@ -79,7 +79,7 @@ that moves it.
 | `loom.authority`            | singleton                                                  | the recorded authority, its epoch and the deployment id                                                                                                                                                                                                                                                                                                                                 |
 | `loom.scope_generations`    | `(org, scope)`                                             | the last revision number of a namespace, or a policy generation (`scope = '*'`, org `''` for the global one)                                                                                                                                                                                                                                                                            |
 | `loom.memory_current`       | `(org, namespace, agent, user_id, session_id, memory_key)` | the head of each key: the complete `loom.memory` row as JSON, with `memory_id`, `version`, `seq`, `content_sha256` beside it                                                                                                                                                                                                                                                            |
-| `loom.memory_revisions`     | `(org, namespace, seq)`                                    | every committed row, append-only (a redaction scrubs one in place), with its hash-only audit row and its metadata in typed columns ([revision metadata](#revision-metadata))                                                                                                                                                                                                            |
+| `loom.memory_revisions`     | `(org, namespace, seq)`                                    | every committed row, append-only (a redaction scrubs one in place, and with `LOOM_PG_PAYLOAD_CLEAR_ENABLED` the clearing pass clears a delivered one's payload past the horizon: [payload clearing](#payload-clearing)), with its hash-only audit row and its metadata in typed columns ([revision metadata](#revision-metadata))                                                       |
 | `loom.memory_deliveries`    | `(org, namespace, seq)`                                    | the targets a revision still owes ClickHouse (bits: 1 memory row, 2 search document, 4 audit row, 8 a deleted decision's record, 16 the old vectors), its lease and fencing token; deleted when the last target lands                                                                                                                                                                   |
 | `loom.idempotency`          | `(org, key_hash)`                                          | an op's request digest, its state (`running`, `committed`, `done`), the revisions it committed, its answer, a lease and its token                                                                                                                                                                                                                                                       |
 | `loom.erased_memories`      | `(org, namespace, memory_id)`                              | deletion evidence: the namespace and id of each memory an erasure removed, when, and when its publishers are quiet; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                                                                                                                                                                                                   |
@@ -146,15 +146,65 @@ A profile revision keeps its payload for good: a redaction's reach into the prof
 folded from the memory matches on `row`, which the partial index
 `memory_revisions_profile` serves.
 
-Every commit sets a revision's payload; nothing clears it.
+Every commit sets a revision's payload; only the payload clearing pass clears it.
 
-Ten maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
+Eleven maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
 `knowledge_deliveries (lease_until)` `WHERE NOT settled` (the delivery workers' queues
 across tenants), the same two `WHERE settled`, `audit_outbox (due_at)`,
 `idempotency (expires_at)`, `erased_memories (erased_at)`,
 `erased_documents (erased_at)`, `knowledge_jobs (updated_at)` and
-`erasure_ledger (requested_at)` (the sweeps). All ten are local to a Postgres database,
+`erasure_ledger (requested_at)` (the sweeps), and `memory_revisions_payload` (the
+payload clearing pass across tenants). All eleven are local to a Postgres database,
 and a tenant's rows are still found by their primary keys.
+
+### Payload clearing
+
+With `LOOM_PG_PAYLOAD_CLEAR_ENABLED` (off by default), the `pg_payload_clear` worker
+clears the payload of a revision every ClickHouse backup a restore may use holds, keeping
+its metadata. The journal then stays the size of its metadata, plus the payloads of the
+last horizon, of the profile revisions, of revisions still owing a delivery and of
+versions ClickHouse lacks, while ClickHouse's `memory_versions` serves the old versions'
+content.
+
+- **When a revision was delivered.** A completion that empties a delivery more than
+  15 minutes after its revision's commit sets the revision's `delivered_at`, in the
+  same statement that deletes or settles the delivery; one within 15 minutes leaves the
+  journal untouched. A revision's delivery time is therefore at most
+  `coalesce(delivered_at, committed_at)` plus 15 minutes; a build without the stamp
+  breaks that bound for what it delivers late, which
+  [rolling-upgrade rule 43](rolling-upgrades.md#the-rules) waits out.
+- **What is cleared.** A pass clears a revision when all of these hold:
+  - its delivery time is past the horizon;
+  - it has no delivery row: a parked or repaired delivery, and a settled one until the
+    delivery pass sweeps it past the insert bound, keep the revision's payload;
+  - it is not a profile revision;
+  - `loom.memory_versions` holds its key and version with the same `memory_id` and
+    content hash, read with sequential consistency. A redaction keeps the hash, so a
+    redacted revision is cleared too.
+
+  A version ClickHouse lacks is counted (`missing_in_clickhouse` in the worker's
+  outcome) and kept. The pass reads the partial index `memory_revisions_payload` in
+  delivery order from where the last pass stopped (its cursor in `loom.worker_status`,
+  so a new process or colour continues it), a batch of `LOOM_PG_DELIVERY_BATCH_ROWS` at
+  a time, until one comes back short or half its deadline has gone. It clears with
+  `FOR NO KEY UPDATE SKIP LOCKED`, so a revision a redaction or an erasure holds is left
+  for a later pass.
+
+- **The horizon** is `LOOM_PG_PAYLOAD_RESTORE_HORIZON_MINUTES`, never under
+  `LOOM_CH_BACKUP_INTERVAL_MINUTES` plus 60 nor under the insert bound plus 60.
+  At 0 (the default) it is twice the backup interval plus 60. Both settings are LIVE and
+  read at each pass. A process clears nothing until it has adopted the deployment's
+  overrides. Why the horizon covers a restore, and the restore runbook that stops the
+  pass first, are in
+  [backup and recovery](../operations/backup-and-recovery.md#the-postgres-journal-and-a-clickhouse-restore).
+- **After a restore.** A delivery of a cleared revision that is still its key's head
+  sends the head's row from `memory_current`, the same version, so `loom reconcile`
+  sends again every head ClickHouse lacks or holds older. A cleared revision since
+  superseded has nothing to send: `loom reconcile` leaves it out of its holds, and a
+  delivery that still reaches one (held as a pass cleared it) parks at its claim
+  ([delivery](#delivery)).
+- **Knowledge documents** are not cleared here: a document's superseded versions live
+  only in ClickHouse once its delivery is swept.
 
 ### Rejected layouts
 
@@ -499,30 +549,34 @@ embedded it with a contextual prefix gets the plain text's vector instead, the o
 `memory.set` would have given it. Claims are published a namespace at a time, and one by
 one when a namespace's batch fails, so a revision ClickHouse keeps refusing holds back
 only itself. At `LOOM_PG_DELIVERY_MAX_ATTEMPTS` failed publishes (a refused row, a
-refused Postgres statement, a lease that ran out during the publish) a delivery owing its
-search document and not its memory row publishes a stub the embedding worker fills; any
-other is parked: no longer claimed, left out of the published watermark, and counted by
-`GET /v1/health?include=postgres` (`postgres.parked_deliveries`). A publish that ends the
-worker process counts too: a claim is marked started just before its own publish and the
-mark cleared with its outcome, so the next pass counts one still marked as an attempt,
-publishes it alone, and parks it at the limit (a delivery owing only its search document
-gets its stub instead, and is parked if that stub stops the process too). The worker
-stops a pass between namespaces, and between claims it publishes one by one or stubs past
-their attempts, once a lease has gone by, so its deadline cuts only a publish slow on its
-own. A pass that ends without an outcome for a claim clears its mark and counts nothing:
-one cancelled (the worker's deadline, a shutdown) before that claim's publish started, or
-cut by a Postgres outage. A publish the worker was running when its pass was cancelled
-keeps its mark and counts (each claim of a batch then counts one attempt and goes alone),
-as does one its lease ran out on; an admission helping with a namespace's backlog
-releases everything it claimed. ClickHouse refused nothing when it answers with a state
-that clears on its own (a merge backlog, a read-only table, Keeper lost, too many
-queries, an insert of unknown status, the server out of memory as a whole), when every
-pooled connection is busy, or when a publish fails at the connection and ClickHouse then
-does not answer a probe: the pass stops. A connection failure while ClickHouse answers, a
-timeout, and an insert block spanning too many partitions are the rows' own and count, so
-a batch that always fails that way is tried row by row and a row that keeps failing is
-parked. A second copy of a row is harmless: both ClickHouse tables are
-`ReplacingMergeTree(version)` and every row keeps its revision's version, so a copy
+refused Postgres statement, a lease that ran out during the publish) a delivery owing
+its search document and not its memory row publishes a stub the embedding worker fills;
+any other is parked: no longer claimed, left out of the published watermark, and counted
+by `GET /v1/health?include=postgres` (`postgres.parked_deliveries`). A delivery whose
+revision's payload was cleared ([payload clearing](#payload-clearing)) sends its key's
+head row when the revision is still the head; otherwise it has nothing to send and is
+parked at its claim, with `last_error` "payload cleared, nothing to send" (what to do:
+[Postgres operations](../operations/postgres.md#what-the-boot-checks)). A publish that
+ends the worker process counts too: a claim is marked started just before its own
+publish and the mark cleared with its outcome, so the next pass counts one still marked
+as an attempt, publishes it alone, and parks it at the limit (a delivery owing only its
+search document gets its stub instead, and is parked if that stub stops the process
+too). The worker stops a pass between namespaces, and between claims it publishes one by
+one or stubs past their attempts, once a lease has gone by, so its deadline cuts only a
+publish slow on its own. A pass that ends without an outcome for a claim clears its mark
+and counts nothing: one cancelled (the worker's deadline, a shutdown) before that
+claim's publish started, or cut by a Postgres outage. A publish the worker was running
+when its pass was cancelled keeps its mark and counts (each claim of a batch then counts
+one attempt and goes alone), as does one its lease ran out on; an admission helping with
+a namespace's backlog releases everything it claimed. ClickHouse refused nothing when it
+answers with a state that clears on its own (a merge backlog, a read-only table, Keeper
+lost, too many queries, an insert of unknown status, the server out of memory as a
+whole), when every pooled connection is busy, or when a publish fails at the connection
+and ClickHouse then does not answer a probe: the pass stops. A connection failure while
+ClickHouse answers, a timeout, and an insert block spanning too many partitions are the
+rows' own and count, so a batch that always fails that way is tried row by row and a row
+that keeps failing is parked. A second copy of a row is harmless: both ClickHouse tables
+are `ReplacingMergeTree(version)` and every row keeps its revision's version, so a copy
 collapses into the first and a late one never outranks a newer write. Only the current
 token's holder clears a target, so an overtaken publisher cannot mark a newer claim's
 work done.

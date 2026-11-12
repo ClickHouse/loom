@@ -33,6 +33,7 @@ _NOT_READS = {
         "claim_due", "defer_audits", "release", "renew", "sweep_settled", "claim_outbox",
         "drop_outbox", "fail_outbox", "sweep_erasure_evidence", "record_failure", "redact",
         "fold_usage", "republish_targets", "hold_for_republish", "hold", "release_held",
+        "clear_payloads",
     },
     "pg_documents": {
         "refuse_unstorable_keys", "encode_row", "decode_row", "commit", "complete",
@@ -109,6 +110,8 @@ _CALLERS = {
     "server/memory/store/records.py": "a retirement reads its writers durably; "
     "`live_writer_record` filters a request's read, which commits through `memory.set`",
     "server/memory/store/redaction.py": "decides a redaction, which commits",
+    "server/memory/workers/pg_payload_clear.py": "clears through its own commit, and only "
+    "revisions delivered a horizon ago that ClickHouse holds",
 }
 
 

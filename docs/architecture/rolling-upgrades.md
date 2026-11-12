@@ -577,6 +577,24 @@ schema. These rules keep that safe. The operator procedure is in
     them; once N-1 stops serving, run such an erasure again with N ([upgrade
     procedure](../operations/upgrades.md#upgrade-procedure), step 12). No gate holds the
     rollout, and the mixed-version gate does not check this rule.
+43. **A revision's delivery time** (`delivered_at` on `loom.memory_revisions`, Postgres
+    migration `010_revision_delivered_at.sql`): under the Postgres authority N stamps a
+    revision it delivers more than 15 minutes after its commit, and the payload clearing
+    pass takes an unstamped one as delivered within 15 minutes of `committed_at`
+    ([payload clearing](storage-authority.md#payload-clearing)). N-1 completes a late
+    delivery without the stamp, so a revision it delivered late counts as delivered
+    earlier than it was, by up to that delivery's lateness, and stays so. Turn
+    `LOOM_PG_PAYLOAD_CLEAR_ENABLED` on no sooner than one clearing horizon after N
+    serves alone: every revision N-1 delivered is then past the horizon from its real
+    delivery. A rollback to N-1 starts that wait again: turn the switch off before it,
+    and on again no sooner than one clearing horizon after N serves alone after the roll
+    forward. The switch is off by default, and N-1 runs no clearing pass. N-1's delivery
+    cannot send a revision whose payload was cleared. Once a clearing pass has run,
+    `loom reconcile` runs only with a build that carries 010, and that build is the one
+    the deployment starts on after it; a rollback waits until N owes no claimable
+    delivery for a cleared revision, and while N-1 serves a retry of parked deliveries
+    leaves the cleared revisions out ([rollback](../operations/upgrades.md#rollback)).
+    No gate holds the rollout, and the mixed-version gate does not check this rule.
 
 ## What checks them
 

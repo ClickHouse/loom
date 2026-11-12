@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -1186,6 +1187,38 @@ def test_the_ledger_sweep_runs_after_a_copy_that_failed(monkeypatch: pytest.Monk
     assert result.ledger_swept == 4
 
 
+def test_heads_that_hold_leaves_out_are_not_counted_and_are_warned_of(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A head ClickHouse lacks whose revision `hold` leaves out (erased meanwhile) is not
+    counted as held, and reconcile warns of it."""
+    from server.memory.app import restore_reconcile
+
+    heads = [
+        {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "-",
+         "memory_key": k, "version": 1, "seq": i, "memory_type": "semantic", "sensitivity": ""}
+        for i, k in enumerate(("k1", "k2"), start=1)
+    ]  # fmt: skip
+    pages = [heads, []]
+
+    async def page(after: Any, limit: int) -> list[dict[str, Any]]:
+        return pages.pop(0)
+
+    async def hold(seqs: Any, targets: Any) -> int:
+        return len(seqs) - 1  # one revision erased meanwhile
+
+    class _Empty:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr(pg_memory, "head_page", page)
+    monkeypatch.setattr(pg_memory, "hold", hold)
+    with caplog.at_level(logging.WARNING, logger=restore_reconcile.__name__):
+        assert asyncio.run(restore_reconcile.hold_heads_behind(_Empty())) == 1
+    assert "heads ClickHouse lacks or holds older that cannot be sent again" in caplog.text
+    assert caplog.text.rstrip().endswith(": 1")
+
+
 def test_the_heads_clickhouse_lacks_or_holds_older_are_held_page_by_page(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1212,8 +1245,9 @@ def test_the_heads_clickhouse_lacks_or_holds_older_are_held_page_by_page(
 
     held: list[Any] = []
 
-    async def hold(seqs: Any, targets: Any) -> None:
+    async def hold(seqs: Any, targets: Any) -> int:
         held.extend(zip(seqs, targets, strict=True))
+        return len(seqs)
 
     class _Published:
         """ClickHouse holds k1 at the same version, k2 at an older one, k3 not at all."""

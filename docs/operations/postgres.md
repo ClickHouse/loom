@@ -135,19 +135,35 @@ and `knowledge.ingest_cancel` answer 503 too, as each reads or commits its job t
 (`loom.knowledge_jobs`); a run stopped by an outage counts that attempt and runs again
 once Postgres answers.
 
-`parked_deliveries` counts revisions committed in Postgres that ClickHouse refused
-`LOOM_PG_DELIVERY_MAX_ATTEMPTS` times. One whose `targets` holds none of 1, 2 and 4 has
-its memory row in ClickHouse (its search document too when it gets one), its audit row
-there or in `loom.audit_outbox`, and owes only retirements: 8, its deleted decision's
-record, which `decision.chain` still serves until it is retired; 16, the vectors of the
-version it replaced, which search still finds until they are retired (for a `high` row,
-its fence hides the served model's vectors meanwhile). A parked revision is not retried;
-its `last_error` in `loom.memory_deliveries` holds the error's type and its ClickHouse
-code, HTTP status or Postgres SQLSTATE, never its text, which may quote the memory. This
-statement retries one:
+`parked_deliveries` counts every memory delivery with an endless lease: revisions
+committed in Postgres that ClickHouse refused `LOOM_PG_DELIVERY_MAX_ATTEMPTS` times, the
+superseded versions whose cleared payload left nothing to send (below), and the
+deliveries `loom reconcile` holds (`last_error` `held by loom reconcile`) until it
+releases them. One whose `targets` holds none of 1, 2 and 4 has its memory row in
+ClickHouse (its search document too when it gets one), its audit row there or in
+`loom.audit_outbox`, and owes only retirements: 8, its deleted decision's record, which
+`decision.chain` still serves until it is retired; 16, the vectors of the version it
+replaced, which search still finds until they are retired (for a `high` row, its fence
+hides the served model's vectors meanwhile). One out of attempts is not retried; its
+`last_error` in `loom.memory_deliveries` holds the error's type and its ClickHouse code,
+HTTP status or Postgres SQLSTATE, never its text, which may quote the memory. This
+statement retries one (never a reconcile hold, which `loom reconcile` releases itself):
 
 ```sql
 UPDATE loom.memory_deliveries SET attempts = 0, held = false, lease_until = now() WHERE …
+```
+
+Once the [payload clearing](../architecture/storage-authority.md#payload-clearing) pass
+has run, a build without `010_revision_delivered_at.sql` cannot send a revision whose
+payload was cleared: while such a build serves, a retry leaves those out, adding this to
+its `WHERE` (one primary-key probe per delivery):
+
+```sql
+AND NOT EXISTS (SELECT 1 FROM loom.memory_revisions r
+                WHERE r.org = memory_deliveries.org
+                  AND r.namespace = memory_deliveries.namespace
+                  AND r.seq = memory_deliveries.seq
+                  AND r.row IS NULL)
 ```
 
 A publish that ends the worker process (out of memory on a huge value) counts as an
@@ -157,7 +173,20 @@ document, gets a stub the embedding worker fills.
 
 A publish that runs past its ClickHouse statement deadline counts as the rows' own
 failure, since ClickHouse still answers: after a slowdown that parked healthy
-revisions, the statement above with `WHERE attempts >= …` retries them all.
+revisions, the retry statement above with `WHERE attempts >= …` retries them all.
+
+One parked with `last_error` `payload cleared, nothing to send` is a version whose
+payload the [payload clearing](../architecture/storage-authority.md#payload-clearing)
+pass cleared and that a later version of its key has replaced: ClickHouse serves the
+key's head, and that version's content is gone (a restore that skipped the
+[runbook](backup-and-recovery.md#the-postgres-journal-and-a-clickhouse-restore)). Its
+audit row is not sent again either: it stays in the revision's `audit` in
+`loom.memory_revisions`. Retrying the delivery cannot succeed; once noted, delete its row:
+
+```sql
+DELETE FROM loom.memory_deliveries
+WHERE lease_until = 'infinity' AND last_error = 'payload cleared, nothing to send';
+```
 
 The knowledge delivery worker publishes one delivery at a time, each retirement its own:
 up to two inserts per delivery and `LOOM_PG_DELIVERY_BATCH_ROWS` deliveries a pass,
