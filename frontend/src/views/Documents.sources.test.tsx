@@ -152,7 +152,7 @@ describe("Library sources", () => {
     expect(screen.queryByRole("button", { name: "Add a source" })).toBeNull();
   });
 
-  it("shows no Sources heading while the list loads", async () => {
+  it("shows no Sources button while the list loads", async () => {
     sources.listKnowledgeSources.mockReturnValue(new Promise(() => {}));
     show("admin");
     await waitFor(() => expect(sources.listKnowledgeSources).toHaveBeenCalled());
@@ -259,26 +259,30 @@ describe("Library sources", () => {
         .map((m) => m.textContent),
     ).toEqual(["Check", "Retire"]);
   });
-});
 
-describe("Library sources button", () => {
-  beforeEach(() => {
-    resetNamespaceRoleCache();
-    sources.listKnowledgeSources.mockResolvedValue(LISTED);
-  });
-  afterEach(() => {
-    cleanup();
-    vi.clearAllMocks();
-    useStore.setState({ identity: null, whoami: null, myNamespaces: null });
-  });
-
-  it("keeps the list closed, counted on its button, until it is pressed", async () => {
+  it("keeps the list closed, counted on its button, until it is pressed, and closes again", async () => {
     show("viewer");
+    const user = userEvent.setup();
     const button = await screen.findByRole("button", { name: "Sources (1)" });
     expect(button).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("team-notes")).toBeNull();
-    await userEvent.setup().click(button);
+    await user.click(button);
     expect(button).toHaveAttribute("aria-expanded", "true");
     expect(await screen.findByText("team-notes")).toBeInTheDocument();
+    // The heading takes the focus, so the list is next in the tab order.
+    expect(screen.getByRole("heading", { name: "Sources" })).toHaveFocus();
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("team-notes")).toBeNull();
+  });
+
+  it("opens the list below the header, not inside its actions", async () => {
+    show("viewer");
+    await openSources();
+    const section = (await screen.findByRole("heading", { name: "Sources" })).closest("section");
+    const button = screen.getByRole("button", { name: "Sources (1)" });
+    expect(section).not.toBeNull();
+    expect(section?.contains(button)).toBe(false);
+    expect(button.compareDocumentPosition(section as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

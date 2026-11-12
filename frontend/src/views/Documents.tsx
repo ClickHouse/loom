@@ -73,7 +73,7 @@ import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
 
-// Loaded with the Library's place view; SourcesList decides whether its section shows.
+// Loaded with the Library's place view; SourcesList decides whether its button shows.
 const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
 
 const FIRST_SCREEN_ROWS = 12;
