@@ -8,6 +8,7 @@ import json
 import pytest
 
 import server.cli.install as cli
+from server.identity.app.token_clients import CODING_CLIENTS, MCP_CLIENTS, client_config
 
 
 @pytest.fixture(autouse=True)
@@ -205,7 +206,7 @@ def test_claude_code_install_prints_command_and_project_block_when_claude_missin
     monkeypatch.setenv("HOME", str(tmp_path))
     _no_claude_binary(monkeypatch)
     assert cli._install_claude_code_mcp(
-        server_url="https://h/", name="loom", dry_run=False, toolset=""
+        server_url="https://h/", name="loom", dry_run=False, toolset="coding"
     )
     out = capsys.readouterr().out
     assert "not on PATH" in out
@@ -275,7 +276,9 @@ def test_claude_code_install_reports_claude_mcp_add_failure(
 
     monkeypatch.setattr(subprocess, "run", lambda argv, **kw: _Failed())
     assert (
-        cli._install_claude_code_mcp(server_url="https://h", name="loom", dry_run=False, toolset="")
+        cli._install_claude_code_mcp(
+            server_url="https://h", name="loom", dry_run=False, toolset="coding"
+        )
         is False
     )
     err = capsys.readouterr().err
@@ -295,7 +298,7 @@ def test_claude_code_install_dry_run_runs_nothing(
 
     monkeypatch.setattr(subprocess, "run", _boom)
     assert cli._install_claude_code_mcp(
-        server_url="https://h", name="loom", dry_run=True, toolset=""
+        server_url="https://h", name="loom", dry_run=True, toolset="coding"
     )
     out = capsys.readouterr().out
     assert out.startswith("would run: " + _CC_CMD)
@@ -425,3 +428,20 @@ def test_dry_run_previews_only_the_keys_it_sets_and_masks_the_token(
     # nothing was written
     assert json.loads(cfg.read_text()) == other
     assert json.loads(lcfg.read_text()) == {"token": "OLD-SECRET", "note": "kept"}
+
+
+@pytest.mark.parametrize("client", sorted(set(MCP_CLIENTS) - {"claude-code", "codex"}))
+def test_install_gives_each_client_the_toolset_the_server_setup_gives(
+    client: str, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty --toolset writes the URL the dashboard's and the token setup's
+    entry for the client carries: `coding` for a coding agent, else bare."""
+    cfg = tmp_path / client / "config.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
+    cfg.parent.mkdir(parents=True)
+    assert cli._install_one(client, token="T", server_url="https://h", name="loom", dry_run=False)
+    written = json.dumps(json.loads(cfg.read_text()))
+    setup = json.dumps(client_config(client, "https://h/mcp", "T")["config"])
+    expected = "https://h/mcp?toolset=coding" if client in CODING_CLIENTS else "https://h/mcp"
+    assert expected in written and expected in setup
+    assert "toolset=coding" not in written or client in CODING_CLIENTS

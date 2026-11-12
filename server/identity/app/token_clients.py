@@ -11,7 +11,7 @@ import re
 _STDIO_VIA_NPX = {"claude-desktop", "zed", "cline"}
 
 # Coding agents mount the `coding` toolset, on the URL, as the dashboard's snippets do
-# (frontend/src/lib/clients.ts CODING_TOOLSET_CLIENTS).
+# (frontend/src/lib/clients.ts CODING_TOOLSET_CLIENTS) and `loom install` does.
 CODING_CLIENTS = {"claude-code", "codex", "cursor"}
 
 

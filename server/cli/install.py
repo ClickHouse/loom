@@ -83,8 +83,7 @@ def _install_mcp_url(server_url: str, toolset: str) -> str:
     return mcp_url
 
 
-# A coding agent (CODING_CLIENTS: Claude Code, Codex, Cursor) lists the `coding`
-# tier unless --toolset names another, as the plugins and the dashboard do.
+# A client in CODING_CLIENTS lists the coding tier unless --toolset names another.
 _CODING_TOOLSET = "coding"
 
 
@@ -180,7 +179,7 @@ def _install_claude_code_mcp(
 
     if _plugin_mounts_the_server(force):
         return True
-    mcp_url = _install_mcp_url(server_url, toolset or _CODING_TOOLSET)
+    mcp_url = _install_mcp_url(server_url, toolset)
     argv = _claude_mcp_add_argv(name=name, mcp_url=mcp_url)
     line = _shell_words(argv)
     claude_bin = shutil.which("claude")
@@ -248,7 +247,7 @@ def _install_codex_mcp(
     import shutil
     import subprocess
 
-    mcp_url = _install_mcp_url(server_url, toolset or _CODING_TOOLSET)
+    mcp_url = _install_mcp_url(server_url, toolset)
     argv = _codex_mcp_add_argv(name=name, mcp_url=mcp_url)
     line = _shell_words(argv)
     codex_bin = shutil.which("codex")
@@ -354,6 +353,7 @@ def _install_one(
     goes through `claude mcp add`."""
     import json as _json
 
+    toolset = toolset or (_CODING_TOOLSET if client in CODING_CLIENTS else "")
     if client == "claude-code":
         return _install_claude_code_mcp(
             server_url=server_url,
@@ -368,8 +368,7 @@ def _install_one(
         )
     section = config_key(client)
     cfg_path = _resolve_install_path(client)
-    default = _CODING_TOOLSET if client in CODING_CLIENTS else ""
-    mcp_url = _install_mcp_url(server_url, toolset or default)
+    mcp_url = _install_mcp_url(server_url, toolset)
     entry = mcp_entry(client, mcp_url, token)
 
     existing: dict[str, Any] = {}
@@ -501,8 +500,8 @@ def _add_install_flags(p_install: argparse.ArgumentParser) -> None:
         type=_toolset_arg,
         help=(
             "MCP toolset the client lists, as `?toolset=` on the URL: "
-            "`coding` for a coding agent, empty for the server default (core; "
-            "claude-code, codex and cursor default to `coding`)."
+            "empty: `coding` for claude-code, codex and cursor, else the server "
+            "default (LOOM_MCP_TOOLSET)."
         ),
     )
     p_install.add_argument(
