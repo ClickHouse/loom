@@ -120,9 +120,13 @@ gain on a small set of term queries.
 ### Recording misses
 
 Recording is an operator opt-in (`knowledge_gaps_enabled`, off by default), as
-`search_trace_log_enabled` is: a miss stores query text. A miss is a search that found
-nothing a caller could use, recorded by the op the caller invoked, never by a search
-another op runs on its behalf:
+`search_trace_log_enabled` is: a miss stores query text. A namespace that refused capture
+(`capture_generation_io = false`, read through `server/observability/capture_consent.py`)
+records no misses, and an unreadable consent counts as a refusal; the setting's other
+values leave recording to the operator's opt-in, so turning gaps on never needs prompt
+capture. No miss is recorded while a replica below N serves (the rollout gate below). A
+miss is a search that found nothing a caller could use, recorded by the op the caller
+invoked, never by a search another op runs on its behalf:
 
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
   and served no governed definition, when it read the namespace-wide rows under a read
@@ -160,7 +164,7 @@ per query text with its sessions, not its people, and only for memory searches.
 The `knowledge_gaps` worker runs once a day for each namespace with misses. It reads the
 last `knowledge_gaps_window_days` (default 7) of misses and groups them by normalised
 query. **Privacy threshold:** a group with fewer than `knowledge_gaps_min_askers` distinct
-askers (default three, never below two, one value for the deployment) is dropped before
+askers (default three, never below three, one value for the deployment) is dropped before
 anything else, so every query a gap shows was
 asked in that form by at least that many tokens' principals. The worker embeds the
 remaining groups' queries (at most `knowledge_gaps_max_groups`), merges groups whose
@@ -172,7 +176,7 @@ new build of the namespace in `loom.knowledge_gaps`:
 | `gap_id`          | A hash of the namespace and the gap's most asked query.         |
 | `head`, `samples` | The most asked normalised query, and the others merged into it. |
 | `askers`, `asks`  | How many distinct askers, and how many times.                   |
-| `last_at`         | When it was last asked.                                         |
+| `last_at`         | The day it was last asked.                                      |
 
 Every build writes its gaps, then a marker row, and readers take the latest build that has
 its marker, so a build with no gap left, or one whose gaps an erasure deleted, still
@@ -180,16 +184,17 @@ replaces the last one. Builds expire after 14 days. A pass whose read raced an e
 delete could write erased rows back, so after writing its gaps, and before the marker, the
 worker deletes them and writes no marker when an erasure that may reach the namespace (any
 user's, or the namespace's) was unfinished when the pass read or has finished since
-(`ledger_reads.unfinished_reaching`, [memory architecture](memory-architecture.md)); an
+(`ledger_reads.unfinished_reaching`, as the
+[erasure saga](memory-architecture.md#erasure-saga) fences other writers); an
 erasure that begins after that check deletes the gaps itself. A failed erasure keeps that
 fence until it completes, and the namespace shows no new build meanwhile.
 
 ### Ops and dashboard
 
-| Op                     | Role  | What it does                                                                                                                                                              |
-| ---------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                                                                                                  |
-| `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM, from its queries and the namespace's live documents a search for it finds, and queues it (`source_kind = 'knowledge_gap'`). |
+| Op                     | Role  | What it does                                                                                                          |
+| ---------------------- | ----- | --------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                                              |
+| `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`). |
 
 Both list what users asked, so neither honours a read-narrowed token: the check that
 admits the `knowledge.` group to such a token (`honours_read_scope` in
@@ -234,7 +239,10 @@ namespace, so the blacklist and the pinned-key check run as for any write ([lear
 review queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)).
 Then the same call governs the version the write committed (under the Postgres memory
 authority, the version Postgres committed, published or not) as the reviewer's
-server-stamped actor: the admin promoting a definition is the person standing behind it. A
+server-stamped actor: the admin promoting a definition is the person standing behind it.
+A govern (promotion's or `definition.govern`) writes its record, then reads the row again
+and deletes the record when the row was tombstoned, redacted or changed meanwhile, so a
+racing delete or redact leaves no record behind. A
 draft for a term already governed revises that definition, and the promotion is the
 approval of its new text. A definition promotes to memory only; a `destination` of
 `knowledge` or `both` is refused for these candidates. A rejected draft leaves nothing
@@ -285,7 +293,7 @@ serves. Every op it adds (`knowledge.gaps.*`, `definition.*`, the query-history
 registration's ops) and a `learnings.review` promotion of a `knowledge_gap` or
 `query_history` candidate answers 503 while any live replica's schema is below N, as
 `namespace.guide_set` does (rule 24), and the gaps pass and the query-history turn write
-nothing then. The operator turns `knowledge_gaps_enabled` on only
+nothing then, and no miss is recorded. The operator turns `knowledge_gaps_enabled` on only
 once no N-1 replica serves, as rule 23 does for assistant-turn learnings. So while N-1
 serves no miss, gap, draft, governed record or registration is written, and N-1 sees a
 `definition` row only as a plain memory row with no term leg.
