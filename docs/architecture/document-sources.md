@@ -77,20 +77,22 @@ an item swap whose new files are listed before the old copies retire, or a lower
 setting) holds back new documents only: it finishes its listing, rewrites changed lists,
 retires, and lands its listing row, so its copies drain back under the bound and no list
 goes stale; `inspect` and `loom doctor` show `too_many_documents` meanwhile, with the
-count, for a `namespace` source; for a mirrored one only a connected source's owner and
-a platform admin see it. The read of a source's stored copies goes in pages by
+count, for a `namespace` source; for a mirrored one a connected source's owner and a
+platform admin see the code alone. The read of a source's stored copies goes in pages by
 `source_uri`, so it never cuts one off. A listing asks the store about at most 50 parent
 folders per query (not a setting), so a source of many folders lists in several queries;
 a recursive folder's subfolders are walked on every full listing, and a file in a new
 subfolder arrives with the next one. A probe checks a bounded sample: every item while
 there are at most 20, otherwise the 20 items added last, and the answer says `sampled:
-true` with the number checked. A mirrored source's probe answers reachability, the items
-checked and codes, never a count, a sample of titles or a summary that names a file,
-since it lists as the owner or as crawled people. A crawl's probe and status, and a
-connected source's to anyone but its owner, answer only whether the credential and its
-scopes work: no answer about an item depends on whether a person can read a file. Only a
-refused item of the sample refuses `add` or `update`; the next sync turn reports any
-other as `item <n>: http_404` and goes on with the rest.
+true` with the number checked (on a mirrored source, for its owner only, below). A
+mirrored source's probe answers reachability, the items checked and codes, never a
+count, a sample of titles or a summary that names a file, since it lists as the owner or
+as crawled people. A crawl's probe and status, for any caller, and a connected source's
+to anyone but its owner, answer only whether the credential and its scopes work: an item
+refusal, a per-item turn code (`item <n>: http_404`, `meet_recordings: not found`) and
+the oldest listing start are not answered there, since each depends on what a person can
+read. Only a refused item of the sample refuses `add` or `update`; the next sync turn
+reports any other as `item <n>: http_404` and goes on with the rest.
 
 ### The link parser
 
@@ -137,35 +139,35 @@ drives it reads, what it reads of them (items, `include`) or the key it reads wi
 
 ### One document, one owner
 
-One document per address per namespace, as today, owned by one source: the source whose
-`source:<name>` tag it carries, written by the sync worker (today's ownership check).
-Only the owner rewrites the document when its file changes and retires it on positive
-evidence (today's retirement rule), and a document another writer (a person, an agent)
-wrote is never overwritten or retired by any source, as today. A mirrored document also
-carries `source-id:<id>`, the id of the source that wrote it, and in a mirror that tag,
-not the name, decides ownership: a later source of the same name owns none of an earlier
-one's documents, and the cleanup of a stopped mirrored source retires by it. Only N
-writes a mirror, so every mirror document carries the tag. How a stopped source's
-documents and rows are found and cleaned when several sources, builds or names meet is
-the implementing pull request's to specify.
+In a namespace, one document per address, as today, owned by one source: the source
+whose `source:<name>` tag it carries, written by the sync worker (today's ownership
+check). Only the owner rewrites the document when its file changes and retires it on
+positive evidence (today's retirement rule), and a document another writer (a person, an
+agent) wrote is never overwritten or retired by any source, as today. A mirrored
+document also carries `source-id:<id>`, the id of the source that wrote it, and in a
+mirror that tag, not the name, decides ownership: a later source of the same name owns
+none of an earlier one's documents, and the cleanup of a stopped mirrored source retires
+by it. Only N writes a mirror, so every mirror document carries the tag. Inside a mirror
+a document is keyed by its address and its source id, so each mirrored source writes its
+own copy with its own list and no source's write depends on what another source holds;
+the legs drop the duplicate after the check. How a stopped source's documents and rows
+are found and cleaned when several sources, builds or names meet is the implementing
+pull request's to specify.
 
-A second source that lists a file at an address where a document is counts it `skipped`,
-as today, and fetches no content. No source reads whether another is live: an address is
-free exactly when no document is there. Once the owner's document is retired (by today's
-[retirement rule](../features/knowledge.md#document-sources), its `remove` with
-`delete_documents`, or any stop of a mirrored source), the next source that lists the
-file writes it as a new file under its own tag: a mirrored source at its next complete
-listing, a `namespace` source at its next full listing
+In a namespace, a second source that lists a file at an address where a document is
+counts it `skipped`, as today, and fetches no content. No source reads whether another
+is live: an address is free exactly when no document is there. Once the owner's document
+is retired (by today's [retirement rule](../features/knowledge.md#document-sources), its
+`remove` with `delete_documents`, or any stop of a mirrored source), the next source
+that lists the file writes it as a new file under its own tag at its next full listing
 (`knowledge_source_sync_full_interval_seconds`). A kept document (one a `remove` without
 `delete_documents` left) is skipped by every source until `knowledge.delete` removes it,
 as today.
 
-So a file that two sources reach is written once and read through one document, with the
-owner's list: in a mirror, a file whose list neither source can read admits only the
-people the owner's listing found, so the other source's reader does not see it while the
-first owns it, which fails closed. Between the owner's retirement and the other source's
-next listing of the file, the document is missing; those gaps are the cost of keeping
-one owner per address instead of recording every source that reaches it.
+So a file that two `namespace` sources reach is written once and read through one
+document. Between the owner's retirement and the other source's next listing of the
+file, the document is missing; that gap is the cost of keeping one owner per address
+there. A mirror pays duplicate chunks for a file two mirrored sources reach instead.
 
 `remove` with `delete_documents` retires the source's documents, as today, and without
 it they stay as kept documents, which `add` of the same name refuses to take over
@@ -314,8 +316,9 @@ holds: no count, title, file id or address, and a code that depends on the mirro
 (a residue failure) reads as the same code for any cause. One more exception: a
 namespace erasure keeps its mirror's step and census counts in a separate part of its
 ledger row, which `erasure.status` and `erasure.list` show only to a platform admin. The
-sync of a mirrored source is no request; its spend counts against the namespace's cap
-and appears in no per-namespace usage row.
+sync of a mirrored source is no request: its spend counts against no namespace's cap and
+appears in no per-namespace row; its own pass budget bounds it, and only a platform
+admin sees its total, a third exception.
 
 A deployment with auth off (`LOOM_AUTH_REQUIRED=false`) has no reader identity to check.
 It refuses to add a mirrored source (`AUTH_REQUIRED`), and when auth is switched off
@@ -422,9 +425,10 @@ tombstone carries no list, and no read op returns the column.
 A reader sees a mirrored document when all of these hold:
 
 1. The reader holds `viewer` on the source's namespace (the ordinary gate).
-2. The document's owning source (by its `source-id` tag) has a last complete listing
-   that started within `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` (default 3600) of now,
-   read from its row in `loom.knowledge_source_listings`, and the list is not `unread`.
+2. The document's owning source (by its `source-id` tag) is active and has a last
+   complete listing that started within `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS`
+   (default 3600) of now, read from its row in `loom.knowledge_source_listings`, and the
+   list is not `unread`.
 3. One of the reader's verified emails is in the list's `emails`, or in the members of
    one of its `groups` from an equally fresh members row of the document's owning source
    (by its `source-id` tag), or that email's domain is in its `domains`, or its `anyone`
@@ -448,12 +452,14 @@ replica cannot pair a fresh listing row with an older list. It computes the addr
 the reader may see before its `LIMIT`, so a page is never cut short by the check, and
 caches no admitted set. No score depends on a document the reader may not see: a
 mirror's chunks add nothing to any corpus statistic (the lexical leg's document counts,
-lengths and term frequencies), and a mirror leg scores its hits against the namespace's
-statistics. Under the Postgres authority each leg judges the addresses it is about to
-answer by their heads, so a narrowing or a retirement committed and not yet published
-already applies, and a missing head drops the address; a leg that cannot read the heads
-shows no mirrored document. The implementing pull request measures the leg on a mirror
-of a million documents under both storage authorities and puts the figures here.
+lengths and term frequencies), and a mirror leg scores its lexical hits with fixed
+corpus constants, which depend on no document, so a namespace fed only by mirrored
+sources still ranks by both legs. Under the Postgres authority each leg judges the
+addresses it is about to answer by their heads, so a narrowing or a retirement committed
+and not yet published already applies, and a missing head drops the address; a leg that
+cannot read the heads shows no mirrored document. The implementing pull request measures
+the leg on a mirror of a million documents under both storage authorities and puts the
+figures here.
 
 ### Every turn reads the lists again
 
@@ -477,9 +483,10 @@ most a third of the pass deadline (`knowledge_source_sync_max_pass_seconds`); a 
 that does not finish goes on from its cursor in the next pass, and until it completes
 the source's listing row keeps its older start, so a large source needs a stale bound
 longer than the time to list it all. `inspect` and `loom doctor` report each source's
-oldest listing start. A stopped sync hides every mirrored document once the stale bound
-passes. The implementing pull request measures the writes of a crawl over 2000 people
-and puts the figures here.
+oldest listing start, a mirrored source's to its connected owner and a platform admin
+only. A stopped sync hides every mirrored document once the stale bound passes. The
+implementing pull request measures the writes of a crawl over 2000 people and puts the
+figures here.
 
 How lists from several accounts of one source, a person a crawl stops reading, a stopped
 source's rows, and restores of either store are handled is the implementing pull
@@ -508,9 +515,10 @@ admits someone the store no longer names.
 | A caller injects store query syntax through a filter                              | Filters are fields with patterns, escaped and built by the server; no raw query is taken.                                                                                                                      | `server/clients/gdrive.py`                                                             |
 | A stolen connected credential changes the store                                   | Only read scopes are accepted; the credential is sealed and never returned.                                                                                                                                    | the connect callback; `server/core/secrets_at_rest.py`                                 |
 
-Out of scope: a reader who already saw a document and kept its text, their own agent's
-or conversation's record of an answer included, which is that reader's write; the store
-itself reporting a wrong permission list.
+Out of scope: response timing; that a namespace erasure is still retrying, which a
+namespace admin sees whatever its cause; a reader who already saw a document and kept
+its text, their own agent's or conversation's record of an answer included, which is
+that reader's write; the store itself reporting a wrong permission list.
 
 ## Meetings through the shared-folder store
 
@@ -576,7 +584,7 @@ requests. That design has to answer what this page found:
   (`--credential-file`, `--connected`), `loom connect gdrive|notion|linear`, `loom
 connection list|disconnect`, `loom knowledge mirror erase --all` ([restores and
   rollback](#rolling-upgrades)), and `loom doctor`'s line for the oldest listing start
-  of each mirrored source.
+  of each mirrored source (for a connected source's owner and a platform admin).
 - **Dashboard.** The Library's Sources section: paste many links, a preview of what each
   resolves to and which could not be read, Check, Add, edit items, the access mode, and
   each source's last sync. Settings → Connected accounts: connect, see, disconnect. The
@@ -788,9 +796,16 @@ Each implementing pull request lists its own; these pin the model:
     `lexical_score` and rank unchanged; `knowledge.reads` after an admitted reader's
     `knowledge.get` of a mirrored address not naming it; `audit.list` after a connected
     `add`, by an admin who is not the owner, showing no item; a crawl `update` probe by
-    an org admin who is not the registrant answering the same code whether or not the
-    file exists; `erasure.status` and `erasure.list` by a viewer, and a saga that fails
-    on mirror residue, showing no mirror count.
+    any caller answering the same code whether or not the file exists; `erasure.status`
+    and `erasure.list` by a viewer, and a saga that fails on mirror residue, showing no
+    mirror count.
+  - `cost.budget_status` and `cost.summary` by a viewer reading the same before and
+    after a mirrored sync pass; a file another mirrored source holds, added by a second
+    source, written as that source's own copy with its own list, so the adder sees what
+    they would with no other source; a namespace whose documents are all mirrored
+    ranking by both legs; a crawl's status carrying no `item <n>` code and no
+    `meet_recordings: not found`; a stopped source's documents admitting nobody before
+    their retirement.
   - `row_reach`, `row_in_scope` and `namespace_for_id` opening nothing of a mirror with
     auth off; a mirrored source's document counts shown to nobody.
   - A turn that finds a narrowed list rewriting the row without rebuilding a chunk, and
