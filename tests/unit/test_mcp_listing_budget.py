@@ -371,9 +371,9 @@ def test_roster_sizes_derive_from_the_registry():
 def test_listing_budget_chars_over_four():
     """The ceilings sit a little above the current listings; a new tool or a
     long description pays for itself here."""
-    assert _tok({"tools": _listing("core", True)}) <= 9_500
-    assert _tok({"tools": _listing("core", False)}) <= 5_975
-    assert _tok({"tools": _listing("coding", False)}) <= 9_125
+    assert _tok({"tools": _listing("core", True)}) <= 9_475
+    assert _tok({"tools": _listing("core", False)}) <= 5_950
+    assert _tok({"tools": _listing("coding", False)}) <= 9_100
     assert _tok({"tools": _listing("atomic", False)}) <= 4_500
     # every listed tool on every listing: a text's length depends on the listing,
     # since an unlisted op gains "(via loom_op)" where a listed one is renamed

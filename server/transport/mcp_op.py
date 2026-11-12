@@ -27,6 +27,7 @@ import re
 from collections.abc import Set
 from typing import Any
 
+from server.operations.base import Operation
 from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport.mcp_config import _ok
@@ -40,7 +41,6 @@ _CATALOG_LIMIT = 15
 
 
 def _ops() -> list[Any]:
-
     return [op for op in ALL_OPERATIONS if op.name not in _MCP_HIDDEN_OPS]
 
 
@@ -95,7 +95,7 @@ def reachable(op: Any, toolset: str | None) -> bool:
 
 # Tool name → op: how a `tools/call` resolves its op, and how prose naming a
 # tool is read back to its op.
-TOOLS_BY_NAME: dict[str, Any] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
+TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 # A dotted op name as prose spells it (`memory.set`, `knowledge.source.add`).
 OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
 # An op named in prose: its tool name or its dotted op name, and a closing
@@ -137,14 +137,17 @@ _EXAMPLES: tuple[tuple[str, str], ...] = (
 )
 
 
-def description(listed: Set[str], toolset: str | None) -> str:
+def loom_op_description(listed: Set[str], toolset: str | None) -> str:
     """`loom_op`'s text for a listing whose tool names are ``listed``."""
     shown = []
     for name, what in _EXAMPLES:
         op = OPERATIONS_BY_NAME[name]
         if op.mcp_tool_name not in listed and reachable(op, toolset):
             shown.append(f"{what} ({name})")
-    such_as = f" It reaches, for example, {', '.join(shown)}." if shown else ""
+    such_as = ""
+    if shown:
+        listing = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+        such_as = f" It reaches, for example, {listing}."
     reads = "" if routes_writes(toolset) else " On this read-only connection it runs reads only."
     # Discovery and the call shape lead: compact keeps the first paragraph cut near
     # 280 chars, so both must fit in the first sentence.
@@ -153,14 +156,13 @@ def description(listed: Set[str], toolset: str | None) -> str:
         '{"op": "help", "query": "<words>"} lists matching ops, then call one as '
         '{"op": "memory.related", "arguments": {"memory_key": "deploy_day"}}.\n'
         f'A description\'s "(via loom_op)" means this tool.{such_as} '
-        f"Prefer a listed tool when one fits.{reads}\n"
-        f"Help lists up to {_CATALOG_LIMIT} ops with their arguments and purpose; an unknown "
-        "op answers with the nearest ones. Identity and namespace default as for a listed tool."
+        f"Prefer a listed tool when one fits.{reads} Identity and namespace default as for "
+        "a listed tool."
     )
 
 
 DESCRIPTOR: dict[str, Any] = {
-    "name": LOOM_OP_TOOL_NAME,  # its description is built per listing: description()
+    "name": LOOM_OP_TOOL_NAME,  # its description is built per listing: loom_op_description()
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -257,7 +259,7 @@ _NEEDS_AN_OPERATOR = (
 )
 
 
-def hidden_refusal(name: str, toolset: str | None = None) -> dict[str, Any] | None:
+def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
     """The refusal for an op that exists but is kept off MCP: that it is not on
     MCP, and what to do instead, naming ops as the ``toolset`` listing does.
     None when `name` is not a hidden op."""

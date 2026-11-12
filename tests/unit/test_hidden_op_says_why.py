@@ -52,7 +52,7 @@ def test_a_readonly_deployment_default_routes_reads_only(monkeypatch) -> None:
 
     monkeypatch.setattr(settings, "mcp_toolset", "readonly")
     assert not mcp_op.routes_writes(None)
-    assert "reads only" in mcp_op.description(set(), None)
+    assert "reads only" in mcp_op.loom_op_description(set(), None)
     body = _call("memory.set", {"memory_key": "k", "value": "v"})["structuredContent"]
     assert body["code"] == "UNKNOWN_OP" and "read-only" in body["error"]
     assert mcp_op.hidden_refusal("memory.bulk_set", None)["instead"].startswith(
@@ -80,9 +80,9 @@ def test_every_hidden_op_gets_a_reason_and_an_unknown_op_keeps_the_old_refusal()
 
     names = {op.name for op in ALL_OPERATIONS}
     for name in sorted(_MCP_HIDDEN_OPS & names):
-        body = mcp_op.hidden_refusal(name)
+        body = mcp_op.hidden_refusal(name, None)
         assert body and body["instead"], name
-    assert mcp_op.hidden_refusal("memory.nope") is None
+    assert mcp_op.hidden_refusal("memory.nope", None) is None
     assert _call("memory.nope")["structuredContent"]["code"] == "UNKNOWN_OP"
 
 

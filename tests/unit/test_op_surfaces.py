@@ -107,7 +107,7 @@ def test_a_refusal_names_the_dashboard_only_for_an_op_the_dashboard_calls():
     """A hidden op with no alternative of its own sends the agent to the user in the
     dashboard when the dashboard calls it, and to an operator when it does not."""
     for name in _MCP_HIDDEN_OPS:
-        instead = mcp_op.hidden_refusal(name)["instead"]
+        instead = mcp_op.hidden_refusal(name, None)["instead"]
         called = "dashboard" in OPERATIONS_BY_NAME[name].reach
         if "dashboard" in instead:
             assert called, name

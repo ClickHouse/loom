@@ -52,8 +52,7 @@ from server.transport.mcp_descriptions import (
     TOOL_DESCRIPTIONS as _TOOL_DESCRIPTIONS,
 )
 from server.transport.mcp_descriptions import coding_search_description
-from server.transport.mcp_op import LOOM_OP_TOOL_NAME, name_ops_for_listing
-from server.transport.mcp_op import description as loom_op_description
+from server.transport.mcp_op import LOOM_OP_TOOL_NAME, loom_op_description, name_ops_for_listing
 from server.transport.mcp_schemas import (
     _shape_schema,
     _strip_blob_fields_from_knowledge,
@@ -381,10 +380,8 @@ def _curated_description(toolset: str, op_name: str) -> str | None:
 
 def listed_tool_names(toolset: str | None) -> set[str]:
     """The tool names a `tools/list` on ``toolset`` shows."""
-    from server.settings import settings
-
     names = {op.mcp_tool_name for op in listed_ops(toolset)}
-    if not is_assistant(resolve_toolset(toolset, settings.mcp_toolset)):
+    if not assistant_connection(toolset):
         names |= {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}
     return names
 

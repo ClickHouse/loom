@@ -176,14 +176,14 @@ def test_the_namespace_check_sees_the_inner_arguments(monkeypatch: pytest.Monkey
 def test_the_description_stays_small() -> None:
     import json
 
-    widest = {**mcp_op.DESCRIPTOR, "description": mcp_op.description(set(), "core")}
-    assert len(json.dumps(widest)) // 4 <= 280
+    widest = {**mcp_op.DESCRIPTOR, "description": mcp_op.loom_op_description(set(), "core")}
+    assert len(json.dumps(widest)) // 4 <= 260
 
 
 @pytest.mark.parametrize(
     "toolset", ["core", "coding", "atomic", "tasks", "tracker", "readonly", "all"]
 )
-def test_the_example_op_is_unlisted_wherever_loom_op_is(
+def test_loom_op_text_is_built_for_its_listing(
     toolset: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The listed text is the one built for this listing: every op it names,
@@ -198,7 +198,7 @@ def test_the_example_op_is_unlisted_wherever_loom_op_is(
     tools = asyncio.run(_tools_descriptor(toolset=toolset))
     names = {d["name"] for d in tools}
     text = next(d["description"] for d in tools if d["name"] == "loom_op")
-    assert text == mcp_op.description(names, toolset)
+    assert text == mcp_op.loom_op_description(names, toolset)
     named = set(re.findall(r'"op": "([a-z_]+(?:\.[a-z_]+)+)"', text))
     named |= set(re.findall(r"\(([a-z_]+\.[a-z_]+)\)", text))
     assert "memory.related" in named
