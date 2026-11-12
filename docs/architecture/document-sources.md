@@ -400,17 +400,18 @@ rejected that for collections, since one missed path leaks.
 - **Nothing to read:** decision mining and dataset extraction skip mirrored documents,
   since a decision row is a memory every reader of the namespace reads and a dataset is
   read by `knowledge.query` without the check.
-- **A request that touches a mirror is marked.** A request that runs a mirror leg is
-  marked, and nothing it writes outside the mirror depends on what the mirror holds,
-  except as exception 2 allows: no cache shared across readers (the repository-docs
-  listing cache, `memory.ask`'s precedents, the provider response and embedding caches)
-  is read or written with text a mirror leg gave, and no field or row of its
-  `agent_events`, trace, exposure, metric or span records, nor a generation's captured
-  text, depends on the mirror. Every request that runs a mirror leg is marked, whether
-  or not anything was admitted, since marking on admission would tell existence; the
-  costs are accepted: `knowledge.reads` names no address on a namespace with a mirror,
-  every knowledge read there drops out of `cost.summary` by `user_id`, `operation` and
-  `agent`, and the assistant's support check reads a marked call as unknown.
+- **A request that touches a mirror is marked.** Nothing a marked request writes outside
+  the mirror depends on what the mirror holds, except as exception 2 allows: no cache
+  shared across readers (the repository-docs listing cache, `memory.ask`'s precedents,
+  the provider response and embedding caches) is read or written with text a mirror leg
+  gave, and no field or row of its `agent_events`, trace, exposure, metric or span
+  records, of the recall credit it writes to `loom.memory_usage_events`, nor a
+  generation's captured text, depends on the mirror. Every request that runs a mirror
+  leg is marked, whether or not anything was admitted, since marking on admission would
+  tell existence; the costs are accepted: `knowledge.reads` names no address on a
+  namespace with a mirror, every knowledge read there drops out of `cost.summary` by
+  `user_id`, `operation` and `agent`, and the assistant's support check reads a marked
+  call as unknown.
 - **The flag.** An answer any part of which comes from an admitted mirrored item carries
   `mirrored: true`, as the first field or line of the answer and again on each admitted
   item, so a truncated copy still carries it. A mirror leg answers nothing to a client
@@ -435,11 +436,16 @@ rejected that for collections, since one missed path leaks.
   compacted from a flagged one is flagged, and so is one started from a flagged
   session's process (`claude -p` or `codex exec` run through its shell, a worker an
   orchestrator starts): the CLI and the hooks set an inherited marker in the environment
-  and read it; the CLI's `ingest-transcript` refuses a transcript that carries the
-  marker. From the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set until it
-  is off again and the mirror-erase command has run, every session-content op refuses a
-  client that does not declare the flag, in every org, whatever mix of clients and
-  tokens a session runs. The condition is deployment state and the check fails closed: a
+  and read it, and keep the flag in the session's own state beside what they keep for
+  resume and fork. A worker an orchestrator starts outside that process tree (through
+  `tmux`, `ssh` or a job queue) inherits nothing; what its own session records is the
+  orchestrating agent's choice, out of scope below. The CLI's `ingest-transcript`
+  refuses a transcript that carries the flag, or whose session's state records it. From
+  the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is set until it is off again
+  and the mirror-erase command has run, every session-content op refuses a client that
+  does not declare the flag, in every org, whatever mix of clients and tokens a session
+  runs. The condition is a deployment row written the first time any process reads the
+  switch on and deleted only by the mirror-erase command, and the check fails closed: a
   process that cannot read it refuses, and the first mirrored `add` waits until every
   live process reports the switch on, as the schema check does. Since it lifts only
   then, it says nothing of when another org's mirrors went. Mirrored sources are off for
@@ -471,8 +477,10 @@ rejected that for collections, since one missed path leaks.
   `acl-` names out, so `audit.list`, the insights, usage and cost reads, the SQL surface
   and a person's export name no mirror. The analytics export and `sql_v1_usage_daily`
   fold a marked request's spend into a row per namespace and day with agent and
-  operation `-`, and `sql_v1_agent_events` masks a marked row's token, cost and work
-  fields, `llm_calls` included, which exception 2 accepts as a cost beside
+  operation `-`, and every read of `agent_events` rows for anyone below a platform admin
+  goes through the fold and the mask: `sql_v1_agent_events` masks a marked row's token,
+  cost and work fields, `llm_calls` included, and `insights.query`'s analyst reads a
+  masked view of the table, never the table, which exception 2 accepts as a cost beside
   `cost.summary`'s. `row_reach` refuses the form before its auth-off return, so no
   id-addressed check or `audit.list` of a named namespace opens one.
 
@@ -647,8 +655,10 @@ Out of scope: response timing; how fast the shared pass gets to a connected owne
 source, which its fresh or stale code and per-item status reflect; that a namespace
 erasure is still retrying, which a namespace admin sees whatever its cause; a reader who
 already saw a document and kept its text in a record only they read, or one their agent
-chose to write, which is that reader's write; that a person able to add a file where a
-mirrored source lists can tell, by the file never appearing, that the source is over
+chose to write or sent in a call it chose (a follow-up `memory.search` whose terms come
+from what it read, recorded in a trace log the namespace's viewers read), which is that
+reader's write; that a person able to add a file where a mirrored source lists can tell,
+by the file never appearing, that the source is over
 `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`; the store itself reporting a wrong permission
 list.
 
@@ -1066,9 +1076,16 @@ Each implementing pull request lists its own; these pin the model:
       content.
     - A session with clients holding tokens for two orgs, one reading a mirror,
       capturing nothing into the other.
-    - The session-content refusal holding when `loom.knowledge_mirrors` cannot be read
-      and on a replica whose view lags the first mirror, and lifting only once the
-      switch is off and the mirror-erase command has run.
+      - The session-content refusal holding once the switch was set with no mirror
+        yet, when the deployment row cannot be read and on a replica whose view lags
+        it, and lifting only once the switch is off and the mirror-erase command has
+        deleted the row.
+    - A viewer's `insights.query` over `agent_events` after another person's marked
+      request finding its tokens and cost only as the mask allows.
+    - An admitted mirrored item in `context.pack` leaving the request's recall credits
+      and trace rows equal to a run with the mirror empty.
+    - A later `ingest-transcript` of a session flagged only by inheritance refused from
+      an unflagged shell.
     - A session started from a flagged session's process (`claude -p` through its shell)
       flagged through the inherited marker, and a hook's `code.search` and
       `context.pack` sending nothing after the flag.
