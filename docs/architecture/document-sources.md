@@ -38,11 +38,11 @@ its source lease, clearing their credentials, as `code.repo.remove` does today, 
 source outlives its namespace with a sealed credential or writes back what an erasure
 took.
 
-A source's sync state is keyed by its namespace and, for a mirrored source, its source
-id (by name for a `namespace` source, as today), so the namespace's erasure covers it
-and a later source of the same name resumes none of an earlier one's listing. It lives
-where [storage layout](storage-layout.md#cursors) places it (`loom.code_index_state`
-today, Postgres `cursors` from wave 3).
+A source's sync state is keyed by its namespace and name, as today, and a mirrored
+source's by its mirror and source id, so the namespace's erasure covers it and a later
+source of the same name resumes none of an earlier one's listing. It lives where
+[storage layout](storage-layout.md#cursors) places it (`loom.code_index_state` today,
+Postgres `cursors` from wave 3).
 
 On the dashboard, the Library shows a Sources section for the namespace or collection in
 view; the repository card keeps its own.
@@ -121,13 +121,13 @@ written in it, else `{}`.
 new `include`, probes what it adds with the stored credential (the same sample rule),
 and writes the source at its next version under the namespace's source lease. Its audit
 row names the namespace, the name and the items added and removed, with a `filter`'s
-`owner` email and a crawl's `subjects` as keyed hashes (below). Removing every item is
-refused (`BAD_CONFIG`); `remove` ends a source. Changing `access` is a new source. For a
-`crawl`, `update` also takes `subjects` (the new list, probed like added items) and
-`directory_subject`. Every `update` and `rotate` of a crawl needs the same roles as
-`add`, since its credential reads every listed person's drive: a namespace admin without
-an org-wide role cannot change whose drives it reads, what it reads of them (items,
-`include`) or the key it reads with.
+`owner` email, a crawl's `subjects` and a connected source's item ids as keyed hashes
+(below). Removing every item is refused (`BAD_CONFIG`); `remove` ends a source. Changing
+`access` is a new source. For a `crawl`, `update` also takes `subjects` (the new list,
+probed like added items) and `directory_subject`. Every `update` and `rotate` of a crawl
+needs the same roles as `add`, since its credential reads every listed person's drive: a
+namespace admin without an org-wide role cannot change whose drives it reads, what it
+reads of them (items, `include`) or the key it reads with.
 
 ### One document, one owner
 
@@ -300,7 +300,8 @@ opens; each document carries its permission list; every read through that namesp
 checks the list and fails closed; and every sync turn reads the lists again. One rule
 holds them together: nothing derived from a mirrored document (its address, title, text,
 counts or existence) is written outside the mirror, except a checked leg's answer to its
-reader.
+reader and the request's spend, which counts against the namespace's
+`daily_cost_cap_usd`.
 
 A deployment with auth off (`LOOM_AUTH_REQUIRED=false`) has no reader identity to check.
 It refuses to add a mirrored source (`AUTH_REQUIRED`), and when auth is switched off
@@ -341,23 +342,26 @@ missed path leaks.
 - **Nothing to read:** decision mining and dataset extraction skip mirrored documents,
   since a decision row is a memory every reader of the namespace reads and a dataset is
   read by `knowledge.query` without the check.
-- **Rows filed under the mirror:** what the sync and the legs write about a mirrored
-  document (the sync's audit rows, its source's error text and per-file wait state,
-  which carry codes and no file id or address) is filed under the mirror's namespace. A
-  request on the namespace that a mirror leg answered keeps no address argument or found
-  flag in its `agent_events` row, so `knowledge.reads` and the ledger of the namespace
-  name no mirrored address and tell no reader whom the list admits; the row's spend
-  still counts against the namespace's `daily_cost_cap_usd`.
-- **No org-wide rollup reaches a mirror:** `every_namespace_scope` and
-  `rollup_member_namespaces` (`server/auth/context.py`) leave out the `acl-[0-9a-f]{24}`
-  form, so `audit.list`, the insights, usage and cost reads, `sql_v1_agent_events`,
-  `sql_v1_usage_daily` (replaced by a migration) and the analytics export name no
-  mirror.
-- **No text in a trace:** a generation whose context holds a mirrored chunk captures no
-  prompt or completion text, whatever the namespace's `capture_generation_io` says.
-- **No id reaches a mirror:** the id-addressed checks (`row_reach`, `row_in_scope`,
-  `id_namespace.namespace_for_id`) address memory rows, which no mirror holds, so their
-  auth-off shortcut opens nothing of one.
+- **A request that read a mirror is marked.** A mirror leg marks its request (a
+  request-scoped flag, as the query tag is), and nothing the request writes outside the
+  mirror carries what the leg answered: no cache shared across readers stores the answer
+  (the repository-docs listing cache, `memory.ask`'s precedents, the provider response
+  cache), its `agent_events` row keeps no argument or result-side field the leg shaped,
+  the search trace and exposure rows leave mirrored hits out, and a generation captures
+  no prompt or completion text, whatever the namespace's `capture_generation_io` says.
+  Each pull request that adds a mirror leg lists the writes its request makes and tests
+  each against the flag.
+- **The sync writes nothing outside the mirror.** A mirrored source's sync state, audit
+  rows, error text and per-file wait state are filed under the mirror's namespace; what
+  of them leaves it (a source's status, the worker's pass notes, log lines) carries
+  codes, never a file id, name or address.
+- **No scope reaches a mirror.** `resolve_org_scope`, ahead of its auth-off return,
+  `every_namespace_scope` and `rollup_member_namespaces` (`server/auth/context.py`)
+  leave out the `acl-[0-9a-f]{24}` form, and so do `sql_v1_agent_events` and
+  `sql_v1_usage_daily` (replaced by a migration) and the analytics export's statements,
+  so `audit.list`, the insights, usage and cost reads and the SQL surface name no
+  mirror. `row_reach` refuses the form before its auth-off return, so no id-addressed
+  check or `audit.list` of a named namespace opens one.
 
 A mirrored source's documents are never kept past it: `remove` retires every one it owns
 (`delete_documents` is implied), and so do a disconnect, a SCIM deactivation, the owner
@@ -375,9 +379,8 @@ Each mirrored document carries its permission list in an `access_json` column of
 (`loom.documents`; under the Postgres authority it rides in the head's `row` jsonb, with
 no Postgres migration), written by the turn of the source that owns the document:
 
-- `emails`: the people the store grants any role, lower-cased, and, for a file whose
-  list the source cannot read (a view-only file, a page store that shows an integration
-  no permissions), the people whose own account listed the file in that turn: the owner
+- `emails`: the people the store grants any role, lower-cased, and the people whose own
+  account listed the file in that turn, whether or not its list could be read: the owner
   of a connected source, named by the owner subject's verified directory emails at that
   turn (never the connection's store email), and the person a crawl listed it as. A
   `shared` mirrored source's service account is no reader, so its unreadable lists are
@@ -385,8 +388,8 @@ no Postgres migration), written by the turn of the source that owns the document
 - `groups`: group emails, which a crawl's directory read expands into
   `loom.knowledge_group_members` (one row per source and group, with its members and
   `read_at`). A connected or `shared` mirrored source reads no directory and expands no
-  group, so a file shared with its reader only through a group shows to nobody, the
-  owner included.
+  group, so a file shared with its readers only through a group shows only to the people
+  whose own account listed it.
 - `domains` and `anyone`: a domain or public permission the store marks discoverable. A
   link-only share (one the store marks not discoverable) is left out: it lets someone
   who holds the link open the file, not find it.
@@ -542,11 +545,13 @@ requests. That design has to answer what this page found:
   `crawl`, `directory_subject` and `subjects`; `update`, `parse_links`,
   `connection.list` and `connection.disconnect` are new (a connection starts in the
   dashboard, `POST /v1/connect/<kind>/start`); `list` and `inspect` show items, modes
-  and, through the check, the documents each owns. To a viewer who is neither the owner
-  nor an admin, a mirrored source shows its kind, its owner as "a connected account" for
-  a connected one, its item count and its last sync's status, not its items, `config`,
-  `created_by` or its document counts; a mirrored source's error text carries codes
-  only, for every viewer. Python and TypeScript SDKs are regenerated.
+  and, through the check, the documents each owns. A mirrored source shows its document
+  counts to nobody, and a connected source's items only to its owner (an admin can still
+  remove the source). To a viewer who is neither the owner nor an admin, a mirrored
+  source shows its kind, its owner as "a connected account" for a connected one, its
+  item count and its last sync's status, not its items, `config` or `created_by`; its
+  error text carries codes only, for every viewer. Python and TypeScript SDKs are
+  regenerated.
 - **CLI.** `loom knowledge source add|update|list --namespace <ns> --link <url>...`
   (`--credential-file`, `--connected`), `loom connect gdrive|notion|linear`, `loom
 connection list|disconnect`, `loom knowledge mirror erase --all` ([restores and
@@ -746,13 +751,17 @@ Each implementing pull request lists its own; these pin the model:
     through their directory email, never the connection's store email; a generation over
     a mirrored chunk capturing no text; the insights agents and cost reads leaving
     `acl-` names out.
-  - The sync's audit rows and a source's error text naming no mirrored file id or
-    address; a request a mirror leg answered leaving no address or found flag in the
-    namespace's `agent_events` row; `every_namespace_scope` and
-    `rollup_member_namespaces` leaving out every `acl-` name.
+  - Two readers of one namespace, one admitted to a mirrored document, through the
+    repository-docs listing cache and `memory.ask`'s precedent fast path: the other gets
+    none of it; a request a mirror leg answered keeping no argument or result-side field
+    the leg shaped in its `agent_events` row; the sync's audit rows, status, pass notes
+    and log lines naming no mirrored file id or address; `resolve_org_scope` with auth
+    off, `every_namespace_scope`, `rollup_member_namespaces`, `sql_v1_agent_events`
+    under a `*` grant and the analytics export leaving out every `acl-` name;
+    `row_reach` and `audit.list` refusing an `acl-` name with auth off; a connected
+    source's items and counts hidden from an admin who is not its owner.
   - `row_reach`, `row_in_scope` and `namespace_for_id` opening nothing of a mirror with
-    auth off; a mirrored source's document counts hidden from a viewer who is neither
-    its owner nor an admin.
+    auth off; a mirrored source's document counts shown to nobody.
   - A turn that finds a narrowed list rewriting the row without rebuilding a chunk, and
     one that finds the same list writing nothing; a listing row landing only after its
     changed lists.
