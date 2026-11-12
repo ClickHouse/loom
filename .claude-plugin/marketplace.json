@@ -3,7 +3,7 @@
   "owner": {
     "name": "ClickHouse"
   },
-  "description": "Loom: shared long-term memory and code intelligence for AI coding agents, self-hosted on ClickHouse.",
+  "description": "ClickHouse Loom: shared long-term memory and code intelligence for AI coding agents, self-hosted.",
   "plugins": [
     {
       "name": "loom",

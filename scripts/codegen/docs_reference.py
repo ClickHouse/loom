@@ -435,7 +435,7 @@ def render_llms_txt() -> str:
     """The llms.txt index agents read: every doc page, grouped, with its outcome line."""
     docs = ROOT / "docs"
     out = [
-        "# Loom",
+        "# ClickHouse Loom",
         "",
         "> Loom is a self-hosted MCP server that gives AI agents shared long-term memory, "
         "document search with citations and a code index. It keeps its data in ClickHouse, "

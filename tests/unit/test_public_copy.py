@@ -190,6 +190,7 @@ ROOT_FILES = (
     ".env.example",
     "server.json",
     "context7.json",
+    "CITATION.cff",
 )
 SCAN_SUFFIXES = {
     ".py",

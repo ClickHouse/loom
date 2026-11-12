@@ -1,4 +1,4 @@
-# Loom documentation
+# ClickHouse Loom documentation
 
 Loom is a memory, document and code-index server for AI agents, stored in ClickHouse,
 with [Postgres](architecture/storage-authority.md#why-two-stores) as an option for live

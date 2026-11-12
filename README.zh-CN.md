@@ -1,4 +1,4 @@
-<h1 align="center">Loom</h1>
+<h1 align="center">ClickHouse Loom</h1>
 
 <p align="center">
   <b>为 AI 智能体提供共享记忆、文档检索和代码智能。</b><br>
