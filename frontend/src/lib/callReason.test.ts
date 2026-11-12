@@ -48,13 +48,22 @@ describe("callReason", () => {
     ).toBe("Needs writer on team. An admin of it can grant that.");
   });
 
-  it("leaves it to the server for a token scoped per namespace, whose role does not show in whoami", () => {
+  it("leaves it to the server for a token scoped per namespace with no direct grant row there", () => {
     const scoped = token([], ["team"]);
-    // No row: no role the client can see.
+    // No row, a claim-only row or an inherited one: no role the client can see.
     expect(callReason("memory.pin", { role: null, loading: false, rows: [] }, scoped, "team")).toBe(SERVER);
-    // A grant row below the op: ns_roles may reach it.
+    expect(callReason("memory.pin", { role: null, loading: false, rows: [row("jwt")] }, scoped, "team")).toBe(SERVER);
+    expect(
+      callReason(
+        "memory.pin",
+        { role: "viewer", loading: false, rows: [{ ...row("viewer"), inherited: true }] },
+        scoped,
+        "team",
+      ),
+    ).toBe(SERVER);
+    // A direct grant row caps the scoped token's own role (claim_cap, _scoped_role): it is the most.
     expect(callReason("memory.pin", { role: "viewer", loading: false, rows: [row("viewer")] }, scoped, "team")).toBe(
-      SERVER,
+      "Needs writer on team. An admin of it can grant that.",
     );
     // The same with a flat role: the row is all there is.
     expect(

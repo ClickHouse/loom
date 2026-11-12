@@ -16,7 +16,7 @@ import {
 import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
 import { needsRole } from "../lib/namespaceRole";
-import { needsMaintainer, rolesUnseen, serverDecides } from "../lib/callReason";
+import { needsMaintainer, scopedUnseen, serverDecides } from "../lib/callReason";
 import { toast, toastError, toastErrorLine } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
@@ -136,12 +136,16 @@ export function MembersDialog({
     );
   // What a member who is not an admin here sees on each control an admin uses: the control,
   // unavailable, with the role it needs. Null while the grants are unread.
-  // A token scoped per namespace may be an admin here the client cannot see: the server decides.
+  // A token scoped per namespace with no grant of its own here may be an admin the client
+  // cannot see: the server decides. A grant of its own caps it, so that grant is the most.
   const manageReason =
     canManage || rows === null
       ? null
-      : rolesUnseen(whoami)
-        ? serverDecides(namespace)
+      : scopedUnseen(
+            whoami,
+            rows.some((r) => r.subject === me),
+          )
+        ? serverDecides(label ?? namespace)
         : isCode
           ? needsMaintainer(label ?? namespace)
           : needsRole("admin", namespace);

@@ -67,10 +67,21 @@ describe("NamespaceSettingsDialog roles", () => {
     expect(confirmAction).not.toHaveBeenCalled();
   });
 
-  it("says the server decides for a token scoped per namespace, whose role does not show here", async () => {
+  it("tells a token scoped per namespace the role it needs over a direct grant, which caps it", async () => {
     useStore.setState({
       whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: [], namespaces: ["team"] },
       myNamespaces: [grant("writer")],
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue(info);
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await act(async () => undefined);
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(NEEDS);
+  });
+
+  it("says the server decides for a token scoped per namespace with no grant here", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: [], namespaces: ["team"] },
+      myNamespaces: [],
     });
     vi.mocked(api.getNamespace).mockResolvedValue(info);
     render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
@@ -194,6 +205,23 @@ describe("NamespaceSettingsDialog for a repository", () => {
     const line = "Needs maintainer on acme/api @ main. A maintainer of it can grant that.";
     expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
     expect(screen.getByRole("button", { name: "Delete namespace" })).toHaveAccessibleDescription(line);
+  });
+});
+
+describe("NamespaceSettingsDialog Delete on a restricted namespace", () => {
+  it("is unavailable to an admin by grant whose token the gate refuses, with the same line", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: ["WRITER"], namespaces: ["team"] },
+      myNamespaces: [grant("admin")],
+    });
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...info, classification: "restricted" });
+    render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await act(async () => undefined);
+    const line = "To change its settings, your token must carry an admin claim.";
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
+    const del = screen.getByRole("button", { name: "Delete namespace" });
+    expect(del).toHaveAttribute("aria-disabled", "true");
+    expect(del).toHaveAccessibleDescription(line);
   });
 });
 

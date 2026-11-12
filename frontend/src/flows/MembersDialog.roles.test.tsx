@@ -66,8 +66,34 @@ describe("MembersDialog for a member who is not an admin", () => {
 });
 
 describe("MembersDialog for a token scoped per namespace", () => {
-  it("says the server decides, rather than the role it needs", async () => {
-    signIn("viewer-me", []);
+  it("says the role it needs when the token's subject holds a direct grant, which caps it", async () => {
+    // viewer-me holds a direct viewer grant (ROWS); carol a writer one.
+    signIn("carol", []);
+    render(<MembersDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
+    await screen.findByRole("button", { name: "Approve as viewer" });
+    expect(screen.getByRole("button", { name: "Add member" })).toHaveAccessibleDescription(NEEDS);
+  });
+
+  it("names the repository when the server decides for one", async () => {
+    signIn("stranger", []);
+    render(
+      <MembersDialog
+        open
+        onOpenChange={() => {}}
+        org="dev"
+        namespace="code-acme-api-main"
+        kind="code"
+        label="acme/api @ main"
+      />,
+    );
+    await screen.findByRole("button", { name: /^Approve as/ });
+    expect(screen.getByRole("button", { name: "Add reader" })).toHaveAccessibleDescription(
+      "The server decides this token's access to acme/api @ main; it does not show here.",
+    );
+  });
+
+  it("says the server decides when the token's subject holds no grant here", async () => {
+    signIn("stranger", []);
     render(<MembersDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
     await screen.findByRole("button", { name: "Approve as viewer" });
     expect(screen.getByRole("button", { name: "Add member" })).toHaveAccessibleDescription(

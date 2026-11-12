@@ -17,7 +17,14 @@ import { hasAdminClaim, isNamespaceAdmin } from "../lib/role";
 import { canUpdateNamespace, restrictedMisses } from "../lib/namespaceUpdate";
 import { needsRole } from "../lib/namespaceRole";
 import { sharedMine } from "../lib/sharedReads";
-import { needsMaintainer, rolesUnseen, serverDecides, unreadLine } from "../lib/callReason";
+import {
+  holdsDirectRow,
+  needsMaintainer,
+  rolesUnseen,
+  scopedUnseen,
+  serverDecides,
+  unreadLine,
+} from "../lib/callReason";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { useAbortableEffect } from "../lib/hooks";
@@ -110,7 +117,6 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
   // auto-registered row (and on a restricted row only a named, directly granted admin);
   // namespace.delete needs ADMIN on the namespace.
   const canManage = canUpdateNamespace(whoami, rows, { org, namespace }, ns);
-  const canDelete = isNamespaceAdmin(whoami, rows, namespace);
 
   // Repository mode: a code index shows only what applies to read-only source —
   // description, the join rule, danger zone.
@@ -118,9 +124,10 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
   // A repository's admins are its maintainers, and it is named by its label.
   const name = isRepo ? (label ?? namespace) : namespace;
   const adminWord = isRepo ? "maintainer" : "admin";
-  // A token scoped per namespace may be an admin here the client cannot see.
-  const needsAdmin = rolesUnseen(whoami)
-    ? serverDecides(namespace)
+  // A token scoped per namespace with no direct grant here may be an admin the client cannot
+  // see; a direct grant caps it.
+  const needsAdmin = scopedUnseen(whoami, holdsDirectRow(rows, namespace))
+    ? serverDecides(name)
     : isRepo
       ? needsMaintainer(name)
       : needsRole("admin", namespace);
@@ -129,7 +136,12 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
   // (`restrictedMisses`, the same list `canUpdateNamespace` admits on), and while the grants
   // are unread, why.
   let lockedReason = needsAdmin;
-  if (ns?.classification === "restricted") {
+  const restricted = ns?.classification === "restricted";
+  // namespace.delete passes the restricted gate too, which an admin grant alone does not.
+  const canDelete = restricted
+    ? restrictedMisses(whoami, rows, { org, namespace }).length === 0
+    : isNamespaceAdmin(whoami, rows, namespace);
+  if (restricted) {
     const misses = restrictedMisses(whoami, rows, { org, namespace });
     const grant = rows?.find((m) => m.namespace === namespace);
     const tokenMisses = [
@@ -141,9 +153,10 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
     else if (!misses.includes("grant") && tokenMisses.length > 0)
       lockedReason = `To change its settings, your token must ${andList(tokenMisses)}.`;
     // A token scoped per namespace: its role there is the server's to read.
-    else if (!misses.includes("grant") && misses.includes("unseen")) lockedReason = serverDecides(namespace);
-    // An admin by claim, or by an inherited or pending grant, still lacks the direct grant.
-    else if (misses.includes("grant") && (hasAdminClaim(whoami) || grant?.role === "admin"))
+    else if (!misses.includes("grant") && misses.includes("unseen")) lockedReason = serverDecides(name);
+    // An admin by claim, by an inherited or pending grant, or by a scoped role the client
+    // cannot see, still lacks the direct grant the gate wants.
+    else if (misses.includes("grant") && (hasAdminClaim(whoami) || grant?.role === "admin" || rolesUnseen(whoami)))
       lockedReason = `Changing its settings needs a direct ${adminWord} grant on ${name}.`;
   }
 
@@ -404,7 +417,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                   Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run an
                   erasure.request separately.
                 </p>
-                <Unavailable reason={canDelete ? null : needsAdmin}>
+                <Unavailable reason={canDelete ? null : restricted ? lockedReason : needsAdmin}>
                   <Button
                     type="danger"
                     htmlType="button"
