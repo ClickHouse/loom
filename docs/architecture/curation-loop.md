@@ -74,12 +74,14 @@ changed, it is `high`, gone, expired, past its `valid_to`, under a key that is n
 term's slug, promoted from a row that is not the namespace-wide one, or no longer
 `active`), and lists a definition that passes the check but is not served because a later
 promotion holds one of its names as `shadowed`, naming the row that wins. A changed text
-is promoted again; a source that is no longer `active` is restored (Undo in
-`memory.auto_retirements`, whose reasons include `same_key_newest_wins` for a later write
-of the same key under `newest_wins`, for a retirement of the last 30 days that op lists,
-and `memory.restore` for an older one) or cleared (`conflicts.resolve` for a `conflicted`
-mark, `memory.dedup_resolve` for a `duplicate` one), which governs it again when its text
-is the approved one, and is promoted again otherwise.
+is promoted again. On N no write-time verdict retires or marks a definition's source (the
+exemptions below), so a source that is no longer `active` was left that way by N-1 or
+before this design, and is restored (Undo in `memory.auto_retirements`, whose reasons
+include `same_key_newest_wins` for a later write of the same key under `newest_wins`, for
+a retirement of the last 30 days that op lists, and `memory.restore` for an older one) or
+cleared (`conflicts.resolve` for a `conflicted` mark, `memory.dedup_resolve` for a
+`duplicate` one), which governs it again when its text is the approved one, and is
+promoted again otherwise.
 
 One prerequisite is not part of this design: namespace erasure does not reach
 `loom.shared` today (only user erasure does, by provenance), so a namespace erasure leaves
@@ -161,11 +163,12 @@ Under `newest_wins`, a write of a `definition/` key by another identity (a user'
 copy) does not retire the namespace-wide row of that key, as same-key supersession does
 today for every unpinned row the writer reads: only a write of the namespace-wide row
 itself revises it, so no writer ends an admin's definition by writing a private copy,
-which the term leg then keeps out of the served list. This narrows the rule that a pinned
-row blocks a close write from any user ([read scope inside a
-namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
-definitions against definitions only; the implementing pull request updates that page, the
-memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check and
+which the term leg then keeps out of the served list. This narrows the `newest_wins` rule
+that a write for a key retires every older live row with that key, whoever wrote it
+([conflicts and refusal](../features/memory/conflicts-and-refusal.md)), for a definition's
+namespace-wide row only; the pinned-peer exemption above is the one `decision` already has
+as a key-identified type. The implementing pull request updates the policy table of that
+page, the memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check and
 consolidation in [memory architecture](memory-architecture.md) and [conflicts and
 refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the old verdicts
 during a rollout. Conflict surfacing compares a row only with rows of its own
@@ -233,11 +236,10 @@ the bound, the most recently promoted definitions (by `promoted_at`) are read. I
 concurrently with the other legs under its own time bound, which never shortens theirs (a
 leg past its bound adds nothing); an added output field, `term_leg` (`complete`, `capped`,
 `timed_out`, `failed` when a source read failed closed and a definition was withheld, and
-`off` when the leg did not run: a page handle, a field that turns it off, or a namespace
-with no definition), says which; a miss reads `off` as finished, and its latency is
-measured against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in
-the pull request that adds it. `governed` is an added output field: the SDKs and the MCP
-schema carry it.
+`empty` when the namespace holds no definition, and `off` when a page handle or a field
+turned the leg off), says which; and its latency is measured against the op's budget
+(`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull request that adds it.
+`governed` is an added output field: the SDKs and the MCP schema carry it.
 
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
@@ -282,9 +284,9 @@ gone sooner deletes them as the rollback below does. No miss is recorded while a
 below N serves (the rollout gate below). A gap needs several distinct askers, so a
 deployment that has one identity for every caller (`effective_identity_provider()` is
 `single-user`, set explicitly or inferred when `auth_required` is off and no provider is
-set) records no misses, gaps on or off, and a request without a token records no miss. A
-miss is a search that found nothing a caller could use, recorded by the op the caller
-invoked, never by a search another op runs on its behalf:
+set) records no misses, and a request without a token records no miss. A miss is a search
+that found nothing a caller could use, recorded by the op the caller invoked, never by a
+search another op runs on its behalf:
 
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
   and served no governed definition, when it read the namespace-wide rows under a read
@@ -311,8 +313,9 @@ a search that could not answer for another reason is not a miss: a degraded answ
 provider fell back, one with writes still waiting for extraction (`pending_extraction >
 0`), one whose fan-out stopped short (`namespaces_skipped`), or one whose hits the memory
 authority dropped (`stale_dropped > 0`), or one whose term leg did not finish (`term_leg`
-`capped`, `timed_out` or `failed`; `off`, a leg with no definition to read, is finished),
-so a defined term is never recorded as a gap because its leg was cut.
+anything but `complete` or `empty`, so `off` too: a field that turns the leg off, such as
+`recent_first`, also keeps the search from recording a miss), so a defined term is never
+recorded as a gap because its leg was cut.
 
 The **asker** is the person the token stands for, never a body field: the end user of an
 end-user token; else the token's `creator` claim, the person at the root of a delegated
