@@ -368,9 +368,9 @@ class Transport:
     @staticmethod
     def without_empty_namespace(payload: dict[str, Any]) -> dict[str, Any]:
         """The body without a `namespace` of "": an Agent built with none leaves it
-        to the server, which a single-user server fills for a call with no token
-        and any other server refuses as missing, rather than reading the empty
-        string as a namespace."""
+        to the server, which a single-user server fills on the ops it lists, for a
+        call with no token; every other call is refused as missing, rather than
+        read as the empty namespace."""
         if payload.get("namespace") != "":
             return payload
         return {k: v for k, v in payload.items() if k != "namespace"}
