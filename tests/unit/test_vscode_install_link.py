@@ -1,0 +1,41 @@
+"""The README's Add to VS Code links install the entry the VS Code page documents."""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
+
+from server.identity.app.token_clients import client_config
+
+ROOT = Path(__file__).resolve().parents[2]
+LINK = re.compile(r"https://(?:insiders\.)?vscode\.dev/redirect\?url=[^)\s`]+")
+
+
+def _entries(text: str) -> list[dict[str, object]]:
+    out = []
+    for link in LINK.findall(text):
+        target = parse_qs(urlparse(link).query)["url"][0]
+        scheme, _, payload = target.partition(":mcp/install?")
+        assert scheme in {"vscode", "vscode-insiders"}, target
+        out.append(json.loads(unquote(payload)))
+    return out
+
+
+def test_readme_and_vscode_page_carry_the_same_links() -> None:
+    readme = LINK.findall((ROOT / "README.md").read_text())
+    page = LINK.findall((ROOT / "docs/features/integrations/vscode.md").read_text())
+    assert len(readme) == 2 and readme == page
+
+
+def test_the_links_install_the_documented_entry_the_server_gives_vs_code() -> None:
+    page = (ROOT / "docs/features/integrations/vscode.md").read_text()
+    match = re.search(r"```json\n(\{[^`]*?\})\n```", page)
+    assert match, "no JSON entry on the VS Code page"
+    documented = json.loads(match.group(1))
+    assert all(entry == documented for entry in _entries(page))
+    server = client_config("vscode", "http://localhost:7777/mcp", "-")
+    server_entry = server["config"]["servers"]["loom"]
+    assert documented["url"] == server_entry["url"]
+    assert documented["type"] == server_entry["type"]
