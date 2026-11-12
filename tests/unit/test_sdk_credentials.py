@@ -12,8 +12,10 @@ from typing import Any
 
 import httpx
 import pytest
-from loom import credentials
+from loom import cli, credentials
 from loom.errors import AuthInvalid
+
+from tests.unit.clock_fake import ManualClock
 
 _SERVER = "https://loom.example"
 _META = {
@@ -64,7 +66,9 @@ class _Server:
         if self.queued.get(path):
             return self.queued[path].pop(0)
         if path == "/.well-known/oauth-authorization-server":
-            return httpx.Response(200, json=_META)
+            # Each host advertises its own endpoints, as a cell does at its own host.
+            base = f"{request.url.scheme}://{request.url.host}"
+            return httpx.Response(200, json={k: v.replace(_SERVER, base) for k, v in _META.items()})
         if path == "/oauth/device_authorization":
             return httpx.Response(
                 200,
@@ -980,3 +984,213 @@ def test_releasing_leaves_a_lock_directory_another_process_took_over(_home) -> N
     with credentials._locked():
         (lock / "owner").write_text('{"pid": 1}')  # broken as stale and taken meanwhile
     assert lock.exists()
+
+
+def _lookup(server: Any, *answers: httpx.Response) -> None:
+    server.queued["/cells/lookup"] = list(answers)
+
+
+def _signins(server: Any) -> list[str]:
+    return [path for path, _ in server.sent if path == "/oauth/device_authorization"]
+
+
+def test_login_with_an_org_signs_in_at_the_cell_the_router_names(server) -> None:
+    _lookup(
+        server, httpx.Response(200, json={"org": "beta", "cell": "eu-2", "host": "eu-2.example"})
+    )
+    asked: list[str] = []
+    real = server.answer
+
+    def _answer(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/cells/lookup":
+            asked.append(str(request.url.params))
+        return real(request)
+
+    server.answer = _answer
+    printed: list[str] = []
+    credentials.login(_SERVER, org="beta", open_browser=False, echo=printed.append)
+    assert asked == ["org=beta"]
+    assert printed[0] == "Org beta is at https://eu-2.example."
+    assert _stored()["profiles"]["default"]["server"] == "https://eu-2.example"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(404, json={"detail": "Not Found"}),  # a deployment with no router
+        httpx.Response(503, json={"error": "the directory holds no cell yet", "code": "NO_CELL"}),
+    ],
+)
+def test_login_with_an_org_keeps_its_server_with_no_router_or_no_cell(server, answer) -> None:
+    _lookup(server, answer)
+    credentials.login(_SERVER, org="beta", open_browser=False, echo=lambda _: None)
+    assert _stored()["profiles"]["default"]["server"] == _SERVER
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(503, json={"error": "the directory could not be read: OSError"}),
+        httpx.Response(500, text="oops"),
+        httpx.Response(200, json={"org": "beta", "cell": "eu-2"}),  # no host
+    ],
+)
+def test_login_with_an_org_refuses_any_other_lookup_answer_and_starts_no_sign_in(
+    server, answer
+) -> None:
+    _lookup(server, answer)
+    with pytest.raises(credentials.LoomError, match="router"):
+        credentials.login(_SERVER, org="beta", open_browser=False, echo=lambda _: None)
+    assert _signins(server) == [] and not credentials.CREDENTIALS_FILE.exists()
+
+
+@pytest.fixture
+def waits(monkeypatch) -> list[float]:
+    """The lookup's waits, on a clock they advance."""
+    clock = ManualClock()
+    monkeypatch.setattr(credentials, "_monotonic", clock)
+    monkeypatch.setattr(credentials.time, "sleep", clock.sleep)
+    return clock.sleeps
+
+
+def test_login_with_an_org_waits_out_the_routers_rate_limit(server, waits) -> None:
+    _lookup(
+        server,
+        httpx.Response(429, headers={"Retry-After": "7"}, json={"error": "too many lookups"}),
+        httpx.Response(200, json={"org": "beta", "cell": "eu-2", "host": "eu-2.example"}),
+    )
+    credentials.login(_SERVER, org="beta", open_browser=False, echo=lambda _: None)
+    assert waits[0] == 7.0
+    assert _stored()["profiles"]["default"]["server"] == "https://eu-2.example"
+
+
+def test_login_with_an_org_refuses_as_a_rate_refusal_once_the_wait_is_spent(server, waits) -> None:
+    """Retry-After 7 within a 20 s --wait: two waits, then the third would pass it."""
+    _lookup(server, *[httpx.Response(429, headers={"Retry-After": "7"}) for _ in range(5)])
+    with pytest.raises(credentials.RateLimited, match="asks for 7s and 6s of the wait") as refused:
+        credentials.login(_SERVER, org="beta", wait_s=20, open_browser=False, echo=lambda _: None)
+    assert waits == [7.0, 7.0] and _signins(server) == []
+    assert (refused.value.category, refused.value.retryable, refused.value.status) == (
+        "capacity",
+        True,
+        429,
+    )
+
+
+def test_login_with_an_org_reaches_the_cell_over_https_whatever_the_routers_scheme(
+    server,
+) -> None:
+    _lookup(
+        server, httpx.Response(200, json={"org": "beta", "cell": "eu-2", "host": "eu-2.example"})
+    )
+    credentials.login("http://localhost:8080", org="beta", open_browser=False, echo=lambda _: None)
+    assert _stored()["profiles"]["default"]["server"] == "https://eu-2.example"
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        {"a": 1},
+        "x@evil.example",
+        "eu-2.example/p",
+        "a b.example",
+        "eu-2.example:port",
+        "",
+        "?q",
+        "[eu-2",
+        "999.1.1.1",
+        "eu-2.example?",
+        "eu-2.example#",
+    ],
+)
+def test_login_with_an_org_refuses_a_host_that_is_not_a_bare_name(server, host) -> None:
+    _lookup(server, httpx.Response(200, json={"org": "beta", "cell": "eu-2", "host": host}))
+    with pytest.raises(credentials.LoomError, match="router .* no usable host") as refused:
+        credentials.login(_SERVER, org="beta", open_browser=False, echo=lambda _: None)
+    assert _signins(server) == []
+    assert (refused.value.category, refused.value.retryable) == ("internal", False)
+    assert refused.value.status == 200
+
+
+def test_a_lookup_refusal_is_classed_for_the_caller(server) -> None:
+    """An outage's 503 is a dependency to retry; a 4xx other than 404 is not."""
+    _lookup(server, httpx.Response(503, json={"error": "the directory could not be read"}))
+    with pytest.raises(credentials.LoomError) as down:
+        credentials.org_server(_SERVER, "beta")
+    assert (down.value.category, down.value.retryable, down.value.status) == (
+        "dependency",
+        True,
+        503,
+    )
+    _lookup(server, httpx.Response(400, json={"error": "a lookup names an org"}))
+    with pytest.raises(credentials.LoomError, match="router") as bad:
+        credentials.org_server(_SERVER, "beta")
+    assert bad.value.retryable is False and bad.value.status == 400
+
+
+def test_a_lookup_answer_that_is_not_json_refuses_naming_the_router(server) -> None:
+    _lookup(server, httpx.Response(200, text="<html>proxy</html>"))
+    with pytest.raises(credentials.LoomError, match="router") as refused:
+        credentials.org_server(_SERVER, "beta")
+    assert (refused.value.category, refused.value.status) == ("internal", 200)
+
+
+def test_a_lookup_naming_the_given_server_says_nothing(server) -> None:
+    _lookup(server, httpx.Response(200, json={"org": "beta", "cell": "c1", "host": "loom.example"}))
+    printed: list[str] = []
+    credentials.login("https://Loom.example", org="beta", open_browser=False, echo=printed.append)
+    assert not any(line.startswith("Org beta is at") for line in printed)
+
+
+@pytest.mark.parametrize(
+    "argv,said",
+    [
+        (["login", "--wait", "5"], "--wait applies only with --org"),
+        (["login", "--wait", "120"], "--wait applies only with --org"),
+        (["login", "--org", "", "--wait", "5"], "--org needs an org"),
+        (["login", "--org", "beta", "--wait", "-5"], "0 or more"),
+        (["login", "--org", "beta", "--wait", "nan"], "0 or more"),
+        (["login", "--org", "beta", "--wait", "inf"], "0 or more"),
+    ],
+)
+def test_login_refuses_a_wait_it_cannot_use(capsys, argv: list[str], said: str) -> None:
+    with pytest.raises(SystemExit) as refused:
+        cli.main(argv)
+    assert refused.value.code == 2 and said in capsys.readouterr().err
+
+
+def test_login_with_an_empty_org_refuses(server) -> None:
+    with pytest.raises(credentials.LoomError, match="names no org"):
+        credentials.login(_SERVER, org="", open_browser=False, echo=lambda _: None)
+    assert _signins(server) == []
+
+
+@pytest.mark.parametrize("wait_s", [float("nan"), float("inf"), -1.0])
+def test_login_with_an_org_refuses_a_wait_it_cannot_honour(server, wait_s: float) -> None:
+    with pytest.raises(credentials.LoomError, match="wait_s"):
+        credentials.login(
+            _SERVER, org="beta", wait_s=wait_s, open_browser=False, echo=lambda _: None
+        )
+    assert _signins(server) == [] and "/cells/lookup" not in [p for p, _ in server.sent]
+
+
+@pytest.mark.parametrize(
+    "header,wait",
+    [("7", 7.0), ("inf", 1.0), ("nan", 1.0), ("soon", 1.0), ("600", 60.0), ("0", 1.0)],
+)
+def test_the_routers_retry_after_is_read_as_the_transport_reads_it(
+    server, waits, header: str, wait: float
+) -> None:
+    _lookup(
+        server,
+        httpx.Response(429, headers={"Retry-After": header}),
+        httpx.Response(200, json={"org": "beta", "cell": "eu-2", "host": "eu-2.example"}),
+    )
+    assert credentials.org_server(_SERVER, "beta") == "https://eu-2.example"
+    assert waits == [wait]
+
+
+def test_login_refuses_a_wait_it_cannot_honour_with_no_org_too(server) -> None:
+    with pytest.raises(credentials.LoomError, match="wait_s"):
+        credentials.login(_SERVER, wait_s=float("nan"), open_browser=False, echo=lambda _: None)
+    assert _signins(server) == []

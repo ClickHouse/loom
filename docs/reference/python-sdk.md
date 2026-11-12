@@ -34,7 +34,10 @@ hour, or the bot's shorter maximum, that it renews itself), then the session
 `loom.login()` / `loom login` stored in `~/.loom/credentials` for that server
 (profile `LOOM_PROFILE`, default `default`; it refreshes itself), and finally
 the first line of `~/.loom/token`, the file `loom mint-token --save` writes. A
-stored session is used only for the server it signed in to.
+stored session is used only for the server it signed in to. `loom.login(org=…)`
+signs in at that org's [cell](../architecture/cells.md), as the router's lookup names
+it, waiting out its 429s for at most `wait_s` seconds; the session is then the cell
+host's, so point `base_url` (or `LOOM_BASE_URL`) at the host it prints.
 Routes outside the operation registry are on `agent.account` (service
 accounts, MCP client setup, the default namespace, the sharing summary) and
 `agent.deployment` (health, workers, model settings, claim release); see
