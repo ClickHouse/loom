@@ -62,8 +62,8 @@ definitions with the read-time check's verdict on each and the reason a lapsed o
 (its text changed, it is `high`, gone, expired, or no longer `active`). A changed text is
 promoted again; a source that is no longer `active` is first restored (Undo in
 `memory.auto_retirements`, whose reasons include `same_key_newest_wins` for a later write
-of the same key under `newest_wins`) or cleared (`conflicts.resolve` for a `conflicted` or
-`duplicate` mark), then promoted again.
+of the same key under `newest_wins`) or cleared (`conflicts.resolve` for a `conflicted`
+mark, `memory.dedup_resolve` for a `duplicate` one), then promoted again.
 
 The shared layer needs eight changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
@@ -288,10 +288,10 @@ erasure to finish by its id, which `erasure.status` authorizes per row, never by
 
 ### Ops and dashboard
 
-| Op                     | Role  | What it does                                                                                                                                                        |
-| ---------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                                                                                            |
-| `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM from its queries alone, with `owner` left empty for the admin to set, and queues it (`source_kind = 'knowledge_gap'`). |
+| Op                     | Role  | What it does                                                                                                                                                                                                                                                                  |
+| ---------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                                                                                                                                                                                                      |
+| `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM from its queries alone, with `owner` left empty (an admin sets it by editing the namespace-wide row after promotion and promoting it again with `memory.promote` and its hash), and queues it (`source_kind = 'knowledge_gap'`). |
 
 Both list what users asked, so neither honours a read-narrowed token: the check that
 admits the `knowledge.` group to such a token (`honours_read_scope` in
@@ -353,9 +353,10 @@ queue row. A promotion refused after the write (a racing edit, a racing term, or
 `memory.set` answering `PUBLICATION_PENDING`, which today's review path swallows) leaves
 the candidate pending and the namespace-wide row written, which no term leg serves until
 its text is promoted; for a revision, the old definition lapses meanwhile and the admin
-read lists it. A retried review, idempotent by key, completes it; rejecting the draft
-instead leaves the written row, which the admin restores from the row's history or
-promotes.
+read lists it. A retried review, idempotent by key, completes it, writing with
+`if_match_sha256` against the head the first attempt wrote, so it refuses rather than
+overwrite a writer's edit made since; rejecting the draft instead leaves the written row,
+which the admin restores from the row's history or promotes.
 
 ## Erasure and audit
 
@@ -389,7 +390,9 @@ promotes.
 
 ## Cost bounds
 
-- Recording a miss is one asynchronous insert; a hit records nothing.
+- Recording a miss is one asynchronous insert, and the asker's resolution (the creator
+  chain, the directory's spelling tie, the consent read) runs with it after the response,
+  off the request's path; a hit records nothing.
 - The gaps worker's grouping and its threshold run in ClickHouse (`GROUP BY` the
   normalised query, `HAVING` enough distinct askers), so at most
   `knowledge_gaps_max_groups` groups leave the store, and it embeds at most that many
@@ -427,12 +430,13 @@ not know `definition` as key-identified, can merge, supersede or retire one defi
 source while writing another; the rows it retired are listed by `memory.auto_retirements`
 (reasons `conflict_resolver`, `newest_wins_contradiction`, `value_update` and
 `same_key_newest_wins`), restored with its Undo, and promoted again; a source it marked
-`conflicted` or `duplicate` is cleared with `conflicts.resolve` and promoted again; a
-write it merged was never stored and is written again. An N-1 relabel of a definition's
-source to `high` leaves its shared copy served by the ordinary legs: once N serves, an
-admin demotes every definition the admin read lists as lapsed for `high`. N-1's redact and
-namespace erasure do not reach the shared row's text, as today: one run during the rollout
-or after a rollback is run again once N serves.
+`conflicted` is cleared with `conflicts.resolve`, one it marked `duplicate` with
+`memory.dedup_resolve`, and promoted again; a write it merged was never stored and is
+written again. An N-1 relabel of a definition's source to `high` leaves its shared copy
+served by the ordinary legs: once N serves, an admin demotes every definition the admin
+read lists as lapsed for `high`. N-1's redact and namespace erasure do not reach the
+shared row's text, as today: one run during the rollout or after a rollback is run again
+once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
