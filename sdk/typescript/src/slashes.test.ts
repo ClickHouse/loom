@@ -25,6 +25,9 @@ describe("slash trims", () => {
     const started = Date.now();
     expect(trimTrailingSlashes(long)).toBe(long);
     expect(trimSlashes(long)).toBe("x");
+    // A run that touches neither end is the slow case for the two-ended regex.
+    const inner = `x${"/".repeat(200_000)}x`;
+    expect(trimSlashes(inner)).toBe(inner);
     expect(Date.now() - started).toBeLessThan(1000);
   });
 });
