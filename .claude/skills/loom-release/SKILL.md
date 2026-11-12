@@ -56,6 +56,8 @@ gh run watch -R ClickHouse/loom "$run" --exit-status
 
 A prerelease takes neither Latest nor `:latest` and is not listed in the MCP Registry. Deploy it to a deployment you run (`loom-deploy`; on Kubernetes set `image.tag` and `extractor.image.tag` to `X.Y.Z-rc.N`) and use it for at least two days. A regression is fixed on `main`, whose files already name `X.Y.Z`; tag `rc.2` on the fix's merge commit (for a patch, on its merge commit on `release/X.Y`, as in §7) and soak again. Never move a tag: once its images are published, the workflow refuses a tag that points elsewhere. Once the final is tagged, a candidate's run is refused (`prepare.py check-tag`), and the message says whether to run the final, do nothing, or delete a stray tag.
 
+A candidate's registry dispatch (`gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z-rc.N`, the owner's go-ahead first) publishes PyPI's `X.Y.ZrcN`, the PEP 440 form the workflow writes into the SDK, and npm's `next` dist-tag; the MCP Registry skips a prerelease. `releases/latest/download/install.sh` keeps serving the previous final until the final is published, so a candidate installs from its own URL: `releases/download/vX.Y.Z-rc.N/install.sh`.
+
 ## 4. The final release
 
 On the same commit as the last release candidate, after `prepare.py notes X.Y.Z` there:
@@ -67,6 +69,17 @@ git push origin vX.Y.Z                                        # the owner's go-a
 gh workflow run release.yml -R ClickHouse/loom --ref vX.Y.Z   # the owner's go-ahead first
 git push origin "vX.Y.Z^{commit}:refs/heads/release/X.Y"      # X.Y.0 only: the line's patch branch; the owner's go-ahead first
 ```
+
+The registry dispatch's `pypi`, `npm` and `mcp-registry` jobs wait for a required reviewer of their environments. The owner approves them on the run's page, or with `gh`:
+
+```bash
+gh api "repos/ClickHouse/loom/actions/runs/$run/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
+gh api -X POST "repos/ClickHouse/loom/actions/runs/$run/pending_deployments" \
+  -F 'environment_ids[]=<id>' -F 'environment_ids[]=<id>' -F 'environment_ids[]=<id>' \
+  -f state=approved -f comment="Release X.Y.Z"
+```
+
+A job that failed on a download from outside GitHub (`curl: (7) Failed to connect` from an apt or key server during an image build) is re-run with `gh run rerun "$run" -R ClickHouse/loom --failed`: the workflow makes a re-run of failed jobs safe, and it builds only the images not yet published.
 
 The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
 
@@ -84,6 +97,8 @@ Signed in to nothing, it runs the one-line installer (`curl -fsSL https://github
 curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom" | jq '.servers[].server.version'   # lists X.Y.Z
 npm view @clickhouse/loom dist-tags   # latest names the highest final
 ```
+
+npm can take several minutes to list a version it has just accepted ("Your package is being processed"), so read `dist-tags` again before calling the publish missing. Both SDKs publish through trusted publishing, with no token in the workflow: `npm view @clickhouse/loom@X.Y.Z dist.attestations` names the provenance, and `https://pypi.org/integrity/clickhouse-loom/X.Y.Z/clickhouse_loom-X.Y.Z-py3-none-any.whl/provenance` answers 200.
 
 The plugins, in a throwaway `HOME`: `claude plugin marketplace add ClickHouse/loom && claude plugin install loom@loom`, and `codex plugin marketplace add ClickHouse/loom` then install `loom` from it; each lists the plugin version on `main`, and its SessionStart against this server prints no `loom:` line about the server's version. Post what you checked, with the run links, on the release pull request (the owner's go-ahead first).
 
