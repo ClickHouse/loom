@@ -130,7 +130,7 @@ async def _require_no_erasure(org: str, namespace: str) -> None:
     for row in await ledger_reads.open_namespace_erasures(org):
         if may_cover(str(row["scope_type"]), str(row["scope_value"]), namespace):
             raise ErasureRunningError(
-                f"an erasure of {namespace!r} is running; add the source once it finishes"
+                f"an erasure of {namespace!r} will still run; add the source once it finishes"
             )
 
 

@@ -175,11 +175,11 @@ namespace erasure (`knowledge_sources.retire`, its first step) retire its source
 same way, under the same lease, so no source keeps a credential for a namespace that is
 gone. A deleted namespace's source documents stay, as a `remove` without
 `delete_documents` leaves them; `knowledge.source.remove` with `delete_documents=true`
-still accepts the retired source and retires them. An `add` while an erasure of the
-namespace runs answers `ERASURE_RUNNING` (409, retryable) until it finishes, since the
-erasure may have read the sources already. The erasure step then waits for each source's sync
-turn still running, so no turn writes back a document or a mined decision after the
-later steps erase them.
+still accepts the retired source and retires them. An `add` while an erasure that will
+still run covers the namespace answers `ERASURE_RUNNING` (409, retryable) until it
+finishes, since the erasure may have read the sources already. The erasure step then
+waits for each source's sync turn still running, so no turn writes back a document or a
+mined decision after the later steps erase them.
 
 `namespace.restore` brings the namespace back, not its sources: their credentials were
 cleared, and the restored documents keep the retired source's name, so an admin removes
