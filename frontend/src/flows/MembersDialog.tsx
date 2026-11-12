@@ -134,12 +134,9 @@ export function MembersDialog({
       whoami,
       rows?.find((r) => r.subject === me),
     );
-  // What a member who is not an admin here sees on each control an admin uses: the control,
-  // unavailable, with the role it needs. Null while the grants are unread.
-  // A token scoped per namespace with no grant of its own here may be an admin the client
-  // cannot see: the server decides. A grant of its own caps it, so that grant is the most.
   // A repository is named by its label.
   const name = isCode ? (label ?? namespace) : namespace;
+  // A scoped token with no grant here may be an admin the client cannot see; a grant of its own caps it.
   const manageReason =
     canManage || rows === null
       ? null

@@ -126,7 +126,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
     ? serverDecides(name)
     : isRepo
       ? needsMaintainer(name)
-      : needsRole("admin", namespace);
+      : needsRole("admin", name);
 
   // Why the fields are locked. While the grants or whoami are unread (or the read failed),
   // say so, never a role the caller may well hold. On a restricted row, from what its gate
@@ -407,7 +407,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                   Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run an
                   erasure.request separately.
                 </p>
-                <Unavailable reason={canDelete ? null : restricted || unread ? lockedReason : needsAdmin}>
+                <Unavailable reason={canDelete ? null : lockedReason}>
                   <Button
                     type="danger"
                     htmlType="button"
