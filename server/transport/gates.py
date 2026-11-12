@@ -195,18 +195,11 @@ SINGLE_USER_DEFAULT_AGENT: Final[dict[str, str]] = {
 def with_single_user_identity(
     op: Operation, args: dict[str, Any], auth: AuthInfo | None
 ) -> dict[str, Any]:
-    """The body every later phase of an HTTP call reads (validation, authorization,
-    the ledger), with the single-user install's identity where the call left it out.
-    Only a call with no token on a single-user server is filled, the one caller such
-    a server has; any token, and every other identity mode, names its own.
-
-    The org is filled on every op but the code and tracker ones, which keep their
-    plane org: the install has the one org MCP and the dashboard use (`caller_org`).
-    The namespace and agent are filled only on a SINGLE_USER_DEFAULT_AGENT op: the
-    install's one namespace (`LOOM_DEFAULT_NAMESPACE`, which `default_namespace`
-    answers for a caller with no token) and the op's default agent. A field is
-    filled when it is missing, null, or a string the gates read as absent (blank or
-    "-"); any other value is left for validation."""
+    """The body every later phase of an HTTP call reads, with the install's identity
+    where the call left it out: only for a call with no token on a single-user server.
+    The org (`caller_org`) on every op but code and tracker ones; the namespace
+    (`LOOM_DEFAULT_NAMESPACE`) and the agent on a SINGLE_USER_DEFAULT_AGENT op. A
+    field is filled when missing, null, or a string the gates read as absent."""
     from server.identity.app.caller_home import caller_org
     from server.settings import settings
 
