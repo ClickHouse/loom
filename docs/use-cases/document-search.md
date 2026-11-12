@@ -25,11 +25,11 @@ model writes the answer from the passages Loom returns.
 
 ## Measured
 
-On a committed corpus of PDF, DOCX and PPTX files (27 held-out files), Loom's extractor (its layout and
-OCR reader, on by default) scored 0.999 text recall and 0.991 table cell F1
-([document parsing](../benchmarks/results.md#document-parsing)). Retrieval quality over
-documents is measured only in part; [coverage and known gaps](../benchmarks/coverage.md)
-says what is still missing.
+On a committed corpus of PDF, DOCX and PPTX files (27 held-out files), Loom's extractor,
+read with its layout reader and OCR at version 3 of its parsers, scored 0.999 text recall
+and 0.991 table cell F1 ([document parsing](../benchmarks/results.md#document-parsing)).
+Retrieval quality over documents is measured only in part;
+[coverage and known gaps](../benchmarks/coverage.md) says what is still missing.
 
 ## Start
 
