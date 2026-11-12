@@ -281,6 +281,16 @@ nodeTest("on Windows the helper checks through the launcher and names no install
     const r = spawnSync(sh, [helper], { encoding: "utf8", env: env(noNode) });
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /No installer for this OS; install Node\.js 18\+ on PATH\./);
+    // Installed where Claude Code puts it, run by its backslash path: the check
+    // judges the node on PATH, though LOOM_NODE gives the launcher one.
+    const installed = installAt(path.join(dir, ".claude", "plugins", "cache", "loom", "loom", "1.2.21"));
+    assert.ok(installed.includes("\\"), installed);
+    const claude = spawnSync(sh, [installed, "--check"], {
+      encoding: "utf8",
+      env: { ...env(noNode), LOOM_NODE: process.execPath },
+    });
+    assert.equal(claude.status, 1, claude.stdout);
+    assert.match(claude.stderr, /no Node\.js 18\+ as `node` on this PATH/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
