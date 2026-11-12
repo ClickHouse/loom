@@ -426,6 +426,37 @@ describe("folder collections", () => {
     expect(holds).not.toHaveBeenCalled();
   });
 
+  it("takes a collection this upload made as new for a second folder the server answers with it", async () => {
+    // Docs and Docs! land on one untitled collection; each holds "new", which the server makes once.
+    const team = entry("col-team", { title: "Team" });
+    const rows = [team, entry("col-docs", { parent: "col-team" })];
+    const paths = ["Docs/new/a.md", "Docs!/new/b.md"];
+    const plans = planFolders(paths, rows, team);
+    expect(
+      collectionsMade(plans)
+        .filter((p) => !p.existing)
+        .map((p) => p.path),
+    ).toEqual(["Docs/new"]);
+    vi.mocked(createCollection).mockImplementation(async (_org, _ns, o) =>
+      o?.title === "new"
+        ? {
+            namespace: "col-docs-new",
+            parent: "col-docs",
+            created: vi.mocked(createCollection).mock.calls.filter(([, , c]) => c?.title === "new").length === 1,
+            title: "new",
+          }
+        : { namespace: "col-docs", parent: "col-team", created: false, title: "" },
+    );
+    const folders = new FolderCollections("o", new Map(plans.map((p) => [p.path, p])), "col-team", (step) => step());
+    const holds = vi.fn(async () => new Map<string, KeptFields>());
+    const placed = await placeFolders(pick(paths), folders, holds, (f) => f, new AbortController().signal);
+    expect(placed.map((p) => [p.row.target.namespace, p.row.fresh])).toEqual([
+      ["col-docs-new", true],
+      ["col-docs-new", true],
+    ]);
+    expect(holds).not.toHaveBeenCalled();
+  });
+
   it("names the folder refused when a folder above a file's could not be made", async () => {
     vi.mocked(createCollection).mockRejectedValue(
       new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "cannot add to col-team" }),

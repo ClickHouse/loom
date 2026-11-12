@@ -215,8 +215,7 @@ export function planFolders(paths: string[], rows: CollectionEntry[], place: Col
     const sibling = `${parentPath}\0${titleKey(title)}`;
     const earlier = first.get(sibling);
     if (earlier) {
-      const plan = made.get(earlier);
-      if (plan) plan.files += counts.get(path) ?? 0;
+      (made.get(earlier) as FolderPlan).files += counts.get(path) ?? 0;
       made.set(path, { path, title, parentPath, existing: "", files: 0, refused: "", sameAs: earlier });
       continue;
     }
@@ -254,9 +253,21 @@ export function planFolders(paths: string[], rows: CollectionEntry[], place: Col
   return [...made.values()];
 }
 
-/** The plans that make a collection: not the folders that are another's. */
+/** The plans that make a collection: not the folders that are another's, nor a new one
+ *  whose title a new sibling already has under the same collection (two folders that land
+ *  on one collection each holding it: the server makes it once). */
 export function collectionsMade(plans: FolderPlan[]): FolderPlan[] {
-  return plans.filter((p) => !p.sameAs);
+  const byPath = new Map(plans.map((p) => [p.path, p]));
+  const seen = new Set<string>();
+  return plans.filter((p) => {
+    if (p.sameAs) return false;
+    const under = byPath.get(p.parentPath)?.existing;
+    if (p.existing || !under) return true;
+    const key = `${under}\0${titleKey(p.title)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** What Python's `str.strip()` takes off, as the server strips a title first. */
@@ -420,6 +431,10 @@ export async function placeFolders(
   const there = new Map<string, Map<string, KeptFields>>();
   const unread = new Map<string, unknown>();
   const unreadCut = new Set<string>();
+  // A collection this upload made is new for every folder it went to, including one whose
+  // create the server answered with it as already there.
+  for (const [folder, w] of went)
+    if (!w.fresh && folders.created.includes(w.namespace)) went.set(folder, { ...w, fresh: true });
   const toRead = [...new Set([...went.values()].filter((w) => !w.fresh).map((w) => w.namespace))];
   await inTurn(toRead, BATCH_OPEN, (ns) =>
     holds(ns).then(

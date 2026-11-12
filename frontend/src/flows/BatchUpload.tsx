@@ -346,28 +346,34 @@ export function BatchUpload({
   const checkedWhere = targetKey === namespace ? `in ${place}` : "there";
   const where = (r: BatchRow) => (r.folder ? (planOf(r.folder)?.existing ?? "") : namespace);
   // The formats may arrive after the pick: what is left out is decided again then, while
-  // nothing has been sent, each file keeping what the check found of it.
-  if (formats !== plannedWith && !started) {
-    setPlannedWith(formats);
-    const nowNest = nestPicked.current ? nest : nestFor(formats);
-    if (nowNest !== nest) setNest(nowNest);
-    const nowFolderFiles = foldersIn(formats);
+  // nothing has been sent, each file keeping what the check found of it. A switch between
+  // collections and paths changes where each file goes, and so can a folder left out (its
+  // collection may now be a sibling's): those check again.
+  const replanFor = (readable: KnowledgeFormats | null) => {
+    const nowNest = nestPicked.current ? nest : nestFor(readable);
+    const nowFolderFiles = foldersIn(readable);
     const mode = asCollectionsFor(nowFolderFiles, nowNest);
-    // By row: in a folder upload two folders' files may share a source URI. A switch between
-    // collections and paths changes where each file goes, and so can a folder left out (its
-    // collection may now be a sibling's): the marks are checked again.
-    const found = new Map(rows.map((r) => [r.id, r]));
     const switched = mode !== asCollections;
     const folderSet = (files: BatchRow[]) => [...new Set(files.map((r) => r.folder))].sort().join("\0");
-    const moved = mode && folderSet(nowFolderFiles) !== folderSet(folderFiles);
-    const replanned = plan(mode, formats).map((r) => {
+    const recheck = switched || (mode && folderSet(nowFolderFiles) !== folderSet(folderFiles));
+    // By row: in a folder upload two folders' files may share a source URI.
+    const found = new Map(rows.map((r) => [r.id, r]));
+    const next = plan(mode, readable).map((r) => {
       const was = found.get(r.id);
       return was && !switched ? { ...r, replaces: was.replaces, kept: was.kept } : r;
     });
-    if (switched || moved) setChecks((n) => n + 1);
-    const use = chosen.current ?? firstChoice(replanned, twinIds(replanned, where));
-    setChoice(use);
-    setRows(capBatch(replanned, use === "skip"));
+    // Twins by this render's plan: a re-plan that moves a folder checks again, and the
+    // check's answer decides the choice anew.
+    const choice = chosen.current ?? firstChoice(next, twinIds(next, where));
+    return { nest: nowNest, rows: capBatch(next, choice === "skip"), choice, recheck };
+  };
+  if (formats !== plannedWith && !started) {
+    const next = replanFor(formats);
+    setPlannedWith(formats);
+    if (next.nest !== nest) setNest(next.nest);
+    if (next.recheck) setChecks((n) => n + 1);
+    setChoice(next.choice);
+    setRows(next.rows);
   }
   // Each change of `checks` (Check again) or of the collections to read reads again; never
   // once files are sent.
