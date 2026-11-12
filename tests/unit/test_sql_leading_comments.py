@@ -30,7 +30,8 @@ def test_leading_comments_are_skipped() -> None:
 
 
 def test_a_comment_ends_at_its_first_close() -> None:
-    # Nesting is not modelled: the text after the first `*/` is not a keyword.
+    # A known limit, not wanted behaviour: ClickHouse nests `/* */`, these readers do not,
+    # so the text after the first `*/` is read as the statement's start.
     assert statement_class("/* a /* b */ (c) */ INSERT INTO t VALUES (1)") == "read"
     assert not is_read_statement("/* a /* b */ (c) */ SELECT 1")
     assert not looks_like_sql("/* a /* b */ (c) */ SELECT a FROM t", inside_client=True)
