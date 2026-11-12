@@ -452,8 +452,9 @@ _CENSUS: tuple[Substrate, ...] = (
 #   agent_events.scrub               — identity scrubbed, rows kept for cost.
 #   subject_last_seen.delete         — an end user's newest-call row: an
 #                                       identifier, no memory content.
-#   shared*.tombstone                — org-wide promoted rows, matched by
-#                                       provenance not by scope.
+#   shared*.tombstone                — in the user scope, promoted rows matched
+#                                       by provenance; the namespace scope counts
+#                                       loom.shared by namespace.
 #   consolidated.tombstone           — loom.memory rows under another identity,
 #                                       their search rows and code links. The
 #                                       memory row counts the summaries in both

@@ -1255,7 +1255,9 @@ names the resuming process); the body's `requester` goes in their subject.
 `erasure_recovery` replays sagas stuck `in_progress` and names itself on the
 `erasure.recovered` row; after `max_attempts` it marks the request `failed` and emits
 `erasure.abandoned`. Configured external backends (Langfuse traces and ClickStack rows)
-are steps too and fail the saga closed.
+are steps too and fail the saga closed. A namespace erasure tombstones the namespace's
+promoted rows in `loom.shared` (`shared.tombstone`); a user erasure matches them by
+provenance.
 
 The last step is a residue census over every table the read paths touch and, with a
 document bucket configured, the bucket objects left under the erased namespaces
@@ -1263,11 +1265,11 @@ document bucket configured, the bucket objects left under the erased namespaces
 namespace); a non-zero count re-opens `documents.tombstone`. The registry is in
 `server/erasure/store/census.py`:
 
-| List                | Holds                                                                                                                                                 |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `_CENSUS`           | One `Substrate(table, live, user_pred, ns_step, user_step, final)` per table that can hold content in scope. Any live row in scope fails the saga.    |
-| `STEP_ONLY_TABLES`  | Tables a step clears that the census does not count (shared and consolidated tombstones, term aggregates, session outcomes, the code index purge, …). |
-| `NO_MEMORY_CONTENT` | Every other table, each with the reason it holds no content in scope.                                                                                 |
+| List                | Holds                                                                                                                                                                    |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `_CENSUS`           | One `Substrate(table, live, user_pred, ns_step, user_step, final)` per table that can hold content in scope. Any live row in scope fails the saga.                       |
+| `STEP_ONLY_TABLES`  | Tables a step clears that the census does not count (user-scope shared tombstones, consolidated tombstones, term aggregates, session outcomes, the code index purge, …). |
+| `NO_MEMORY_CONTENT` | Every other table, each with the reason it holds no content in scope.                                                                                                    |
 
 The row links (`entity_triple_rows`, `entity_edge_rows`) carry the row's writer as
 `user_id`, so a user's erasure finds them after the row itself is gone.

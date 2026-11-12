@@ -61,3 +61,16 @@ async def test_a_namespace_erasure_tombstones_the_namespaces_shared_rows() -> No
     assert after["loom.shared"] == 0
     other = await census.table_residue(org, "namespace", "other")
     assert other["loom.shared"] == 1
+
+
+async def test_a_namespace_list_erasure_tombstones_each_listed_namespaces_shared_rows() -> None:
+    from server.core.ch import get_client
+
+    org = unique_org("erase-shared-list")
+    rows = [_shared(org, ns) for ns in ("a", "b", "kept")]
+    await get_client().insert("loom.shared", rows)
+    assert await steps_memory.tombstone_shared_by_namespace(org, ["a", "b"]) == 2
+    listed = await census.table_residue(org, "namespace", ["a", "b"])
+    assert listed["loom.shared"] == 0
+    kept = await census.table_residue(org, "namespace", "kept")
+    assert kept["loom.shared"] == 1

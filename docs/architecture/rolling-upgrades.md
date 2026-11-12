@@ -617,6 +617,16 @@ schema. These rules keep that safe. The operator procedure is in
     refusals and that cleanup, and it ends once no N-1 replica serves. The mixed-version
     gate does not check this rule.
 
+45. **A namespace's promoted rows** (`shared.tombstone` in the namespace saga): N-1's
+    namespace erasure has no step for `loom.shared` and its census does not count the
+    table, so a `namespace` or `namespace_list` erasure N-1 runs completes with the
+    namespace's promoted rows live, and so did every one an older build completed. Their
+    search rows are gone (`memory_embeddings.tombstone`), but `memory.lineage` and the
+    shared reads still return them. Once N serves alone, the [upgrade
+    procedure](../operations/upgrades.md#upgrade-procedure), step 14, lists them for
+    `memory.demote`. No gate holds the rollout, and the mixed-version gate does not check
+    this rule.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,
