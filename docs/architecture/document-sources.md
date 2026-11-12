@@ -38,10 +38,11 @@ its source lease, clearing their credentials, as `code.repo.remove` does today, 
 source outlives its namespace with a sealed credential or writes back what an erasure
 took.
 
-Sync state stays in `loom.code_index_state`, keyed by the source's namespace, which the
-namespace's erasure already covers: under `knowledge_source:<name>` for a `namespace`
-source, as today, and under `knowledge_source:<source id>` for a mirrored one, so a
-later source of the same name resumes none of an earlier one's listing.
+Sync state stays where [storage layout](storage-layout.md#cursors) keeps a source's sync
+state (`loom.code_index_state` today, Postgres `cursors` from wave 3), keyed by the
+source's namespace, which the namespace's erasure already covers: by name for a
+`namespace` source, as today, and by source id for a mirrored one, so a later source of
+the same name resumes none of an earlier one's listing.
 
 On the dashboard, the Library shows a Sources section for the namespace or collection in
 view; the repository card keeps its own.
@@ -313,11 +314,12 @@ mirror). The gate admits no token to a name of that form (`acl-[0-9a-f]{24}`):
 `check_authorized` and `CachedGate` refuse the name before any other rule, the auth-off
 return included, and `namespace.register` and `restore` refuse the form.
 `erasure.request` refuses an `acl-` name in its scope for every caller but a platform
-admin, and `erasure.export` for every caller, with auth on or off. So no token searches,
-reads or exports a mirror, and the threat model's rows hold for every token. A mirror
-has no directory row and appears in no namespace listing or usage view; a namespace name
-keeps one mirror for life, so a name deleted and registered again inherits it, and a
-name whose mirror still holds rows counts as in use (`namespace_census.in_use`).
+admin with auth on, and `erasure.export` for every caller; with auth off both refuse it
+for everyone. So no token searches, reads or exports a mirror, and the threat model's
+rows hold for every token. A mirror has no directory row and appears in no namespace
+listing or usage view; a namespace name keeps one mirror for life, so a name deleted and
+registered again inherits it, and a name whose mirror still holds rows counts as in use
+(`namespace_census.in_use`).
 
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
 check below. Every other read path reads the namespace and finds nothing of the mirror.
@@ -339,8 +341,12 @@ missed path leaks.
   read by `knowledge.query` without the check.
 - **Reads recorded under the mirror:** a mirror leg's `agent_events` row is filed under
   the mirror's namespace, so `knowledge.reads` on the namespace names no mirrored
-  address, and `sql_v1_agent_events`, `sql_v1_usage_daily` (replaced by a migration) and
-  the analytics export's usage entity leave `acl-` names out.
+  address, and `sql_v1_agent_events`, `sql_v1_usage_daily` (replaced by a migration),
+  the analytics export's usage entity and the insights agents and cost reads leave
+  `acl-` names out; a mirror's spend is charged to its namespace, under that namespace's
+  `daily_cost_cap_usd`.
+- **No text in a trace:** a generation whose context holds a mirrored chunk captures no
+  prompt or completion text, whatever the namespace's `capture_generation_io` says.
 - **No id reaches a mirror:** the id-addressed checks (`row_reach`, `row_in_scope`,
   `id_namespace.namespace_for_id`) address memory rows, which no mirror holds, so their
   auth-off shortcut opens nothing of one.
@@ -364,8 +370,10 @@ no Postgres migration), written by the turn of the source that owns the document
 - `emails`: the people the store grants any role, lower-cased, and, for a file whose
   list the source cannot read (a view-only file, a page store that shows an integration
   no permissions), the people whose own account listed the file in that turn: the owner
-  of a connected source, the person a crawl listed it as. A `shared` mirrored source's
-  service account is no reader, so its unreadable lists are `unread`.
+  of a connected source, named by the owner subject's verified directory emails at that
+  turn (never the connection's store email), and the person a crawl listed it as. A
+  `shared` mirrored source's service account is no reader, so its unreadable lists are
+  `unread`.
 - `groups`: group emails, which a crawl's directory read expands into
   `loom.knowledge_group_members` (one row per source and group, with its members and
   `read_at`). A connected source reads no directory and expands no group.
@@ -384,9 +392,9 @@ tombstone carries no list, and no read op returns the column.
 A reader sees a mirrored document when all of these hold:
 
 1. The reader holds `viewer` on the source's namespace (the ordinary gate).
-2. The source's last complete listing started within
-   `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` (default 3600) of now, read from its row in
-   `loom.knowledge_source_listings`, and the list is not `unread`.
+2. The document's owning source (by its `source-id` tag) has a last complete listing
+   that started within `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` (default 3600) of now,
+   read from its row in `loom.knowledge_source_listings`, and the list is not `unread`.
 3. One of the reader's verified emails is in the list's `emails`, or in the members of
    one of its `groups` from an equally fresh members row of the document's owning source
    (by its `source-id` tag), or that email's domain is in its `domains`, or its `anyone`
@@ -404,7 +412,9 @@ creator's grants, a bot and an end-user token included, has none, so it sees onl
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
 a link-only permission and a permission type the sync does not know admit nobody. A leg
 that cannot read the lists, the members rows or the listing row shows no mirrored
-document and marks the answer `degraded: mirror_unread`. Each leg computes the addresses
+document and marks the answer `degraded: mirror_unread`. Each leg reads the listing row
+first and then the members rows and the lists, under `sequential_reads()`, so a lagging
+replica cannot pair a fresh listing row with an older list. It computes the addresses
 the reader may see before its `LIMIT`, so a page is never cut short by the check, and
 caches no admitted set. Under the Postgres authority each leg judges the addresses it is
 about to answer by their heads, so a narrowing or a retirement committed and not yet
@@ -426,7 +436,9 @@ today. The listing row's start lands only once every changed list and every such
 `unread` rewrite of that listing is written, so a row is never newer than the lists it
 vouches for. These rewrites are outside the pass's document cap, bounded only by the
 listings' share of the deadline. Content is fetched only for a file whose revision
-changed.
+changed, and a content write carries the list of the latest listing that read the file,
+so a fetch the pass bound deferred never writes an older list; a listing row lands only
+once every document written during that listing carries a list it read.
 
 A pass runs the listings first, rotating across the mirrored sources, and gives them at
 most a third of the pass deadline (`knowledge_source_sync_max_pass_seconds`); a listing
@@ -458,7 +470,7 @@ admits someone the store no longer names.
 | An id-addressed read confirms a mirrored document exists                 | `get`, `outline`, `download` and the inspects answer `found=false` or leave out an address the reader may not see.                                                                                             | the mirror legs                                                        |
 | A new read path shows mirrored documents to everyone                     | Mirrored documents live in a namespace no grant opens and no listing names; a path that does not read the mirror shows none.                                                                                   | `check_authorized` (`acl-[0-9a-f]{24}`)                                |
 | An older build shows mirrored documents                                  | N-1 reads no mirror; its gate does not refuse a mirror's name, so no N-1 serves while one holds rows: the new modes wait for N everywhere, and a rollback first erases the mirrors with every replica stopped. | the random name; the rollback procedure                                |
-| A mirrored document's text reaches every reader through a derived row    | Decision mining and dataset extraction skip mirrored documents.                                                                                                                                                | the sync                                                               |
+| A mirrored document's text reaches every reader through a derived row    | Decision mining and dataset extraction skip mirrored documents; a generation over a mirrored chunk captures no text.                                                                                           | the sync; generation capture                                           |
 | A store account is linked into another person's Loom account, either way | The connection is stored only from the browser that started it, with that subject's own dashboard session and the `state` cookie. A connection's email is never a reader identity.                             | the connect routes                                                     |
 | A caller injects store query syntax through a filter                     | Filters are fields with patterns, escaped and built by the server; no raw query is taken.                                                                                                                      | `server/clients/gdrive.py`                                             |
 | A stolen connected credential changes the store                          | Only read scopes are accepted; the credential is sealed and never returned.                                                                                                                                    | the connect callback; `server/core/secrets_at_rest.py`                 |
@@ -565,8 +577,13 @@ reseal` covers) and its items in `items_json`, with `credential_enc` empty and
 upgrades](#rolling-upgrades)). The mirror's documents and chunks live in
 `loom.documents` and `loom.chunks` under the mirror's namespace, so the document
 machinery (heads under the Postgres authority, deliveries, originals, the blob sweep)
-applies unchanged. An implementing pull request that needs another table (for a stopped
-source's cleanup, or a crawl's exclusions) adds it with its erasure classification.
+applies unchanged. Each new table is placed in [storage layout](storage-layout.md) by
+its placement rule, in the pull request that adds it: `loom.knowledge_mirrors` and
+`loom.connected_accounts` are registrations read by key, so they follow
+`knowledge_sources` to Postgres in wave 3; the listing and members rows are read by the
+mirror legs beside the lists in `loom.documents`, so they stay in ClickHouse. An
+implementing pull request that needs another table (for a stopped source's cleanup, or a
+crawl's exclusions) adds it with its placement and erasure classification.
 
 ## Erasure and audit
 
@@ -585,9 +602,9 @@ statements and census keys against these, and its tests pin each one:
   no source row, list or members row names them, and a crawl reads them again only once
   an org admin readmits them. The pull request that builds connected accounts and crawls
   designs that erasure.
-- `erasure.request` refuses an `acl-` scope for every caller but a platform admin, and
-  `erasure.export` refuses one for every caller (an export would read the mirror's
-  chunks with no permission check), with auth on or off.
+- `erasure.request` refuses an `acl-` scope for every caller but a platform admin with
+  auth on, and `erasure.export` refuses one for every caller (an export would read the
+  mirror's chunks with no permission check); with auth off both refuse it for everyone.
 - Audit rows: `add`, `update`, `rotate`, `remove`, `sync_now` as today, plus `update`'s
   item changes; `connect` and `disconnect` (subject, kind, scopes, never a credential);
   a crawl's subjects (as keyed hashes), granted scopes and member count; a SCIM-driven
@@ -713,6 +730,12 @@ Each implementing pull request lists its own; these pin the model:
     lands; an email-shaped subject with no verified directory email, and an inheriting
     service account, seeing no `emails` document; a group matched only through the
     owning source's members row.
+  - A leg on a lagging replica that sees a fresh listing row and an older list admitting
+    nobody; a fetch the pass bound deferred writing no list older than the listing row
+    that lands after it; a connected source's unreadable-list entry admitting the owner
+    through their directory email, never the connection's store email; a generation over
+    a mirrored chunk capturing no text; the insights agents and cost reads leaving
+    `acl-` names out.
   - `row_reach`, `row_in_scope` and `namespace_for_id` opening nothing of a mirror with
     auth off; a mirrored source's document counts hidden from a viewer who is neither
     its owner nor an admin.
