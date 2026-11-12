@@ -49,17 +49,20 @@ indexers are included and enabled. A repository indexed with the TypeScript inde
 its dependencies installed automatically. Both images support Linux `amd64` and `arm64`,
 including Docker Desktop on Apple Silicon.
 
-Once Loom answers, a new install saves and reads back a first memory, `loom/welcome`,
-which says the server runs without sign-in and where its dashboard is; a rerun after it read back,
-an upgrade, or an install whose ClickHouse already holds one writes none. On a terminal,
-the installer then offers to connect each coding agent it finds: Claude Code and Codex
-through their plugins, and VS Code through `code --add-mcp`. `LOOM_CONNECT` answers for
-it, for a run without a terminal too: a comma list of `claude-code`, `codex` and `vscode`,
-`all`, or `none` (any other name stops the install); without a terminal and without
-`LOOM_CONNECT`, no agent's settings change. A plugin or MCP server set up before is left
-as it is, with the server it was set up for; for Claude Code the installer prints the
-command that points it at this install. On a port other than 7777, Codex, whose plugin
-always uses `http://localhost:7777`, gets a link to its setup page instead. Last, on a
+Once Loom answers, a new install saves a test memory, reads it back and deletes it, which
+shows that writes and reads work and leaves the namespace empty; a rerun after that check
+passed, or an upgrade, skips it. On a terminal, the installer then offers to connect each
+coding agent it finds: Claude Code and Codex through their plugins, and VS Code through
+`code --add-mcp`. `LOOM_CONNECT` answers for it, for a run without a terminal too: a comma
+list of `claude-code`, `codex` and `vscode`, `all`, or `none` (any other name stops the
+install); without a terminal and without `LOOM_CONNECT`, no agent's settings change. A
+plugin or MCP server set up before, by the plugin or by `claude mcp add`, `codex mcp add`
+or `loom install`, is left as it is, with the server it was set up for; for Claude Code
+the installer prints the command that points the plugin at this install. Claude Code's
+plugin needs Node.js 18 or later; without it the installer prints the `claude mcp add`
+line for the MCP server alone. When Loom is not on `http://localhost:7777`, Codex, whose
+plugin always uses that address, gets a link to its setup page instead. VS Code is not
+offered inside a remote session or WSL, where `code` is another machine's. Last, on a
 desktop, it opens the dashboard; `LOOM_NO_OPEN=1` skips that. With sign-in on, it connects
 no agent and says where tokens come from. Ctrl-C stops the run at any step.
 

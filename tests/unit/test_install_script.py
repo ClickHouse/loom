@@ -956,6 +956,7 @@ def _start_stubs(
         f"  *v1/memory.get*) if [ -f {saved} ]; then echo '{{\"found\":true}}'; "
         f'else echo \'{{"found":false}}\'; fi > "$out"; printf {memory_status}; exit 0 ;;\n'
         f"  *v1/memory.set*) {on_set}echo '{{}}' > \"$out\"; printf {memory_status}; exit 0 ;;\n"
+        f"  *v1/memory.delete*) rm -f {saved}; echo '{{}}' > \"$out\"; printf {memory_status}; exit 0 ;;\n"
         "esac\n"
         f"printf %s {connect_time}\nexit {probe_exit}\n"
     )
@@ -1144,38 +1145,49 @@ def test_a_failed_pull_names_dockers_proxy_settings(install, installer_env: dict
     assert not any(" up " in c for c in docker_log.read_text().splitlines())
 
 
-def _agent_cli(installer_env: dict[str, str], name: str, plugins: str = "", mcp: str = "") -> Path:
-    """A stub agent CLI that logs its arguments and prints `plugins` for `plugin list`
-    and `mcp` for `mcp list` (escapes read by printf %b); returns its log."""
+def _agent_cli(installer_env: dict[str, str], name: str, plugins: str = "", code: int = 0) -> Path:
+    """A stub agent CLI that logs its arguments, prints `plugins` for `plugin list`
+    (escapes read by printf %b) and exits `code`; returns its log."""
     bin_dir = Path(installer_env["PATH"].split(":")[0])
     log = bin_dir / f"{name}.log"
     cli = bin_dir / name
     cli.write_text(
         f'#!/bin/sh\necho "$*" >> {log}\n'
-        f'case "$*" in "plugin list") printf \'%b\\n\' "{plugins}" ;;\n'
-        f'  "mcp list") printf \'%b\\n\' "{mcp}" ;; esac\nexit 0\n'
+        f'case "$*" in "plugin list") printf \'%b\\n\' "{plugins}" ;; esac\nexit {code}\n'
     )
     cli.chmod(0o755)
     log.write_text("")
     return log
 
 
-def _mcp_line(url: str) -> str:
-    return f"plugin:loom:loom: {url}/mcp?toolset=coding#/ (HTTP) - ✔ Connected"
-
-
-def test_a_new_install_saves_and_reads_back_a_first_memory(
+def test_a_new_install_saves_reads_back_and_deletes_a_test_memory(
     install, installer_env: dict[str, str]
 ) -> None:
+    """Proof that writes and reads work, which leaves no memory behind: a kept one
+    would read as the user's first (the dashboard's first-run checklist)."""
     run, target = install
     curl_log, _ = _start_stubs(installer_env)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 0, result.stderr
-    assert "Saved and read back a first memory, loom/welcome" in result.stdout
-    assert not (target / ".welcome-pending").exists()
-    sets = [c for c in curl_log.read_text().splitlines() if "memory.set" in c]
-    assert len(sets) == 1 and '"org":"dev","namespace":"local","agent":"installer"' in sets[0]
-    assert all("--noproxy *" in c for c in curl_log.read_text().splitlines())
+    assert "Saved, read back and deleted a test memory: writes and reads work." in result.stdout
+    assert not (target / ".memory-check-pending").exists()
+    calls = curl_log.read_text().splitlines()
+    ops = [op for c in calls for op in ("memory.get", "memory.set", "memory.delete") if op in c]
+    assert ops == ["memory.get", "memory.set", "memory.get", "memory.delete"]
+    sets = [c for c in calls if "memory.set" in c]
+    assert '"org":"dev","namespace":"local","agent":"installer"' in sets[0]
+    assert '"memory_key":"loom/installer-check"' in sets[0]
+    assert all("--noproxy *" in c for c in calls)
+
+
+def test_a_failed_run_checks_on_the_next_one(install, installer_env: dict[str, str]) -> None:
+    """The marker a new .env comes with stays until the check passes."""
+    run, target = install
+    assert run().returncode == 0  # files only, as a run that stopped early
+    assert (target / ".memory-check-pending").exists()
+    curl_log, _ = _start_stubs(installer_env)
+    assert run(LOOM_SKIP_START="0").returncode == 0
+    assert any("memory.set" in c for c in curl_log.read_text().splitlines())
 
 
 def test_a_rerun_writes_no_memory_again(install, installer_env: dict[str, str]) -> None:
@@ -1188,7 +1200,7 @@ def test_a_rerun_writes_no_memory_again(install, installer_env: dict[str, str]) 
     _start_stubs(installer_env, found=False)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 0, result.stderr
-    assert "first memory" not in result.stdout
+    assert "test memory" not in result.stdout
     assert not any("memory.set" in c for c in curl_log.read_text().splitlines())
 
 
@@ -1196,7 +1208,7 @@ def test_an_upgrade_from_before_writes_no_memory(install, installer_env: dict[st
     """An install whose .env came before this release has data of its own."""
     run, target = install
     assert run().returncode == 0  # files only
-    (target / ".welcome-pending").unlink()
+    (target / ".memory-check-pending").unlink()
     curl_log, _ = _start_stubs(installer_env)
     assert run(LOOM_SKIP_START="0").returncode == 0
     assert not any("memory.set" in c for c in curl_log.read_text().splitlines())
@@ -1217,7 +1229,7 @@ def test_loom_connect_installs_the_claude_code_plugin(
 ) -> None:
     run, _ = install
     _start_stubs(installer_env)
-    claude = _agent_cli(installer_env, "claude", mcp=_mcp_line("http://localhost:28977"))
+    claude = _agent_cli(installer_env, "claude")
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", LOOM_PORT="28977")
     assert result.returncode == 0, result.stderr
     calls = claude.read_text().splitlines()
@@ -1272,16 +1284,6 @@ def test_loom_connect_adds_the_codex_plugin(install, installer_env: dict[str, st
     assert "approve the plugin's hooks" in result.stdout
 
 
-def test_a_welcome_memory_already_there_is_kept(install, installer_env: dict[str, str]) -> None:
-    """Another install on the same ClickHouse wrote one: it is read, not overwritten."""
-    run, target = install
-    curl_log, _ = _start_stubs(installer_env, found=True)
-    result = run(LOOM_SKIP_START="0")
-    assert result.returncode == 0, result.stderr
-    assert not any("memory.set" in c for c in curl_log.read_text().splitlines())
-    assert not (target / ".welcome-pending").exists()
-
-
 def test_a_first_memory_that_does_not_read_back_is_named(
     install, installer_env: dict[str, str]
 ) -> None:
@@ -1289,11 +1291,11 @@ def test_a_first_memory_that_does_not_read_back_is_named(
     _start_stubs(installer_env, set_saves=False)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 0, result.stderr
-    assert "Could not save a first memory" in result.stdout
-    assert (target / ".welcome-pending").exists()
+    assert "Could not save a test memory" in result.stdout
+    assert (target / ".memory-check-pending").exists()
 
 
-def test_a_namespace_a_json_body_cannot_hold_skips_the_first_memory(
+def test_a_namespace_a_json_body_cannot_hold_skips_the_memory_check(
     install, installer_env: dict[str, str]
 ) -> None:
     run, target = install
@@ -1303,7 +1305,7 @@ def test_a_namespace_a_json_body_cannot_hold_skips_the_first_memory(
     curl_log, _ = _start_stubs(installer_env)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 0, result.stderr
-    assert "Skipped the first memory" in result.stdout
+    assert "Skipped the memory check" in result.stdout
     assert not any("memory." in c for c in curl_log.read_text().splitlines())
 
 
@@ -1347,7 +1349,7 @@ def test_vscode_inside_a_remote_is_not_offered(
 def test_loom_connect_all_connects_every_client(install, installer_env: dict[str, str]) -> None:
     run, _ = install
     _start_stubs(installer_env)
-    claude = _agent_cli(installer_env, "claude", mcp=_mcp_line("http://localhost:7777"))
+    claude = _agent_cli(installer_env, "claude")
     codex = _agent_cli(installer_env, "codex")
     code = _agent_cli(installer_env, "code")
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="all")
@@ -1357,7 +1359,7 @@ def test_loom_connect_all_connects_every_client(install, installer_env: dict[str
     )
     assert "plugin add loom@loom" in codex.read_text().splitlines()
     assert any(c.startswith("--add-mcp ") for c in code.read_text().splitlines())
-    assert "Connected: Claude Code Codex VS Code." in result.stdout
+    assert "Connected: Claude Code, Codex, VS Code." in result.stdout
 
 
 def test_a_server_error_connects_no_agent(install, installer_env: dict[str, str]) -> None:
@@ -1486,3 +1488,76 @@ def test_a_loom_mcp_server_vscode_has_is_left_as_it_is(
     assert result.returncode == 0, result.stderr
     assert code.read_text() == ""
     assert "VS Code: a loom MCP server is set up already" in result.stdout
+
+
+def test_a_claude_mcp_entry_from_before_is_left_as_it_is(
+    install, installer_env: dict[str, str]
+) -> None:
+    """`claude mcp add loom` (or `loom install`) set it up: the plugin would list
+    every tool twice."""
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    config = Path(installer_env["HOME"]) / ".claude.json"
+    config.write_text(
+        '{"mcpServers": {"loom": {"type": "http", "url": "http://localhost:7777/mcp"}}}'
+    )
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]
+    assert "Claude Code: a loom MCP server is set up already" in result.stdout
+
+
+def test_a_codex_mcp_entry_from_before_is_left_as_it_is(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex")
+    config = Path(installer_env["HOME"]) / ".codex/config.toml"
+    config.parent.mkdir()
+    config.write_text('[mcp_servers.loom]\nurl = "http://localhost:7777/mcp"\n')
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
+    assert result.returncode == 0, result.stderr
+    assert codex.read_text().splitlines() == ["plugin list"]
+    assert "Codex: a loom MCP server is set up already" in result.stdout
+
+
+def test_vscode_under_wsl_is_not_offered(install, installer_env: dict[str, str]) -> None:
+    """There `code` is the Windows VS Code, whose profile this run cannot read."""
+    run, _ = install
+    _start_stubs(installer_env)
+    code = _agent_cli(installer_env, "code")
+    assert run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", WSL_DISTRO_NAME="Ubuntu").returncode == 0
+    assert code.read_text() == ""
+
+
+@pytest.mark.parametrize("name", ["claude", "codex"])
+def test_a_plugin_list_that_fails_leaves_the_client_alone(
+    install, installer_env: dict[str, str], name: str
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    log = _agent_cli(installer_env, name, code=1)
+    client = "claude-code" if name == "claude" else "codex"
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT=client)
+    assert result.returncode == 0, result.stderr
+    assert log.read_text().splitlines() == ["plugin list"]
+    assert "could not list its plugins (above), so it is left as it is" in result.stdout
+
+
+@pytest.mark.skipif(Path("/usr/bin/node").exists(), reason="Node.js is in /usr/bin here")
+def test_claude_code_without_node_gets_the_mcp_entry_instead(
+    install, installer_env: dict[str, str]
+) -> None:
+    """The plugin's MCP header helper and its hooks run on Node.js."""
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    bin_dir = installer_env["PATH"].split(":")[0]
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", PATH=f"{bin_dir}:/usr/bin:/bin")
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]
+    assert 'claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding"' in (
+        result.stdout
+    )

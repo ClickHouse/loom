@@ -123,11 +123,12 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 
 Run it from your home directory, or another
 [directory only you can write to](./docs/getting-started/quickstart.md#fast-path-released-image-no-clone).
-The installer starts Loom and ClickHouse, applies migrations, saves a first memory and
-prints the dashboard URL: **http://localhost:7777/**. On a terminal it then offers to
-connect the coding agents it finds (Claude Code, Codex, VS Code) and opens the dashboard. The image includes the server, workers, dashboard and
-Python, TypeScript and Go compiler indexers; TypeScript dependencies are prepared
-automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
+The installer starts Loom and ClickHouse, applies migrations, checks that a memory saves
+and reads back, and prints the dashboard URL: **http://localhost:7777/**. On a terminal it
+then offers to connect the coding agents it finds (Claude Code, Codex, VS Code) and opens
+the dashboard. The image includes the server, workers, dashboard and Python, TypeScript
+and Go compiler indexers; TypeScript dependencies are prepared automatically. [Quickstart
+and pinned releases](./docs/getting-started/quickstart.md)
 
 The installation lives in `~/.loom` (`LOOM_INSTALL_DIR` chooses another directory): the
 Compose file and the startup settings in `~/.loom/.env`. Running the install command again
@@ -181,8 +182,8 @@ where each value came from ([runtime settings](./docs/operations/runtime-setting
 
 ### 3. Connect your agents
 
-If the installer connected your agent, skip to the last paragraph of this step. On the
-machine running a personal installation, the plugins need no token:
+If the installer connected your agent, skip the commands below. On the machine running a
+personal installation, the plugins need no token:
 
 ```bash
 # Claude Code
