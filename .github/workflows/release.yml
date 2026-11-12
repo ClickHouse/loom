@@ -247,19 +247,27 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
       # The SDK sources carry the tag's version, so every published file names it.
-      # check-version.mjs compares package.json, package-lock.json (npm version
-      # rewrites both) and src/version.ts.
-      - name: Sync SDK versions to the tag
+      # The Python SDK takes its PEP 440 form (1.2.0rc1 for 1.2.0-rc.1): the
+      # build backend writes the version into METADATA as given, and the verify
+      # step and PyPI read the normalized one.
+      - name: Sync the Python SDK version to the tag
+        id: sync-python
         run: |
+          pip install packaging==26.3
           python - <<'PY'
           import os, pathlib, re
-          version = os.environ["VERSION"]
+          from packaging.version import Version
+          version = str(Version(os.environ["VERSION"]))
           p = pathlib.Path("sdk/python/pyproject.toml")
           p.write_text(re.sub(r'^version = ".*"$', f'version = "{version}"', p.read_text(), count=1, flags=re.M))
           v = pathlib.Path("sdk/python/loom/_version.py")
           v.write_text(re.sub(r'__version__ = ".*"', f'__version__ = "{version}"', v.read_text()))
           PY
-          cd sdk/typescript
+      # check-version.mjs compares package.json, package-lock.json (npm version
+      # rewrites both) and src/version.ts.
+      - name: Sync the TypeScript SDK version to the tag
+        working-directory: sdk/typescript
+        run: |
           npm version --no-git-tag-version --allow-same-version "$VERSION"
           sed -i "s/export const SDK_VERSION = \".*\";/export const SDK_VERSION = \"$VERSION\";/" src/version.ts
       - name: Build Python sdist + wheel
