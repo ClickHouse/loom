@@ -961,7 +961,7 @@ def test_a_port_another_program_holds_stops_before_any_pull(
     result = run(LOOM_SKIP_START="0", LOOM_PORT="28977")
     assert result.returncode == 1
     assert "port 28977 on 127.0.0.1 is in use by another program:" in result.stderr
-    assert "LOOM_PORT=7778 sh loom-install.sh" in result.stderr
+    assert "again with LOOM_PORT=7778 in front of sh" in result.stderr
     assert not _started(docker_log)
 
 
@@ -976,18 +976,18 @@ def test_a_listener_that_never_answers_holds_the_port(
     assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
 
 
+@pytest.mark.parametrize("code", [52, 56, 1, 8])
 def test_a_listener_that_resets_or_answers_nothing_holds_the_port(
-    install, installer_env: dict[str, str]
+    install, installer_env: dict[str, str], code: int
 ) -> None:
     """Any exit after a connection is a listener: 52 (an empty reply), 56 (a reset),
     1 (a non-HTTP reply, such as an SSH or TLS server's) and 8 (a status line curl
     cannot read)."""
     run, _ = install
-    for code in (52, 56, 1, 8):
-        _start_stubs(installer_env, probe_exit=code, connect_time="0.000150")
-        result = run(LOOM_SKIP_START="0")
-        assert result.returncode == 1
-        assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
+    _start_stubs(installer_env, probe_exit=code, connect_time="0.000150")
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
 
 
 @pytest.mark.parametrize("connect_time", ["0.000000", "0.000"])
@@ -1053,6 +1053,16 @@ def test_a_rerun_onto_another_port_probes_that_port(install, installer_env: dict
     assert "port 7778 on 127.0.0.1 is in use" in result.stderr
     assert "LOOM_PORT=7779" in result.stderr
     assert not _started(docker_log)
+
+
+def test_a_rerun_onto_a_free_port_installs(install, installer_env: dict[str, str]) -> None:
+    """Its own server publishes 7777; 7778, asked for, is probed and free."""
+    run, _ = install
+    curl_log, docker_log = _start_stubs(installer_env, docker_body=_OWN_SERVER)
+    result = run(LOOM_SKIP_START="0", LOOM_PORT="7778")
+    assert result.returncode == 0, result.stderr
+    assert curl_log.read_text().splitlines()[0].endswith(" http://127.0.0.1:7778/")
+    assert any(" up -d" in c for c in docker_log.read_text().splitlines())
 
 
 def test_the_port_probe_goes_where_loom_is_published(

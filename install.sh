@@ -408,19 +408,15 @@ main() {
     *)
       # Whether curl connected decides it: exit 7 is a refused connection and
       # the port is free; a connect time above zero (printed in the C locale) is
-      # a listener, whatever it answered; a timeout with none says nothing.
+      # a listener, whatever it answered; a failure with none says nothing.
       probe=0
       connected=$(LC_ALL=C curl -s --noproxy '*' -o /dev/null -w '%{time_connect}' \
         --connect-timeout 3 --max-time 5 "http://$host:$port/" 2>/dev/null) || probe=$?
       case $probe,$connected in
         7,*) ;;
-        *,0.000 | *,0.000000 | *,) [ "$probe" != 28 ] || probe=unreachable ;;
-        *) probe=held ;;
-      esac
-      case $probe in
-        7) ;;
-        unreachable) fail "cannot reach $host:$port within 3 seconds: check LOOM_BIND_HOST and LOOM_PORT, or a firewall on this host" ;;
-        held)
+        28,0.000 | 28,0.000000 | 28,) fail "cannot reach $host:$port within 3 seconds: check LOOM_BIND_HOST and LOOM_PORT, or a firewall on this host" ;;
+        *,0.000 | *,0.000000 | *,) fail "could not check port $port on $host (curl exit $probe): check LOOM_BIND_HOST and LOOM_PORT" ;;
+        *)
           other_port=7778
           [ "$port" != 7778 ] || other_port=7779
           holder="another program"
@@ -428,9 +424,8 @@ main() {
           curl -s --noproxy '*' --max-time 3 "http://$host:$port/v1/health" 2>/dev/null \
             | grep -q '"schema_version"' \
             && holder="another Loom server (another install, or one started from a checkout)"
-          fail "port $port on $host is in use by $holder: stop it, or choose a free port by running the saved installer again as LOOM_PORT=$other_port sh loom-install.sh"
+          fail "port $port on $host is in use by $holder: stop it, or run the install command again with LOOM_PORT=$other_port in front of sh"
           ;;
-        *) fail "could not check port $port on $host (curl exit $probe): check LOOM_BIND_HOST and LOOM_PORT" ;;
       esac
       ;;
   esac
