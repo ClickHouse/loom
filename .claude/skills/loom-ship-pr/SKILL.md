@@ -40,7 +40,7 @@ git push -u origin HEAD
 gh pr create --base main --title "<subject>" --body-file /path/to/body.md
 ```
 
-CI runs on PRs into `main` (and pushes to it). A stacked PR gets checks once retargeted (`gh pr edit <n> --base main`); a PR with a merge conflict gets none, silently. After every push:
+CI runs on PRs into `main` or a `release/X.Y` line (and pushes to them). A stacked PR gets checks once retargeted (`gh pr edit <n> --base main`); a PR with a merge conflict gets none, silently. After every push:
 
 ```bash
 gh pr view <n> --json mergeable --jq .mergeable     # CONFLICTING: rebase on origin/main now, or CI never starts

@@ -77,7 +77,7 @@ docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --p
 
 ## Branch, change, check
 
-1. Branch from `main`. CI runs only on pull requests into `main` and pushes to it. A pull request stacked on another branch gets no checks until it targets `main`.
+1. Branch from `main`. CI runs on pull requests into `main` or a `release/X.Y` line and on pushes to them. A pull request stacked on another branch gets no checks until it targets one of them.
 2. Make the change with its tests ([testing](./docs/development/testing.md)). If it moves a source that something is generated from, regenerate it ([code generation](./docs/development/code-generation.md)). If it changes the schema, follow [migrations](./docs/development/migrations.md).
 3. Run what CI runs:
 
