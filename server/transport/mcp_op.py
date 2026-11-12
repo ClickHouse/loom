@@ -99,11 +99,11 @@ TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERAT
 # A dotted op name as prose spells it (`memory.set`, `knowledge.source.add`).
 OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
 # An op named in prose: its tool name or its dotted op name, and a closing
-# backtick, which the "(via loom_op)" marker goes after. A name in quotes, after
+# backtick or a possessive 's, which the "(via loom_op)" marker goes after. A name in quotes, after
 # a `/` or before a `#` is a value, a path or a citation tag
 # ('memory.delete', /v1/memory.set, [knowledge.query#1]), not a reference; a
 # possessive (memory.set's) still is.
-_NAMED_OP = re.compile(rf"(?<!['\"/])\b(loom_[a-z_]+|{OP_MENTION})\b(`?)(?!#|\"|'(?![a-z]))")
+_NAMED_OP = re.compile(rf"(?<!['\"/])\b(loom_[a-z_]+|{OP_MENTION})\b(`?(?:'s)?)(?!#|\"|'(?![a-z]))")
 
 
 def _lookup(name: str) -> Operation | None:
@@ -339,7 +339,6 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     if op is None or not _routed(op, writes):
         if op is not None:  # a write on a read-only connection
             emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP)
-        # suggest only ops this connection routes
         routed = [n for n, o in by_name.items() if _routed(o, writes)]
         near = difflib.get_close_matches(name, routed, n=5, cutoff=0.6)
         body = {

@@ -159,6 +159,7 @@ _TOOLSETS = [
     ("tracker", False),
     ("readonly", False),
     ("assistant", False),
+    ("all", False),
     ("all", True),
     ("coding+tracker", False),
 ]
@@ -174,6 +175,16 @@ def test_no_listed_text_names_a_hidden_op(toolset: str, code: bool):
         for text in _texts(t):
             hidden = sorted((_op_refs(text) & _MCP_HIDDEN_OPS) - listed)
             assert not hidden, f"{toolset}: {t['name']} names hidden {hidden}"
+
+
+# Every text a listing renders from, as written in the source.
+_SOURCE_TEXTS = (
+    TOOL_DESCRIPTIONS,
+    ATOMIC_TOOL_DESCRIPTIONS,
+    CODING_TOOL_DESCRIPTIONS,
+    ASSISTANT_TOOL_DESCRIPTIONS,
+    mcp_op._INSTEAD,
+)
 
 
 def _texts(tool: dict) -> list[str]:
@@ -250,13 +261,7 @@ def test_the_assistant_listing_names_only_its_own_tools():
 
 def test_no_source_text_puts_an_op_inside_a_longer_code_span():
     """The "(via loom_op)" marker would land inside the span."""
-    from server.transport.mcp_descriptions import (
-        ASSISTANT_TOOL_DESCRIPTIONS,
-        CODING_TOOL_DESCRIPTIONS,
-    )
-
-    sources = (TOOL_DESCRIPTIONS, ATOMIC_TOOL_DESCRIPTIONS, CODING_TOOL_DESCRIPTIONS)
-    for texts in (*sources, ASSISTANT_TOOL_DESCRIPTIONS, mcp_op._INSTEAD):
+    for texts in _SOURCE_TEXTS:
         for name, text in texts.items():
             for span in re.findall(r"`([^`]+)`", text):
                 ops = [m for m in re.findall(mcp_op.OP_MENTION, span) if m in OPS]
@@ -265,13 +270,7 @@ def test_no_source_text_puts_an_op_inside_a_longer_code_span():
 
 def test_no_source_text_writes_an_op_as_a_call():
     """`op(args)` would put the "(via loom_op)" marker between the name and `(`."""
-    from server.transport.mcp_descriptions import (
-        ASSISTANT_TOOL_DESCRIPTIONS,
-        CODING_TOOL_DESCRIPTIONS,
-    )
-
-    sources = (TOOL_DESCRIPTIONS, ATOMIC_TOOL_DESCRIPTIONS, CODING_TOOL_DESCRIPTIONS)
-    for texts in (*sources, ASSISTANT_TOOL_DESCRIPTIONS, mcp_op._INSTEAD):
+    for texts in _SOURCE_TEXTS:
         for name, text in texts.items():
             calls = [m for m in re.findall(rf"\b({mcp_op.OP_MENTION})\(", text) if m in OPS]
             assert not calls, f"{name}: {calls}"
@@ -309,6 +308,10 @@ def test_naming_marks_only_what_loom_op_routes():
     assert mcp_op.name_ops_for_listing("memory.set's text", listed, writes=True) == (
         "loom_memory_set's text"
     )
+    # an unlisted op's marker goes after its possessive
+    assert mcp_op.name_ops_for_listing("memory.apply's limit", listed, writes=True) == (
+        "memory.apply's (via loom_op) limit"
+    )
     # a citation tag is not an op mention
     assert mcp_op.name_ops_for_listing("[knowledge.query#1]", listed, writes=True) == (
         "[knowledge.query#1]"
@@ -325,14 +328,7 @@ def test_a_listing_build_leaves_the_source_texts_as_written():
     source texts keep op names and carry no hand-written marker."""
     assert _listing("core", True) == _listing("core", True)
     assert "memory.update" in TOOL_DESCRIPTIONS["memory.set"]
-    sources = (
-        TOOL_DESCRIPTIONS,
-        ATOMIC_TOOL_DESCRIPTIONS,
-        CODING_TOOL_DESCRIPTIONS,
-        ASSISTANT_TOOL_DESCRIPTIONS,
-        mcp_op._INSTEAD,
-    )
-    for texts in sources:
+    for texts in _SOURCE_TEXTS:
         for name, text in texts.items():
             assert "(via loom_op)" not in text, f"{name}: the listing adds the marker"
 

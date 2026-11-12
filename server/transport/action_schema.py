@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Set
 from typing import Any
 
 from pydantic import BaseModel
@@ -64,7 +65,7 @@ def effect_class(op: Operation) -> str:
     return "destructive" if ann["destructiveHint"] else "write"
 
 
-def _description(op: Operation, listed: set[str]) -> str:
+def _description(op: Operation, listed: Set[str]) -> str:
     from server.transport.mcp_descriptions import TOOL_DESCRIPTIONS
     from server.transport.mcp_op import name_ops_for_listing
 
