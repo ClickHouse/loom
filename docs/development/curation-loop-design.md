@@ -38,9 +38,11 @@ A definition is a memory row with `memory_type = 'definition'` under the key
    appended.
 
 One helper in `server/memory/domain/definitions.py` computes it. The SDKs and the
-dashboard port it and test against the same table of terms and keys, a full-width term and
-one with a doubled space among them, and a refused promotion names the key it expected.
-Its value is a JSON object, which `memory.set` stores whole in `value` and in `value_json`
+dashboard port it and test against the same table of terms and keys, among them a
+full-width term, one with a doubled space, one whose case fold differs from lower-casing
+(`Straße`, a Greek final sigma) and ones holding whitespace that Python and JavaScript
+split differently (U+0085, U+FEFF), and a refused promotion names the key it expected. Its
+value is a JSON object, which `memory.set` stores whole in `value` and in `value_json`
 (the embedding reads its excerpt, as for any row):
 
 | Field      | Meaning                                                                     |
@@ -460,14 +462,14 @@ to two accounts, or a tie that cannot be read, records no miss.
 
 **The stored row.** Each miss writes one row to `loom.search_misses` under the namespace
 the search was addressed to: the identity tuple, the asker, the plane and the query's
-normalised form. That form is the query through `canonical_document_text`, as the term leg
-reads it, case-folded, with every run of characters other than letters, digits, `_`, `+`
-and `#` made one space, so `C++`, `C#` and `arr_v2` stay apart as the term leg keeps them.
-It is still the query's words, kept as the trace of a question under the request's capture
-level; only the threshold below decides what an admin sees. A query that reads or grades
-as `medium` or `high` (`reads_high` and the grader in
-`server/memory/domain/sensitivity.py`, as a definition's promotion grades its value)
-records no miss, so a pasted credential or an email never becomes a gap head, an
+normalised form. That form is the query through `canonical_document_text` (as the term leg
+reads it), then case-folded, with every run of characters other than letters, digits, `_`,
+`+` and `#` made one space and a space at either end dropped, so `C++`, `C#` and `arr_v2`
+stay apart as the term leg keeps them. It is still the query's words, kept as the trace of
+a question under the request's capture level; only the threshold below decides what an
+admin sees. A query that reads or grades as `medium` or `high` (`reads_high` and the
+grader in `server/memory/domain/sensitivity.py`, as a definition's promotion grades its
+value) records no miss, so a pasted credential or an email never becomes a gap head, an
 embedding, an LLM prompt or a draft no promotion could accept. No memory key or document
 URI is kept: one naming another user's row or document would outlive that user's erasure,
 or the document's delete, in someone else's miss.
