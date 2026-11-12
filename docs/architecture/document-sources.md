@@ -734,7 +734,7 @@ among what it erases, and before the deployment starts. Under the ClickHouse aut
 subject erasure completed after the point rolls back with its ledger and audit rows and
 leaves no trace in the store, so it is lost and is requested again from the requester's
 own record (or from an audit export kept off the service). The command takes those
-erasures as a file of lines, each an org and the erasure's `scope_value` JSON
+erasures as a file of one JSON object per line, `{"org": …, "scope_value": {…}}`
 (`--subject-erasures <file>`), runs them for every org in the file, with no placement
 check, before it exits, so their exclusion rows exist before the deployment starts and
 before any crawl can be added again. `loom reconcile` leaves `acl-` names out of the
@@ -911,17 +911,19 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   `docs/reference/errors.md`) rather than `ERASURE_PENDING`; this differs from
   `namespace_census`'s open-erasure branch, which also counts an abandoned saga.
 - One lock order holds for turns, cleanups, the anti-join, `knowledge_sources.retire`,
-  `connections.forget_user` and `knowledge_sources.forget_user`, and none of them waits
-  for a turn lease while it holds a source lease: a source's turn lease outer, the
-  namespace's source lease inner, as a sync turn takes them today.
-  `knowledge_sources.retire` writes every source row of each scope name inactive (every
-  registry row, inactive ones included, gets its cleanup decision) under that
-  namespace's source lease, leaves it, and only then waits, outside it, for each
-  source's turn lease within the step's 30 seconds in all; a wait that times out fails
-  the step, and `erasure_recovery` resumes it. A turn in flight stops at its next
-  `require_current`. For a `namespace_list` the source leases are taken one name at a
-  time, each waiting at most its usual 5 seconds; a busy one fails the step the same
-  way.
+  `connections.forget_user`, `pg_knowledge.forget_user` and
+  `knowledge_sources.forget_user`, and none of them waits for a turn lease while it
+  holds a source lease or a Postgres transaction (`pg_knowledge.forget_user` takes its
+  turn leases before it opens its transaction, and marks itself done in that transaction
+  as every Postgres step does): a source's turn lease outer, the namespace's source
+  lease inner, as a sync turn takes them today. `knowledge_sources.retire` writes every
+  source row of each scope name inactive (every registry row, inactive ones included,
+  gets its cleanup decision) under that namespace's source lease, leaves it, and only
+  then waits, outside it, for each source's turn lease within the step's 30 seconds in
+  all; a wait that times out fails the step, and `erasure_recovery` resumes it. A turn
+  in flight stops at its next `require_current`. For a `namespace_list` the source
+  leases are taken one name at a time, each waiting at most its usual 5 seconds; a busy
+  one fails the step the same way.
 - No mirror is created under an erasure: a first mirrored `add` of a namespace that has
   no mirror is refused with `ERASURE_PENDING` (409, class `capacity`, retryable, with
   `retry_after_s`; a row in `CLASS_BY_CODE` and in `docs/reference/errors.md`) while an
@@ -991,22 +993,30 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   `server/erasure/` gains a `subject` case, and the implementing pull request's tests
   assert none reaches the namespace or `user_id` path: `purge` is honoured, status,
   listing and export are an org admin's only, and no `memory.erased` webhook is sent,
-  since no memory is erased. The ledger and audit rows keep `scope_value` as given, as a
-  `user_id` erasure's keep its user, so a resume, a replay and `loom erasure-re-verify`
-  find the person the same way. `erasure.export` validates the same JSON; a `subject`
+  since no memory is erased. `erasure.request` resolves who the person is (below) once
+  and stores it in `scope_value` as `{"subject", "email", "spellings", "emails"}`, which
+  the validator accepts as it accepts the form `begin_erasure` rewrites a
+  `namespace_list` to; the ledger and audit rows keep it, as a `user_id` erasure's rows
+  keep its user, so a resume, a replay and `loom erasure-re-verify` match that stored
+  set and read no directory again. `erasure.export` validates the same JSON; a `subject`
   export answers two new sections, the person's connections (kind, store account email,
   scopes, connection times; never a credential) and the sources, crawl entries and
-  `filter` items that name them, and its other sections come back empty. The SDKs are
-  regenerated for the scope and the sections. The connections step goes first because
-  the last one rewrites the `owner_subject` it finds active sources by. What they must
-  guarantee, and the census checks:
+  `filter` items that name them, plus the audit rows naming any of the stored spellings;
+  its other sections come back empty. The SDKs are regenerated for the scope and the
+  sections, and the dashboard's Erasures view gains a `subject` form for org admins and
+  its label. The connections step goes first because the last one rewrites the
+  `owner_subject` it finds active sources by, and the Postgres step comes before the
+  last one because it finds sources by the `owner` the last one removes and its deletes
+  must precede the ClickHouse retirements. What they must guarantee, and the census
+  checks:
   - **Who is the person.** The subject the request names and the email it names, both
     taken as given (an org admin named them), plus what a verified tie makes theirs:
     `verified_spellings` (`server/auth/aliases.py`) and the person's verified emails. An
     unverified tie is not followed, since an unverified address could be another
-    person's (a self-signup's `contact_email`). Steps and census match the same way and
-    raise when the directory cannot be read. A person who never signed in is erased by
-    naming their email, which reaches the crawl lists that hold it.
+    person's (a self-signup's `contact_email`). The request reads them and raises when
+    the directory cannot be read; steps and census match the stored set. A person who
+    never signed in is erased by naming their email, which reaches the crawl lists that
+    hold it.
   - **Their connected sources go, with everything they wrote.** Every connected source
     the person ever owned, whatever stopped it and whatever later wrote its registry row
     (an N-1 `remove` resets `owner_subject`, and a merge keeps only the newest version).
@@ -1027,10 +1037,11 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
     for the sources whose cleanup or `source:` rows name the person as `owner` or carry
     this erasure's `erasure_id` (ClickHouse rows, which a Postgres restore leaves), with
     `loom.erased_documents` evidence and the publisher wait, as `pg_knowledge.delete`
-    does for the person's own, so nothing lands after the ClickHouse rows go. Its
-    readers and listing rows go in every version, by `source_id`, so another subject
-    connected to the same store account keeps its rows. The connections end in the order
-    every path uses ([connected accounts](#connected-accounts)), and their rows go last.
+    does for a namespace's or a user's documents, so nothing lands after the ClickHouse
+    rows go. Its readers and listing rows go in every version, by `source_id`, so
+    another subject connected to the same store account keeps its rows. The connections
+    end in the order every path uses ([connected accounts](#connected-accounts)), and
+    their rows go last.
   - **No address of theirs stays in a source.** Exclusion rows are written for their
     addresses; the addresses leave every crawl's `subjects`, `filter` items they own
     leave every source (a source left with no item stops), a crawl whose
@@ -1049,8 +1060,10 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
     or a cleanup in flight finishes first; a bounded wait that times out fails the step
     for `erasure_recovery` to resume, and while a long cleanup holds a turn lease,
     failing and resuming is the expected path.
-  - **Its census proves it.** A residue key per step (as `OBJECT_RESIDUE` has for
-    originals), so residue reopens the step that owns it. It finds the sources by every
+  - **Its census proves it.** Each census table it counts gets a `subject`-scope owner,
+    as `Substrate` has `ns_step` and `user_step`; only the counts that are no table's
+    (the person's sources' documents, chunks, originals, heads and deliveries) take a
+    residue key, as `OBJECT_RESIDUE` does for originals. It finds the sources by every
     version of a cleanup row carrying this erasure's `erasure_id`, and independently
     counts every version of a cleanup row or `source:` listing row whose `owner` names
     the person, and counts, every version, the rows above that name the person and those
@@ -1093,6 +1106,9 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   `read_live(all_deployments=True)`, as rule 25 counts) reports a schema version below
   the migration that adds the columns, or no heartbeat has been read, as rule 24 does
   for namespace guides ([rolling upgrades](rolling-upgrades.md)).
+- **The `subject` scope waits for N too.** `erasure.request` answers 503 `OVERLOADED`
+  for it on the same fleet check, so no N-1 process, which cannot parse the scope, holds
+  a `subject` ledger row it would resume and abandon.
 - **Rollback.** N-1 reads no mirror, but its gate admits a platform or org admin's
   wildcard token that names one, and nothing on N-1 ages the lists. So the rollback
   procedure ([upgrades](../operations/upgrades.md)) requires, with every replica stopped
@@ -1121,7 +1137,6 @@ and pins this section's N-1 behaviour with a test that runs today's `check`, `ro
   `ERASURE_REPLAY_PENDING` (until an operator's `loom reconcile`) for a first mirrored
   source while an erasure of the namespace is unfinished.
 - `recording` sources lose the `meet` provider.
-
 - A source whose stored documents plus new files pass
   `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` (default 50,000) writes no new document and
   reports `too_many_documents`, where today it syncs on with a truncated comparison.
@@ -1298,8 +1313,8 @@ The redirect URI to register with each store is
     claim.
   - The mirror lookup seeing a mirror row inserted through another replica.
   - A `user_id` export returning no `agent_events` row under an `acl-` namespace.
-    - A `subject` erasure removing a `filter` item owned by the person and stopping a
-      crawl whose `directory_subject` names them.
+  - A `subject` erasure removing a `filter` item owned by the person and stopping a
+    crawl whose `directory_subject` names them.
   - `forget_user` on a source whose only item is the person's filter, and a `subject`
     census finding no retired connected source's owner.
   - A `subject` erasure of a person whose connected source an N-1 replica stopped before
@@ -1314,7 +1329,9 @@ The redirect URI to register with each store is
     or delivery of the person's sources.
   - A `subject` erasure resumed after its first step, and replayed, reading its
     `scope_value` back through the validator; one that named only an email matching on
-    the resume what the first run matched.
+    the resume what the first run matched after the person's account was removed in
+    between; a request that lands while a process reports the old schema refused with
+    `OVERLOADED`; a `--subject-erasures` line holding both fields.
   - A subject erasure over a crawl removed before it, and over a source row whose older
     versions name the person, leaving no version that names them;
     `loom.code_index_state` read without `FINAL` after it holding no cursor of theirs.
