@@ -91,6 +91,8 @@ def _synthetic_tool_descriptors(toolset: str = "core") -> list[dict[str, Any]]:
         # The schema-shape rule (inert defaults go) applies to the hand-written
         # synthetic schemas as it does to the registry's.
         d["inputSchema"] = collapse_nullable(d["inputSchema"])
+        if d["name"] == LOOM_OP_TOOL_NAME:  # its text names what this listing leaves out
+            d["description"] = loom_op_description(listed_tool_names(toolset), toolset)
     if "coding" in toolset_parts(toolset):
         # The coding tier's activation text (same triggers,
         # one line, no persona-tone clause) and search text (derived).
@@ -382,7 +384,7 @@ def listed_tool_names(toolset: str | None) -> set[str]:
     """The tool names a `tools/list` on ``toolset`` shows."""
     names = {op.mcp_tool_name for op in listed_ops(toolset)}
     if not assistant_connection(toolset):
-        names |= {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}
+        names |= {d["name"] for d in _synthetic_tool_descriptors_core()}
     return names
 
 
@@ -487,10 +489,9 @@ async def _tools_descriptor(
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset))
-    listed = {d["name"] for d in descriptors}
+    listed = listed_tool_names(toolset)
     for d in descriptors:
-        if d["name"] == LOOM_OP_TOOL_NAME:  # its text is about dotted op names
-            d["description"] = loom_op_description(listed, toolset)
+        if d["name"] == LOOM_OP_TOOL_NAME:  # built for this listing already
             continue
         d["description"] = name_ops_for_listing(d["description"], listed, toolset)
         d["inputSchema"] = _name_ops_in_fields(d["inputSchema"], listed, toolset)

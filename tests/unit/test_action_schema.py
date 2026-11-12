@@ -37,6 +37,15 @@ def test_manifest_has_one_tool_per_operation_with_loom_extras():
     json.loads(A.to_manifest_json())
 
 
+def test_a_manifest_of_some_ops_names_the_rest_by_op_name():
+    """An op outside the manifest keeps its dotted name, unmarked: no loom_op is in it."""
+    ops = [op for op in ALL_OPERATIONS if op.name in ("memory.apply", "memory.delete")]
+    by_op = {t["loom"]["operation"]: t for t in A.build_manifest(ops)["tools"]}
+    text = by_op["memory.apply"]["description"]
+    assert "loom_memory_delete" in text and "memory.set" in text
+    assert "loom_memory_set" not in text and "(via loom_op)" not in text
+
+
 def test_effect_class_agrees_with_mcp_annotations():
     from server.transport.mcp_tools import _tool_annotations
 

@@ -40,7 +40,7 @@ _HELP = {"", "help", "ops", "list", "catalog", "?"}
 _CATALOG_LIMIT = 15
 
 
-def _ops() -> list[Any]:
+def _ops() -> list[Operation]:
     return [op for op in ALL_OPERATIONS if op.name not in _MCP_HIDDEN_OPS]
 
 
@@ -74,7 +74,7 @@ def _row(op: Any, purpose: str | None = None) -> dict[str, Any]:
     return row
 
 
-def _is_read(op: Any) -> bool:
+def _is_read(op: Operation) -> bool:
     return bool(op.read_only)
 
 
@@ -88,7 +88,7 @@ def routes_writes(toolset: str | None) -> bool:
     return resolve_toolset(toolset, settings.mcp_toolset) != "readonly"
 
 
-def reachable(op: Any, toolset: str | None) -> bool:
+def reachable(op: Operation, toolset: str | None) -> bool:
     """Whether `loom_op` on this connection routes ``op``: never a hidden op."""
     return op.name not in _MCP_HIDDEN_OPS and (_is_read(op) or routes_writes(toolset))
 
@@ -146,8 +146,8 @@ def loom_op_description(listed: Set[str], toolset: str | None) -> str:
             shown.append(f"{what} ({name})")
     such_as = ""
     if shown:
-        listing = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
-        such_as = f" It reaches, for example, {listing}."
+        examples = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+        such_as = f" It reaches, for example, {examples}."
     reads = "" if routes_writes(toolset) else " On this read-only connection it runs reads only."
     # Discovery and the call shape lead: compact keeps the first paragraph cut near
     # 280 chars, so both must fit in the first sentence.
@@ -156,8 +156,8 @@ def loom_op_description(listed: Set[str], toolset: str | None) -> str:
         '{"op": "help", "query": "<words>"} lists matching ops, then call one as '
         '{"op": "memory.related", "arguments": {"memory_key": "deploy_day"}}.\n'
         f'A description\'s "(via loom_op)" means this tool.{such_as} '
-        f"Prefer a listed tool when one fits.{reads} Identity and namespace default as for "
-        "a listed tool."
+        f"Prefer a listed tool when one fits.{reads} Identity and namespace are filled in "
+        "as for a listed tool."
     )
 
 
