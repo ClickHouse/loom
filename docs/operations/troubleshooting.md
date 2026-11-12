@@ -263,7 +263,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Symptom:** every request but the health probes answers 503, `/v1/health/ready`
   fails its `cell` check, no worker runs, and the reason says the deployment "is a cell
-  in enforced mode and LOOM_CELL is unset" or "holds a partial cell state (... present)".
+  in enforced mode and LOOM_CELL is unset", "holds a partial cell state (... present)"
+  or that its "cell state is not read yet".
 - **Cause:** under the Postgres authority every server process reads the deployment's
   cell state (`loom.cell_first`, `loom.tenancy_mode`, `loom.cell_self`, `loom.tenancy`).
   With `LOOM_CELL` unset it serves only while none of them holds a row, or while they
@@ -278,7 +279,11 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   SELECT cell, is_first, state, placed FROM loom_router.cells WHERE deployment_id = :'id';
   ```
 
-- **Fix**, by what the check shows:
+- **Fix**, for "not read yet": the process booted with Postgres migrations pending
+  (`LOOM_BOOT_MIGRATE` off) or has not reached Postgres since; apply the migrations
+  (`/v1/health` names them) or restore the connection, and the next read, within a
+  second, opens or gates it as below.
+- **Fix** otherwise, by what the check shows:
   - **The deployment is a cell** (the directory holds its row and it is not an
     unattached later cell, below): set `LOOM_CELL` to the cell's name; for a partial
     state, run `loom cell prepare` again, which completes it.

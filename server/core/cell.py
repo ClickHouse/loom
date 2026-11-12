@@ -222,12 +222,12 @@ _deployment_id = ""
 # Set by the server process that reads the cell state (`boot.start_cell_gate`): until its
 # first read lands it is gated. Unset in a process that reads nothing (a CLI, the
 # workers child with LOOM_CELL unset), whose unread view is `open`.
-_server_reads = False
+_awaiting_first_read = False
 
 
-def mark_server_reads() -> None:
-    global _server_reads
-    _server_reads = True
+def await_first_read() -> None:
+    global _awaiting_first_read
+    _awaiting_first_read = True
 
 
 def set_deployment_id(deployment_id: str) -> None:
@@ -302,22 +302,22 @@ def read_error() -> str:
     return _view.error
 
 
-def server_reads_state() -> bool:
-    """Whether a server process reads the state rows and is gated on them: every one
-    under the Postgres authority, `LOOM_CELL` set or not (a cell needs that authority,
-    `settings_problem`)."""
+def gated_by_state() -> bool:
+    """Whether this deployment's server processes read the state rows and are gated on
+    them: under the Postgres authority, `LOOM_CELL` set or not (a cell needs that
+    authority, `settings_problem`). Under the ClickHouse authority nothing is read."""
     return settings.storage_authority == "postgres"
 
 
 def _unset_reason(view: _View) -> str:
     """The gate on a process with `LOOM_CELL` unset: open while the deployment is no
     cell or a first cell still recording."""
-    if not server_reads_state():
-        return ""
-    if _server_reads and view.read_at is None:
+    if _awaiting_first_read and view.read_at is None:
         # A failed read is never taken for an absent row.
-        return "the deployment's cell state is not read yet" + (
-            f" ({view.error})" if view.error else ""
+        return (
+            "the deployment's cell state is not read yet"
+            + (f" ({view.error})" if view.error else "")
+            + f" (see {TROUBLESHOOTING})"
         )
     found = view.state()
     if found in ("open", "recording"):

@@ -42,7 +42,7 @@ def _unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cell, "_memo", None)
     # A test's refresh() replaces the module's view; undone at teardown.
     monkeypatch.setattr(cell, "_view", cell._View())
-    monkeypatch.setattr(cell, "_server_reads", False)
+    monkeypatch.setattr(cell, "_awaiting_first_read", False)
     monkeypatch.setattr(readiness, "draining", lambda: False)
     monkeypatch.setattr(leader.deployment_config, "drift", lambda: [])
 
@@ -475,7 +475,7 @@ def test_an_unread_state_answers_503_while_postgres_migrations_are_pending(
 ) -> None:
     from server.transport.model_maintenance import ModelMaintenanceMiddleware
 
-    monkeypatch.setattr(cell, "_server_reads", True)
+    monkeypatch.setattr(cell, "_awaiting_first_read", True)
     monkeypatch.setattr(cell, "_view", cell._View(error="relation does not exist"))
     app, send = AsyncMock(), AsyncMock()
     asyncio.run(

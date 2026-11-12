@@ -207,7 +207,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     emitter = get_emitter()
     await emitter.start()
 
-    # An auth-off deployment's namespace row (`boot.ensure_default_namespace`).
     await boot.ensure_default_namespace()
 
     from server.workers import child as _workers_child

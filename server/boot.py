@@ -631,13 +631,13 @@ async def start_cell_state() -> list[asyncio.Task[None]]:
 async def start_cell_gate() -> list[asyncio.Task[None]]:
     """A server process reads the deployment's cell state right after its storage
     authority opened and migrated, before its first heartbeat and its lease decision,
-    then on a timer (`cell.server_reads_state`). A failed first read refuses the boot,
+    then on a timer (`cell.gated_by_state`). A failed first read refuses the boot,
     as a failed Postgres open does; later failures keep the last view."""
     from server.core import cell
 
-    if not cell.server_reads_state():
+    if not cell.gated_by_state():
         return []
-    cell.mark_server_reads()
+    cell.await_first_read()
     if not await cell.refresh() and not SKIPPED_PG_MIGRATIONS:
         raise RuntimeError(
             "refusing to start: the deployment's cell state could not be read "
@@ -766,7 +766,7 @@ def start_lease_loop(lease: Any, supervisor: Any, ch: Any) -> asyncio.Task[None]
     otherwise."""
     from server.core import cell
 
-    if lease.mode != "auto" and not (lease.mode == "on" and cell.server_reads_state()):
+    if lease.mode != "auto" and not (lease.mode == "on" and cell.gated_by_state()):
         return None
     from server.workers import leader as _leader
 
@@ -921,7 +921,7 @@ def register_readiness_checks(ch: Any) -> None:
     readiness.register("config_drift", deployment_config.readiness_check)
     from server.core import cell
 
-    if cell.server_reads_state():
+    if cell.gated_by_state():
         readiness.register("cell", cell.readiness_check)
     readiness.register("sandbox", sandbox.readiness_check)
     # Reported, not required: a provider rebuild closes the gate on every
