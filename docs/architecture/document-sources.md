@@ -77,7 +77,8 @@ an item swap whose new files are listed before the old copies retire, or a lower
 setting) holds back new documents only: it finishes its listing, rewrites changed lists,
 retires, and lands its listing row, so its copies drain back under the bound and no list
 goes stale; `inspect` and `loom doctor` show `too_many_documents` meanwhile, with the
-count for a `namespace` source. The read of a source's stored copies goes in pages by
+count, for a `namespace` source; for a mirrored one only a connected source's owner and
+a platform admin see it. The read of a source's stored copies goes in pages by
 `source_uri`, so it never cuts one off. A listing asks the store about at most 50 parent
 folders per query (not a setting), so a source of many folders lists in several queries;
 a recursive folder's subfolders are walked on every full listing, and a file in a new
@@ -85,9 +86,11 @@ subfolder arrives with the next one. A probe checks a bounded sample: every item
 there are at most 20, otherwise the 20 items added last, and the answer says `sampled:
 true` with the number checked. A mirrored source's probe answers reachability, the items
 checked and codes, never a count, a sample of titles or a summary that names a file,
-since it lists as the owner or as crawled people. Only a refused item of the sample
-refuses `add` or `update`; the next sync turn reports any other as `item <n>: http_404`
-and goes on with the rest.
+since it lists as the owner or as crawled people. A crawl's probe and status, and a
+connected source's to anyone but its owner, answer only whether the credential and its
+scopes work: no answer about an item depends on whether a person can read a file. Only a
+refused item of the sample refuses `add` or `update`; the next sync turn reports any
+other as `item <n>: http_404` and goes on with the rest.
 
 ### The link parser
 
@@ -123,14 +126,14 @@ written in it, else `{}`.
 `knowledge.source.update` takes `add_items`, `remove_items` (each also as links) and a
 new `include`, probes what it adds with the stored credential (the same sample rule),
 and writes the source at its next version under the namespace's source lease. Its audit
-row names the namespace, the name and the items added and removed, with a `filter`'s
-`owner` email, a crawl's `subjects` and a connected source's item ids as keyed hashes
-(below). Removing every item is refused (`BAD_CONFIG`); `remove` ends a source. Changing
-`access` is a new source. For a `crawl`, `update` also takes `subjects` (the new list,
-probed like added items) and `directory_subject`. Every `update` and `rotate` of a crawl
-needs the same roles as `add`, since its credential reads every listed person's drive: a
-namespace admin without an org-wide role cannot change whose drives it reads, what it
-reads of them (items, `include`) or the key it reads with.
+row, and `add`'s, names the namespace, the name and the items added and removed, with a
+`filter`'s `owner` email, a crawl's `subjects` and a connected source's item ids as
+keyed hashes (below). Removing every item is refused (`BAD_CONFIG`); `remove` ends a
+source. Changing `access` is a new source. For a `crawl`, `update` also takes `subjects`
+(the new list, probed like added items) and `directory_subject`. Every `update` and
+`rotate` of a crawl needs the same roles as `add`, since its credential reads every
+listed person's drive: a namespace admin without an org-wide role cannot change whose
+drives it reads, what it reads of them (items, `include`) or the key it reads with.
 
 ### One document, one owner
 
@@ -305,10 +308,14 @@ checks the list and fails closed; and every sync turn reads the lists again. One
 holds them together: nothing derived from a mirrored document (its address, title, text,
 counts or existence) is written outside the mirror or answered to a caller, except a
 checked leg's answer to its reader and the request's spend, which counts against the
-namespace's `daily_cost_cap_usd`. So an op that is no checked leg (a source's probe,
+namespace's `daily_cost_cap_usd`. So an op that is not a checked leg (a source's probe,
 status or `remove`, a namespace erasure's receipt) answers codes for what a mirror
-holds: no count, title, file id or address; an erasure counts its mirror's steps and
-census apart, shown only to a platform admin.
+holds: no count, title, file id or address, and a code that depends on the mirror's rows
+(a residue failure) reads as the same code for any cause. One more exception: a
+namespace erasure keeps its mirror's step and census counts in a separate part of its
+ledger row, which `erasure.status` and `erasure.list` show only to a platform admin. The
+sync of a mirrored source is no request; its spend counts against the namespace's cap
+and appears in no per-namespace usage row.
 
 A deployment with auth off (`LOOM_AUTH_REQUIRED=false`) has no reader identity to check.
 It refuses to add a mirrored source (`AUTH_REQUIRED`), and when auth is switched off
@@ -353,11 +360,11 @@ missed path leaks.
   request-scoped flag, as the query tag is), and nothing the request writes outside the
   mirror carries what the leg answered: no cache shared across readers stores the answer
   (the repository-docs listing cache, `memory.ask`'s precedents, the provider response
-  cache), its `agent_events` row keeps no argument or result-side field the leg shaped,
-  the search trace and exposure rows leave mirrored hits out, and a generation captures
-  no prompt or completion text, whatever the namespace's `capture_generation_io` says.
-  Each pull request that adds a mirror leg lists the writes its request makes and tests
-  each against the flag.
+  cache), its `agent_events` row keeps no argument and no result-side field, the search
+  trace and exposure rows leave mirrored hits out, and a generation captures no prompt
+  or completion text, whatever the namespace's `capture_generation_io` says. Each pull
+  request that adds a mirror leg lists the writes its request makes and tests each
+  against the flag.
 - **The sync writes nothing outside the mirror.** A mirrored source's sync state, audit
   rows, error text and per-file wait state are filed under the mirror's namespace; what
   of them leaves it (a source's status, the worker's pass notes, log lines) carries
@@ -379,7 +386,9 @@ overrides give each mirror its namespace's `retention_days` and `warm_days`.
 
 A namespace source and a mirrored source that reach the same file own two documents, one
 in the namespace and one in its mirror. The namespace copy is readable by every reader,
-because an admin registered a source that makes it so; search answers the address once.
+because an admin registered a source that makes it so; search answers the address once,
+dropping the duplicate after the check, so a reader the mirror copy does not admit keeps
+the namespace copy.
 
 ### The permission list
 
@@ -437,12 +446,14 @@ document and marks the answer `degraded: mirror_unread`. Each leg reads the list
 first and then the members rows and the lists, under `sequential_reads()`, so a lagging
 replica cannot pair a fresh listing row with an older list. It computes the addresses
 the reader may see before its `LIMIT`, so a page is never cut short by the check, and
-caches no admitted set. Under the Postgres authority each leg judges the addresses it is
-about to answer by their heads, so a narrowing or a retirement committed and not yet
-published already applies, and a missing head drops the address; a leg that cannot read
-the heads shows no mirrored document. The implementing pull request measures the leg on
-a mirror of a million documents under both storage authorities and puts the figures
-here.
+caches no admitted set. No score depends on a document the reader may not see: a
+mirror's chunks add nothing to any corpus statistic (the lexical leg's document counts,
+lengths and term frequencies), and a mirror leg scores its hits against the namespace's
+statistics. Under the Postgres authority each leg judges the addresses it is about to
+answer by their heads, so a narrowing or a retirement committed and not yet published
+already applies, and a missing head drops the address; a leg that cannot read the heads
+shows no mirrored document. The implementing pull request measures the leg on a mirror
+of a million documents under both storage authorities and puts the figures here.
 
 ### Every turn reads the lists again
 
@@ -477,24 +488,25 @@ admits someone the store no longer names.
 
 ### Threat model
 
-| Threat                                                                   | Boundary                                                                                                                                                                                                       | Enforced by                                                                            |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| A connected person leaks a private file into a team namespace            | Every connected source is mirrored; its documents live in the mirror, and a teammate sees one only when the store names them. `access` cannot change.                                                          | `add` and `update`; the mirror gate; `test_document_source_leakage.py`                 |
-| A crawl's registrant reads crawled people's private files                | No rule admits a source's registrant or owner as such; a registrant reads a file only when the store names them or their own account lists it.                                                                 | the access check                                                                       |
-| An admin points someone's connected account at files they did not choose | Only a connected source's owner adds its items or changes `include`.                                                                                                                                           | `update`                                                                               |
-| A link-only share becomes a search hit for everyone                      | A permission the store marks not discoverable admits nobody.                                                                                                                                                   | the access check                                                                       |
-| A person stops reading a file and Loom keeps showing it (stale ACL)      | Every turn of a mirrored source reads every file's list and rewrites a changed one; a source whose last complete listing is older than the stale bound admits nobody.                                          | the sync's mirrored listing; the access check                                          |
-| A person leaves a group and keeps reading through it (group churn)       | Groups are read on every turn into a members row with its `read_at`; a stale or unread group admits nobody.                                                                                                    | the access check                                                                       |
-| Auth is switched off after mirrors exist                                 | The `acl-` refusal runs before the auth-off return; mirror legs answer nothing and the sync skips mirrored sources while auth is off.                                                                          | `check_authorized`; the mirror legs                                                    |
-| A person leaves the org and their connected sources keep syncing         | SCIM deactivation and disconnect stop the sources and clear the credential, then revoke it at the store; each turn's owner check skips a source whose owner is revoked, deactivated or no longer a writer.     | `server/auth/scim.py`; the sync's turn                                                 |
-| A crawl reads more than its registrant meant, or can write               | An org-wide role to register, update or rotate; the probe requires the store to refuse a write scope; subjects and scopes in the audit row.                                                                    | the crawl probe; `loom.audit_log`                                                      |
-| An id-addressed read confirms a mirrored document exists                 | `get`, `outline`, `download` and the inspects answer `found=false` or leave out an address the reader may not see.                                                                                             | the mirror legs                                                                        |
-| A new read path shows mirrored documents to everyone                     | Mirrored documents live in a namespace no grant opens and no listing names; a path that does not read the mirror shows none, and no org-wide scope names an `acl-` namespace.                                  | `check_authorized` (`acl-[0-9a-f]{24}`); the scope helpers ([the mirror](#the-mirror)) |
-| An older build shows mirrored documents                                  | N-1 reads no mirror; its gate does not refuse a mirror's name, so no N-1 serves while one holds rows: the new modes wait for N everywhere, and a rollback first erases the mirrors with every replica stopped. | the random name; the rollback procedure                                                |
-| A mirrored document's text reaches every reader through a derived row    | Decision mining and dataset extraction skip mirrored documents; a request that read a mirror writes nothing derived from it outside the mirror.                                                                | the sync; the request flag                                                             |
-| A store account is linked into another person's Loom account, either way | The connection is stored only from the browser that started it, with that subject's own dashboard session and the `state` cookie. A connection's email is never a reader identity.                             | the connect routes                                                                     |
-| A caller injects store query syntax through a filter                     | Filters are fields with patterns, escaped and built by the server; no raw query is taken.                                                                                                                      | `server/clients/gdrive.py`                                                             |
-| A stolen connected credential changes the store                          | Only read scopes are accepted; the credential is sealed and never returned.                                                                                                                                    | the connect callback; `server/core/secrets_at_rest.py`                                 |
+| Threat                                                                            | Boundary                                                                                                                                                                                                       | Enforced by                                                                            |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| A connected person leaks a private file into a team namespace                     | Every connected source is mirrored; its documents live in the mirror, and a teammate sees one only when the store names them. `access` cannot change.                                                          | `add` and `update`; the mirror gate; `test_document_source_leakage.py`                 |
+| A crawl's registrant reads crawled people's private files                         | No rule admits a source's registrant or owner as such; a registrant reads a file only when the store names them or their own account lists it.                                                                 | the access check                                                                       |
+| An admin points someone's connected account at files they did not choose          | Only a connected source's owner adds its items or changes `include`.                                                                                                                                           | `update`                                                                               |
+| A link-only share becomes a search hit for everyone                               | A permission the store marks not discoverable admits nobody.                                                                                                                                                   | the access check                                                                       |
+| A person stops reading a file and Loom keeps showing it (stale ACL)               | Every turn of a mirrored source reads every file's list and rewrites a changed one; a source whose last complete listing is older than the stale bound admits nobody.                                          | the sync's mirrored listing; the access check                                          |
+| A person leaves a group and keeps reading through it (group churn)                | Groups are read on every turn into a members row with its `read_at`; a stale or unread group admits nobody.                                                                                                    | the access check                                                                       |
+| Auth is switched off after mirrors exist                                          | The `acl-` refusal runs before the auth-off return; mirror legs answer nothing and the sync skips mirrored sources while auth is off.                                                                          | `check_authorized`; the mirror legs                                                    |
+| A person leaves the org and their connected sources keep syncing                  | SCIM deactivation and disconnect stop the sources and clear the credential, then revoke it at the store; each turn's owner check skips a source whose owner is revoked, deactivated or no longer a writer.     | `server/auth/scim.py`; the sync's turn                                                 |
+| A crawl reads more than its registrant meant, or can write                        | An org-wide role to register, update or rotate; the probe requires the store to refuse a write scope; subjects and scopes in the audit row.                                                                    | the crawl probe; `loom.audit_log`                                                      |
+| An id-addressed read confirms a mirrored document exists                          | `get`, `outline`, `download` and the inspects answer `found=false` or leave out an address the reader may not see.                                                                                             | the mirror legs                                                                        |
+| A viewer or admin learns what a mirror holds from an op that is not a checked leg | A source's probe, status and `remove`, and an erasure's receipt, answer codes for a mirror; its counts go to a platform admin only.                                                                            | the source ops; the erasure handlers                                                   |
+| A new read path shows mirrored documents to everyone                              | Mirrored documents live in a namespace no grant opens and no listing names; a path that does not read the mirror shows none, and no org-wide scope names an `acl-` namespace.                                  | `check_authorized` (`acl-[0-9a-f]{24}`); the scope helpers ([the mirror](#the-mirror)) |
+| An older build shows mirrored documents                                           | N-1 reads no mirror; its gate does not refuse a mirror's name, so no N-1 serves while one holds rows: the new modes wait for N everywhere, and a rollback first erases the mirrors with every replica stopped. | the random name; the rollback procedure                                                |
+| A mirrored document's text reaches every reader through a derived row             | Decision mining and dataset extraction skip mirrored documents; a request that read a mirror writes nothing derived from it outside the mirror.                                                                | the sync; the request flag                                                             |
+| A store account is linked into another person's Loom account, either way          | The connection is stored only from the browser that started it, with that subject's own dashboard session and the `state` cookie. A connection's email is never a reader identity.                             | the connect routes                                                                     |
+| A caller injects store query syntax through a filter                              | Filters are fields with patterns, escaped and built by the server; no raw query is taken.                                                                                                                      | `server/clients/gdrive.py`                                                             |
+| A stolen connected credential changes the store                                   | Only read scopes are accepted; the credential is sealed and never returned.                                                                                                                                    | the connect callback; `server/core/secrets_at_rest.py`                                 |
 
 Out of scope: a reader who already saw a document and kept its text, their own agent's
 or conversation's record of an answer included, which is that reader's write; the store
@@ -507,8 +519,8 @@ recordings folder of the shared-folder store, and shares them with the participa
 `gdrive` source reads them like any file: a `meet_recordings` item, or a `folder` item
 for that folder. `meet_recordings` finds the folder the meeting store made in each
 account's own drive by its name, from a fixed table of the names the store gives it in
-each language; when none is found, the turn reports `meet_recordings: not found` for
-that account, and a `folder` item with the folder's link reads it instead.
+each language; when none is found, the turn reports `meet_recordings: not found`, naming
+no account, and a `folder` item with the folder's link reads it instead.
 
 The sync recognises a transcript Doc (one in a recordings folder whose exported text has
 the store's transcript shape: a title line, then speaker turns under time stamps) and
@@ -772,6 +784,13 @@ Each implementing pull request lists its own; these pin the model:
     a non-owner admin and a crawl registrant), status, `remove` answer and a namespace
     erasure's receipt carrying no count, title, file id or address of what the mirror
     holds.
+  - A hidden mirrored chunk holding the query term leaving an admitted hit's
+    `lexical_score` and rank unchanged; `knowledge.reads` after an admitted reader's
+    `knowledge.get` of a mirrored address not naming it; `audit.list` after a connected
+    `add`, by an admin who is not the owner, showing no item; a crawl `update` probe by
+    an org admin who is not the registrant answering the same code whether or not the
+    file exists; `erasure.status` and `erasure.list` by a viewer, and a saga that fails
+    on mirror residue, showing no mirror count.
   - `row_reach`, `row_in_scope` and `namespace_for_id` opening nothing of a mirror with
     auth off; a mirrored source's document counts shown to nobody.
   - A turn that finds a narrowed list rewriting the row without rebuilding a chunk, and
