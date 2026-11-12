@@ -144,7 +144,8 @@ _INSTEAD: dict[str, str] = {
         "round trip here"
     ),
     "memory.bulk_get": (
-        "call memory.get per key, or memory.list with a key prefix (via loom_op where unlisted)"
+        "call memory.get per key, or memory.list with a key prefix (each via loom_op where "
+        "unlisted)"
     ),
     "memory.keys": "call memory.list (via loom_op where unlisted), which pages the namespace",
     "memory.delete_version": "call memory.delete (via loom_op where unlisted)",
