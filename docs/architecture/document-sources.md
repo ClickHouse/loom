@@ -5,8 +5,8 @@ store, a project tracker, a meeting store) into a namespace's documents and keep
 in step, on any shared namespace or collection. This page is the design of sources of
 many items given as pasted links, per-user connected accounts, an org-wide crawl, and
 access that follows the store's own permissions. The caller's view of today's sources is
-in [knowledge: document sources](../features/knowledge.md#document-sources); parsing is in
-[document extraction](document-extraction.md).
+in [knowledge: document sources](../features/knowledge.md#document-sources); parsing is
+in [document extraction](document-extraction.md).
 
 ## What changes
 
@@ -24,14 +24,14 @@ A source can be registered on any active shared namespace or collection; who may
 register which kind is in [credentials](#credentials). `add` on an inactive namespace
 answers `NAMESPACE_INACTIVE`, and `add` and `update` answer `ERASURE_RUNNING` (409,
 retryable) while an erasure that will still run names the namespace, so no source writes
-into a mirror the erasure is clearing. A source on a repository's trunk code namespace still tags each document
-`repo:<id>`, so the repository's `code.context` and `loom_search` legs read them as
-today; on any other namespace, a branch namespace included, it does not. A person's own
-place (a `col-me-…` collection, a `personal-…` or `u-…` namespace, a namespace claimed
-at sign-up) holds no source (`PERSONAL_NAMESPACE`): a `user_id` erasure erases what the
-person wrote, and a source's documents are the sync worker's. The sync skips a source
-whose namespace is inactive; the cleanup of a stopped source runs whatever its
-namespace's state.
+into a mirror the erasure is clearing. A source on a repository's trunk code namespace
+still tags each document `repo:<id>`, so the repository's `code.context` and
+`loom_search` legs read them as today; on any other namespace, a branch namespace
+included, it does not. A person's own place (a `col-me-…` collection, a `personal-…` or
+`u-…` namespace, a namespace claimed at sign-up) holds no source (`PERSONAL_NAMESPACE`):
+a `user_id` erasure erases what the person wrote, and a source's documents are the sync
+worker's. The sync skips a source whose namespace is inactive; the cleanup of a stopped
+source runs whatever its namespace's state.
 
 A source ends with its namespace: `code.repo.remove`, `namespace.delete`,
 `collection.delete` and a namespace erasure each retire the namespace's sources under

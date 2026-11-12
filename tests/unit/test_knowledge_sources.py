@@ -1218,9 +1218,10 @@ def test_the_erasure_step_fails_at_its_deadline_while_the_retirement_lease_is_he
     fake: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-a")))
-    # The lease is free when the step looks, then another change takes it for good: the
-    # retirement waits out what is left of the 30 s, not 5 s more.
-    clock = _clocked(monkeypatch, {})
+    # An add holds the lease for the first 10 s of the step's 30; then another change
+    # takes it for good, and the retirement waits only the 20 s left (a fresh wait would
+    # end at 140, the old fixed one at 115).
+    clock = _clocked(monkeypatch, {f"knowledge-source:{ORG}:team-a": 110.0})
 
     @contextlib.asynccontextmanager
     async def _held_elsewhere(name: str, *, wait_s: float, **_kw: Any) -> AsyncIterator[bool]:

@@ -508,9 +508,9 @@ async def deactivate_namespace_sources(org: str, namespace: str) -> list[str]:
 async def retire_sources_of(org: str, namespaces: list[str], *, wait_s: float) -> int:
     """Retire the sources of `namespaces` (an erasure's) and wait for every sync turn of
     theirs still running; every lease wait (an add's, the retirement's, each sync turn's)
-    shares one `wait_s` deadline. A source add while the saga runs is
-    refused (`ERASURE_RUNNING`) under the namespace's lease, so once no add holds that
-    lease, one sequential read finds every source an add wrote."""
+    shares one `wait_s` deadline. A source add while the saga runs is refused
+    (`ERASURE_RUNNING`) under the namespace's lease, so once no add holds that lease, one
+    sequential read finds every source an add wrote."""
     deadline = time.monotonic() + wait_s
     with sequential_reads():
         for namespace in sorted(set(namespaces)):
@@ -523,7 +523,6 @@ async def retire_sources_of(org: str, namespaces: list[str], *, wait_s: float) -
     waits = set(found)
     retired = 0
     for namespace in sorted({ns for ns, _ in found}):
-        # The lease wait counts against the step's one deadline too.
         async with sources_lease(org, namespace, wait_s=max(0.0, deadline - time.monotonic())):
             names = await deactivate_namespace_sources(org, namespace)
         retired += len(names)
