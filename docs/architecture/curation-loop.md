@@ -54,24 +54,27 @@ layer already is the namespace's admin-approved copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records its source
 (`promoted_from`) and, on the review path, the candidate it came from
-(`promoted_from_candidate_id`; for a definition a direct `memory.promote` ignores the
-field and names it in `ignored_args`, as it does `approver`, so only a review records a
-candidate), `memory.lineage` walks it back, and every build knows it. So governance needs
-no table or state of its own. An edit, a relabel to `high` or a tombstone of the source,
-by any writer or worker on any build, ends governance while the source differs from what
-the admin approved; a copy that keeps the text (the entity pass, a touch) keeps it, and a
-source that returns to the approved state (a restore, an edit reverted byte for byte) is
-governed again with no new promotion. A relabel back from `high` does not bring back the
-shared embedding it retired: the term leg serves the definition again, and an admin
-promotes it again to restore the copy's search row. `memory.demote` ends governance. Only
-`memory.promote` promotes into `loom.shared` (the op and `learnings.review`'s path through
-it; demote, erasure, a redact and a relabel to `high` only retire or scrub there, as the
-changes below say); no worker promotes on its own. An admin read,
-`memory.definitions.list`, lists the namespace's shared definitions with the read-time
-check's verdict on each and the reason a lapsed one lapsed (its text changed, it is
-`high`, gone, expired, past its `valid_to`, under a key that is not its term's slug,
-promoted from a row that is not the namespace-wide one, or no longer `active`). A changed
-text is promoted again; a source that is no longer `active` is restored (Undo in
+(`promoted_from_candidate_id`; for a definition the wire op `memory.promote` ignores the
+field and names it in `ignored_args`, as it does `approver`, while the review path passes
+the candidate's id to the promotion as an internal argument the wire model does not
+expose, so only a review records a candidate), `memory.lineage` walks it back, and every
+build knows it. So governance needs no table or state of its own. An edit, a relabel to
+`high` or a tombstone of the source, by any writer or worker on any build, ends governance
+while the source differs from what the admin approved; a copy that keeps the text (the
+entity pass, a touch) keeps it, and a source that returns to the approved state (a
+restore, an edit reverted byte for byte) is governed again with no new promotion. A
+relabel back from `high` does not bring back the shared embedding it retired: the term leg
+serves the definition again, and an admin promotes it again to restore the copy's search
+row. `memory.demote` ends governance. Only `memory.promote` promotes into `loom.shared`
+(the op and `learnings.review`'s path through it; demote, erasure, a redact and a relabel
+to `high` only retire or scrub there, as the changes below say); no worker promotes on its
+own. An admin read, `memory.definitions.list`, lists the namespace's shared definitions
+with the read-time check's verdict on each and the reason a lapsed one lapsed (its text
+changed, it is `high`, gone, expired, past its `valid_to`, under a key that is not its
+term's slug, promoted from a row that is not the namespace-wide one, or no longer
+`active`), and lists a definition that passes the check but is not served because a later
+promotion holds one of its names as `shadowed`, naming the row that wins. A changed text
+is promoted again; a source that is no longer `active` is restored (Undo in
 `memory.auto_retirements`, whose reasons include `same_key_newest_wins` for a later write
 of the same key under `newest_wins`, for a retirement of the last 30 days that op lists,
 and `memory.restore` for an older one) or cleared (`conflicts.resolve` for a `conflicted`
@@ -180,8 +183,9 @@ not cover `loom.shared` today, so every write of a definition's shared row (prom
 demote, a scrub, an embedding retired) moves the namespace's memory write mark, and no
 answer from before a promotion or demotion on N is reused after it (rolling upgrades below
 covers N-1's). A lapse with no write, a source passing its `expires_at` or `valid_to`,
-does not move the mark, and the precedent path's evidence check reads only tombstones and
-redactions, so an answer that quoted such a definition is reused for up to
+does not move the mark, and the precedent path's evidence check compares each cited row's
+live hash (catching a tombstone, a redaction or an edit), not its status or validity, so
+an answer that quoted such a definition is reused for up to
 `memory_ask_precedents_fast_max_age_hours`, as for any row that expires today. It reads
 the addressed namespace's live `loom.shared` rows of type `definition` under a
 `definition/` key (only that namespace, whatever `namespace_scope` fans out over), matches
@@ -272,15 +276,15 @@ turns on both: gaps, and capture at `query` or `all` for the namespace. The oper
 own `capture_generation_io` is a boolean that wins, `true` meaning `all`, so a namespace
 that opts in that way also captures every LLM prompt and completion. Turning
 `knowledge_gaps_enabled` off stops recording, the gaps pass and `knowledge.gaps.list`
-(which then answers an empty list); the stored misses and builds expire by their TTL, and
-an operator who wants them gone sooner deletes them as the rollback below does. No miss is
-recorded while a replica below N serves (the rollout gate below). A gap needs several
-distinct askers, so a deployment that has one identity for every caller
-(`effective_identity_provider()` is `single-user`, set explicitly or inferred when
-`auth_required` is off and no provider is set) records no misses, gaps on or off, and a
-request without a token records no miss. A miss is a search that found nothing a caller
-could use, recorded by the op the caller invoked, never by a search another op runs on its
-behalf:
+(which then answers an empty list) and `knowledge.gaps.draft` (which answers not found for
+any gap); the stored misses and builds expire by their TTL, and an operator who wants them
+gone sooner deletes them as the rollback below does. No miss is recorded while a replica
+below N serves (the rollout gate below). A gap needs several distinct askers, so a
+deployment that has one identity for every caller (`effective_identity_provider()` is
+`single-user`, set explicitly or inferred when `auth_required` is off and no provider is
+set) records no misses, gaps on or off, and a request without a token records no miss. A
+miss is a search that found nothing a caller could use, recorded by the op the caller
+invoked, never by a search another op runs on its behalf:
 
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
   and served no governed definition, when it read the namespace-wide rows under a read
@@ -538,7 +542,10 @@ govern it.
   the step closed (a token subject spelled as the user's id goes too, which costs only a
   trace row), and a census row counting the step's own predicate, over the asker and
   `user_id` under every spelling it deletes, so a miss the step left fails the saga's
-  verify; an end user's asker is stored as their id, the form the erasure names.
+  verify; today a census row binds only the user's id (`{uid:String}`), so the
+  implementing pull request passes the spellings the step resolved to the census, which
+  compares them lower-cased and fails closed when the directory cannot be read; an end
+  user's asker is stored as their id, the form the erasure names.
 - `loom.knowledge_gaps` keeps counts, not askers, so no op or page names who asked: a
   namespace step, and, inside the user's miss step before it deletes the misses, a read of
   the namespaces the user has misses in and a delete of those namespaces' builds (derived
