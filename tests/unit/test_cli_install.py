@@ -330,11 +330,11 @@ def test_claude_code_install_skips_the_user_scope_entry_when_the_plugin_mounts_i
         lambda argv, check=False: ran.append(argv) or type("R", (), {"returncode": 0})(),
     )
     assert cli._install_claude_code_mcp(
-        server_url="https://h", name="loom", dry_run=False, toolset=""
+        server_url="https://h", name="loom", dry_run=False, toolset="coding"
     )
     assert ran == [] and "mounts the server itself" in capsys.readouterr().out
     assert cli._install_claude_code_mcp(
-        server_url="https://h", name="loom", dry_run=False, toolset="", force=True
+        server_url="https://h", name="loom", dry_run=False, toolset="coding", force=True
     )
     assert ran and ran[0][:3] == ["claude", "mcp", "add"]
 
