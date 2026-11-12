@@ -1,6 +1,6 @@
 /** A namespace admin can forget every memory one agent holds there; the agent's name is
- *  typed again first, and nobody else sees the action. */
-import { cleanup, render, screen, waitFor, within } from "../../test/rtl";
+ *  typed again first, and anyone else sees it unavailable, with the role it needs. */
+import { act, cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../../lib/state";
@@ -49,11 +49,26 @@ afterEach(() => {
 });
 
 describe("Agents: forget an agent's memories", () => {
-  it("shows no row menu to a writer", async () => {
+  it("shows a writer Forget unavailable in the row menu, with the role it needs", async () => {
     signIn("writer");
     render(<Agents />);
-    expect(await screen.findByText("claude-code")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Actions for claude-code" })).toBeNull();
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for claude-code" }));
+    const item = await screen.findByRole("menuitem", { name: /Forget its memories in team/ });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveAccessibleDescription("Needs admin on team. An admin of it can grant that.");
+    await userEvent.click(item);
+    expect(screen.queryByRole("dialog", { name: "Forget memories" })).toBeNull();
+  });
+
+  it("closes an open Forget when the role falls below admin, and forgets nothing", async () => {
+    signIn("admin");
+    render(<Agents />);
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for claude-code" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: /Forget its memories in team/ }));
+    expect(await screen.findByRole("dialog", { name: "Forget memories" })).toBeInTheDocument();
+    act(() => signIn("writer"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Forget memories" })).toBeNull());
+    expect(clearAgentMemories).not.toHaveBeenCalled();
   });
 
   it("clears the agent's memories once its name is typed", async () => {

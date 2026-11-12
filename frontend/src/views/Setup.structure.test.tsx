@@ -79,6 +79,15 @@ describe("Settings → Structure", () => {
     );
   });
 
+  it("shows a role that cannot read it the tab, what it needs, and reads nothing", async () => {
+    seed("team-z");
+    useStore.setState({ myNamespaces: [row("team-a")] });
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Structure" }));
+    expect(await screen.findByText("Needs viewer on team-z. An admin of it can grant that.")).toBeVisible();
+    expect(listRecordSchemas).not.toHaveBeenCalled();
+  });
+
   it("is not offered on a code namespace", async () => {
     seed("code-x");
     render(<Setup />);

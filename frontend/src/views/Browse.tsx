@@ -18,8 +18,9 @@ import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { GuideDialog } from "../flows/GuideDialog";
-import { isCollectionName } from "../lib/namespace";
+import { isCollectionName, isPersonalCollection } from "../lib/namespace";
 import { canEditGuide, roleOnNamespace } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { RowSkeleton } from "../components/Skeleton";
@@ -119,9 +120,11 @@ export function Browse() {
         failed = e;
         return [] as BrowseEntry[];
       }),
-      // The shared membership read, not a second list_mine
-      sharedMine(identity.org).catch(() => [] as MyNamespaceEntry[]),
-    ]).then(([browseRows, mineRead]) => {
+      // The shared membership read, not a second list_mine; null when it fails, so the guide's
+      // Edit says the access could not be checked.
+      sharedMine(identity.org).catch(() => null),
+    ]).then(([browseRows, mineResult]) => {
+      const mineRead = mineResult ?? [];
       if (!live()) return;
       setRefreshing(false);
       setError(failed);
@@ -129,7 +132,7 @@ export function Browse() {
       // lists no collection here: one is shared in the Library, never joined.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
       setRepoCount(browseRows.filter((r) => r.kind === "code").length);
-      setMineRows(mineRead);
+      setMineRows(mineResult);
       setMine(new Set(mineRead.map((r) => r.namespace)));
       setMyRole(Object.fromEntries(mineRead.map((r) => [r.namespace, r.role])));
       setPending(new Set(mineRead.filter((r) => r.pending_role || r.status === "pending").map((r) => r.namespace)));
@@ -483,6 +486,17 @@ export function Browse() {
           namespace={guideNs}
           // The Memories header's rule, from the same rows: one answer for one caller.
           canEdit={canEditGuide(roleOnNamespace(whoami, mineRows, guideNs), guideNs)}
+          // As the tune card's: from the same gate, so loading and the server's say show too.
+          editReason={
+            isPersonalCollection(guideNs)
+              ? null
+              : callReason(
+                  "namespace.guide_set",
+                  { role: roleOnNamespace(whoami, mineRows, guideNs), loading: false, rows: mineRows },
+                  whoami,
+                  guideNs,
+                )
+          }
           onSaved={load}
         />
       )}

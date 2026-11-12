@@ -30,7 +30,8 @@ import { BusyButton } from "../../components/ui/BusyButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { PageContainer } from "../../layout/PageContainer";
 import { Alert, LoadingSkeleton, PageHeader, Stat, TabTrigger } from "../../components/ui";
-import { useNamespaceRole } from "../../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../../lib/namespaceRole";
+import { callReason } from "../../lib/callReason";
 import { isCollectionName } from "../../lib/namespace";
 import { NamespaceHealthPanel } from "./NamespaceHealth";
 import { ProjectionFailuresPanel } from "./ProjectionFailures";
@@ -170,9 +171,11 @@ export function Health() {
   const seesOpMix = hasOrgAdminClaim(whoami);
   // Namespace reads memory.health (VIEWER); every repair is ADMIN, as memory.sweep_expired
   // is, and none reads on open; Projection failures is ORG_ADMIN, like Operation mix.
-  const role = useNamespaceRole(identity.namespace);
-  const seesNamespace = canCall("memory.health", role, whoami);
-  const seesRepairs = canCall("memory.sweep_expired", role, whoami);
+  // Both are this namespace's, so they stay for every role: a role that cannot read or
+  // repair sees the tab with what it needs, and nothing is read for it.
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const namespaceReason = callReason("memory.health", roleRead, whoami, identity.namespace);
+  const repairsReason = callReason("memory.sweep_expired", roleRead, whoami, identity.namespace);
   const [tab, setTab] = useState<HealthTab>(seesWorkers ? "workers" : "extraction");
 
   // Drop the consolidations sub-tab entirely until a run has landed.
@@ -189,14 +192,14 @@ export function Health() {
     [identity.org, identity.namespace],
   );
 
-  // A tab gated by the namespace's role can vanish on a switch; Extraction quality is always there.
+  // A tab gated by the token's claim or by its data can vanish on a switch; Extraction quality is always there.
   const shown: Record<HealthTab, boolean> = {
     workers: seesWorkers,
     extraction: true,
     opmix: seesOpMix,
     consolidations: hasConsolidations,
-    namespace: seesNamespace,
-    repairs: seesRepairs,
+    namespace: true,
+    repairs: true,
     projections: seesOpMix,
   };
   const open = shown[tab] ? tab : "extraction";
@@ -230,16 +233,12 @@ export function Health() {
               {HEALTH_TABS.consolidations}
             </TabTrigger>
           )}
-          {seesNamespace && (
-            <TabTrigger value="namespace" icon="database">
-              {HEALTH_TABS.namespace}
-            </TabTrigger>
-          )}
-          {seesRepairs && (
-            <TabTrigger value="repairs" icon="refresh">
-              {HEALTH_TABS.repairs}
-            </TabTrigger>
-          )}
+          <TabTrigger value="namespace" icon="database">
+            {HEALTH_TABS.namespace}
+          </TabTrigger>
+          <TabTrigger value="repairs" icon="refresh">
+            {HEALTH_TABS.repairs}
+          </TabTrigger>
           {seesOpMix && (
             <TabTrigger value="projections" icon="warning">
               {HEALTH_TABS.projections}
@@ -264,16 +263,16 @@ export function Health() {
             <ConsolidationsPanel />
           </Tabs.Content>
         )}
-        {seesNamespace && (
-          <Tabs.Content value="namespace">
+        <Tabs.Content value="namespace">
+          {namespaceReason ? (
+            <p className="m-0 text-sm text-text-muted">{namespaceReason}</p>
+          ) : (
             <NamespaceHealthPanel />
-          </Tabs.Content>
-        )}
-        {seesRepairs && (
-          <Tabs.Content value="repairs">
-            <RepairsPanel />
-          </Tabs.Content>
-        )}
+          )}
+        </Tabs.Content>
+        <Tabs.Content value="repairs">
+          <RepairsPanel unavailable={repairsReason} />
+        </Tabs.Content>
         {seesOpMix && (
           <Tabs.Content value="projections">
             <ProjectionFailuresPanel />

@@ -53,12 +53,16 @@ const toolbar = () => screen.getByLabelText("Search and filters");
 describe("Library list", () => {
   beforeEach(() => {
     api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: null });
-    useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" }, view: "knowledge" });
+    useStore.setState({
+      identity: { org: "acme", namespace: "team", agent: "loom-ui" },
+      view: "knowledge",
+      whoami: { authenticated: false },
+    });
   });
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
-    useStore.setState({ identity: null });
+    useStore.setState({ identity: null, whoami: null });
   });
 
   it("gives every row one More menu, visible without a hover, holding its actions", async () => {

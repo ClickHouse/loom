@@ -16,14 +16,16 @@ import { saveJson } from "../../lib/download";
 import { listTimeTitle } from "../../lib/format";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { toast, toastError } from "../../components/Toast";
-import { Panel, SectionHeading } from "../../components/ui";
+import { Panel, SectionHeading, Unavailable } from "../../components/ui";
 import { DateTimeField } from "../../flows/TaskDialogFrame";
 
 /**
  * A namespace admin's repairs. Each one that can count first (the expiry sweep, a
  * rollback) shows what it would do and asks before it writes; the others ask first.
+ * `unavailable` is why the caller's role cannot repair: every repair stays in view,
+ * unavailable, with it.
  */
-export function RepairsPanel() {
+export function RepairsPanel({ unavailable = null }: { unavailable?: string | null }) {
   const identity = useIdentity();
   const [busy, setBusy] = useState(false);
   const [adapter, setAdapter] = useState("");
@@ -144,15 +146,20 @@ export function RepairsPanel() {
 
   return (
     <div className="space-y-4">
+      {unavailable && <p className="m-0 text-sm text-text-muted">{unavailable}</p>}
       <Panel>
         <SectionHeading label="Expiry and embeddings" level={2} />
         <div className="mt-2 flex flex-wrap gap-2">
-          <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void sweep()}>
-            Apply expiries now
-          </Button>
-          <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void reembed()}>
-            Re-embed stale vectors
-          </Button>
+          <Unavailable reason={unavailable}>
+            <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void sweep()}>
+              Apply expiries now
+            </Button>
+          </Unavailable>
+          <Unavailable reason={unavailable}>
+            <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void reembed()}>
+              Re-embed stale vectors
+            </Button>
+          </Unavailable>
         </div>
       </Panel>
       <Panel>
@@ -162,42 +169,66 @@ export function RepairsPanel() {
           caption="For an extractor that wrote wrong graph facts; the memories stay."
         />
         <div className="mt-2 flex flex-wrap items-end gap-2">
-          <TextField id="repair-adapter" label="Extractor" value={adapter} onChange={setAdapter} />
-          <Button type="danger" htmlType="button" disabled={busy || !adapter.trim()} onClick={() => void expire()}>
-            Remove facts
-          </Button>
+          <TextField
+            id="repair-adapter"
+            label="Extractor"
+            value={adapter}
+            onChange={setAdapter}
+            disabled={!!unavailable}
+          />
+          <Unavailable reason={unavailable}>
+            <Button
+              type="danger"
+              htmlType="button"
+              disabled={!unavailable && (busy || !adapter.trim())}
+              onClick={() => void expire()}
+            >
+              Remove facts
+            </Button>
+          </Unavailable>
         </div>
       </Panel>
       <Panel>
         <SectionHeading label="Roll back" level={2} caption="Every memory back to how it stood at a time." />
         <div className="mt-2 flex flex-wrap items-end gap-2">
-          <DateTimeField id="repair-as-of" label="As of" value={asOf} onChange={setAsOf} />
-          <Button type="danger" htmlType="button" disabled={busy || !asOf} onClick={() => void rollback()}>
-            Roll back
-          </Button>
+          <DateTimeField id="repair-as-of" label="As of" value={asOf} onChange={setAsOf} disabled={!!unavailable} />
+          <Unavailable reason={unavailable}>
+            <Button
+              type="danger"
+              htmlType="button"
+              disabled={!unavailable && (busy || !asOf)}
+              onClick={() => void rollback()}
+            >
+              Roll back
+            </Button>
+          </Unavailable>
         </div>
       </Panel>
       <Panel>
         <SectionHeading label="Snapshot" level={2} caption="The namespace's memories, types and grants as one file." />
         <div className="mt-2 flex flex-wrap gap-2">
-          <Button
-            type="secondary"
-            htmlType="button"
-            iconLeft="download"
-            disabled={busy}
-            onClick={() => void download()}
-          >
-            Download snapshot
-          </Button>
-          <Button
-            type="secondary"
-            htmlType="button"
-            iconLeft="upload"
-            disabled={busy}
-            onClick={() => restoreInput.current?.click()}
-          >
-            Restore a snapshot
-          </Button>
+          <Unavailable reason={unavailable}>
+            <Button
+              type="secondary"
+              htmlType="button"
+              iconLeft="download"
+              disabled={busy}
+              onClick={() => void download()}
+            >
+              Download snapshot
+            </Button>
+          </Unavailable>
+          <Unavailable reason={unavailable}>
+            <Button
+              type="secondary"
+              htmlType="button"
+              iconLeft="upload"
+              disabled={busy}
+              onClick={() => restoreInput.current?.click()}
+            >
+              Restore a snapshot
+            </Button>
+          </Unavailable>
           <input
             ref={restoreInput}
             type="file"

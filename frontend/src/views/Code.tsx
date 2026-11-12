@@ -8,7 +8,7 @@
  * (search/symbol/callers — the same ops agents call), PR packs (precomputed
  * per-PR context), Access (who can read it, how tokens get the claim).
  */
-import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -22,6 +22,9 @@ import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { VerticalStepper } from "@clickhouse/click-ui/VerticalStepper";
 import { PageContainer } from "../layout/PageContainer";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
+import { restrictedReason } from "../lib/namespaceUpdate";
+import { useGrantRows } from "../lib/useGrantRows";
 import { useStore, useIdentity } from "../lib/state";
 import { hasPlatformAdminClaim, holdsAdminGrant } from "../lib/role";
 import { fmtInt, relativeTime, listTime, parseChTime, refreshDetail } from "../lib/format";
@@ -111,7 +114,10 @@ import {
   TextClamp,
   Tip,
   TipTarget,
+  Unavailable,
 } from "../components/ui";
+import { GatedIconButton } from "../components/ui/GatedIconButton";
+import { callReason, loadingLine, needsMaintainer, scopedUnseen, serverDecides, unreadLine } from "../lib/callReason";
 import { isRecord } from "../lib/guards";
 import { oneOf } from "../lib/oneOf";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
@@ -1735,7 +1741,7 @@ function RepoDetail({
         {/* Each tab is keyed by branch: another branch starts each one fresh (its status,
             results, open pack and filter), and the tab the reader is on stays selected. */}
         <Tabs.Content value="health">
-          <HealthTab key={repo.namespace} id={id} />
+          <HealthTab key={repo.namespace} id={id} repo={repo} />
         </Tabs.Content>
         <Tabs.Content value="explore">
           <ExploreTab key={repo.namespace} id={id} />
@@ -1865,7 +1871,32 @@ function StageCard({
   );
 }
 
-export function HealthTab({ id }: { id: CodeId }) {
+/**
+ * Why the caller cannot call code.refresh (WRITER) on the repository, or null: `callReason`
+ * named by the repository's label, as the Access tab names it. A repository has readers and
+ * maintainers only, so the grant that reaches WRITER is maintainer. A restricted one's gate
+ * asks more, of an admin claim's token too (`restrictedMisses`), from grant rows read even
+ * where the role read skips list_mine.
+ */
+function useRefreshReason(id: CodeId, repo: CodeRepoSummary): string | null {
+  const read = useNamespaceRoleRead(id.namespace);
+  const whoami = useStore((s) => s.whoami);
+  const restricted = repo.classification === "restricted" && whoami?.authenticated !== false;
+  const grants = useGrantRows(id.org, restricted);
+  const name = `${repo.repo} @ ${repo.branch}`;
+  if (restricted) {
+    const gate = restrictedReason(grants, whoami, id, {
+      name,
+      adminWord: "maintainer",
+      what: "its index",
+      role: "writer",
+    });
+    if (gate) return gate;
+  }
+  return callReason("code.refresh", read, whoami, id.namespace, name);
+}
+
+export function HealthTab({ id, repo }: { id: CodeId; repo: CodeRepoSummary }) {
   const [st, setSt] = useState<CodeIndexStatus | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -1944,7 +1975,9 @@ export function HealthTab({ id }: { id: CodeId }) {
   useAbortableEffect((signal, live) => load(signal, live), [load]);
   useVisiblePoll(load, 60_000);
 
+  const refreshReason = useRefreshReason(id, repo);
   const onRefresh = async () => {
+    if (refreshReason) return;
     setRefreshing(true);
     try {
       const r = await codeRefresh(id);
@@ -2308,9 +2341,11 @@ export function HealthTab({ id }: { id: CodeId }) {
             )}
           </div>
         </div>
-        <Button type="primary" htmlType="button" iconLeft="refresh" loading={refreshing} onClick={onRefresh}>
-          Refresh now
-        </Button>
+        <Unavailable reason={refreshReason}>
+          <Button type="primary" htmlType="button" iconLeft="refresh" loading={refreshing} onClick={onRefresh}>
+            Refresh now
+          </Button>
+        </Unavailable>
       </div>
 
       <div>
@@ -3010,6 +3045,8 @@ export function AccessTab({
   const [ns, setNs] = useState<NamespaceInfo | null | undefined>(undefined);
   const [grants, setGrants] = useState<GrantEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // grants.list refused the caller (a viewer read): not a reader, so not a maintainer.
+  const [refused, setRefused] = useState(false);
   const [subject, setSubject] = useState("");
   const [role, setRole] = useState<GrantRole>("viewer");
   const [busy, setBusy] = useState<string | null>(null);
@@ -3035,10 +3072,13 @@ export function AccessTab({
           if (live()) {
             setGrants(r.rows);
             setError(null);
+            setRefused(false);
           }
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e, { read: true }));
+          if (!live()) return;
+          setError(humanizeError(e, { read: true }));
+          setRefused(e instanceof ApiError && e.status === 403);
         });
     },
     // `id` is a fresh object each parent render; its two fields are the identity.
@@ -3049,7 +3089,30 @@ export function AccessTab({
 
   const me = whoami?.subject;
   const myGrant = grants?.find((g) => g.subject === me);
-  const canManage = holdsAdminGrant(whoami, myGrant);
+  // A restricted repository's gate refuses a maintainer's token that does not name it, or
+  // whose claim is below admin, and an admin claim with no direct grant (`restrictedMisses`).
+  const repoName = repoRow ? `${repoRow.repo} @ ${repoRow.branch}` : id.namespace;
+  const restricted = repoRow?.classification === "restricted" && whoami?.authenticated !== false;
+  const grantRows = useGrantRows(id.org, restricted);
+  const gateReason = restricted
+    ? restrictedReason(grantRows, whoami, id, { name: repoName, adminWord: "maintainer", what: "its access" })
+    : null;
+  const canManage = holdsAdminGrant(whoami, myGrant) && gateReason === null;
+  // A maintainer's controls stay in view for anyone else once the readers are read, with what
+  // they need, named by the repository's label; grants.list is a viewer read.
+  const lockedId = useId();
+  const manageNeeds = (): string | null => {
+    if (canManage) return null;
+    if ((grants !== null || refused) && gateReason) return gateReason;
+    if (grants === null) {
+      if (refused && repoRow?.classification !== "restricted") return needsMaintainer(repoName);
+      return error ? unreadLine(false, repoName) : null;
+    }
+    if (!whoami) return loadingLine(repoName, id.namespace);
+    if (scopedUnseen(whoami, !!myGrant)) return serverDecides(repoName);
+    return needsMaintainer(repoName);
+  };
+  const manageReason = manageNeeds();
   const roleWord = (r: string) => (r === "viewer" ? "reader" : r === "admin" ? "maintainer" : r);
   const active = (grants || []).filter((g) => g.status === "active");
   // Two shapes of "waiting" (namespace.join): no access yet (status pending),
@@ -3128,7 +3191,7 @@ export function AccessTab({
   const onAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     const s = subject.trim();
-    if (!s) return;
+    if (!s || !canManage) return;
     setBusy("add");
     try {
       await createGrant(id, s, role);
@@ -3196,6 +3259,7 @@ export function AccessTab({
   }, [canManage, waiting.length, others.map((b) => b.namespace).join("|")]);
 
   const approveEverywhere = async (g: GrantEntry) => {
+    if (!canManage) return;
     const targets = [
       { org: id.org, namespace: id.namespace },
       ...(siblingWaiting[g.subject] ?? []).map((b) => ({ org: b.org, namespace: b.namespace })),
@@ -3239,10 +3303,11 @@ export function AccessTab({
                 </div>
                 <p className="mt-1.5 text-xs text-text-muted max-w-2xl">{RULE_META[rule].detail}</p>
               </div>
-              {canManage && (
+              {(canManage || manageReason) && (
                 <div className="flex flex-col items-end gap-2">
                   {/* A select, not radios: arrow keys in a radio group would ask for one
-                      confirmation per press. Cancelling leaves the current rule selected. */}
+                      confirmation per press. Cancelling leaves the current rule selected. A
+                      caller who is no maintainer sees it locked, with the line below. */}
                   <Select
                     label="Join rule"
                     value={rule}
@@ -3250,7 +3315,8 @@ export function AccessTab({
                       const next = oneOf(JOIN_RULES, v);
                       if (next) void setRule(next);
                     }}
-                    disabled={busy !== null}
+                    disabled={busy !== null || !!manageReason}
+                    triggerProps={{ "aria-describedby": manageReason ? lockedId : undefined }}
                   >
                     {JOIN_RULES.map((r) => (
                       <Select.Item
@@ -3261,9 +3327,20 @@ export function AccessTab({
                       />
                     ))}
                   </Select>
-                  <Button type="empty" htmlType="button" iconLeft="gear" onClick={() => setSettingsOpen(true)}>
-                    Description & more
-                  </Button>
+                  <Unavailable reason={manageReason}>
+                    <Button type="empty" htmlType="button" iconLeft="gear" onClick={() => setSettingsOpen(true)}>
+                      Description & more
+                    </Button>
+                  </Unavailable>
+                  {manageReason && (
+                    <p
+                      id={lockedId}
+                      className="m-0 max-w-xs text-right text-xs text-text-muted"
+                      data-testid="access-locked"
+                    >
+                      {manageReason}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -3305,10 +3382,12 @@ export function AccessTab({
               <Icon name="clock" size="sm" color="var(--color-warn)" aria-hidden="true" /> Waiting for a maintainer{" "}
               <span className="tabular text-text-muted">({waiting.length})</span>
             </div>
-            {canManage && waiting.length > 1 && (
-              <Button type="empty" htmlType="button" onClick={() => void approveAll()} disabled={busy !== null}>
-                Approve all
-              </Button>
+            {waiting.length > 1 && (
+              <Unavailable reason={manageReason}>
+                <Button type="empty" htmlType="button" onClick={() => void approveAll()} disabled={busy !== null}>
+                  Approve all
+                </Button>
+              </Unavailable>
             )}
           </div>
           {waiting.map((g) => {
@@ -3327,20 +3406,20 @@ export function AccessTab({
                 <span className="text-text-muted tabular hidden md:inline">
                   <ListTime time={g.pending_since} quiet />
                 </span>
-                {canManage ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    {asked === "admin" && (
-                      <Tip content="Admit as a reader instead of a maintainer">
-                        <Button
-                          type="secondary"
-                          htmlType="button"
-                          onClick={() => void decide(g, "approve", "viewer")}
-                          disabled={busy !== null}
-                        >
-                          Reader instead
-                        </Button>
-                      </Tip>
-                    )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {asked === "admin" && (
+                    <Unavailable reason={manageReason} tip="Admit as a reader instead of a maintainer">
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        onClick={() => void decide(g, "approve", "viewer")}
+                        disabled={busy !== null}
+                      >
+                        Reader instead
+                      </Button>
+                    </Unavailable>
+                  )}
+                  <Unavailable reason={manageReason}>
                     <Button
                       type="secondary"
                       htmlType="button"
@@ -3350,20 +3429,23 @@ export function AccessTab({
                     >
                       Decline
                     </Button>
-                    {alsoOn.length > 0 && (
-                      <Tip content={`Also waiting on ${alsoOn.map((b) => b.branch).join(", ")}`}>
-                        <Button
-                          type="secondary"
-                          htmlType="button"
-                          iconLeft="check"
-                          onClick={() => void approveEverywhere(g)}
-                          disabled={busy !== null}
-                        >
-                          Approve on all {alsoOn.length + 1} branches
-                        </Button>
-                      </Tip>
-                    )}
-                    {/* One primary per surface: a page of requests has none per row. */}
+                  </Unavailable>
+                  {/* Only a maintainer reads the other branches' requests, so this never needs a reason. */}
+                  {canManage && alsoOn.length > 0 && (
+                    <Tip content={`Also waiting on ${alsoOn.map((b) => b.branch).join(", ")}`}>
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        iconLeft="check"
+                        onClick={() => void approveEverywhere(g)}
+                        disabled={busy !== null}
+                      >
+                        Approve on all {alsoOn.length + 1} branches
+                      </Button>
+                    </Tip>
+                  )}
+                  {/* One primary per surface: a page of requests has none per row. */}
+                  <Unavailable reason={manageReason}>
                     <Button
                       type="secondary"
                       htmlType="button"
@@ -3373,10 +3455,8 @@ export function AccessTab({
                     >
                       Approve as {ROLE_WORD[asked]}
                     </Button>
-                  </div>
-                ) : (
-                  <span className="text-text-muted">waiting</span>
-                )}
+                  </Unavailable>
+                </div>
               </div>
             );
           })}
@@ -3414,7 +3494,7 @@ export function AccessTab({
                 { label: "Reader" },
                 { label: "Role", width: "200px" },
                 { label: "Added", width: "220px" },
-                ...(canManage ? [{ label: <span className="sr-only">Actions</span>, width: "56px" }] : []),
+                { label: <span className="sr-only">Actions</span>, width: "56px" },
               ]}
               rows={active.map((g) => ({
                 id: g.subject,
@@ -3449,28 +3529,28 @@ export function AccessTab({
                       </span>
                     ),
                   },
-                  ...(canManage
-                    ? [
-                        {
-                          label:
-                            g.subject !== me ? (
-                              <IconButton
-                                icon="trash"
-                                size="sm"
-                                label={`Remove ${g.subject}`}
-                                tooltip="Remove reader"
-                                onClick={() => void onRevoke(g)}
-                              />
-                            ) : null,
-                        },
-                      ]
-                    : []),
+                  {
+                    label:
+                      g.subject !== me ? (
+                        <GatedIconButton
+                          icon="trash"
+                          size="sm"
+                          label={`Remove ${g.subject}`}
+                          tooltip="Remove reader"
+                          reason={manageReason}
+                          onClick={() => void onRevoke(g)}
+                        />
+                      ) : null,
+                  },
                 ],
               }))}
             />
           )}
 
-          {canManage && hasAdmin && (
+          {/* One form for a maintainer and anyone else once the readers are read, so its Add
+              keeps its focus as the gate resolves: below it the fields are disabled and Add
+              says what it needs. */}
+          {(canManage || manageReason) && hasAdmin && (
             <form onSubmit={onAdd} className="flex flex-wrap gap-2 items-end" aria-label="Add a reader">
               <div className="flex-1 min-w-64">
                 <TextField
@@ -3478,11 +3558,13 @@ export function AccessTab({
                   onChange={(v) => setSubject(v)}
                   placeholder="login handle (sign-in namespace), verified email or service-account subject"
                   aria-label="Subject to add"
+                  disabled={!canManage}
                 />
               </div>
               <div className="w-full sm:w-80">
                 <Select
                   value={role}
+                  disabled={!canManage}
                   triggerProps={{ "aria-label": "Role" }}
                   onSelect={(value) => {
                     const v = oneOf(
@@ -3499,9 +3581,16 @@ export function AccessTab({
                   ))}
                 </Select>
               </div>
-              <Button type="primary" htmlType="submit" iconLeft="plus" disabled={busy !== null || !subject.trim()}>
-                Add
-              </Button>
+              <Unavailable reason={manageReason}>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  iconLeft="plus"
+                  disabled={canManage && (busy !== null || !subject.trim())}
+                >
+                  Add
+                </Button>
+              </Unavailable>
               <span className="text-xs text-text-muted basis-full">
                 Adding someone by name works under every rule. Agents read with a token that names this repository.
               </span>
@@ -3513,7 +3602,7 @@ export function AccessTab({
       {/* 4. Retire — the one irreversible verb, last, red, and
              behind a confirmation that spells out what goes. Operator-configured
              entries say who owns them instead. */}
-      {canManage && repoRow && (
+      {(canManage || manageReason) && repoRow && (
         <section
           className="rounded-xl border border-border p-4 flex items-start justify-between gap-4 flex-wrap"
           aria-label="Retire"
@@ -3539,8 +3628,10 @@ export function AccessTab({
               )}
             </p>
           </div>
-          <Tip
-            content={
+          {/* A configured index is the deployment's for everyone: natively off, with its tip. */}
+          <Unavailable
+            reason={repoRow.source === "registry" ? manageReason : null}
+            tip={
               repoRow.source === "registry"
                 ? "Irreversible; a confirmation follows"
                 : "Managed by the deployment config"
@@ -3550,7 +3641,7 @@ export function AccessTab({
               type="danger"
               htmlType="button"
               iconLeft="trash"
-              disabled={repoRow.source !== "registry" || busy !== null}
+              disabled={repoRow.source !== "registry" || (!manageReason && busy !== null)}
               onClick={async () => {
                 if (
                   !(await confirmAction({
@@ -3578,7 +3669,7 @@ export function AccessTab({
             >
               Retire…
             </Button>
-          </Tip>
+          </Unavailable>
         </section>
       )}
 

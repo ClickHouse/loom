@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Switch } from "@clickhouse/click-ui/Switch";
@@ -12,8 +12,8 @@ import {
   type ConversationThreadSummary,
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
-import { canCall } from "../lib/canCall";
-import { canWrite, useNamespaceRole } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
+import { canWrite, useNamespaceRoleRead } from "../lib/namespaceRole";
 import { RowSkeleton, Skeleton } from "../components/Skeleton";
 import { ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
 import { ListPager } from "../components/ui/ListPager";
@@ -72,7 +72,8 @@ function emphasize(text: string, query: string) {
 export function Conversations() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  const roleHere = useNamespaceRole(identity.namespace);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const roleHere = roleRead.role;
   const pendingConversationThread = useStore((s) => s.pendingConversationThread);
   const clearPendingConversationThread = useStore((s) => s.clearPendingConversationThread);
   // The search last sent (on Enter); the box keeps what is typed, so a keystroke does not
@@ -334,9 +335,11 @@ export function Conversations() {
     clearPendingConversationThread();
   }, [pendingConversationThread, openThreadDialog, clearPendingConversationThread]);
 
-  const canSetLogging = canCall("conversation.set_logging", roleHere, whoami);
-  const canRenameThread = canCall("conversation.update", roleHere, whoami);
-  const canDeleteThread = canCall("conversation.delete", roleHere, whoami);
+  // Each stays in view for a role that cannot call it, with the role it needs.
+  const loggingReason = callReason("conversation.set_logging", roleRead, whoami, identity.namespace);
+  const canSetLogging = loggingReason === null;
+  const renameReason = callReason("conversation.update", roleRead, whoami, identity.namespace);
+  const deleteReason = callReason("conversation.delete", roleRead, whoami, identity.namespace);
 
   const toggleLogging = async () => {
     if (loggingEnabled === null) return;
@@ -418,8 +421,8 @@ export function Conversations() {
                   <ThreadActions
                     identity={identity}
                     thread={{ thread_id: t.thread_id, agent: t.agent, title: t.title ?? "", label: title }}
-                    canRename={canRenameThread}
-                    canDelete={canDeleteThread}
+                    renameReason={renameReason}
+                    deleteReason={deleteReason}
                     onChanged={() => setThreadsRetry((n) => n + 1)}
                   />
                 }
@@ -482,11 +485,17 @@ export function Conversations() {
   };
 
   const phone = useMedia(PHONE_QUERY);
-  const recording = canSetLogging && loggingEnabled !== null && (
+  const loggingWhyId = useId();
+  // A role that cannot set it sees the switch, off-limits: a native switch cannot hold focus
+  // while disabled, so the reason sits in the info button's tooltip beside it and in the
+  // switch's own description.
+  const recording = loggingEnabled !== null && (
     <span className="flex items-center gap-1">
       <Switch
         checked={loggingEnabled}
         onCheckedChange={toggleLogging}
+        disabled={!canSetLogging}
+        aria-describedby={loggingReason ? loggingWhyId : undefined}
         // "Record" on a phone, beside the title, so the switch keeps to the title's row; the
         // name stays whole.
         label={phone ? "Record" : "Record conversations"}
@@ -498,8 +507,17 @@ export function Conversations() {
         icon="info-in-circle"
         size="xs"
         label="About recording"
-        tooltip="When off, new conversation turns are not stored for this namespace"
+        tooltip={
+          loggingReason
+            ? `${loggingReason} When off, new conversation turns are not stored for this namespace.`
+            : "When off, new conversation turns are not stored for this namespace."
+        }
       />
+      {loggingReason && (
+        <span id={loggingWhyId} className="sr-only">
+          {loggingReason}
+        </span>
+      )}
     </span>
   );
 
@@ -606,7 +624,8 @@ export function Conversations() {
             icon="chat"
             title="No conversations yet in this namespace"
             // Recording off: no agent can fill the page until it is on, so the next step is the
-            // switch (in the header, for whoever may set it), not a connect.
+            // switch in the header (shown to every role, unavailable to one that cannot set it),
+            // not a connect.
             {...(loggingEnabled === false
               ? {
                   description: canSetLogging

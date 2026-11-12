@@ -212,6 +212,14 @@ describe("canUpdateNamespace on a restricted row (the two-factor gate)", () => {
     ).toEqual(["org"]);
     expect(restrictedMisses(writerJwt, [], { org: "dev", namespace: "team-b" })).toEqual(["name", "claim", "grant"]);
     expect(restrictedMisses(namedAdmin, [row("team-a", "admin")], { org: "dev", namespace: "team-a" })).toEqual([]);
+    // At WRITER a writer claim and a direct writer grant are enough; a viewer grant is not.
+    const namedWriter: WhoAmI = { ...writerJwt, namespaces: ["team-a"] };
+    const scope = { org: "dev", namespace: "team-a" };
+    expect(restrictedMisses(namedWriter, [row("team-a", "writer")], scope, "writer")).toEqual([]);
+    expect(restrictedMisses(namedWriter, [row("team-a", "viewer")], scope, "writer")).toEqual(["grant"]);
+    expect(
+      restrictedMisses({ ...viewerJwt, namespaces: ["team-a"] }, [row("team-a", "writer")], scope, "writer"),
+    ).toEqual(["claim"]);
     // No flat roles: a per-namespace role the client cannot see, never a missing claim.
     expect(
       restrictedMisses({ ...namedAdmin, roles: [] }, [row("team-a", "admin")], { org: "dev", namespace: "team-a" }),

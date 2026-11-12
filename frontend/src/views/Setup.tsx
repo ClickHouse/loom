@@ -8,12 +8,12 @@ import { listTokens, type TokenEntry, importCuratedDoc, type ImportCuratedResult
 import { useStore, useIdentity } from "../lib/state";
 import { toast, toastError } from "../components/Toast";
 import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
-import { canCall } from "../lib/canCall";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Alert, PageHeader, TabTrigger } from "../components/ui";
+import { Alert, PageHeader, TabTrigger, Unavailable } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
 import { isMemoryNamespace } from "../lib/namespace";
 import { hasPlatformAdminClaim } from "../lib/role";
 import { TokensSection } from "./Tokens";
@@ -71,8 +71,10 @@ export function Setup() {
   };
   useEffect(loadTokens, []);
 
-  const role = useNamespaceRole(namespace);
-  const showStructure = !!memoryNamespace && canCall("memory_schema.list", role, whoami);
+  // Structure is a memory namespace's: shown to every role there; one that cannot read it
+  // sees what it needs, and nothing is read.
+  const structureRead = useNamespaceRoleRead(namespace);
+  const structureReason = callReason("memory_schema.list", structureRead, whoami, namespace);
   const [tab, setTab] = useState<SettingsTab>(() => readTabParam() ?? "tokens");
   // A link that opens Settings on a tab while it already shows (an assistant card's) moves
   // to that tab: the page is not drawn again.
@@ -140,7 +142,7 @@ export function Setup() {
           <TabTrigger value="memory" icon="light-bulb">
             {TAB_LABELS.memory}
           </TabTrigger>
-          {showStructure && (
+          {!!memoryNamespace && (
             <TabTrigger value="structure" icon="table">
               {TAB_LABELS.structure}
             </TabTrigger>
@@ -159,10 +161,12 @@ export function Setup() {
         </Tabs.Content>
         <Tabs.Content value="structure">
           {/* Keyed by scope: another namespace starts with no rows, draft or dialog of this one. */}
-          {showStructure ? (
-            <StructureTab key={`${identity.org}/${namespace}`} />
+          {!memoryNamespace ? (
+            <p>Structure is shown for a memory namespace.</p>
+          ) : structureReason ? (
+            <p className="m-0 text-sm text-text-muted">{structureReason}</p>
           ) : (
-            <p>Structure is shown for a memory namespace you can read.</p>
+            <StructureTab key={`${identity.org}/${namespace}`} />
           )}
         </Tabs.Content>
         <Tabs.Content value="models">
@@ -184,11 +188,16 @@ const PRIVACY_STARTERS: PrivacyFilterStarter[] = [
  *  admin, the namespace's webhooks. */
 function MemoryTab() {
   const [importing, setImporting] = useState(false);
-  // Hidden below namespace ADMIN: the section reads webhook.list on mount.
+  // Shown to every role; below namespace ADMIN it says so and reads no webhook.list.
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity.namespace);
-  const showWebhooks = canCall("webhook.list", role, whoami);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const webhooksReason = callReason("webhook.list", roleRead, whoami, identity.namespace);
+  const importReason = callReason("memory.import_curated", roleRead, whoami, identity.namespace);
+  // A reason that appears while it is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (importReason) setImporting(false);
+  }, [importReason]);
   return (
     <div className="max-w-3xl space-y-8">
       <section aria-labelledby="settings-never-save">
@@ -211,9 +220,11 @@ function MemoryTab() {
             <code className="code-inline text-xs">##</code> section.
           </p>
         </div>
-        <Button type="secondary" htmlType="button" iconLeft="upload" onClick={() => setImporting(true)}>
-          Import a document
-        </Button>
+        <Unavailable reason={importReason}>
+          <Button type="secondary" htmlType="button" iconLeft="upload" onClick={() => setImporting(true)}>
+            Import a document
+          </Button>
+        </Unavailable>
         <Modal
           open={importing}
           onOpenChange={setImporting}
@@ -221,11 +232,11 @@ function MemoryTab() {
           description="Paste a Markdown document; each second-level section becomes one memory."
           className="max-w-[720px] w-full"
         >
-          <ImportCuratedPanel />
+          <ImportCuratedPanel unavailable={importReason} />
         </Modal>
       </section>
 
-      {showWebhooks && <WebhooksSection key={`${identity.org}/${identity.namespace}`} />}
+      <WebhooksSection key={`${identity.org}/${identity.namespace}`} unavailable={webhooksReason} />
     </div>
   );
 }
@@ -237,7 +248,9 @@ const VERDICT_STATES: Record<string, BadgeState> = {
   rejected_pinned: "danger",
 };
 
-function ImportCuratedPanel() {
+/** `unavailable`: why the caller cannot import. The tab closes this dialog when it appears;
+ *  the guard in run covers the render before it does. */
+function ImportCuratedPanel({ unavailable }: { unavailable: string | null }) {
   const identity = useIdentity();
   const [content, setContent] = useState("");
   const [sourceUri, setSourceUri] = useState("AGENTS.md");
@@ -245,6 +258,7 @@ function ImportCuratedPanel() {
   const [result, setResult] = useState<ImportCuratedResult | null>(null);
 
   const run = async () => {
+    if (unavailable) return;
     if (!content.trim()) {
       toast("Paste a doc body first", "info");
       return;

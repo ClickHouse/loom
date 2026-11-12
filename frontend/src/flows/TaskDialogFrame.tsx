@@ -74,18 +74,26 @@ export function DateTimeField({
   label,
   value,
   onChange,
+  disabled = false,
 }: {
   id: string;
   label: ReactNode;
   value: string;
   onChange: (v: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <div>
       <Label htmlFor={id} className="mb-1 block">
         {label}
       </Label>
-      <input id={id} type="datetime-local" value={value} onChange={(e) => onChange(e.target.value)} />
+      <input
+        id={id}
+        type="datetime-local"
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }

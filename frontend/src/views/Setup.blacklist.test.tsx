@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, TokenEntry, WhoAmI } from "../api";
@@ -37,6 +37,7 @@ vi.mock("../api", async (importOriginal) => {
       expires_at: null,
       mcp_url: "http://localhost/mcp",
     })),
+    addBlacklist: vi.fn(async () => ({})),
     listBlacklist: vi.fn(async () => ({
       rows: [
         {
@@ -58,7 +59,7 @@ vi.mock("../api/webhooks", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/webhooks")>()),
   listWebhooks: vi.fn(async () => ({ webhooks: [] })),
 }));
-import { countMemories, listBlacklist, listMine, registerNamespace } from "../api";
+import { addBlacklist, countMemories, listBlacklist, listMine, registerNamespace } from "../api";
 import { listWebhooks } from "../api/webhooks";
 import { sharedMine } from "../lib/sharedReads";
 
@@ -129,7 +130,9 @@ describe("Setup's 'Never save' panel", () => {
     seed(viewerNoMemory, [codeRow("code-clickhouse", "code"), codeRow("tracker-clickhouse", "qa")], MEMORY_NS);
     render(<Setup />);
     await openMemoryTab();
-    expect(await screen.findByText(PRIVACY_FILTERS_MANAGED_BY_ADMIN, undefined, WAIT)).toBeInTheDocument();
+    expect(
+      await screen.findByText("Needs viewer on reporter-public. An admin of it can grant that.", undefined, WAIT),
+    ).toBeInTheDocument();
     expect(listBlacklist).not.toHaveBeenCalled();
     // The same rule covers the checklist's memory.list total.
     expect(countMemories).not.toHaveBeenCalled();
@@ -151,11 +154,14 @@ describe("Setup's 'Never save' panel", () => {
     seed(viewerNoMemory, null, MEMORY_NS);
     render(<Setup />);
     await openMemoryTab();
-    expect(await screen.findByText(PRIVACY_FILTERS_MANAGED_BY_ADMIN, undefined, WAIT)).toBeInTheDocument();
+    // The page's own list_mine answers with no grant here: the note names the role it needs.
+    expect(
+      await screen.findByText("Needs viewer on reporter-public. An admin of it can grant that.", undefined, WAIT),
+    ).toBeInTheDocument();
     expect(listBlacklist).not.toHaveBeenCalled();
   });
 
-  it("a viewer with a grant on the namespace lists once, read-only: no add form, no remove button", async () => {
+  it("a viewer with a grant on the namespace lists once, read-only: the add form disabled, Add and Remove unavailable", async () => {
     seed(viewerNoMemory, [{ ...codeRow(MEMORY_NS, "code"), kind: "memory", role: "viewer" }], MEMORY_NS);
     render(<Setup />);
     // Nothing is read for a tab that is not open: the list request waits for the Memory tab.
@@ -165,14 +171,40 @@ describe("Setup's 'Never save' panel", () => {
     await waitFor(() => expect(listBlacklist).toHaveBeenCalledTimes(1), WAIT);
     expect(await screen.findByText("sk-[A-Za-z0-9]{20,}", undefined, WAIT)).toBeInTheDocument();
     expect(screen.getByText(PRIVACY_FILTERS_READ_ONLY)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Substring to block")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Remove pattern/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Substring to block")).toBeDisabled();
+    const remove = screen.getByRole("button", { name: /Remove pattern/ });
+    expect(remove).toHaveAttribute("aria-disabled", "true");
+    expect(remove).toHaveAccessibleDescription(/^Needs admin on .+\. An admin of it can grant that\.$/);
+    const addPattern = screen.getByRole("button", { name: "Add" });
+    expect(addPattern).toHaveAccessibleDescription(/^Needs writer on .+\. An admin of it can grant that\.$/);
+    fireEvent.click(addPattern);
+    expect(addBlacklist).not.toHaveBeenCalled();
     expect(screen.queryByText(PRIVACY_FILTERS_MANAGED_BY_ADMIN)).not.toBeInTheDocument();
     // Settings reads no memory count.
     expect(countMemories).not.toHaveBeenCalled();
-    // Webhooks are ADMIN: a viewer neither sees the section nor reads them.
-    expect(screen.queryByRole("heading", { name: "Webhooks" })).not.toBeInTheDocument();
+    // Webhooks are ADMIN: a viewer sees the section, what it needs, and nothing is read.
+    expect(screen.getByRole("heading", { name: "Webhooks" })).toBeInTheDocument();
+    const addHook = screen.getByRole("button", { name: "Add webhook" });
+    expect(addHook).toHaveAccessibleDescription(/^Needs admin on .+\. An admin of it can grant that\.$/);
+    fireEvent.click(addHook);
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(listWebhooks).not.toHaveBeenCalled();
+    // Seeding from a document is memory.import_curated (WRITER): it opens no dialog.
+    const importDoc = screen.getByRole("button", { name: "Import a document" });
+    expect(importDoc).toHaveAttribute("aria-disabled", "true");
+    expect(importDoc).toHaveAccessibleDescription(/^Needs writer on .+\. An admin of it can grant that\.$/);
+    fireEvent.click(importDoc);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a `*` writer claim over a viewer grant gets Add's server-decides line, not the read-only note", async () => {
+    const star: WhoAmI = { authenticated: true, subject: "w@x", org: ORG, roles: ["WRITER"], namespaces: ["*"] };
+    seed(star, [{ ...codeRow(MEMORY_NS, "code"), kind: "memory", role: "viewer" }], MEMORY_NS);
+    render(<Setup />);
+    await openMemoryTab();
+    const add = await screen.findByRole("button", { name: "Add" }, WAIT);
+    expect(add).toHaveAccessibleDescription(/^The server decides this token's access to /);
+    expect(screen.queryByText(PRIVACY_FILTERS_READ_ONLY)).not.toBeInTheDocument();
   });
 
   it("an admin claim lists once and gets the add form and the remove button", async () => {
@@ -187,7 +219,10 @@ describe("Setup's 'Never save' panel", () => {
     expect(screen.queryByText(PRIVACY_FILTERS_MANAGED_BY_ADMIN)).not.toBeInTheDocument();
     expect(screen.queryByText(PRIVACY_FILTERS_READ_ONLY)).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Webhooks" }, WAIT)).toBeInTheDocument();
-  });
+    await userEvent.click(screen.getByRole("button", { name: "Import a document" }));
+    expect(await screen.findByRole("dialog", { name: "Import a document" }, WAIT)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Import" })).not.toHaveAttribute("aria-disabled");
+  }, 15_000);
 
   it("drops the previous namespace's patterns on a switch: the list is keyed by its namespace", async () => {
     const admin: WhoAmI = { authenticated: true, subject: "a@x", org: ORG, roles: ["ADMIN"] };

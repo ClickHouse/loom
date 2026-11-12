@@ -656,22 +656,55 @@ describe("Tasks page", () => {
     expect(new URLSearchParams(window.location.search).get("task")).toBe("urgent");
   });
 
-  it("a viewer sees the page but no New task, settings, inline or footer actions", async () => {
+  it("a viewer sees New task, settings, inline and footer actions unavailable, with the role each needs", async () => {
     seed(viewer, [row("viewer")]);
     const user = userEvent.setup();
     render(<Tasks />);
     await screen.findByRole("row", { name: "Task urgent" });
-    expect(screen.queryByRole("button", { name: /New task/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Accept Task urgent" })).not.toBeInTheDocument();
+    const writer = /^Needs writer on .+\. An admin of it can grant that\.$/;
+    const admin = /^Needs admin on .+\. An admin of it can grant that\.$/;
+    const unavailable = (el: HTMLElement, reason: RegExp) => {
+      expect(el).toHaveAttribute("aria-disabled", "true");
+      expect(el).toHaveAccessibleDescription(reason);
+    };
+    unavailable(screen.getByRole("button", { name: /New task/ }), writer);
+    await user.click(screen.getByRole("button", { name: /New task/ }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    unavailable(screen.getByRole("button", { name: "Accept Task urgent" }), writer);
+    // Its key does nothing here, so it is not announced.
+    expect(screen.getByRole("button", { name: "Accept Task urgent" })).not.toHaveAttribute("aria-keyshortcuts");
     await user.click(screen.getByRole("button", { name: "Page options" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Keyboard shortcuts"]);
+    unavailable(screen.getByRole("menuitem", { name: "Inbox settings…" }), admin);
+    unavailable(screen.getByRole("menuitem", { name: "Register inbox…" }), admin);
+    await user.click(screen.getByRole("menuitem", { name: "Inbox settings…" }));
+    await user.click(screen.getByRole("menuitem", { name: "Register inbox…" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Actions for Task urgent" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Copy id"]);
+    for (const item of screen.getAllByRole("menuitem").filter((m) => m.textContent !== "Copy id"))
+      unavailable(item, writer);
     await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Accept Task urgent" }));
+    expect(acceptTask).not.toHaveBeenCalled();
+    vi.mocked(getTask).mockResolvedValueOnce(full(ROWS[1]));
     await user.click(screen.getByRole("row", { name: "Task urgent" }));
     const panel = await screen.findByRole("complementary", { name: "Task detail" });
-    expect(within(panel).queryByRole("button", { name: "Accept" })).not.toBeInTheDocument();
+    unavailable(await within(panel).findByRole("button", { name: "Accept" }), writer);
+  });
+
+  it("a viewer pressing each action key sends nothing", async () => {
+    seed(viewer, [row("viewer")]);
+    const user = userEvent.setup();
+    render(<Tasks />);
+    await screen.findByRole("row", { name: "Task urgent" });
+    await user.keyboard("j");
+    expect(screen.getByRole("row", { name: "Task urgent" })).toHaveAttribute("aria-selected", "true");
+    for (const key of ["a", "s", "c", "x", "d"]) await user.keyboard(key);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(acceptTask).not.toHaveBeenCalled();
+    expect(claimTask).not.toHaveBeenCalled();
+    expect(wontDoTask).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("an admin gets New task, and Inbox settings and Register inbox under Page options", async () => {
@@ -987,12 +1020,14 @@ describe("Tasks page", () => {
     expect(screen.getAllByText("None match the filters.").length).toBeGreaterThan(0);
   });
 
-  it("with no inbox registered, explains and offers Register inbox to an admin only", async () => {
+  it("with no inbox registered, explains, and offers Register inbox to an admin, unavailable to others", async () => {
     vi.mocked(listInboxes).mockResolvedValueOnce([]);
     seed(viewer, [row("viewer")]);
     render(<Tasks />);
     await screen.findByRole("heading", { name: "No inbox here yet" });
-    expect(screen.queryByRole("button", { name: "Register inbox" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Register inbox" })).toHaveAccessibleDescription(
+      /^Needs admin on .+\. An admin of it can grant that\.$/,
+    );
     expect(listTasks).not.toHaveBeenCalled();
     cleanup();
     vi.mocked(listInboxes).mockResolvedValueOnce([]);

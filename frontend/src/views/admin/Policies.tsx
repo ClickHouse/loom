@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -23,7 +23,8 @@ import {
   type PolicyDecisionKind,
 } from "../../api";
 import { useIdentity } from "../../lib/state";
-import { IconButton } from "../../components/IconButton";
+import { GatedIconButton } from "../../components/ui/GatedIconButton";
+import { useOpReason } from "../../lib/useOpReason";
 import { Modal, ModalFooter } from "../../components/ui/Modal";
 import { Panel } from "../../components/ui/Panel";
 import { Skeleton, SkeletonCard } from "../../components/Skeleton";
@@ -38,7 +39,7 @@ import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
 import { isRecord } from "../../lib/guards";
-import { Alert, ListTime, LoadingSkeleton, PageHeader } from "../../components/ui";
+import { Alert, ListTime, LoadingSkeleton, PageHeader, Unavailable } from "../../components/ui";
 import { ListState } from "../../components/ui/ListState";
 
 /**
@@ -212,6 +213,13 @@ export function Policies() {
   const [error, setError] = useState<unknown>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [decisionsVersion, setDecisionsVersion] = useState(0);
+  // Add rule and each rule's Delete stay in view below admin, unavailable with why.
+  const setReason = useOpReason("policy.set", identity.namespace);
+  const deleteReason = useOpReason("policy.delete", identity.namespace);
+  // A reason that appears while it is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (setReason) setAddOpen(false);
+  }, [setReason]);
 
   // A reload after an add or a delete keeps the rules on screen, marked busy.
   const [refreshing, setRefreshing] = useState(false);
@@ -252,6 +260,7 @@ export function Policies() {
   );
 
   const remove = async (r: PolicyRule) => {
+    if (deleteReason) return;
     if (
       !(await confirmAction({
         title: `Delete rule "${r.policy_id}"?`,
@@ -289,9 +298,11 @@ export function Policies() {
         <Card
           title="Rules"
           action={
-            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-              Add rule
-            </Button>
+            <Unavailable reason={setReason}>
+              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+                Add rule
+              </Button>
+            </Unavailable>
           }
         >
           {/* Mounted before the read answers, so the count is announced when it lands. */}
@@ -360,11 +371,12 @@ export function Policies() {
                     },
                     {
                       label: (
-                        <IconButton
+                        <GatedIconButton
                           icon="trash"
                           type="danger"
                           size="sm"
                           label={`Delete ${r.policy_id}`}
+                          reason={deleteReason}
                           onClick={() => remove(r)}
                         />
                       ),
@@ -395,6 +407,9 @@ export function Policies() {
 
 function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
   const identity = useIdentity();
+  // The page closes this dialog when its reason appears; the guard in submit covers the render
+  // before it does.
+  const setReason = useOpReason("policy.set", identity.namespace);
   const [policyId, setPolicyId] = useState("");
   const [effect, setEffect] = useState<PolicyEffect>("forbid");
   const [actions, setActions] = useState("memory.delete");
@@ -418,6 +433,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
   };
 
   const submit = async () => {
+    if (setReason) return;
     setErr(null);
     const id = policyId.trim();
     const acts = actions

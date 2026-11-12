@@ -17,6 +17,9 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   identity: Identity;
   onAdded: () => void;
+  /** Why the caller cannot add, when known: the page closes the dialog when it appears, and
+   *  submit guards the render before it does. */
+  reason?: string | null;
 }
 
 // "Never" leaves ttl_seconds unset → no `expires_at`; lives until deleted.
@@ -30,7 +33,7 @@ const EXPIRY_OPTIONS: Array<{ label: string; ttlSeconds: number | null }> = [
   { label: "1 year", ttlSeconds: 365 * 24 * 60 * 60 },
 ];
 
-export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props) {
+export function AddMemoryDialog({ open, onOpenChange, identity, onAdded, reason = null }: Props) {
   const [memoryKey, setMemoryKey] = useState("");
   const [value, setValue] = useState("");
   const [tagsInput, setTagsInput] = useState("");
@@ -70,7 +73,7 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
   const canSubmit = memoryKey.trim() !== "" && value.trim() !== "" && !keyError && !busy;
 
   const onSubmit = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || reason) return;
     setBusy(true);
     setError(null);
     const tags = tagsInput

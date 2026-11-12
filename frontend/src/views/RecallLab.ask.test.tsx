@@ -109,12 +109,14 @@ describe("Ask about this on a Recall lab result", () => {
     );
   });
 
-  it("offers no Ask, and no column for it, to a role the assistant's route does not admit", async () => {
+  it("shows Ask unavailable on each row, with the role it needs, to a role the assistant's route does not admit", async () => {
     useStore.setState({ myNamespaces: [] });
     render(<RecallLab />);
     const table = await score();
-    expect(within(table).queryByRole("button", { name: "Ask the assistant about this result" })).toBeNull();
-    expect(within(table).getAllByRole("columnheader")).toHaveLength(7);
+    for (const ask of within(table).getAllByRole("button", { name: "Ask the assistant about this result" })) {
+      expect(ask).toHaveAttribute("aria-disabled", "true");
+      expect(ask).toHaveAccessibleDescription(/^Needs viewer on .+\. An admin of it can grant that\.$/);
+    }
   });
 
   it("an unavailable Ask opens nothing either", async () => {

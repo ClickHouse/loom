@@ -40,6 +40,7 @@ vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof i
 vi.mock("../lib/namespaceRole", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/namespaceRole")>()),
   useNamespaceRole: () => "admin",
+  useNamespaceRoleRead: () => ({ role: "admin", loading: false, rows: [] }),
 }));
 vi.mock("../components/SessionBriefsSection", () => ({ SessionBriefsSection: () => null }));
 vi.mock("../components/SessionBriefPanel", () => ({ SessionBriefPanel: () => null }));

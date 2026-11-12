@@ -50,13 +50,17 @@ async function deleteRow() {
 describe("Library delete Undo", () => {
   beforeEach(() => {
     api.listKnowledge.mockResolvedValue({ rows: [ROW], next_cursor: null });
-    useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" }, view: "knowledge" });
+    useStore.setState({
+      identity: { org: "acme", namespace: "team", agent: "loom-ui" },
+      view: "knowledge",
+      whoami: { authenticated: false },
+    });
   });
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
     vi.useRealTimers();
-    useStore.setState({ identity: null });
+    useStore.setState({ identity: null, whoami: null });
   });
 
   it("restores into the namespace the delete ran in and reads the list again", async () => {

@@ -2,6 +2,7 @@
  *  a removed cap reads the global one, and a save that lands after a namespace switch
  *  leaves the new namespace's bar alone. */
 import { act, cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
 import type { BudgetStatus, CostRow, NamespaceInfo } from "../../api";
@@ -19,6 +20,7 @@ vi.mock("../../api", async (importOriginal) => {
     getBudgetStatus: vi.fn(),
     getNamespace: vi.fn(),
     reregisterNamespace: vi.fn(),
+    listMine: vi.fn(async () => []),
     getAgentSpend: vi.fn(async () => ({ rows: [], total_cost_usd: 0, total_turns: 0, unpriced_turns: 0 })),
   };
 });
@@ -141,14 +143,246 @@ describe("Spending cap editor on a restricted namespace", () => {
     is_new: false,
   };
 
-  it("hides the editor from an admin claim namespace.register would refuse", async () => {
+  it("shows Edit cap unavailable to an admin claim namespace.register would refuse, and says why", async () => {
     useStore.setState({ whoami: namedAdmin, myNamespaces: [viewerGrant] });
     vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
     vi.mocked(api.getNamespace).mockResolvedValue({ ...nsRow("team-a"), classification: "restricted" });
     render(<Spending />);
     expect(await screen.findByText("$0.1000 / $1.00 (namespace)")).toBeInTheDocument();
     await waitFor(() => expect(api.getNamespace).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByRole("button", { name: /Edit cap/ })).toBeNull());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAccessibleDescription(
+        "Changing its cap needs a direct admin grant on team-a.",
+      ),
+    );
+    expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(screen.getByRole("button", { name: /Edit cap/ }));
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+  });
+
+  it("leaves a restricted namespace's cap to the server for a scoped token holding the direct grant", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "a@example.com", org: "dev", roles: [], namespaces: ["team-a"] },
+      myNamespaces: [{ ...viewerGrant, role: "admin" as never }],
+    });
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...nsRow("team-a"), classification: "restricted" });
+    render(<Spending />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAccessibleDescription(
+        "The server decides this token's access to team-a; it does not show here.",
+      ),
+    );
+  });
+
+  it("says the grants are loading on a restricted namespace for an admin claim whose list_mine is unread", async () => {
+    vi.mocked(api.listMine).mockImplementation(() => new Promise<never>(() => {}));
+    useStore.setState({ whoami: namedAdmin, myNamespaces: null });
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...nsRow("team-a"), classification: "restricted" });
+    render(<Spending />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAccessibleDescription(
+        "Your role on this namespace is still loading.",
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Edit cap/ }));
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    vi.mocked(api.listMine).mockImplementation(async () => []);
+  });
+
+  it("shows a viewer on a standard namespace Edit cap unavailable, with the role it needs", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"], namespaces: ["team-a"] },
+      myNamespaces: [viewerGrant],
+    });
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...nsRow("team-a"), classification: "standard" });
+    render(<Spending />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAccessibleDescription(
+        "Needs admin on team-a. An admin of it can grant that.",
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Edit cap/ }));
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+  });
+
+  it.each([
+    ["loading", "restricted", () => new Promise<never>(() => {}), "Your role on this namespace is still loading."],
+    ["failed", "restricted", () => Promise.reject(new Error("down")), "Couldn't check your access to team-a."],
+    ["loading", "standard", () => new Promise<never>(() => {}), "Your role on this namespace is still loading."],
+    ["failed", "standard", () => Promise.reject(new Error("down")), "Couldn't check your access to team-a."],
+  ] as const)(
+    "says the role is unread while list_mine is %s on a %s namespace, and opens nothing",
+    async (_label, classification, read, line) => {
+      vi.mocked(api.listMine).mockImplementation(read as never);
+      useStore.setState({
+        whoami: {
+          authenticated: true,
+          subject: "v@example.com",
+          org: "dev",
+          roles: ["VIEWER"],
+          namespaces: ["team-a"],
+        },
+        myNamespaces: null,
+      });
+      vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
+      vi.mocked(api.getNamespace).mockResolvedValue({ ...nsRow("team-a"), classification });
+      render(<Spending />);
+      await waitFor(() => expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAccessibleDescription(line));
+      await userEvent.click(screen.getByRole("button", { name: /Edit cap/ }));
+      expect(screen.queryByRole("spinbutton")).toBeNull();
+      expect(api.reregisterNamespace).not.toHaveBeenCalled();
+      vi.mocked(api.listMine).mockImplementation(async () => []);
+    },
+  );
+
+  it("says the access could not be checked when the namespace's row cannot be read", async () => {
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"], namespaces: ["team-a"] },
+      myNamespaces: [viewerGrant],
+    });
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
+    vi.mocked(api.getNamespace).mockRejectedValue(new Error("down"));
+    render(<Spending />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAccessibleDescription(
+        "Couldn't check your access to team-a.",
+      ),
+    );
+  });
+
+  it("reads the role from the page's own list_mine when the store holds none", async () => {
+    vi.mocked(api.listMine).mockResolvedValue([viewerGrant] as never);
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"], namespaces: ["team-a"] },
+      myNamespaces: null,
+    });
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...nsRow("team-a"), classification: "standard" });
+    render(<Spending />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAccessibleDescription(
+        "Needs admin on team-a. An admin of it can grant that.",
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Edit cap/ }));
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    vi.mocked(api.listMine).mockImplementation(async () => []);
+  });
+
+  it("forgets the last namespace's row on a switch until the next one is read", async () => {
+    const grants = [
+      { ...viewerGrant, role: "admin" as never },
+      { ...viewerGrant, namespace: "team-b", role: "admin" as never },
+    ];
+    vi.mocked(api.listMine).mockResolvedValue(grants as never);
+    useStore.setState({
+      whoami: { authenticated: true, subject: "a@example.com", org: "dev", namespaces: ["*"], roles: ["ADMIN"] },
+      myNamespaces: [
+        { ...viewerGrant, role: "admin" as never },
+        { ...viewerGrant, namespace: "team-b", role: "admin" as never },
+      ],
+    });
+    vi.mocked(api.getBudgetStatus).mockImplementation(async ({ namespace }) =>
+      namespace === "team-a" ? budget("team-a", 0.1, 1, "namespace") : budget("team-b", 0.2, 7, "namespace"),
+    );
+    const rowB = deferred<NamespaceInfo>();
+    vi.mocked(api.getNamespace).mockImplementation(async ({ namespace }) =>
+      namespace === "team-a" ? { ...nsRow("team-a"), classification: "standard" } : rowB.promise,
+    );
+    render(<Spending />);
+    expect(await screen.findByText("$0.1000 / $1.00 (namespace)")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /Edit cap/ })).not.toHaveAttribute("aria-disabled"));
+    act(() => setNamespace("team-b"));
+    expect(await screen.findByText("$0.2000 / $7.00 (namespace)")).toBeInTheDocument();
+    // team-a's standard row no longer stands in for team-b's, which has not answered.
+    const edit = screen.getByRole("button", { name: /Edit cap/ });
+    expect(edit).toHaveAccessibleDescription("Reading the settings of team-b.");
+    await userEvent.click(edit);
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    await act(async () => rowB.resolve({ ...nsRow("team-b"), classification: "standard" }));
+    vi.mocked(api.listMine).mockImplementation(async () => []);
+  });
+
+  it("treats a namespace with no row as answered: an admin edits the cap, a viewer needs admin", async () => {
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
+    vi.mocked(api.getNamespace).mockResolvedValue(null);
+    useStore.setState({
+      whoami: { authenticated: true, subject: "a@example.com", org: "dev", roles: ["ADMIN"], namespaces: ["team-a"] },
+      myNamespaces: [],
+    });
+    render(<Spending />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Edit cap/ })).not.toHaveAttribute("aria-disabled"));
+    await userEvent.click(screen.getByRole("button", { name: /Edit cap/ }));
+    expect(await screen.findByRole("spinbutton")).toBeInTheDocument();
+    cleanup();
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"], namespaces: ["team-a"] },
+      myNamespaces: [viewerGrant],
+    });
+    render(<Spending />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAccessibleDescription(
+        "Needs admin on team-a. An admin of it can grant that.",
+      ),
+    );
+  });
+
+  it("keeps it for the owner of an auto-registered namespace whose role the grant list cannot show", async () => {
+    vi.mocked(api.listMine).mockResolvedValue([] as never);
+    useStore.setState({
+      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: ["WRITER"], namespaces: ["*"] },
+      myNamespaces: [],
+    });
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
+    vi.mocked(api.getNamespace).mockResolvedValue({
+      ...nsRow("team-a"),
+      classification: "standard",
+      tags: ["auto-registered"],
+    });
+    render(<Spending />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Edit cap/ })).not.toHaveAttribute("aria-disabled"));
+    await userEvent.click(screen.getByRole("button", { name: /Edit cap/ }));
+    expect(screen.getByRole("spinbutton")).toBeInTheDocument();
+    vi.mocked(api.listMine).mockImplementation(async () => []);
+  });
+
+  it("closes an open cap editor when the role falls short, and sends nothing", async () => {
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...nsRow("team-a"), classification: "standard" });
+    render(<Spending />);
+    fireEvent.click(await screen.findByRole("button", { name: /Edit cap/ }));
+    expect(screen.getByLabelText("Daily LLM budget cap in dollars")).toBeInTheDocument();
+    act(() =>
+      useStore.setState({
+        whoami: {
+          authenticated: true,
+          subject: "v@example.com",
+          org: "dev",
+          roles: ["VIEWER"],
+          namespaces: ["team-a"],
+        },
+        myNamespaces: [viewerGrant],
+      }),
+    );
+    await waitFor(() => expect(screen.queryByLabelText("Daily LLM budget cap in dollars")).toBeNull());
+    expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAccessibleDescription(
+      "Needs admin on team-a. An admin of it can grant that.",
+    );
+    expect(api.reregisterNamespace).not.toHaveBeenCalled();
+  });
+
+  it("offers Edit cap on a restricted namespace with auth off, reading no grants", async () => {
+    vi.mocked(api.listMine).mockClear();
+    useStore.setState({ whoami: { authenticated: false }, myNamespaces: null });
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.1, 1, "namespace"));
+    vi.mocked(api.getNamespace).mockResolvedValue({ ...nsRow("team-a"), classification: "restricted" });
+    render(<Spending />);
+    await waitFor(() => expect(api.getNamespace).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /Edit cap/ })).not.toHaveAttribute("aria-disabled"));
+    expect(api.listMine).not.toHaveBeenCalled();
   });
 
   it("keeps it for the same admin on a standard namespace", async () => {

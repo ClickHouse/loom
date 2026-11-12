@@ -330,6 +330,30 @@ describe("Health tabs", () => {
     useStore.setState({ whoami: null, identity: null });
   });
 
+  it("shows the Namespace tab to a role that cannot read it, with why, and reads nothing for it", async () => {
+    as(["VIEWER"]);
+    // list_mine never answers: the role is still loading.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => {})),
+    );
+    useStore.setState({ myNamespaces: null });
+    render(<Health />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Namespace/ }));
+    expect(await screen.findByText("Your role on this namespace is still loading.")).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some((c) => String(c[0]).includes("memory.health"))).toBe(false);
+    cleanup();
+    // list_mine read, no grant here: the role it needs.
+    respond({ rows: [], workers: {} });
+    useStore.setState({ myNamespaces: [] });
+    render(<Health />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Namespace/ }));
+    expect(await screen.findByText("Needs viewer on team-a. An admin of it can grant that.")).toBeInTheDocument();
+    const paths = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
+    expect(paths.some((u) => u.includes("memory.health"))).toBe(false);
+    useStore.setState({ myNamespaces: null });
+  });
+
   it("an ADMIN claim sees Workers but not Operation mix", () => {
     as(["ADMIN"]);
     render(<Health />);
@@ -344,7 +368,7 @@ describe("Health tabs", () => {
     expect(screen.getByRole("tab", { name: /Operation mix/ })).toBeInTheDocument();
   });
 
-  it("falls back to Extraction quality when a switch hides the open Repairs tab", async () => {
+  it("keeps the open Repairs tab across a switch to a namespace the role cannot repair, each repair unavailable", async () => {
     as(["VIEWER"]);
     useStore.setState({
       myNamespaces: [
@@ -355,9 +379,34 @@ describe("Health tabs", () => {
     render(<Health />);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /Repairs/ }));
     expect(screen.getByRole("tab", { name: /Repairs/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Apply expiries now" })).not.toHaveAttribute("aria-disabled");
     act(() => useStore.setState({ identity: { org: "dev", namespace: "team-b", agent: "loom-ui" } }));
-    expect(screen.queryByRole("tab", { name: /Repairs/ })).toBeNull();
-    expect(screen.getByRole("tab", { name: /Extraction quality/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /Repairs/ })).toHaveAttribute("aria-selected", "true");
+    const reason = "Needs admin on team-b. An admin of it can grant that.";
+    const sweep = screen.getByRole("button", { name: "Apply expiries now" });
+    expect(sweep).toHaveAttribute("aria-disabled", "true");
+    expect(sweep).toHaveAccessibleDescription(reason);
+    expect(screen.getByRole("button", { name: "Roll back" })).toHaveAccessibleDescription(reason);
+    expect(screen.getByLabelText("Extractor")).toBeDisabled();
+    expect(screen.getByLabelText("As of")).toBeDisabled();
+    for (const name of [
+      "Apply expiries now",
+      "Re-embed stale vectors",
+      "Roll back",
+      "Remove facts",
+      "Download snapshot",
+      "Restore a snapshot",
+    ])
+      fireEvent.click(screen.getByRole("button", { name }));
+    await new Promise((r) => setTimeout(r, 20));
+    const paths = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
+    expect(
+      paths.some((u) =>
+        /memory\.sweep_expired|memory\.reindex|namespace\.rollback|facts\.expire_by_adapter|namespace\.snapshot|namespace\.restore/.test(
+          u,
+        ),
+      ),
+    ).toBe(false);
     useStore.setState({ myNamespaces: null });
   });
 });

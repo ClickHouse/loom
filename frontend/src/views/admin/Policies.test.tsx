@@ -7,6 +7,26 @@ import * as api from "../../api";
 import { useStore } from "../../lib/state";
 import { ConfirmViewport } from "../../components/ConfirmDialog";
 import { Policies } from "./Policies";
+import type { MyNamespaceEntry, WhoAmI } from "../../api";
+import { resetNamespaceRoleCache } from "../../lib/namespaceRole";
+
+// The caller's own grant on each namespace the tests use: the role its writes need.
+const grant = (namespace: string, role: MyNamespaceEntry["role"] = "admin"): MyNamespaceEntry => ({
+  namespace,
+  role,
+  status: "active",
+  visibility: "private",
+  description: "",
+  joined_at: null,
+  is_new: false,
+});
+const person: WhoAmI = {
+  authenticated: true,
+  subject: "p@example.com",
+  org: "dev",
+  roles: ["USER"],
+  namespaces: ["ns1", "a", "b"],
+};
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
@@ -21,10 +41,16 @@ vi.mock("../../api", async (importOriginal) => {
 });
 
 beforeEach(() => {
-  useStore.setState({ identity: { org: "dev", namespace: "ns1", agent: "loom-ui" } });
+  resetNamespaceRoleCache();
+  useStore.setState({
+    whoami: person,
+    myNamespaces: [grant("ns1"), grant("a"), grant("b")],
+    identity: { org: "dev", namespace: "ns1", agent: "loom-ui" },
+  });
 });
 afterEach(() => {
   cleanup();
+  useStore.setState({ whoami: null, myNamespaces: null });
   vi.clearAllMocks();
 });
 
@@ -119,6 +145,81 @@ describe("Policies add rule", () => {
         expect.objectContaining({ policy_id: "no-blind-delete", effect: "require", actions: ["memory.delete"] }),
       ),
     );
+  });
+});
+
+describe("Policies add rule, role falls short", () => {
+  it("closes the open dialog when the role falls below admin, and sends nothing", async () => {
+    const user = userEvent.setup();
+    render(<Policies />);
+    await user.click(await screen.findByRole("button", { name: /Add rule/ }));
+    expect(await screen.findByLabelText("Policy ID")).toBeInTheDocument();
+    act(() => useStore.setState({ myNamespaces: [grant("ns1", "writer")] }));
+    await waitFor(() => expect(screen.queryByLabelText("Policy ID")).toBeNull());
+    expect(api.setPolicy).not.toHaveBeenCalled();
+  });
+});
+
+describe("Policies below admin", () => {
+  it("keeps Add rule and Delete in view, unavailable with why, and sends nothing", async () => {
+    useStore.setState({ myNamespaces: [grant("ns1", "writer")] });
+    vi.mocked(api.listPolicies).mockResolvedValueOnce({
+      mode: "enforce",
+      rules: [
+        {
+          policy_id: "p1",
+          effect: "forbid",
+          actions: ["memory.delete"],
+          condition: { op: "all", of: [] },
+          description: "",
+          enabled: true,
+          created_by: "alice",
+          created_at: null,
+          updated_at: null,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    render(<Policies />);
+    const needs = "Needs admin on ns1. An admin of it can grant that.";
+    const add = await screen.findByRole("button", { name: /Add rule/ });
+    const remove = await screen.findByRole("button", { name: "Delete p1" });
+    for (const button of [add, remove]) {
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription(needs);
+      await user.click(button);
+    }
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.deletePolicy).not.toHaveBeenCalled();
+  });
+
+  it("deletes a rule for an admin", async () => {
+    vi.mocked(api.listPolicies).mockResolvedValueOnce({
+      mode: "enforce",
+      rules: [
+        {
+          policy_id: "p1",
+          effect: "forbid",
+          actions: ["memory.delete"],
+          condition: { op: "all", of: [] },
+          description: "",
+          enabled: true,
+          created_by: "alice",
+          created_at: null,
+          updated_at: null,
+        },
+      ],
+    });
+    render(
+      <>
+        <Policies />
+        <ConfirmViewport />
+      </>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Delete p1" }));
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(api.deletePolicy).toHaveBeenCalled());
   });
 });
 

@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   uploadKnowledgeFile: vi.fn(),
   ingestKnowledge: vi.fn(),
   knowledgeIngestStatus: vi.fn(),
+  deleteKnowledge: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 const confirm = vi.hoisted(() => ({ next: false }));
@@ -482,6 +483,8 @@ describe("the Library on a collection", () => {
   });
 
   it("says folders wait for the list when the Library's collections failed to load", async () => {
+    // Add document waits for the role; auth off answers it at once.
+    useStore.setState({ whoami: { authenticated: false } });
     api.listCollections.mockRejectedValue(new Error("offline"));
     api.knowledgeFormats.mockResolvedValue(MARKDOWN);
     render(<Documents />);
@@ -495,6 +498,8 @@ describe("the Library on a collection", () => {
   });
 
   it("takes no folder until the Library has listed its collections", async () => {
+    // Add document waits for the role; auth off answers it at once.
+    useStore.setState({ whoami: { authenticated: false } });
     api.listCollections.mockReturnValue(new Promise(() => {}));
     api.knowledgeFormats.mockResolvedValue(MARKDOWN);
     render(<Documents />);
@@ -707,7 +712,7 @@ describe("the Library on a collection", () => {
     expect(api.getKnowledge.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "col-q3" });
   });
 
-  it("shows a viewer Add document and the preview's writes unavailable, and no write in a row's menu", async () => {
+  it("shows a viewer Add document, the row menu's writes and the preview's unavailable", async () => {
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
     api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
     history.replaceState(null, "", "/library?collection=col-plans");
@@ -720,8 +725,16 @@ describe("the Library on a collection", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for A" }), { button: 0, ctrlKey: false });
     await settle();
     expect(screen.getByRole("menuitem", { name: "Preview" })).toBeInTheDocument();
-    for (const write of ["Replace content", "Edit details", "Delete"])
-      expect(screen.queryByRole("menuitem", { name: write })).not.toBeInTheDocument();
+    for (const write of ["Replace content", "Edit details", "Delete"]) {
+      const item = screen.getByRole("menuitem", { name: write });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription(needs);
+    }
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit details" }));
+    await settle();
+    expect(api.deleteKnowledge).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("checkbox", { name: "Select A" })).not.toBeInTheDocument();
     await act(async () => {
       fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });

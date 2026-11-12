@@ -33,12 +33,31 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+const WRITER_NEEDED = "Needs writer on team. An admin of it can grant that.";
+const ADMIN_NEEDED = "Needs admin on team. An admin of it can grant that.";
+
 describe("ThreadActions", () => {
-  it("offers nothing to a role that reaches neither op", () => {
+  it("shows a role that reaches neither op both items unavailable, each with the role it needs", async () => {
     render(
-      <ThreadActions identity={identity} thread={thread} canRename={false} canDelete={false} onChanged={vi.fn()} />,
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={WRITER_NEEDED}
+        deleteReason={ADMIN_NEEDED}
+        onChanged={vi.fn()}
+      />,
     );
-    expect(screen.queryByRole("button", { name: "Actions for Deploy plan" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
+    const rename = await screen.findByRole("menuitem", { name: "Rename" });
+    expect(rename).toHaveAttribute("aria-disabled", "true");
+    expect(rename).toHaveAccessibleDescription(WRITER_NEEDED);
+    const del = screen.getByRole("menuitem", { name: "Delete" });
+    expect(del).toHaveAccessibleDescription(ADMIN_NEEDED);
+    await userEvent.click(rename);
+    expect(screen.queryByRole("dialog", { name: "Rename conversation" })).toBeNull();
+    await userEvent.click(del);
+    expect(confirmAction).not.toHaveBeenCalled();
+    expect(api.deleteThread).not.toHaveBeenCalled();
   });
 
   it("renames a thread and deletes one with the thread id confirmed", async () => {
@@ -49,7 +68,15 @@ describe("ThreadActions", () => {
       created_at: "2000-01-01 00:00:00",
     } as never);
     const onChanged = vi.fn();
-    render(<ThreadActions identity={identity} thread={thread} canRename canDelete onChanged={onChanged} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={null}
+        deleteReason={null}
+        onChanged={onChanged}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
@@ -71,7 +98,15 @@ describe("ThreadActions", () => {
       agent: "claude-code",
       created_at: null,
     } as never);
-    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={null}
+        deleteReason={ADMIN_NEEDED}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
@@ -89,7 +124,15 @@ describe("ThreadActions", () => {
       .mockResolvedValueOnce({ found: true, msg_count: 1, agent: "codex", created_at: "2000-01-01 00:00:00" } as never)
       .mockResolvedValueOnce({ found: true, msg_count: 1, agent: "cursor", created_at: null } as never);
     vi.mocked(api.renameThread).mockResolvedValueOnce({ updated: false });
-    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={null}
+        deleteReason={ADMIN_NEEDED}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
@@ -104,7 +147,15 @@ describe("ThreadActions", () => {
       agent: "codex",
       created_at: "2000-01-01 00:00:00",
     } as never);
-    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={null}
+        deleteReason={ADMIN_NEEDED}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
@@ -117,7 +168,15 @@ describe("ThreadActions", () => {
     vi.mocked(api.getConversationThread)
       .mockResolvedValueOnce({ found: true, msg_count: 2, agent: "codex" } as never)
       .mockRejectedValueOnce(new Error("down"));
-    render(<ThreadActions identity={identity} thread={thread} canRename={false} canDelete onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={WRITER_NEEDED}
+        deleteReason={null}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
@@ -132,7 +191,15 @@ describe("ThreadActions", () => {
     vi.mocked(api.getConversationThread)
       .mockResolvedValueOnce({ found: true, msg_count: 2, agent: "codex" } as never)
       .mockResolvedValueOnce({ found: false, msg_count: 0, agent: "" } as never);
-    render(<ThreadActions identity={identity} thread={thread} canRename={false} canDelete onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={WRITER_NEEDED}
+        deleteReason={null}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith('Deleted "Deploy plan"', "ok"));
@@ -148,7 +215,15 @@ describe("ThreadActions", () => {
       msg_count: 4,
       agent: "claude-code",
     } as never);
-    render(<ThreadActions identity={identity} thread={thread} canRename={false} canDelete onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={WRITER_NEEDED}
+        deleteReason={null}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
@@ -159,7 +234,15 @@ describe("ThreadActions", () => {
   it("keeps the count it read when the next agent's delete fails", async () => {
     vi.mocked(api.getConversationThread).mockResolvedValueOnce({ found: true, msg_count: 2, agent: "codex" } as never);
     vi.mocked(api.deleteThread).mockResolvedValueOnce({ total: 1 }).mockRejectedValueOnce(new Error("down"));
-    render(<ThreadActions identity={identity} thread={thread} canRename={false} canDelete onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={WRITER_NEEDED}
+        deleteReason={null}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
@@ -182,7 +265,15 @@ describe("ThreadActions", () => {
           detail: { retryable: true, retry_after_s: 3 },
         }),
       );
-    render(<ThreadActions identity={identity} thread={thread} canRename={false} canDelete onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={WRITER_NEEDED}
+        deleteReason={null}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() =>
@@ -196,7 +287,15 @@ describe("ThreadActions", () => {
   it("writes no row for a conversation deleted while the rename was open, and reads the list again", async () => {
     vi.mocked(api.getConversationThread).mockResolvedValueOnce({ found: false, msg_count: 0, agent: "" } as never);
     const onChanged = vi.fn();
-    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={onChanged} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={null}
+        deleteReason={ADMIN_NEEDED}
+        onChanged={onChanged}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
@@ -217,7 +316,15 @@ describe("ThreadActions", () => {
         created_at: "2000-01-02 00:00:00",
       } as never);
     vi.mocked(api.renameThread).mockResolvedValueOnce({ updated: false });
-    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={null}
+        deleteReason={ADMIN_NEEDED}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
@@ -230,7 +337,15 @@ describe("ThreadActions", () => {
     const head = { found: true, msg_count: 1, agent: "codex", created_at: "2000-01-01 00:00:00" } as never;
     vi.mocked(api.getConversationThread).mockResolvedValueOnce(head).mockResolvedValueOnce(head);
     vi.mocked(api.renameThread).mockResolvedValueOnce({ updated: false }).mockResolvedValueOnce({ updated: false });
-    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={null}
+        deleteReason={ADMIN_NEEDED}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
@@ -249,7 +364,15 @@ describe("ThreadActions", () => {
       .mockResolvedValueOnce({ found: false, msg_count: 0, agent: "" } as never);
     vi.mocked(api.renameThread).mockResolvedValueOnce({ updated: false });
     const onChanged = vi.fn();
-    render(<ThreadActions identity={identity} thread={thread} canRename canDelete={false} onChanged={onChanged} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={thread}
+        renameReason={null}
+        deleteReason={ADMIN_NEEDED}
+        onChanged={onChanged}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for Deploy plan" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });
@@ -262,7 +385,15 @@ describe("ThreadActions", () => {
 
   it("starts a rename of an untitled thread from an empty title, not the line the list shows", async () => {
     const untitled = { ...thread, title: "", label: "how do I deploy?" };
-    render(<ThreadActions identity={identity} thread={untitled} canRename canDelete={false} onChanged={vi.fn()} />);
+    render(
+      <ThreadActions
+        identity={identity}
+        thread={untitled}
+        renameReason={null}
+        deleteReason={ADMIN_NEEDED}
+        onChanged={vi.fn()}
+      />,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Actions for how do I deploy?" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog", { name: "Rename conversation" });

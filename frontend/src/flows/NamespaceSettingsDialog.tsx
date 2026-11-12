@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { NumberField } from "@clickhouse/click-ui/NumberField";
@@ -8,15 +8,14 @@ import {
   getNamespace,
   reregisterNamespace,
   deleteNamespace,
-  type MyNamespaceEntry,
   type NamespaceInfo,
   type NamespaceRegisterFields,
 } from "../api";
 import { useStore } from "../lib/state";
 import { isNamespaceAdmin } from "../lib/role";
-import { canUpdateNamespace, restrictedMisses } from "../lib/namespaceUpdate";
+import { canUpdateNamespace, restrictedMisses, restrictedReason } from "../lib/namespaceUpdate";
+import { useGrantRows } from "../lib/useGrantRows";
 import { needsRole } from "../lib/namespaceRole";
-import { sharedMine } from "../lib/sharedReads";
 import { holdsDirectRow, needsMaintainer, scopedUnseen, serverDecides, unreadLine } from "../lib/callReason";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -59,7 +58,6 @@ interface Props {
  */
 export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, label }: Props) {
   const whoami = useStore((s) => s.whoami);
-  const myNamespaces = useStore((s) => s.myNamespaces);
   // A loaded row is kept with the (org, namespace) it was read for, so a row read for a
   // previous namespace is never shown under this one or used to build its save.
   const key = JSON.stringify([org, namespace]);
@@ -90,22 +88,10 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
     [open, org, namespace],
   );
 
-  const [mineRead, setMineRead] = useState<{ org: string; rows: MyNamespaceEntry[] | null } | null>(null);
   // The caller's grants: App's boot read, else this dialog's own (a restricted row's gate
   // wants the grant even under an admin claim). Null until read, and on a failed read.
-  useEffect(() => {
-    if (!open || myNamespaces !== null) return;
-    let live = true;
-    sharedMine(org).then(
-      (r) => live && setMineRead({ org, rows: r }),
-      () => live && setMineRead({ org, rows: null }),
-    );
-    return () => {
-      live = false;
-    };
-  }, [open, org, myNamespaces]);
-  const mineLoading = myNamespaces === null && mineRead?.org !== org;
-  const rows = myNamespaces ?? (mineLoading ? null : (mineRead?.rows ?? null));
+  const grants = useGrantRows(org, open);
+  const rows = grants.rows;
   // The restricted gate (`restrictedMisses`) decides both settings and Delete on a restricted
   // row; elsewhere namespace.register's update path also admits the owner of an
   // auto-registered row, and namespace.delete needs ADMIN on the namespace.
@@ -133,22 +119,11 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
   // finds missing: the token's parts, the direct grant, or both; with neither, the token is
   // scoped per namespace and the server decides.
   const unread = rows === null || !whoami;
-  let lockedReason = unread ? unreadLine(mineLoading || !whoami, name) : needsAdmin;
-  if (restricted && !unread) {
-    const tokenMisses = [
-      misses.includes("org") ? `be of ${org}` : null,
-      misses.includes("name") ? `name ${namespace}` : null,
-      misses.includes("claim") ? "carry an admin claim" : null,
-    ].filter((p): p is string => p !== null);
-    if (misses.includes("grant"))
-      lockedReason = tokenMisses.length
-        ? `To change its settings, your token must ${andList(tokenMisses)}, and you need a direct ${adminWord} grant on ${name}.`
-        : `Changing its settings needs a direct ${adminWord} grant on ${name}.`;
-    else
-      lockedReason = tokenMisses.length
-        ? `To change its settings, your token must ${andList(tokenMisses)}.`
-        : serverDecides(name);
-  }
+  const lockedReason = restricted
+    ? restrictedReason(grants, whoami, { org, namespace }, { name, adminWord, what: "its settings" })
+    : unread
+      ? unreadLine(grants.loading || !whoami, name)
+      : needsAdmin;
 
   const save = async (patch: Partial<NamespaceRegisterFields>) => {
     if (!ns) return;
@@ -426,9 +401,4 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
       </div>
     </Modal>
   );
-}
-
-/** "a", "a and b", "a, b and c". */
-function andList(parts: string[]): string {
-  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
 }

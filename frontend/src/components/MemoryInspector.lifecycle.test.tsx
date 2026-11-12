@@ -37,6 +37,7 @@ vi.mock("../api", async (importOriginal) => {
     getMemory: vi.fn(async () => LIVE),
     setMemory: vi.fn(),
     deleteMemory: vi.fn(async () => ({ tombstoned: true, version: 4 })),
+    verifyMemory: vi.fn(),
     memoryHistory: vi.fn(async () => ({ rows: [] })),
     memoryRelated: vi.fn(async () => ({ results: [] })),
     memoryLineage: vi.fn(async () => ({ steps: [] })),
@@ -154,6 +155,97 @@ describe("MemoryInspector lifecycle actions", () => {
     await open("viewer", { ...LIVE, lock_mode: "read_only" });
     const unlock = within(await menu()).getByRole("menuitem", { name: "Unlock" });
     expect(unlock).toHaveAccessibleDescription(A);
+  });
+
+  it("shows a viewer Edit, Delete, its expiry and tags, Verify and Copy to unavailable, and sends nothing", async () => {
+    await open("viewer");
+    for (const name of ["Edit", "Delete", "Change"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription(W);
+      await userEvent.click(button);
+    }
+    // Change opens no menu; Edit opens no editor.
+    expect(screen.queryByRole("menuitem", { name: "1 hour" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
+    // A tag stays, with no remove; the field to add one is disabled and says why.
+    expect(screen.queryByRole("button", { name: "Remove coffee" })).toBeNull();
+    const add = screen.getByLabelText("Add a tag");
+    expect(add).toBeDisabled();
+    expect(add).toHaveAccessibleDescription(W);
+    // Nor do the shortcuts edit or delete.
+    screen.getByRole("dialog").focus();
+    await userEvent.keyboard("e");
+    await userEvent.keyboard("d");
+    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
+    const list = await menu();
+    const verify = within(list).getByRole("menuitem", { name: "Verify" });
+    expect(verify).toHaveAttribute("aria-disabled", "true");
+    expect(verify).toHaveAccessibleDescription(W);
+    await userEvent.click(verify);
+    expect(api.verifyMemory).not.toHaveBeenCalled();
+    // Copy to is checked against the token's flat claim: this one claims no writer.
+    const copy = within(list).getByRole("menuitem", { name: "Copy to…" });
+    expect(copy).toHaveAttribute("aria-disabled", "true");
+    expect(copy).toHaveAccessibleDescription("Copying needs a token with a writer claim or above.");
+    await userEvent.click(copy);
+    expect(screen.queryByRole("dialog", { name: /Copy/ })).toBeNull();
+    expect(api.setMemory).not.toHaveBeenCalled();
+    expect(api.deleteMemory).not.toHaveBeenCalled();
+    expect(confirmAction).not.toHaveBeenCalled();
+  });
+
+  it("leaves Copy to open to a viewer here whose token claims writer: it writes another namespace", async () => {
+    vi.mocked(api.getMemory).mockResolvedValue(LIVE);
+    useStore.setState({
+      authed: true,
+      whoami: { ...person, roles: ["WRITER"] },
+      myNamespaces: [grant("viewer")],
+      identity,
+    });
+    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("oat milk, no sugar");
+    expect(within(await menu()).getByRole("menuitem", { name: "Copy to…" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("closes an open expiry menu when the role falls short, and keeps it shut when it is back", async () => {
+    await open("writer");
+    await userEvent.click(screen.getByRole("button", { name: "Change" }));
+    expect(await screen.findByRole("menuitem", { name: "1 hour" })).toBeInTheDocument();
+    act(() => useStore.setState({ myNamespaces: [grant("viewer")] }));
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "1 hour" })).toBeNull());
+    act(() => useStore.setState({ myNamespaces: [grant("writer")] }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Change" })).not.toHaveAttribute("aria-disabled"));
+    expect(screen.queryByRole("menuitem", { name: "1 hour" })).toBeNull();
+  });
+
+  it("closes an open edit when the role falls short, and sends nothing", async () => {
+    await open("writer");
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(await screen.findByRole("button", { name: "Save new version" })).toBeInTheDocument();
+    act(() => useStore.setState({ myNamespaces: [grant("viewer")] }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull());
+    expect(api.setMemory).not.toHaveBeenCalled();
+  });
+
+  it("leaves a repository member's edit and delete to the server, whatever the role", async () => {
+    vi.mocked(api.getMemory).mockResolvedValue(LIVE);
+    useStore.setState({ authed: true, whoami: person, myNamespaces: [{ ...grant("viewer"), kind: "code" }], identity });
+    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("oat milk, no sugar");
+    for (const name of ["Edit", "Delete"])
+      expect(screen.getByRole("button", { name })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("forgets a click on an unavailable Change: the menu stays shut once the role can change it", async () => {
+    await open("viewer");
+    const change = screen.getByRole("button", { name: "Change" });
+    expect(change).toHaveAttribute("data-unavailable", "empty");
+    await userEvent.click(change);
+    act(() => useStore.setState({ myNamespaces: [grant("writer")] }));
+    await waitFor(() => expect(change).not.toHaveAttribute("aria-disabled"));
+    expect(screen.getByRole("button", { name: "Change" })).toBe(change);
+    expect(screen.queryByRole("menuitem", { name: "1 hour" })).toBeNull();
   });
 
   it("writes an expiry and an edit to the row it shows, not under the drawer's identity", async () => {

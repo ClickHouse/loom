@@ -128,12 +128,12 @@ function mount(status: TaskStatus, extra: Partial<TaskRow> = {}, props: Partial<
       identity={identity}
       row={listRow(status, extra)}
       inboxes={[INBOX]}
-      canWrite
       now={NOW}
       reloadKey={0}
       onClose={noop}
       onAction={onAction}
       onOpenTask={noop}
+      writeReason={null}
       {...props}
     />,
   );
@@ -330,12 +330,15 @@ describe("TaskPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("without write access the footer holds only the menu with Copy id", async () => {
-    mount("triage", {}, { canWrite: false });
+  it("without write access the footer holds the moves, unavailable with the reason, and a click sends nothing", async () => {
+    const reason = "Needs writer on team. An admin of it can grant that.";
+    const onAction = mount("triage", {}, { writeReason: reason });
     const f = await footerOf();
-    expect(buttons(f)).toEqual(["More actions"]);
-    await userEvent.setup().click(within(f).getByRole("button", { name: "More actions" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Copy id"]);
+    const accept = within(f).getByRole("button", { name: "Accept" });
+    expect(accept).toHaveAttribute("aria-disabled", "true");
+    expect(accept).toHaveAccessibleDescription(reason);
+    await userEvent.setup().click(accept);
+    expect(onAction).not.toHaveBeenCalled();
   });
 
   it("a task the read does not find shows only that, with no brief to wait on and no actions", async () => {
@@ -345,9 +348,9 @@ describe("TaskPanel", () => {
         identity={identity}
         row={listRow("triage")}
         inboxes={[INBOX]}
-        canWrite
         now={NOW}
         reloadKey={0}
+        writeReason={null}
         onClose={noop}
         onAction={noop}
         onOpenTask={noop}
@@ -372,9 +375,9 @@ describe("TaskPanel", () => {
         identity={identity}
         row={listRow("todo")}
         inboxes={[INBOX]}
-        canWrite
         now={NOW}
         reloadKey={0}
+        writeReason={null}
         onClose={noop}
         onAction={noop}
         onOpenTask={noop}
@@ -386,9 +389,9 @@ describe("TaskPanel", () => {
         identity={identity}
         row={listRow("todo")}
         inboxes={[INBOX]}
-        canWrite
         now={NOW}
         reloadKey={1}
+        writeReason={null}
         onClose={noop}
         onAction={noop}
         onOpenTask={noop}
@@ -418,9 +421,9 @@ describe("TaskPanel", () => {
                   identity={identity}
                   row={row}
                   inboxes={[INBOX]}
-                  canWrite
                   now={NOW}
                   reloadKey={0}
+                  writeReason={null}
                   onClose={() => setOpen(false)}
                   onAction={noop}
                   onOpenTask={noop}
@@ -451,11 +454,11 @@ describe("actionTip", () => {
     const accept = { action: "accept", label: "Accept", key: "a" } as const;
     const start = { action: "start", label: "Start", tip: "Claim it: to do → in progress", key: "s" } as const;
     const done = { action: "complete", label: "Mark done…", key: "c" } as const;
-    expect(actionTip(accept, false)).toBe("Accept · A");
-    expect(actionTip(done, false)).toBe("Mark done · C");
-    expect(actionTip(start, false)).toBe("Claim it: to do → in progress · S");
-    expect(actionTip(start, true)).toBe("Claim it: to do → in progress");
-    expect(actionTip(accept, true)).toBe("");
-    expect(actionTip({ action: "unblock", label: "Unblock" }, false)).toBe("");
+    expect(actionTip(accept, true)).toBe("Accept · A");
+    expect(actionTip(done, true)).toBe("Mark done · C");
+    expect(actionTip(start, true)).toBe("Claim it: to do → in progress · S");
+    expect(actionTip(start, false)).toBe("Claim it: to do → in progress");
+    expect(actionTip(accept, false)).toBe("");
+    expect(actionTip({ action: "unblock", label: "Unblock" }, true)).toBe("");
   });
 });

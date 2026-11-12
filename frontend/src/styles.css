@@ -338,6 +338,13 @@ body {
     border-color: var(--click-button-basic-color-danger-stroke-disabled);
     color: var(--click-button-basic-color-danger-text-disabled);
   }
+  /* An icon button (components/ui/GatedIconButton), of any variant: Click UI's icon-button
+     disabled look. */
+  .gated-icon[data-unavailable]:not(:disabled) {
+    background: var(--click-button-iconButton-color-disabled-background-default);
+    border-color: transparent;
+    color: var(--click-button-iconButton-color-disabled-text-default);
+  }
 }
 
 /* A button whose read is in flight stays focusable (components/ui/BusyButton) and shows
@@ -1358,6 +1365,13 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   .persona-card:hover {
     background: var(--click-card-horizontal-default-color-background-hover);
+  }
+  /* A role that cannot write a section: the card stays readable, without the hover. */
+  .persona-card[aria-disabled="true"] {
+    cursor: not-allowed;
+    border-color: var(--click-card-horizontal-default-color-stroke-disabled);
+    background: var(--click-card-horizontal-default-color-background-disabled);
+    color: var(--click-card-horizontal-default-color-title-disabled);
   }
 }
 
