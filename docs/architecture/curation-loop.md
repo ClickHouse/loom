@@ -102,10 +102,10 @@ leg, because the term leg serves shared rows to every reader:
   governed definition's, on every promotion path. Names are compared case-folded (the form
   the key's hash reads), so `SAT` and `Sat` are one name.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
-  key) whose source is not the namespace-wide row or whose key is not the slug of its
-  `term`, so a revision of a term always lands on the governed row's key. The read-time
-  check above is what the term leg relies on; this refusal keeps such rows from being
-  made.
+  key) whose source is not the namespace-wide row, whose source key is not the slug key of
+  its `term` (`definition/<slug>`), or whose `target_key` differs from that key, so a
+  revision of a term always lands on the governed row's key. The read-time check above is
+  what the term leg relies on; this refusal keeps such rows from being made.
 
 The changes to `memory.promote` break existing callers: a `definition` promotion without
 the approved hash, from a row that is not namespace-wide, or under a key that is not its
@@ -166,13 +166,14 @@ governed definitions through this leg only. The leg runs only on a search's firs
 (the governed keys it served there stay out of every later page of that search), and is
 off when a field asks for other rows (any `memory_type`; `tags`; `category`; an explicit
 `agent`, `run_id` or `session_ids`; `as_of`; a body `user_id` or `session_id` under a
-whole-namespace read; `entity_filter`; `min_body_chars`). A
-`user_id` or `session_id` the read scope pins, `scope`, `exclude_keys` and
-`min_similarity` keep it on; it drops any key in `exclude_keys`. It serves no definition
-whose source is `sensitivity = 'high'` (the read-time check above). Its read is bounded by
-a setting; past the bound, the most recently promoted definitions (by `version`) are read
-and the response says the leg was cut. It runs beside the others under the same time
-budget, and its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
+whole-namespace read; `entity_filter`; `min_body_chars`). A `user_id` or `session_id` the
+read scope pins, `scope`, `exclude_keys` and `min_similarity` keep it on; it drops any key
+in `exclude_keys`. It serves no definition whose source is `sensitivity = 'high'` (the
+read-time check above). Its read is bounded by a setting; past the bound, the most
+recently promoted definitions (by `version`) are read and the response says the leg was
+cut. It runs concurrently with the other legs under its own time bound, which never
+shortens theirs (a leg past its bound adds nothing, and the response says so), and its
+latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
 `server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
 output field: the SDKs and the MCP schema carry it.
 
@@ -200,18 +201,19 @@ reports the gain on a small set of term queries.
 
 ### Recording misses
 
-Recording is an operator opt-in (`knowledge_gaps_enabled`, off by default), as
-`search_trace_log_enabled` is: a miss stores query text. A namespace that refused capture
-(`capture_generation_io = false`, read through `server/observability/capture_consent.py`)
-records no misses, and an unreadable consent counts as a refusal; the setting's other
-values leave recording to the operator's opt-in, so turning gaps on never needs prompt
-capture. No miss is recorded while a replica below N serves (the rollout gate below). A
-gap needs several distinct askers, so a deployment that has one identity for every caller
-(`effective_identity_provider()` is `single-user`, set explicitly or inferred when
-`auth_required` is off and no provider is set) records no misses, gaps on or off, and a
-request without a token records no miss. A miss is a search that found nothing a caller
-could use, recorded by the op the caller invoked, never by a search another op runs on its
-behalf:
+Recording is an operator opt-in (`knowledge_gaps_enabled`, off by default), and a miss
+stores query text, so it follows the rule `loom.search_trace_log` applies to its query
+column: a miss is recorded only when the namespace's capture level
+(`capture_consent.resolve` in `server/observability/capture_consent.py`: the namespace's
+`capture_generation_io`, else the operator's `langfuse_capture_io_level`) is not `off`. An
+unreadable consent reads as `off`. A deployment that wants gaps therefore turns on both:
+gaps, and capture at `query` or `all`. No miss is recorded while a replica below N serves
+(the rollout gate below). A gap needs several distinct askers, so a deployment that has
+one identity for every caller (`effective_identity_provider()` is `single-user`, set
+explicitly or inferred when `auth_required` is off and no provider is set) records no
+misses, gaps on or off, and a request without a token records no miss. A miss is a search
+that found nothing a caller could use, recorded by the op the caller invoked, never by a
+search another op runs on its behalf:
 
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
   and served no governed definition, when it read the namespace-wide rows under a read
@@ -257,35 +259,34 @@ implementing pull request adds a helper beside it that returns the handle; a spe
 to two accounts, or a tie that cannot be read, records no miss. Each miss writes one row
 to `loom.search_misses` under the namespace the search was addressed to: the identity
 tuple, the asker, `actor`, the plane and the query's normalised form (case-folded, with
-every run of characters other than letters, digits, `+` and `#` made one space, so `C++`
-and `C#` stay apart as the term leg keeps them). That form is still the query's words,
-kept as the trace of a question under the namespace's consent; only the threshold below
-decides what an admin sees. A query that reads as `high` (`reads_high` in
-`server/memory/domain/sensitivity.py`, the rule namespace-wide listings apply) records no
-miss, so a pasted credential never becomes a gap head, an embedding or an LLM prompt. No
-memory key or document URI is kept: one naming another user's row or document would
+every run of characters other than letters, digits, `_`, `+` and `#` made one space, so
+`C++`, `C#` and `arr_v2` stay apart as the term leg keeps them). That form is still the
+query's words, kept as the trace of a question under the namespace's capture level; only
+the threshold below decides what an admin sees. A query that reads as `high` (`reads_high`
+in `server/memory/domain/sensitivity.py`, the rule namespace-wide listings apply) records
+no miss, so a pasted credential never becomes a gap head, an embedding or an LLM prompt.
+No memory key or document URI is kept: one naming another user's row or document would
 outlive that user's erasure, or the document's delete, in someone else's miss. A miss is
 inserted after the response, so a user erasure could run between the search and the
 insert: just before inserting, the recording reads `ledger_reads.unfinished_reaching` with
 every user scope (`user_id=None`) and drops the miss when an erasure of the namespace, or
-of a user one of whose spellings (`aliases.spellings`, as the user step matches them) is
-the asker or the miss's `user_id`, was unfinished when the search began or has finished
-since; an unreadable ledger or directory drops it; an erasure that begins after that check
-deletes the row itself. The table has a 16-day TTL: it is a trace, not memory. A pass
-reads the last 7 days and a build lives 7 days from its write, with two days to spare, so
-a miss outlives every build that counted it and a user erasure always finds the namespaces
-it must clear.
+any user erasure in the org, was unfinished when the search began or has finished since;
+an unreadable ledger drops it; an erasure that begins after that check deletes the row
+itself. The table has a 16-day TTL: it is a trace, not memory. A pass reads the last 7
+days and a build lives 7 days from its write, with two days to spare, so a miss outlives
+every build that counted it and a user erasure always finds the namespaces it must clear.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
-misses and has no `user_id` to count askers or erase by. `loom.query_nodes` keeps one row
+misses, its `actor` is the token's principal, not the person resolved as below (an end
+user, a creator), and it has no user-scope erasure step. `loom.query_nodes` keeps one row
 per query text with its sessions, not its people, and only for memory searches.
 
 ### Grouping
 
 The `knowledge_gaps` worker runs once a day for each namespace with misses or a live
-build. It re-reads the namespace's stored consent, uncached. One that now refuses capture
-gets an empty build and its stored misses deleted, so a later consent does not count them
-again; a consent that cannot be read skips the namespace's pass, with no build and no
+build. It re-reads the namespace's capture level, uncached. A namespace whose level is now
+`off` gets an empty build and its stored misses deleted, so a later consent does not count
+them again; a level that cannot be read skips the namespace's pass, with no build and no
 delete, so a failed read never deletes misses; otherwise it reads the namespace's misses
 of the last 7 days and groups them by normalised query. **Privacy threshold:** a group
 with fewer than `knowledge_gaps_min_askers` distinct askers (default three, never below
@@ -320,12 +321,12 @@ older than 7 days, so an old one is never served past its window even when passe
 (the TTL only frees the disk). A pass whose read raced an erasure's delete could write
 erased rows back, so after writing its gaps, and before the marker, the worker deletes
 them and writes no marker when an erasure that may reach what it read (the namespace's, or
-a user's one of whose spellings, matched as above, asked a miss the pass read) was
-unfinished when the pass read or has finished since (`ledger_reads.unfinished_reaching`,
-as the [erasure saga](memory-architecture.md#erasure-saga) fences other writers); an
-erasure that begins after that check deletes the gaps itself. A failed erasure keeps that
-fence until it completes: `knowledge.gaps.list` then says the list is held and names the
-erasure to finish by its id, which `erasure.status` authorizes per row, never by its user.
+any user erasure in the org, so the hold says nothing about who asked here) was unfinished
+when the pass read or has finished since (`ledger_reads.unfinished_reaching`, as the
+[erasure saga](memory-architecture.md#erasure-saga) fences other writers); an erasure that
+begins after that check deletes the gaps itself. A failed erasure keeps that fence until
+it completes: `knowledge.gaps.list` then says the list is held and names the erasure to
+finish by its id, which `erasure.status` authorizes per row, never by its user.
 
 ### Ops and dashboard
 
@@ -336,10 +337,11 @@ erasure to finish by its id, which `erasure.status` authorizes per row, never by
 | `memory.definitions.list`                         | admin | The namespace's shared definitions, each with the read-time check's verdict and the reason a lapsed one lapsed.                                                                                                                                                               |
 | `knowledge.query_history.add`, `.list`, `.remove` | admin | Register, list and remove a query-history source on the namespace.                                                                                                                                                                                                            |
 
-The two `knowledge.gaps.` ops list what users asked, so neither honours a read-narrowed
-token: the check that admits the `knowledge.` group to such a token (`honours_read_scope`
-in `server/identity/domain/read_scope.py`) refuses `knowledge.gaps.` first. A draft queued
-from a gap holds the drafted definition and the gap's id. The LLM writes it from the gap's
+The `knowledge.gaps.` ops list what users asked and the `knowledge.query_history.` ops
+manage a source, not documents, so none honours a read-narrowed token: the check that
+admits the `knowledge.` group to such a token (`honours_read_scope` in
+`server/identity/domain/read_scope.py`) refuses both prefixes first. A draft queued from a
+gap holds the drafted definition and the gap's id. The LLM writes it from the gap's
 queries, so it carries only text from queries at least `knowledge_gaps_min_askers` askers
 asked in that form: that threshold is why it may be shown to the namespace's viewers in
 `learnings.list`, as every learning is, and why it outlives a user erasure. The Library
@@ -436,8 +438,8 @@ which the admin restores from the row's history or promotes.
   gaps there). A gap names no user, so the census counts the table in the namespace scope
   only; the pass's fence keeps a raced build from coming back.
 - A query-history registration holds a host and a sealed credential but no memory content:
-  a namespace step, and a census classification of `NO_MEMORY_CONTENT`, as for
-  `loom.qa_sources` and `loom.knowledge_sources`.
+  a namespace step deletes it, and its table is listed under that step in
+  `STEP_ONLY_TABLES`, a step without a census row.
 - A direct `memory.promote` writes its audit row; a promotion through `learnings.review`
   writes the review's row, which names the candidate, and the implementing pull request
   adds the promotion's own row there. `knowledge.gaps.draft` writes one naming the gap.
@@ -509,8 +511,8 @@ namespace erasure run after the rollback is run again once N serves.
 
 - A gap shows only queries that at least `knowledge_gaps_min_askers` askers asked in that
   form; a query-history draft only the normalised text of queries that many users ran.
-- A miss is recorded only when the operator opted in and the namespace did not refuse
-  capture; its asker comes from the token, never the body.
+- A miss is recorded only when the operator opted in and the namespace's capture level is
+  not `off`; its asker comes from the token, never the body.
 - A definition is governed only while an admin's promotion of its namespace-wide row into
   the shared layer is live and the source still holds that text under its term's slug,
   active, live, within its validity and unlabelled `high`; the term leg serves at most one
