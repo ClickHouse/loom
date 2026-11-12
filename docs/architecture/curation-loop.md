@@ -51,7 +51,11 @@ came from (`promoted_from_candidate_id`), `memory.lineage` walks it back, and ev
 knows it. So governance needs no table or state of its own. An edit, a relabel to `high`,
 a redact or a tombstone of the source, by any writer or worker on any build, ends
 governance until an admin promotes the source again; a copy that keeps the text (the
-entity pass, a touch) keeps it. `memory.demote` ends governance.
+entity pass, a touch) keeps it. `memory.demote` ends governance. Only `memory.promote`
+writes `loom.shared` (the op and `learnings.review`'s path through it); no worker promotes
+on its own. An admin read lists the namespace's shared definitions with the read-time
+check's verdict on each, so a definition whose governance lapsed is seen and promoted
+again.
 
 The shared layer needs seven changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
@@ -68,7 +72,8 @@ leg, because the term leg serves shared rows to every reader:
   `memory.promote`, and is refused when the source's text no longer has it, so a writer's
   change between the write and the promotion is never signed off as the admin's.
 - **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
-  `memory.promote` or `learnings.review`, never taken from the body's `approver`.
+  `memory.promote` or `learnings.review`, and so are the queue row's `decided_by` and the
+  audit subject for these candidate kinds, never taken from the body's `approver`.
 - **`check_against_shared`**, the promotion's conflict check, skips `definition` (only),
   so promoting `MRR` is not refused as a conflict with `ARR`; decisions keep the check.
 - **`memory.promote` refuses a definition whose term or alias** is already another
@@ -175,7 +180,8 @@ invoked, never by a search another op runs on its behalf:
   scope of the whole namespace. Its own memory and knowledge searches record nothing, so a
   question that knowledge answers is not a gap because memory abstained.
 
-A search that could not answer for another reason is not a miss: an expired page handle
+Only a search's first page can record a miss (a call with a `page` handle never does), and
+a search that could not answer for another reason is not a miss: an expired page handle
 (`abstain_code = 'page_expired'`), a degraded answer whose provider fell back, or one with
 writes still waiting for extraction (`pending_extraction > 0`).
 
@@ -345,6 +351,9 @@ retried review, idempotent by key, completes it.
   namespace's daily cost cap (`server/observability/budget.py`), read fail-closed
   (`fail_open=False`) as the conflict resolver reads it: over the cap, or with the cap
   unreadable, a draft is refused and a pass or turn ends early, and the next one resumes.
+- A query-history turn's read of `system.query_log` is bounded by its own window (at most
+  a setting's number of days) and time limit, separate from the tracker's live-read
+  budget, and a timeout counts against the source's breaker like any tracker read.
 - The term leg is one bounded read of the namespace's shared definitions per search, and
   one read of the matched definitions' source rows.
 
