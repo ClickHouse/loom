@@ -1219,8 +1219,8 @@ def test_the_erasure_step_fails_at_its_deadline_while_the_retirement_lease_is_he
 ) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-a")))
     # An add holds the lease for the first 10 s of the step's 30; then another change
-    # takes it for good, and the retirement waits only the 20 s left (a fresh wait would
-    # end at 140, the old fixed one at 115).
+    # takes it for good, and the retirement waits only the 20 s left (a fresh 30 s wait
+    # would end at 140).
     clock = _clocked(monkeypatch, {f"knowledge-source:{ORG}:team-a": 110.0})
 
     @contextlib.asynccontextmanager
