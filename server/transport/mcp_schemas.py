@@ -22,9 +22,8 @@ def _generated_schema(model: type[BaseModel]) -> dict[str, Any]:
 def model_schema(model: type[BaseModel]) -> dict[str, Any]:
     """`model.model_json_schema()`, generated once per model class and handed
     out as a fresh copy. Pydantic regenerates a schema on every call, which
-    would be ~85% of a tools/list build (~38 ms for the core listing, ~106 ms
-    for `all`, on the event loop, per request); an op model does not change
-    after import."""
+    would be most of a tools/list build, on the event loop, per request; an op
+    model does not change after import."""
     return copy.deepcopy(_generated_schema(model))
 
 
