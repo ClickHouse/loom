@@ -218,7 +218,7 @@ export function Card({ turn, level }: { turn: Turn; level: 2 | 3 }) {
   const fresh = isFresh(turn.id);
   const blockedNow = gate(card.op);
   const reread = (args?: CardArgs) => readCard(turn.id, blockedNow, args);
-  // A turn asked again reads its card again, once the person's role is known.
+  // A turn asked again reads its card again once the role has loaded; a gate that still refuses is said on the card.
   useEffect(() => {
     if (card.again && blockedNow !== ROLE_LOADING) readCard(turn.id, blockedNow);
   }, [card.again, blockedNow, turn.id]);
