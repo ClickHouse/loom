@@ -121,8 +121,8 @@ async def _source_refusal(org: str, namespace: str) -> ValidationError | None:
 
 
 async def _require_no_erasure(org: str, namespace: str) -> None:
-    """Refuse a new source while an erasure of the namespace runs: its first step read the
-    sources already, so what a later source wrote would outlast the erasure."""
+    """Refuse a new source while an erasure of the namespace will still run: its first step
+    may have read the sources already, so what a later source wrote would outlast it."""
     # Imported here: the erasure saga imports this module.
     from server.erasure.app import ledger_reads
     from server.erasure.domain.scopes import may_cover

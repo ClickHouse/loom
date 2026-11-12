@@ -128,7 +128,7 @@ class SourceReplacedError(LoomServerError):
 
 class ErasureRunningError(LoomServerError):
     """409 — an erasure of the namespace is running: a document source added now would
-    outlast it, since its first step has already read the namespace's sources. Retry once
+    outlast it, since its first step may already have read the namespace's sources. Retry once
     the erasure finishes (`erasure.status`)."""
 
     code = "ERASURE_RUNNING"

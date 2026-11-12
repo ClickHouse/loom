@@ -177,7 +177,7 @@ gone. A deleted namespace's source documents stay, as a `remove` without
 `delete_documents` leaves them; `knowledge.source.remove` with `delete_documents=true`
 still accepts the retired source and retires them. An `add` while an erasure of the
 namespace runs answers `ERASURE_RUNNING` (409, retryable) until it finishes, since the
-erasure has read the sources already. The erasure step then waits for each source's sync
+erasure may have read the sources already. The erasure step then waits for each source's sync
 turn still running, so no turn writes back a document or a mined decision after the
 later steps erase them.
 
@@ -233,6 +233,7 @@ decisions again.
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `NAMESPACE_INACTIVE`    | `add`, `rotate` or `sync_now` names a namespace whose directory row is inactive, a collection the tree no longer holds, or a namespace deleted while the probe ran.                                                          |
 | `PERSONAL_NAMESPACE`    | `add`, `rotate` or `sync_now` names a person's own collection, `personal-` namespace, single sign-on `u-` namespace or a namespace claimed at sign-up, which holds no document source.                                       |
+| `ERASURE_RUNNING`       | `add` names a namespace an erasure that will still run may cover (409, retryable); add the source once the erasure finishes.                                                                                                 |
 | `BAD_NAME`              | The name is not 2-32 lower-case letters, digits, `-` or `_`, starting with a letter.                                                                                                                                         |
 | `BAD_KIND`              | The kind is not one the server serves.                                                                                                                                                                                       |
 | `BAD_CONFIG`            | The config has an unknown key, a malformed folder, project, page, database, space or meeting id, an unknown `include` value or an unknown `provider`, or a `notion` config with no id or more than 20.                       |

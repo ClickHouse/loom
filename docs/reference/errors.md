@@ -475,7 +475,7 @@ Raised in `server/memory/domain/record_values.py`.
 
 #### `ERASURE_RUNNING`
 
-HTTP 409, raised as `server.core.errors.ErasureRunningError`. 409 — an erasure of the namespace is running: a document source added now would outlast it, since its first step has already read the namespace's sources. Category `capacity`, retryable: yes.
+HTTP 409, raised as `server.core.errors.ErasureRunningError`. 409 — an erasure of the namespace is running: a document source added now would outlast it, since its first step may already have read the namespace's sources. Category `capacity`, retryable: yes.
 
 #### `EXPIRED`
 
