@@ -49,25 +49,29 @@ indexers are included and enabled. A repository indexed with the TypeScript inde
 its dependencies installed automatically. Both images support Linux `amd64` and `arm64`,
 including Docker Desktop on Apple Silicon.
 
-Once Loom answers, a new install saves a test memory, reads it back and deletes it, which
-shows that writes and reads work and leaves no live memory (its deleted version shows
-under Recently deleted); a rerun after that check passed, or an upgrade, skips it. On a
-terminal, the installer then offers to connect each coding agent it finds: Claude Code and
-Codex through their plugins, and VS Code through `code --add-mcp`. `LOOM_CONNECT` answers
-for it, for a run without a terminal too: a comma list of `claude-code`, `codex` and
-`vscode`, `all`, or `none` alone (any other name, or `none` with another, stops the
-install); without a terminal and without `LOOM_CONNECT`, no agent's settings change. A
-plugin or MCP server set up before, by the plugin or by `claude mcp add`, `codex mcp add`
-or `loom install`, is left as it is, with the server it was set up for; for Claude Code
-the installer prints the command that points the plugin at this install. Both plugins run
-on Node.js 18 or later, which their launcher also looks for in nvm, fnm, Volta and the
-like; when none is on PATH, the installer also prints the `claude mcp add` or `codex mcp
-add` line for the MCP server alone. A client `LOOM_CONNECT` names that this machine does
-not have is named as missing. When Loom is not on `http://localhost:7777`, Codex, whose
-plugin always uses that address, gets a link to its setup page instead. VS Code is not
-offered inside a remote session or WSL, where `code` is another machine's. Last, on a
-desktop, it opens the dashboard; `LOOM_NO_OPEN=1` skips that. With sign-in on, it connects
-no agent and says where tokens come from. Ctrl-C stops the run at any step.
+Once Loom answers, the installer:
+
+1. **Checks a memory.** A new install saves a test memory, reads it back and deletes it,
+   which shows that writes and reads work and leaves no live memory (its deleted version
+   shows under Recently deleted). A rerun after that check passed, or an upgrade, skips it.
+2. **Learns whether sign-in is on.** With sign-in on, it connects no agent and says where
+   tokens come from.
+3. **Offers to connect your coding agents.** On a terminal it asks, for each one it finds:
+   Claude Code and Codex through their plugins, VS Code through `code --add-mcp`.
+   `LOOM_CONNECT` answers instead, for a run without a terminal too: a comma list of
+   `claude-code`, `codex` and `vscode`, `all`, or `none` alone; any other value stops the
+   install. Without a terminal and without `LOOM_CONNECT`, no agent is looked at or
+   changed. A plugin or MCP server set up before (by the plugin, `claude mcp add`,
+   `codex mcp add` or `loom install`) is left as it is; for Claude Code the installer
+   prints the command that points it at this install. Both plugins run on Node.js 18 or
+   later, which their launcher also finds through nvm and the like; when `node` on PATH is
+   missing or older, the installer prints the `claude mcp add` or `codex mcp add` line
+   for the MCP server alone. Codex's plugin always uses `http://localhost:7777`, so for an
+   install elsewhere it gets a link to its setup page instead. VS Code is not offered in a
+   remote session or WSL. A client `LOOM_CONNECT` names that is not on PATH is named.
+4. **Opens the dashboard** on a desktop; `LOOM_NO_OPEN=1` skips that.
+
+Ctrl-C stops the run at any step.
 
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
 self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its

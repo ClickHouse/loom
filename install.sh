@@ -505,6 +505,7 @@ main() {
   printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"
 
   # The memory check: a test memory saved, read back and deleted with no token,
+  # as agent "-" (no agent: the dashboard lists no connected agent for it),
   # proof that writes and reads work, once per new install (the marker its .env
   # came with). It leaves no live memory: a kept row would read as the user's
   # first (the dashboard's first-run checklist counts live memories); its deleted
@@ -523,7 +524,7 @@ main() {
     grep -q '"found"[[:space:]]*:[[:space:]]*true' "$tmp_dir/api.out"
   }
   pending="$INSTALL_DIR/.memory-check-pending"
-  memory="\"org\":\"$org\",\"namespace\":\"$namespace\",\"agent\":\"installer\",\"memory_key\":\"loom/installer-check\""
+  memory="\"org\":\"$org\",\"namespace\":\"$namespace\",\"agent\":\"-\",\"memory_key\":\"loom/installer-check\""
   skip_agents=
   case $org$namespace in
     # Both go into a JSON body as they are.
@@ -565,11 +566,12 @@ main() {
       ;;
   esac
 
-  # bounded CMD...: CMD, stopped after $bound_s seconds, 60 unless the caller sets
-  # it (macOS has no `timeout`). Run in this shell, not in a pipeline or $(...), so
-  # that Ctrl-C reaches what it started.
-  bound_s=60
+  # bounded SECONDS CMD...: CMD, stopped after SECONDS (macOS has no `timeout`).
+  # Run in this shell, not in a pipeline or $(...), so that Ctrl-C reaches what it
+  # started. A child CMD started itself (a git clone) outlives a stop.
   bounded() {
+    bound_s=$1
+    shift
     "$@" &
     cmd_pid=$!
     # The watchdog takes its sleep with it when it is stopped.
@@ -616,6 +618,11 @@ main() {
   # only a server without sign-in takes that. LOOM_CONNECT=none looks for none.
   agents=
   kept=
+  # Without a terminal and without LOOM_CONNECT no client can be connected, so
+  # none is looked at either.
+  if [ -z "${LOOM_CONNECT:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; then
+    skip_agents=${skip_agents:-quiet}
+  fi
   if [ -z "$skip_agents" ] && [ "${LOOM_CONNECT:-}" != none ]; then
     server_url=http://localhost:$port
     [ "$host" = 127.0.0.1 ] || server_url=http://$host:$port
@@ -625,22 +632,20 @@ main() {
       # A plugin installed before, or a loom MCP entry added without it, is left
       # as it is, with the server it was set up for; reading the plugin list and
       # Claude Code's config starts nothing.
-      if ! bounded claude plugin list >"$tmp_dir/claude.plugins"; then
+      if ! bounded 60 claude plugin list >"$tmp_dir/claude.plugins"; then
         printf 'Claude Code: could not list its plugins (above), so it is left as it is\n'
       elif grep -Eq '(^|[[:space:]])loom@loom$' "$tmp_dir/claude.plugins"; then
         printf 'Claude Code: the Loom plugin is installed already; `claude mcp list` shows the server it uses, and `claude plugin install loom@loom --config server_url=%s` points it here\n' "$server_url"
         kept=1
       elif grep -q '"loom"[[:space:]]*:' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" 2>/dev/null; then
-        printf 'Claude Code: a loom MCP server is set up already (%s); the plugin would list its tools twice\n' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
+        printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s); the plugin would list its tools twice there, so it is left to you: claude plugin install loom@loom --config server_url=%s\n' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" "$server_url"
         kept=1
       elif wants claude-code "Claude Code"; then
         # A marketplace added before is no error: the install below says what fails.
         # It clones the repository: the slowest call, so it gets 5 minutes.
-        bound_s=300
-        bounded claude plugin marketplace add ClickHouse/loom >/dev/null || true
-        bound_s=60
+        bounded 300 claude plugin marketplace add ClickHouse/loom >/dev/null || true
         # The URL is always given: the plugin's default reads LOOM_BASE_URL.
-        if bounded claude plugin install loom@loom --config "server_url=$server_url" >/dev/null; then
+        if bounded 60 claude plugin install loom@loom --config "server_url=$server_url" >/dev/null; then
           printf 'Claude Code: connected to %s (the plugin'"'"'s other settings are optional)\n' "$server_url"
           agents="$agents, Claude Code"
           node_ok || printf 'Claude Code: the plugin runs on Node.js 18 or later, which is not on PATH here; without one it finds, add the MCP server alone instead: claude mcp add --transport http loom "%s/mcp?toolset=coding" -s user\n' "$server_url"
@@ -656,7 +661,7 @@ main() {
       else
         codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
         codex_loom=
-        if bounded codex plugin list >"$tmp_dir/codex.plugins"; then
+        if bounded 60 codex plugin list >"$tmp_dir/codex.plugins"; then
           # Its STATUS column: "installed, enabled", "installed, disabled" or, with
           # only the marketplace added, "not installed".
           codex_loom=$(awk '$1 == "loom@loom" { print $2; exit }' "$tmp_dir/codex.plugins")
@@ -672,10 +677,8 @@ main() {
           printf 'Codex: a loom MCP server is set up already (%s)\n' "$codex_config"
           kept=1
         elif wants codex Codex; then
-          bound_s=300
-          bounded codex plugin marketplace add ClickHouse/loom >/dev/null || true
-          bound_s=60
-          if bounded codex plugin add loom@loom >/dev/null; then
+          bounded 300 codex plugin marketplace add ClickHouse/loom >/dev/null || true
+          if bounded 60 codex plugin add loom@loom >/dev/null; then
             printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
             agents="$agents, Codex"
             node_ok || printf 'Codex: the plugin runs on Node.js 18 or later, which is not on PATH here; without one it finds, add the MCP server alone instead: codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
@@ -690,12 +693,16 @@ main() {
     # is another machine's, so it is not offered there.
     vscode_mcp="$HOME/.config/Code/User/mcp.json"
     [ "$(uname -s)" != Darwin ] || vscode_mcp="$HOME/Library/Application Support/Code/User/mcp.json"
-    if command -v code >/dev/null 2>&1 && [ -z "${REMOTE_CONTAINERS:-}${CODESPACES:-}${SSH_CONNECTION:-}${WSL_DISTRO_NAME:-}" ]; then
+    if command -v code >/dev/null 2>&1 && [ -n "${REMOTE_CONTAINERS:-}${CODESPACES:-}${SSH_CONNECTION:-}${WSL_DISTRO_NAME:-}" ]; then
+      case ",${LOOM_CONNECT:-}," in
+        *,vscode,* | *,all,*) printf 'VS Code: not offered in a remote session or WSL, where `code` is another machine'"'"'s\n' ;;
+      esac
+    elif command -v code >/dev/null 2>&1; then
       if grep -q '"loom"[[:space:]]*:' "$vscode_mcp" 2>/dev/null; then
         printf 'VS Code: a loom MCP server is set up already (%s)\n' "$vscode_mcp"
         kept=1
       elif wants vscode "VS Code"; then
-        if bounded code --add-mcp "{\"name\":\"loom\",\"type\":\"http\",\"url\":\"$server_url/mcp?toolset=coding\"}" >/dev/null; then
+        if bounded 60 code --add-mcp "{\"name\":\"loom\",\"type\":\"http\",\"url\":\"$server_url/mcp?toolset=coding\"}" >/dev/null; then
           printf 'VS Code: added the loom MCP server\n'
           agents="$agents, VS Code"
         else
@@ -718,6 +725,8 @@ main() {
     else
       printf '\nConnect an agent: https://github.com/%s/blob/main/docs/getting-started/connect-a-coding-agent.md\n' "$REPOSITORY"
     fi
+  elif [ "$skip_agents" = quiet ]; then
+    printf '\nConnect an agent: https://github.com/%s/blob/main/docs/getting-started/connect-a-coding-agent.md\n' "$REPOSITORY"
   fi
 
   # The dashboard, on a desktop: a terminal, no SSH session and a way to open a

@@ -1180,7 +1180,8 @@ def test_a_new_install_saves_reads_back_and_deletes_a_test_memory(
     ops = [op for c in calls for op in ("memory.get", "memory.set", "memory.delete") if op in c]
     assert ops == ["memory.get", "memory.set", "memory.get", "memory.delete"]
     sets = [c for c in calls if "memory.set" in c]
-    assert '"org":"dev","namespace":"local","agent":"installer"' in sets[0]
+    # Agent "-": the dashboard lists no connected agent for the check.
+    assert '"org":"dev","namespace":"local","agent":"-"' in sets[0]
     assert '"memory_key":"loom/installer-check"' in sets[0]
     assert all("--noproxy *" in c for c in calls)
 
@@ -1273,8 +1274,8 @@ def test_without_a_terminal_or_loom_connect_no_agent_is_changed(
     installer_env.update(env)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 0, result.stderr
-    assert claude.read_text().splitlines() == ["plugin list"]
-    assert codex.read_text().splitlines() == ["plugin list"]
+    # Nothing could be connected, so no client is even looked at.
+    assert claude.read_text() == "" and codex.read_text() == ""
     assert "Connect an agent:" in result.stdout
 
 
@@ -1346,8 +1347,10 @@ def test_vscode_inside_a_remote_is_not_offered(
     run, _ = install
     _start_stubs(installer_env)
     code = _agent_cli(installer_env, "code")
-    assert run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", **{remote: "1"}).returncode == 0
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", **{remote: "1"})
+    assert result.returncode == 0, result.stderr
     assert code.read_text() == ""
+    assert "VS Code: not offered in a remote session or WSL" in result.stdout
 
 
 def test_loom_connect_all_connects_every_client(install, installer_env: dict[str, str]) -> None:
@@ -1644,6 +1647,10 @@ def test_a_save_that_does_not_read_back_is_still_deleted(
     assert any("memory.delete" in c for c in curl_log.read_text().splitlines())
 
 
+@pytest.mark.skipif(
+    any(Path(d, "code").exists() for d in ("/usr/bin", "/bin")),
+    reason="a real VS Code CLI is on the trimmed PATH here",
+)
 def test_a_client_loom_connect_names_but_this_machine_lacks_is_named(
     install, installer_env: dict[str, str]
 ) -> None:
