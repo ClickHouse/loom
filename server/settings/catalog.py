@@ -2380,9 +2380,9 @@ class McpSettings(BaseModel):
 
     # Which tools `tools/list` shows when a connection names no `?toolset=` (a request that
     # names one gets that one instead). Rosters are the frozensets in
-    # server/operations/toolsets.py plus loom_search, loom_activate and loom_op; on every toolset
-    # but "assistant" this is visibility only and every op stays callable by name over MCP
-    # and /v1/*.
+    # server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on
+    # "assistant"); on every toolset but "assistant" this is visibility only and every op
+    # stays callable by name over MCP and /v1/*.
     #   "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
     #                 mcp_code_tools is on).
     #   "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it

@@ -182,7 +182,9 @@ def test_the_description_stays_small() -> None:
 @pytest.mark.parametrize(
     "toolset", ["core", "coding", "atomic", "tasks", "tracker", "readonly", "all"]
 )
-def test_the_example_op_is_unlisted_wherever_loom_op_is(toolset: str, monkeypatch) -> None:
+def test_the_example_op_is_unlisted_wherever_loom_op_is(
+    toolset: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The op the description gives as its example is one the listing does not show."""
     import asyncio
     import re
