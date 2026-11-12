@@ -446,7 +446,10 @@ def test_only_sign_and_the_registries_get_an_oidc_token() -> None:
 def test_npm_publishes_only_through_its_trusted_publisher() -> None:
     """A token in the npm job would publish where the trusted publisher refuses."""
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    assert "secrets" not in yaml.safe_dump({"env": workflow["env"], "npm": workflow["jobs"]["npm"]})
+    assert (
+        "secrets"
+        not in yaml.safe_dump({"env": workflow["env"], "npm": workflow["jobs"]["npm"]}).lower()
+    )
 
 
 def test_the_tag_run_signs_the_digests_it_made_and_every_run_verifies_them() -> None:
