@@ -1234,8 +1234,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "wants to audit what's being filtered out."
     ),
     "blacklist.add": (
-        "WHAT: Every later memory write in the namespace (the default "
-        "`scope`) whose value matches `pattern` is refused. Refused to a token "
+        "WHAT: Every later memory write in this namespace whose value "
+        "matches `pattern` is refused. Refused to a token "
         "bounded to one user: a pattern refuses every user's writes.\n"
         "WHEN: An explicit 'never remember X' or 'don't store anything about "
         "Y'. Pass `sweep=true` only when the user also asks to forget what is "
