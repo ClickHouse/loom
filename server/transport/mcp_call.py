@@ -170,13 +170,6 @@ def _address_first_claim(arguments: dict[str, Any], readable: list[str]) -> bool
     return bool(readable)
 
 
-# History and related name a KEY — a key another client
-# wrote answered `{}` / source_not_found under the caller's own slug.
-_MCP_CROSS_AGENT_READS: frozenset[str] = frozenset(
-    {"memory.search", "memory.list", "memory.search_trace", "memory.history", "memory.related"}
-)
-
-
 def _forbidden_result(
     op: Any, err: Exception, auth: Any, org: str | None, ns: str | None
 ) -> dict[str, Any]:
@@ -604,7 +597,7 @@ async def _bind_caller_identity(
     # Read-shaped ops default to cross-agent within the namespace (memory is
     # shared across tools). Writes keep the caller's own agent for provenance.
     # Caller can opt back into strict-agent by passing their agent explicitly.
-    if defaults and op.name in _MCP_CROSS_AGENT_READS:
+    if defaults and op.name in gates.CROSS_AGENT_READS:
         if not arguments.get("agent") or arguments.get("agent") == defaults.get("agent"):
             arguments["agent"] = "*"
     # The assistant writes nothing, so its client's own agent holds no rows. A read it names
@@ -616,7 +609,7 @@ async def _bind_caller_identity(
     if assistant_call() and not explicit_agent and agent_field is not None:
         if op.name in ASSISTANT_NAMED_AGENT_OPS:
             arguments.pop("agent", None)
-        elif isinstance(agent_field.default, str) and op.name not in _MCP_CROSS_AGENT_READS:
+        elif isinstance(agent_field.default, str) and op.name not in gates.CROSS_AGENT_READS:
             arguments["agent"] = agent_field.default
     return request_id, defaults
 

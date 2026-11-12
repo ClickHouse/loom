@@ -370,10 +370,11 @@ Claims, roles and grants are in [Tokens and grants](../guides/tokens-and-grants.
 Every operation is a `POST /v1/<op>` with a JSON body. A fresh install with the stock
 `.env`, from the installer or a checkout, is single-user: no token, and a call that names
 no `org` or `namespace` runs in the install's own, org `dev` and namespace `local`, the
-ones MCP and the dashboard use; a write that names no `agent` is recorded as agent `http`.
-So the calls below need only their own fields. If a call without a token answers 401 `AUTH_INVALID`, auth is on: add
-`-H "Authorization: Bearer $LOOM_API_KEY"` and name your account's `org`, `namespace`
-and `agent`; a header with an empty token is refused.
+ones MCP and the dashboard use; a write that names no `agent` is recorded as agent `http`,
+and a search reads every agent. So the calls below need only their own fields. If a call
+without a token answers 401 `AUTH_INVALID`, auth is on: add
+`-H "Authorization: Bearer $LOOM_API_KEY"` and name your account's `org`, `namespace` and
+`agent`; a header with an empty token is refused.
 
 ```bash
 curl -sX POST http://localhost:7777/v1/memory.set -H 'Content-Type: application/json' \

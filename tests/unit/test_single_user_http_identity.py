@@ -162,3 +162,89 @@ def test_a_token_call_naming_no_namespace_is_refused(
     assert response.status_code == 422, response.text
     assert "namespace" in {e["loc"][-1] for e in response.json()["detail"]["errors"]}
     assert seen == []
+
+
+@pytest.mark.parametrize("op", ["memory.list", "memory.history"])
+def test_a_cross_agent_read_reads_every_agent(
+    seen: list[tuple[str, str, str | None, str]], op: str
+) -> None:
+    """Their agent is required, and filled with `*`, as MCP fills it: a key or a list
+    another agent wrote is found."""
+    _post(op, {"memory_key": "deploy_window"})
+    assert len(seen) == 1 and seen[0][1:] == ("dev", "local", "*")
+
+
+def test_another_read_that_needs_an_agent_still_names_it(
+    seen: list[tuple[str, str, str | None, str]],
+) -> None:
+    """Filled as `http`, it would read only the rows agent `http` wrote."""
+    response = _post("memory.bulk_get", {"memory_keys": ["deploy_window"]})
+    assert response.status_code == 422
+    assert "agent" in {e["loc"][-1] for e in response.json()["detail"]["errors"]}
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    ("op", "body"),
+    [
+        ("namespace.delete", {}),
+        ("namespace.leave", {}),
+        ("namespace.rollback", {"as_of": "2026-01-01T00:00:00Z"}),
+        ("memory.clear", {}),
+        ("memory.resolve_orphan_duplicates", {}),
+    ],
+)
+def test_an_op_whose_namespace_is_its_target_is_not_filled(
+    seen: list[tuple[str, str, str | None, str]], op: str, body: dict[str, Any]
+) -> None:
+    """Admin ops, `namespace.*` and namespace-wide writes: a missing namespace stays
+    missing, never the install's."""
+    response = _post(op, body)
+    assert response.status_code == 422, response.text
+    assert "namespace" in {e["loc"][-1] for e in response.json()["detail"]["errors"]}
+    assert seen == []
+
+
+# Writes with a required namespace and no field naming what they act on, filled with
+# the install's namespace; each acts on the caller's own session, run or evidence.
+_FILLED_WRITES_NAMING_NO_ROW = {
+    "memory.touch",
+    "memory.import_evidence",
+    "working_memory.set",
+    "working_memory.delete",
+    "session.brief_save",
+    "observe.crystallize",
+}
+
+
+def test_every_write_naming_no_row_is_classified() -> None:
+    """A new write that names no row must be placed: filled (above) or left alone
+    (`NAMESPACE_WIDE_WRITES`), so no namespace-wide write is filled by default."""
+    from server.operations.base import Role
+    from server.transport.gates import NAMESPACE_WIDE_WRITES
+
+    identity = {"org", "namespace", "agent", "user_id", "session_id", "run_id", "consumer"}
+    unplaced = []
+    for op in ALL_OPERATIONS:
+        fields = op.input_model.model_fields
+        namespace = fields.get("namespace")
+        if (
+            op.required_role != Role.WRITER
+            or op.name.startswith(("code.", "tracker.", "namespace."))
+            or namespace is None
+            or not namespace.is_required()
+        ):
+            continue
+        if any(f.is_required() for k, f in fields.items() if k not in identity):
+            continue
+        if op.name not in _FILLED_WRITES_NAMING_NO_ROW | NAMESPACE_WIDE_WRITES:
+            unplaced.append(op.name)
+    assert unplaced == []
+
+
+def test_a_read_that_falls_back_to_any_agent_runs_as_http(
+    seen: list[tuple[str, str, str | None, str]],
+) -> None:
+    """memory.get tries its own agent, then any: the quickstart's get needs no agent."""
+    _post("memory.get", {"memory_key": "deploy_window"})
+    assert seen == [("MemoryGetInput", "dev", "local", "http")]

@@ -158,11 +158,15 @@ curl -sX POST "$LOOM/v1/memory.set" \
   deployment's code or tracker plane when the body omits them. On a single-user
   server, a call with no token that leaves out `org`, or a `namespace` the op
   requires, or sends one blank or `"-"`, runs in the install's org and namespace
-  (`LOOM_SELF_SIGNUP_ORG`, `LOOM_DEFAULT_NAMESPACE`), the ones MCP and the dashboard
-  use; an op that requires `agent` gets `http`. An optional `namespace` or `agent`
-  left out still reads every namespace or agent, and `code.*` and `tracker.*` keep
-  their plane defaults. A call with a token, and every other identity mode, names
-  its own.
+  (`LOOM_SELF_SIGNUP_ORG`, `LOOM_DEFAULT_NAMESPACE`), the ones MCP and the
+  dashboard use. A write, and `memory.get`, run as agent `http`; `memory.search`,
+  `memory.list`, `memory.history`, `memory.related` and `memory.search_trace` read
+  every agent, as on MCP. Every other required field stays required: the agent of
+  other reads, and the namespace of admin ops, `namespace.*` ops and writes that act
+  on a whole namespace, so a call that leaves it out is still refused rather than
+  run on the install's namespace. An optional `namespace` or `agent` left out still
+  reads every namespace or agent. A call with a token, and every other identity
+  mode, names its own.
 - **`consumer`.** Any body may carry `consumer`, a short tag for the product or
   module calling; it is stored on the request and audit ledgers. A token minted
   with a consumer overrides it. See

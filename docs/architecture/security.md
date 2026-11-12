@@ -360,12 +360,14 @@ credential is shown per window. See [tokens and grants](../guides/tokens-and-gra
 The modes (`single-user`, `trust-network`, `gateway`) are described in
 [identities and namespaces](../concepts/identities-and-namespaces.md) and their settings
 in [deployment](../operations/deployment.md). Never expose `single-user` beyond the
-local machine: auth is off. Its one caller is also why a single-user HTTP call with
-no token may leave out `org` and a required `namespace` or `agent`: they are filled with
-the install's own (`with_single_user_identity` in `server/transport/gates.py`) before
-validation and authorization, as MCP fills them. A call with a token is filled with
-nothing, nor is any call in another mode, so tenant isolation and failing closed are
-unchanged wherever a token decides who the caller is. In `trust-network`, passwords are argon2id and there is no
+local machine: auth is off. Its one caller is also why a single-user HTTP call with no
+token may leave out `org` and a required `namespace` or `agent`: they are filled with the
+install's own (`with_single_user_identity` in `server/transport/gates.py`) before
+validation and authorization, as MCP fills them. A namespace that is what the op acts on
+(admin ops, `namespace.*` ops, `NAMESPACE_WIDE_WRITES`) is never filled, so Loom still
+deletes only what was named. A call with a token is filled with nothing, nor is any call
+in another mode, so tenant isolation and failing closed are unchanged wherever a token
+decides who the caller is. In `trust-network`, passwords are argon2id and there is no
 email verification or password reset. In `gateway`, Loom never sees a password.
 
 **Agent claims.** An agent account is unclaimed while its password is its claim code
