@@ -413,5 +413,47 @@ def test_a_gated_unset_process_answers_503_naming_the_state(
     app.assert_not_awaited()
     assert send.await_args_list[0].args[0]["status"] == 503
     body = send.await_args_list[1].args[0]["body"]
-    assert b"AUTH_UNAVAILABLE" in body and b"does not serve this deployment's cell state" in body
+    assert b"AUTH_UNAVAILABLE" in body and b"run with LOOM_CELL unset, serves nothing now" in body
     assert b"as its cell" not in body
+
+
+def test_an_unset_on_process_runs_the_leaders_boot_duties_when_its_gate_opens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The callbacks `start_lease_loop` builds: the workers start, the retention
+    overrides and the deployment config follow, and only the deployment's leader
+    registers the tracker namespaces."""
+    _rows(monkeypatch, "open")
+    lease = asyncio.run(leader.decide_supervisor("on"))
+    monkeypatch.setattr(leader, "current", lambda: lease)
+    acquired: list = []
+
+    async def _keep(_lease, on_acquired, _on_lost) -> None:
+        acquired.append(on_acquired)
+
+    spawned: list[str] = []
+
+    def _spawn(coro, *, name: str) -> None:
+        coro.close()
+        spawned.append(name)
+
+    published: list[bool] = []
+    monkeypatch.setattr(leader, "keep_lease", _keep)
+    monkeypatch.setattr(boot, "_spawn_boot_task", _spawn)
+    monkeypatch.setattr(boot, "publish_deployment_config", lambda _ch: published.append(True))
+    started: list[bool] = []
+
+    class _Supervisor:
+        def start_all(self) -> None:
+            started.append(True)
+
+    async def _run(deployment: bool) -> list[str]:
+        monkeypatch.setattr(settings, "deployment", deployment)
+        spawned.clear()
+        await boot.start_lease_loop(lease, _Supervisor(), object())
+        acquired.pop()()
+        return list(spawned)
+
+    assert asyncio.run(_run(False)) == ["loom-retention-overrides"]
+    assert "loom-tracker-namespaces" in asyncio.run(_run(True))
+    assert started == [True, True] and published == [True, True]

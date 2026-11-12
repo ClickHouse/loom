@@ -1,25 +1,24 @@
 """A process with LOOM_CELL unset reads its deployment's cell state from a real Postgres
 and is gated by it (server/core/cell.py), and the troubleshooting page's state
 transaction, run as the page prints it, takes a gated deployment back to `open`
-(docs/operations/troubleshooting.md). Each test runs in a database of its own,
-migrated from empty, and drops it."""
+(docs/operations/troubleshooting.md). Each test runs in a database of its own
+(`_pg_database`)."""
 
 from __future__ import annotations
 
 import contextlib
 import os
 import re
-import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
 from server.core import cell, pg
 from server.core.schema import pg_migrate
 from server.settings import settings
+from tests.integration._pg_database import own_database, with_database
 
 PAGE = Path(__file__).resolve().parents[2] / "docs/operations/troubleshooting.md"
 _OWN = {"v": 1, "fields": {}}
@@ -38,43 +37,17 @@ def _statements(block: str) -> str:
     return "\n".join(line for line in block.splitlines() if not line.lstrip().startswith("\\"))
 
 
-def _with_db(dsn: str, name: str) -> str:
-    parts = urlsplit(dsn)
-    return urlunsplit(parts._replace(path=f"/{name}"))
-
-
 @contextlib.asynccontextmanager
 async def _own_database() -> AsyncIterator[Any]:
-    dsn = os.environ.get("LOOM_PG_DSN") or pytest.skip("LOOM_PG_DSN not set")
     import asyncpg
 
-    name = f"loom_cell_it_{uuid.uuid4().hex[:10]}"
-    admin = await asyncpg.connect(dsn)
-    try:
-        try:
-            await admin.execute(f'CREATE DATABASE "{name}"')
-        except asyncpg.exceptions.InsufficientPrivilegeError:
-            pytest.skip("this Postgres role cannot create a database")
-        target = _with_db(dsn, name)
-
-        @contextlib.asynccontextmanager
-        async def _connect() -> AsyncIterator[Any]:
-            conn = await asyncpg.connect(target)
-            try:
-                yield conn
-            finally:
-                await conn.close()
-
-        await pg_migrate.migrate(connect=_connect)
-        conn = await asyncpg.connect(target)
+    async with own_database() as dsn:
+        conn = await asyncpg.connect(dsn)
         await pg.init_connection(conn)  # the pool's codecs: json decodes as the server reads it
         try:
             yield conn
         finally:
             await conn.close()
-    finally:
-        await admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        await admin.close()
 
 
 async def _write_state(conn: Any, rows: set[str]) -> None:
@@ -179,7 +152,7 @@ async def test_the_pages_transaction_changes_nothing_while_a_migration_holds_the
     async with _own_database() as conn:
         await _write_state(conn, {"tenancy"})
         database = await conn.fetchval("SELECT current_database()")
-        holder = await asyncpg.connect(_with_db(os.environ["LOOM_PG_DSN"], database))
+        holder = await asyncpg.connect(with_database(os.environ["LOOM_PG_DSN"], database))
         try:
             await holder.execute("SELECT pg_advisory_lock($1)", pg_migrate._LOCK_KEY)
             with pytest.raises(asyncpg.exceptions.LockNotAvailableError):

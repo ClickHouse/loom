@@ -304,8 +304,9 @@ def read_error() -> str:
 
 def server_reads_state() -> bool:
     """Whether a server process reads the state rows and is gated on them: every one
-    under the Postgres authority, `LOOM_CELL` set or not."""
-    return bool(settings.cell) or settings.storage_authority == "postgres"
+    under the Postgres authority, `LOOM_CELL` set or not (a cell needs that authority,
+    `settings_problem`)."""
+    return settings.storage_authority == "postgres"
 
 
 def _unset_reason(view: _View) -> str:

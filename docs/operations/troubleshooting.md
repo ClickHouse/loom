@@ -287,10 +287,10 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     `state = 'attaching'` and `placed = 0`) that you are turning back into a single
     deployment: clear the state in one transaction, in a psql session on `LOOM_PG_DSN`
     (`\connect` back to it after the check) as the role that owns schema `loom`'s tables
-    (the role that migrates; altering a trigger needs the table's owner). On a lock
-    failure, `ROLLBACK` if psql is still open, then rerun the whole step. The deployment is then `open`. An unattached later
-    cell's directory row stays live; making the deployment a cell again needs that row
-    removed and a new prepare.
+    (the role that migrates; altering a trigger needs the table's owner). The
+    deployment is then `open`. An unattached later cell's directory row stays live;
+    making the deployment a cell again needs that row removed and a new prepare. On a
+    lock failure, `ROLLBACK` if psql is still open, then rerun the whole step.
 
     ```sql
     \set ON_ERROR_STOP on

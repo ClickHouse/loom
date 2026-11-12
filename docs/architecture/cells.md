@@ -334,11 +334,12 @@ holds its state, cannot tell the two apart (ClickHouse carries no cell state: ad
 would make the write path read a second store for tenancy) and such a process never
 reads the directory; where every process has `LOOM_CELL` unset, `loom doctor`'s naming
 of it (which reads the directory, and ships with attach) is the only signal. A
-`(true, …)` row with `recording`: the first cell recording.
-Both present otherwise: `enforced`, a later cell's mode reading as `enforced` whatever
-its row says (its triggers, mode cache and CLI treat it so, and `loom doctor` names a
-row that is not). Either row alone, or both absent beside a tenancy or own row (the
-one-row states), which prepare never leaves: the org triggers act as in `enforced`,
+`(true, …)` row with `recording` and the own row: the first cell recording.
+Both present with the own row otherwise: `enforced`, a later cell's mode reading as
+`enforced` whatever its row says (its triggers, mode cache and CLI treat it so, and
+`loom doctor` names a row that is not). Either row alone, both without the own row, or
+both absent beside a tenancy or own row (the one-row states), which prepare never
+leaves: the org triggers act as in `enforced`,
 every process is gated as by an unread row, `loom doctor` names it, and a rerun of
 `loom cell prepare` writes the missing rows back from the directory while the cell runs.
 A unique index in the directory allows one first cell, and the value holds no memory

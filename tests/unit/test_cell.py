@@ -29,6 +29,7 @@ def _no_code_orgs_reader(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _cell_settings(monkeypatch: pytest.MonkeyPatch, name: str = "eu-1") -> None:
     monkeypatch.setattr(settings, "cell", name)
+    monkeypatch.setattr(settings, "storage_authority", "postgres")  # a cell needs it
     monkeypatch.setattr(settings, "public_base_url", "https://eu-1.example.test")
 
 

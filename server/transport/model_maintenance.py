@@ -65,7 +65,7 @@ async def _refuse_cell(scope: Scope, receive: Receive, send: Send, reason: str) 
     if settings.cell:
         message = f"This server cannot serve as its cell yet: {reason}. Retry shortly."
     else:
-        message = f"This server does not serve this deployment's cell state: {reason}."
+        message = f"This server, run with LOOM_CELL unset, serves nothing now: {reason}."
     await _refuse(scope, receive, send, code="AUTH_UNAVAILABLE", message=message, retry_after="5")
 
 
