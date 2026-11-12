@@ -916,89 +916,143 @@ def test_the_inspect_path_installs_from_the_checked_bundle(tmp_path: Path) -> No
     assert not (home / "loom-install.sh").exists(), (page, install)
 
 
-def _start_stubs(installer_env: dict[str, str], *, curl_exit: int, docker_body: str) -> Path:
-    """Stub curl (the port probe exits `curl_exit`, the health poll answers ok) and a
-    docker that logs its calls and runs `docker_body`; returns the log."""
+def _start_stubs(
+    installer_env: dict[str, str],
+    *,
+    docker_body: str = "exit 0",
+    probe_exit: int = 7,
+    connect_time: str = "0.000000",
+    health: str = '{"status":"ok"}',
+) -> tuple[Path, Path]:
+    """Stubs for a started install: a curl whose port probe prints `connect_time` and
+    exits `probe_exit`, and whose /v1/health calls print `health`; a docker that runs
+    `docker_body`. Both log their arguments; returns (curl log, docker log)."""
     bin_dir = Path(installer_env["PATH"].split(":")[0])
+    curl_log, docker_log = bin_dir / "curl.log", bin_dir / "docker.log"
     (bin_dir / "curl").write_text(
-        '#!/bin/sh\ncase "$*" in *v1/health*) echo \'{"status":"ok"}\'; exit 0 ;; esac\n'
-        f"exit {curl_exit}\n"
+        f'#!/bin/sh\necho "$*" >> {curl_log}\n'
+        f"case \"$*\" in *v1/health*) echo '{health}'; exit 0 ;; esac\n"
+        f"printf %s {connect_time}\nexit {probe_exit}\n"
     )
-    log = bin_dir / "docker.log"
     (bin_dir / "docker").write_text(
         '#!/bin/sh\n[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1 && exit 0\n'
-        f'echo "$*" >> {log}\n{docker_body}\n'
+        f'echo "$*" >> {docker_log}\n{docker_body}\n'
     )
-    return log
+    return curl_log, docker_log
+
+
+def _started(docker_log: Path) -> bool:
+    return any(" pull" in c or " up " in c for c in docker_log.read_text().splitlines())
+
+
+# This install's server runs and Docker publishes it on 7777.
+_OWN_SERVER = """case "$*" in
+  *" ps -q --status running --status restarting loom") echo 3f2a ;;
+  inspect*) echo " 7777" ;;
+esac
+exit 0"""
 
 
 def test_a_port_another_program_holds_stops_before_any_pull(
     install, installer_env: dict[str, str]
 ) -> None:
     run, _ = install
-    log = _start_stubs(installer_env, curl_exit=0, docker_body="exit 0")
+    _, docker_log = _start_stubs(installer_env, probe_exit=0, connect_time="0.000210")
     result = run(LOOM_SKIP_START="0", LOOM_PORT="28977")
     assert result.returncode == 1
     assert "port 28977 on 127.0.0.1 is in use by another program:" in result.stderr
-    assert "LOOM_PORT=7778" in result.stderr
-    assert not any(" pull" in c or " up " in c for c in log.read_text().splitlines())
+    assert "LOOM_PORT=7778 sh loom-install.sh" in result.stderr
+    assert not _started(docker_log)
+
+
+def test_a_listener_that_never_answers_holds_the_port(
+    install, installer_env: dict[str, str]
+) -> None:
+    """A timeout after the connection was made: something accepted it."""
+    run, _ = install
+    _start_stubs(installer_env, probe_exit=28, connect_time="0.000412")
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
+
+
+def test_a_port_that_does_not_connect_in_time_is_not_called_in_use(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env, probe_exit=28)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "cannot reach 127.0.0.1:7777 within 3 seconds" in result.stderr
+    assert "in use" not in result.stderr
+
+
+@pytest.mark.parametrize("status", ["ok", "degraded"])
+def test_a_port_another_loom_holds_is_named_as_loom(
+    install, installer_env: dict[str, str], status: str
+) -> None:
+    """Named from its health body, also when that Loom's ClickHouse is down (503)."""
+    run, _ = install
+    health = f'{{"status":"{status}","schema_version":"1"}}'
+    _start_stubs(installer_env, probe_exit=0, connect_time="0.000120", health=health)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "port 7777 on 127.0.0.1 is in use by another Loom server" in result.stderr
 
 
 def test_a_rerun_over_its_own_running_server_skips_the_port_check(
     install, installer_env: dict[str, str]
 ) -> None:
-    """This install's server holds the port: the probe is not made, the run goes on."""
     run, _ = install
-    body = 'case "$*" in *" ps -q --status running --status restarting loom") echo 3f2a ;; esac\nexit 0'
-    log = _start_stubs(installer_env, curl_exit=0, docker_body=body)
+    curl_log, docker_log = _start_stubs(
+        installer_env, docker_body=_OWN_SERVER, probe_exit=0, connect_time="0.000100"
+    )
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 0, result.stderr
-    assert "in use by another program" not in result.stderr
-    assert any(" up -d" in c for c in log.read_text().splitlines())
+    assert all("v1/health" in c for c in curl_log.read_text().splitlines())
+    assert any(" up -d" in c for c in docker_log.read_text().splitlines())
 
 
-def test_a_failed_pull_names_dockers_proxy_settings(install, installer_env: dict[str, str]) -> None:
+def test_a_rerun_onto_another_port_probes_that_port(install, installer_env: dict[str, str]) -> None:
+    """Its own server publishes 7777, not the 7778 asked for: 7778 is probed."""
     run, _ = install
-    body = 'case "$*" in *" pull"*) exit 1 ;; esac\nexit 0'
-    log = _start_stubs(installer_env, curl_exit=7, docker_body=body)
-    result = run(LOOM_SKIP_START="0")
+    _, docker_log = _start_stubs(
+        installer_env, docker_body=_OWN_SERVER, probe_exit=0, connect_time="0.000100"
+    )
+    result = run(LOOM_SKIP_START="0", LOOM_PORT="7778")
     assert result.returncode == 1
-    assert "could not pull the Loom images" in result.stderr
-    assert "docs.docker.com/engine/daemon/proxy" in result.stderr
-    assert not any(" up " in c for c in log.read_text().splitlines())
-
-
-def test_a_port_another_loom_holds_is_named_as_loom(install, installer_env: dict[str, str]) -> None:
-    run, _ = install
-    _start_stubs(installer_env, curl_exit=0, docker_body="exit 0")
-    curl = Path(installer_env["PATH"].split(":")[0]) / "curl"
-    curl.write_text('#!/bin/sh\necho \'{"status":"ok","schema_version":"1"}\'\n')
-    result = run(LOOM_SKIP_START="0")
-    assert result.returncode == 1
-    assert "port 7777 on 127.0.0.1 is in use by another Loom server" in result.stderr
+    assert "port 7778 on 127.0.0.1 is in use" in result.stderr
+    assert "LOOM_PORT=7779" in result.stderr
+    assert not _started(docker_log)
 
 
 def test_the_port_probe_goes_where_loom_is_published(
     install, installer_env: dict[str, str]
 ) -> None:
     run, _ = install
-    _start_stubs(installer_env, curl_exit=0, docker_body="exit 0")
-    seen = Path(installer_env["HOME"]) / "curl.log"
-    curl = Path(installer_env["PATH"].split(":")[0]) / "curl"
-    curl.write_text(
-        f'#!/bin/sh\necho "$@" >> {seen}\n'
-        'case "$*" in *v1/health*) echo \'{"status":"ok"}\'; exit 0 ;; esac\nexit 7\n'
-    )
+    curl_log, _ = _start_stubs(installer_env)
     assert run(LOOM_SKIP_START="0", LOOM_PORT="28977", LOOM_BIND_HOST="::").returncode == 0
-    assert seen.read_text().splitlines()[0].endswith(" http://[::1]:28977/")
+    assert curl_log.read_text().splitlines()[0].endswith(" http://[::1]:28977/")
 
 
-def test_a_port_that_does_not_answer_in_time_is_not_called_in_use(
+def test_every_call_to_the_local_server_bypasses_a_proxy(
     install, installer_env: dict[str, str]
 ) -> None:
+    """A proxy in the shell would answer for 127.0.0.1 and make the port look held."""
     run, _ = install
-    _start_stubs(installer_env, curl_exit=28, docker_body="exit 0")
+    curl_log, _ = _start_stubs(installer_env)
+    result = run(LOOM_SKIP_START="0", http_proxy="http://proxy.invalid:3128")
+    assert result.returncode == 0, result.stderr
+    calls = curl_log.read_text().splitlines()
+    assert calls and all("--noproxy *" in c for c in calls), calls
+
+
+def test_a_failed_pull_names_dockers_proxy_settings(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    body = 'case "$*" in *" pull"*) exit 1 ;; esac\nexit 0'
+    _, docker_log = _start_stubs(installer_env, docker_body=body)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 1
-    assert "cannot reach 127.0.0.1:7777 within 3 seconds" in result.stderr
-    assert "in use" not in result.stderr
+    assert "could not pull the Loom images" in result.stderr
+    assert "docs.docker.com/engine/daemon/proxy" in result.stderr
+    assert not any(" up " in c for c in docker_log.read_text().splitlines())

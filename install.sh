@@ -394,25 +394,40 @@ main() {
   esac
 
   # A port held by another program fails `up` only after the pull and the
-  # ClickHouse start, with Docker's bind error: say so before either. Curl's
-  # exit 7 is a refused connection, so nothing listens there. This install's own
-  # server, running or restarting, holds the port itself and `up` recreates it.
-  if [ -z "$(compose ps -q --status running --status restarting loom 2>/dev/null)" ]; then
-    probe=0
-    curl -s -o /dev/null --max-time 3 "http://$host:$port/" 2>/dev/null || probe=$?
-    other_port=7778
-    [ "$port" != 7778 ] || other_port=7779
-    case $probe in
-      7) ;;
-      28) fail "cannot reach $host:$port within 3 seconds: check LOOM_BIND_HOST and LOOM_PORT, or a firewall on this host" ;;
-      *)
-        holder="another program"
-        curl -fsS --max-time 3 "http://$host:$port/v1/health" 2>/dev/null | grep -q '"schema_version"' \
-          && holder="another Loom server (another install, or one started from a checkout)"
-        fail "port $port on $host is in use by $holder: stop it, or run the install command again with a free port, such as LOOM_PORT=$other_port"
-        ;;
-    esac
-  fi
+  # ClickHouse start, with Docker's bind error: say so before either. The probes
+  # bypass any proxy the shell names, which would otherwise answer for the port.
+  # This install's own server, running or restarting, may hold the port: `up`
+  # recreates it, so it is not probed when it is published on this port.
+  own=$(compose ps -q --status running --status restarting loom 2>/dev/null) || own=
+  own_ports=
+  [ -z "$own" ] || own_ports=$(docker inspect -f \
+    '{{range $p, $b := .HostConfig.PortBindings}}{{range $b}} {{.HostPort}}{{end}}{{end}}' \
+    $own 2>/dev/null) || own_ports=
+  case "$own_ports " in
+    *" $port "*) ;;
+    *)
+      # Curl's exit 7 is a refused connection: nothing listens there. A timeout
+      # after a connection (connect time above zero) is a listener that does not
+      # answer, which holds the port as much as one that does.
+      probe=0
+      connected=$(curl -s --noproxy '*' -o /dev/null -w '%{time_connect}' --connect-timeout 3 \
+        --max-time 5 "http://$host:$port/" 2>/dev/null) || probe=$?
+      other_port=7778
+      [ "$port" != 7778 ] || other_port=7779
+      case $probe,$connected in
+        7,*) ;;
+        28,0.000000 | 28,0 | 28,) fail "cannot reach $host:$port within 3 seconds: check LOOM_BIND_HOST and LOOM_PORT, or a firewall on this host" ;;
+        *)
+          holder="another program"
+          # A Loom answers health with its schema version, 503 included.
+          curl -sS --noproxy '*' --max-time 3 "http://$host:$port/v1/health" 2>/dev/null \
+            | grep -q '"schema_version"' \
+            && holder="another Loom server (another install, or one started from a checkout)"
+          fail "port $port on $host is in use by $holder: stop it, or choose a free port by running the saved installer again as LOOM_PORT=$other_port sh loom-install.sh"
+          ;;
+      esac
+      ;;
+  esac
 
   printf 'Starting Loom %s (the first pull can take a few minutes)…\n' "$version"
   compose pull \
@@ -436,7 +451,7 @@ main() {
   health="http://$host:$port/v1/health"
   attempt=0
   while [ "$attempt" -lt 90 ]; do
-    if curl -fsS "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
+    if curl -fsS --noproxy '*' "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
       printf '\nLoom is ready.\n'
       printf 'Dashboard: http://%s:%s/\n' "$host" "$port"
       printf 'Files:     %s\n' "$INSTALL_DIR"
