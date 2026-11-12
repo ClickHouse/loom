@@ -97,7 +97,8 @@ leg, because the term leg serves shared rows to every reader:
 - **`check_against_shared`**, the promotion's conflict check, skips `definition` (only),
   so promoting `MRR` is not refused as a conflict with `ARR`; decisions keep the check.
 - **`memory.promote` refuses a definition whose term or alias** is already another
-  governed definition's, compared as below, on every promotion path.
+  governed definition's, on every promotion path. Names are compared case-folded (the
+  form the key's hash reads), so `SAT` and `Sat` are one name.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row or whose key is not the slug of its
   `term`, so a revision of a term always lands on the governed row's key. The read-time
@@ -110,10 +111,7 @@ term's slug is refused, and `approver` no longer names a definition's promoter (
 response names it in `ignored_args`); the SDKs and the MCP schema carry the hash field,
 and the implementing pull request names the break.
 
-No two governed definitions share a term or an alias, compared case-folded (the form the
-key's hash reads), so `SAT` and `Sat` are one name: promoting a definition whose term or
-alias is already another governed definition's is refused, by `memory.promote` itself (the
-change above). Should two shared rows still match one name (two promotions racing, or one
+Should two shared rows match one name despite that refusal (two promotions racing, or one
 promoted through a build without the check), the term leg serves the one promoted last, by
 the shared row's `version` (its whole-second `promoted_at` can tie).
 
@@ -159,7 +157,7 @@ governed definitions through this leg only. The leg runs only on a search's firs
 (the governed keys it served there stay out of every later page of that search), and is
 off when a field asks for other rows (any `memory_type`; `tags`; `category`; an explicit
 `agent`, `run_id` or `session_ids`; `as_of`; a body `user_id` or `session_id` under a
-whole-namespace read; `entity_filter`; `min_body_chars`; a `legs` without `memory`). A
+whole-namespace read; `entity_filter`; `min_body_chars`). A
 `user_id` or `session_id` the read scope pins, `scope`, `exclude_keys` and
 `min_similarity` keep it on; it drops any key in `exclude_keys`. It serves no definition
 whose source is `sensitivity = 'high'` (the read-time check above). Its read is bounded by
@@ -248,7 +246,12 @@ made one space, so `C++` and `C#` stay apart as the term leg keeps them). That f
 still the query's words, kept as the trace of a question under the namespace's consent;
 only the threshold below decides what an admin sees. No memory key or document URI is
 kept: one naming another user's row or document would outlive that user's erasure, or the
-document's delete, in someone else's miss. The table has a 16-day TTL: it is a trace, not
+document's delete, in someone else's miss. A miss is inserted after the response, so a
+user erasure could run between the search and the insert: just before inserting, the
+recording checks `ledger_reads.unfinished_reaching` for the namespace and the asker, and
+drops the miss when an erasure that reaches either was unfinished then or has finished
+since the search began; an erasure that begins after that check deletes the row itself.
+The table has a 16-day TTL: it is a trace, not
 memory. A pass reads the last 7 days and a build lives 7 days from its write, with two
 days to spare, so a miss outlives every build that counted it and a user erasure always
 finds the namespaces it must clear.
@@ -336,8 +339,13 @@ names the team that owns its definitions. Each turn:
    otherwise, grouped by `normalized_query_hash`, counting initial queries only
    (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and then by
    recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
-   ran. Only the normalised text is read, with comments removed and literals replaced
-   (`normalizeQuery`), so no user's literal values reach the LLM or the draft;
+   ran. A user here is a ClickHouse account, not a person: the threshold holds only where
+   each person queries under their own account, and a shared account (a BI tool's, a
+   service's) counts as one asker however many people stand behind it, while one person
+   with several accounts counts once per account. The threshold is a floor against
+   drafting from one account's queries, not an anonymity guarantee. Only the normalised
+   text is read, with comments removed and literals replaced (`normalizeQuery`), so no
+   user's literal values reach the LLM or the draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition for at most a setting's number of groups, and
    queues each (`source_kind = 'query_history'`): the metric's name is the `term`, its
