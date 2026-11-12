@@ -140,7 +140,7 @@ def test_input_schema_keeps_every_argument_and_field_description():
 
 # ---------------------------------------------------------------- reference lint
 
-_OP_REF = re.compile(rf"\b{mt.OP_MENTION}\b")
+_OP_REF = re.compile(rf"\b{mcp_op.OP_MENTION}\b")
 _TOOL_REF = re.compile(r"\bloom_[a-z_]+\b")
 
 
@@ -243,22 +243,25 @@ def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code:
 def test_naming_marks_only_what_loom_op_routes():
     listed = {"loom_op", "loom_memory_set"}
     text = "Save with memory.set; tidy with `memory.apply`, then memory.apply again."
-    assert mt.name_ops_for_listing(text, listed, "core") == (
+    assert mcp_op.name_ops_for_listing(text, listed, "core") == (
         "Save with loom_memory_set; tidy with `memory.apply` (via loom_op), "
         "then memory.apply again."
     )
     # a read-only connection's loom_op routes reads only; a hidden op stays as written
-    assert mt.name_ops_for_listing("memory.apply", listed, "readonly") == "memory.apply"
-    assert mt.name_ops_for_listing("memory.bulk_set", listed, "core") == "memory.bulk_set"
+    assert mcp_op.name_ops_for_listing("memory.apply", listed, "readonly") == "memory.apply"
+    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, "readonly") == "memory.apply"
+    assert mcp_op.name_ops_for_listing("memory.bulk_set", listed, "core") == "memory.bulk_set"
     # without loom_op on the listing nothing is marked
-    assert mt.name_ops_for_listing("memory.apply", {"loom_memory_set"}, "core") == "memory.apply"
-    assert mt.name_ops_for_listing("loom_memory_apply", listed, "core") == (
+    assert (
+        mcp_op.name_ops_for_listing("memory.apply", {"loom_memory_set"}, "core") == "memory.apply"
+    )
+    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, "core") == (
         "memory.apply (via loom_op)"
     )
     # a dotted name that is no op, such as a response field path, stays
-    assert mt.name_ops_for_listing("`memory.next_page`", listed, "core") == "`memory.next_page`"
+    assert mcp_op.name_ops_for_listing("`memory.next_page`", listed, "core") == "`memory.next_page`"
     # a field path under a listed op is not an op mention and stays whole
-    assert mt.name_ops_for_listing("`memory.set.value`", listed, "core") == "`memory.set.value`"
+    assert mcp_op.name_ops_for_listing("`memory.set.value`", listed, "core") == "`memory.set.value`"
 
 
 def test_a_listing_build_leaves_the_source_texts_as_written():
@@ -285,6 +288,14 @@ def test_listed_tool_names_is_what_the_listing_shows(toolset: str, code: bool, m
     monkeypatch.setattr(settings, "mcp_toolset", toolset)
     monkeypatch.setattr(settings, "mcp_code_tools", code)
     assert mt.listed_tool_names(None) == listing
+
+
+@pytest.mark.parametrize("toolset", ["core", "all"])
+def test_compact_loom_op_keeps_discovery_and_the_call(toolset: str):
+    """compact keeps a description's first sentence; loom_op's must hold help and a call."""
+    tools = {t["name"]: t for t in _listing(toolset, True, "compact")}
+    text = tools["loom_op"]["description"]
+    assert '"op": "help"' in text and '"op": "memory.related"' in text
 
 
 def test_the_compact_profile_keeps_the_tool_names():

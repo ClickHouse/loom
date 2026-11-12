@@ -10,7 +10,6 @@ summary plus the lean sections), and writes a call's ledger row
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Set
 from typing import Any, get_args
 
@@ -18,7 +17,7 @@ from server.memory.api.models_loom_search import SearchInput
 from server.memory.app.loom_search.answer_first import withheld_note
 from server.memory.app.loom_search.tracker_leg import tracker_text_lines
 from server.operations.base import Operation
-from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
+from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
     ASSISTANT_DROPPED_ARGS,
@@ -53,7 +52,7 @@ from server.transport.mcp_descriptions import (
     TOOL_DESCRIPTIONS as _TOOL_DESCRIPTIONS,
 )
 from server.transport.mcp_descriptions import coding_search_description
-from server.transport.mcp_op import LOOM_OP_TOOL_NAME, reachable
+from server.transport.mcp_op import LOOM_OP_TOOL_NAME, name_ops_for_listing
 from server.transport.mcp_op import description as loom_op_description
 from server.transport.mcp_schemas import (
     _shape_schema,
@@ -72,39 +71,6 @@ log = logging.getLogger(__name__)
 
 # Tool name → op: how a `tools/call` resolves its op, and its refusal rows name it.
 TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
-
-# A dotted op name as prose spells it (`memory.set`, `knowledge.source.add`).
-OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
-# An op named in prose: its tool name or its dotted op name, and a closing
-# backtick, which the "(via loom_op)" marker goes after.
-_NAMED_OP = re.compile(rf"\b(loom_[a-z_]+|{OP_MENTION})\b(`?)")
-
-
-def name_ops_for_listing(text: str, listed: Set[str], toolset: str | None) -> str:
-    """``text`` as a client of this listing reads it. A client calls a listed op
-    by its tool name, so every op the listing carries is named by its tool. An
-    op it does not carry keeps its dotted name, the one `loom_op` takes, and its
-    first mention says "(via loom_op)". An op `loom_op` does not route here (a
-    hidden op, a write on a read-only connection, any op on a listing without
-    `loom_op`) stays as written."""
-    routes = LOOM_OP_TOOL_NAME in listed
-    marked: set[str] = set()
-
-    def rename(m: re.Match[str]) -> str:
-        name, trail = m.groups()
-        op = TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
-        if op is None:
-            return m.group(0)
-        if op.mcp_tool_name in listed:
-            return f"{op.mcp_tool_name}{trail}"
-        if not routes or not reachable(op, toolset):
-            return m.group(0)
-        if op.name in marked:
-            return f"{op.name}{trail}"
-        marked.add(op.name)
-        return f"{op.name}{trail} (via loom_op)"
-
-    return _NAMED_OP.sub(rename, text)
 
 
 def _name_ops_in_fields(schema: Any, listed: Set[str], toolset: str | None) -> Any:
@@ -422,7 +388,7 @@ def listed_tool_names(toolset: str | None) -> set[str]:
 
     names = {op.mcp_tool_name for op in listed_ops(toolset)}
     if not is_assistant(resolve_toolset(toolset, settings.mcp_toolset)):
-        names |= {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}
+        names |= {d["name"] for d in _synthetic_tool_descriptors_core()}
     return names
 
 
@@ -527,7 +493,7 @@ async def _tools_descriptor(
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset))
-    listed = {d["name"] for d in descriptors}
+    listed = listed_tool_names(toolset)
     for d in descriptors:
         if d["name"] == LOOM_OP_TOOL_NAME:  # its text is about dotted op names
             d["description"] = loom_op_description(listed, toolset)

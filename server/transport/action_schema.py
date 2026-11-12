@@ -66,7 +66,7 @@ def effect_class(op: Operation) -> str:
 
 def _description(op: Operation, listed: set[str]) -> str:
     from server.transport.mcp_descriptions import TOOL_DESCRIPTIONS
-    from server.transport.mcp_tools import name_ops_for_listing
+    from server.transport.mcp_op import name_ops_for_listing
 
     custom = TOOL_DESCRIPTIONS.get(op.name)
     if custom:

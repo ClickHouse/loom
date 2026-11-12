@@ -30,7 +30,7 @@ from server.operations.toolsets import (
     op_toolsets,
 )
 from server.settings import settings
-from server.transport import mcp_primer
+from server.transport import mcp_op, mcp_primer
 from server.transport import mcp_tools as mt
 from server.transport.mcp_descriptions import (
     ACTIVATION_TRIGGERS,
@@ -68,7 +68,7 @@ def _names(tools: list[dict]) -> set[str]:
 
 def _shown(listed: dict[str, dict], toolset: str, name: str, source: str) -> bool:
     """Whether tool ``name`` carries ``source`` as this listing renders it."""
-    text = mt.name_ops_for_listing(source, set(listed), toolset)
+    text = mcp_op.name_ops_for_listing(source, set(listed), toolset)
     return listed[name]["description"] == text
 
 

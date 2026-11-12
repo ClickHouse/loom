@@ -152,7 +152,7 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   curated texts say when to use a tool and when not to; the choice is left to
   the model. A text names other ops by op name, and each listing renders it for
   the client that reads it (`name_ops_for_listing` in
-  `server/transport/mcp_tools.py`): an op the listing carries is named by its
+  `server/transport/mcp_op.py`): an op the listing carries is named by its
   tool (`loom_memory_update`), and an op it does not carry keeps its op name,
   the one `loom_op` takes, with "(via loom_op)" after its first mention when
   `loom_op` routes it on that connection (not a hidden op, a write on

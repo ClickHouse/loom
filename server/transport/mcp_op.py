@@ -27,6 +27,7 @@ import re
 from collections.abc import Set
 from typing import Any
 
+from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport.mcp_config import _ok
 from server.transport.mcp_ledger import emit_token_refusal
@@ -93,10 +94,45 @@ def reachable(op: Any, toolset: str | None) -> bool:
     return op.name not in _MCP_HIDDEN_OPS and (_is_read(op) or routes_writes(toolset))
 
 
-# What loom_op's text offers by name: each shows only on a listing that leaves
-# it out and where loom_op routes it, so the text holds on every toolset.
+# Tool name → op, for a description that names an op by its tool.
+_TOOLS_BY_NAME = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
+# A dotted op name as prose spells it (`memory.set`, `knowledge.source.add`).
+OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
+# An op named in prose: its tool name or its dotted op name, and a closing
+# backtick, which the "(via loom_op)" marker goes after.
+_NAMED_OP = re.compile(rf"\b(loom_[a-z_]+|{OP_MENTION})\b(`?)")
+
+
+def name_ops_for_listing(text: str, listed: Set[str], toolset: str | None) -> str:
+    """``text`` as a client of this listing reads it. A client calls a listed op
+    by its tool name, so every op the listing carries is named by its tool. An
+    op it does not carry keeps its dotted name, the one `loom_op` takes, and its
+    first mention says "(via loom_op)", unless `loom_op` does not route it here
+    (a hidden op, a write on a read-only connection, a listing without
+    `loom_op`)."""
+    routes = LOOM_OP_TOOL_NAME in listed
+    marked: set[str] = set()
+
+    def rename(m: re.Match[str]) -> str:
+        name, trail = m.groups()
+        op = _TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
+        if op is None:
+            return m.group(0)
+        if op.mcp_tool_name in listed:
+            return f"{op.mcp_tool_name}{trail}"
+        if not routes or not reachable(op, toolset):
+            return f"{op.name}{trail}"
+        if op.name in marked:
+            return f"{op.name}{trail}"
+        marked.add(op.name)
+        return f"{op.name}{trail} (via loom_op)"
+
+    return _NAMED_OP.sub(rename, text)
+
+
+# The ops loom_op's text offers beside its example call (memory.related). Each
+# shows only on a listing that leaves it out and where loom_op routes it.
 _EXAMPLES: tuple[tuple[str, str], ...] = (
-    ("memory.related", "related memories"),
     ("memory.evidence", "the source turns behind a memory"),
     ("memory.digests", "session digests"),
     ("erasure.request", "erasure requests"),
@@ -112,17 +148,17 @@ def description(listed: Set[str], toolset: str | None) -> str:
         op = OPERATIONS_BY_NAME[name]
         if op.mcp_tool_name not in listed and reachable(op, toolset):
             shown.append(f"{what} ({name})")
-    such_as = f", such as {', '.join(shown)}" if shown else ""
+    such_as = f"It reaches, for example, {', '.join(shown)}; " if shown else ""
     reads = "" if routes_writes(toolset) else " On this read-only connection it runs reads only."
+    # Discovery and the call shape lead: the compact profile keeps only the first sentence.
     return (
-        f"Run a Loom op this list does not show as a tool, by its dotted name{such_as}; "
-        'a description\'s "(via loom_op)" means this tool. '
+        "Run a Loom op this list does not show as a tool, by its dotted name: "
+        '{"op": "help", "query": "<words>"} lists matching ops, then call one as '
+        '{"op": "memory.related", "arguments": {"memory_key": "deploy_day"}}.\n'
+        f'{such_as}a description\'s "(via loom_op)" means this tool. '
         f"Prefer a listed tool when one fits.{reads}\n"
-        f'FIND: {{"op": "help", "query": "<words>"}} lists up to {_CATALOG_LIMIT} matching ops, '
-        "each with its required and optional arguments and a one-line purpose; "
-        "an unknown op answers with the nearest ones.\n"
-        'CALL: {"op": "memory.related", "arguments": {"memory_key": "deploy_day"}}. '
-        "Identity and namespace default as for a listed tool."
+        f"Help lists up to {_CATALOG_LIMIT} ops with their arguments and purpose; an unknown "
+        "op answers with the nearest ones. Identity and namespace default as for a listed tool."
     )
 
 
@@ -133,7 +169,10 @@ DESCRIPTOR: dict[str, Any] = {
         "properties": {
             "op": {"type": "string", "description": 'A dotted op name, or "help".'},
             "arguments": {"type": "object", "description": "The op's own arguments."},
-            "query": {"type": "string", "description": "help: words to match."},
+            "query": {
+                "type": "string",
+                "description": 'With op="help": words matched against op names and purposes.',
+            },
         },
         "required": ["op"],
     },
@@ -191,7 +230,7 @@ _INSTEAD: dict[str, str] = {
     "code.context_packs": "call code.context_pack with the pr_number you want",
     "memory.extraction_status": (
         "call memory.extraction_status_mine with the queue_id "
-        "each deferred extraction call returned"
+        "each deferred memory.set_from_messages returned"
     ),
     "erasure.status": "call erasure.list; each saga row carries its status",
     "memory.search_trace": (
@@ -226,7 +265,7 @@ def hidden_refusal(name: str, toolset: str | None = None) -> dict[str, Any] | No
     MCP, and what to do instead, naming ops as the ``toolset`` listing does.
     None when `name` is not a hidden op."""
     from server.operations.registry import OPERATIONS_BY_NAME
-    from server.transport.mcp_tools import listed_tool_names, name_ops_for_listing
+    from server.transport.mcp_tools import listed_tool_names
 
     op = OPERATIONS_BY_NAME.get(name)
     if op is None or name not in _MCP_HIDDEN_OPS:
