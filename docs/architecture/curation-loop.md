@@ -77,14 +77,15 @@ write, and is not part of this design.
 
 ### The term leg
 
-`memory.search` gains one leg. It reads the namespace's `loom.governed_definitions` on the
-`(org, namespace)` key prefix, matches the query against each record's term and aliases,
-reads the matched definitions whose text is still the approved one, and places them at the
-top of the served list with `governed = true` on the hit.
-A term or alias matches where it appears in the query with no letter, digit, `+` or `#`
-next to it. One written all in capitals, or with a capital after its first letter, matches
-only as written, so `IT` does not match "what is it" and `GitHub` stays exact; any other
-matches case-folded, so `Churn rate` matches "what is our churn rate".
+`memory.search` gains one leg. It reads the addressed namespace's
+`loom.governed_definitions` (only that one, whatever `namespace_scope` fans out over) on
+the `(org, namespace)` key prefix, matches the query against each record's term and
+aliases, reads the matched definitions whose text is still the approved one, and places
+them at the top of the served list with `governed = true` on the hit. A term or alias
+matches where it appears in the query with no letter, digit, `+` or `#` next to it. One
+written all in capitals, or with a capital after its first letter, matches only as
+written, so `IT` does not match "what is it" and `GitHub` stays exact; any other matches
+case-folded, so `Churn rate` matches "what is our churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -145,9 +146,9 @@ writes still waiting for extraction (`pending_extraction > 0`).
 The **asker** is who the token says asked: the end user of an end-user token, else the
 token's subject; a body field never names it. Each miss writes one row to
 `loom.search_misses` under the namespace the search was addressed to: the identity tuple,
-the asker, `actor`, the plane, the query, its normalised form, and the document URIs of
-that namespace it came closest to. No memory key is kept: a key of another user's row
-would outlive that user's erasure in someone else's miss. The table has a 30-day TTL: it
+the asker, `actor`, the plane, the query and its normalised form. No memory key or document
+URI is kept: one naming another user's row or document would outlive that user's erasure,
+or the document's delete, in someone else's miss. The table has a 30-day TTL: it
 is a trace, not memory.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
@@ -172,7 +173,6 @@ new build of the namespace in `loom.knowledge_gaps`:
 | `head`, `samples` | The most asked normalised query, and the others merged into it. |
 | `askers`, `asks`  | How many distinct askers, and how many times.                   |
 | `last_at`         | When it was last asked.                                         |
-| `nearest`         | The document URIs the misses came closest to.                   |
 
 Every build writes its gaps, then a marker row, and readers take the latest build that has
 its marker, so a build with no gap left, or one whose gaps an erasure deleted, still
@@ -186,10 +186,10 @@ fence until it completes, and the namespace shows no new build meanwhile.
 
 ### Ops and dashboard
 
-| Op                     | Role  | What it does                                                                                  |
-| ---------------------- | ----- | --------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                      |
-| `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM and queues it (`source_kind = 'knowledge_gap'`). |
+| Op                     | Role  | What it does                                                                                                                                                              |
+| ---------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                                                                                                  |
+| `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM, from its queries and the namespace's live documents a search for it finds, and queues it (`source_kind = 'knowledge_gap'`). |
 
 Both list what users asked, so neither honours a read-narrowed token: the check that
 admits the `knowledge.` group to such a token (`honours_read_scope` in
