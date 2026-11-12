@@ -10,7 +10,7 @@ metadata:
 
 A release publishes what nobody can take back: images anyone pulls, a PyPI version that can never be reused, an npm version, an MCP Registry listing, and the GitHub Release the one-line installer reads. The procedure and the workflow are in [release process](../../../docs/development/release-process.md); this skill orders the steps and adds the checks that prove each one. Supported lines and deprecations: [supported versions](../../../docs/operations/supported-versions.md).
 
-Every step others see is the owner's to start, as AGENTS.md has it: opening or merging a pull request (the release pull request, and a fix's against `release/X.Y`) and posting on it, pushing a tag or `release/X.Y`, the registry dispatch and approving its `pypi`, `npm` and `mcp-registry` environments, editing a GitHub Release, a PyPI yank, `npm deprecate` and `npm dist-tag`, moving `:latest`. Print the command, get the go-ahead, then run it. Everything else here (the dry run, `prepare.py`, the checks) you run yourself.
+Every step others see is the owner's to start, as AGENTS.md has it: opening or merging a pull request (the release pull request, and a fix's against `release/X.Y`) and posting on it, pushing a tag or `release/X.Y`, the registry dispatch and approving or declining its `pypi`, `npm` and `mcp-registry` environments, editing a GitHub Release, a PyPI yank, `npm deprecate` and `npm dist-tag`, moving `:latest`. Print the command, get the go-ahead, then run it. Everything else here (the dry run, `prepare.py`, the checks) you run yourself.
 
 ## 0. Is it time
 
@@ -77,7 +77,7 @@ The registry dispatch's `pypi`, `npm` and `mcp-registry` jobs (only `pypi` and `
 
 ```bash
 tag=vX.Y.Z   # vX.Y.Z-rc.N for a candidate
-# Run this once the dispatch shows `waiting`; a new dispatch takes a few seconds to appear, so re-run these two lines until the echo prints an id.
+# Once the run shows waiting (after github-release): the GET then lists pypi and npm, and mcp-registry for a final.
 dispatch=$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event workflow_dispatch -L 1 --json databaseId --jq '.[0].databaseId // empty')
 echo "${dispatch:?no dispatch run for the tag yet}"
 gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
@@ -85,7 +85,7 @@ ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending
 gh api -X POST "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"
 ```
 
-To publish only the images and the GitHub Release, as when a dispatch recovers images, send the same POST with `-f state=rejected`.
+To publish only the images and the GitHub Release, as for a `clickhouse_image` or `allow_clickhouse_downgrade` dispatch that stands in for a stopped tag run ([release process](../../../docs/development/release-process.md)), send the POST with `-f state=rejected -f comment="SDKs not published for $tag"`.
 
 The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
 
