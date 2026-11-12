@@ -42,15 +42,16 @@ a live `loom.shared` row of type `definition` under a `definition/` key exists; 
 provenance (`promoted_from`) names exactly one source, the namespace-wide row under that
 key, which is the slug of the value's `term` (`user_id`, `agent` and `session_id` all
 `'-'`); and that source is live (`status = 'active'`, not tombstoned, superseded, or past
-its `expires_at` or `valid_to`), labelled neither `medium` nor `high`, and holds the same
-text as the shared copy: the source's `content_sha256` equals the canonical-JSON hash of
-the shared `value` (the hash the approved-content check below uses), so a store that
-orders an object's keys differently is not a change. The source is read from the memory
-authority (Postgres when it holds live memory, [storage authority](storage-authority.md)),
-and a source whose head cannot be read fails closed: the definition is not served. A
-read-time check covers every path into that state that it can see, rows promoted before
-this design and through N-1 included; what it cannot see is named under rolling upgrades.
-The shared layer already is the namespace's admin-approved copy of a fact ([the shared
+its `expires_at` or `valid_to`), neither labelled nor graded `medium` or `high` (the value
+itself is graded, since some write paths store the label empty), and holds the same text
+as the shared copy: the source's `content_sha256` equals the canonical-JSON hash of the
+shared `value` (the hash the approved-content check below uses), so a store that orders an
+object's keys differently is not a change. The source is read from the memory authority
+(Postgres when it holds live memory, [storage authority](storage-authority.md)), and a
+source whose head cannot be read fails closed: the definition is not served. A read-time
+check covers every path into that state that it can see, rows promoted before this design
+and through N-1 included; what it cannot see is named under rolling upgrades. The shared
+layer already is the namespace's admin-approved copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records its source
 (`promoted_from`) and the candidate it came from (`promoted_from_candidate_id`),
@@ -73,16 +74,16 @@ lists a definition that passes the check but is not served because a later promo
 one of its names as `shadowed`, naming the row that wins. A changed text is promoted
 again. On N no automatic verdict retires or marks a definition's source (the exemptions
 below, and the negative-outcome quarantine of `memory.outcome`, which skips a definition's
-namespace-wide row as it skips a pinned one), so a source that is no longer `active` was
-rejected by a writer, or left that way by N-1 or before this design. The admin brings it
-back by the way it lapsed:
+namespace-wide row as it skips a locked one; an admin can also lock the row,
+`memory.lock`, to keep writers from changing it), so a source that is no longer `active`
+was rejected by a writer, or left that way by N-1 or before this design. The admin brings
+it back by the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
 - marked `conflicted`: `conflicts.resolve`;
 - marked `duplicate`: `memory.dedup_resolve`;
-- rejected with `memory.reject`, a writer's explicit verdict like an edit: written again
-  and promoted.
+- rejected with `memory.reject`, a writer's explicit verdict like an edit: written again.
 
 It is governed again when its text is the approved one, and is promoted again otherwise.
 
@@ -127,11 +128,14 @@ reader:
   both ops then name in `ignored_args`.
 - **`check_against_shared`**, the promotion's conflict check, skips `definition` (only),
   so promoting `MRR` is not refused as a conflict with `ARR`; decisions keep the check.
-- **`memory.promote` refuses a definition labelled `medium`**, as it refuses `high` today:
-  a definition is the organisation's vocabulary, served to every reader, so its value
-  names no person (its `owner` is a team or a handle, not an email), and the
-  sensitive-retention window, which would anonymize a `medium` source but not its shared
-  copy, never reaches a governed definition.
+- **`memory.promote` refuses a definition whose value is labelled or graded `medium`**, as
+  it refuses `high` today, grading the value itself (`value_reads_high` and the grader the
+  write path uses) rather than trusting the stored label, which an import, a restore or
+  `copy_to` leaves empty. A definition is the organisation's vocabulary, served to every
+  reader, so it names no person: its `owner` must name a group of the directory
+  (`loom.principal_groups`), and any other `owner` is refused. The sensitive-retention
+  window, which would anonymize a `medium` source but not its shared copy, so never
+  reaches a governed definition, and a user erasure finds no person's name in one.
 - **`memory.promote` refuses a definition whose term or alias** is already another
   definition's, governed or lapsed (every live shared row of type `definition`), on every
   promotion path, read from the namespace's definition rows within the term leg's bound
@@ -209,13 +213,13 @@ fields, which the SDKs and the MCP schema carry.
 **What it reads.** The addressed namespace's live `loom.shared` rows of type `definition`
 under a `definition/` key, from that namespace only, whatever `namespace_scope` fans out
 over. It serves no definition whose source is labelled `medium` or `high` (the read-time
-check above). Its read is bounded by a setting; past the bound (`term_leg` `capped`, which
-also keeps a `memory.search` from recording a miss, and which `memory.definitions.list`
-reports for a namespace over the bound), the most recently promoted definitions (by
-`promoted_at`) are read. It runs concurrently with the other legs under its own time
-bound, which never shortens theirs; a leg past its bound adds nothing. Its latency is
-measured against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in
-the pull request that adds it.
+check above). Its read is bounded by `memory_term_leg_max_definitions`; past the bound
+(`term_leg` `capped`, which also keeps a `memory.search` from recording a miss, and which
+`memory.definitions.list` reports for a namespace over the bound), the most recently
+promoted definitions (by `promoted_at`) are read. It runs concurrently with the other legs
+under its own time bound (`memory_term_leg_timeout_ms`), which never shortens theirs; a
+leg past its bound adds nothing. Its latency is measured against the op's budget
+(`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull request that adds it.
 
 **Matching.** A term or alias matches where it appears in the query with no character next
 to it that continues its edge:
@@ -474,16 +478,18 @@ askers. The threshold is as strong as the principals behind it:
 the latest ask, so the cut is the same for the same questions. It merges groups whose
 vectors are at least `knowledge_gaps_merge_similarity` alike, counting a merged gap's
 askers as the union of the distinct askers each group's query returns (`groupUniqArray`,
-capped at a setting's number per group, beyond which a gap's count reads as the cap), held
-in memory for the pass and never stored. It writes the result as a new build of the
-namespace in `loom.knowledge_gaps`:
+capped at `knowledge_gaps_max_askers_per_group` per group, beyond which a gap's count
+reads as the cap), held in memory for the pass and never stored. It writes the result as a
+new build of the namespace in `loom.knowledge_gaps`:
 
-| Column            | Meaning                                                         |
-| ----------------- | --------------------------------------------------------------- |
-| `gap_id`          | A hash of the namespace and the gap's most asked query.         |
-| `head`, `samples` | The most asked normalised query, and the others merged into it. |
-| `askers`, `asks`  | How many distinct askers, and how many times.                   |
-| `last_at`         | The day it was last asked.                                      |
+| Column              | Meaning                                                                     |
+| ------------------- | --------------------------------------------------------------------------- |
+| `org`, `namespace`  | The namespace the misses were recorded under (no user: a gap is counts).    |
+| `build`, `built_at` | The pass that wrote it; a row with an empty `gap_id` is the build's marker. |
+| `gap_id`            | A hash of the namespace and the gap's most asked query.                     |
+| `head`, `samples`   | The most asked normalised query, and the others merged into it.             |
+| `askers`, `asks`    | How many distinct askers, and how many times.                               |
+| `last_at`           | The day it was last asked.                                                  |
 
 **Builds.** Every build writes its gaps, then a marker row, and readers take the latest
 build that has its marker, so a build with no gap left, or one whose gaps an erasure
@@ -531,7 +537,8 @@ action per gap.
 ## Definitions from query history
 
 A query-history source reads `system.query_log` from a team's ClickHouse into one
-namespace's learnings queue. It is registered on that namespace by its admin, in a
+namespace's learnings queue. It is off by default (`knowledge_query_history_enabled`): the
+operator opts in, as for gaps. It is registered on that namespace by its admin, in a
 registration of its own: not a document source, whose config never holds a host and which
 writes documents, and not a tracker source, which needs the record contract and the
 tracker org. It reuses the tracker's connection checks: the host vetting, a read-only user
@@ -557,10 +564,11 @@ tables. Each turn:
    literals replaced (`normalizeQuery`), so no user's literal values reach the LLM or the
    draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
-3. asks the LLM to draft a metric definition for at most a setting's number of groups, and
-   queues each (`source_kind = 'query_history'`): the metric's name is the `term`, its
-   meaning the `body`, the normalised SQL and the tables and columns it reads go in
-   `rests_on`, and the registration's team is the `owner`.
+3. asks the LLM to draft a metric definition for at most
+   `knowledge_query_history_max_drafts` groups, and queues each (`source_kind =
+'query_history'`): the metric's name is the `term`, its meaning the `body`, the
+   normalised SQL and the tables and columns it reads go in `rests_on`, and the
+   registration's team is the `owner`.
 
 `clusterAllReplicas` is a table function: a cluster registration accepts the `REMOTE`
 grant it needs beside the tracker's read-only list, which already allows `CREATE TEMPORARY
@@ -638,8 +646,8 @@ govern it.
   tombstone, demote, redact, namespace erasure, history, audit. A user erasure tombstones
   a shared row whose provenance names the user (`shared.tombstone`); a definition promoted
   from the namespace-wide row names none, so erasing the admin who promoted it leaves it
-  governed, and an admin's name in its `owner`, like `promoted_by` on the shared row
-  today, stays until an admin edits the definition.
+  governed; its `owner` names a group, never a person, and `promoted_by` on the shared row
+  names the admin as an audit actor does, as it does today.
 - A redact of a past version of a definition reaches that version, the shared row holding
   its text, and the `knowledge_gap` and `query_history` candidates reviewed to that text
   or named by its `candidate-id:` tag (the change above), not the gap it came from, which
@@ -663,11 +671,12 @@ govern it.
   rows the next daily pass rebuilds without the user's misses; the cost is a day without
   gaps there). A gap names no user, so the census counts the table in the namespace scope
   only; the pass's fence keeps a raced build from coming back.
-- A query-history registration holds a host and a sealed credential but no memory content:
-  a namespace step deletes it, and its table is listed under that step in
-  `STEP_ONLY_TABLES`, a step without a census row. `loom.qa_sources`, which holds the same
-  kind of row, is in `NO_MEMORY_CONTENT` because no erasure step deletes it; a table a
-  step deletes is listed under its step, and the two lists stay disjoint
+- A query-history registration (`loom.query_history_sources`) holds a host and a sealed
+  credential but no memory content: a namespace step (`query_history_sources.delete`)
+  deletes it, and its table is listed under that step in `STEP_ONLY_TABLES`, a step
+  without a census row. `loom.qa_sources`, which holds the same kind of row, is in
+  `NO_MEMORY_CONTENT` because no erasure step deletes it; a table a step deletes is listed
+  under its step, and the two lists stay disjoint
   (`tests/unit/test_every_table_is_classified.py`).
 - A direct `memory.promote` writes its audit row; a promotion through `learnings.review`
   writes the review's row, which names the candidate, and the implementing pull request
@@ -682,8 +691,8 @@ govern it.
   per hop of a service account's creator chain, a directory read for an email-shaped
   subject, and a read of the erasure ledger before and after the insert, with the
   spellings of any user erasure it finds (a delete only when an erasure began in between).
-  The recordings in flight are bounded by a setting; past it a miss is dropped and
-  counted. A hit records nothing.
+  The recordings in flight are bounded by `knowledge_gaps_max_in_flight`; past it a miss
+  is dropped and counted. A hit records nothing.
 - The gaps worker's grouping and its threshold run in ClickHouse (`GROUP BY` the
   normalised query, `HAVING` enough distinct askers), so at most
   `knowledge_gaps_max_groups` groups leave the store, and it embeds at most that many
@@ -695,8 +704,9 @@ govern it.
   resolver reads it: over the cap, or with the cap unreadable, a draft is refused and a
   pass or turn ends early, and the next one resumes.
 - A query-history turn's read of `system.query_log` is bounded by its own window (at most
-  a setting's number of days) and time limit, separate from the tracker's live-read
-  budget, and a timeout counts against the source's breaker like any tracker read.
+  `knowledge_query_history_window_days`) and time limit, separate from the tracker's
+  live-read budget, and a timeout counts against the source's breaker like any tracker
+  read.
 - The term leg is one bounded read of the namespace's shared definitions per search, and
   one read of the matched definitions' source rows.
 - A definition's promotion reads the namespace's definition rows, within the term leg's
@@ -751,13 +761,14 @@ namespace erasure do not reach the shared row's text, as today: one run during t
 or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
-`knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
-`loom.knowledge_gaps`, every query-history registration, and every `knowledge_gap` and
-`query_history` row of `loom.learnings_queue` whatever its status, as the assistant-turn
-learnings rule does for assistant-turn rules; a team re-registers its source once N serves
-again. The first N-1 replica to serve closes the gate, so no op or turn of this design
-writes after it; the operator runs the same delete once more then, for what N wrote in
-between.
+`knowledge_gaps_enabled` and `knowledge_query_history_enabled` off, which stop recording,
+the gaps pass, drafts and query-history turns, and deletes the rows of
+`loom.search_misses` and `loom.knowledge_gaps`, every query-history registration, and
+every `knowledge_gap` and `query_history` row of `loom.learnings_queue` whatever its
+status, as the assistant-turn learnings rule does for assistant-turn rules; a team
+re-registers its source once N serves again. The first N-1 replica to serve closes the
+gate, so no op or turn of this design writes after it; the operator runs the same delete
+once more then, for what N wrote in between.
 
 ## Invariants
 
