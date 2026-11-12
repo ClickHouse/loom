@@ -108,7 +108,8 @@ No two governed definitions share a term or an alias, compared case-folded (the 
 key's hash reads), so `SAT` and `Sat` are one name: promoting a definition whose term or
 alias is already another governed definition's is refused, by `memory.promote` itself (the
 change above). Should two shared rows still match one name (two promotions racing, or one
-promoted through a build without the check), the term leg serves the one promoted last.
+promoted through a build without the check), the term leg serves the one promoted last, by
+the shared row's `version` (its whole-second `promoted_at` can tie).
 
 A caller may already write rows of type `definition`; they are governed only once an admin
 promotes them, but their write-time verdicts change with this design: `definition` joins
@@ -149,17 +150,17 @@ serves no namespace-wide row ([read scope inside a
 namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
 governed definitions through this leg only. The leg runs only on a search's first page
 (the governed keys it served there stay out of every later page of that search), and is
-off when a field asks for other rows (any `memory_type`, the filter's values not including
-`definition`; `tags`; `category`; an explicit `agent`, `run_id` or `session_ids`; `as_of`;
-a body `user_id` or `session_id` under a whole-namespace read; `entity_filter`;
-`min_body_chars`). A `user_id` or `session_id` the read scope pins, `scope`,
-`exclude_keys` and `min_similarity` keep it on; it drops any key in `exclude_keys`. It
-serves no definition whose source is `sensitivity = 'high'` (the read-time check above).
-Its read is bounded by a setting; past the bound, the most recently promoted definitions
-are read and the response says the leg was cut. It runs beside the others under the same
-time budget, and its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
-`server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
-output field: the SDKs and the MCP schema carry it.
+off when a field asks for other rows (any `memory_type`; `tags`; `category`; an explicit
+`agent`, `run_id` or `session_ids`; `as_of`; a body `user_id` or `session_id` under a
+whole-namespace read; `entity_filter`; `min_body_chars`). A `user_id` or `session_id` the
+read scope pins, `scope`, `exclude_keys` and `min_similarity` keep it on; it drops any key
+in `exclude_keys`. It serves no definition whose source is `sensitivity = 'high'` (the
+read-time check above). Its read is bounded by a setting; past the bound, the most
+recently promoted definitions (by `version`) are read and the response says the leg was
+cut. It runs beside the others under the same time budget, and its latency is measured
+against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
+request that adds it. `governed` is an added output field: the SDKs and the MCP schema
+carry it.
 
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
@@ -220,8 +221,9 @@ token or service account ([tokens and grants](../guides/tokens-and-grants.md)); 
 a service account's token minted without the claim, the first subject that is not a
 service account in its creator chain as the registry records it (`created_by` and its
 lineage, `server/auth/service_accounts.py`), and no miss when the chain has none; else the
-token's subject. An agent of a machine trust (`sa:<trust>:<agent>`) stands for no person
-and records no miss. Tokens a person mints for themselves therefore count as that person.
+token's subject. An agent of a machine trust (`sa:<trust>:<agent>`) and an agent sign-up's
+service account (whose `created_by` names a namespace, not a person) stand for no person
+and record no miss. Tokens a person mints for themselves therefore count as that person.
 An asker that cannot be resolved (the registry unreadable, or a service account with no
 creator) records no miss: an unknown principal is never counted as a separate person. The
 asker is stored in the form a user erasure names: an end user as their id, without the
@@ -256,12 +258,12 @@ value for the deployment) is dropped before anything else, so every query a gap 
 asked in that form by at least that many askers. The threshold is as strong as the
 principals behind it: it does not bind whoever holds the signing key (`loom mint-token`
 mints any subject), an end-user issuer or a trusted caller (each names its own users), or
-a deployment where principals can be self-created (`LOOM_SELF_SIGNUP=open`, unclaimed
-agent sign-ups), where an admin could ask from accounts of their own. There it limits what
-one ordinary caller reveals, not what an admin can learn. On any deployment, an admin who
-compares two daily builds can tell that one more asker reached a query that day, and in a
-small namespace that may say who; the threshold bounds what one build shows, not what a
-series of builds implies. The worker embeds the remaining groups' queries (at most
+a deployment where principals can be self-created (`LOOM_SELF_SIGNUP=open`), where an
+admin could ask from accounts of their own. There it limits what one ordinary caller
+reveals, not what an admin can learn. On any deployment, an admin who compares two daily
+builds can tell that one more asker reached a query that day, and in a small namespace
+that may say who; the threshold bounds what one build shows, not what a series of builds
+implies. The worker embeds the remaining groups' queries (at most
 `knowledge_gaps_max_groups`), merges groups whose vectors are at least
 `knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
 namespace in `loom.knowledge_gaps`:
@@ -372,9 +374,9 @@ which the admin restores from the row's history or promotes.
   came from, which holds only normalised queries enough askers asked and expires after 7
   days.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
-  `user_id` is the user (a token subject spelled as the user's id goes too, which costs
-  only a trace row), and a census row; an end user's asker is stored as their id, the form
-  the erasure names.
+  `user_id` is the user, the named subject folded onto its one spelling first as the asker
+  was (a token subject spelled as the user's id goes too, which costs only a trace row),
+  and a census row; an end user's asker is stored as their id, the form the erasure names.
 - `loom.knowledge_gaps` keeps counts, not askers, so no op or page names who asked: a
   namespace step, and a user step that reads the namespaces the user has misses in, before
   the miss step deletes them, and deletes those namespaces' builds (derived rows the next
@@ -398,10 +400,11 @@ which the admin restores from the row's history or promotes.
   `knowledge_gaps_max_groups` groups leave the store, and it embeds at most that many
   texts per namespace per day.
 - `knowledge.gaps.draft` and a query-history turn make one LLM call per draft, a turn at
-  most its setting's number. They and the gaps worker's embeddings run inside the
-  namespace's daily cost cap (`server/observability/budget.py`), read fail-closed
-  (`fail_open=False`) as the conflict resolver reads it: over the cap, or with the cap
-  unreadable, a draft is refused and a pass or turn ends early, and the next one resumes.
+  most its setting's number. They and the gaps worker's embeddings honour the org's switch
+  for model calls and run inside the namespace's daily cost cap
+  (`server/observability/budget.py`), read fail-closed (`fail_open=False`) as the conflict
+  resolver reads it: over the cap, or with the cap unreadable, a draft is refused and a
+  pass or turn ends early, and the next one resumes.
 - A query-history turn's read of `system.query_log` is bounded by its own window (at most
   a setting's number of days) and time limit, separate from the tracker's live-read
   budget, and a timeout counts against the source's breaker like any tracker read.
