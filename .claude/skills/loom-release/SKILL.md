@@ -79,7 +79,7 @@ tag=vX.Y.Z   # vX.Y.Z-rc.N for a candidate
 # Once the run shows waiting (after github-release): the GET then lists pypi and npm, and mcp-registry for a final.
 dispatch=$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event workflow_dispatch --status waiting -L 1 --json databaseId --jq '.[0].databaseId // empty')
 gh api "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag is waiting yet}/pending_deployments" --jq '.[] | [.environment.id, .environment.name, .current_user_can_approve] | @tsv'   # true: this gh account can approve
-ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
+ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag is waiting yet}/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
 gh api -X POST "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag is waiting yet}/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"   # the owner's go-ahead first
 ```
 
