@@ -77,6 +77,7 @@ async def _splice(
             last_active[0] = time.monotonic()
             writer.write(data)
             await writer.drain()
+            last_active[0] = time.monotonic()  # a slow reader is not a silent one
         if writer.can_write_eof():
             writer.write_eof()
     except (ConnectionError, OSError):

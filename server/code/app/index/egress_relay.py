@@ -23,7 +23,7 @@ import time
 from collections.abc import Callable
 
 
-def _pipe(src: socket.socket, dst: socket.socket, done: threading.Event) -> None:
+def _to_client(src: socket.socket, dst: socket.socket, done: threading.Event) -> None:
     """Proxy to client, to the proxy's EOF."""
     try:
         while data := src.recv(65536):
@@ -36,21 +36,19 @@ def _pipe(src: socket.socket, dst: socket.socket, done: threading.Event) -> None
             dst.shutdown(socket.SHUT_WR)
 
 
-def _forward(src: socket.socket, dst: socket.socket, back_done: threading.Event) -> None:
-    """Client to proxy, to the client's EOF. Once the proxy's side has ended, what
-    the client still sends is dropped, and a second without a byte ends it: a client
-    may keep a finished connection open, and the bridge would hold its slot."""
+def _to_proxy(src: socket.socket, dst: socket.socket, proxy_done: threading.Event) -> None:
+    """Client to proxy, to the client's EOF, or to a second without a byte once the
+    proxy's side has ended: a client may keep a finished connection open."""
     try:
         while True:
             if not select.select([src], [], [], 1.0)[0]:
-                if back_done.is_set():
+                if proxy_done.is_set():
                     return
                 continue
             data = src.recv(65536)
             if not data:
                 return
-            if not back_done.is_set():
-                dst.sendall(data)
+            dst.sendall(data)  # fails once the proxy has closed
     except OSError:
         pass
     finally:
@@ -74,14 +72,12 @@ def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
             upstream.connect(path)
-            back_done = threading.Event()
-            back = _start(_pipe, upstream, conn, back_done)
-            _forward(conn, upstream, back_done)
+            proxy_done = threading.Event()
+            back = _start(_to_client, upstream, conn, proxy_done)
+            _to_proxy(conn, upstream, proxy_done)
             back.join()
-            # Hold the slot until the proxy has finished with the tunnel, or the next
-            # connection could reach a proxy that is still full. A client that reset
-            # mid-download leaves the rest of it read here, as the proxy keeps a tunnel
-            # that still moves bytes.
+            # hold the slot until the proxy closes, or the next connection meets a full
+            # proxy; a client that reset leaves the rest of its download to be read here
             while upstream.recv(65536):
                 pass
     except OSError:
@@ -152,10 +148,8 @@ def _copy_stdin(dst: socket.socket) -> None:
     except OSError:
         pass
     finally:
-        try:
+        with contextlib.suppress(OSError):
             dst.shutdown(socket.SHUT_WR)
-        except OSError:
-            pass
 
 
 def main(args: list[str]) -> int:

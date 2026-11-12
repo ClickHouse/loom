@@ -207,6 +207,32 @@ def test_a_client_left_open_after_the_proxy_closed_frees_its_slot(sock_dir: Path
         second.close()
 
 
+def test_a_client_still_sending_after_the_proxy_closed_frees_its_slot(sock_dir: Path) -> None:
+    with _relay(sock_dir, 1) as (port, upstream):
+        first = socket.create_connection(("127.0.0.1", port), timeout=5)
+        assert upstream.arrived.acquire(timeout=5)
+        upstream.held[0].close()  # the proxy ends the tunnel
+        assert first.recv(1) == b""
+        stop = threading.Event()
+
+        def keep_sending() -> None:
+            with contextlib.suppress(OSError):  # the bridge may reset it once it is gone
+                while not stop.is_set():
+                    first.sendall(b"x")
+                    time.sleep(0.05)
+
+        sender = threading.Thread(target=keep_sending)
+        sender.start()
+        try:
+            second = socket.create_connection(("127.0.0.1", port))
+            assert upstream.arrived.acquire(timeout=5)
+            second.close()
+        finally:
+            stop.set()
+            sender.join()
+            first.close()
+
+
 def test_an_upstream_socket_that_cannot_open_costs_its_connection_only(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
