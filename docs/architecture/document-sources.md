@@ -402,14 +402,14 @@ first looks for namespaces of the reserved form, registered or holding rows, and
 to run, naming them, if it finds any.
 
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
-check below, while the namespace's source list holds a mirrored source (a fact that list
-shows every viewer); a mirror with no active mirrored source in that list runs no leg.
-Every other read path reads the namespace and finds nothing of the mirror. So a new op,
-a context-pack leg or an export that nobody taught the check shows no mirrored document;
-an N-1 replica has no mirror leg, and the rollback procedure keeps it off a mirror that
-holds rows. A permission column on `loom.documents` read by every path would make the
-opposite the default; [sharing](sharing.md#alternatives-not-taken) rejected that for
-collections, since one missed path leaks.
+check below, while the namespace's source list holds an active mirrored source (a fact
+that list shows every viewer); a mirror with no active mirrored source in that list runs
+no leg. Every other read path reads the namespace and finds nothing of the mirror. So a
+new op, a context-pack leg or an export that nobody taught the check shows no mirrored
+document; an N-1 replica has no mirror leg, and the rollback procedure keeps it off a
+mirror that holds rows. A permission column on `loom.documents` read by every path would
+make the opposite the default; [sharing](sharing.md#alternatives-not-taken) rejected
+that for collections, since one missed path leaks.
 
 - **Legs with the check:** `knowledge.search`, `get`, `outline`, `list`, `download`,
   `synthesize`, `knowledge.inspect` (titles), `knowledge.source.inspect` (a mirrored
@@ -432,8 +432,8 @@ collections, since one missed path leaks.
   tell existence. The costs are accepted:
   - `knowledge.reads` names no address a marked request read, a namespace document's
     included;
-  - every knowledge read there drops out of `cost.summary` by `user_id`, `operation` and
-    `agent`;
+  - every marked knowledge read drops out of `cost.summary` by `user_id`, `operation`
+    and `agent`;
   - a marked request writes no recall credit or exposure row, so the usage signals
     (`recall_count`, `last_recalled_at`, the usage totals) leave out every marked read;
   - the assistant's support check reads a marked call as unknown, so a memory it cites
@@ -441,8 +441,8 @@ collections, since one missed path leaks.
     `unsupported`;
   - the assistant's step list cannot say a marked tool call failed;
   - every session whose request runs a mirror leg is flagged, and a prompt-recall
-    `context.pack` runs one, so while a namespace lists a mirrored source every Loom
-    hook of a session over it stops after its first recall, reads included, and a
+    `context.pack` runs one, so while a namespace lists an active mirrored source every
+    Loom hook of a session over it stops after its first recall, reads included, and a
     dashboard view of a flagged answer sends no `ui.vitals`
     ([the session rule](#the-session-rule)).
 
@@ -451,10 +451,10 @@ collections, since one missed path leaks.
   with the caller (the dashboard's browser storage, or the message list an SDK or HTTP
   caller sends).
 
-- **The flag.** The answer of every marked request carries `mirrored: true` as its
-  first field or line, whether or not anything was admitted, for the same reason as the
-  mark, and each admitted item carries it again, so a truncated copy still carries it.
-  Every assistant answer on a namespace with a mirrored source (the `assistant.ask` op
+- **The flag.** The answer of every marked request carries `mirrored: true` as its first
+  field or line, whether or not anything was admitted, for the same reason as the mark,
+  and each admitted item carries it again, so a truncated copy still carries it. Every
+  assistant answer on a namespace with an active mirrored source (the `assistant.ask` op
   and the chat route, `POST /v1/assistant/chat/completions`, which carries the flag in
   its stream's first event or its response's first field) is marked and flagged, since
   its answer is model text written from tool results and need not carry the field the
@@ -1099,15 +1099,16 @@ Each implementing pull request lists its own; these pin the model:
       reads-as claim reading as nobody.
     - A caller of `assistant.ask`, `loom_assistant_ask` or the chat route that does not
       declare the flag getting no mirrored text; an `assistant.ask` and a chat-route
-      answer on a namespace with a mirrored source and no admitted item answering
-      `mirrored: true`, the chat route in its stream's first event and, unstreamed, in
-      its response's first field; a plugin session flagged once its
+      answer on a namespace with an active mirrored source and no admitted item
+      answering `mirrored: true`, the chat route in its stream's first event and,
+      unstreamed, in its response's first field; a plugin session flagged once its
       `loom_assistant_ask` answer carries the flag; a marked `assistant.ask` and
       chat-route row folded and masked like a marked tool-call row.
-    - A `knowledge.search`, `context.pack` and `memory.ask` on a namespace with a
-      mirrored source and no admitted item answering `mirrored: true` as the first
-      field; the same reads after the last mirrored source is removed answering no flag
-      and running no mirror leg.
+    - A `knowledge.search`, `context.pack` and `memory.ask` on a namespace with an
+      active mirrored source and no admitted item answering `mirrored: true` as the
+      first field; the same reads after the last mirrored source is removed, and while
+      the only one listed is inactive (its owner gone, its cleanup pending), answering
+      no flag and running no mirror leg.
     - A marked `memory.ask` whose candidates are all hidden making the same model and
       embedding calls as one with no candidates.
     - A caller admitted to nothing seeing the same `cost.budget_status` change over 10
@@ -1175,8 +1176,8 @@ Each implementing pull request lists its own; these pin the model:
     - A later turn of a session that saw `mirrored: true` not captured, and a client
       that does not declare the flag answered nothing by a mirror leg.
     - A capture hook recording no turn whose answer carries `mirrored: true`.
-    - A plugin session over a collection with a mirrored source and no admitted hit
-      flagged all the same, its next turn not captured.
+    - A plugin session over a collection with an active mirrored source and no admitted
+      hit flagged all the same, its next turn not captured.
     - `loom` CLI output holding an admitted mirrored item, and a subagent's mirror read,
       not captured into the parent session.
     - A `loom` CLI run through a shell and a prompt-recall injection carrying
