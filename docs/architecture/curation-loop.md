@@ -72,7 +72,8 @@ check's verdict on each and the reason a lapsed one lapsed (its text changed, it
 promoted from a row that is not the namespace-wide one, or no longer `active`). A changed
 text is promoted again; a source that is no longer `active` is restored (Undo in
 `memory.auto_retirements`, whose reasons include `same_key_newest_wins` for a later write
-of the same key under `newest_wins`) or cleared (`conflicts.resolve` for a `conflicted`
+of the same key under `newest_wins`, for a retirement of the last 30 days that op lists,
+and `memory.restore` for an older one) or cleared (`conflicts.resolve` for a `conflicted`
 mark, `memory.dedup_resolve` for a `duplicate` one), which governs it again when its text
 is the approved one, and is promoted again otherwise.
 
@@ -208,10 +209,11 @@ definition whose source is `sensitivity = 'high'` (the read-time check above). I
 bounded by a setting; past the bound, the most recently promoted definitions (by
 `version`) are read. It runs concurrently with the other legs under its own time bound,
 which never shortens theirs (a leg past its bound adds nothing); an added output field,
-`term_leg` (`complete`, `capped` or `timed_out`), says which, and its latency is measured
-against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
-request that adds it. `governed` is an added output field: the SDKs and the MCP schema
-carry it.
+`term_leg` (`complete`, `capped` or `timed_out`, and `off` when the leg did not run: a
+page handle, a field that turns it off, or a namespace with no definition), says which; a
+miss reads `off` as finished, and its latency is measured against the op's budget
+(`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull request that adds it.
+`governed` is an added output field: the SDKs and the MCP schema carry it.
 
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
@@ -245,13 +247,15 @@ column: the request's capture level (`current_capture_level()` in
 `capture_generation_io`, else the operator's `langfuse_capture_io_level`, and narrows to
 the most restrictive namespace a fan-out reads). A miss is recorded only when that level
 is not `off`; an unreadable consent reads as `off`. A deployment that wants gaps therefore
-turns on both: gaps, and capture at `query` or `all`. No miss is recorded while a replica
-below N serves (the rollout gate below). A gap needs several distinct askers, so a
-deployment that has one identity for every caller (`effective_identity_provider()` is
-`single-user`, set explicitly or inferred when `auth_required` is off and no provider is
-set) records no misses, gaps on or off, and a request without a token records no miss. A
-miss is a search that found nothing a caller could use, recorded by the op the caller
-invoked, never by a search another op runs on its behalf:
+turns on both: gaps, and capture at `query` or `all` for the namespace (its
+`capture_generation_io`, which wins, else `langfuse_capture_io_level`). No miss is
+recorded while a replica below N serves (the rollout gate below). A gap needs several
+distinct askers, so a deployment that has one identity for every caller
+(`effective_identity_provider()` is `single-user`, set explicitly or inferred when
+`auth_required` is off and no provider is set) records no misses, gaps on or off, and a
+request without a token records no miss. A miss is a search that found nothing a caller
+could use, recorded by the op the caller invoked, never by a search another op runs on its
+behalf:
 
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
   and served no governed definition, when it read the namespace-wide rows under a read
@@ -518,7 +522,10 @@ govern it.
   only; the pass's fence keeps a raced build from coming back.
 - A query-history registration holds a host and a sealed credential but no memory content:
   a namespace step deletes it, and its table is listed under that step in
-  `STEP_ONLY_TABLES`, a step without a census row.
+  `STEP_ONLY_TABLES`, a step without a census row. `loom.qa_sources`, which holds the same
+  kind of row, is in `NO_MEMORY_CONTENT` because no erasure step deletes it; a table a
+  step deletes is listed under its step, and the two lists stay disjoint
+  (`tests/unit/test_every_table_is_classified.py`).
 - A direct `memory.promote` writes its audit row; a promotion through `learnings.review`
   writes the review's row, which names the candidate, and the implementing pull request
   adds the promotion's own row there. `knowledge.gaps.draft` writes one naming the gap.
@@ -576,17 +583,18 @@ from the rollout is not reused past it (until then such an answer lives at most
 key-identified, can merge, supersede or retire one definition's source while writing
 another; the rows it retired are listed by `memory.auto_retirements` (reasons
 `conflict_resolver`, `newest_wins_contradiction`, `value_update` and
-`same_key_newest_wins`), restored with its Undo, and promoted again; a source it marked
-`conflicted` is cleared with `conflicts.resolve`, one it marked `duplicate` with
-`memory.dedup_resolve`, and promoted again; a write it merged was never stored and is
-written again; a source an N-1 `memory.consolidate` tombstoned is brought back with
-`memory.restore` and promoted again. An N-1 relabel of a definition's source to `high`
-leaves its shared copy's embedding served by the ordinary legs: once N serves, the
-operator runs the retirement N's relabel performs (the shared embedding retired, the row
-kept) over every definition the admin read lists as lapsed for `high`, an operator step
-the implementing pull request's rollout section names, so a relabel back governs it again
-as on N. N-1's redact and namespace erasure do not reach the shared row's text, as today:
-one run during the rollout or after a rollback is run again once N serves.
+`same_key_newest_wins`), restored with its Undo (or `memory.restore` past its 30-day
+window), and promoted again; a source it marked `conflicted` is cleared with
+`conflicts.resolve`, one it marked `duplicate` with `memory.dedup_resolve`, and promoted
+again; a write it merged was never stored and is written again; a source an N-1
+`memory.consolidate` tombstoned is brought back with `memory.restore` and promoted again.
+An N-1 relabel of a definition's source to `high` leaves its shared copy's embedding
+served by the ordinary legs: once N serves, the operator runs the retirement N's relabel
+performs (the shared embedding retired, the row kept) over every definition the admin read
+lists as lapsed for `high`, an operator step the implementing pull request's rollout
+section names, so a relabel back governs it again as on N. N-1's redact and namespace
+erasure do not reach the shared row's text, as today: one run during the rollout or after
+a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
