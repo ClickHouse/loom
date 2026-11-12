@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 PUBLIC_COPY_FILES = (
     "README.md",
+    "README.zh-CN.md",
     "docs/getting-started/quickstart.md",
     "docs/concepts/memory.md",
 )
@@ -177,6 +178,7 @@ SCAN_DIRS = (
 )
 ROOT_FILES = (
     "README.md",
+    "README.zh-CN.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
     "CLAUDE.md",
