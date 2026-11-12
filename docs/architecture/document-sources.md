@@ -122,8 +122,11 @@ One document per address per namespace, as today, owned by one source: the sourc
 Only the owner rewrites the document when its file changes and retires it on positive
 evidence (today's retirement rule), and a document another writer (a person, an agent)
 wrote is never overwritten or retired by any source, as today. A mirrored document also
-carries `source-id:<id>`, the id of the source that wrote it, which the cleanup of a
-stopped mirrored source retires by ([below](#who-the-store-says-may-read)).
+carries `source-id:<id>`, the id of the source that wrote it, and in a mirror that tag,
+not the name, decides ownership: a later source of the same name owns none of an earlier
+one's documents, and the cleanup of a stopped mirrored source retires by it
+([below](#who-the-store-says-may-read)). Only N writes a mirror, so every mirror
+document carries the tag.
 
 A second source that lists a file at an address where a document is counts it `skipped`,
 as today, and fetches no content. No source reads whether another is live: an address is
@@ -345,9 +348,9 @@ document in the namespace stops nothing. A `namespace` source's documents go as 
 builds run retires them by tag in the namespace. The retention pass reads
 `loom.knowledge_mirrors` and applies the namespace's `retention_days` to its mirror.
 `count_documents`, the name checks of `add` and the sync's retirement read the mirror
-for a mirrored source. A mirrored document is never kept, so `add` of a mirrored source
-never answers `SOURCE_DOCUMENTS_KEPT`; while an open cleanup row names the same
-namespace and name, it answers `SOURCE_DELETE_PENDING`.
+for a mirrored source. A mirrored document is never kept, and ownership in a mirror goes
+by source id, so `add` of a mirrored source answers neither `SOURCE_DOCUMENTS_KEPT` nor
+`SOURCE_DELETE_PENDING` for an earlier source's mirror documents.
 
 A namespace source and a mirrored source that reach the same file own two documents, one
 in the namespace and one in its mirror. The namespace copy is readable by every reader,
@@ -396,9 +399,8 @@ it: an open row of `loom.knowledge_source_cleanups`, written by every stop N mak
 by the anti-join below. Every stop writes it under the source lease, with the source's
 id, name, namespace and mirror. Because the row is keyed by the source's id, a source
 added later under the same name, which replaces the stopped row in the registry, cannot
-hide it, and `add` refuses that name while the cleanup is open
-([above](#where-a-mirrored-document-lives)). A `namespace` source writes no readers,
-listing or group-members row and needs no cleanup row.
+hide it. A `namespace` source writes no readers, listing or group-members row and needs
+no cleanup row.
 
 A pass cleans at most 100 open cleanup rows, oldest first, each under that source's own
 turn lease (`knowledge-source-sync:<org>/<namespace>/<name>`, as today's retirement of a
@@ -412,13 +414,17 @@ mirror's documents carrying its `source-id:<id>` tag, re-checking that tag on ea
 document before its retirement, so a document another source wrote is never retired.
 Retiring a mirrored document writes its access row `deleted` at the retirement's time;
 an access row from a read older than the retirement loses to it and waits for the next
-read, so the check fails closed meanwhile. The cleanup then writes `deleted` every
-access row of the mirror at an address with no live document, which removes a list the
-stopped source read for a file it never fetched; a live source that lists the address
-writes the row again at its next read, as every turn does. It then marks the cleanup
-done; a run cut short is run again from its open row and finds the documents still
-tagged. So no row of a stopped source can admit anyone, and none names an account in any
-form other than its pseudonym, even for a source that never reached a file.
+read, so the check fails closed meanwhile. It then marks the cleanup done; a run cut
+short is run again from its open row and finds the documents still tagged. Every pass
+also sweeps each mirror once (one read per mirror; mirrors are few): an access row whose
+address has no live document and whose `read_at` is older than the stale bound is
+written `deleted` at the sweep's time. That removes a list read for a file no document
+holds, whether its source stopped (an N-1 stop of a `shared` mirrored source included,
+which leaves no other row) or its content was never fetched; a row a turn writes after
+the sweep from an older read loses to it, and a live source that lists the address
+writes the row again at its next read, as every turn does. So no row of a stopped source
+can admit anyone, and none names an account in any form other than its pseudonym, even
+for a source that never reached a file.
 
 The anti-join finds what no stop of N recorded: a mirrored source N-1 stopped (its row
 inactive, with its `source_id`), and one whose name an N-1 `add` has since reused (its
@@ -684,9 +690,10 @@ the Postgres authority, deliveries, originals, the blob sweep) applies unchanged
   erased with it. `loom.knowledge_document_access` and `loom.knowledge_group_members`
   hold people's emails copied from the store's permission lists and directory, people
   who are not Loom users among them; their rows are written `deleted` with their
-  document or when their source stops or no longer reads that person, and otherwise
-  mirror the store's current lists, so an erasure by `user_id` does not select them; the
-  crawl rows that name an erased person go as the next bullet says.
+  document, by the pass's sweep of a list no document holds, or when their source stops
+  or no longer reads that person, and otherwise mirror the store's current lists, so an
+  erasure by `user_id` does not select them; the crawl rows that name an erased person
+  go as the next bullet says.
 - A user erasure (`user_id`) reaches the connections of every subject that spelling maps
   to (`server/auth/aliases.py` `spellings`, `user:<id>` included). Its step reads those
   connections first, then deletes outright (a `DELETE`, every version, as the user steps
@@ -857,22 +864,25 @@ The redirect URI to register with each store is
   `remove` without `delete_documents` on a `namespace` source keeping its documents,
   also when a same-named mirrored source's cleanup runs; a connected source N-1 removed
   during its first listing leaving no readers row after the anti-join's cleanup; an
-  access row at an address the stopped source never fetched deleted by its cleanup and
-  written again by a live source's next read; a mirrored `add` refused with
-  `SOURCE_DELETE_PENDING` while a same-named cleanup is open; a source whose registry
-  row a lagging replica does not show yet left alone; a person dropped from a crawl's
-  expansion leaving no readers or listing row; a directory read that fails mid-group, or
-  returns over the cap, dropping nobody; a user erasure leaving no row, of any version,
-  keyed by the person's pseudonyms; `erasure.request` refusing an `acl-` scope for an
-  org admin and a namespace admin and admitting a platform admin; a user erasure leaving
-  no address of the person in `loom.knowledge_sources`, nor a crawl readers or listing
-  row naming them; `erasure.request` and `erasure.export` refusing an `acl-` scope with
-  auth off; the mirror cache after an erasure followed by a new mirrored `add`; a
-  connected `notion` page shown to its owner only; a consent callback without the
-  starting browser's cookie, or in another subject's session, storing nothing; an
-  admin's `update` adding items to someone else's connected source refused; scope
-  refusals on the connect callback and a crawl's probe; today's `check`, `rotate`,
-  `remove` and turn over a row N wrote with `kind` empty.
+  access row at an address no document holds, past the stale bound, deleted by the
+  sweep, also after an N-1 stop of a `shared` mirrored source before its first document,
+  and written again by a live source's next read; a fresh access row for a file awaiting
+  its content phase left by the sweep; a mirrored `add` reusing the name of a stopped
+  mirrored source whose documents are still in the mirror, before the anti-join runs,
+  owning none of them and counting them `skipped`; a source whose registry row a lagging
+  replica does not show yet left alone; a person dropped from a crawl's expansion
+  leaving no readers or listing row; a directory read that fails mid-group, or returns
+  over the cap, dropping nobody; a user erasure leaving no row, of any version, keyed by
+  the person's pseudonyms; `erasure.request` refusing an `acl-` scope for an org admin
+  and a namespace admin and admitting a platform admin; a user erasure leaving no
+  address of the person in `loom.knowledge_sources`, nor a crawl readers or listing row
+  naming them; `erasure.request` and `erasure.export` refusing an `acl-` scope with auth
+  off; the mirror cache after an erasure followed by a new mirrored `add`; a connected
+  `notion` page shown to its owner only; a consent callback without the starting
+  browser's cookie, or in another subject's session, storing nothing; an admin's
+  `update` adding items to someone else's connected source refused; scope refusals on
+  the connect callback and a crawl's probe; today's `check`, `rotate`, `remove` and turn
+  over a row N wrote with `kind` empty.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`, seeds mirrored documents with canary text and reads
   every knowledge read op, `knowledge.reads`, `knowledge.query` and
