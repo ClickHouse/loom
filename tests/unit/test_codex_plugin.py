@@ -267,9 +267,10 @@ def test_the_minimum_server_version_is_no_newer_than_the_server() -> None:
 
 
 def test_plugins_carry_nothing_the_plugin_directory_warns_about() -> None:
-    """The plugin directory's validator warns on a skill's `allowed-tools` and on
-    a manifest field Claude Code does not know (`claude plugin validate
-    --profile directory --strict`)."""
+    """The plugin directory's validator warns on a skill's `allowed-tools`, on a
+    manifest field Claude Code does not know and on a tool matcher for a server
+    the plugin does not ship (`claude plugin validate --profile directory
+    --strict`)."""
     for plugin in (CLAUDE, CODEX):
         for skill in (plugin / "skills").glob("*/SKILL.md"):
             frontmatter = skill.read_text().split("\n---", 1)[0]
