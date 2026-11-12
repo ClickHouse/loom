@@ -23,6 +23,8 @@ from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
+from server.erasure.store.mutations import namespaces_of
+from server.knowledge.app.sources import retire_sources_of
 from server.memory.app.code_links import queue_lease
 from server.workers.registry import DEADLINE_CAP_SECONDS
 
@@ -91,6 +93,7 @@ async def _step_purge_code_index_by_ns(org: str, namespace: _NS) -> int:
 # how long a code-link erasure waits for a linking pass to give up the queue lease: longer
 # than the link worker's pass deadline (a test holds it so)
 _LINK_PASS_WAIT_S = DEADLINE_CAP_SECONDS
+_SOURCE_RETIRE_WAIT_S = 30.0  # not a setting: well inside a request and the recovery pass
 
 
 async def _step_delete_code_links_by_user(org: str, user_id: str) -> int:
@@ -148,6 +151,11 @@ async def _step_retire_personal_collection_by_user(org: str, user_id: str) -> in
     """Under its directory row's claim, which `namespace.delete` holds too."""
     async with account_change(org, personal_name(org, "user:" + user_id)):
         return await principal_steps.retire_personal_collection_by_user(org, user_id)
+
+
+async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
+    """First of all, so no source writes back what the later steps erase."""
+    return await retire_sources_of(org, namespaces_of(namespace), wait_s=_SOURCE_RETIRE_WAIT_S)
 
 
 async def _step_forget_collection_owner_by_user(org: str, user_id: str) -> int:
@@ -298,6 +306,7 @@ USER_STEPS: tuple[UserStep, ...] = (
 # The loom-side steps of a namespace erasure over (org, namespace or list), in
 # saga order. Names as for USER_STEPS.
 NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
+    ("knowledge_sources.retire", _step_retire_knowledge_sources_by_ns),
     ("pg_memory.delete", pg_steps.delete_pg_memory_by_namespace),
     ("pg_knowledge.delete", pg_steps.delete_pg_knowledge_by_namespace),
     ("memory.tombstone", memory_steps.tombstone_memory_by_namespace),

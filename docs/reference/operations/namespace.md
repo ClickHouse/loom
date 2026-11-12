@@ -75,7 +75,7 @@ Withdraw the caller's own pending elevation request.
 
 ## `namespace.delete`
 
-Tombstone a namespace and stop accepting writes against it.
+Tombstone a namespace and stop accepting writes against it; the document sources it retires are named in `sources_retired`, also when `deleted` is false.
 
 `POST /v1/namespace.delete` · MCP `loom_namespace_delete` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -89,6 +89,7 @@ Tombstone a namespace and stop accepting writes against it.
 | `deleted` | `bool` | True if the row went from active=true → false |
 | `namespace` | `str` | The namespace the op reads or writes. |
 | `updated_at` | `datetime` | When the soft-delete was written, or the time of the call when nothing changed. |
+| `sources_retired` | `list[str]` | The document sources this delete retired, also when `deleted` is false. |
 
 ## `namespace.get`
 

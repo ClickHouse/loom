@@ -108,7 +108,7 @@ export const OP_MIN_ROLE = {
   "conversation.update": WRITER,
   "conversation.delete": ADMIN,
   // A repository card's Docs and Sources facets (`canCallOn`): Add a document and Remove,
-  // and every verb on a document source.
+  // and every verb on a document source; the Library's Sources section (`canCall`).
   "knowledge.add": WRITER,
   "knowledge.delete": WRITER,
   "knowledge.source.add": ADMIN,

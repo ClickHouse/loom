@@ -522,6 +522,9 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "grants.revoke": ("loom.namespace_grants",),
     "groups.remove_member": ("loom.principal_groups",),
     "personal.retire": ("loom.namespaces",),
+    # Deactivates the namespace's sources and clears their credentials: configuration,
+    # no memory or document content.
+    "knowledge_sources.retire": ("loom.knowledge_sources",),
     "collections.forget_owner": ("loom.collections", "loom.namespaces"),
     # The org's other cache: its cached query vectors (never their text), deleted
     # org-wide beside the replay bodies at both scopes but not counted, since any
@@ -578,11 +581,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "A tracker source a person registered (host, database, read-only user, "
         "an encrypted password, the tracker namespaces reading it) — deployment configuration "
         "keyed by (org, name), holding no memory or record content; retired by active=false."
-    ),
-    "loom.knowledge_sources": (
-        "A document source a repository's maintainer registered (kind, folder ids, an "
-        "encrypted credential) — deployment configuration keyed by (org, namespace, name), "
-        "holding no memory or document content; retired by active=false."
     ),
     "loom.task_inboxes": (
         "An inbox a namespace admin registered (owner agent, posters, "

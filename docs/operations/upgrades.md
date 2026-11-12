@@ -163,6 +163,56 @@ checkout.
     run per erasure is enough. Ask again, too, each `knowledge.delete` and
     `knowledge.bulk_delete` an older build answered in that window: it removed the
     sources' datasets from `loom.datasets` alone.
+13. Moving to a build that keeps document sources on any namespace, a roll forward
+    after a rollback included: once the newer build serves alone, retire the sources an
+    older build's `namespace.delete`, `collection.delete` or namespace erasure left
+    active ([rolling upgrades](../architecture/rolling-upgrades.md), rule 44). The
+    sources on a deleted namespace:
+
+    ```sql
+    SELECT s.org, s.namespace, s.name
+    FROM (SELECT org, namespace, name FROM loom.knowledge_sources FINAL WHERE active) AS s
+    INNER JOIN (SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active) AS n
+        ON s.org = n.org AND s.namespace = n.namespace
+    ```
+
+    and the sources registered before a namespace erasure completed that it did not
+    retire (one an older build ran, or one an older build added while a newer build's
+    erasure ran):
+
+    ```sql
+    SELECT s.org, s.namespace, s.name, e.id
+    FROM (
+        SELECT org, namespace, name, active, created_at, updated_at
+        FROM loom.knowledge_sources FINAL
+    ) AS s
+    INNER JOIN (
+        SELECT id, org, completed_at,
+               arrayJoin(if(scope_type = 'namespace', [scope_value],
+                            if(JSONType(scope_value) = 'Array',
+                               JSONExtract(scope_value, 'Array(String)'),
+                               JSONExtract(scope_value, 'namespaces', 'Array(String)')))) AS namespace
+        FROM loom.erasure_requests FINAL
+        WHERE scope_type IN ('namespace', 'namespace_list') AND status = 'completed'
+    ) AS e ON s.org = e.org AND s.namespace = e.namespace
+    WHERE s.created_at <= e.completed_at AND (s.active OR s.updated_at > e.completed_at)
+    ```
+
+    For the first query, remove each listed source (`knowledge.source.remove`), or
+    delete its namespace again with the newer build, which retires it. For the second,
+    remove each listed source with `knowledge.source.remove` and
+    `delete_documents=true`, which retires the documents it wrote back (it accepts a
+    source already retired, by a later delete of its namespace for one), and delete with
+    `memory.delete` the decision rows mined from them. A namespace erasure with the
+    newer build does both, but it also erases everything written to the namespace since
+    the first erasure; request it again only for a namespace nobody has written to
+    since. A source registered after the erasure is not listed: the erasure never
+    covered it. The second list is a worklist to act on once: a source removed as above
+    stays listed, since its removal row is newer than the erasure.
+
+    A namespace erasure an older build started and the newer build finished needs
+    nothing here: its final census finds the documents and decisions its source wrote
+    back and reopens their steps, so the saga completes only once they are gone.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in

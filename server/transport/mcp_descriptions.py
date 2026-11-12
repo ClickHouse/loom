@@ -324,7 +324,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "specific namespace's configuration or who runs it."
     ),
     "namespace.delete": (
-        "Tombstone a namespace and stop accepting writes against it. "
+        "Tombstone a namespace and stop accepting writes against it; the document "
+        "sources it retires are named in `sources_retired`, also when `deleted` is false. "
         "DESTRUCTIVE, admin-only. Only call on a clearly-intended delete "
         "request — never as cleanup."
     ),

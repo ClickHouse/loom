@@ -363,6 +363,40 @@ async def test_remove_retires_the_namespaces_document_sources(plane, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_remove_names_a_source_added_between_its_two_retirements(plane, monkeypatch) -> None:
+    """An add that lands after the repository's retirement and before its namespace's
+    delete is retired by the delete, and named too."""
+
+    def _row(name: str) -> dict[str, Any]:
+        return {
+            "org": ORG,
+            "namespace": "code-widgets",
+            "name": name,
+            "kind": "gdrive",
+            "config_json": '{"folder_ids": ["1AbCdEfGhIjKlMnOp"]}',
+            "credential_enc": "sealed",
+            "created_by": "alice@x",
+            "active": True,
+        }
+
+    plain = plane.query_all
+    reads = 0
+
+    async def _query_all(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        nonlocal reads
+        if "FROM loom.knowledge_sources" in sql:
+            reads += 1
+            return [_row("design-decks")] if reads == 1 else [_row("late-add")]
+        return await plain(sql, params)
+
+    monkeypatch.setattr(plane, "query_all", _query_all)
+    out = await admin.handle_code_repo_remove(
+        CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
+    )
+    assert out.sources_deactivated == ["design-decks", "late-add"]
+
+
+@pytest.mark.asyncio
 async def test_a_failed_source_retirement_leaves_the_repository_to_retry(
     plane, monkeypatch
 ) -> None:
@@ -386,10 +420,11 @@ async def test_remove_retires_sources_and_registry_row_under_one_lease(plane) ->
     await admin.handle_code_repo_remove(
         CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
     )
-    # One lease, the one every source write of the namespace takes, held across
-    # both: an add runs wholly before or wholly after the retirement.
-    assert plane.leases == [f"knowledge-source:{ORG}:code-widgets"]
-    assert plane.registry_active_under_lease == [False]
+    # The lease every source write of the namespace takes, held across both
+    # retirements, then again by the namespace delete, which retires any source an
+    # add landed in between.
+    assert plane.leases == [f"knowledge-source:{ORG}:code-widgets"] * 2
+    assert plane.registry_active_under_lease == [False, False]
 
 
 @pytest.mark.asyncio
@@ -420,7 +455,7 @@ async def test_remove_deactivates_the_registry_row_under_the_account_claim(
     await admin.handle_code_repo_remove(
         CodeRepoRemoveInput(org=ORG, namespace="code-widgets", confirm="code-widgets")
     )
-    assert plane.registry_active_under_lease == [False]
+    assert plane.registry_active_under_lease == [False, False]
 
 
 @pytest.mark.asyncio

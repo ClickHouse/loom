@@ -116,7 +116,7 @@ default is `off`) are not listed here.
 | `LOOM_ENTITY_COMMUNITIES_ENABLED` | Label-propagation communities over the entity co-occurrence graph, per namespace, into loom.entity_communities (read by namespace.taxonomy and graph-mode expansion). |
 | `LOOM_INFERENCE_CUSTOMER_REQUIRED` | True (a cell serving several customers): refuse to start without inference_customer_header, so no model call goes out unattributed. |
 | `LOOM_INFERENCE_GATEWAY_REQUIRED` | True: model calls and memory content go only to inference_gateway_hosts; on whenever a workload token is sent (inference_token_url, or the bearer mode). |
-| `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | The knowledge_source_sync worker: pulls each registered document source's changed files into its repository's documents. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | The knowledge_source_sync worker: pulls each registered document source's changed files into its namespace's documents. |
 | `LOOM_MCP_CODE_TOOLS` | List code.* tools on the MCP surface (core toolset union). |
 | `LOOM_MEMORY_ASK_CONSISTENCY_CHECK` | After synthesis one judge call (the cheap client when the cascade is on, else the synth client) labels the answer entailed / neutral / contradicted against the memories it cites (consistency… |
 | `LOOM_MEMORY_ASK_PRECEDENTS` | Serve the earlier synthesized answer to the same question and shape, with no LLM call, when the synthesis window is byte-identical (same keys, same content_sha256 per key); otherwise synthesize and… |

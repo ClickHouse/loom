@@ -74,36 +74,43 @@ Markdown built from its text, and the `X-Loom-Download-Source` header says `blob
 
 ## Document sources
 
-A repository's admins register the document sources Loom pulls the repository's
-documents from. A source lives on the repository's trunk code namespace, the one its
-documents live in, so whoever reads the repository sees where its documents come from,
-and only the namespace's admins change that. Four kinds are served: `gdrive`, a shared
-folder of docs, slides, PDFs, `.pptx` decks and `.docx` documents, read with a service
-account the folders are shared to read-only, whose credential is the account's JSON key;
-`linear`, the documents of a project tracker's projects, read with a read-only API key
-of an account that sees the projects; `notion`, a page store's pages and databases, read
-with an integration that has read content access and that the pages and databases are
-shared with, whose credential is the integration's token; and `recording`, the
-transcripts of a meeting store's recordings ([recordings](#a-recording-source)). The
-`knowledge_source_sync` worker pulls each source's files into the repository's documents
-([syncing](#syncing-a-source)); `list` says whether this deployment runs it (`enabled`,
-`LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, off by default). The design of sources on any
-namespace, connected accounts and access that follows the store's permissions is in
-[document sources](../architecture/document-sources.md).
+A namespace's admins register the document sources Loom pulls the namespace's documents
+from. A source lives on the namespace its documents live in, so whoever reads the
+namespace sees where its documents come from, and only the namespace's admins change
+that. Any shared namespace can hold sources: a team's, a shared collection, or a
+repository's trunk code namespace, whose sources' documents also carry the repository's
+`repo:<id>` tag so the repository's documentation legs read them. Four kinds are served:
+`gdrive`, a shared folder of docs, slides, PDFs, `.pptx` decks and `.docx` documents,
+read with a service account the folders are shared to read-only, whose credential is the
+account's JSON key; `linear`, the documents of a project tracker's projects, read with a
+read-only API key of an account that sees the projects; `notion`, a page store's pages
+and databases, read with an integration that has read content access and that the pages
+and databases are shared with, whose credential is the integration's token; and
+`recording`, the transcripts of a meeting store's recordings
+([recordings](#a-recording-source)). The `knowledge_source_sync` worker pulls each
+source's files into the namespace's documents ([syncing](#syncing-a-source)); `list`
+says whether this deployment runs it (`enabled`, `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`,
+off by default). The design of connected accounts and access that follows the store's
+permissions is in [document sources](../architecture/document-sources.md).
 
-On the dashboard, an opened repository on the Repositories page shows its sources under
-Sources: each source's kind, last sync and counts, to anyone who reads the repository. A
-caller with the role the table below names gets the verbs: Add a source, Check, Sync
-now, Rotate credential and Retire. Add a source takes a kind, then that kind's `config`
-fields as listed below (a `gdrive` folder or a `notion` page or database may also be
-given as a pasted link, a `meet` space with its `spaces/` prefix, a `zoom` meeting id
-with the spaces it is shown with) and its credential. The form checks the server's rules
-for those ids before Check is offered; Check sends `knowledge.source.add` with
-`dry_run`, and Add stays off until the form it would send is the one that passed. A
-refused check or add shows the server's error as it came back. The credential is typed
-into a password field, sent with the request and never shown again; changing the kind or
-the `recording` provider clears it, so it only goes to the store it was typed for, and
-changing the provider also clears the ids typed for the other one.
+On the dashboard, the Library shows the sources of the shared namespace or collection in
+view under Sources, and an opened repository on the Repositories page shows its sources
+under Sources: each source's kind, last sync and counts, to anyone who reads the
+namespace (or the repository); a place that takes no new source (a person's own, or an
+inactive one) offers no Add, and shows the section only while it still holds a source; a
+reader who cannot add one sees no section on a place that holds none, nor when the list
+cannot be read, where an admin sees the error. A caller with the role the table below
+names gets the verbs: Add a source, Check, Sync now, Rotate credential and Retire. Add a
+source takes a kind, then that kind's `config` fields as listed below (a `gdrive` folder
+or a `notion` page or database may also be given as a pasted link, a `meet` space with
+its `spaces/` prefix, a `zoom` meeting id with the spaces it is shown with) and its
+credential. The form checks the server's rules for those ids before Check is offered;
+Check sends `knowledge.source.add` with `dry_run`, and Add stays off until the form it
+would send is the one that passed. A refused check or add shows the server's error as it
+came back. The credential is typed into a password field, sent with the request and
+never shown again; changing the kind or the `recording` provider clears it, so it only
+goes to the store it was typed for, and changing the provider also clears the ids typed
+for the other one.
 
 | Operation                                                                                   | Role   | Does                                                                                                       |
 | ------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------- |
@@ -142,13 +149,15 @@ by `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` (default 20 s); past it `add` and `ro
 answer `SOURCE_UNREACHABLE` and `check` answers `reachable: false`.
 
 Every write of a namespace's sources (`add`, `rotate`, `remove`, `sync_now`, and the
-retirement in `code.repo.remove`) is serialized by a lease, so a write's checks still
-hold when it writes; a probe runs outside it. A write that finds the lease held past
-a short wait answers `OVERLOADED` and can be retried; one whose lease store cannot
-answer is refused, never run unlocked. The one writer outside the lease is
-`loom secrets reseal`, which writes a row it read again at that row's version + 1, so
-any later write wins over it. Versions come from the ClickHouse servers' clocks, so
-writes stay ordered while those clocks differ by less than the time between them.
+retirement when the namespace goes: `code.repo.remove`, `namespace.delete`,
+`collection.delete` and the erasure step `knowledge_sources.retire`) is serialized by a
+lease, so a write's checks still hold when it writes; a probe runs outside it. A write
+that finds the lease held past a short wait answers `OVERLOADED` and can be retried; one
+whose lease store cannot answer is refused, never run unlocked. The one writer outside
+the lease is `loom secrets reseal`, which writes a row it read again at that row's
+version + 1, so any later write wins over it. Versions come from the ClickHouse servers'
+clocks, so writes stay ordered while those clocks differ by less than the time between
+them.
 
 A removed source's row stays, inactive and with its credential cleared. With
 `delete_documents`, the row also carries the request for the sync worker, even when no
@@ -157,13 +166,40 @@ worker clears it once none is left. Removing a repository (`code.repo.remove`) r
 the sources registered on its namespace the same way and names them in
 `sources_deactivated`; the purge of the repository's code index that follows deletes
 their sync state (it lives in `loom.code_index_state`) and the namespace's documents,
-and leaves the inactive source rows. A source can still outlive its repository's trunk
-namespace (a repository retired by editing the deployment's configuration, a branch that
-now outranks the trunk, or a repository removed by a replica of the previous release,
-which does not retire sources): its row stays active, keeps its sealed credential and
-counts toward the namespace's quota until `knowledge.source.remove` retires it. `check`,
-`rotate` and `sync_now` refuse it with `NOT_A_CODE_NAMESPACE`; `list`, `inspect` and
-`remove` still serve it, and the sync worker skips it.
+and leaves the inactive source rows. An `add` that probed while the repository was being
+removed answers `NAMESPACE_INACTIVE`, or, when it lands before the namespace is deleted,
+is retired with it.
+
+A source ends with its namespace: `namespace.delete`, `collection.delete` and a
+namespace erasure (`knowledge_sources.retire`, its first step) retire its sources the
+same way, under the same lease, so no source keeps a credential for a namespace that is
+gone. A deleted namespace's source documents stay, as a `remove` without
+`delete_documents` leaves them; `knowledge.source.remove` with `delete_documents=true`
+still accepts the retired source and retires them. An `add` while an erasure that will
+still run covers the namespace answers `ERASURE_RUNNING` (409, retryable) until it
+finishes, since the erasure may have read the sources already. The erasure step then
+waits for each source's sync turn still running, so no turn writes back a document or a
+mined decision after the later steps erase them.
+
+`namespace.restore` brings the namespace back, not its sources: their credentials were
+cleared, and the restored documents keep the retired source's name, so an admin removes
+it with `delete_documents=true`, waits for the sync worker to retire its documents
+(`add` answers `SOURCE_DELETE_PENDING` until then), and adds it again; its next sync
+writes the documents back.
+
+A person's own collection, `personal-` namespace or single sign-on `u-` namespace holds
+no source (`PERSONAL_NAMESPACE`): a user erasure erases what the person wrote, and a
+source's documents are the sync worker's. A namespace claimed at sign-up is refused the
+same way, a person's or an agent's: its directory row's owner is the namespace itself.
+The name forms are refused by form alone, so a shared namespace registered under such a
+name is refused too, and so is one registered with its own name as `owner_email`.
+
+A source whose namespace stops being the repository's trunk (a repository retired by
+editing the deployment's configuration, or a branch that now outranks the trunk) keeps
+syncing into its namespace, and the documents it writes from then on carry no
+`repo:<id>` tag. Since that tag comes from the code repository registry, a pass stops
+after its retirements (`RegistryUnread`) while the self-service registry has never been
+read, for every source, and the next pass tries again.
 
 A source's documents are the live documents of its namespace that carry the tag
 `source:<name>` and that the sync worker wrote (actor `worker:knowledge-source-sync`).
@@ -179,8 +215,8 @@ A name is free for `add` only while no document of an earlier source of that nam
 live, since a new source of the name would take them over. A removed source whose
 documents wait to be retired refuses its name with `SOURCE_DELETE_PENDING` until they
 are gone; one whose documents were kept refuses it with `SOURCE_DOCUMENTS_KEPT` until
-they are deleted (`knowledge.delete`). A removed source with no documents frees its
-name at once.
+they are retired (`knowledge.source.remove` with `delete_documents=true`, which takes
+the removed source). A removed source with no documents frees its name at once.
 
 No op changes a stored source's `config`: a `gdrive` source lists only the kinds its
 stored `include` names. To take in a kind it leaves out, add a second source on the same
@@ -195,7 +231,9 @@ decisions again.
 
 | Code                    | When                                                                                                                                                                                                                         |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NOT_A_CODE_NAMESPACE`  | `add`, `check`, `rotate` or `sync_now` names a namespace that is not a repository's trunk code namespace.                                                                                                                    |
+| `NAMESPACE_INACTIVE`    | `add`, `rotate` or `sync_now` names a namespace whose directory row is inactive, a collection the tree no longer holds, or a namespace deleted while the probe ran.                                                          |
+| `PERSONAL_NAMESPACE`    | `add`, `rotate` or `sync_now` names a person's own collection, `personal-` namespace, single sign-on `u-` namespace or a namespace claimed at sign-up, which holds no document source.                                       |
+| `ERASURE_RUNNING`       | `add` names a namespace an erasure that will still run may cover (409, retryable); add the source once the erasure finishes.                                                                                                 |
 | `BAD_NAME`              | The name is not 2-32 lower-case letters, digits, `-` or `_`, starting with a letter.                                                                                                                                         |
 | `BAD_KIND`              | The kind is not one the server serves.                                                                                                                                                                                       |
 | `BAD_CONFIG`            | The config has an unknown key, a malformed folder, project, page, database, space or meeting id, an unknown `include` value or an unknown `provider`, or a `notion` config with no id or more than 20.                       |
@@ -205,10 +243,10 @@ decisions again.
 | `CREDENTIAL_REFUSED`    | The credential is not of the kind's form, or the store refused it; nothing is stored.                                                                                                                                        |
 | `SOURCE_UNREACHABLE`    | A folder, project, page, database, space or meeting is not visible to the account or integration, a page or database is in the trash, the store failed or rate-limited the probe, or the probe timed out; nothing is stored. |
 | `SOURCE_DELETE_PENDING` | `add` names a removed source whose documents are still waiting to be retired.                                                                                                                                                |
-| `SOURCE_DOCUMENTS_KEPT` | `add` names a removed source whose kept documents are still live; delete them first.                                                                                                                                         |
+| `SOURCE_DOCUMENTS_KEPT` | `add` names a removed source whose kept documents are still live; retire them first with `knowledge.source.remove` and `delete_documents=true`.                                                                              |
 | `SOURCE_REPLACED`       | `rotate` or `sync_now`'s source was removed and added again during the call (409); act on the current source.                                                                                                                |
 | `SOURCE_TAGS_LOCKED`    | A write that keeps the sync worker as a document's author changes its `source:*` tags.                                                                                                                                       |
-| `SOURCE_NOT_FOUND`      | No active source of that name in the namespace (404).                                                                                                                                                                        |
+| `SOURCE_NOT_FOUND`      | No active source of that name in the namespace (404); for `remove` with `delete_documents=true`, no source of that name was ever registered there.                                                                           |
 | `CONFIRM_REQUIRED`      | `remove`'s `confirm` is not the source's name.                                                                                                                                                                               |
 
 A probe's error names the HTTP status (`http_403`), never the store's response text.
@@ -216,11 +254,11 @@ A probe's error names the HTTP status (`http_403`), never the store's response t
 ### Syncing a source
 
 Every `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` (default 900) the worker first
-retires the documents of removed sources a maintainer asked to delete, then gives each
-active source a turn: sources a maintainer asked for with `sync_now` first, then the
-rest from where the previous pass stopped. A source whose namespace is inactive or no
-longer a repository's trunk is skipped. Each turn holds a lease of its own, so two
-copies of the worker never sync one source at once.
+retires the documents of removed sources an admin asked to delete, then gives each
+active source a turn: sources an admin asked for with `sync_now` first, then the
+rest from where the previous pass stopped. A source whose namespace is inactive is
+skipped. Each turn holds a lease of its own, so two copies of the worker never sync one
+source at once.
 
 A turn lists the source's files. Its first turn, a turn `sync_now(full=true)` asked for
 and the first turn after `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS` (default a
@@ -243,23 +281,24 @@ with `knowledge.upsert`:
 Each document's address (`source_uri`) is the link the store reports for the file,
 without its query, so a `knowledge.synthesize` citation of it reads `<link>#<chunk>`.
 Its title is the file's name, its description the first paragraph, its tags
-`source-kind:design_doc`, the repository's `repo:<id>` and `source:<name>`, and its
-metadata the source's kind and name, the file's id (`ingested_from`), its revision
-(`source_revision`) and the conversion (`ingested_format`); a native document also
-carries a hash of its title and text (`text_sha256`), which the
-[mining](#mining-decisions) step keys it by with its revision, so a copy written again
-at the same revision with other text is mined again. Every document a sync writes has
-the actor `worker:knowledge-source-sync` and the class `imported`. A live document at
-the same address that another writer or another source holds is never overwritten or
-retired. The source and the address are read again before each write. A source removed
-or replaced during its turn stops the turn, which records nothing. A file whose address
-another writer holds is counted `skipped`: nothing is fetched for it when the address is
-held as the file is listed, and nothing is written when it was taken during the fetch.
+`source-kind:design_doc`, `source:<name>` and, on a repository's trunk code namespace,
+the repository's `repo:<id>`, and its metadata the source's kind and name, the file's id
+(`ingested_from`), its revision (`source_revision`) and the conversion
+(`ingested_format`); a native document also carries a hash of its title and text
+(`text_sha256`), which the [mining](#mining-decisions) step keys it by with its
+revision, so a copy written again at the same revision with other text is mined again.
+Every document a sync writes has the actor `worker:knowledge-source-sync` and the class
+`imported`. A live document at the same address that another writer or another source
+holds is never overwritten or retired. The source and the address are read again before
+each write. A source removed or replaced during its turn stops the turn, which records
+nothing. A file whose address another writer holds is counted `skipped`: nothing is
+fetched for it when the address is held as the file is listed, and nothing is written
+when it was taken during the fetch.
 
 A document is retired only on positive evidence: its file is missing from a complete
 full listing and the store, asked about that file, reports it gone, trashed or in none
 of the source's folders (a listing paged while files change can miss one); its document
-sits at an address that is no longer its file's; or a maintainer asked with
+sits at an address that is no longer its file's; or an admin asked with
 `remove(delete_documents=true)`. A listed file the store gives no https link for is not
 written (`no_address`) and counts as missing, so its stored document stays while the
 lookup still finds the file. A listing the store marks incomplete (`incompleteSearch`)
@@ -371,9 +410,8 @@ the extraction `loom decisions extract --apply` runs
 ([extract decisions from a document](tasks-and-decisions.md#extract-decisions-from-a-document)).
 The revision a document was mined at is recorded only once its extraction is done, so a
 document written by a turn that failed or was stopped is mined on a later pass, as is
-one synced while no extraction ran. The rows
-go to the source's namespace, the repository's trunk code namespace, each citing its
-document in `source_resource_id`, written through `decision.record` as agent
+one synced while no extraction ran. The rows go to the source's namespace, each citing
+its document in `source_resource_id`, written through `decision.record` as agent
 `loom-decisions` with the actor `worker:knowledge-source-sync` and the audit row the
 transport would write.
 
@@ -491,7 +529,7 @@ name or paraphrase a speaker too; deleting the transcript leaves them, and
 `memory.delete` of each decision's row (which retires its record) or the
 namespace's erasure removes them.
 
-`loom knowledge sync --org O --namespace <trunk namespace> [--source NAME] [--full]` runs
+`loom knowledge sync --org O --namespace NS [--source NAME] [--full]` runs
 one such pass over one namespace's sources now, in-process, and leaves a manual
 `knowledge_source_sync` row in `loom.worker_status`. `--full` records a full sync
 request, as `sync_now(full=true)` does; run again while that request is unfinished, it

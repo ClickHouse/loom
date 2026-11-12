@@ -661,11 +661,12 @@ retry after that is a new request.
 
 ## Erasure
 
-The first step of every erasure saga is `pg_memory.delete`
-(`server/erasure/store/steps_pg.py`). In one transaction it advances every affected
-namespace's generation (which locks it, so the scope's commits wait, and a verdict in
-flight that links a memory it removed is reached again), moves the audit rows ClickHouse
-does not have yet to `loom.audit_outbox`, deletes the scope's revisions (and with them
+The first step that erases is `pg_memory.delete` (`server/erasure/store/steps_pg.py`);
+a namespace erasure only stops the namespace's document sources before it. In one
+transaction `pg_memory.delete` advances every affected namespace's generation (which
+locks it, so the scope's commits wait, and a verdict in flight that links a memory it
+removed is reached again), moves the audit rows ClickHouse does not have yet to
+`loom.audit_outbox`, deletes the scope's revisions (and with them
 their deliveries) and heads, and reads the latest lease among the deliveries it removed.
 It then waits until every publisher that held one has stopped: a publisher sends nothing
 past its lease, every insert it sent starts on the server within a transit allowance of

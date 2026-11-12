@@ -44,6 +44,7 @@ from server.identity.domain.account_ties import owner_moved
 from server.identity.store import grants as grants_repo
 from server.identity.store import namespace_guides
 from server.identity.store import namespaces as namespaces_repo
+from server.knowledge.app.sources import deactivate_namespace_sources, sources_lease
 from server.memory.app import namespace_retrieval_defaults as _rd
 from server.memory.domain import code_change
 from server.operations.base import Role
@@ -620,8 +621,10 @@ async def handle_namespace_delete(
 
     Idempotent: deleting an already-inactive namespace returns
     `deleted=False`. Deleting a namespace that was never registered
-    is a no-op (returns deleted=False). A collection is refused: it goes with
-    what it holds, through `collection.delete`.
+    writes no directory row (returns deleted=False). Registered or not, the
+    namespace's document sources are retired, their credentials cleared.
+    A collection is refused: it goes with what it holds, through
+    `collection.delete`.
     """
     if is_personal(input.namespace):
         # It goes with its user's erasure, which also takes the user's id off its row.
@@ -634,10 +637,13 @@ async def handle_namespace_delete(
 async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
     """`namespace.delete`'s write, and `collection.delete`'s once its purge ran."""
     ch = get_client()
-    # SELECT * so the soft-delete row mirrors EVERY column forward; a
-    # partial RMT insert would reset omitted columns to schema defaults.
-    async with account_change(org, namespace):  # as register holds it
+    # The sources lease first, as code.repo.remove takes it, so an add sees the delete.
+    async with sources_lease(org, namespace), account_change(org, namespace):
+        # SELECT * so the soft-delete row mirrors EVERY column forward; a
+        # partial RMT insert would reset omitted columns to schema defaults.
         existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
+        # A source never outlives its namespace with its credential.
+        retired = await deactivate_namespace_sources(org, namespace)
         now = naive_utc_now_seconds()
         if existing is None:
             # A collection whose create stopped before its directory row still
@@ -645,7 +651,9 @@ async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
             from server.identity.app.collections import retire
 
             closed = is_collection(namespace) and await retire(org, namespace)
-            return NamespaceDeleteOutput(deleted=closed, namespace=namespace, updated_at=now)
+            return NamespaceDeleteOutput(
+                deleted=closed, namespace=namespace, updated_at=now, sources_retired=retired
+            )
         active = bool(existing.get("active", False))
         if active:
             row = dict(existing)
@@ -661,13 +669,13 @@ async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
 
             await retire(org, namespace)
         if not active:
-            return NamespaceDeleteOutput(deleted=False, namespace=namespace, updated_at=now)
+            return NamespaceDeleteOutput(
+                deleted=False, namespace=namespace, updated_at=now, sources_retired=retired
+            )
     # The claim cap reads which accounts tie a person's spellings from this table.
     await grant_cache.changed(org)
     return NamespaceDeleteOutput(
-        deleted=True,
-        namespace=namespace,
-        updated_at=now,
+        deleted=True, namespace=namespace, updated_at=now, sources_retired=retired
     )
 
 

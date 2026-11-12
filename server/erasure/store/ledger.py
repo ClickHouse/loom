@@ -20,8 +20,17 @@ from server.erasure.store.rows import (
 # days after `requested_at`, which every checkpoint of the saga repeats, so near the end an
 # older checkpoint can outlive the terminal row and read as the saga's state. The fences
 # (`unfinished_since`, `unfinished_reaching`) do not apply it: a stale unfinished row keeps
-# fencing, which fails closed.
+# fencing, which fails closed. `open_namespace_erasures` does, as the recovery worker's
+# `still_open` does: a saga that will never resume again must not refuse source adds.
 LIVE_LEDGER = "requested_at > now() - INTERVAL 89 DAY"
+
+# A saga that will still run: queued, in progress, or failed and awaiting the recovery
+# worker (not abandoned, not waiting for a replay). Takes `abandoned` and `pending`.
+WILL_RUN = (
+    "(status IN ('queued', 'in_progress') OR (status = 'failed' "
+    "AND NOT startsWith(failure_reason, {abandoned:String}) "
+    "AND failure_reason != {pending:String}))"
+)
 
 
 async def list_stuck_in_progress(
@@ -325,6 +334,25 @@ async def unfinished_reaching(
         )
 
 
+async def open_namespace_erasures(org: str, *, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+    """The org's namespace and namespace-list erasures that will still run: queued, in
+    progress, or failed and awaiting the recovery worker (not abandoned, not waiting for a
+    replay). Each row has `scope_type` and `scope_value`. Read with sequential consistency:
+    a fence on it must see an erasure another replica just registered."""
+    ch = ch or _default_client()
+    with sequential_reads():
+        return await ch.query_all(
+            "SELECT scope_type, scope_value FROM loom.erasure_requests FINAL "
+            "WHERE org = {org:String} AND " + LIVE_LEDGER + " "
+            "AND scope_type IN ('namespace', 'namespace_list') AND " + WILL_RUN,
+            params={
+                "org": org,
+                "abandoned": ABANDONED_REASON_PREFIX,
+                "pending": REPLAY_PENDING_REASON,
+            },
+        )
+
+
 _LEDGER_ROW = (
     "SELECT id, org, scope_type, scope_value, requester, urgency, purge, requested_at, "
     "completed_at, steps_completed, attempts FROM loom.erasure_requests FINAL "
@@ -404,9 +432,9 @@ async def still_open(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
         _LEDGER_ROW
         + "WHERE "
         + LIVE_LEDGER
-        + " AND (status IN ('queued', 'in_progress') OR (status = 'failed' "
-        "AND NOT startsWith(failure_reason, {abandoned:String}) "
-        "AND failure_reason != {pending:String})) ORDER BY requested_at, org, id",
+        + " AND "
+        + WILL_RUN
+        + " ORDER BY requested_at, org, id",
         params={"abandoned": ABANDONED_REASON_PREFIX, "pending": REPLAY_PENDING_REASON},
     )
     return [dict(r) for r in rows]

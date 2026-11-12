@@ -35,11 +35,16 @@ _SSO_NAMESPACE_RE = re.compile(
 )
 
 
+def is_sso_namespace_name(namespace: str) -> bool:
+    """Whether `namespace` has the form of a name JIT gives a person."""
+    return bool(_SSO_NAMESPACE_RE.fullmatch(namespace))
+
+
 def reserved_for_sso(namespace: str) -> bool:
     """Whether a new namespace by this name is single sign-on's to create."""
     from server.settings import settings
 
-    return settings.oidc_jit_provision and bool(_SSO_NAMESPACE_RE.fullmatch(namespace))
+    return settings.oidc_jit_provision and is_sso_namespace_name(namespace)
 
 
 def named(value: str | None, *, wildcard: bool = False) -> str | None:

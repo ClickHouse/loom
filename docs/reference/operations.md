@@ -427,10 +427,10 @@ Fields for every `knowledge` op: [operations/knowledge.md](operations/knowledge.
 | [`knowledge.reads`](operations/knowledge.md#knowledgereads) | How often agents opened each document over the last `days` (`knowledge.get` ledger rows; dashboard, assistant and bench traffic left out). | viewer | read | no |  |
 | [`knowledge.restore`](operations/knowledge.md#knowledgerestore) | Undo a `knowledge.delete` or `knowledge.bulk_delete` of one document. | writer | idempotent | no | yes |
 | [`knowledge.search`](operations/knowledge.md#knowledgesearch) | Search the user's uploaded document library — bills, contracts, receipts, resumes, policies, manuals, technical docs. | viewer | read | no |  |
-| [`knowledge.source.add`](operations/knowledge.md#knowledgesourceadd) | Register a document source on a repository's trunk code namespace: a kind, the ids it reads and a read-only credential. | admin | write | no | yes |
+| [`knowledge.source.add`](operations/knowledge.md#knowledgesourceadd) | Register a document source on a namespace: a kind, the ids it reads and a read-only credential. | admin | write | no | yes |
 | [`knowledge.source.check`](operations/knowledge.md#knowledgesourcecheck) | Probe a registered document source with its stored credential now (a check and a listing of each folder or project), nothing written. | admin | idempotent | no |  |
 | [`knowledge.source.inspect`](operations/knowledge.md#knowledgesourceinspect) | One registered document source: its config, its sync state and the documents it wrote (the 200 most recently ingested). | viewer | read | no |  |
-| [`knowledge.source.list`](operations/knowledge.md#knowledgesourcelist) | The document sources registered on a repository's code namespace, with each one's sync state. | viewer | read | no |  |
+| [`knowledge.source.list`](operations/knowledge.md#knowledgesourcelist) | The document sources registered on a namespace, with each one's sync state. | viewer | read | no |  |
 | [`knowledge.source.remove`](operations/knowledge.md#knowledgesourceremove) | Retire a registered document source: its registry row goes inactive and its credential is cleared. | admin | write | no | yes |
 | [`knowledge.source.rotate`](operations/knowledge.md#knowledgesourcerotate) | Replace a registered document source's credential. | admin | write | no | yes |
 | [`knowledge.source.sync_now`](operations/knowledge.md#knowledgesourcesync_now) | Record a request to sync one document source in its sync state: the sync worker starts its next pass with it. | admin | idempotent | no | yes |
@@ -562,7 +562,7 @@ Fields for every `namespace` op: [operations/namespace.md](operations/namespace.
 | [`namespace.audit`](operations/namespace.md#namespaceaudit) | Usage report for one namespace: is it being used as a memory, or as an object store? | viewer | read | yes |  |
 | [`namespace.browse`](operations/namespace.md#namespacebrowse) | Discover public namespaces in the org; anyone can join returned rows via namespace.join. | viewer | read | yes |  |
 | [`namespace.cancel_request`](operations/namespace.md#namespacecancel_request) | Withdraw the caller's own pending elevation request. | viewer | idempotent | no | yes |
-| [`namespace.delete`](operations/namespace.md#namespacedelete) | Tombstone a namespace and stop accepting writes against it. | admin | idempotent | no | yes |
+| [`namespace.delete`](operations/namespace.md#namespacedelete) | Tombstone a namespace and stop accepting writes against it; the document sources it retires are named in `sources_retired`, also when `deleted` is false. | admin | idempotent | no | yes |
 | [`namespace.get`](operations/namespace.md#namespaceget) | Fetch one namespace's metadata + settings (owner, visibility, feature flags, retention). | viewer | read | yes |  |
 | [`namespace.guide_get`](operations/namespace.md#namespaceguide_get) | The namespace's guide: Markdown its writers keep on what it holds, its key layout and what its tags mean. | viewer | read | no |  |
 | [`namespace.guide_history`](operations/namespace.md#namespaceguide_history) | The guide's revisions, newest first, with summary, note, writer and length. | viewer | read | no |  |

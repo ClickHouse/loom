@@ -9,6 +9,7 @@ import dataclasses
 import json
 import uuid
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -17,12 +18,15 @@ import server.auth.authz as authz
 from server.auth.authz import Role, check_authorized
 from server.auth.jwt import AuthInfo
 from server.core import leases
+from server.core.ch import sequential_reads_active
 from server.core.errors import (
+    ErasureRunningError,
     NotFoundError,
     OverloadedError,
     SourceReplacedError,
     ValidationError,
 )
+from server.core.principals import personal_name
 from server.core.secrets_at_rest import unseal
 from server.knowledge.api.models_sources import (
     KnowledgeSourceAddInput,
@@ -41,6 +45,7 @@ from server.knowledge.store import sources as store
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.settings import settings
 from tests.unit.ch_fake import RecordingCH
+from tests.unit.clock_fake import ManualClock
 from tests.unit.schema_ddl import column_names
 
 ORG, NS = "acme", "code-acme-app"
@@ -56,6 +61,24 @@ class _Store:
         self.states: dict[str, dict[str, str]] = {}
         # Live documents the sync worker wrote with each name's tag.
         self.documents: dict[str, int] = {}
+        self.inactive: set[tuple[str, str]] = set()
+        self.claimed: set[str] = set()
+        # Whether each namespace read was sequential.
+        self.sequential: list[bool] = []
+
+    async def inactive_namespaces(self, pairs: list[tuple[str, str]]) -> set[tuple[str, str]]:
+        self.sequential.append(sequential_reads_active())
+        return {p for p in pairs if p in self.inactive}
+
+    async def directory_row(self, org: str, namespace: str) -> store.DirectoryRow:
+        self.sequential.append(sequential_reads_active())
+        inactive = (org, namespace) in self.inactive
+        return store.DirectoryRow(inactive, not inactive and namespace in self.claimed)
+
+    async def sources_in(self, org: str, names: list[str]) -> list[tuple[str, str]]:
+        self.sequential.append(sequential_reads_active())
+        found = [(n, name) for (o, n, name) in self.rows if o == org]
+        return sorted(f for f in found if f[0] in names)
 
     async def list_sources(self, org: str, ns: str) -> list[KnowledgeSource]:
         found = [s for (o, n, _), s in self.rows.items() if (o, n) == (org, ns) and s.active]
@@ -98,16 +121,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
         probes.append((kind, config, credential))
         return source_probes.Probe(documents=3, sample=["Deck"])
 
-    async def _trunk(org: str, ns: str) -> bool:
-        return ns == NS
-
     monkeypatch.setattr(source_probes, "probe", _probe)
-    monkeypatch.setattr(app, "is_trunk_namespace", _trunk)
-
-    async def _registered(org: str, ns: str) -> bool:
-        return ns == NS
-
-    monkeypatch.setattr(app, "_registered", _registered)
     leases_taken: list[str] = []
 
     @contextlib.asynccontextmanager
@@ -115,9 +129,26 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Store:
         leases_taken.append(name)
         yield True
 
+    watched: list[str] = []
+
+    async def _has_live_holder(name: str, **_kw: Any) -> bool:
+        watched.append(name)
+        return False
+
     monkeypatch.setattr(leases, "holding", _holding)
+    monkeypatch.setattr(leases, "has_live_holder", _has_live_holder)
+    erasures: list[dict[str, Any]] = []
+
+    async def _open(org: str) -> list[dict[str, Any]]:
+        return list(erasures)
+
+    from server.erasure.app import ledger_reads
+
+    monkeypatch.setattr(ledger_reads, "open_namespace_erasures", _open)
+    fake.erasures = erasures  # type: ignore[attr-defined]
     fake.probes = probes  # type: ignore[attr-defined]
     fake.leases = leases_taken  # type: ignore[attr-defined]
+    fake.watched = watched  # type: ignore[attr-defined]
     return fake
 
 
@@ -132,6 +163,19 @@ def _add(**kw: Any) -> KnowledgeSourceAddInput:
     }
     body.update(kw)
     return KnowledgeSourceAddInput(**body)
+
+
+def _after_first_read(fake: _Store, change: Any) -> None:
+    """Run `change` right after the next read of a source, as a concurrent call would."""
+    read = fake.get_source
+
+    async def _read_then_change(org: str, ns: str, name: str) -> KnowledgeSource | None:
+        fake.get_source = read  # type: ignore[method-assign]
+        src = await read(org, ns, name)
+        await change(org, ns, name)
+        return src
+
+    fake.get_source = _read_then_change  # type: ignore[method-assign]
 
 
 def _code(call: Any) -> str:
@@ -193,7 +237,6 @@ def test_a_dry_run_probes_and_writes_nothing(fake: _Store) -> None:
         ({"config": {"folder_ids": FOLDER}}, "BAD_CONFIG"),
         ({"config": {"folder_ids": []}}, "BAD_CONFIG"),
         ({"config": {"folder_ids": [FOLDER], "host": "h"}}, "BAD_CONFIG"),
-        ({"namespace": "notes"}, "NOT_A_CODE_NAMESPACE"),
         ({"credential": " "}, "CREDENTIAL_REFUSED"),
     ],
 )
@@ -376,6 +419,22 @@ def test_remove_with_documents_marks_them_for_the_worker(fake: _Store) -> None:
     assert json.loads(fake.states["design-decks"]["detail"]) == {"status": "ok"}
 
 
+def test_a_source_retired_with_its_namespace_can_still_have_its_documents_retired(
+    fake: _Store,
+) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add()))
+    asyncio.run(app.deactivate_namespace_sources(ORG, NS))
+    fake.documents["design-decks"] = 3
+    keep = KnowledgeSourceRemoveInput(
+        org=ORG, namespace=NS, name="design-decks", confirm="design-decks"
+    )
+    assert _code(app.handle_knowledge_source_remove(keep)) == "SOURCE_NOT_FOUND"
+    body = keep.model_copy(update={"delete_documents": True})
+    assert asyncio.run(app.handle_knowledge_source_remove(body)).documents_pending == 3
+    row = fake.rows[(ORG, NS, "design-decks")]
+    assert (row.active, row.pending_delete) == (False, True)
+
+
 def test_a_delete_request_with_no_documents_yet_is_recorded_and_frees_the_name(
     fake: _Store,
 ) -> None:
@@ -397,6 +456,39 @@ def test_sync_now_records_the_request_in_the_state_row(fake: _Store) -> None:
     assert out.name == "design-decks"
     detail = json.loads(fake.states["design-decks"]["detail"])
     assert detail["full"] is True and detail["requested_at"]
+
+
+def test_add_is_refused_while_an_erasure_of_its_namespace_runs(fake: _Store) -> None:
+    erasures = fake.erasures  # type: ignore[attr-defined]
+    erasures.append({"scope_type": "namespace_list", "scope_value": '{"namespaces": ["other"]}'})
+    asyncio.run(app.handle_knowledge_source_add(_add(name="first")))
+    erasures.append({"scope_type": "namespace", "scope_value": NS})
+    with pytest.raises(ErasureRunningError):
+        asyncio.run(app.handle_knowledge_source_add(_add(name="second")))
+    assert len(fake.probes) == 1  # type: ignore[attr-defined]  # the refused add never probed
+
+
+def test_an_erasure_that_starts_during_the_probe_refuses_the_add_under_its_lease(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    erasures = fake.erasures  # type: ignore[attr-defined]
+
+    async def _probe(kind: str, config: dict[str, Any], credential: str) -> source_probes.Probe:
+        erasures.append({"scope_type": "namespace", "scope_value": NS})
+        return source_probes.Probe(documents=3, sample=["Deck"])
+
+    monkeypatch.setattr(source_probes, "probe", _probe)
+    with pytest.raises(ErasureRunningError):
+        asyncio.run(app.handle_knowledge_source_add(_add()))
+    assert not fake.rows
+
+
+def test_sync_now_refuses_a_source_of_an_inactive_namespace(fake: _Store) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add()))
+    fake.inactive.add((ORG, NS))
+    body = KnowledgeSourceSyncNowInput(org=ORG, namespace=NS, name="design-decks")
+    assert _code(app.handle_knowledge_source_sync_now(body)) == "NAMESPACE_INACTIVE"
+    assert "requested_at" not in json.loads(fake.states["design-decks"]["detail"])
 
 
 def test_audit_subjects_carry_no_credential() -> None:
@@ -463,7 +555,7 @@ def test_writes_and_check_need_the_namespace_admin(no_grant_reads: None, name: s
 
 
 @pytest.mark.parametrize("name", ["knowledge.source.list", "knowledge.source.inspect"])
-def test_reads_are_open_to_the_repository_reader(no_grant_reads: None, name: str) -> None:
+def test_reads_are_open_to_the_namespace_reader(no_grant_reads: None, name: str) -> None:
     op = OPERATIONS_BY_NAME[name]
     assert op.required_role == Role.VIEWER and op.read_only
     asyncio.run(check_authorized(_auth(Role.VIEWER), op.required_role, ORG, NS))
@@ -603,17 +695,14 @@ def test_a_sync_now_after_a_remove_leaves_the_delete_request(
     # sync_now read the source; a remove with documents to retire lands before its lease.
     asyncio.run(app.handle_knowledge_source_add(_add()))
     fake.documents["design-decks"] = 3
-    real_lookup = app._source_in_repository
 
-    async def _read_then_removed(org: str, ns: str, name: str) -> KnowledgeSource:
-        src = await real_lookup(org, ns, name)
+    async def _remove(org: str, ns: str, name: str) -> None:
         body = KnowledgeSourceRemoveInput(
             org=org, namespace=ns, name=name, confirm=name, delete_documents=True
         )
         await app.handle_knowledge_source_remove(body)
-        return src
 
-    monkeypatch.setattr(app, "_source_in_repository", _read_then_removed)
+    _after_first_read(fake, _remove)
     states = dict(fake.states)
     sync = KnowledgeSourceSyncNowInput(org=ORG, namespace=NS, name="design-decks")
     assert _code(app.handle_knowledge_source_sync_now(sync)) == "SOURCE_NOT_FOUND"
@@ -632,21 +721,35 @@ def test_a_name_whose_kept_documents_remain_cannot_be_added_again(fake: _Store) 
     with pytest.raises(ValidationError) as e:
         asyncio.run(app.handle_knowledge_source_add(_add()))
     assert e.value.to_detail()["code"] == "SOURCE_DOCUMENTS_KEPT"
-    assert "knowledge.delete" in str(e.value) and "4 left" in str(e.value)
+    assert "delete_documents=true" in str(e.value) and "4 left" in str(e.value)
 
 
-def test_add_checks_the_repository_again_after_its_probe(
+def test_a_source_lives_on_any_namespace(fake: _Store) -> None:
+    out = asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-notes")))
+    assert out.namespace == "team-notes"
+    assert fake.rows[(ORG, "team-notes", "design-decks")].active
+
+
+def test_add_refuses_an_inactive_namespace_before_its_probe(fake: _Store) -> None:
+    fake.inactive.add((ORG, "team-notes"))
+    assert _code(app.handle_knowledge_source_add(_add(namespace="team-notes"))) == (
+        "NAMESPACE_INACTIVE"
+    )
+    assert fake.probes == [] and fake.rows == {}  # type: ignore[attr-defined]
+
+
+def test_add_checks_the_namespace_again_after_its_probe(
     fake: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls: list[str] = []
+    async def _deleted_during_probe(*_: Any) -> source_probes.Probe:
+        fake.inactive.add((ORG, "team-notes"))
+        return source_probes.Probe(documents=1)
 
-    async def _trunk_then_gone(org: str, ns: str) -> bool:
-        calls.append(ns)
-        return len(calls) == 1
-
-    monkeypatch.setattr(app, "is_trunk_namespace", _trunk_then_gone)
-    assert _code(app.handle_knowledge_source_add(_add())) == "NOT_A_CODE_NAMESPACE"
-    assert calls == [NS, NS] and fake.rows == {}
+    monkeypatch.setattr(source_probes, "probe", _deleted_during_probe)
+    assert _code(app.handle_knowledge_source_add(_add(namespace="team-notes"))) == (
+        "NAMESPACE_INACTIVE"
+    )
+    assert fake.rows == {}
 
 
 def test_a_name_added_again_starts_with_a_fresh_sync_state(fake: _Store) -> None:
@@ -686,51 +789,6 @@ def test_the_call_ledger_keeps_no_credential() -> None:
     assert "credential" not in args and SECRET not in json.dumps(args)
 
 
-@pytest.mark.parametrize(
-    "call",
-    [
-        lambda: app.handle_knowledge_source_check(
-            KnowledgeSourceCheckInput(org=ORG, namespace=NS, name="design-decks")
-        ),
-        lambda: app.handle_knowledge_source_rotate(
-            KnowledgeSourceRotateInput(
-                org=ORG, namespace=NS, name="design-decks", credential=SECRET
-            )
-        ),
-        lambda: app.handle_knowledge_source_sync_now(
-            KnowledgeSourceSyncNowInput(org=ORG, namespace=NS, name="design-decks")
-        ),
-    ],
-    ids=["check", "rotate", "sync_now"],
-)
-def test_a_source_whose_namespace_is_no_trunk_is_refused(
-    fake: _Store, monkeypatch: pytest.MonkeyPatch, call: Any
-) -> None:
-    asyncio.run(app.handle_knowledge_source_add(_add()))
-    probes = len(fake.probes)  # type: ignore[attr-defined]
-
-    async def _gone(org: str, ns: str) -> bool:
-        return False
-
-    monkeypatch.setattr(app, "is_trunk_namespace", _gone)
-    with pytest.raises(ValidationError) as e:
-        asyncio.run(call())
-    assert e.value.to_detail()["code"] == "NOT_A_CODE_NAMESPACE"
-    assert "knowledge.source.remove retires it" in str(e.value)
-    # Nothing probed or written; the source can still be read and removed.
-    assert len(fake.probes) == probes and fake.states["design-decks"]["detail"] == "{}"  # type: ignore[attr-defined]
-    seen = asyncio.run(
-        app.handle_knowledge_source_inspect(
-            KnowledgeSourceInspectInput(org=ORG, namespace=NS, name="design-decks")
-        )
-    )
-    assert seen.name == "design-decks"
-    body = KnowledgeSourceRemoveInput(
-        org=ORG, namespace=NS, name="design-decks", confirm="design-decks"
-    )
-    assert asyncio.run(app.handle_knowledge_source_remove(body)).name == "design-decks"
-
-
 def test_rotate_refuses_a_source_removed_and_added_again_during_its_probe(
     fake: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -753,53 +811,6 @@ def test_rotate_refuses_a_source_removed_and_added_again_during_its_probe(
     assert e.value.to_detail()["code"] == "SOURCE_REPLACED" and e.value.status_code == 409
     # The source that holds the name now keeps its own credential.
     assert fake.rows[(ORG, NS, "design-decks")] is readded
-
-
-def test_the_trunk_check_reads_the_cached_registry(monkeypatch: pytest.MonkeyPatch) -> None:
-    from server.code.app.index import repo_registry
-    from server.code.domain.index import repos
-
-    calls: list[dict[str, Any]] = []
-
-    async def _refresh(**kw: Any) -> list[Any]:
-        calls.append(kw)
-        return []
-
-    monkeypatch.setattr(repo_registry, "refresh_db_repos", _refresh)
-    monkeypatch.setattr(repos, "docs_namespaces", lambda: {(ORG, "acme/app"): NS})
-    assert asyncio.run(app.is_trunk_namespace(ORG, NS)) is True
-    assert asyncio.run(app.is_trunk_namespace(ORG, "code-acme-app-dev")) is False
-    assert asyncio.run(app.is_trunk_namespace("other", NS)) is False
-    # No forced read per call: the snapshot refreshes on its own schedule.
-    assert calls == [{}, {}, {}]
-
-
-def test_registration_is_read_from_the_registry_row_for_a_registered_repository(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from types import SimpleNamespace
-
-    from server.code.domain.index import repos
-
-    entries = {
-        "code-reg": SimpleNamespace(source="registry"),
-        "code-cfg": SimpleNamespace(source="config"),
-    }
-    monkeypatch.setattr(repos, "repo_for_namespace", lambda org, ns: entries.get(ns))
-    reads: list[str] = []
-
-    async def _active(org: str, ns: str) -> bool:
-        reads.append(ns)
-        return False
-
-    from server.code.app.index import repo_registry
-
-    monkeypatch.setattr(repo_registry, "row_active", _active)
-    assert asyncio.run(app._registered(ORG, "code-reg")) is False
-    # The operator's configuration owns this one; code.repo.remove cannot retire it.
-    assert asyncio.run(app._registered(ORG, "code-cfg")) is True
-    assert asyncio.run(app._registered(ORG, "code-none")) is False
-    assert reads == ["code-reg"]
 
 
 LEASE = f"knowledge-source:{ORG}:{NS}"
@@ -889,48 +900,19 @@ def test_a_lease_store_that_cannot_answer_refuses(
     assert fake.rows == before and fake.states == states
 
 
-def test_add_re_checks_registration_under_the_lease(
-    fake: _Store, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def _removed(org: str, ns: str) -> bool:
-        return False
-
-    monkeypatch.setattr(app, "_registered", _removed)
-    assert _code(app.handle_knowledge_source_add(_add())) == "NOT_A_CODE_NAMESPACE"
-    assert fake.rows == {} and fake.leases == [LEASE]  # type: ignore[attr-defined]
-
-
-@pytest.mark.parametrize(
-    ("rows", "active"), [([{"active": 1}], True), ([{"active": 0}], False), ([], False)]
-)
-def test_registration_reads_the_code_repos_row(
-    monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]], active: bool
-) -> None:
-    from server.code.app.index import repo_registry
-
-    ch = RecordingCH().on("FROM loom.code_repos", rows)
-    ch.install(monkeypatch)
-    assert asyncio.run(repo_registry.row_active(ORG, NS)) is active
-    [st] = ch.statements("FROM loom.code_repos")
-    assert "FINAL" in st.sql and st.params == {"org": ORG, "ns": NS}
-
-
 def test_a_sync_request_for_a_replaced_source_is_not_recorded_on_the_new_one(
     fake: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add()))
     fake.states["design-decks"] = {"state_value": "old-stamp", "detail": "{}"}
-    real_lookup = app._source_in_repository
 
-    async def _read_then_replaced(org: str, ns: str, name: str) -> KnowledgeSource:
+    async def _replace(org: str, ns: str, name: str) -> None:
         # sync_now read the first source; a remove and a new add land before its lease.
-        src = await real_lookup(org, ns, name)
         remove = KnowledgeSourceRemoveInput(org=org, namespace=ns, name=name, confirm=name)
         await app.handle_knowledge_source_remove(remove)
         await app.handle_knowledge_source_add(_add())
-        return src
 
-    monkeypatch.setattr(app, "_source_in_repository", _read_then_replaced)
+    _after_first_read(fake, _replace)
     body = KnowledgeSourceSyncNowInput(org=ORG, namespace=NS, name="design-decks")
     with pytest.raises(SourceReplacedError, match="sync_now again for the current source"):
         asyncio.run(app.handle_knowledge_source_sync_now(body))
@@ -940,8 +922,6 @@ def test_a_sync_request_for_a_replaced_source_is_not_recorded_on_the_new_one(
 def test_remove_counts_documents_with_sequential_consistency(
     fake: _Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.core.ch import sequential_reads_active
-
     asyncio.run(app.handle_knowledge_source_add(_add()))
     seen: list[bool] = []
 
@@ -979,3 +959,276 @@ def test_a_name_with_a_trailing_newline_is_no_valid_name() -> None:
     # `$` would accept "name\n"; the rule is matched whole.
     assert domain.valid_name("design-decks")
     assert not domain.valid_name("design-decks\n")
+
+
+def test_rotate_serves_a_source_on_a_plain_namespace(fake: _Store) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-notes")))
+    body = KnowledgeSourceRotateInput(
+        org=ORG, namespace="team-notes", name="design-decks", credential=SECRET
+    )
+    assert asyncio.run(app.handle_knowledge_source_rotate(body)).name == "design-decks"
+    assert len(fake.probes) == 2  # type: ignore[attr-defined]
+
+
+def test_rotate_stores_no_credential_on_a_source_whose_namespace_is_gone(fake: _Store) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-notes")))
+    before = fake.rows[(ORG, "team-notes", "design-decks")].credential_enc
+    fake.inactive.add((ORG, "team-notes"))
+    body = KnowledgeSourceRotateInput(
+        org=ORG, namespace="team-notes", name="design-decks", credential=SECRET
+    )
+    probes = len(fake.probes)  # type: ignore[attr-defined]
+    assert _code(app.handle_knowledge_source_rotate(body)) == "NAMESPACE_INACTIVE"
+    assert fake.rows[(ORG, "team-notes", "design-decks")].credential_enc == before
+    # Refused before the probe, as add is.
+    assert len(fake.probes) == probes  # type: ignore[attr-defined]
+
+
+def test_rotate_reads_the_namespace_again_sequentially_under_its_lease(fake: _Store) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-notes")))
+    fake.sequential.clear()
+    body = KnowledgeSourceRotateInput(
+        org=ORG, namespace="team-notes", name="design-decks", credential=SECRET
+    )
+    asyncio.run(app.handle_knowledge_source_rotate(body))
+    assert fake.sequential == [False, True]
+
+
+def test_deactivating_a_namespace_s_sources_clears_their_credentials(fake: _Store) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-notes")))
+    assert asyncio.run(app.deactivate_namespace_sources(ORG, "team-notes")) == ["design-decks"]
+    row = fake.rows[(ORG, "team-notes", "design-decks")]
+    assert (row.active, row.credential_enc) == (False, "")
+
+
+def test_a_namespace_delete_retires_its_sources(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.identity.app import namespace as ns_app
+
+    asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-notes")))
+    taken: list[str] = fake.leases  # type: ignore[attr-defined]
+
+    @contextlib.asynccontextmanager
+    async def _claim(*_a: Any) -> AsyncIterator[None]:
+        taken.append("account")
+        yield
+
+    async def _row(*_a: Any, **_k: Any) -> dict[str, Any] | None:
+        return None  # a namespace with no directory row still loses its sources
+
+    monkeypatch.setattr(ns_app, "account_change", _claim)
+    monkeypatch.setattr(ns_app.namespaces_repo, "fetch_row", _row)
+    taken.clear()
+    out = asyncio.run(ns_app.delete_namespace(ORG, "team-notes"))
+    assert (out.deleted, out.sources_retired) == (False, ["design-decks"])
+    row = fake.rows[(ORG, "team-notes", "design-decks")]
+    assert (row.active, row.credential_enc) == (False, "")
+    # The sources lease, then the account's claim, as code.repo.remove takes them.
+    assert taken == [f"knowledge-source:{ORG}:team-notes", "account"]
+
+
+@pytest.mark.parametrize(
+    "own",
+    ["personal-bob", "personal-bob-1a2b3c", "u-bob-0a1b2c3d", personal_name(ORG, "user:bob")],
+)
+def test_a_person_s_own_place_holds_no_source(fake: _Store, own: str) -> None:
+    assert _code(app.handle_knowledge_source_add(_add(namespace=own))) == "PERSONAL_NAMESPACE"
+    assert fake.probes == []  # type: ignore[attr-defined]
+
+
+def test_a_namespace_a_person_claimed_at_signup_holds_no_source(fake: _Store) -> None:
+    fake.claimed.add("alice-notes")
+    assert _code(app.handle_knowledge_source_add(_add(namespace="alice-notes"))) == (
+        "PERSONAL_NAMESPACE"
+    )
+    assert fake.probes == []  # type: ignore[attr-defined]
+
+
+def test_the_source_list_tells_a_persons_own_place(fake: _Store) -> None:
+    fake.claimed.add("alice-notes")
+
+    def accepts(namespace: str) -> bool:
+        listed = asyncio.run(
+            app.handle_knowledge_source_list(KnowledgeSourceListInput(org=ORG, namespace=namespace))
+        )
+        return listed.accepts_sources
+
+    assert accepts(NS)
+    assert not accepts("alice-notes")
+    assert not accepts("personal-alice")
+    assert not accepts("col-me-alice")
+    fake.inactive.add((ORG, "retired"))
+    assert not accepts("retired")
+
+
+def test_a_collection_the_tree_no_longer_holds_takes_no_source(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _in_tree(org: str, ns: str) -> bool:
+        return ns == "col-kept"
+
+    from server.identity.app import collections
+
+    monkeypatch.setattr(collections, "in_tree", _in_tree)
+    assert _code(app.handle_knowledge_source_add(_add(namespace="col-gone"))) == (
+        "NAMESPACE_INACTIVE"
+    )
+    assert asyncio.run(app.handle_knowledge_source_add(_add(namespace="col-kept"))).name
+
+
+def test_a_namespace_erasure_retires_the_sources_of_every_namespace(fake: _Store) -> None:
+    from server.erasure.app import saga_steps
+
+    for ns in ("team-a", "team-b"):
+        asyncio.run(app.handle_knowledge_source_add(_add(namespace=ns)))
+    fake.leases.clear()  # type: ignore[attr-defined]
+    fake.sequential.clear()
+    erased = ["team-a", "team-b", "team-empty"]
+    retired = asyncio.run(saga_steps._step_retire_knowledge_sources_by_ns(ORG, erased))
+    assert retired == 2
+    assert not any(src.active or src.credential_enc for src in fake.rows.values())
+    # Every namespace's source lease is watched until no add holds it, one with no source
+    # too: an add that holds it lands before the sequential read, and a later one sees the
+    # erasure. Only namespaces with a source take the lease. Then each source's sync turn
+    # lease is watched until free, so no turn running outlives the step.
+    assert fake.sequential == [True]
+    assert fake.leases == [  # type: ignore[attr-defined]
+        f"knowledge-source:{ORG}:team-a",
+        f"knowledge-source:{ORG}:team-b",
+    ]
+    assert fake.watched == [  # type: ignore[attr-defined]
+        f"knowledge-source:{ORG}:team-a",
+        f"knowledge-source:{ORG}:team-b",
+        f"knowledge-source:{ORG}:team-empty",
+        f"knowledge-source-sync:{ORG}/team-a/design-decks",
+        f"knowledge-source-sync:{ORG}/team-b/design-decks",
+    ]
+
+
+def _turn(name: str, namespace: str = "team-a") -> str:
+    return f"knowledge-source-sync:{ORG}/{namespace}/{name}"
+
+
+def _clocked(monkeypatch: pytest.MonkeyPatch, busy: dict[str, float]) -> ManualClock:
+    """A manual clock for `retire_sources_of`, and leases (by full name) held until
+    `busy`'s times."""
+    clock = ManualClock(t=100.0)
+    monkeypatch.setattr(app, "time", SimpleNamespace(monotonic=clock.monotonic))
+    monkeypatch.setattr(app, "asyncio", SimpleNamespace(sleep=clock.async_sleep))
+
+    async def _has_live_holder(name: str, **_kw: Any) -> bool:
+        return clock.t < busy.get(name, 0.0)
+
+    monkeypatch.setattr(leases, "has_live_holder", _has_live_holder)
+    return clock
+
+
+def test_the_erasure_step_s_turn_waits_share_one_deadline(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("decks", "notes"):
+        asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-a", name=name)))
+    # decks's turn gives its lease up after 20 s; notes's never does.
+    clock = _clocked(monkeypatch, {_turn("decks"): 120.0, _turn("notes"): float("inf")})
+    with pytest.raises(OverloadedError):
+        asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=30.0))
+    assert clock.t == 130.0
+
+
+def test_the_erasure_step_waits_less_than_the_recovery_workers_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.erasure.app import saga_steps
+    from server.workers.registry import pass_deadline_seconds
+
+    waits: list[float] = []
+
+    async def _retire(org: str, namespaces: list[str], *, wait_s: float) -> int:
+        waits.append(wait_s)
+        return 0
+
+    monkeypatch.setattr(saga_steps, "retire_sources_of", _retire)
+    asyncio.run(saga_steps._step_retire_knowledge_sources_by_ns(ORG, ["team-a"]))
+    # A turn still running fails the step; the saga's retries wait it out.
+    assert waits and waits[0] < pass_deadline_seconds("erasure_recovery") / 2
+
+
+def test_the_erasure_step_waits_out_a_running_turn_and_its_retry_waits_again(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-a")))
+    busy = {_turn("design-decks"): float("inf")}
+    clock = _clocked(monkeypatch, busy)
+    with pytest.raises(OverloadedError):
+        asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=1.0))
+    assert not any(src.active for src in fake.rows.values())
+    # The retry finds no active source, and still waits for the turn until it ends.
+    busy[_turn("design-decks")] = clock.t + 0.5
+    assert asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=1.0)) == 0
+    assert clock.sleeps[-1] == 0.5
+
+
+def test_the_erasure_step_waits_for_a_source_an_older_build_added_after_its_read(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An older build's add takes the lease but reads no ledger, so it can land between
+    # the step's read and its lease: the re-list under the lease waits for its turn too.
+    for name in ("decks", "notes"):
+        asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-a", name=name)))
+    read = fake.sources_in
+
+    async def _before_notes(org: str, names: list[str]) -> list[tuple[str, str]]:
+        return [row for row in await read(org, names) if row[1] == "decks"]
+
+    monkeypatch.setattr(fake, "sources_in", _before_notes)
+    _clocked(monkeypatch, {_turn("notes"): float("inf")})
+    with pytest.raises(OverloadedError):
+        asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=1.0))
+    assert not any(src.active for src in fake.rows.values())
+
+
+def test_add_reads_the_namespace_again_sequentially_under_its_lease(fake: _Store) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-notes")))
+    # Before the probe any replica will do; under the lease, the read sees every write.
+    assert fake.sequential == [False, True]
+
+
+def test_the_erasure_step_waits_while_an_add_holds_the_sources_lease(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An add holding the lease may have checked the ledger before the erasure: the step
+    # reads the sources only once it lets go, and fails (retried) while it holds on.
+    held = f"knowledge-source:{ORG}:team-a"
+    busy = {held: float("inf")}
+    clock = _clocked(monkeypatch, busy)
+    with pytest.raises(OverloadedError, match="document sources"):
+        asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=1.0))
+    assert clock.t == 101.0
+    assert fake.sequential == []  # the sources were never read
+    # Once it lets go, the read follows and sees what the add wrote.
+    asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-a")))
+    fake.sequential.clear()
+    busy[held] = clock.t + 0.5
+    assert asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=1.0)) == 1
+    assert fake.sequential == [True]
+
+
+def test_the_erasure_step_fails_at_its_deadline_while_the_retirement_lease_is_held(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asyncio.run(app.handle_knowledge_source_add(_add(namespace="team-a")))
+    # An add holds the lease for the first 10 s of the step's 30; then another change
+    # takes it for good, and the retirement waits only the 20 s left (a fresh 30 s wait
+    # would end at 140).
+    clock = _clocked(monkeypatch, {f"knowledge-source:{ORG}:team-a": 110.0})
+
+    @contextlib.asynccontextmanager
+    async def _held_elsewhere(name: str, *, wait_s: float, **_kw: Any) -> AsyncIterator[bool]:
+        await clock.async_sleep(wait_s)
+        yield False
+
+    monkeypatch.setattr(leases, "holding", _held_elsewhere)
+    with pytest.raises(OverloadedError):
+        asyncio.run(app.retire_sources_of(ORG, ["team-a"], wait_s=30.0))
+    assert clock.t == 130.0

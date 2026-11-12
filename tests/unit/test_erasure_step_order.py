@@ -44,6 +44,11 @@ _CODE_LINKS = (
     (D, "loom._migration_lock"),
 )
 
+# The stub answers one namespace that holds sources: its lease taken and released (every
+# erased namespace's lease and the turn lease are only read, which writes nothing).
+_SOURCES_RETIRE = ("knowledge_sources.retire", (("OTHER", "INSERT"), (D, "loom._migration_lock")))
+
+
 USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
@@ -563,7 +568,8 @@ async def test_user_purge_saga_trace(run: Any) -> None:
 async def test_namespace_saga_trace(
     run: Any, scope_type: str, scope_value: str, backends: list[str]
 ) -> None:
-    assert await run(scope_type, scope_value) == _with_tail(NS_TRACE, backends)
+    want = [_SOURCES_RETIRE, *_with_tail(NS_TRACE, backends)]
+    assert await run(scope_type, scope_value) == want
 
 
 @pytest.mark.parametrize("external", [True, False])
@@ -571,7 +577,7 @@ async def test_namespace_purge_saga_trace(run: Any, external: bool) -> None:
     """Under purge every tombstone becomes a delete: the wide tables by a
     lightweight DELETE, the narrow ones by an ALTER DELETE. Same steps."""
     got = await run("namespace_list", _ns_list(purge=True, external=external))
-    assert got == _with_tail(NS_PURGE_TRACE, NS_BACKENDS if external else [])
+    assert got == [_SOURCES_RETIRE, *_with_tail(NS_PURGE_TRACE, NS_BACKENDS if external else [])]
 
 
 @pytest.mark.parametrize(("scope_type", "scope_value"), [("user_id", "alice"), ("namespace", "a")])

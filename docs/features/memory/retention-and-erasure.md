@@ -156,6 +156,12 @@ flowchart TD
   `steps_completed`. The `erasure_recovery` worker resumes a saga stranded
   `in_progress` or `failed` from its checkpoint. A step waits up to
   `LOOM_ERASURE_MUTATION_WAIT_S` for its mutation, then fails naming it.
+- **Document sources stop before the documents go.** A namespace erasure retires the
+  namespace's [document sources](../knowledge.md#document-sources) in
+  `knowledge_sources.retire`, its first step, clearing their credentials, then waits for
+  each source's sync turn still running (up to 30 seconds in all; a turn still running
+  fails the step with `OVERLOADED`, and `erasure_recovery` retries the saga), so no sync
+  writes back a document or a mined decision after the later steps erase them.
 - **Code links wait for the link worker.** `code_links.delete` takes the code-link
   worker's queue lease, so no pass publishes a cursor it read before the erasure: across
   hosts with Keeper, within one process without it. It waits up to 15 minutes for a pass

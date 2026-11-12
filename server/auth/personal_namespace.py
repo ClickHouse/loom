@@ -20,7 +20,9 @@ from typing import Any, Final
 
 from server.auth.directory import directory
 from server.auth.grant_claims import account_change
+from server.auth.sharing import is_personal
 from server.core.errors import GrantBusyError
+from server.core.naming import is_sso_namespace_name, slugify
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +30,21 @@ _seen: Final[set[tuple[str, str]]] = set()
 _MAX_CACHE = 100_000
 # The claim outlives the read and the two inserts; a dead holder's is taken over.
 CLAIM_TTL_S = 30
+
+
+# The prefix of the namespace Loom provisions for a person.
+PROVISIONED_NAMESPACE_PREFIX = "personal-"
+
+
+def is_own_namespace(namespace: str) -> bool:
+    """Whether `namespace` has the form of a person's own place: the namespace Loom
+    provisions (`personal-…`), the one single sign-on gives them (`u-…`), or an end
+    user's personal collection (`col-me-…`)."""
+    return (
+        namespace.startswith(PROVISIONED_NAMESPACE_PREFIX)
+        or is_sso_namespace_name(namespace)
+        or is_personal(namespace)
+    )
 
 
 class PersonalNamespaceBusy(Exception):
@@ -42,19 +59,17 @@ def derive_personal_slug(sub: str) -> str:
     the email local-part is slugified to ``[a-z0-9-]``, falling back to a
     sha1 prefix if slugification empties it.
     """
-    from server.core.naming import slugify
-
-    if sub.startswith("personal-"):
+    if sub.startswith(PROVISIONED_NAMESPACE_PREFIX):
         return sub
     local = sub.split("@", 1)[0] if "@" in sub else sub
     slug = slugify(local, max_len=55) or hashlib.sha1(sub.encode("utf-8")).hexdigest()[:8]
-    return f"personal-{slug}"
+    return f"{PROVISIONED_NAMESPACE_PREFIX}{slug}"
 
 
 def personal_candidates(sub: str) -> list[str]:
     """The names `ensure_personal_namespace` tries for `sub`, in order."""
     base = derive_personal_slug(sub)
-    if sub.startswith("personal-"):
+    if sub.startswith(PROVISIONED_NAMESPACE_PREFIX):
         return [base]
     return [base, f"{base}-{hashlib.sha1(sub.encode('utf-8')).hexdigest()[:6]}"]
 

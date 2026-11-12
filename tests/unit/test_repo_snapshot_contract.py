@@ -319,7 +319,7 @@ async def test_a_source_sync_retires_removed_sources_while_the_registry_is_unrea
     monkeypatch.setattr(source_sync.store, "inactive_namespaces", inactive)
     monkeypatch.setattr(source_sync, "_source_turn", turn)
     monkeypatch.setattr(source_sync, "_retire_all", retire_all)
-    # The trunk check reads the code registry and refuses, after the retirement.
+    # The pass reads the code registry for repository tags and refuses, after the retirement.
     with pytest.raises(repos.RegistryUnread):
         await source_sync.run_sync()
     assert retired == ["docs"]

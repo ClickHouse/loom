@@ -479,10 +479,6 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
         )
     from server.knowledge.app.sources import deactivate_namespace_sources, sources_lease
 
-    # The document sources registered on this namespace stop with the repository. Under
-    # the lease every source write of the namespace takes, an add runs wholly before
-    # (and is retired here) or after (and sees the repository gone). Sources first, so
-    # a call that fails between the two leaves the repository registered to retry.
     ch = get_client()
     # set_access's account claim: it cannot write the row back to life; busy refuses.
     async with (
@@ -491,6 +487,8 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
     ):
         # First, so a failed clear stops the removal while it can be retried.
         await _empty_tracker_links(input.org, input.namespace, detail="repository removed")
+        # Sources before the registry row, so a failure in between leaves the repository
+        # registered to retry.
         sources_off = await deactivate_namespace_sources(input.org, input.namespace)
         registry_off = await retire.deactivate_registry_row(ch, input.org, input.namespace)
     await reg.refresh_db_repos(force=True)
@@ -518,7 +516,8 @@ async def handle_code_repo_remove(input: CodeRepoRemoveInput) -> CodeRepoRemoveO
         purged_tables=len(tables),
         erasure_id=erasure_id,
         mirror_removed=mirror_removed,
-        sources_deactivated=sources_off,
+        # The namespace delete retires a source added after the lease above was released.
+        sources_deactivated=sorted({*sources_off, *directory.sources_retired}),
     )
 
 

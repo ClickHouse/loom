@@ -84,7 +84,7 @@ const addResult = (dryRun: boolean) => ({
 });
 
 function renderAdd(onAdded = vi.fn()) {
-  render(<AddSourceDialog open onOpenChange={() => {}} {...NS} repo="Acme/x" onAdded={onAdded} />);
+  render(<AddSourceDialog open onOpenChange={() => {}} {...NS} label="Acme/x" onAdded={onAdded} />);
   return onAdded;
 }
 

@@ -23,7 +23,7 @@ from typing import Any
 from server.core import pg
 from server.core.background import register_deferred_task
 from server.core.error_summary import error_summary
-from server.core.errors import BackendUnavailableError, caller_text
+from server.core.errors import BackendUnavailableError, OverloadedError, caller_text
 from server.core.pg import PostgresUnavailableError
 from server.erasure.api.erasure import (
     ErasureRequestInput,
@@ -58,8 +58,14 @@ from server.observability import audit
 
 log = logging.getLogger(__name__)
 
-# A store that refused or timed out: the recovery worker retries the saga.
-_BACKEND_FAILURES = (ErasureBackendError, BackendUnavailableError, PostgresUnavailableError)
+# Failures of the moment (a store that refused or timed out, a busy lease): one
+# warning line, no traceback.
+_TRANSIENT_FAILURES = (
+    ErasureBackendError,
+    BackendUnavailableError,
+    PostgresUnavailableError,
+    OverloadedError,
+)
 
 
 def audit_namespace(scope_type: str, scope_value: str) -> str:
@@ -375,10 +381,11 @@ async def run_saga(
             # a traceback is for the unexpected case.
             cause = getattr(e, "cause", None)
             if isinstance(e, ErasureStepError) and (
-                isinstance(cause, _BACKEND_FAILURES) or (cause is not None and pg.is_outage(cause))
+                isinstance(cause, _TRANSIENT_FAILURES)
+                or (cause is not None and pg.is_outage(cause))
             ):
                 log.warning(
-                    "erasure %s failed at step %s (backend, will retry): %s: %s",
+                    "erasure %s failed at step %s (transient, will retry): %s: %s",
                     erasure_id,
                     e.step,
                     type(cause).__name__,

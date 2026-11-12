@@ -1,14 +1,14 @@
 /**
- * A repository's document sources on its card: the shared folders, project document
- * stores, page stores' pages and meeting transcripts its documents are pulled from,
- * each with its last sync. They live on the repository's trunk code namespace, the
- * docs namespace, so a reader of the repository sees them and an admin there manages
- * them: Add a source, Check, Sync now, Rotate credential, Retire.
- * Read once when the card is opened (a folded card asks nothing); the dialogs load on
- * first use. The counts are information only: nothing waits for a person to confirm
- * a row.
+ * A namespace's document sources: the shared folders, project document stores, page
+ * stores' pages and meeting transcripts its documents are pulled from, each with its
+ * last sync. Shown on a repository's card (for its docs namespace) and on the Library
+ * (for the namespace in view): a reader sees them and an admin manages them: Add a
+ * source, Check, Sync now, Rotate credential, Retire.
+ * Read once when the card is opened (a folded card asks nothing) or the Library's place
+ * view opens, the read deciding whether its section shows; the dialogs load on first
+ * use. The counts are information only: nothing waits for a person to confirm a row.
  */
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useId, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
@@ -52,7 +52,7 @@ const TONE_STATE: Record<SyncTone, BadgeState> = { ok: "success", warn: "warning
 
 type State =
   | { kind: "loading" }
-  | { kind: "ready"; sources: KnowledgeSource[]; enabled: boolean }
+  | { kind: "ready"; sources: KnowledgeSource[]; enabled: boolean; accepts: boolean }
   | { kind: "absent" }
   | { kind: "refused" }
   | { kind: "error"; message: string };
@@ -106,34 +106,45 @@ function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuIte
   );
 }
 
-export function RepoSourcesList({
+/** The place a list belongs to: what the add dialog's title names, and what the copy calls it. */
+export type SourcesPlace = { label: string; noun: "repository" | "namespace" | "collection" };
+
+export function SourcesList({
   org,
-  docsNamespace,
-  repo,
+  namespace,
+  place,
   manageable,
-  busy,
+  busy = false,
+  section,
 }: {
   org: string;
-  docsNamespace: string;
-  repo: string;
-  /** The caller may call the source ops on the docs namespace: every verb. */
+  /** The namespace the sources live in. */
+  namespace: string;
+  place: SourcesPlace;
+  /** The caller may call the source ops on the namespace: every verb. */
   manageable: boolean;
-  busy: boolean;
+  /** Another change on the page is running: Add waits for it. */
+  busy?: boolean;
+  /** Render as the Library's own section under this heading. A section shows only once
+   *  the list has answered, and to a caller who cannot add, only while it lists a source. */
+  section?: string;
 }) {
   const [state, setState] = useState<State>({ kind: "loading" });
+  const headingId = useId();
   const [nonce, setNonce] = useState(0);
   const [adding, setAdding] = useState(false);
   const [acting, setActing] = useState<{ verb: Verb; source: KnowledgeSource } | null>(null);
-  // Details is a read: any reader of the repository may open it.
+  // Details is a read: any reader may open it.
   const [details, setDetails] = useState<string | null>(null);
-  const id = { org, namespace: docsNamespace };
+  const id = { org, namespace };
   const reload = () => setNonce((n) => n + 1);
 
   useAbortableEffect(
     async (signal, live) => {
       try {
         const r = await listKnowledgeSources(id, { signal });
-        if (live()) setState({ kind: "ready", sources: r.sources, enabled: r.enabled });
+        if (!live()) return;
+        setState({ kind: "ready", sources: r.sources, enabled: r.enabled, accepts: r.accepts_sources !== false });
       } catch (e) {
         if (!live()) return;
         if (isOpAbsent(e)) setState({ kind: "absent" });
@@ -141,28 +152,37 @@ export function RepoSourcesList({
         else setState({ kind: "error", message: humanizeError(e, { read: true }) });
       }
     },
-    [org, docsNamespace, nonce],
+    [org, namespace, nonce],
   );
 
   const menu = (s: KnowledgeSource): RowMenuItem[] => {
     if (!manageable) return [];
     const act = (verb: Verb) => () => setActing({ verb, source: s });
-    const items: RowMenuItem[] = [
-      { label: "Check", icon: "check", onSelect: act("check") },
-      { label: "Sync now", icon: "refresh", onSelect: act("sync") },
-      { label: "Rotate credential", icon: "key", onSelect: act("rotate") },
-      { label: "Retire", icon: "trash", danger: true, onSelect: act("retire") },
-    ];
+    const check: RowMenuItem = { label: "Check", icon: "check", onSelect: act("check") };
+    const sync: RowMenuItem = { label: "Sync now", icon: "refresh", onSelect: act("sync") };
+    const rotate: RowMenuItem = { label: "Rotate credential", icon: "key", onSelect: act("rotate") };
+    const retire: RowMenuItem = { label: "Retire", icon: "trash", danger: true, onSelect: act("retire") };
+    // A place that takes no new source refuses a sync and a rotation: Check and Retire remain.
+    const closed = state.kind === "ready" && !state.accepts;
+    const items = closed ? [check, retire] : [check, sync, rotate, retire];
     return items.map((item) => ({ ...item, disabled: busy }));
   };
   const close = (v: boolean) => {
     if (!v) setActing(null);
   };
 
-  return (
+  // The Library's section hides while its list loads, on an empty place that takes
+  // no source or that this caller cannot add to, and from a non-admin when the list failed.
+  const empty = state.kind === "ready" && state.sources.length === 0;
+  const closedAndEmpty = empty && !state.accepts;
+  const nothingForReader = empty && !manageable;
+  const loading = state.kind === "loading";
+  const failedForReader = state.kind !== "ready" && !loading && !manageable;
+  if (section && (closedAndEmpty || nothingForReader || loading || failedForReader)) return null;
+  const list = (
     <div className="space-y-1.5">
       {state.kind === "loading" && (
-        <LoadingSkeleton label="Loading the repository's document sources">
+        <LoadingSkeleton label={`Loading the ${place.noun}'s document sources`}>
           <Skeleton className="h-4 w-1/2" />
         </LoadingSkeleton>
       )}
@@ -170,7 +190,7 @@ export function RepoSourcesList({
         <p className="text-xs text-text-muted">Document sources are not available on this deployment yet.</p>
       )}
       {state.kind === "refused" && (
-        <p className="text-xs text-text-muted">Join the repository to see where its documents come from.</p>
+        <p className="text-xs text-text-muted">Join the {place.noun} to see where its documents come from.</p>
       )}
       {state.kind === "error" && (
         <p className="text-xs text-text-muted" role="status">
@@ -178,12 +198,18 @@ export function RepoSourcesList({
         </p>
       )}
       {state.kind === "ready" && !state.enabled && <p className="text-xs text-text-muted">{SYNC_OFF}</p>}
-      {state.kind === "ready" && state.sources.length === 0 && (
+      {state.kind === "ready" && !state.accepts && (
+        <p className="text-xs text-text-muted">
+          This {place.noun} takes no new document sources
+          {manageable && state.sources.length > 0 ? "; retire these when they are no longer needed." : "."}
+        </p>
+      )}
+      {state.kind === "ready" && state.accepts && state.sources.length === 0 && (
         <p className="text-xs text-text-muted">
           No document sources.{" "}
           {manageable
-            ? "Add a source and Loom keeps the repository's documents in step with it."
-            : "Anyone with admin on the repository adds them."}
+            ? `Add a source and Loom keeps the ${place.noun}'s documents in step with it.`
+            : `Anyone with admin on the ${place.noun} adds them.`}
         </p>
       )}
       {state.kind === "ready" && state.sources.length > 0 && (
@@ -193,14 +219,14 @@ export function RepoSourcesList({
           ))}
         </ul>
       )}
-      {manageable && state.kind === "ready" && (
+      {manageable && state.kind === "ready" && state.accepts && (
         <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
           Add a source
         </Button>
       )}
       {details && (
         <Suspense fallback={null}>
-          <SourceDetailsDialog org={org} namespace={docsNamespace} name={details} onClose={() => setDetails(null)} />
+          <SourceDetailsDialog org={org} namespace={namespace} name={details} onClose={() => setDetails(null)} />
         </Suspense>
       )}
       {adding && (
@@ -208,8 +234,8 @@ export function RepoSourcesList({
           <AddSourceDialog
             open
             org={org}
-            namespace={docsNamespace}
-            repo={repo}
+            namespace={namespace}
+            label={place.label}
             onOpenChange={(v) => {
               if (!v) setAdding(false);
             }}
@@ -223,19 +249,13 @@ export function RepoSourcesList({
       {acting && (
         <Suspense fallback={null}>
           {acting.verb === "check" && (
-            <CheckSourceDialog
-              open
-              org={org}
-              namespace={docsNamespace}
-              name={acting.source.name}
-              onOpenChange={close}
-            />
+            <CheckSourceDialog open org={org} namespace={namespace} name={acting.source.name} onOpenChange={close} />
           )}
           {acting.verb === "sync" && (
             <SyncNowDialog
               open
               org={org}
-              namespace={docsNamespace}
+              namespace={namespace}
               name={acting.source.name}
               onOpenChange={close}
               onRequested={reload}
@@ -245,7 +265,7 @@ export function RepoSourcesList({
             <RotateSourceDialog
               open
               org={org}
-              namespace={docsNamespace}
+              namespace={namespace}
               name={acting.source.name}
               kind={acting.source.kind}
               onOpenChange={close}
@@ -259,7 +279,7 @@ export function RepoSourcesList({
             <RetireSourceDialog
               open
               org={org}
-              namespace={docsNamespace}
+              namespace={namespace}
               name={acting.source.name}
               enabled={state.kind === "ready" && state.enabled}
               onOpenChange={close}
@@ -269,5 +289,14 @@ export function RepoSourcesList({
         </Suspense>
       )}
     </div>
+  );
+  if (!section) return list;
+  return (
+    <section aria-labelledby={headingId} className="my-6">
+      <h2 id={headingId} className="mb-2 text-sm font-semibold text-text">
+        {section}
+      </h2>
+      {list}
+    </section>
   );
 }

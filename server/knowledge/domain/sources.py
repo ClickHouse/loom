@@ -1,4 +1,4 @@
-"""Document sources a repository's maintainers register (`knowledge.source.*`):
+"""Document sources a namespace's admins register (`knowledge.source.*`):
 the kinds, the name rule and each kind's configuration. Pure: no I/O.
 
 A source's configuration holds ids and filters only, never a host or a URL: each
@@ -76,7 +76,7 @@ class KnowledgeSource:
     credential_enc: str = ""
     created_by: str = ""
     active: bool = True
-    # On an inactive row: the maintainer asked for the source's documents to be retired.
+    # On an inactive row: an admin asked for the source's documents to be retired.
     pending_delete: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -96,6 +96,16 @@ def valid_name(name: str) -> bool:
 
 def state_key(name: str) -> str:
     return STATE_KEY_PREFIX + name
+
+
+def source_key(org: str, namespace: str, name: str) -> str:
+    """A source's key in the sync's cursor, its states and its turn lease."""
+    return f"{org}/{namespace}/{name}"
+
+
+def turn_lease_name(org: str, namespace: str, name: str) -> str:
+    """The lease a source's sync turn holds; build N-1 takes the same name."""
+    return f"knowledge-source-sync:{source_key(org, namespace, name)}"
 
 
 def source_tag(name: str) -> str:

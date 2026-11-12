@@ -133,7 +133,7 @@
  ],
  "loom knowledge sync": [
   "usage: loom knowledge sync [-h] --org ORG --namespace NAMESPACE [--source SOURCE] [--full]",
-  "options: -h, --help show this help message and exit --org ORG --namespace NAMESPACE The repository's trunk code namespace --source SOURCE Only the source of this name --full Record a full sync request for each source, as knowledge.source.sync_now full=true does, so every file is listed and waiting files are retried; a run while that request is unfinished goes on with it"
+  "options: -h, --help show this help message and exit --org ORG --namespace NAMESPACE The namespace the sources live in --source SOURCE Only the source of this name --full Record a full sync request for each source, as knowledge.source.sync_now full=true does, so every file is listed and waiting files are retried; a run while that request is unfinished goes on with it"
  ],
  "loom knowledge migrate-originals": [
   "usage: loom knowledge migrate-originals [-h] [--org ORG] [--namespace NAMESPACE] [--dry-run]",

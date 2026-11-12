@@ -17,11 +17,11 @@ import httpx
 import pytest
 
 from server.clients import notion
+from server.code.app.index import repo_registry
 from server.core import leases
 from server.core.hashing import sha256_text
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import source_probes, source_sync, source_sync_notion, writes
-from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import convert
 from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, KnowledgeSource, parse_config
 from server.knowledge.store import documents
@@ -203,10 +203,10 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _Store:
     ):
         monkeypatch.setattr(source_sync.store, name, getattr(w, name))
 
-    async def _trunk(org: str, ns: str) -> bool:
-        return True
+    async def _registry(**kw: Any) -> list[Any]:
+        return []
 
-    monkeypatch.setattr(source_ops, "is_trunk_namespace", _trunk)
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", _registry)
     monkeypatch.setattr(source_sync, "_repo_tag", lambda src: "repo:abc")
 
     @contextlib.asynccontextmanager

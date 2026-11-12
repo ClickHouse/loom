@@ -4,11 +4,12 @@ each source's sync state (a `loom.code_index_state` row under
 
 Both tables are ReplacingMergeTree(version): every write is a full version row
 and every read uses FINAL. A registry row changes only on add, rotate, remove
-and a repository's removal (`code.repo.remove`), all under the namespace's lease,
-and on `loom secrets reseal`, the one writer outside it: it writes the row it
-read at version + 1, so any later write wins while the ClickHouse servers' clocks
-differ by less than the time between the two writes. The sync state is a separate row,
-so a sync never rewrites the row that holds the credential.
+and the retirement when its namespace goes (`code.repo.remove`, `namespace.delete`,
+`collection.delete`, the erasure step `knowledge_sources.retire`), all under the
+namespace's lease, and on `loom secrets reseal`, the one writer outside it: it
+writes the row it read at version + 1, so any later write wins while the ClickHouse
+servers' clocks differ by less than the time between the two writes. The sync state is
+a separate row, so a sync never rewrites the row that holds the credential.
 
 Which documents are a source's: see `SYNC_WORKER_ACTOR`.
 """
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
@@ -77,6 +78,21 @@ async def list_sources(
     return [_source(r) for r in rows]
 
 
+async def sources_in(
+    org: str, namespaces: list[str], *, ch: _CHClient | None = None
+) -> list[tuple[str, str]]:
+    """Every `(namespace, name)`, active or not, of `namespaces` the registry holds, sorted."""
+    if not namespaces:
+        return []
+    rows = await (ch or _default_client()).query_all(
+        f"SELECT namespace, name FROM {TABLE} FINAL "
+        "WHERE org = {org:String} AND namespace IN {names:Array(String)} "
+        "ORDER BY namespace, name",
+        params={"org": org, "names": namespaces},
+    )
+    return [(str(r["namespace"]), str(r["name"])) for r in rows]
+
+
 async def all_active_sources(*, ch: _CHClient | None = None) -> list[KnowledgeSource]:
     """Every active source of every org, in (org, namespace, name) order: the sync
     worker's work list."""
@@ -87,7 +103,7 @@ async def all_active_sources(*, ch: _CHClient | None = None) -> list[KnowledgeSo
 
 
 async def pending_delete_sources(*, ch: _CHClient | None = None) -> list[KnowledgeSource]:
-    """Removed sources whose documents a maintainer asked to retire."""
+    """Removed sources whose documents an admin asked to retire."""
     rows = await (ch or _default_client()).query_all(
         f"SELECT {_COLUMNS} FROM {TABLE} FINAL WHERE NOT active AND pending_delete "
         "ORDER BY org, namespace, name"
@@ -107,6 +123,27 @@ async def inactive_namespaces(
         params={"keys": pairs},
     )
     return {(str(r["org"]), str(r["namespace"])) for r in rows}
+
+
+class DirectoryRow(NamedTuple):
+    """What a source's refusal reads of a namespace's directory row."""
+
+    inactive: bool
+    # Self-signup and agent sign-up write the namespace itself as its owner.
+    claimed_at_signup: bool
+
+
+async def directory_row(org: str, namespace: str, *, ch: _CHClient | None = None) -> DirectoryRow:
+    """The namespace's directory row as a source's refusal reads it; no row is neither."""
+    row = await (ch or _default_client()).query_one(
+        "SELECT active, owner_email = namespace AS claimed FROM loom.namespaces FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} LIMIT 1",
+        params={"org": org, "ns": namespace},
+    )
+    if row is None:
+        return DirectoryRow(inactive=False, claimed_at_signup=False)
+    active = bool(row["active"])
+    return DirectoryRow(inactive=not active, claimed_at_signup=active and bool(row["claimed"]))
 
 
 async def get_source(
@@ -325,11 +362,13 @@ async def count_documents(
 
 __all__ = [
     "DOCUMENTS_LIMIT",
+    "DirectoryRow",
     "REVISIONS_LIMIT",
     "TABLE",
     "active_count",
     "all_active_sources",
     "count_documents",
+    "directory_row",
     "get_source",
     "inactive_namespaces",
     "insert_source",
@@ -339,5 +378,6 @@ __all__ = [
     "read_states",
     "source_documents",
     "source_revisions",
+    "sources_in",
     "write_state",
 ]

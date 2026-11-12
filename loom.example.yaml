@@ -2711,8 +2711,8 @@ settings:
 
   # --- document sources ---
 
-  # Active document sources (knowledge.source.add) one repository namespace may
-  # register; an add past it is refused with SOURCE_QUOTA. [live]
+  # Active document sources (knowledge.source.add) one namespace may register; an add
+  # past it is refused with SOURCE_QUOTA. [live]
   # knowledge_sources_max_per_namespace: 8
 
   # Seconds a document source's probe (add, check, rotate) may take in all; past it add
@@ -2720,7 +2720,7 @@ settings:
   # knowledge_source_probe_timeout_s: 20.0
 
   # The knowledge_source_sync worker: pulls each registered document source's changed
-  # files into its repository's documents. Off by default: it needs each source's
+  # files into its namespace's documents. Off by default: it needs each source's
   # credential, spends embedding calls on every changed document and model calls mining
   # it for decisions. [restart]
   # knowledge_source_sync_enabled: false

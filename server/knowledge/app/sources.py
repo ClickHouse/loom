@@ -1,8 +1,8 @@
-"""knowledge.source.* — the document sources a repository's maintainers register
-for Loom to pull from.
+"""knowledge.source.* — the document sources a namespace's admins register for
+Loom to pull from.
 
-Every op is addressed by the repository's trunk code namespace (the one its
-documents live in), so the transport's namespace gate decides who may call:
+Every op is addressed by the namespace the source's documents live in, so the
+transport's namespace gate decides who may call:
 readers list and inspect, the namespace's admins add, check, rotate, remove and
 ask for a sync. The credential is sealed at rest under its own purpose, held in
 memory only for a probe, and never returned or audited.
@@ -13,25 +13,32 @@ next in the source's sync state; `remove(delete_documents=true)` records it on t
 inactive registry row it writes.
 
 Every write of a namespace's sources, registry rows and sync state alike (add,
-rotate, remove, sync_now and code.repo.remove's retirement), runs under
-`sources_lease`, which serializes them; the probes run outside it.
+rotate, remove, sync_now, and the retirement when the namespace goes: code.repo.remove,
+namespace.delete, collection.delete and the erasure step `knowledge_sources.retire`),
+runs under `sources_lease`, which serializes them; the probes run outside it.
 
 Which documents are a source's: see `SYNC_WORKER_ACTOR`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import dataclasses
+import time
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
 from server.auth.context import current_caller
+from server.auth.personal_namespace import is_own_namespace
+from server.auth.sharing import is_collection
+from server.core import leases
 from server.core.ch import sequential_reads
 from server.core.datetimes import as_aware_utc
 from server.core.errors import (
+    ErasureRunningError,
     NotFoundError,
     OverloadedError,
     SourceReplacedError,
@@ -85,26 +92,51 @@ def _seal(credential: str) -> str:
         ) from None
 
 
-async def is_trunk_namespace(org: str, namespace: str) -> bool:
-    """Whether `namespace` is a repository's trunk code namespace, the one its
-    documents live in."""
-    from server.code.app.index import repo_registry
-    from server.code.domain.index.repos import docs_namespaces
+async def _source_refusal(org: str, namespace: str) -> ValidationError | None:
+    """Why `namespace` takes no source, or None. A person's own place (PERSONAL_NAMESPACE):
+    a user erasure erases what the person wrote there, and a source's documents are the
+    sync worker's, so they would stay. A namespace whose directory row is inactive, or a
+    collection the tree no longer holds (NAMESPACE_INACTIVE): the sync skips it and no
+    delete reaches it."""
+    # Through identity's app layer (the package contract allows no cross-plane store
+    # import), imported here since server.identity.app.namespace imports this module.
+    from server.identity.app.collections import in_tree
 
-    # The trunk is decided across all of a repository's branches and the operator's
-    # entries, so it takes the whole registry: the cached snapshot, not a forced read.
-    await repo_registry.refresh_db_repos()
-    return namespace in {ns for (o, _repo), ns in docs_namespaces().items() if o == org}
-
-
-async def _require_trunk_namespace(org: str, namespace: str) -> None:
-    """Refuse to register a source on a namespace that is no repository's trunk."""
-    if not await is_trunk_namespace(org, namespace):
-        raise ValidationError(
-            f"{namespace!r} is not a repository's trunk code namespace; sources are "
-            "registered on the namespace the repository's documents live in",
-            code="NOT_A_CODE_NAMESPACE",
+    personal = ValidationError(
+        f"{namespace!r} is a person's own collection or namespace and holds no "
+        "document source; register it on a shared one",
+        code="PERSONAL_NAMESPACE",
+    )
+    if is_own_namespace(namespace):
+        return personal
+    row = await store.directory_row(org, namespace)
+    if row.claimed_at_signup:
+        return personal
+    gone = is_collection(namespace) and not await in_tree(org, namespace)
+    if gone or row.inactive:
+        return ValidationError(
+            f"{namespace!r} is not an active namespace", code="NAMESPACE_INACTIVE"
         )
+    return None
+
+
+async def _require_no_erasure(org: str, namespace: str) -> None:
+    """Refuse a new source while an erasure of the namespace will still run: its first step
+    may have read the sources already, so what a later source wrote would outlast it."""
+    # Imported here: the erasure saga imports this module.
+    from server.erasure.app import ledger_reads
+    from server.erasure.domain.scopes import may_cover
+
+    for row in await ledger_reads.open_namespace_erasures(org):
+        if may_cover(str(row["scope_type"]), str(row["scope_value"]), namespace):
+            raise ErasureRunningError(
+                f"an erasure of {namespace!r} will still run; add the source once it finishes"
+            )
+
+
+async def _require_source_namespace(org: str, namespace: str) -> None:
+    if refusal := await _source_refusal(org, namespace):
+        raise refusal
 
 
 def _require_kind(kind: str) -> None:
@@ -112,20 +144,6 @@ def _require_kind(kind: str) -> None:
         raise ValidationError(
             f"kind {kind!r} is not served; one of: {', '.join(domain.KINDS)}", code="BAD_KIND"
         )
-
-
-async def _source_in_repository(org: str, namespace: str, name: str) -> KnowledgeSource:
-    """The source, for an op that uses it: refused when its namespace is no longer
-    a repository's trunk code namespace (a repository retired outside
-    `code.repo.remove`, or a branch that now outranks it)."""
-    src = await _source_or_404(org, namespace, name)
-    if not await is_trunk_namespace(org, namespace):
-        raise ValidationError(
-            f"the repository of {namespace!r} is gone or no longer has its trunk there, so "
-            f"source {src.name!r} is not used; knowledge.source.remove retires it",
-            code="NOT_A_CODE_NAMESPACE",
-        )
-    return src
 
 
 async def _source_or_404(org: str, namespace: str, name: str) -> KnowledgeSource:
@@ -163,6 +181,7 @@ async def handle_knowledge_source_list(
     found = await store.list_sources(input.org, input.namespace)
     states = await store.read_states(input.org, input.namespace, [s.name for s in found])
     return KnowledgeSourceListOutput(
+        accepts_sources=await _source_refusal(input.org, input.namespace) is None,
         sources=[
             KnowledgeSourceEntry(
                 name=s.name,
@@ -218,7 +237,8 @@ async def handle_knowledge_source_add(input: KnowledgeSourceAddInput) -> Knowled
         raise ValidationError(str(e), code="BAD_CONFIG") from None
     if not input.credential.strip():
         raise ValidationError("a credential is required", code="CREDENTIAL_REFUSED")
-    await _require_trunk_namespace(input.org, input.namespace)
+    await _require_source_namespace(input.org, input.namespace)
+    await _require_no_erasure(input.org, input.namespace)
     await _require_free(input.org, input.namespace, name)
     # Sealed before the probe, so a deployment that cannot store it says so first.
     credential_enc = _seal(input.credential)
@@ -237,12 +257,11 @@ async def handle_knowledge_source_add(input: KnowledgeSourceAddInput) -> Knowled
     async with sources_lease(input.org, input.namespace):
         # Under the lease nothing else writes this namespace's sources, so the checks
         # hold until the insert: the probe took seconds and ran outside it.
-        if not await _registered(input.org, input.namespace):
-            raise ValidationError(
-                f"the repository of {input.namespace!r} was removed; no source was registered",
-                code="NOT_A_CODE_NAMESPACE",
-            )
-        await _require_trunk_namespace(input.org, input.namespace)
+        # A namespace deleted during the probe (code.repo.remove deletes its own) has
+        # retired its sources under this lease; the add must not land after it.
+        with sequential_reads():
+            await _require_source_namespace(input.org, input.namespace)
+            await _require_no_erasure(input.org, input.namespace)
         await _require_free(input.org, input.namespace, name)
         # A new source starts with a full listing, never on the stamp an earlier
         # source of this name left; reset before the row goes active.
@@ -262,38 +281,25 @@ async def handle_knowledge_source_add(input: KnowledgeSourceAddInput) -> Knowled
     return out
 
 
-@contextlib.asynccontextmanager
-async def sources_lease(org: str, namespace: str) -> AsyncIterator[None]:
-    """Hold the lease that serializes every write of a namespace's sources. Busy
-    past the wait: OVERLOADED, retry; a lease store that cannot answer refuses
-    (LeaseUnavailable), never writes unlocked."""
-    from server.core import leases
+def _sources_lease_name(org: str, namespace: str) -> str:
+    return f"knowledge-source:{org}:{namespace}"
 
+
+@contextlib.asynccontextmanager
+async def sources_lease(org: str, namespace: str, *, wait_s: float = 5.0) -> AsyncIterator[None]:
+    """Hold the lease that serializes every write of a namespace's sources. Busy
+    past `wait_s`: OVERLOADED, retry; a lease store that cannot answer refuses
+    (LeaseUnavailable), never writes unlocked."""
     # The TTL outlives the few reads and inserts of one write with room to spare (a
-    # holder that dies is taken over after it); a second write waits up to 5 s.
+    # holder that dies is taken over after it).
     async with leases.holding(
-        f"knowledge-source:{org}:{namespace}", ttl_s=60.0, wait_s=5.0
+        _sources_lease_name(org, namespace), ttl_s=60.0, wait_s=wait_s
     ) as held:
         if not held:
             raise OverloadedError(
                 f"another change to the document sources of {namespace!r} is running; retry"
             )
         yield
-
-
-async def _registered(org: str, namespace: str) -> bool:
-    """Whether the namespace's repository is still registered: its loom.code_repos
-    row for one a maintainer added; one the operator's configuration owns cannot be
-    removed by code.repo.remove, so it counts as registered."""
-    from server.code.app.index import repo_registry
-    from server.code.domain.index.repos import repo_for_namespace
-
-    cfg = repo_for_namespace(org, namespace)
-    if cfg is None:
-        return False
-    if cfg.source != "registry":
-        return True
-    return await repo_registry.row_active(org, namespace)
 
 
 async def _require_free(org: str, namespace: str, name: str) -> None:
@@ -324,9 +330,9 @@ async def _require_free(org: str, namespace: str, name: str) -> None:
         )
     if documents:
         raise ValidationError(
-            f"the removed source {name!r} kept its documents ({documents} left); delete them "
-            "(knowledge.delete) before reusing the name, or register the source under "
-            "another name",
+            f"the removed source {name!r} kept its documents ({documents} left); retire them "
+            "with knowledge.source.remove and delete_documents=true before reusing the "
+            "name, or register the source under another name",
             code="SOURCE_DOCUMENTS_KEPT",
         )
 
@@ -334,7 +340,7 @@ async def _require_free(org: str, namespace: str, name: str) -> None:
 async def handle_knowledge_source_check(
     input: KnowledgeSourceCheckInput,
 ) -> KnowledgeSourceCheckOutput:
-    src = await _source_in_repository(input.org, input.namespace, input.name)
+    src = await _source_or_404(input.org, input.namespace, input.name)
     checked_at = _now_iso()
     credential = unseal(_CREDENTIAL_PURPOSE, src.credential_enc)
     if not credential:
@@ -373,16 +379,19 @@ async def handle_knowledge_source_check(
 async def handle_knowledge_source_rotate(
     input: KnowledgeSourceRotateInput,
 ) -> KnowledgeSourceRotateOutput:
-    src = await _source_in_repository(input.org, input.namespace, input.name)
+    src = await _source_or_404(input.org, input.namespace, input.name)
     if not input.credential.strip():
         raise ValidationError("a credential is required", code="CREDENTIAL_REFUSED")
     credential_enc = _seal(input.credential)
+    await _require_source_namespace(input.org, input.namespace)
     probe = await _probe_or_refuse(src.kind, src.config, input.credential)
     async with sources_lease(input.org, input.namespace):
         # The probe ran outside the lease: the source may have been removed, or removed
         # and added again as another source this credential was not probed against.
         with sequential_reads():
             fresh = await _source_or_404(input.org, input.namespace, src.name)
+            # A source of a namespace that is gone gets no new credential.
+            await _require_source_namespace(input.org, input.namespace)
         if fresh.source_id != src.source_id:
             raise SourceReplacedError(
                 f"source {src.name!r} was removed and added again while its new credential "
@@ -403,7 +412,16 @@ async def handle_knowledge_source_remove(
         )
     async with sources_lease(input.org, input.namespace):
         with sequential_reads():
-            src = await _source_or_404(input.org, input.namespace, name)
+            src = await store.get_source(input.org, input.namespace, name)
+            if src is None and input.delete_documents:
+                # A retired source (removed keeping its documents, or retired with its
+                # namespace) can still have its documents retired.
+                src = await store.latest_source(input.org, input.namespace, name)
+            if src is None:
+                raise NotFoundError(
+                    f"no document source {name!r} in {input.namespace!r}",
+                    code="SOURCE_NOT_FOUND",
+                )
             pending = 0
             if input.delete_documents:
                 pending = await store.count_documents(src.org, src.namespace, src.name)
@@ -421,7 +439,8 @@ async def handle_knowledge_source_remove(
 async def handle_knowledge_source_sync_now(
     input: KnowledgeSourceSyncNowInput,
 ) -> KnowledgeSourceSyncNowOutput:
-    src = await _source_in_repository(input.org, input.namespace, input.name)
+    src = await _source_or_404(input.org, input.namespace, input.name)
+    await _require_source_namespace(input.org, input.namespace)
     async with sources_lease(input.org, input.namespace):
         # A request meant for the source this call read must not be recorded on another
         # source added under the name meanwhile.
@@ -475,14 +494,56 @@ async def _update_state(
 
 
 async def deactivate_namespace_sources(org: str, namespace: str) -> list[str]:
-    """Retire every active source of a namespace whose repository is being removed:
-    an inactive row with the credential cleared, so nothing reads or opens it again.
-    The caller holds `sources_lease`. The names retired."""
+    """Retire every active source of a namespace that is going away (its repository
+    removed, the namespace deleted or erased): an inactive row with the credential
+    cleared, so nothing reads or opens it again. The caller holds `sources_lease`.
+    The names retired."""
     with sequential_reads():
         found = await store.list_sources(org, namespace)
     for src in found:
         await store.insert_source(dataclasses.replace(src, active=False, credential_enc=""))
     return sorted(src.name for src in found)
+
+
+async def retire_sources_of(org: str, namespaces: list[str], *, wait_s: float) -> int:
+    """Retire the sources of `namespaces` (an erasure's) and wait for every sync turn of
+    theirs still running; every lease wait (an add's, the retirement's, each sync turn's)
+    shares one `wait_s` deadline. A source add while the saga runs is refused
+    (`ERASURE_RUNNING`) under the namespace's lease, so once no add holds that lease, one
+    sequential read finds every source an add wrote."""
+    deadline = time.monotonic() + wait_s
+    with sequential_reads():
+        for namespace in sorted(set(namespaces)):
+            await _wait_until_free(
+                _sources_lease_name(org, namespace),
+                deadline,
+                f"a change to the document sources of {namespace!r} is running; retry",
+            )
+        found = await store.sources_in(org, namespaces)
+    waits = set(found)
+    retired = 0
+    for namespace in sorted({ns for ns, _ in found}):
+        async with sources_lease(org, namespace, wait_s=max(0.0, deadline - time.monotonic())):
+            names = await deactivate_namespace_sources(org, namespace)
+        retired += len(names)
+        waits.update((namespace, name) for name in names)
+    # Wait out turns that read their source before the retirement: inactive names too,
+    # since a retried step finds none active.
+    for namespace, name in sorted(waits):
+        await _wait_until_free(
+            domain.turn_lease_name(org, namespace, name),
+            deadline,
+            f"a sync turn of {name!r} in {namespace!r} is running; retry",
+        )
+    return retired
+
+
+async def _wait_until_free(lease_name: str, deadline: float, busy: str) -> None:
+    """Return once no live holder keeps `lease_name`; past `deadline`, OVERLOADED."""
+    while await leases.has_live_holder(lease_name):
+        if time.monotonic() >= deadline:
+            raise OverloadedError(busy)
+        await asyncio.sleep(0.5)
 
 
 def source_add_audit_subject(input: KnowledgeSourceAddInput, response: Any) -> dict[str, Any]:
@@ -505,7 +566,7 @@ def source_rotate_audit_subject(input: KnowledgeSourceRotateInput, response: Any
 
 __all__ = [
     "deactivate_namespace_sources",
-    "is_trunk_namespace",
+    "retire_sources_of",
     "request_full_sync",
     "sources_lease",
     "handle_knowledge_source_add",

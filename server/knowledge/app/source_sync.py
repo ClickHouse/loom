@@ -1,4 +1,4 @@
-"""The sync of registered document sources into their repositories' documents:
+"""The sync of registered document sources into their namespaces' documents:
 one pass over every active source, run by the `knowledge_source_sync` worker and
 by `loom knowledge sync`. A folder's turn is below; each other kind has its own
 turn module (`source_sync_linear`, `source_sync_notion`, `source_sync_recording`),
@@ -9,10 +9,10 @@ turn's start and stamp, `sync_item` for one listed item, with `give_up`, `wait` 
 `retire_absent` and `retire`, and `client_error`. A kind's own bookkeeping goes in
 `TurnResult.kind_state`, which the sync state keeps.
 
-A pass reads the active sources and drops those whose namespace is inactive or no
-longer a repository's trunk. Sources a maintainer asked to sync (`sync_now`) go
-first, the rest from where the previous pass stopped. Each source's turn holds
-the source's own lease, so two copies of the worker never sync it at once.
+A pass reads the active sources and drops those whose namespace is inactive.
+Sources a namespace's admin asked to sync (`sync_now`) go first, the rest from
+where the previous pass stopped. Each source's turn holds the source's own lease,
+so two copies of the worker never sync it at once.
 
 A turn lists the source's files: every file on its first turn, when asked
 (`full`) and once `knowledge_source_sync_full_interval_seconds` have passed
@@ -47,7 +47,7 @@ writer saved at the address during the fetch is left alone, and the file is coun
 A document is retired only on positive evidence that the source dropped it:
 absence from a complete full listing whose folders the account can still see,
 confirmed by a lookup of that file; an address that is no longer its file's; or a
-maintainer's `remove(delete_documents=true)`. A fetch error, a rate limit or
+an admin's `remove(delete_documents=true)`. A fetch error, a rate limit or
 a folder the account lost retires nothing. A document another writer or another
 source holds is never written or retired.
 
@@ -93,9 +93,14 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from server.clients import gdrive
+from server.code.app.index import repo_registry
 from server.code.app.index.pass_budget import PassBudget, rotate_to
 from server.code.domain.index.remote import repo_tag
-from server.code.domain.index.repos import repo_for_namespace
+from server.code.domain.index.repos import (
+    configured_repos,
+    docs_namespaces,
+    require_registry_read,
+)
 from server.core import leases
 from server.core.ch import sequential_reads
 from server.core.errors import OverloadedError, ValidationError
@@ -111,7 +116,9 @@ from server.knowledge.domain.sources import (
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
     json_object,
+    source_key,
     source_tag,
+    turn_lease_name,
 )
 from server.knowledge.store import documents
 from server.knowledge.store import sources as store
@@ -226,7 +233,7 @@ class PassResult:
     removed: int = 0
     unconverted: int = 0
     skipped: int = 0
-    # Documents of removed sources retired at a maintainer's request.
+    # Documents of removed sources retired at an admin's request.
     retired: int = 0
     # Documents the extraction leg mined, rows it tagged source-changed, documents it
     # gave up on, and sources whose pending documents it left for a later pass.
@@ -262,7 +269,7 @@ def _now_iso() -> str:
 
 
 def _cursor_of(src: KnowledgeSource) -> str:
-    return f"{src.org}/{src.namespace}/{src.name}"
+    return source_key(src.org, src.namespace, src.name)
 
 
 def _budget() -> PassBudget:
@@ -284,9 +291,14 @@ async def run_sync(
         found = [s for s in found if (s.org, s.namespace) == (org, namespace)]
     if only:
         found = [s for s in found if s.name == only]
-    # A maintainer's delete request goes first, before the backlog of changed files and
+    # An admin's delete request goes first, before the backlog of changed files and
     # before anything that reads the code registry.
     await _retire_removed_sources(run, result, org=org, namespace=namespace, only=only)
+    if found:
+        # The repository tags come from the registry: refresh it once per pass, and
+        # stop the pass (RegistryUnread) while it has never been read.
+        await repo_registry.refresh_db_repos()
+        require_registry_read()
     usable = await _usable(found)
     if full:
         for src in usable:
@@ -315,12 +327,9 @@ async def run_sync(
 
 
 async def _usable(found: list[KnowledgeSource]) -> list[KnowledgeSource]:
-    """The sources a pass syncs: their namespace is active and still a repository's
-    trunk code namespace."""
-    pairs = sorted({(s.org, s.namespace) for s in found})
-    inactive = await store.inactive_namespaces(pairs)
-    trunk = {p for p in pairs if p not in inactive and await source_ops.is_trunk_namespace(*p)}
-    return [s for s in found if (s.org, s.namespace) in trunk]
+    """The sources a pass syncs: those whose namespace is active."""
+    inactive = await store.inactive_namespaces(sorted({(s.org, s.namespace) for s in found}))
+    return [s for s in found if (s.org, s.namespace) not in inactive]
 
 
 async def _states(found: list[KnowledgeSource]) -> dict[str, dict[str, str]]:
@@ -329,7 +338,7 @@ async def _states(found: list[KnowledgeSource]) -> dict[str, dict[str, str]]:
     for org, ns in sorted({(s.org, s.namespace) for s in found}):
         names = [s.name for s in found if (s.org, s.namespace) == (org, ns)]
         for name, state in (await store.read_states(org, ns, names)).items():
-            out[f"{org}/{ns}/{name}"] = state
+            out[source_key(org, ns, name)] = state
     return out
 
 
@@ -345,7 +354,7 @@ async def _source_turn(src: KnowledgeSource) -> AsyncIterator[leases.Lease]:
     pass_context.set_namespace(src.namespace)
     set_worker_identity(WORKER, org=src.org, namespace=src.namespace)
     async with leases.cluster_lease(
-        f"knowledge-source-sync:{_cursor_of(src)}", ttl_s=_LEASE_TTL_S
+        turn_lease_name(src.org, src.namespace, src.name), ttl_s=_LEASE_TTL_S
     ) as lease:
         with customer.for_org(src.org, namespace=src.namespace), pipeline_actor(SYNC_WORKER_ACTOR):
             yield lease
@@ -967,8 +976,12 @@ async def require_current(src: KnowledgeSource) -> None:
 
 
 def _repo_tag(src: KnowledgeSource) -> str:
-    cfg = repo_for_namespace(src.org, src.namespace)
-    return repo_tag(cfg.git_remote or cfg.repo) if cfg is not None else ""
+    """`repo:<id>` for a source on a repository's trunk code namespace, else ""."""
+    entries = configured_repos()  # one snapshot for both lookups
+    cfg = next((c for c in entries if (c.org, c.namespace) == (src.org, src.namespace)), None)
+    if cfg is None or docs_namespaces(entries).get((cfg.org, cfg.repo)) != src.namespace:
+        return ""
+    return repo_tag(cfg.git_remote or cfg.repo)
 
 
 async def write_document(
@@ -983,11 +996,11 @@ async def write_document(
 ) -> bool:
     """Write one item (`f`: its `id`, `name`, `modifiedTime` and, with an original,
     its `mimeType`) at `uri` with `knowledge.upsert`, as the sync worker: tagged
-    `source-kind:design_doc`, the repository's `repo:<id>` and `source:<name>`,
-    class `imported`, with the source's kind and name, the item's id and revision
-    and the conversion in its metadata. False, writing nothing, when another writer
-    took the address while the item was fetched: the check before the fetch is
-    seconds old by now."""
+    `source-kind:design_doc`, `source:<name>` and, on a repository's trunk code
+    namespace, its `repo:<id>`, class `imported`, with the source's kind and name, the
+    item's id and revision and the conversion in its metadata. False, writing nothing,
+    when another writer took the address while the item was fetched: the check before
+    the fetch is seconds old by now."""
     tags = ["source-kind:design_doc", source_tag(src.name)]
     if repo := _repo_tag(src):
         tags.insert(1, repo)
@@ -1096,7 +1109,7 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
 async def _retire_removed_sources(
     run: Pass, result: PassResult, *, org: str, namespace: str, only: str
 ) -> None:
-    """Retire the documents of removed sources whose maintainer asked for it, then
+    """Retire the documents of removed sources whose admin asked for it, then
     clear the request once none is left."""
     for src in await store.pending_delete_sources():
         if org and (src.org, src.namespace) != (org, namespace):

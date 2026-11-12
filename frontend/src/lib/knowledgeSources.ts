@@ -1,7 +1,7 @@
 /**
- * The document sources a repository's maintainers register for Loom to pull its documents
- * from (`knowledge.source.*`), as the repository card shows them: the wire shapes, the
- * last sync in plain words, and the add form. Pure: no I/O, no React.
+ * The document sources a namespace's admins register for Loom to pull its documents from
+ * (`knowledge.source.*`), as the repository card and the Library show them: the wire
+ * shapes, the last sync in plain words, and the add form. Pure: no I/O, no React.
  */
 
 /** A source's sync state: a request waiting for the worker, and what its last turn did. */
@@ -52,6 +52,8 @@ export interface KnowledgeSourceList {
   sources: KnowledgeSource[];
   /** Whether this deployment runs the sync worker. */
   enabled: boolean;
+  /** False where add would refuse the namespace; absent from an older server. */
+  accepts_sources?: boolean;
 }
 
 export interface KnowledgeSourceProbe {

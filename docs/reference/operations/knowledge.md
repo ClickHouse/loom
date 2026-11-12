@@ -489,14 +489,14 @@ Search the user's uploaded document library — bills, contracts, receipts, resu
 
 ## `knowledge.source.add`
 
-Register a document source on a repository's trunk code namespace: a kind, the ids it reads and a read-only credential.
+Register a document source on a namespace: a kind, the ids it reads and a read-only credential.
 
 `POST /v1/knowledge.source.add` · MCP `loom_knowledge_source_add` · role `admin` · write · audited · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `namespace` | `str` | required | The namespace or collection the documents live in; a person's own (personal-…, single sign-on u-<name>-<hash>, col-me-…, or one claimed at sign-up) is refused. |
 | `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. |
 | `kind` | `str` | required | The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (a meeting store's transcripts). |
 | `config` | `dict[str, Any]` | required | The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; linear: {project_ids: [1-20 project ids, UUIDs]}; notion: {page_ids: [...]… |
@@ -507,7 +507,7 @@ Register a document source on a repository's trunk code namespace: a kind, the i
 | --- | --- | --- |
 | `name` | `str` | The registered source's name, normalised. |
 | `kind` | `str` | The source kind, normalised. |
-| `namespace` | `str` | The repository's trunk code namespace the source was registered on. |
+| `namespace` | `str` | The namespace the source was registered on. |
 | `config` | `dict[str, Any]` | The config as stored. |
 | `probe` | `KnowledgeSourceProbe` | What the probe with the credential found. |
 | `dry_run` | `bool` | True when the call only probed. |
@@ -521,7 +521,7 @@ Probe a registered document source with its stored credential now (a check and a
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `namespace` | `str` | required | The namespace the source's documents live in. |
 | `name` | `str` | required | The source name. |
 
 | Output field | Type | Meaning |
@@ -543,7 +543,7 @@ One registered document source: its config, its sync state and the documents it 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `namespace` | `str` | required | The namespace the source's documents live in. |
 | `name` | `str` | required | The source name. |
 
 | Output field | Type | Meaning |
@@ -551,26 +551,27 @@ One registered document source: its config, its sync state and the documents it 
 | `name` | `str` | The source's name. |
 | `kind` | `str` | The source's kind. |
 | `config` | `dict[str, Any]` | The ids and filters the source reads; never a credential. |
-| `created_by` | `str` | Token subject of the maintainer who added it; '' with auth off. |
+| `created_by` | `str` | Token subject of the admin who added it; '' with auth off. |
 | `created_at` | `str` | When it was added, ISO UTC. |
 | `sync` | `KnowledgeSourceSync` | The source's sync state: a waiting request and the last pass. |
 | `documents` | `list[KnowledgeSourceDocument]` | The source's live documents, most recently ingested first, at most 200. |
 
 ## `knowledge.source.list`
 
-The document sources registered on a repository's code namespace, with each one's sync state.
+The document sources registered on a namespace, with each one's sync state.
 
 `POST /v1/knowledge.source.list` · MCP `loom_knowledge_source_list` · role `viewer` · read · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `namespace` | `str` | required | The namespace the sources live in. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `sources` | `list[KnowledgeSourceEntry]` | The namespace's active sources, by name. |
 | `enabled` | `bool` | Whether this deployment runs the sync worker (LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED); false: sources are stored and probed, but nothing pulls from them. |
+| `accepts_sources` | `bool` | False where add would refuse the namespace (PERSONAL_NAMESPACE, NAMESPACE_INACTIVE). |
 
 ## `knowledge.source.remove`
 
@@ -581,7 +582,7 @@ Retire a registered document source: its registry row goes inactive and its cred
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `namespace` | `str` | required | The namespace the source's documents live in. |
 | `name` | `str` | required | The source name. |
 | `confirm` | `str` | required | Type the source name to confirm. |
 | `delete_documents` | `bool` | `False` | Record a request to retire the source's documents (default keep them). |
@@ -600,7 +601,7 @@ Replace a registered document source's credential.
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `namespace` | `str` | required | The namespace the source's documents live in. |
 | `name` | `str` | required | The source name. |
 | `credential` | `str` | required | The replacement credential, of the same form as add's; stored encrypted, never returned. |
 
@@ -619,7 +620,7 @@ Record a request to sync one document source in its sync state: the sync worker 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | required | The org. |
-| `namespace` | `str` | required | The repository's trunk code namespace. |
+| `namespace` | `str` | required | The namespace the source's documents live in. |
 | `name` | `str` | required | The source name. |
 | `full` | `bool` | `False` | Ask for a pass that lists every document, not only those changed since the last pass. |
 

@@ -326,6 +326,8 @@ class NamespaceDeleteOutput(BaseModel):
     namespace: str
     # When the soft-delete was written, or the time of the call when nothing changed.
     updated_at: datetime
+    # The document sources this delete retired, also when `deleted` is false.
+    sources_retired: list[str] = Field(default_factory=list)
 
 
 class NamespaceBrowseInput(BaseModel):
