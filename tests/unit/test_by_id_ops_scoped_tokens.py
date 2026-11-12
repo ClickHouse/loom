@@ -228,8 +228,7 @@ def test_scoped_viewer_is_refused_before_the_lookup(http: TestClient, updates: l
 def test_scoped_writer_updates_by_id_over_mcp(
     monkeypatch: pytest.MonkeyPatch, updates: list[str]
 ) -> None:
-    """The MCP core roster's conflict-resolution verb, from the Claude Code
-    plugin's scoped bearer."""
+    """The by-id revision verb, called over MCP from the plugin's scoped bearer."""
     import server.transport.mcp_call as mcp_call
     from server.auth.jwt import verify_token
 

@@ -79,7 +79,7 @@ def test_fixture_exercises_the_revision_path(settings_override) -> None:
         any(g["tool"] == "loom_memory_apply" for g in t["gold"]) for t in retired
     )
     assert not ({t["id"] for t in retired} & {t["id"] for t in tasks})
-    # `dry_run` and the new verbs are on the core surface the bench lists
+    # `dry_run` and the new verbs are on the `all` surface the bench lists
     assert "dry_run" in (tools["loom_memory_set"].get("properties") or {})
     for t in revision:
         for g in t["gold"]:
