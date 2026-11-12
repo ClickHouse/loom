@@ -298,6 +298,12 @@ test("a key file's name is matched as text: a link whose name only matches it as
   fs.linkSync(file, other);
   assert.equal(clearStrayLinks(file, file), "refuse");
   assert.ok(fs.existsSync(other));
+  // Its own temporary name is still a stray.
+  fs.unlinkSync(other);
+  const stray = `${file}.77.abcdefabcdef`;
+  fs.linkSync(file, stray);
+  assert.equal(clearStrayLinks(file, file), "retry");
+  assert.equal(fs.existsSync(stray), false);
 });
 
 test("a good key still linked under its creator's temporary name is put back, not removed", { skip: !posix }, (t) => {
