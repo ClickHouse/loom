@@ -34,18 +34,23 @@ in `value` and in `value_json` (the embedding reads its excerpt, as for any row)
 | `owner`    | Who answers for the definition: a person or a team.                 |
 | `rests_on` | What it is based on: knowledge document `source_uri`s and SQL text. |
 
-A definition is **governed** while its live row in the shared layer exists: a
-`loom.shared` row of type `definition` under a `definition/` key, promoted from the
-namespace-wide row (`user_id`, `agent` and `session_id` all `'-'`). The shared layer
+A definition is **governed** while three things hold, checked when the term leg reads it:
+a live `loom.shared` row of type `definition` under a `definition/` key exists; its
+provenance (`promoted_from`) names exactly one source, the namespace-wide row under that
+key (`user_id`, `agent` and `session_id` all `'-'`); and that source is live, not
+`sensitivity = 'high'`, and holds the same text as the shared copy. A read-time check
+covers every path into that state, rows promoted before this design and through N-1
+included. The shared layer
 already is the namespace's admin-approved copy of a fact
 ([the shared layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records the candidate it
 came from (`promoted_from_candidate_id`), `memory.lineage` walks it back, and every build
-knows it. So governance needs no table or state of its own. Edits to the private row do
-not change the shared copy: the governed text changes only when an admin promotes the
-revision, and `memory.demote` ends governance.
+knows it. So governance needs no table or state of its own. An edit, a relabel to `high`,
+a redact or a tombstone of the source, by any writer or worker on any build, ends
+governance until an admin promotes the source again; a copy that keeps the text (the
+entity pass, a touch) keeps it. `memory.demote` ends governance.
 
-The shared layer needs six changes for this, each in the pull request that adds the term
+The shared layer needs five changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
 
 - **Namespace erasure** gains a step and a census row for `loom.shared`. Today only user
@@ -58,11 +63,9 @@ leg, because the term leg serves shared rows to every reader:
 - **`check_against_shared`**, the promotion's conflict check, skips `KEY_IDENTIFIED_TYPES`,
   so promoting `MRR` is not refused as a conflict with `ARR`.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
-  key) whose source is not the namespace-wide row, so no one user's text reaches a
-  bounded reader through the term leg.
-- **A relabel to `high`** of a promoted definition's source row (`memory.set`,
-  `memory.bulk_set`, `memory.update_by_id`, `loom sensitivity-sweep`) demotes its shared
-  row, since `loom.shared` has no sensitivity of its own.
+  key) whose source is not the namespace-wide row or whose key is not the slug of its
+  `term`, so a revision of a term always lands on the governed row's key. The read-time
+  check above is what the term leg relies on; this refusal keeps such rows from being made.
 
 No two governed definitions share a term or an alias, compared case-folded as the key is
 built, so `SAT` and `Sat` are one name: promoting a definition whose term or alias is
@@ -100,20 +103,19 @@ churn rate".
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
 would read the term as undefined. This narrows the read-scope rule that a bounded read
-serves no namespace-wide row
-([read scope inside a namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)),
-for governed definitions through this leg only. The leg runs only on a search's first
-page, and is off when a field asks for other rows (`memory_type`, which cannot name
+serves no namespace-wide row ([read scope inside a
+namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
+governed definitions through this leg only. The leg runs only on a search's first page,
+and is off when a field asks for other rows (`memory_type`, which cannot name
 `definition`, `tags`, `category`, an explicit `agent`, `run_id` or `session_ids`,
 `as_of`). A `user_id` or `session_id` the read scope pins, `scope`, `exclude_keys` and
-`min_similarity` keep it on; it drops any key in `exclude_keys`. No `sensitivity = 'high'`
-row is in the shared layer: `memory.promote` refuses one, and a relabel demotes one (the
-changes above). Its read is bounded by a setting; past
-the bound, the most recently promoted definitions are read and the response says the leg
-was cut. It runs beside the others under the same time budget, and its latency is measured
-against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
-request that adds it. `governed` is an added output field: the SDKs and the MCP schema
-carry it.
+`min_similarity` keep it on; it drops any key in `exclude_keys`. It serves no definition
+whose source is `sensitivity = 'high'` (the read-time check above). Its read is bounded by
+a setting; past the bound, the most recently promoted definitions are read and the
+response says the leg was cut. It runs beside the others under the same time budget, and
+its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
+`server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
+output field: the SDKs and the MCP schema carry it.
 
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
@@ -298,7 +300,8 @@ candidates. A rejected draft leaves nothing behind but its queue row.
   namespace's daily cost cap (`server/observability/budget.py`), read fail-closed
   (`fail_open=False`) as the conflict resolver reads it: over the cap, or with the cap
   unreadable, a draft is refused and a pass or turn ends early, and the next one resumes.
-- The term leg is one bounded read of the namespace's shared definitions per search.
+- The term leg is one bounded read of the namespace's shared definitions per search, and
+  one read of the matched definitions' source rows.
 
 ## Rolling upgrades
 
@@ -311,10 +314,12 @@ while any live replica's schema is below N, as `namespace.guide_set` does (rule 
 gaps pass and the query-history turn write nothing then, and no miss is recorded. The
 operator turns `knowledge_gaps_enabled` on only once no N-1 replica serves, as rule 23 does
 for assistant-turn learnings. Governed definitions are memory and shared rows, which N-1
-knows: it serves them as plain rows with no term leg, and an admin's `memory.promote` of a
-definition on N-1 skips the term check, which the term leg's last-promoted rule covers. A
-namespace erasure N-1 runs leaves the namespace's shared rows, definitions included, as it
-does today; one run during the rollout or after a rollback is run again once N serves.
+knows: it serves them as plain rows with no term leg. What N-1 does to them is caught by
+the read-time check: a promotion from another source, or an edit, relabel or redact of the
+source, leaves a row the term leg does not serve, and the term leg's last-promoted rule
+covers a promotion that skipped the term check. N-1's redact and namespace erasure do not
+reach the shared row's text, as today: one run during the rollout or after a rollback is
+run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
@@ -332,9 +337,10 @@ namespace erasure run after the rollback is run again once N serves.
   form; a query-history draft only the normalised text of queries that many users ran.
 - A miss is recorded only when the operator opted in and the namespace did not refuse
   capture; its asker comes from the token, never the body.
-- A definition is governed only while an admin's promotion of it into the shared layer is
-  live, and no two governed definitions share a term or an alias; only governed
-  definitions are placed above the served list.
+- A definition is governed only while an admin's promotion of its namespace-wide row into
+  the shared layer is live and the source still holds that text, unlabelled `high`; no two
+  governed definitions share a term or an alias; only governed definitions are placed
+  above the served list.
 - A query naming no governed term is served exactly as without the term leg.
 
 ## Source entry points
