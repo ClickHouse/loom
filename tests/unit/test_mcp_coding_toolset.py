@@ -2,7 +2,7 @@
 of one `core` for two. Membership derives from the frozensets; the toolset is
 selectable per deployment and per request; the code tools ride it without the
 deployment flag; the catalogue says which toolsets list an op; the coding-tier
-descriptions are the core texts with the unlisted op marked callable by name;
+descriptions are the core texts with the chat-only sentences removed;
 each description stays under its budget (the listing's ceiling is in
 test_mcp_listing_budget.py).
 
@@ -11,7 +11,6 @@ Hermetic: `_caller_default_context` (which can hit ClickHouse) is patched."""
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 
@@ -43,8 +42,8 @@ OPS = {op.name: op for op in ALL_OPERATIONS}
 TOOL_TO_OP = {op.mcp_tool_name: op.name for op in ALL_OPERATIONS}
 SYNTHETIC = {"loom_search", "loom_activate", "loom_op"}
 # The prose the tier authors: a derived text may exceed the core text it is
-# built from only by the "(callable by name)" mark (≤ 8 tokens).
-CALLABLE_BY_NAME_MARK_TOKENS = 8
+# built from by a small slack (≤ 8 tokens).
+DERIVED_TEXT_SLACK_TOKENS = 8
 
 
 @pytest.fixture(autouse=True)
@@ -68,10 +67,6 @@ def _listing(toolset: str, code: bool, *, requested: str | None = None) -> list[
 
 def _names(tools: list[dict]) -> set[str]:
     return {t["name"] for t in tools}
-
-
-def _tok(obj) -> int:
-    return len(json.dumps(obj, separators=(",", ":"))) // 4
 
 
 # ---------------------------------------------------------------- membership
@@ -265,11 +260,11 @@ def test_coding_descriptions_stay_under_budget():
     for t in _listing("coding", False):
         assert len(t["description"]) // 4 <= 480, f"{t['name']} description is over budget"
     # the coding-authored prose: never longer than the core text it derives
-    # from, beyond the mark that names the unlisted op as callable by name
+    # from, beyond the slack
     for op, text in CODING_TOOL_DESCRIPTIONS.items():
         if op in TOOL_DESCRIPTIONS:
             grown = (len(text) - len(TOOL_DESCRIPTIONS[op])) // 4
-            assert grown <= CALLABLE_BY_NAME_MARK_TOKENS, (op, grown)
+            assert grown <= DERIVED_TEXT_SLACK_TOKENS, (op, grown)
 
 
 # ---------------------------------------------------------------- catalogue
