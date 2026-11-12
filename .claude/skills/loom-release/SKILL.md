@@ -49,10 +49,9 @@ It refuses a prerelease, an older or an already tagged version before the notes,
 git fetch origin main release/X.Y   # release/X.Y for a patch
 git tag vX.Y.Z-rc.1 <the release pull request's merge commit>
 git push origin vX.Y.Z-rc.1          # the owner's go-ahead first
-# The tag's run may take a few seconds to appear: re-run these two lines until the echo prints an id.
+# The tag's run may take a few seconds to appear: re-run these two lines until the watch starts.
 run=$(gh run list -R ClickHouse/loom --workflow release.yml --branch vX.Y.Z-rc.1 -L 1 --json databaseId --jq '.[0].databaseId // empty')
-echo "${run:?no run for the tag yet}"
-gh run watch -R ClickHouse/loom "$run" --exit-status
+gh run watch -R ClickHouse/loom "${run:?no run for the tag yet}" --exit-status
 ```
 
 A tag run whose image build failed on a download from outside GitHub (`curl: (7) Failed to connect` from an apt or key server), for a candidate or a final, is re-run with `gh run rerun "$run" -R ClickHouse/loom --failed`, which re-runs only the failed jobs and the jobs after them. Never re-run it once another run has tagged the version ([a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)).
@@ -79,10 +78,9 @@ The registry dispatch's `pypi`, `npm` and `mcp-registry` jobs (only `pypi` and `
 tag=vX.Y.Z   # vX.Y.Z-rc.N for a candidate
 # Once the run shows waiting (after github-release): the GET then lists pypi and npm, and mcp-registry for a final.
 dispatch=$(gh run list -R ClickHouse/loom --workflow release.yml --branch "$tag" --event workflow_dispatch -L 1 --json databaseId --jq '.[0].databaseId // empty')
-echo "${dispatch:?no dispatch run for the tag yet}"
-gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
+gh api "repos/ClickHouse/loom/actions/runs/${dispatch:?no dispatch run for the tag yet}/pending_deployments" --jq '.[] | [.environment.id, .environment.name] | @tsv'
 ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" --jq '.[].environment.id'); do ids+=(-F "environment_ids[]=$id"); done
-gh api -X POST "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"
+gh api -X POST "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"   # the owner's go-ahead first
 ```
 
 To publish only the images and the GitHub Release, as for a `clickhouse_image` or `allow_clickhouse_downgrade` dispatch that stands in for a stopped tag run ([release process](../../../docs/development/release-process.md)), send the POST with `-f state=rejected -f comment="SDKs not published for $tag"`.
