@@ -71,6 +71,9 @@ export interface ChatHandlers {
   ) => void;
   /** What the answer has read so far, while it streams: the whole list each time. */
   onSteps?: (read: { steps: Step[]; cut: boolean; listed: boolean }) => void;
+  /** The answer's text is complete and its citations are being checked (`loom.text_done`;
+   *  a server that sends none goes straight to `onCitations`). */
+  onTextDone?: () => void;
 }
 
 function citationOf(raw: unknown): Citation | null {
@@ -121,6 +124,10 @@ function readEvent(data: string, on: ChatHandlers, requestId: string): boolean {
   }
   if (chunk.object === "loom.step") {
     on.onSteps?.(stepsOf(chunk));
+    return false;
+  }
+  if (chunk.object === "loom.text_done") {
+    on.onTextDone?.();
     return false;
   }
   const choices = Array.isArray(chunk.choices) ? chunk.choices : [];

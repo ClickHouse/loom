@@ -494,7 +494,13 @@ def test_the_chat_route_streams_the_agents_chunks(client: Any) -> None:
     r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
     events = [line for line in r.text.split("\n\n") if line]
-    assert events[-1] == "data: [DONE]" and len(events) == 5
+    # The agent's three chunks, the end of the text, the checked citations, then the end.
+    assert events[-1] == "data: [DONE]" and len(events) == 6
+    assert json.loads(events[3][6:]) == {
+        "object": "loom.text_done",
+        "id": "chatcmpl-1",
+        "choices": [],
+    }
     (row,) = rows
     assert row["success"] is True and row["cost"] > 0
     # The streamed body runs in a task of its own; the row still names the answer.
@@ -1428,7 +1434,7 @@ def test_a_streamed_answer_sends_each_step_as_its_row_lands(
 
     monkeypatch.setattr(bridge.ledger, "live_rows", live_rows)
     monkeypatch.setattr(bridge.support.ledger, "run_rows", run_rows)
-    answer, chunks = _streamed(world, with_steps=True)
+    answer, chunks = _streamed(world, live=True)
     events = _events(chunks)
     kinds = [e.get("object", "chunk") for e in events]
     # The step went out once, while the answer still streamed, and the list did not change.
@@ -1457,7 +1463,7 @@ def test_a_streamed_answers_poll_backs_off_and_never_resets(
         await asyncio.sleep(0.01)
 
     monkeypatch.setattr(bridge, "_tick", tick)
-    _streamed(world, with_steps=True)
+    _streamed(world, live=True)
     assert len(ticks) >= 5
     assert ticks[:5] == [1.0, 2.0, 4.0, 4.0, 4.0] and set(ticks[2:]) == {4.0}
 
@@ -1473,7 +1479,7 @@ def test_a_failed_step_read_stops_the_steps_not_the_answer(
         raise ConnectionError("ClickHouse is down")
 
     monkeypatch.setattr(bridge.ledger, "live_rows", failing)
-    answer, chunks = _streamed(world, with_steps=True)
+    answer, chunks = _streamed(world, live=True)
     assert "".join(answer.text) == "Read it." and reads == [1]
     assert not any(e.get("object") == "loom.step" for e in _events(chunks))
 
@@ -1486,6 +1492,61 @@ def test_a_whole_answer_polls_no_steps(world: _World, monkeypatch: pytest.Monkey
     _, chunks = _streamed(world)
     final = _events(chunks)[-1]
     assert final["object"] == "loom.citations" and "steps" not in final
+    assert not any(e.get("object") == "loom.text_done" for e in _events(chunks))
+
+
+def test_a_streamed_answer_says_its_text_ended_before_its_checks(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order: list[str] = []
+    verify = bridge.citations.verify
+
+    async def checked(text: str, **kw: Any) -> Any:
+        order.append("checks")
+        return await verify(text, **kw)
+
+    monkeypatch.setattr(bridge.citations, "verify", checked)
+
+    async def run() -> list[bytes]:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        out = []
+        async for c in bridge.stream(ticket, QUESTION, bridge.Answer(), live=True):
+            if b"loom.text_done" in c:
+                order.append("text_done")
+            out.append(c)
+        return out
+
+    events = _events(asyncio.run(run()))
+    assert [e.get("object", "chunk") for e in events][-2:] == ["loom.text_done", "loom.citations"]
+    assert events[-2] == {"object": "loom.text_done", "id": "chatcmpl-1", "choices": []}
+    assert order == ["text_done", "checks"]
+
+
+def test_a_client_that_leaves_at_text_done_gives_the_slot_back(world: _World) -> None:
+    # The checks never run, so their release does not either: the stream gives it back.
+    async def run() -> None:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), live=True)
+        async for c in gen:
+            if b"loom.text_done" in c:
+                break
+        await gen.aclose()  # type: ignore[attr-defined]
+
+    asyncio.run(run())
+    assert bridge._running == {}
+
+
+def test_the_slot_is_free_when_the_checks_event_goes_out(world: _World) -> None:
+    # The next question may follow `loom.citations` at once: it must not find the slot held.
+    async def run() -> list[bool]:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        free = []
+        async for c in bridge.stream(ticket, QUESTION, bridge.Answer(), live=True):
+            if b"loom.citations" in c:
+                free.append(bridge._running == {})
+        return free
+
+    assert asyncio.run(run()) == [True]
 
 
 def test_a_cut_run_says_so_on_its_last_event(
@@ -1499,7 +1560,7 @@ def test_a_cut_run_says_so_on_its_last_event(
         return rows
 
     monkeypatch.setattr(bridge.support.ledger, "run_rows", run_rows)
-    _, chunks = _streamed(world, with_steps=True)
+    _, chunks = _streamed(world, live=True)
     final = _events(chunks)[-1]
     assert len(final["steps"]) == RUN_ROWS and final["steps_cut"] is True
 
@@ -1513,7 +1574,7 @@ def test_an_answer_left_early_closes_librechat_and_leaves_no_task(
 
     async def run() -> set[asyncio.Task[Any]]:
         ticket = await bridge.open_answer(_caller(), ORG, NS)
-        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), with_steps=True)
+        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), live=True)
         if leave == "client":
             # The caller went away after the first chunk: the route closes the generator.
             await anext(gen)
@@ -1547,7 +1608,7 @@ def test_a_reader_error_of_any_kind_ends_the_answer(world: _World) -> None:
 
     async def run() -> None:
         ticket = await bridge.open_answer(_caller(), ORG, NS)
-        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), with_steps=True)
+        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), live=True)
 
         async def drain() -> None:
             async for _ in gen:
@@ -1570,7 +1631,7 @@ def test_a_streamed_answers_last_event_says_whether_its_run_was_read(
         return read
 
     monkeypatch.setattr(bridge.support, "streamed_calls", streamed_calls)
-    _, chunks = _streamed(world, with_steps=True)
+    _, chunks = _streamed(world, live=True)
     final = _events(chunks)[-1]
     assert final["object"] == "loom.citations" and final.get("steps") == expected
     assert ("steps" in final) is (expected is not None)
@@ -1602,7 +1663,7 @@ def test_a_failed_citation_check_ends_the_streamed_run_read(
 
     async def run() -> set[asyncio.Task[Any]]:
         ticket = await bridge.open_answer(_caller(), ORG, NS)
-        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), with_steps=True)
+        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), live=True)
         with pytest.raises(RuntimeError, match="a check failed"):
             async for _ in gen:
                 pass
@@ -1636,7 +1697,7 @@ def test_an_answer_cancelled_by_a_task_group_leaves_no_task(
 
     async def run() -> set[asyncio.Task[Any]]:
         ticket = await bridge.open_answer(_caller(), ORG, NS)
-        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), with_steps=True)
+        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), live=True)
 
         async def drain() -> None:
             async for _ in gen:
@@ -1665,5 +1726,5 @@ def test_the_step_poll_names_its_reads(world: _World, monkeypatch: pytest.Monkey
         return []
 
     monkeypatch.setattr(bridge.ledger, "live_rows", live_rows)
-    _streamed(world, with_steps=True)
+    _streamed(world, live=True)
     assert tags and set(tags) == {"assistant.steps"}

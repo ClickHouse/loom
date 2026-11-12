@@ -459,7 +459,7 @@ async def stream(
     messages: list[dict[str, str]],
     answer: Answer,
     *,
-    with_steps: bool = False,
+    live: bool = False,
 ) -> AsyncIterator[bytes]:
     """The admitted answer as LibreChat's agents API streams it (OpenAI chat-completion
     chunks as server-sent events), with `answer` filled as it goes, for at most
@@ -467,12 +467,14 @@ async def stream(
     an error or running past the limit raises ASSISTANT_UPSTREAM_FAILED, naming none of
     LibreChat's text. Once LibreChat's stream has begun, the answer's spend is charged
     however it ends. An answer that ended keeps its slot through its citation checks and
-    ends with their `loom.citations` event, then `[DONE]`.
+    ends with their `loom.citations` event, then `[DONE]`; however the caller leaves, the
+    slot is given back.
 
-    `with_steps` (the streaming chat route only): while LibreChat streams, the answer's own
+    `live` (the streaming chat route only): while LibreChat streams, the answer's own
     calls are read as their ledger rows land and sent as `loom.step` events, each carrying
-    the whole list so far; the `loom.citations` event then carries the steps of one read of
-    the run after it ends."""
+    the whole list so far; a `loom.text_done` event says the text is complete before the
+    checks start; the `loom.citations` event then carries the steps of one read of the run
+    after it ends."""
     body = {
         "model": ticket.agent_id,
         "messages": _with_asker(messages, ticket.asker),
@@ -508,7 +510,7 @@ async def stream(
                 answer.started = True
                 queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=_QUEUE_MAX)
                 tasks.append(asyncio.create_task(_read_lines(r, deadline, queue)))
-                if with_steps:
+                if live:
                     tasks.append(asyncio.create_task(_poll_steps(ticket, answer, started, queue)))
                 async with contextlib.aclosing(_relay(ticket, answer, queue)) as relayed:
                     async for chunk in relayed:
@@ -535,11 +537,26 @@ async def stream(
             ticket.release()
         if answer.started:
             _charge(answer)
-    yield await _checked(ticket, answer, with_steps=with_steps)
-    yield b"data: [DONE]\n\n"
+    async with contextlib.aclosing(_ended(ticket, answer, live=live)) as ended:
+        async for chunk in ended:
+            yield chunk
 
 
-async def _checked(ticket: Ticket, answer: Answer, *, with_steps: bool = False) -> bytes:
+async def _ended(ticket: Ticket, answer: Answer, *, live: bool) -> AsyncGenerator[bytes]:
+    """The stream's last events once LibreChat's ended: `loom.text_done` (`live` only), the
+    checks' `loom.citations`, then `[DONE]`."""
+    try:
+        if live:
+            yield _event("loom.text_done", answer.run_id)
+        yield await _checked(ticket, answer, live=live)
+        yield b"data: [DONE]\n\n"
+    finally:
+        # The checks give the slot back before their event goes out, so the next question
+        # never finds it held; this covers a caller that leaves at `loom.text_done`.
+        ticket.release()
+
+
+async def _checked(ticket: Ticket, answer: Answer, *, live: bool = False) -> bytes:
     """The answer's citations, checked inside its slot (the checks are the answer's
     too), as the stream's `loom.citations` event; the slot is given back after. A streamed
     answer's run is read once beside the checks, for its support and its steps: the event
@@ -548,7 +565,7 @@ async def _checked(ticket: Ticket, answer: Answer, *, with_steps: bool = False) 
     try:
         text = "".join(answer.text)
         steps: dict[str, Any] = {}
-        if with_steps:
+        if live:
             steps = await _check_streamed(ticket, answer, text)
         else:
             await _check_whole(ticket, answer, text)

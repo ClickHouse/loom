@@ -269,9 +269,10 @@ async def chat_completions(request: Request) -> Any:
     except BaseException as e:
         held.close(e)
         raise
-    # Only a streamed answer shows its steps while it runs (a whole one carries none).
+    # Only a streamed answer sends its steps and the end of its text while it runs (a whole
+    # one sends neither).
     if payload.get("stream"):
-        chunks = bridge.stream(ticket, messages, held.answer, with_steps=True)
+        chunks = bridge.stream(ticket, messages, held.answer, live=True)
         return _AnswerStream(_streamed(chunks, held), held)
     return await _whole(bridge.stream(ticket, messages, held.answer), held)
 

@@ -164,13 +164,13 @@ or `none`; a value the SDK does not know, or none from an older server, reads as
 call ([steps](../architecture/assistant.md#steps); empty from an older server, and when
 the server could not read the run (a run that made no call has none either)), with
 `steps_cut` when the run held more than 200 ledger rows, so `steps` lists its first ones.
-The live `loom.step` events are skipped. `ask` returns the `AssistantAnswer` whole. The
-generated `client.assistant_ask` op method returns the server's output as it is. A refusal
-raises its typed error before any text, and an `error` event after the answer began raises
-the same way. An answer that began is never resent, nor one refused with a 429; a stored
-login's 401, which comes before the answer starts, is sent once more with a fresh token.
-`read_timeout_s` (300 s) bounds each read, as an answer is silent while a tool call runs.
-`SyncAgent` iterates `stream` blocking.
+The live `loom.step` events and `loom.text_done` are skipped. `ask` returns the
+`AssistantAnswer` whole. The generated `client.assistant_ask` op method returns the
+server's output as it is. A refusal raises its typed error before any text, and an `error`
+event after the answer began raises the same way. An answer that began is never resent,
+nor one refused with a 429; a stored login's 401, which comes before the answer starts, is
+sent once more with a fresh token. `read_timeout_s` (300 s) bounds each read, as an answer
+is silent while a tool call runs. `SyncAgent` iterates `stream` blocking.
 
 ## Sessions and tools
 

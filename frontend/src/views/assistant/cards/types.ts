@@ -40,6 +40,8 @@ export interface TurnCard {
   unanswered?: string;
   /** A read is on its way (never stored). */
   busy?: boolean;
+  /** Its turn was asked again (Retry, an edit): the card reads again once it shows. */
+  again?: boolean;
 }
 
 /** The largest snapshot a stored card keeps (its JSON); past it a reload shows "Read again". */

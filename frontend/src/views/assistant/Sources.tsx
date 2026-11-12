@@ -1,10 +1,12 @@
 import { useId } from "react";
+import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { Popover } from "@clickhouse/click-ui/Popover";
 import type { Citation, Support } from "../../api/assistantChat";
 import { IconButton } from "../../components/IconButton";
 import { PopoverTrigger } from "../../components/ui/Menu";
+import { Unavailable } from "../../components/ui/Unavailable";
 import { useStore } from "../../lib/state";
 
 interface Label {
@@ -16,6 +18,15 @@ interface Label {
 
 // Where a check looks for each cited source.
 const IN_LOOM = "in what Loom holds, in this build's documentation or in what the answer's own reads returned";
+
+/** The label of a finished answer whose check never came back: the connection was lost
+ *  after its text, or the page was left while Loom checked it. */
+export const NOT_CHECKED: Label = {
+  text: "Check didn't finish",
+  why: "Loom's check of this answer's sources didn't finish: the connection was lost or the page was left first, so nothing about its sources is known.",
+  icon: "info-in-circle",
+  tone: "text-text-muted",
+};
 
 /**
  * The label of an answer with this support and these citations; null when it has none.
@@ -90,17 +101,27 @@ export function Sources({
   support,
   unknownNames = [],
   answer,
+  askAgain,
+  blocked = null,
+  checkLost = false,
 }: {
   citations: Citation[];
-  support: Support;
+  /** Absent: none came (a server that sends none, or a check that never came back). */
+  support?: Support;
+  /** The check of this answer's sources never finished: with no support, NOT_CHECKED. */
+  checkLost?: boolean;
   unknownNames?: string[];
   answer: number;
+  /** "Ask again with sources", offered on an unsupported label. */
+  askAgain?: () => void;
+  /** Why nothing can be asked now: "Ask again with sources" shows, unavailable. */
+  blocked?: string | null;
 }) {
   const inspect = useStore((s) => s.inspect);
   const openDocument = useStore((s) => s.openDocument);
   const openDocsPage = useStore((s) => s.openDocsPage);
   const labelId = useId();
-  const label = supportLabel(support, citations, unknownNames);
+  const label = support ? supportLabel(support, citations, unknownNames) : checkLost ? NOT_CHECKED : null;
   // Where a citation found in Loom opens: a memory in the drawer (any writer's: the wildcard
   // reads it whichever agent, user or session it is filed under), a document in its
   // preview, a docs page on the Help view at its section.
@@ -115,7 +136,7 @@ export function Sources({
   return (
     <div className="mt-2 space-y-1" data-testid="assistant-sources">
       {label && (
-        <div className={`flex items-center gap-1 text-xs ${label.tone}`} data-testid="assistant-support">
+        <div className={`flex flex-wrap items-center gap-1 text-xs ${label.tone}`} data-testid="assistant-support">
           <Icon name={label.icon} size="sm" aria-hidden="true" />
           <span id={labelId}>{label.text}</span>
           <Popover>
@@ -131,6 +152,13 @@ export function Sources({
               <p className="text-xs text-text-muted">{label.why}</p>
             </Popover.Content>
           </Popover>
+          {askAgain && support === "unsupported" && (
+            <Unavailable reason={blocked}>
+              <Button type="secondary" htmlType="button" className="ml-1" onClick={askAgain}>
+                Ask again with sources
+              </Button>
+            </Unavailable>
+          )}
         </div>
       )}
       {citations.length > 0 && (

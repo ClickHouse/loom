@@ -118,16 +118,22 @@ describe("loom.assistant.stream", () => {
     });
   });
 
-  it("carries the steps on the answer and yields nothing for a step event", async () => {
+  it("carries the steps on the answer and yields nothing for a step or end-of-text event", async () => {
     const step = { op: "namespace.audit", text: "Read the audit", ok: true };
     const failed = { op: "memory.search", text: "Couldn't search memories", ok: false };
-    const stream = sse({ object: "loom.step", id: "", choices: [], steps: [step] }, chunk("Seven."), {
-      object: "loom.citations",
-      id: "chatcmpl-1",
-      citations: [],
-      steps: [step, failed],
-      steps_cut: true,
-    });
+    const stream = sse(
+      { object: "loom.step", id: "", choices: [], steps: [step] },
+      chunk("Seven."),
+      // The end of the text, before the checks: no choices, so no text.
+      { object: "loom.text_done", id: "chatcmpl-1", choices: [] },
+      {
+        object: "loom.citations",
+        id: "chatcmpl-1",
+        citations: [],
+        steps: [step, failed],
+        steps_cut: true,
+      },
+    );
     const { loom } = client(() => new Response(body(stream, [])));
     const out = await collect(loom);
     expect(out).toHaveLength(2);

@@ -21,7 +21,7 @@ import { canCall } from "../../../lib/canCall";
 import { humanizeError } from "../../../lib/errorWords";
 import { useNamespaceRoleRead } from "../../../lib/namespaceRole";
 import { useStore } from "../../../lib/state";
-import { ask, save, useChat } from "../chatStore";
+import { ask, cardReads, save, useChat } from "../chatStore";
 import { randomId } from "../conversations";
 import { tokenReadScope } from "../tokenScope";
 import { starterOf, starterQuestion } from "./starters";
@@ -33,7 +33,6 @@ const SAMPLE_LIMIT = 5;
 /** The cards read in this tab, by turn: a card restored from a stored conversation was not,
  *  so what it shows is from its own time, and Apply waits for a read again. */
 const fresh = new Set<string>();
-const inFlight = new Map<string, AbortController>();
 
 export const isFresh = (turnId: string) => fresh.has(turnId);
 
@@ -146,8 +145,9 @@ export function readCard(turnId: string, gate: string | null, args?: CardArgs): 
   const org = useStore.getState().identity?.org ?? "";
   const namespace = st.namespace ?? "";
   if (!turn?.card || !org || !namespace) return;
-  inFlight.get(turnId)?.abort();
-  const card = { ...turn.card, ...(args ? { args: { ...turn.card.args, ...args } } : {}) };
+  cardReads.get(turnId)?.abort();
+  const { again: _again, ...was } = turn.card;
+  const card = { ...was, ...(args ? { args: { ...was.args, ...args } } : {}) };
   if (gate) {
     patchCard(turnId, () => ({ ...card, error: gate, failed: false, busy: false }));
     // Kept with the turn: an answer still streaming saves it when it ends.
@@ -155,13 +155,13 @@ export function readCard(turnId: string, gate: string | null, args?: CardArgs): 
     return;
   }
   const mine = new AbortController();
-  inFlight.set(turnId, mine);
+  cardReads.set(turnId, mine);
   patchCard(turnId, () => ({ ...card, busy: true, error: undefined, failed: false }));
   const conversation = st.id;
   // `landed`: the read's data is the card's now (a read of this visit, which may apply).
   const settle = (change: (c: TurnCard) => TurnCard, said: string, landed = false) => {
-    if (inFlight.get(turnId) !== mine) return;
-    inFlight.delete(turnId);
+    if (cardReads.get(turnId) !== mine) return;
+    cardReads.delete(turnId);
     // The conversation was left or reset: the read is not its own any more.
     if (useChat.getState().id !== conversation) return;
     if (landed) fresh.add(turnId);
@@ -228,7 +228,7 @@ export function startStarter(
 /** Forget the reads made in this tab, for a test to start clean (a read that lands after
  *  its conversation was left or reset is dropped by readCard in any case). */
 export function forgetCards(): void {
-  for (const c of inFlight.values()) c.abort();
-  inFlight.clear();
+  for (const c of cardReads.values()) c.abort();
+  cardReads.clear();
   fresh.clear();
 }

@@ -25,6 +25,7 @@ import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../..
 import { useStore } from "../../lib/state";
 import { AssistantChat } from "./Chat";
 import {
+  CITE_SOURCES,
   MAX_MESSAGE_CHARS,
   useChat,
   newConversation,
@@ -32,6 +33,7 @@ import {
   resetChat,
   saveOnHide,
   ask,
+  sentQuestion,
   storedChanged,
 } from "./chatStore";
 import { adoptEpoch, deleteAllConversations, deleteConversation, listConversations, sameOwner } from "./conversations";
@@ -94,6 +96,7 @@ export function DockBody() {
   const answering = useChat((s) => s.answering);
   const storageOff = useChat((s) => s.storageOff);
   const notice = useChat((s) => s.notice);
+  const refused = useChat((s) => s.refused);
   const hint = useChat((s) => s.hint);
   const readiness = useChat((s) => s.readiness);
   const [showHistory, setShowHistory] = useState(false);
@@ -231,7 +234,7 @@ export function DockBody() {
     if (!reasonNow) useDock.setState({ focusField: true });
     // A question the route refused is asked again, in the conversation's namespace, unless
     // what blocks Ask still applies; with nothing refused, nothing is sent.
-    const refused = useChat.getState().refused;
+    const pending = useChat.getState().refused;
     const c = useChat.getState();
     const st = useStore.getState();
     const header = st.identity?.namespace ?? "";
@@ -241,24 +244,29 @@ export function DockBody() {
       memory: isMemoryNamespace(header, st.myNamespaces),
       mismatch: c.turns.length > 0 && c.namespace !== null && c.namespace !== header,
     });
-    // It goes with what the chip shows now: a chip removed since sends nothing about the page.
+    // A new question goes with what the chip shows now (a chip removed since sends nothing
+    // about the page); a turn asked again with the page line it was asked with.
     // A line longer now than when it was asked (an item added since) can push the message
     // past the route's length: nothing is sent. The question waits in the field, which says
     // why; a field holding other text keeps it, and a line in the panel says why.
-    if (!refused || stillBlocked) return;
-    const asked = currentAsk();
-    if (withContext(refused, asked.context).length > MAX_MESSAGE_CHARS) {
-      const draft = useDock.getState().draft;
-      if (!draft || draft === refused) useDock.setState({ draft: refused });
+    if (!pending || stillBlocked) return;
+    const asked = pending.asked ?? currentAsk();
+    const draft = useDock.getState().draft;
+    if (withContext(sentQuestion(pending.question, pending.withSources), asked.context).length > MAX_MESSAGE_CHARS) {
+      if (!draft || draft === pending.question) useDock.setState({ draft: pending.question });
       else {
-        const limit = MAX_MESSAGE_CHARS - contextLength(asked.context);
+        const limit =
+          MAX_MESSAGE_CHARS - contextLength(asked.context) - (pending.withSources ? CITE_SOURCES.length : 0);
         const line = `Not sent: with this page's line the question is longer than ${limit.toLocaleString("en-US")} characters.`;
         useChat.setState({ notice: line });
         announceAssistant(line);
       }
       return;
     }
-    ask(refused, c.namespace ?? header, asked);
+    // A turn asked again and refused is answered again in its place, as it was asked again;
+    // the field empties only when it holds the question.
+    const { question, asked: _asked, ...again } = pending;
+    ask(question, c.namespace ?? header, asked, null, { ...again, fromField: draft === question });
   };
 
   const memory = isMemoryNamespace(namespace, mine);
@@ -348,6 +356,12 @@ export function DockBody() {
               </p>
             )}
             {notice && <p className="text-sm text-text-muted">{notice}</p>}
+            {/* A turn asked again and put back, with nothing in the way: Try again asks it. */}
+            {refused?.replace && !blocked && !answering && (
+              <Button type="secondary" htmlType="button" onClick={() => void tryAgain()}>
+                Try again
+              </Button>
+            )}
           </div>
           <AssistantChat
             namespace={convNamespace ?? namespace}

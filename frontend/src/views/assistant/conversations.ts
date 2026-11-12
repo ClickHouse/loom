@@ -30,9 +30,13 @@ export interface Turn {
   question: string;
   /** What the question said about the page it was asked from; absent when nothing. */
   context?: AskContext;
+  /** Asked with " Cite your sources." after the question ("Ask again with sources"). */
+  withSources?: boolean;
   answer: string;
   state: TurnState;
   error?: string;
+  /** The error may pass if the same question is sent again (Retry is offered). */
+  retryable?: boolean;
   /** The answer's citations as the server checked them; absent until the answer ends, or
    *  from a server that sends none. */
   citations?: Citation[];
@@ -47,6 +51,12 @@ export interface Turn {
   stepsCut?: boolean;
   /** The card of a starter: Loom's own read, shown above the answer. */
   card?: TurnCard;
+  /** Stored only on a turn still answering: its text was complete and its sources were
+   *  being checked, so cut off it reads as done, its check not finished. */
+  textDone?: true;
+  /** The answer is done but Loom's check of its sources never finished (cut off after its
+   *  text): it reads "Check didn't finish" until a label lands. */
+  checkLost?: true;
   /** When the turn last changed (ms): two tabs' copies of one turn merge to the newer. */
   at: number;
 }
@@ -136,8 +146,16 @@ export const ANSWER_MAX_MS = 60 * 60 * 1000;
 /** What a read does with a turn saved while it was answering: `omit` it (another tab may
  *  still answer it; it shows once it ends), read it as `stopped` (no tab answers in the
  *  conversation any more: a reload or a closed tab cut it off), or keep it as stored (a save
- *  writes it back untouched). One older than ANSWER_MAX_MS reads as stopped in every mode. */
+ *  writes it back untouched). One older than ANSWER_MAX_MS reads as stopped in every mode.
+ *  A turn cut off while its sources were checked (`textDone`) reads as done instead. */
 export type AnsweringTurns = "omit" | "stopped" | "kept";
+
+/** A stored turn still answering that no tab answers any more: stopped, or done when its
+ *  text was complete and its sources were being checked (`textDone`). */
+export function cutOffTurn(t: Turn): Turn {
+  const { textDone, ...cut } = t;
+  return textDone ? { ...cut, state: "done", checkLost: true } : { ...cut, state: "stopped" };
+}
 
 /** The stored conversation `id`, when it is `owner`'s. */
 export function readConversation(
@@ -155,9 +173,7 @@ export function readConversation(
       trimmed: c.trimmed === true,
       turns: c.turns
         .map((t) =>
-          t.state === "answering" && (answering === "stopped" || Date.now() - t.at > ANSWER_MAX_MS)
-            ? { ...t, state: "stopped" as const }
-            : t,
+          t.state === "answering" && (answering === "stopped" || Date.now() - t.at > ANSWER_MAX_MS) ? cutOffTurn(t) : t,
         )
         .filter((t) => answering !== "omit" || t.state !== "answering"),
     };
