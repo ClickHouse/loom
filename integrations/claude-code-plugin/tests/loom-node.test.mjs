@@ -327,111 +327,26 @@ function commands(file) {
   );
 }
 
-/** Claude Code's command for hooks/<script> under <event>. Claude Code runs a
- *  hook with sh (Git Bash on Windows), or with PowerShell when Git Bash is
- *  absent; the one command serves both. To sh the first line sets $1 (the
- *  backquotes hold only a comment) and the second execs the launcher, so sh
- *  reads no further. To PowerShell the first line opens a block comment that
- *  `#>` closes, and the rest runs the script with the node on PATH, or names
- *  what is missing; `exit 0`, because without Git Bash only exit 0 or 2
- *  counts as a hook's verdict and a failing PreToolUse hook blocks the tool
- *  call (Claude Code's hooks reference). */
-function claudeHookCommand(script, event) {
-  const hook = `hooks/${script}" ${event}`;
-  return [
-    "set x `# <#`",
-    `exec sh "\${CLAUDE_PLUGIN_ROOT}/bin/loom-node" "\${CLAUDE_PLUGIN_ROOT}/${hook}`,
-    "#>",
-    `if (Get-Command node -ErrorAction SilentlyContinue) { node "$env:CLAUDE_PLUGIN_ROOT/${hook} } else { [Console]::Error.WriteLine('loom: no node on PATH. Install Node.js 18+ on the system PATH.') }`,
-    "exit 0",
-  ].join("\n");
+/** Claude Code's hook for hooks/<script> under <event>: the exec form, which
+ *  Claude Code spawns with no shell on every OS, so Windows needs no Git Bash
+ *  and the command line has nothing for a shell to expand. Node comes from
+ *  the agent's PATH. */
+function claudeHook(script, event) {
+  return { type: "command", command: "node", args: [`\${CLAUDE_PLUGIN_ROOT}/hooks/${script}`, event] };
 }
 
-test("every Claude Code hook command is the two-shell form", () => {
-  const all = commands(path.join(root, "hooks", "hooks.json"));
+test("every Claude Code hook runs its script with node in the exec form", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "hooks", "hooks.json"), "utf8"));
+  const all = Object.values(manifest.hooks).flatMap((groups) => groups.flatMap((g) => g.hooks));
   assert.ok(all.length >= 10);
-  for (const [command] of all) {
-    const [, script, event] = command.match(/hooks\/([a-z-]+\.mjs)" (\w+)$/m);
-    assert.equal(command, claudeHookCommand(script, event));
+  for (const h of all) {
+    const { timeout, ...hook } = h;
+    const [, script] = hook.args[0].match(/^\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/([a-z-]+\.mjs)$/);
+    assert.deepEqual(hook, claudeHook(script, hook.args[1]));
   }
 });
 
-/** A plugin root holding the real launcher and hooks/echo.mjs, which prints
- *  its arguments and stdin. The payload and the reply carry non-ASCII text, as
- *  a prompt and a primer do: no shell may re-encode the bytes. */
-const PAYLOAD = "prompt — é 漢";
-function echoPlugin(f) {
-  const plugin = path.join(f.dir, "plugin");
-  fs.mkdirSync(path.join(plugin, "bin"), { recursive: true });
-  fs.mkdirSync(path.join(plugin, "hooks"));
-  fs.copyFileSync(launcher, path.join(plugin, "bin", "loom-node"));
-  fs.writeFileSync(
-    path.join(plugin, "hooks", "echo.mjs"),
-    'let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => process.stdout.write(process.argv.slice(2).join(" ") + "|" + s));\n',
-  );
-  // Claude Code substitutes the placeholder in the text and exports it too.
-  const command = claudeHookCommand("echo.mjs", "Stop").replaceAll("${CLAUDE_PLUGIN_ROOT}", plugin.replace(/\\/g, "/"));
-  return { plugin, command };
-}
-
-test("a Claude Code hook command runs its script through the launcher under every sh", { skip: WINDOWS }, () => {
-  const f = fixture();
-  try {
-    const { plugin, command } = echoPlugin(f);
-    const node = f.node(".nvm/versions/node/v22.1.0/bin");
-    for (const shell of SHELLS) {
-      const argv = shell.endsWith("busybox") ? ["sh", "-c", command] : ["-c", command];
-      const r = spawnSync(shell, argv, {
-        encoding: "utf8",
-        input: PAYLOAD,
-        env: { HOME: f.home, PATH: `${path.dirname(node)}:/usr/bin:/bin`, CLAUDE_PLUGIN_ROOT: plugin },
-      });
-      assert.equal(r.status, 0, `${shell}: ${r.stderr}`);
-      assert.equal(r.stderr, "", shell);
-      assert.equal(r.stdout, `Stop|${PAYLOAD}`, shell);
-    }
-  } finally {
-    f.done();
-  }
-});
-
-// Claude Code without Git Bash runs hooks with PowerShell: Windows PowerShell
-// 5.1 and PowerShell 7 parse the command alike.
-test("a Claude Code hook command runs under PowerShell, and names a missing Node", { skip: !WINDOWS }, () => {
-  const f = fixture();
-  try {
-    const { plugin, command } = echoPlugin(f);
-    const shells = ["powershell.exe", "pwsh.exe"].filter(
-      (s) => spawnSync(s, ["-NoProfile", "-Command", "exit 0"]).status === 0,
-    );
-    assert.ok(shells.length > 0, "no PowerShell found");
-    const withNode = process.env.PATH;
-    const withoutNode = withNode
-      .split(path.delimiter)
-      .filter((d) => !fs.existsSync(path.join(d, "node.exe")))
-      .join(path.delimiter);
-    for (const shell of shells) {
-      const run = (PATH) =>
-        spawnSync(shell, ["-NoProfile", "-NonInteractive", "-Command", command], {
-          encoding: "utf8",
-          input: PAYLOAD,
-          env: { ...process.env, PATH, CLAUDE_PLUGIN_ROOT: plugin },
-        });
-      const r = run(withNode);
-      assert.equal(r.status, 0, `${shell}: ${r.stderr}`);
-      assert.equal(r.stderr, "", shell);
-      assert.equal(r.stdout, `Stop|${PAYLOAD}`, shell);
-      const missing = run(withoutNode);
-      assert.equal(missing.status, 0, `${shell}: a missing Node must not fail the hook`);
-      assert.equal(missing.stdout, "", shell);
-      assert.match(missing.stderr, /^loom: no node on PATH\. Install Node\.js 18\+/, shell);
-    }
-  } finally {
-    f.done();
-  }
-});
-
-test("the generic and Codex hooks start Node through the launcher; each header helper's shells are pinned", () => {
+test("the generic and Codex hooks start Node through the launcher; each header helper is pinned", () => {
   const wiring = [
     [path.join(root, "hooks", "hooks.generic.json"), "sh ${LOOM_PLUGIN_DIR}/bin/loom-node ${LOOM_PLUGIN_DIR}/hooks/"],
     [path.join(codexRoot, "hooks", "hooks.json"), 'sh "${PLUGIN_ROOT}/bin/loom-node" "${PLUGIN_ROOT}/hooks/'],
@@ -447,16 +362,8 @@ test("the generic and Codex hooks start Node through the launcher; each header h
     }
   }
   const claude = JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8")).mcpServers.loom;
-  // Claude Code runs it with sh on macOS and Linux and with cmd.exe on
-  // Windows, Git Bash or not: sh runs the launcher, as for the hooks; cmd.exe
-  // cannot, and runs the node on PATH instead.
-  assert.ok(
-    claude.headersHelper.startsWith(
-      'sh "$CLAUDE_PLUGIN_ROOT/bin/loom-node" "$CLAUDE_PLUGIN_ROOT/bin/loom-mcp-headers.mjs" || node -e "',
-    ),
-    claude.headersHelper,
-  );
-  assert.match(claude.headersHelper, / \|\| node -e "[^"$`\\%]+"$/);
+  // sh on macOS and Linux and cmd.exe on Windows both run it as written.
+  assert.equal(claude.headersHelper, 'node "${CLAUDE_PLUGIN_ROOT}/bin/loom-mcp-headers.mjs"');
   const codex = JSON.parse(fs.readFileSync(path.join(codexRoot, ".mcp.json"), "utf8")).mcpServers.loom;
   // Codex runs it with `sh -c` on Unix and `cmd.exe /C` on Windows: node
   // first, which both run; under sh, the launcher when node is missing.
@@ -467,72 +374,31 @@ test("the generic and Codex hooks start Node through the launcher; each header h
   );
 });
 
-/** A Claude Code plugin root with the launcher and a header helper that
- *  prints `out`. */
+/** A Claude Code plugin root with a header helper that prints `out`. */
 function claudePlugin(f, out) {
   const plugin = path.join(f.dir, "claude-plugin");
   fs.mkdirSync(path.join(plugin, "bin"), { recursive: true });
-  fs.copyFileSync(launcher, path.join(plugin, "bin", "loom-node"));
   fs.writeFileSync(path.join(plugin, "bin", "loom-mcp-headers.mjs"), `process.stdout.write(${JSON.stringify(out)});\n`);
   return plugin;
 }
 
-const claudeHelper = () =>
-  JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8")).mcpServers.loom.headersHelper;
+/** The helper's command line as Claude Code hands it to the shell. */
+const claudeHelper = (plugin) =>
+  JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8")).mcpServers.loom.headersHelper.replaceAll(
+    "${CLAUDE_PLUGIN_ROOT}",
+    plugin,
+  );
 
-test("the Claude Code header helper runs through the launcher under sh, LOOM_NODE first", { skip: WINDOWS }, () => {
+test("the Claude Code header helper runs under sh with the node on PATH", { skip: WINDOWS }, () => {
   const f = fixture();
   try {
     const plugin = claudePlugin(f, "{}");
-    const onPath = path.dirname(f.node("path-bin"));
-    const chosen = f.node("chosen");
-    // The launcher's log of which Node ran: a fake Node that notes itself.
-    const log = path.join(f.dir, "ran");
-    fs.writeFileSync(
-      chosen,
-      `#!/bin/sh\nif [ "$1" = --version ]; then echo v22.1.0; exit 0; fi\necho chosen > "${log}"\nexec "${process.execPath}" "$@"\n`,
-      { mode: 0o755 },
-    );
-    const run = (env) =>
-      spawnSync("/bin/sh", ["-c", claudeHelper()], {
-        encoding: "utf8",
-        env: { HOME: f.home, CLAUDE_PLUGIN_ROOT: plugin, LOOM_NODE_SYSTEM_DIRS: "", ...env },
-      });
-    const r = run({ PATH: `${onPath}:/usr/bin:/bin`, LOOM_NODE: chosen });
-    assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.stdout, "{}");
-    assert.equal(fs.readFileSync(log, "utf8"), "chosen\n", "LOOM_NODE wins over the node on PATH");
-    // No node on PATH: the launcher finds a version manager's.
-    f.node(".nvm/versions/node/v22.1.0/bin");
-    const managed = run({ PATH: "/usr/bin:/bin" });
-    assert.equal(managed.status, 0, managed.stderr);
-    assert.equal(managed.stdout, "{}");
-  } finally {
-    f.done();
-  }
-});
-
-test("the Claude Code header helper falls back to the node on PATH when LOOM_NODE is too old", {
-  skip: WINDOWS,
-}, () => {
-  const f = fixture();
-  try {
-    const plugin = claudePlugin(f, "{}");
-    const old = f.node("old", "v16.20.2");
-    const onPath = path.dirname(f.node("path-bin"));
-    const r = spawnSync("/bin/sh", ["-c", claudeHelper()], {
+    const r = spawnSync("/bin/sh", ["-c", claudeHelper(plugin)], {
       encoding: "utf8",
-      env: {
-        HOME: f.home,
-        PATH: `${onPath}:/usr/bin:/bin`,
-        CLAUDE_PLUGIN_ROOT: plugin,
-        LOOM_NODE: old,
-        LOOM_NODE_SYSTEM_DIRS: "",
-      },
+      env: { HOME: f.home, PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin` },
     });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, "{}");
-    assert.match(r.stderr, /^loom: LOOM_NODE=.* is not Node\.js 18\+/, "the launcher still says why");
   } finally {
     f.done();
   }
@@ -542,10 +408,10 @@ test("the Claude Code header helper runs under cmd.exe the way Claude Code start
   const f = fixture();
   try {
     const plugin = claudePlugin(f, "{}");
-    const r = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${claudeHelper()}"`], {
+    const r = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${claudeHelper(plugin)}"`], {
       encoding: "utf8",
       windowsVerbatimArguments: true,
-      env: { ...process.env, CLAUDE_PLUGIN_ROOT: plugin },
+      env: process.env,
     });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.stdout, "{}");

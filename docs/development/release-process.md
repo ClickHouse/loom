@@ -1,20 +1,20 @@
 # Release process
 
-Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app and the root skills (`loom-code`, `loom`) share one version `X.Y.Z`. The two coding-agent plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version. Both manifests also declare `minServerVersion`, the oldest server the plugin's hooks support: when the server's `GET /v1/health` reports an older `version`, SessionStart prints one `loom:` line asking for a server upgrade, and says nothing when the version cannot be read. It rises with a release ([cutting the release](#cutting-the-release), step 2).
+Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app and the root skills (`loom-code`, `loom`) share one version `X.Y.Z`. The two coding-agent plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version. `MIN_SERVER_VERSION` in the plugins' `lib/server-version.mjs` names the oldest server their hooks support: when the server's `GET /v1/health` reports an older `version`, SessionStart prints one `loom:` line asking for a server upgrade, and says nothing when the version cannot be read. It rises with a release ([cutting the release](#cutting-the-release), step 2).
 
 ## Where the version lives
 
 `.venv/bin/python scripts/release/prepare.py bump X.Y.Z` bumps each of these in the release commit, except the plugins, and writes the [release notes](#release-notes):
 
-| Component            | Files                                                                                                                                                                                                                                                                                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server               | `server/__init__.py` (`__version__`), `pyproject.toml`, `uv.lock` and `server.json`                                                                                                                                                                                                                                                                                 |
-| Python SDK           | `sdk/python/pyproject.toml` and `sdk/python/loom/_version.py`                                                                                                                                                                                                                                                                                                       |
-| TypeScript SDK       | `sdk/typescript/package.json`, `sdk/typescript/package-lock.json`, `sdk/typescript/src/version.ts`                                                                                                                                                                                                                                                                  |
-| Web app              | `frontend/package.json` and `frontend/package-lock.json`                                                                                                                                                                                                                                                                                                            |
-| Root skills          | `.claude-plugin/plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md` and `skills/loom/SKILL.md`                                                                                                                                                                                                                                                   |
-| Helm chart           | `deploy/helm/loom/Chart.yaml`: `appVersion` (the default tag of the server and extractor images, and the chart's `app.kubernetes.io/version` label) and the chart's own `version`: a minor for a major or minor release, a patch for a patch release                                                                                                                |
-| Coding-agent plugins | `integrations/claude-code-plugin/.claude-plugin/plugin.json`, `integrations/codex-plugin/.codex-plugin/plugin.json` (their own version, and `minServerVersion`, which rises with a release (step 2 below); bump the version on a behaviour change to any file the plugin ships: `hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`) |
+| Component            | Files                                                                                                                                                                                                                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server               | `server/__init__.py` (`__version__`), `pyproject.toml`, `uv.lock` and `server.json`                                                                                                                                                                                                     |
+| Python SDK           | `sdk/python/pyproject.toml` and `sdk/python/loom/_version.py`                                                                                                                                                                                                                           |
+| TypeScript SDK       | `sdk/typescript/package.json`, `sdk/typescript/package-lock.json`, `sdk/typescript/src/version.ts`                                                                                                                                                                                      |
+| Web app              | `frontend/package.json` and `frontend/package-lock.json`                                                                                                                                                                                                                                |
+| Root skills          | `.claude-plugin/plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md` and `skills/loom/SKILL.md`                                                                                                                                                                       |
+| Helm chart           | `deploy/helm/loom/Chart.yaml`: `appVersion` (the default tag of the server and extractor images, and the chart's `app.kubernetes.io/version` label) and the chart's own `version`: a minor for a major or minor release, a patch for a patch release                                    |
+| Coding-agent plugins | `integrations/claude-code-plugin/.claude-plugin/plugin.json`, `integrations/codex-plugin/.codex-plugin/plugin.json` (their own version; bump it on a behaviour change to any file the plugin ships: `hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`) |
 
 The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo`, `loom report` and `GET /v1/health` (checked by `tests/unit/test_health_problems.py`) report it. These checks keep the numbers consistent:
 
@@ -22,7 +22,7 @@ The server reads its version from `server/__init__.py` only; the OpenAPI documen
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `tests/unit/test_release_version.py`           | every surface reports the server's version, and `server.json` keeps the registry listing's shape                                      |
 | `npm run check:version` (TypeScript SDK)       | its four version sources agree                                                                                                        |
-| `tests/unit/test_codex_plugin.py`              | both plugin manifests carry one version and one `minServerVersion`, no newer than the server's version                                |
+| `tests/unit/test_codex_plugin.py`              | both plugin manifests carry one version, and `MIN_SERVER_VERSION` is no newer than the server's version                               |
 | `tests/unit/test_release_prepare.py`           | every file `prepare.py` bumps names the server's version                                                                              |
 | `prepare.py check`, `check-tag`, `check-chart` | the release's `version` job ([step 1](#what-the-release-workflow-does)): one version everywhere, the candidate order, the chart moved |
 
@@ -81,8 +81,9 @@ pull request the tag ships.
    section of its description; edit the notes where an entry needs it. CI must pass, including
    `make schema-check` and the strict migration dry run.
    When a merged pull request's changelog entry says it needs the next server release, the same
-   pull request raises both plugins' `minServerVersion` to this version and bumps both plugin
-   versions: clients get a manifest only through a new plugin version.
+   pull request raises `MIN_SERVER_VERSION` in
+   `integrations/claude-code-plugin/lib/server-version.mjs` to this version, syncs it into the
+   Codex plugin and bumps both plugin versions: clients get it only through a new plugin version.
 3. After the release pull request merges, tag its merge commit and push the tag. To soak a
    release candidate first, tag `vX.Y.Z-rc.1` there instead, and the final later on the
    highest-numbered candidate's commit (below):
@@ -394,7 +395,7 @@ Agents and people find Loom through these listings. Each reads files in this rep
 
 The `mcp-registry` job runs in the `mcp-registry` environment. Give it the same protection rules as `pypi` and `npm` before the first dispatch: GitHub creates a missing environment with none. Its login needs no secret.
 
-After changing the Claude manifest or the marketplace entry, and before pushing, run `claude plugin validate integrations/claude-code-plugin` for the plugin and `claude plugin validate .` for the marketplace: they run the directory's structural checks.
+After changing the Claude manifest or the marketplace entry, and before pushing, run `claude plugin validate integrations/claude-code-plugin --profile directory --strict` for the plugin and `claude plugin validate .` for the marketplace: they run the directory's structural checks, and the plugin's must pass with no warning.
 
 ## After the release
 

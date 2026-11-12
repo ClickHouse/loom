@@ -97,7 +97,7 @@ async function main() {
   const tokenBudget = Math.round(envNumber("LOOM_CONTEXT_TOKEN_BUDGET", 1200, { min: 100 }));
 
   // One GET /v1/health beside the primer: its round trip sets later hooks' bound,
-  // its `version` feeds the minServerVersion line.
+  // its `version` feeds the minimum server version line.
   const serverUrl = resolveServerUrl();
   const health = probeHealth(serverUrl)
     .then(({ ms, body }) => {

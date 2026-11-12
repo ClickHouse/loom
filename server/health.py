@@ -404,8 +404,8 @@ async def health(request: Request, response: Response, include: str = "") -> dic
     if not ch_ok:
         response.status_code = 503
     out: dict[str, object] = {
-        # The server's release, which a coding-agent plugin compares with the
-        # minimum its manifest declares.
+        # The server's release, which a coding-agent plugin compares with its
+        # MIN_SERVER_VERSION (lib/server-version.mjs).
         "version": __version__,
         "schema_version": SCHEMA_VERSION,
         "build_commit": settings.build_commit or "unknown",
