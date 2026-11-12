@@ -14,8 +14,9 @@ built and kept fresh is in [the code index overview](../features/code-index/over
   `code.grep` finds an exact message or identifier.
 - **History and pull requests.** Merged-PR history with review comments, a pre-PR
   duplicate check and bisect candidates for a regression. These need PR history turned on
-  and a GitHub token; [History, PRs and releases](../features/code-index/history-and-prs.md)
-  says what each needs.
+  (`LOOM_CODE_PR_HISTORY_ENABLED`); review comments and open PRs also need a GitHub token.
+  [History, PRs and releases](../features/code-index/history-and-prs.md) says what each
+  needs.
 - **Freshness you can see.** The index trails the branch by merged commits, and a stale
   answer says so. [Freshness](../features/code-index/freshness.md)
 - **Plugins.** The Claude Code and Codex plugins connect on the `coding` toolset, which

@@ -2,7 +2,7 @@
 
 Loom records the work coding agents do, as runs and searchable session conversations, and
 connects it to your code history; conversation recording, PR history and the tracker are
-each off until turned on. Runs carry goals, outcomes and, when a coding-agent plugin
+each off until turned on. Runs carry goals, outcomes and, when the Claude Code plugin
 reports the session's turn usage (on by default), model costs; the history covers merged
 pull requests, review comments, GitHub issues (with a GitHub token) and, with a tracker
 source, incidents and CI runs. An agent or a person can then ask what was tried before,
@@ -17,7 +17,8 @@ what was decided and which change introduced a regression.
   on with `conversation.set_logging(enabled=true)`. [Conversations and sessions](../features/conversations-and-sessions.md) ·
   [Trace and resume long agent runs](../guides/trace-and-resume.md)
 - **PR history.** History of a symbol, path or line, review briefs, a pre-PR duplicate
-  check and bisect candidates. These need PR history turned on and a GitHub token;
+  check and bisect candidates. These need PR history turned on
+  (`LOOM_CODE_PR_HISTORY_ENABLED`); review comments and open PRs also need a GitHub token.
   [History, PRs and releases](../features/code-index/history-and-prs.md) says what each
   needs.
 - **Tracker records.** Duplicate issue checks, issue-to-PR links and flaky tests, read live
