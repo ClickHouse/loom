@@ -381,6 +381,9 @@ def test_every_other_rule_fires_on_its_fact_and_the_profile_keeps_eight(
     for h in full:
         assert len(h.text) <= mentor_rules.HINT_CHARS
         assert h.ops
+    # loom_search is listed under another name; the note names the op that is not
+    abstains = next(h for h in full if h.code == "search_abstains")
+    assert abstains.text.endswith(" (call namespace.audit via loom_op)")
 
 
 def test_a_well_used_namespace_gets_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:

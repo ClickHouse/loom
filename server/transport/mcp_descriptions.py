@@ -1039,9 +1039,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN NOT: Rewriting the block is working_memory.set; durable facts "
         "are memory.set; never append long transcripts.\n"
         "The response carries `fill_ratio` (length / char_limit) and "
-        "`char_limit`: above ~0.7, rewrite the block shorter with "
-        "working_memory.set, passing that `char_limit`, before an append fails "
-        "at 1.0."
+        "`char_limit`: above ~0.7, read the block with working_memory.get (via "
+        "loom_op), then rewrite it shorter with working_memory.set, passing that "
+        "`char_limit`, before an append fails at 1.0."
     ),
     "working_memory.replace": (
         "Replace exact text inside a working-memory block. Use for "
