@@ -402,12 +402,14 @@ first looks for namespaces of the reserved form, registered or holding rows, and
 to run, naming them, if it finds any.
 
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
-check below. Every other read path reads the namespace and finds nothing of the mirror.
-So a new op, a context-pack leg or an export that nobody taught the check shows no
-mirrored document; an N-1 replica has no mirror leg, and the rollback procedure keeps it
-off a mirror that holds rows. A permission column on `loom.documents` read by every path
-would make the opposite the default; [sharing](sharing.md#alternatives-not-taken)
-rejected that for collections, since one missed path leaks.
+check below, while the namespace's source list holds a mirrored source (a fact that list
+shows every viewer); a mirror whose last source is gone runs no leg. Every other read
+path reads the namespace and finds nothing of the mirror. So a new op, a context-pack
+leg or an export that nobody taught the check shows no mirrored document; an N-1 replica
+has no mirror leg, and the rollback procedure keeps it off a mirror that holds rows. A
+permission column on `loom.documents` read by every path would make the opposite the
+default; [sharing](sharing.md#alternatives-not-taken) rejected that for collections,
+since one missed path leaks.
 
 - **Legs with the check:** `knowledge.search`, `get`, `outline`, `list`, `download`,
   `synthesize`, `knowledge.inspect` (titles), `knowledge.source.inspect` (a mirrored
@@ -428,7 +430,7 @@ rejected that for collections, since one missed path leaks.
   generation's captured text, depends on the mirror. Every request that runs a mirror
   leg is marked, whether or not anything was admitted, since marking on admission would
   tell existence. The costs are accepted:
-  - `knowledge.reads` names no address on a namespace with a mirror;
+  - `knowledge.reads` names no address on a namespace with a mirrored source;
   - every knowledge read there drops out of `cost.summary` by `user_id`, `operation` and
     `agent`;
   - a marked request writes no recall credit or exposure row, so the usage signals
@@ -437,19 +439,24 @@ rejected that for collections, since one missed path leaks.
     from one gets the reason that the check could not run (`unchecked`), not
     `unsupported`;
   - the assistant's step list cannot say a marked tool call failed;
-  - every session that reads a namespace with a mirror is flagged, so its capture stops
-    ([the session rule](#the-session-rule)).
+  - every session whose request runs a mirror leg is flagged, and a prompt-recall
+    `context.pack` runs one, so while a namespace lists a mirrored source every Loom
+    hook of a session over it stops after its first recall (capture, recall,
+    `memory.for_file`, `code.impact`), and a dashboard view of such an answer sends no
+    `ui.vitals` ([the session rule](#the-session-rule)).
 
-  The assistant front end's token record of an answer is, like the conversation it
-  stores, the reader's own record, read by the reader and the deployment's operator.
+  The assistant front end's token record of a marked answer is a spend row under
+  exception 2 that only the deployment's operator reads; the conversation itself lives
+  in the reader's browser.
 
 - **The flag.** The answer of every marked request carries `mirrored: true` as its
   first field or line, whether or not anything was admitted, for the same reason as the
   mark, and each admitted item carries it again, so a truncated copy still carries it.
-  Every assistant answer on a namespace with a mirror (the `assistant.ask` op and the
-  chat route, `POST /v1/assistant/chat/completions`, whose stream carries the flag in
-  its first event) is marked and flagged, since its answer is model text written from
-  tool results and need not carry the field the tools answered. A mirror leg answers
+  Every assistant answer on a namespace with a mirrored source (the `assistant.ask` op
+  and the chat route, `POST /v1/assistant/chat/completions`, which carries the flag in
+  its stream's first event or its response's first field) is marked and flagged, since
+  its answer is model text written from tool results and need not carry the field the
+  tools answered. A mirror leg answers
   nothing to a client that does not declare it honours the flag. Loom's plugins and CLI
   declare it, and so do the dashboard, which shows the document, and the assistant,
   whose answer token declares the flag only when its caller's request did: a caller that
@@ -550,9 +557,10 @@ The refusal: from the first time `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` is se
 it is off again and the mirror-erase command has run, every session-content op refuses a
 client that does not declare the flag, in every org, whatever mix of clients and tokens
 a session runs; the declaration is the client's promise, carried by the transport and
-never by an op argument a model fills in (an assistant answer token carries its caller's
-declaration as a claim the bridge fixes at delegation), and a client that does not make it (a
-third-party MCP client connected straight to Loom) is refused like any other. The
+never by an op argument a model fills in (an assistant answer token carries its
+caller's declaration as a claim the bridge fixes at delegation), and a client that does
+not make it (a third-party MCP client connected straight to Loom) is refused like any
+other. The
 condition is the one row of `loom.knowledge_mirror_latch` or the process's own switch: a
 process refuses while its switch is on, row or no row, and writes the row whenever it
 reads the switch on and finds it absent, so neither a lost write nor a restore of a copy
@@ -1091,10 +1099,15 @@ Each implementing pull request lists its own; these pin the model:
       reads-as claim reading as nobody.
     - A caller of `assistant.ask`, `loom_assistant_ask` or the chat route that does not
       declare the flag getting no mirrored text; an `assistant.ask` and a chat-route
-      answer on a namespace with a mirror and no admitted item answering
-      `mirrored: true`, the chat route in its stream's first event; a plugin session
-      whose `loom_assistant_ask` answer carries the flag flagged; a marked `assistant.ask`
-      and chat-route row folded and masked like a marked tool-call row.
+      answer on a namespace with a mirrored source and no admitted item answering
+      `mirrored: true`, the chat route in its stream's first event and, unstreamed, in
+      its response's first field; a plugin session flagged once its
+      `loom_assistant_ask` answer carries the flag; a marked `assistant.ask` and
+      chat-route row folded and masked like a marked tool-call row.
+    - A `knowledge.search`, `context.pack` and `memory.ask` on a namespace with a
+      mirrored source and no admitted item answering `mirrored: true` as the first
+      field; the same reads after the last mirrored source is removed answering no flag
+      and running no mirror leg.
     - A marked `memory.ask` whose candidates are all hidden making the same model and
       embedding calls as one with no candidates.
     - A caller admitted to nothing seeing the same `cost.budget_status` change over 10
