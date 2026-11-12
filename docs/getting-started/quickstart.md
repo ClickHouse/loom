@@ -370,8 +370,9 @@ Claims, roles and grants are in [Tokens and grants](../guides/tokens-and-grants.
 ## 4. First memory over HTTP
 
 Every operation is a `POST /v1/<op>` with a JSON body. A fresh install with the stock
-`.env`, from the installer or a checkout, is single-user: no token, and a memory or
-search call that names no `org` or `namespace` runs in the install's own, org `dev` and
+`.env`, from the installer or a checkout, is single-user: no token, and an everyday
+memory or search call (`memory.set`, `memory.get`, `memory.search` and a few more) that
+names no `org` or `namespace` runs in the install's own, org `dev` and
 namespace `local`, the ones MCP and the dashboard use; a `memory.set` that names no `agent` is
 recorded as agent `http`, and a search reads every agent. So the calls below need only
 their own fields

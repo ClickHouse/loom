@@ -212,9 +212,10 @@ async def with_single_user_identity(
     if op.name in SINGLE_USER_FILLED_OPS:
         fill["namespace"] = await default_namespace(None, org)
         agent = SINGLE_USER_FILLED_OPS[op.name]
-        # "*" reads every agent, and in a history every user and session too: a call
-        # that names a user or session reads only theirs, so it names its agent.
-        if agent != "*" or not (present(args.get("user_id")) or present(args.get("session_id"))):
+        # A history's "*" reads every user and session too (a list keeps its user
+        # and session filters): a history that names one names its agent.
+        named_scope = present(args.get("user_id")) or present(args.get("session_id"))
+        if op.name != "memory.history" or not named_scope:
             fill["agent"] = agent
     fields = op.input_model.model_fields
     update = {

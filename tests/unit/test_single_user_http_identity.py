@@ -262,11 +262,16 @@ def test_a_listed_op_with_an_optional_agent_gets_the_installs_namespace(
 
 
 @pytest.mark.parametrize("scope", [{"user_id": "alice"}, {"session_id": "s1"}])
-@pytest.mark.parametrize("op", ["memory.list", "memory.history"])
-def test_a_cross_agent_read_naming_a_user_or_session_names_its_agent(
-    seen: Seen, op: str, scope: dict[str, str]
+def test_a_history_naming_a_user_or_session_names_its_agent(
+    seen: Seen, scope: dict[str, str]
 ) -> None:
-    """Agent `*` reads every user's and session's rows too: a call that names one
-    is not widened past it, and still has to name its agent."""
-    assert "agent" in _missing(_post(op, {"memory_key": "k", **scope}))
+    """A history under agent `*` reads every user's and session's versions: one that
+    names a user or session is not widened past it, and still names its agent."""
+    assert "agent" in _missing(_post("memory.history", {"memory_key": "k", **scope}))
     assert seen == []
+
+
+def test_a_list_naming_a_user_reads_every_agent_of_that_user(seen: Seen) -> None:
+    """A list keeps its user and session filters under agent `*`."""
+    _post("memory.list", {"user_id": "alice"})
+    assert len(seen) == 1 and seen[0][1:] == ("dev", "local", "*")
