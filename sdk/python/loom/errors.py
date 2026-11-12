@@ -230,6 +230,16 @@ class PreconditionFailed(LoomError):
         self.current_sha256 = current_sha256
 
 
+class WrongCell(PreconditionFailed):
+    """The org the call acts in lives in another cell of this deployment: nothing was
+    written. `.cell` names that cell when the server knows it ('' otherwise), `.org` the
+    org; `GET /cells/lookup?org=` on the router gives the cell's host to call instead."""
+
+    code = "WRONG_CELL"
+    org: str = ""
+    cell: str = ""
+
+
 ERROR_CODES: dict[str, type[LoomError]] = {
     "VALIDATION_FAILED": ValidationError,
     "AUTH_INVALID": AuthInvalid,
@@ -244,6 +254,7 @@ ERROR_CODES: dict[str, type[LoomError]] = {
     "IDEMPOTENT_CONFLICT": IdempotentConflict,
     "IDEMPOTENT_IN_PROGRESS": IdempotentInProgress,
     "PRECONDITION_FAILED": PreconditionFailed,
+    "WRONG_CELL": WrongCell,
     # ClickHouse refused to store an override: no precondition, and not retried.
     "OVERRIDE_NOT_STORED": LoomError,
 }
@@ -305,4 +316,7 @@ def from_response(
         err.retry_after_s = float(retry_after_s)
     if "current_sha256" in err.detail and hasattr(err, "current_sha256"):
         err.current_sha256 = str(err.detail["current_sha256"])
+    if isinstance(err, WrongCell):
+        err.org = str(err.detail.get("org") or "")
+        err.cell = str(err.detail.get("cell") or "")
     return err

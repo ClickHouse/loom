@@ -267,6 +267,7 @@ whose body has neither, or one the SDK raised itself:
 | `NotFound`             | `RESOURCE_NOT_FOUND`; status 404                                                |                                                                                                                                              |
 | `PreconditionFailed`   | `PRECONDITION_FAILED`; status 409, 412 without a known code                     | `.current_sha256`: retry without re-reading                                                                                                  |
 | `IdempotentConflict`   | `IDEMPOTENT_CONFLICT`                                                           |                                                                                                                                              |
+| `WrongCell`            | `WRONG_CELL`                                                                    | subclass of `PreconditionFailed`; `.org` and `.cell` (the org's cell, or ''): look its host up with the router's `GET /cells/lookup`         |
 | `BackendUnavailable`   | `BACKEND_UNAVAILABLE`, any 5xx, and `NETWORK` (no response)                     | `cannot reach <base_url>: …`, `no response from <base_url>: …` (a write that broke off, a timeout), or `response from <base_url> cut off: …` |
 | `RateLimited`          | `RATE_LIMITED`; status 429                                                      | subclass of `BackendUnavailable`; `.retry_after_s`                                                                                           |
 | `Overloaded`           | `OVERLOADED`                                                                    | subclass of `BackendUnavailable`; `.retry_after_s`                                                                                           |
@@ -287,7 +288,7 @@ Only `PRECONDITION_FAILED` carries `.current_sha256`. The other 409s that land i
 are not fixed by resending; match on `.code`.
 
 `loom` re-exports `LoomError`, `ValidationError`, `AuthInvalid`,
-`AuthInsufficient`, `NotFound`, `PreconditionFailed`, `IdempotentConflict`,
+`AuthInsufficient`, `NotFound`, `PreconditionFailed`, `IdempotentConflict`, `WrongCell`,
 `BackendUnavailable` and `RateLimited`, with the two codes
 `NETWORK_ERROR_CODE` and `INVALID_RESPONSE_CODE`; `Overloaded`,
 `BackendTimeout`, `SchemaPending` and `IdempotentInProgress` import from `loom.errors`. What each server

@@ -138,6 +138,19 @@ export class NotFound extends LoomError {}
 export class PreconditionFailed extends LoomError {}
 /** 409 with code IDEMPOTENT_CONFLICT: the Idempotency-Key was reused with a different body. */
 export class IdempotentConflict extends PreconditionFailed {}
+/**
+ * 409 with code WRONG_CELL: the org the call acts in lives in another cell of this
+ * deployment, and nothing was written. `cell` names that cell when the server knows it
+ * ('' otherwise), `org` the org; `GET /cells/lookup?org=` on the router gives its host.
+ */
+export class WrongCell extends PreconditionFailed {
+  get org(): string {
+    return String(this.detail.org ?? "");
+  }
+  get cell(): string {
+    return String(this.detail.cell ?? "");
+  }
+}
 /** 429: rate limited past the pacing budget; `retryAfterS` is the server's hint. */
 export class RateLimited extends LoomError {
   readonly retryAfterS: number;
@@ -194,6 +207,7 @@ export function errorFromResponse(
   if (status === 401 || status === 403) return new AuthError(message, opts);
   if (status === 404) return new NotFound(message, opts);
   if (status === 409 && code === "IDEMPOTENT_CONFLICT") return new IdempotentConflict(message, opts);
+  if (status === 409 && code === "WRONG_CELL") return new WrongCell(message, opts);
   // ClickHouse refused to store an override: no precondition, and not retried.
   if (status === 409 && code === "OVERRIDE_NOT_STORED") return new LoomError(message, opts);
   if (status === 409 || status === 412) return new PreconditionFailed(message, opts);

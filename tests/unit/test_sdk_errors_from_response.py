@@ -27,11 +27,12 @@ from loom.errors import (
     RateLimited,
     SchemaPending,
     ValidationError,
+    WrongCell,
     from_response,
 )
 from loom.transport import Transport, unreachable_error
 
-from server.core.errors import LoomServerError
+from server.core.errors import LoomServerError, WrongCellError
 
 
 def test_code_in_detail_wins_over_status() -> None:
@@ -140,7 +141,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "ENTRY_LEASE_NOT_HELD": PreconditionFailed,  # the uploading pass no longer holds its entry
     "SOURCE_REPLACED": PreconditionFailed,  # a 409 with no SDK class: mapped by status
     "COLLECTION_NAME_TAKEN": PreconditionFailed,  # a 409 with no SDK class: mapped by status
-    "WRONG_CELL": PreconditionFailed,  # a 409 with no SDK class: mapped by status
+    "WRONG_CELL": WrongCell,
     "MODEL_CALL_UNATTRIBUTED": BackendUnavailable,  # a 500 with no SDK class: mapped by status
     "MODEL_CALLS_DISABLED": AuthInsufficient,  # a 403 with no SDK class: mapped by status
     "MODEL_CALL_REFUSED": AuthInsufficient,  # a 403 with no SDK class, never retried
@@ -424,3 +425,13 @@ def test_an_answer_the_server_classes_configuration_is_not_retried() -> None:
 
     err = _sent("memory.get", answer, attempts=3)
     assert (err.retryable, len(calls)) == (False, 1)
+
+
+def test_a_wrong_cell_error_names_the_org_and_its_cell() -> None:
+    """The server's detail carries both; a caller looks the cell's host up and calls it."""
+    detail = WrongCellError("acme", cell="eu-2").to_detail()
+    err = from_response({"detail": detail}, 409)
+    assert isinstance(err, WrongCell) and isinstance(err, PreconditionFailed)
+    assert (err.org, err.cell) == ("acme", "eu-2")
+    unnamed = from_response({"detail": WrongCellError("acme").to_detail()}, 409)
+    assert isinstance(unnamed, WrongCell) and (unnamed.org, unnamed.cell) == ("acme", "")

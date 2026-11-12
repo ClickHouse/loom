@@ -300,18 +300,19 @@ the server sent):
 
 The subclass follows the HTTP status (`errorFromResponse`):
 
-| Class                  | When                                                                                                                                                                                                                 |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ValidationError`      | 400, 422                                                                                                                                                                                                             |
-| `AuthError`            | 401, 403                                                                                                                                                                                                             |
-| `NotFound`             | 404                                                                                                                                                                                                                  |
-| `IdempotentConflict`   | 409 with code `IDEMPOTENT_CONFLICT`; a subclass of `PreconditionFailed`                                                                                                                                              |
-| `PreconditionFailed`   | any other 409 (including `PINNED_CONFLICT`: check `code`) but `OVERRIDE_NOT_STORED` (a `LoomError`), 412                                                                                                             |
-| `RateLimited`          | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                                                                       |
-| `IdempotentInProgress` | 503 with code `IDEMPOTENT_IN_PROGRESS` once the retries are spent: the first request with this `Idempotency-Key` still runs; a subclass of `BackendUnavailable` with `retryAfterS`                                   |
-| `BackendUnavailable`   | 5xx after the retries, or no complete response: the message reads `<op>: cannot reach <baseUrl>: …` (or `no response from <baseUrl>: …`, or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE` |
-| `TimeoutError`         | the per-call timeout elapsed                                                                                                                                                                                         |
-| `LoomError`            | any other status; a 2xx body that is not JSON has code `INVALID_RESPONSE_CODE`; a call whose `signal` aborted is a plain `LoomError`                                                                                 |
+| Class                  | When                                                                                                                                                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ValidationError`      | 400, 422                                                                                                                                                                                                                |
+| `AuthError`            | 401, 403                                                                                                                                                                                                                |
+| `NotFound`             | 404                                                                                                                                                                                                                     |
+| `IdempotentConflict`   | 409 with code `IDEMPOTENT_CONFLICT`; a subclass of `PreconditionFailed`                                                                                                                                                 |
+| `WrongCell`            | 409 with code `WRONG_CELL`: the org lives in another cell and nothing was written; `org` and `cell` (or `""`) name them, and the router's `GET /cells/lookup` gives the cell's host; a subclass of `PreconditionFailed` |
+| `PreconditionFailed`   | any other 409 (including `PINNED_CONFLICT`: check `code`) but `OVERRIDE_NOT_STORED` (a `LoomError`), 412                                                                                                                |
+| `RateLimited`          | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                                                                          |
+| `IdempotentInProgress` | 503 with code `IDEMPOTENT_IN_PROGRESS` once the retries are spent: the first request with this `Idempotency-Key` still runs; a subclass of `BackendUnavailable` with `retryAfterS`                                      |
+| `BackendUnavailable`   | 5xx after the retries, or no complete response: the message reads `<op>: cannot reach <baseUrl>: …` (or `no response from <baseUrl>: …`, or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE`    |
+| `TimeoutError`         | the per-call timeout elapsed                                                                                                                                                                                            |
+| `LoomError`            | any other status; a 2xx body that is not JSON has code `INVALID_RESPONSE_CODE`; a call whose `signal` aborted is a plain `LoomError`                                                                                    |
 
 Because the class follows the status, match on `e.code` to tell codes that
 share one (`PRECONDITION_FAILED` from `PINNED_CONFLICT`, `OVERLOADED` from

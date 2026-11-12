@@ -58,6 +58,7 @@ const ROOT_EXPORTS = [
   "TimeoutError",
   "Transport",
   "ValidationError",
+  "WrongCell",
   "accessToken",
   "backoffDelayMs",
   "capabilities",
