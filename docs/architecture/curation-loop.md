@@ -42,8 +42,9 @@ tombstoned and not past its `expires_at`), not `sensitivity = 'high'`, and holds
 text as the shared copy. The source is read from the memory authority (Postgres when it
 holds live memory, [storage authority](storage-authority.md)), and a source whose head
 cannot be read fails closed: the definition is not served. A read-time check covers every
-path into that state, rows promoted before this design and through N-1 included. The
-shared layer already is the namespace's admin-approved copy of a fact ([the shared
+path into that state that it can see, rows promoted before this design and through N-1
+included; what it cannot see is named under rolling upgrades. The shared layer already is
+the namespace's admin-approved copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records the candidate it
 came from (`promoted_from_candidate_id`), `memory.lineage` walks it back, and every build
@@ -185,8 +186,9 @@ person mints for themselves therefore count as that person. Each miss writes one
 the asker, `actor`, the plane and the query's normalised form, never the raw text: nothing
 reads it, and it is one asker's words below the threshold. No memory key or document URI
 is kept: one naming another user's row or document would outlive that user's erasure, or
-the document's delete, in someone else's miss. The table has a 7-day TTL, the window a
-gaps pass reads: it is a trace, not memory, and no miss outlives the only reader of it.
+the document's delete, in someone else's miss. The table has a 14-day TTL: it is a trace,
+not memory. A pass reads the last 7 days, and a build lives 7 days, so a miss outlives
+every build that counted it and a user erasure always finds the namespaces it must clear.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
 misses and has no `user_id` to count askers or erase by. `loom.query_nodes` keeps one row
@@ -194,8 +196,8 @@ per query text with its sessions, not its people, and only for memory searches.
 
 ### Grouping
 
-The `knowledge_gaps` worker runs once a day for each namespace with misses. It reads the
-namespace's misses (the last 7 days, all the table keeps) and groups them by normalised
+The `knowledge_gaps` worker runs once a day for each namespace with misses or a live
+build. It reads the namespace's misses of the last 7 days and groups them by normalised
 query. **Privacy threshold:** a group with fewer than `knowledge_gaps_min_askers` distinct
 askers (default three, never below three, one value for the deployment) is dropped before
 anything else, so every query a gap shows was asked in that form by at least that many
@@ -215,15 +217,16 @@ namespace in `loom.knowledge_gaps`:
 
 Every build writes its gaps, then a marker row, and readers take the latest build that has
 its marker, so a build with no gap left, or one whose gaps an erasure deleted, still
-replaces the last one. Builds expire after 14 days. A pass whose read raced an erasure's
-delete could write erased rows back, so after writing its gaps, and before the marker, the
-worker deletes them and writes no marker when an erasure that may reach what it read (the
-namespace's, or a user's whose misses the pass read) was unfinished when the pass read or
-has finished since (`ledger_reads.unfinished_reaching`, as the [erasure
-saga](memory-architecture.md#erasure-saga) fences other writers); an erasure that begins
-after that check deletes the gaps itself. A failed erasure keeps that fence until it
-completes: `knowledge.gaps.list` then says the list is held and names the erasure to
-finish by its id, which `erasure.status` authorizes per row, never by its user.
+replaces the last one. Builds expire after 7 days, and a namespace left with no misses in
+the window gets an empty build, so an old one is never served past its window. A pass
+whose read raced an erasure's delete could write erased rows back, so after writing its
+gaps, and before the marker, the worker deletes them and writes no marker when an erasure
+that may reach what it read (the namespace's, or a user's whose misses the pass read) was
+unfinished when the pass read or has finished since (`ledger_reads.unfinished_reaching`,
+as the [erasure saga](memory-architecture.md#erasure-saga) fences other writers); an
+erasure that begins after that check deletes the gaps itself. A failed erasure keeps that
+fence until it completes: `knowledge.gaps.list` then says the list is held and names the
+erasure to finish by its id, which `erasure.status` authorizes per row, never by its user.
 
 ### Ops and dashboard
 
@@ -279,7 +282,10 @@ queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). 
 promoting a definition is the person standing behind it. A draft for a term already
 governed revises that definition: the promotion replaces its shared row. A definition
 promotes to memory only; a `destination` of `knowledge` or `both` is refused for these
-candidates. A rejected draft leaves nothing behind but its queue row.
+candidates. A rejected draft leaves nothing behind but its queue row. A promotion refused
+after the write (a racing edit, a racing term, the rollout gate) leaves the candidate
+pending and the namespace-wide row written, which no term leg serves until its text is
+promoted; a retried review, idempotent by key, completes it.
 
 ## Erasure and audit
 
@@ -290,7 +296,7 @@ candidates. A rejected draft leaves nothing behind but its queue row.
   namespace-wide row names none, so erasing the admin who promoted it leaves it governed.
 - A redact of a definition reaches its memory and shared rows and the candidate it was
   promoted from (the change above), not the gap it came from, which holds only normalised
-  queries enough askers asked and expires after 14 days.
+  queries enough askers asked and expires after 7 days.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
   `user_id` is the user (a token subject spelled as the user's id goes too, which costs
   only a trace row), and a census row.
@@ -336,12 +342,15 @@ does for assistant-turn learnings. Governed definitions are memory and shared ro
 N-1 knows: it serves them as plain rows with no term leg. What N-1 does to them is caught
 by the read-time check: a promotion from another source, or an edit, relabel or redact of
 the source, leaves a row the term leg does not serve, and the term leg's last-promoted
-rule covers a promotion that skipped the term check. N-1, which does not know `definition`
-as key-identified, can merge, supersede or retire one definition's source while writing
-another; the rows its conflict resolver retired are listed by `memory.auto_retirements`
-(reason `conflict_resolver`), restored with its Undo, and promoted again. N-1's redact and
-namespace erasure do not reach the shared row's text, as today: one run during the rollout
-or after a rollback is run again once N serves.
+rule covers a promotion that skipped the term check. A promotion on N-1 also skips the
+approved-hash check and takes `promoted_by` from the body, which no read-time check can
+tell; once no N-1 replica serves, an admin promotes again the definitions promoted during
+the rollout (`loom.shared` rows of type `definition` by promotion time). N-1, which does
+not know `definition` as key-identified, can merge, supersede or retire one definition's
+source while writing another; the rows its conflict resolver retired are listed by
+`memory.auto_retirements` (reason `conflict_resolver`), restored with its Undo, and
+promoted again. N-1's redact and namespace erasure do not reach the shared row's text, as
+today: one run during the rollout or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
