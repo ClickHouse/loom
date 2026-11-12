@@ -62,10 +62,13 @@ A client that only reads can use a `viewer` token; see
 The file is replaced atomically with mode 0600; every other key is kept. A file that is
 not a valid JSON object is refused, not overwritten.
 
-The two entry shapes:
+The two entry shapes, the first as the Cursor command above writes it:
 
 ```json
-{ "url": "https://loom.example.com/mcp", "headers": { "Authorization": "Bearer <JWT>" } }
+{
+  "url": "https://loom.example.com/mcp?toolset=coding",
+  "headers": { "Authorization": "Bearer <JWT>" }
+}
 ```
 
 ```json
