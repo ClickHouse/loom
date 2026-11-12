@@ -47,8 +47,7 @@ if str(ROOT) not in sys.path:  # run as a file
     sys.path.insert(0, str(ROOT))
 
 from scripts.codegen.common import write_atomic  # noqa: E402
-from scripts.codegen.page_summary import first_sentence as _first_sentence  # noqa: E402
-from scripts.codegen.page_summary import page_summary as _page_summary  # noqa: E402
+from scripts.codegen.page_summary import first_sentence, page_summary  # noqa: E402
 from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
 from server.core.errors import (  # noqa: E402
     CLASS_BY_CODE,
@@ -89,7 +88,7 @@ def _op_summary(op: Operation, curated: dict[str, str]) -> str:
     if model_doc and "Usage docs: https://docs.pydantic.dev" in model_doc:
         model_doc = None  # pydantic's inherited BaseModel docstring
     for text in (model_doc, curated.get(op.name), op.handler.__doc__):
-        s = _first_sentence(text)
+        s = first_sentence(text)
         if s:
             return s
     return ""
@@ -219,7 +218,7 @@ def render_status_switches() -> str:
         for name, field in Settings.model_fields.items()
         if field.annotation is bool and getattr(loaded, name) is False
     )
-    rows = [f"| `LOOM_{n.upper()}` | {_cell(_first_sentence(described[n]))} |" for n in off]
+    rows = [f"| `LOOM_{n.upper()}` | {_cell(first_sentence(described[n]))} |" for n in off]
     return "\n".join(
         [
             f"{len(off)} boolean settings load false.\n",
@@ -333,7 +332,7 @@ def _field_rows(model: type, with_default: bool) -> list[str]:
                 text = repr(info.default)
                 default = f"`{_cell(text if len(text) <= 40 else text[:37] + '…')}`"
             cells.append(default)
-        cells.append(_cell(_first_sentence(meaning, 240)))
+        cells.append(_cell(first_sentence(meaning, 240)))
         rows.append("| " + " | ".join(cells) + " |")
     return rows
 
@@ -430,14 +429,14 @@ def render_llms_txt() -> str:
             continue
         out.append(f"## {heading}\n")
         for p in pages:
-            title, outcome = _page_summary(p)
+            title, outcome = page_summary(p)
             rel = p.relative_to(ROOT).as_posix()
             out.append(f"- [{title}]({rel})" + (f": {outcome}" if outcome else ""))
         out.append("")
     out.append("## Optional\n")
     for p in (docs / "glossary.md", docs / "faq.md"):
         if p.exists():
-            title, outcome = _page_summary(p)
+            title, outcome = page_summary(p)
             out.append(
                 f"- [{title}]({p.relative_to(ROOT).as_posix()})"
                 + (f": {outcome}" if outcome else "")
@@ -464,7 +463,7 @@ def _module_summary(module: str) -> str:
     path = ROOT / (module.replace(".", "/") + ".py")
     if not path.exists():
         return ""
-    return _first_sentence(ast.get_docstring(ast.parse(path.read_text(encoding="utf-8"))))
+    return first_sentence(ast.get_docstring(ast.parse(path.read_text(encoding="utf-8"))))
 
 
 def render_workers() -> str:
@@ -512,7 +511,7 @@ def _cli_rows(node: dict, out: list[str]) -> None:
         for name, child in subs.items():
             summary = helps.get(name) or child.get("description") or ""
             out.append(
-                f"| `{child['prog']}` | {_cell(_first_sentence(summary))} | {_flags(child)} |"
+                f"| `{child['prog']}` | {_cell(first_sentence(summary))} | {_flags(child)} |"
             )
             _cli_rows(child, out)
 
@@ -572,7 +571,7 @@ def _typed_errors() -> dict[str, tuple[int, str, str]]:
                     attrs[target.id] = value.value
             code, status = attrs.get("code"), attrs.get("status_code")
             if isinstance(code, str) and _CODE_LITERAL.match(code) and isinstance(status, int):
-                doc = _first_sentence(ast.get_docstring(cls))
+                doc = first_sentence(ast.get_docstring(cls))
                 typed.setdefault(code, (status, doc, f"{module}.{cls.name}"))
     return typed
 
