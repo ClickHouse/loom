@@ -13513,7 +13513,7 @@
        "nargs": null,
        "type": "server.cli.install:_toolset_arg",
        "required": false,
-       "help": "MCP toolset the client lists, as `?toolset=` on the URL; when omitted, `coding` for claude-code, codex and cursor, else the server default (LOOM_MCP_TOOLSET).",
+       "help": "MCP toolset the client lists, as `?toolset=` on the URL; when omitted, `coding` for claude-code, codex, cursor, else the server default (LOOM_MCP_TOOLSET).",
        "metavar": null
       },
       {
