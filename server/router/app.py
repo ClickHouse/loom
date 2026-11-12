@@ -3,6 +3,8 @@
 - `POST /cells/v1/placements`: a cell places a new org, with its own credential
   (`LOOM_CELL_ROUTER_TOKEN` there, its SHA-256 in the directory) and its
   configuration fingerprint, and gets back the cell and deployment id that hold it;
+- `GET /cells/v1/cells/<cell>`: the first cell's state (`attaching`, `serving`), for that
+  cell's own credential only, which it reads while its mode is `recording`;
 - `GET /cells/lookup?org=`: which cell, and at which host, an org lives in
   (unauthenticated, rate-limited per client address);
 - `GET /livez` and `GET /readyz` (the directory answers, read at most once a second).
@@ -161,16 +163,13 @@ class Router:
                 raise directory.DirectoryUnavailable(self._credentials_error)
             return self._credentials.get(name)
 
-    async def place(self, request: Request) -> JSONResponse:
+    async def _authenticated(self, request: Request, name: str) -> str | JSONResponse:
+        """The SHA-256 of the bearer when it is cell `name`'s credential as the router
+        caches it, else the refusal: 401, or 503 while the directory cannot be read. A
+        wrong credential reads nothing; each route checks the hash against its row too."""
         token = _bearer(request)
-        if not token:
+        if not token or not cell_state.NAME.fullmatch(name):
             return _refused(401, "the credential names no cell of this directory")
-        body = await _body(request)
-        if not isinstance(body, dict):
-            return _refused(400, "a placement is a JSON object: org, cell, fingerprint")
-        org, name = _org(body.get("org")), body.get("cell")
-        if org is None or not isinstance(name, str) or not cell_state.NAME.fullmatch(name):
-            return _refused(400, "a placement names an org and a cell")
         try:
             expected = await self._credential(name)
         except directory.DirectoryUnavailable as e:
@@ -178,6 +177,20 @@ class Router:
         presented = hashlib.sha256(token.encode()).hexdigest()
         if expected is None or not hmac.compare_digest(presented, expected):
             return _refused(401, "the credential names no cell of this directory")
+        return presented
+
+    async def place(self, request: Request) -> JSONResponse:
+        if not _bearer(request):
+            return _refused(401, "the credential names no cell of this directory")
+        body = await _body(request)
+        if not isinstance(body, dict):
+            return _refused(400, "a placement is a JSON object: org, cell, fingerprint")
+        org, name = _org(body.get("org")), body.get("cell")
+        if org is None or not isinstance(name, str) or not cell_state.NAME.fullmatch(name):
+            return _refused(400, "a placement names an org and a cell")
+        presented = await self._authenticated(request, name)
+        if isinstance(presented, JSONResponse):
+            return presented
         if not self.placements.admit(name):
             wait = str(self.placements.wait_s(name))
             return _refused(
@@ -210,6 +223,25 @@ class Router:
             return _refused(503, e.reason)
         log.info("placement of %s: %s (asked by %s)", org, winner, name)
         return JSONResponse({"cell": winner, "deployment_id": deployment_id})
+
+    async def cell_state(self, request: Request) -> JSONResponse:
+        """`GET /cells/v1/cells/<cell>`: the first cell's state, for its own credential
+        only. A first cell in `recording` records a new org only while this answers
+        `attaching`; any other answer counts as unreadable there."""
+        name = request.path_params["cell"]
+        presented = await self._authenticated(request, name)
+        if isinstance(presented, JSONResponse):
+            return presented
+        try:
+            row = await directory.first_cell_named(name)
+        except directory.DirectoryUnavailable as e:
+            return _refused(503, e.reason)
+        if row is None:
+            return _refused(404, f"cell {name!r} is not the first cell")
+        if not hmac.compare_digest(presented, row.credential_sha256):
+            self._credentials_at = None  # the cached hash is older than the row
+            return _refused(401, "the credential names no cell of this directory")
+        return JSONResponse({"cell": row.cell, "state": row.state})
 
     async def lookup(self, request: Request) -> JSONResponse:
         client = request.client.host if request.client else ""
@@ -262,6 +294,7 @@ def build_app(router: Router | None = None) -> Starlette:
     return Starlette(
         routes=[
             Route("/cells/v1/placements", router.place, methods=["POST"]),
+            Route("/cells/v1/cells/{cell}", router.cell_state, methods=["GET"]),
             Route("/cells/lookup", router.lookup, methods=["GET"]),
             Route("/livez", router.livez, methods=["GET"]),
             Route("/readyz", router.readyz, methods=["GET"]),

@@ -79,6 +79,8 @@ def cell_pg(monkeypatch: pytest.MonkeyPatch) -> _PG:
     monkeypatch.setattr(tenancy, "_elsewhere", {})
     monkeypatch.setattr(tenancy, "_not_held", {})
     monkeypatch.setattr(tenancy, "_placing", {})
+    # The directory answers that this first cell is `attaching` (its own tests below).
+    monkeypatch.setattr(tenancy, "directory_says_attaching", AsyncMock(return_value=True))
     monkeypatch.setattr(cell, "_deployment_id", "dep-eu-1")
     monkeypatch.setattr(cell, "mode", lambda: fake.mode)
     monkeypatch.setattr(pg, "fetchval", fake.fetchval)
@@ -1348,3 +1350,167 @@ def test_a_router_refusal_passes_its_wait_to_the_client(
         asyncio.run(tenancy.ensure_held("new", _auth("new")))
     assert refused.value.extra["retry_after_s"] == wait
     assert cell_pg.writes == []
+
+
+def test_a_recording_cell_the_directory_marks_serving_records_no_new_org(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A restore to before attach's step 3 reads `recording` again; the directory says
+    `serving`, so a new org answers 503 and nothing is written, while a held org serves."""
+    cell_pg.mode = "recording"
+    monkeypatch.setattr(tenancy, "directory_says_attaching", AsyncMock(return_value=False))
+    with pytest.raises(errors.BackendUnavailableError, match="attaching"):
+        asyncio.run(tenancy.ensure_held("new", _auth("new")))
+    assert cell_pg.writes == [] and "new" not in cell_pg.held
+    asyncio.run(tenancy.ensure_held("held", _auth("held")))
+
+
+def _state_router(monkeypatch: pytest.MonkeyPatch, answer: Any, status: int = 200) -> list[str]:
+    calls: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path} {request.headers.get('authorization')}")
+        if isinstance(answer, Exception):
+            raise answer
+        return httpx.Response(status, json=answer)
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(_handler), **kw)
+    )
+    return calls
+
+
+@pytest.fixture
+def state_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr(settings, "cell_router_url", "https://router.test/")
+    monkeypatch.setattr(settings, "cell_router_token", "lcr_" + "0" * 128)
+    monkeypatch.setattr(tenancy, "_attaching", None)
+    monkeypatch.setattr(tenancy, "_attaching_read", None)
+
+
+@pytest.mark.parametrize(
+    "answer,status,attaching",
+    [
+        ({"cell": "eu-1", "state": "attaching"}, 200, True),
+        ({"cell": "eu-1", "state": "serving"}, 200, False),
+        ({"error": "not the first cell"}, 404, False),
+        ({"error": "no cell"}, 401, False),
+        (["attaching"], 200, False),
+        (httpx.ConnectError("down"), 200, False),
+    ],
+)
+def test_the_state_read_is_attaching_only_on_that_answer(
+    state_read: None, monkeypatch: pytest.MonkeyPatch, answer: Any, status: int, attaching: bool
+) -> None:
+    calls = _state_router(monkeypatch, answer, status)
+    assert asyncio.run(tenancy.directory_says_attaching()) is attaching
+    assert calls == [f"GET /cells/v1/cells/eu-1 Bearer lcr_{'0' * 128}"]
+
+
+def test_the_state_read_is_read_once_per_window_and_shared(
+    state_read: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _state_router(monkeypatch, {"cell": "eu-1", "state": "attaching"})
+
+    async def _burst() -> list[bool]:
+        return list(await asyncio.gather(*(tenancy.directory_says_attaching() for _ in range(5))))
+
+    assert asyncio.run(_burst()) == [True] * 5
+    assert asyncio.run(tenancy.directory_says_attaching()) is True
+    assert len(calls) == 1
+    answer, at = tenancy._attaching
+    tenancy._attaching = (answer, at - settings.tenancy_mode_cache_s)  # the window has passed
+    assert asyncio.run(tenancy.directory_says_attaching()) is True
+    assert len(calls) == 2
+
+
+def test_the_state_read_without_a_router_is_not_attaching(
+    state_read: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "cell_router_url", "")
+    calls = _state_router(monkeypatch, {"cell": "eu-1", "state": "attaching"})
+    assert asyncio.run(tenancy.directory_says_attaching()) is False and calls == []
+
+
+def test_a_state_read_slower_than_the_timeout_is_not_attaching(
+    state_read: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "cell_router_timeout_s", 0.2)
+
+    async def _slow(_request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(5)
+        return httpx.Response(200, json={"cell": "eu-1", "state": "attaching"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(_slow), **kw)
+    )
+    started = time.monotonic()
+    assert asyncio.run(tenancy.directory_says_attaching()) is False
+    assert time.monotonic() - started < 2
+
+
+def test_a_false_state_read_stands_for_the_window_too(
+    state_read: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A router outage costs one call per window, not one per new-org request."""
+    calls = _state_router(monkeypatch, httpx.ConnectError("down"))
+    assert [asyncio.run(tenancy.directory_says_attaching()) for _ in range(3)] == [False] * 3
+    assert len(calls) == 1
+
+
+def test_a_cancelled_waiter_leaves_the_shared_state_read_to_the_others(
+    state_read: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+
+    async def _answer(_request: httpx.Request) -> httpx.Response:
+        calls.append("read")
+        await asyncio.sleep(0.05)
+        return httpx.Response(200, json={"cell": "eu-1", "state": "attaching"})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(_answer), **kw)
+    )
+
+    async def _burst() -> list[Any]:
+        waiters = [asyncio.create_task(tenancy.directory_says_attaching()) for _ in range(3)]
+        await asyncio.sleep(0.01)
+        waiters[0].cancel()
+        return await asyncio.gather(*waiters, return_exceptions=True)
+
+    results = asyncio.run(_burst())
+    assert isinstance(results[0], asyncio.CancelledError) and results[1:] == [True, True]
+    assert calls == ["read"]
+
+
+def test_a_recording_cell_with_no_router_names_the_settings_it_lacks(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cell_pg.mode = "recording"
+    monkeypatch.setattr(tenancy, "directory_says_attaching", AsyncMock(return_value=False))
+    monkeypatch.setattr(settings, "cell_router_token", "")
+    with pytest.raises(errors.BackendUnavailableError, match="LOOM_CELL_ROUTER_TOKEN unset"):
+        asyncio.run(tenancy.ensure_held("new", _auth("new")))
+    assert cell_pg.writes == []
+
+
+def test_a_malformed_router_url_is_no_state_read_answer(
+    state_read: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "cell_router_url", "https://router.test:notaport")
+    calls = _state_router(monkeypatch, {"cell": "eu-1", "state": "attaching"})
+    assert asyncio.run(tenancy.directory_says_attaching()) is False and calls == []
+
+
+def test_a_malformed_router_url_answers_a_placement_503_and_writes_nothing(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "cell_router_url", "https://router.test:notaport")
+    calls = _router(monkeypatch, {"cell": "eu-1", "deployment_id": "dep-eu-1"})
+    with pytest.raises(errors.BackendUnavailableError, match="did not answer"):
+        asyncio.run(tenancy.ensure_held("new", _auth("new")))
+    assert calls == [] and cell_pg.writes == []

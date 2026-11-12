@@ -63,6 +63,11 @@ class _Directory:
         self._check()
         return next((r for r in self.cells.values() if r.is_first), None)
 
+    async def first_cell_named(self, name: str) -> directory.Cell | None:
+        self._check()
+        row = self.cells.get(name)
+        return row if row is not None and row.is_first else None
+
     async def place(self, org: str, name: str, refusal: Any) -> tuple[str, str]:
         self._check()
         if org not in self.placements:
@@ -97,7 +102,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> _Directory:
             credential_sha256=hashlib.sha256(US_TOKEN.encode()).hexdigest(),
         ),
     )
-    for name in ("credentials", "first_cell", "place", "lookup", "ping"):
+    for name in ("credentials", "first_cell", "first_cell_named", "place", "lookup", "ping"):
         monkeypatch.setattr(directory, name, getattr(d, name))
     return d
 
@@ -167,6 +172,7 @@ def test_a_malformed_placement_answers_400(fake: _Directory, body: dict[str, Any
         "/cells/v1/placements", json=payload, headers={"Authorization": f"Bearer {TOKEN}"}
     )
     assert r.status_code == 400 and fake.placements == {}
+    assert fake.credential_reads == 0  # judged before the credential is checked
 
 
 def test_a_body_nested_past_the_parser_answers_400(fake: _Directory) -> None:
@@ -515,3 +521,73 @@ def test_the_router_runs_only_against_a_directory_of_its_own(
     monkeypatch.setattr(settings, "router_pg_dsn", dsn)
     monkeypatch.setattr(settings, "pg_dsn", memory)
     assert (refused in router_cli._refusal()) if refused else router_cli._refusal() == ""
+
+
+def _state(client: TestClient, name: str = "eu-1", *, token: str = TOKEN) -> Any:
+    return client.get(f"/cells/v1/cells/{name}", headers={"Authorization": f"Bearer {token}"})
+
+
+@pytest.mark.parametrize("state", ["attaching", "serving"])
+def test_the_first_cell_reads_its_own_state(fake: _Directory, state: str) -> None:
+    fake.cells["eu-1"] = _row(is_first=True, state=state)
+    assert _state(_client()).json() == {"cell": "eu-1", "state": state}
+
+
+def test_a_state_read_is_answered_only_for_the_first_cell(fake: _Directory) -> None:
+    r = _state(_client())  # eu-1 is a later cell here
+    assert r.status_code == 404 and "not the first cell" in r.json()["error"]
+
+
+@pytest.mark.parametrize(
+    "path,token",
+    [
+        ("eu-1", "wrong-credential-0000000000000000"),
+        ("eu-1", US_TOKEN),  # another cell's own credential
+        ("EU_1", TOKEN),  # not a cell name
+        ("nope", TOKEN),
+    ],
+)
+def test_a_state_read_needs_the_named_cells_own_credential(
+    fake: _Directory, path: str, token: str
+) -> None:
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching")
+    assert _state(_client(), path, token=token).status_code == 401
+
+
+def test_a_state_read_with_no_bearer_reads_nothing(fake: _Directory) -> None:
+    r = _client().get("/cells/v1/cells/eu-1")
+    assert r.status_code == 401 and fake.credential_reads == 0
+
+
+def test_a_replaced_credential_still_cached_is_refused_on_the_state_read(
+    fake: _Directory,
+) -> None:
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching")
+    client = _client()
+    assert _state(client).status_code == 200
+    replaced = "replaced-credential-0123456789abcdef"
+    sha = hashlib.sha256(replaced.encode()).hexdigest()
+    fake.cells["eu-1"] = _row(is_first=True, state="attaching", credential_sha256=sha)
+    assert _state(client).status_code == 401  # judged on the row, not the cache
+    assert _state(client, token=replaced).status_code == 200
+    assert fake.credential_reads == 2
+
+
+def test_a_state_read_while_the_directory_is_down_answers_503(fake: _Directory) -> None:
+    fake.down = True
+    assert _state(_client()).status_code == 503
+
+
+def test_a_state_read_with_its_credential_cached_answers_503_when_the_directory_goes_down(
+    fake: _Directory,
+) -> None:
+    """The credential comes from the cache and the row read fails: the read answers 503
+    with the directory's reason."""
+    fake.cells["eu-1"] = _row(is_first=True)
+    client = _client()
+    assert _state(client).status_code == 200
+    fake.down = True
+    r = _state(client)
+    assert r.status_code == 503
+    assert r.json()["error"] == "the directory could not be read: OSError"
+    assert fake.credential_reads == 1  # the credential came from the cache
