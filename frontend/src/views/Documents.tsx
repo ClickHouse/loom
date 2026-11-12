@@ -1,7 +1,9 @@
 import {
+  lazy,
   memo,
   type ReactNode,
   startTransition,
+  Suspense,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -35,6 +37,8 @@ import {
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
 import { collectionTitle } from "../lib/collections";
+import { useNamespaceRole } from "../lib/namespaceRole";
+import { canCall } from "../lib/canCall";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError, toastWithId } from "../components/Toast";
@@ -68,6 +72,9 @@ import { useMedia, PHONE_QUERY } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
+
+// Loaded with the Library's place view; SourcesList decides whether its section shows.
+const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
 
 const FIRST_SCREEN_ROWS = 12;
 type SortBy = "recency" | "title" | "chunks" | "size";
@@ -205,6 +212,11 @@ export function Documents() {
   const readOnly = shown?.role === "viewer";
   // A viewer of the collection sees each write, unavailable, with the role it needs.
   const writeReason = readOnly && shown ? needsRole("writer", collectionTitle(shown)) : null;
+  const whoami = useStore((s) => s.whoami);
+  const headerRole = useNamespaceRole(picked.namespace);
+  // The place's admins manage its sources. An admin claim reaches no collection, so there
+  // only the collection's own role decides.
+  const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.add", headerRole, whoami);
   const phone = useMedia(PHONE_QUERY);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
@@ -1010,6 +1022,25 @@ export function Documents() {
           tooltip="Reference docs your agents can read. Memories are what the agent remembered; the library is what you gave it to read."
         />
       </div>
+
+      {!resolving && !shown?.personal && (
+        // Where this place's documents are pulled from, above the list; SourcesList decides
+        // when the section shows.
+        <Suspense fallback={null}>
+          <SourcesList
+            key={`${identity.org}/${identity.namespace}`}
+            org={identity.org}
+            namespace={identity.namespace}
+            place={
+              shown
+                ? { label: collectionTitle(shown), noun: "collection" }
+                : { label: identity.namespace, noun: "namespace" }
+            }
+            manageable={sourcesAdmin}
+            section="Sources"
+          />
+        </Suspense>
+      )}
 
       {/* The search, the sort and the count, in the one bar that stays at the top as the list
           scrolls, in every state: nothing moves when the rows land. A tag picked from a row

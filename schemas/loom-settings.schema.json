@@ -3103,7 +3103,7 @@
         "knowledge_source_sync_enabled": {
           "default": false,
           "type": "boolean",
-          "description": "The knowledge_source_sync worker: pulls each registered document source's changed files into its repository's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions."
+          "description": "The knowledge_source_sync worker: pulls each registered document source's changed files into its namespace's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions."
         },
         "knowledge_source_sync_full_interval_seconds": {
           "default": 86400,
@@ -3139,7 +3139,7 @@
           "default": 8,
           "minimum": 1,
           "type": "integer",
-          "description": "Active document sources (knowledge.source.add) one repository namespace may register; an add past it is refused with SOURCE_QUOTA."
+          "description": "Active document sources (knowledge.source.add) one namespace may register; an add past it is refused with SOURCE_QUOTA."
         },
         "knowledge_upload_max_bytes": {
           "default": 67108864,

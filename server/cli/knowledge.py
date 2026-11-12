@@ -32,7 +32,7 @@ def register_knowledge_cli(sub: Any) -> None:
         "source's turn or a document's extraction failed.",
     )
     p_sync.add_argument("--org", required=True)
-    p_sync.add_argument("--namespace", required=True, help="The repository's trunk code namespace")
+    p_sync.add_argument("--namespace", required=True, help="The namespace the sources live in")
     p_sync.add_argument("--source", default="", help="Only the source of this name")
     p_sync.add_argument(
         "--full",

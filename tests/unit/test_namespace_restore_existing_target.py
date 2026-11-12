@@ -93,6 +93,15 @@ def wire(monkeypatch: pytest.MonkeyPatch):
     async def _no_audit(*_a: Any, **_k: Any) -> str:
         return ""
 
+    @asynccontextmanager
+    async def _no_lease(*_a: Any) -> AsyncIterator[None]:
+        yield
+
+    async def _no_sources(*_a: Any) -> list[str]:
+        return []
+
+    monkeypatch.setattr(h, "sources_lease", _no_lease)
+    monkeypatch.setattr(h, "deactivate_namespace_sources", _no_sources)
     monkeypatch.setattr(authz, "grant_role_for", _grant)
     monkeypatch.setattr(_audit, "emit", _no_audit)
     monkeypatch.setattr(_audit, "emit_strict", _no_audit)

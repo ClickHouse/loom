@@ -1,4 +1,4 @@
-"""Pulls each registered document source's changed files into its repository's
+"""Pulls each registered document source's changed files into its namespace's
 documents (`server.knowledge.app.source_sync`)."""
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
 """knowledge.source.* against a running server and its ClickHouse. A registry row
 is seeded directly (an add needs a reachable source to probe), then read, asked
 to sync and retired through the ops; the state and registry rows are read back.
-Six of the eight cases need the deployment's code namespace (LOOM_CODE_ORG /
-LOOM_CODE_NAMESPACE) and skip without it: the registry reads and writes and the
-name rule, with documents written as the sync worker and as a caller."""
+The cases on the `repository` fixture need the deployment's code namespace
+(LOOM_CODE_ORG / LOOM_CODE_NAMESPACE) and skip without it: the registry reads and
+writes and the name rule, with documents written as the sync worker and as a caller."""
 
 from __future__ import annotations
 
@@ -17,9 +17,7 @@ import httpx
 import pytest
 
 from tests.integration._resources import unique_org
-
-NAME = "design-decks"
-CONFIG = {"folder_ids": ["1AbCdEfGhIjKlMnOp"], "include": ["slides"]}
+from tests.integration._sources import CONFIG, NAME, seed_source
 
 
 def _post(url: str, op: str, body: dict[str, Any]) -> httpx.Response:
@@ -33,36 +31,6 @@ def _post(url: str, op: str, body: dict[str, Any]) -> httpx.Response:
     return resp
 
 
-def _seed(
-    ch: Any, org: str, ns: str, name: str = NAME, credential: str = "not-a-sealed-value"
-) -> None:
-    ch.insert(
-        "loom.knowledge_sources",
-        [
-            [
-                org,
-                ns,
-                name,
-                "gdrive",
-                json.dumps(CONFIG),
-                credential,
-                "alice",
-                True,
-            ]
-        ],
-        column_names=[
-            "org",
-            "namespace",
-            "name",
-            "kind",
-            "config_json",
-            "credential_enc",
-            "created_by",
-            "active",
-        ],
-    )
-
-
 def _query(ch: Any, sql: str, **params: Any) -> list[dict[str, Any]]:
     result = ch.query(sql, parameters=params)
     return [dict(zip(result.column_names, r, strict=True)) for r in result.result_rows]
@@ -72,15 +40,15 @@ def _query(ch: Any, sql: str, **params: Any) -> list[dict[str, Any]]:
 def tenant(ch_client: Any, repository: Any) -> tuple[str, str, str]:
     """A source seeded on the deployment's code namespace: (org, namespace, name)."""
     name = repository.name()
-    _seed(ch_client, repository.org, repository.ns, name)
+    seed_source(ch_client, repository.org, repository.ns, name)
     return repository.org, repository.ns, name
 
 
 @pytest.fixture
-def orphan(ch_client: Any) -> tuple[str, str]:
-    """A source whose namespace is no repository's trunk (its repository is gone)."""
-    org, ns = unique_org("ksrc"), "code-ksrc-gone"
-    _seed(ch_client, org, ns)
+def plain_source(ch_client: Any) -> tuple[str, str]:
+    """A source on a namespace that is no repository's trunk."""
+    org, ns = unique_org("ksrc"), "team-ksrc"
+    seed_source(ch_client, org, ns)
     return org, ns
 
 
@@ -192,25 +160,20 @@ def test_check_with_no_usable_credential_fails_closed(control_plane_url: str, te
     assert out.json()["summary"].startswith("credential_invalid")
 
 
-def test_a_source_whose_repository_is_gone_is_only_read_and_removed(
-    control_plane_url: str, orphan: Any
+def test_a_source_on_a_plain_namespace_serves_check_and_sync_now(
+    control_plane_url: str, plain_source: Any
 ) -> None:
-    org, ns = orphan
+    org, ns = plain_source
     named = {"org": org, "namespace": ns, "name": NAME}
-    for op, extra in (
-        ("knowledge.source.check", {}),
-        ("knowledge.source.rotate", {"credential": "{}"}),
-        ("knowledge.source.sync_now", {}),
-    ):
-        out = _post(control_plane_url, op, {**named, **extra})
-        assert out.status_code == 422, (op, out.text)
-        assert out.json()["detail"]["code"] == "NOT_A_CODE_NAMESPACE", op
+    for op in ("knowledge.source.check", "knowledge.source.sync_now"):
+        out = _post(control_plane_url, op, named)
+        assert out.status_code == 200, (op, out.text)
     assert _post(control_plane_url, "knowledge.source.inspect", named).status_code == 200
     removed = _post(control_plane_url, "knowledge.source.remove", {**named, "confirm": NAME})
     assert removed.status_code == 200, removed.text
 
 
-def test_add_refuses_a_namespace_that_is_not_a_repository(control_plane_url: str) -> None:
+def test_add_takes_a_namespace_that_is_not_a_repository(control_plane_url: str) -> None:
     body = {
         "org": unique_org("ksrc"),
         "namespace": "notes",
@@ -221,12 +184,13 @@ def test_add_refuses_a_namespace_that_is_not_a_repository(control_plane_url: str
     }
     out = _post(control_plane_url, "knowledge.source.add", body)
     assert out.status_code == 422, out.text
-    assert out.json()["detail"]["code"] == "NOT_A_CODE_NAMESPACE"
+    # Past the namespace: the probe refused the credential.
+    assert out.json()["detail"]["code"] == "CREDENTIAL_REFUSED"
     out = _post(control_plane_url, "knowledge.source.add", {**body, "kind": "other"})
     assert out.json()["detail"]["code"] == "BAD_KIND"
 
 
-def test_add_reads_a_recording_config_before_the_namespace(control_plane_url: str) -> None:
+def test_add_reads_a_recording_config_before_its_probe(control_plane_url: str) -> None:
     body = {
         "org": unique_org("ksrc"),
         "namespace": "notes",
@@ -240,7 +204,7 @@ def test_add_reads_a_recording_config_before_the_namespace(control_plane_url: st
     assert out.json()["detail"]["code"] == "BAD_CONFIG"
     body["config"] = {"provider": "zoom", "ids": [85746065432]}
     out = _post(control_plane_url, "knowledge.source.add", body)
-    assert out.json()["detail"]["code"] == "NOT_A_CODE_NAMESPACE"
+    assert out.json()["detail"]["code"] == "CREDENTIAL_REFUSED"
 
 
 def _document(ch: Any, repo: Any, name: str, actor: str) -> str:
@@ -346,7 +310,7 @@ def test_a_name_whose_sync_documents_are_live_is_refused(
 ) -> None:
     org, ns = repository.org, repository.ns
     name = repository.name()
-    _seed(ch_client, org, ns, name)
+    seed_source(ch_client, org, ns, name)
     synced = _document(ch_client, repository, name, "worker:knowledge-source-sync")
     _document(ch_client, repository, name, "human:someone")  # a caller's own tagged document
     seen = _post(
@@ -375,7 +339,7 @@ def test_a_callers_tagged_document_never_holds_a_name(
 ) -> None:
     org, ns = repository.org, repository.ns
     name = repository.name()
-    _seed(ch_client, org, ns, name)
+    seed_source(ch_client, org, ns, name)
     _document(ch_client, repository, name, "human:someone")
     removed = _remove(control_plane_url, org, ns, name, True)
     assert removed.json()["documents_pending"] == 0
@@ -446,7 +410,7 @@ async def test_a_synced_document_is_mined_into_decision_rows_in_the_same_pass(
     uri = f"https://docs.example.com/document/d/{file_id}/edit"
     repository.uris.append(uri)
     key = '{"type": "service_account", "client_email": "a@b", "private_key": "k"}'
-    _seed(ch_client, org, ns, name, credential=seal("knowledge_sources.credential", key))
+    seed_source(ch_client, org, ns, name, credential=seal("knowledge_sources.credential", key))
 
     async def _token(account: Any) -> str:
         return "tok"

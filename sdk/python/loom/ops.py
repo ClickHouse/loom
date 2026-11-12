@@ -11249,7 +11249,7 @@ class SearchHit(TypedDict, total=False):
 
 
 class KnowledgeSourceAddInput(TypedDict, total=False):
-    "Register a document source on a repository's trunk code namespace: a kind,"
+    "Register a document source on a namespace: a kind, the ids it reads and a"
 
     org: Required[str]
     namespace: Required[str]
@@ -11261,7 +11261,7 @@ class KnowledgeSourceAddInput(TypedDict, total=False):
 
 
 class KnowledgeSourceAddBody(TypedDict, total=False):
-    "Register a document source on a repository's trunk code namespace: a kind,"
+    "Register a document source on a namespace: a kind, the ids it reads and a"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11370,14 +11370,14 @@ class KnowledgeSourceDocument(TypedDict, total=False):
 
 
 class KnowledgeSourceListInput(TypedDict, total=False):
-    "The document sources registered on a repository's code namespace, with each"
+    "The document sources registered on a namespace, with each one's sync"
 
     org: Required[str]
     namespace: Required[str]
 
 
 class KnowledgeSourceListBody(TypedDict, total=False):
-    "The document sources registered on a repository's code namespace, with each"
+    "The document sources registered on a namespace, with each one's sync"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11386,6 +11386,7 @@ class KnowledgeSourceListBody(TypedDict, total=False):
 class KnowledgeSourceListOutput(TypedDict, total=False):
     sources: NotRequired[list["KnowledgeSourceEntry"]]
     enabled: NotRequired[bool]
+    accepts_sources: NotRequired[bool]
 
 
 class KnowledgeSourceEntry(TypedDict, total=False):
@@ -16227,6 +16228,7 @@ class NamespaceDeleteOutput(TypedDict, total=False):
     deleted: Required[bool]
     namespace: Required[str]
     updated_at: Required[str]  # date-time as ISO-8601 text
+    sources_retired: NotRequired[list[str]]
 
 
 class NamespaceGetInput(TypedDict, total=False):

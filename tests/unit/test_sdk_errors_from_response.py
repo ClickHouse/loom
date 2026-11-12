@@ -141,6 +141,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "ENTRY_LEASE_NOT_HELD": PreconditionFailed,  # the uploading pass no longer holds its entry
     "SOURCE_REPLACED": PreconditionFailed,  # a 409 with no SDK class: mapped by status
     "COLLECTION_NAME_TAKEN": PreconditionFailed,  # a 409 with no SDK class: mapped by status
+    "ERASURE_RUNNING": PreconditionFailed,  # a 409 the server names retryable
     "WRONG_CELL": WrongCell,
     "MODEL_CALL_UNATTRIBUTED": BackendUnavailable,  # a 500 with no SDK class: mapped by status
     "MODEL_CALLS_DISABLED": AuthInsufficient,  # a 403 with no SDK class: mapped by status

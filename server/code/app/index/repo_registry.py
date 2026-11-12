@@ -223,16 +223,6 @@ def reset_for_tests() -> None:
     _LOADED_AT = -1e12
 
 
-async def row_active(org: str, namespace: str, ch: Any | None = None) -> bool:
-    """Whether the namespace's loom.code_repos row is active, read now (not the snapshot)."""
-    from server.code.store.index import CodeRepo
-    from server.core.ch import sequential_reads
-
-    with sequential_reads():
-        row = await CodeRepo(ch).code_repo_row(org, namespace)
-    return bool(row and row.get("active"))
-
-
 async def active_count(org: str, ch: Any | None = None) -> int:
     from server.code.store.index import CodeRepo
 

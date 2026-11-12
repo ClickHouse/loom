@@ -1,7 +1,7 @@
 """The `knowledge.source.*` operation declarations; their wire models are in
-`models_sources`. Each op is addressed by the repository's trunk code namespace,
-so the transport's namespace gate decides: readers list and inspect, the
-namespace's admins (the repository's maintainers) do the rest."""
+`models_sources`. Each op is addressed by the namespace the source's documents
+live in, so the transport's namespace gate decides: readers list and inspect, the
+namespace's admins do the rest."""
 
 from __future__ import annotations
 

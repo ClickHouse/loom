@@ -50,6 +50,7 @@ const mine: MyNamespaceEntry[] = [
 // A generic body that satisfies every list-shaped reader.
 const GENERIC = {
   rows: [],
+  sources: [],
   entries: [],
   repos: [],
   results: {},
@@ -152,8 +153,9 @@ const BUDGET: Record<string, { render: () => JSX.Element; view: View; allow: Rec
   Documents: {
     render: () => <Documents />,
     view: "knowledge",
-    // The select above the list reads the collections the person can open, once.
-    allow: { "/v1/knowledge.list": 1, "/v1/collection.list": 1 },
+    // The select above the list reads the collections the person can open, once; the
+    // Sources section reads the place's document sources, once.
+    allow: { "/v1/knowledge.list": 1, "/v1/collection.list": 1, "/v1/knowledge.source.list": 1 },
   },
   Repositories: {
     render: () => <CodeView />,

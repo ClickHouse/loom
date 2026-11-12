@@ -1,5 +1,5 @@
-"""Wire models of `knowledge.source.*`: the document sources a repository's
-maintainers register for Loom to pull from. No output carries a credential."""
+"""Wire models of `knowledge.source.*`: the document sources a namespace's admins
+register for Loom to pull from. No output carries a credential."""
 
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ class KnowledgeSourceEntry(BaseModel):
     kind: str
     # The ids and filters the source reads; never a credential.
     config: dict[str, Any] = Field(default_factory=dict)
-    # Token subject of the maintainer who added it; '' with auth off.
+    # Token subject of the admin who added it; '' with auth off.
     created_by: str = ""
     # When it was added, ISO UTC.
     created_at: str = ""
@@ -98,12 +98,12 @@ class KnowledgeSourceEntry(BaseModel):
 
 
 class KnowledgeSourceListInput(BaseModel):
-    """The document sources registered on a repository's code namespace, with each
-    one's sync state. Any reader of the repository may list them; the credential
+    """The document sources registered on a namespace, with each one's sync
+    state. Any reader of the namespace may list them; the credential
     is never returned."""
 
     org: str = Field(..., description="The org.")
-    namespace: str = Field(..., description="The repository's trunk code namespace.")
+    namespace: str = Field(..., description="The namespace the sources live in.")
 
 
 class KnowledgeSourceListOutput(BaseModel):
@@ -112,18 +112,27 @@ class KnowledgeSourceListOutput(BaseModel):
     # Whether this deployment runs the sync worker (LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED);
     # false: sources are stored and probed, but nothing pulls from them.
     enabled: bool = False
+    # False where add would refuse the namespace (PERSONAL_NAMESPACE, NAMESPACE_INACTIVE).
+    accepts_sources: bool = True
 
 
 class KnowledgeSourceAddInput(BaseModel):
-    """Register a document source on a repository's trunk code namespace: a kind,
-    the ids it reads and a read-only credential. A namespace admin (the
-    repository's maintainer) may. The credential is probed (a check and a listing
-    of each folder or project) before anything is stored; a probe that fails stores nothing. A name
-    is refused while documents the sync worker wrote for an earlier source of that
-    name are live. The credential is stored encrypted and never returned."""
+    """Register a document source on a namespace: a kind, the ids it reads and a
+    read-only credential. A namespace admin may. The credential is probed (a check and
+    a listing of each folder or project) before anything is stored; a probe that fails
+    stores nothing. A name is refused while documents the sync worker wrote for an
+    earlier source of that name are live. The credential is stored encrypted and never
+    returned."""
 
     org: str = Field(..., description="The org.")
-    namespace: str = Field(..., description="The repository's trunk code namespace.")
+    namespace: str = Field(
+        ...,
+        description=(
+            "The namespace or collection the documents live in; a person's own "
+            "(personal-…, single sign-on u-<name>-<hash>, col-me-…, or one claimed at "
+            "sign-up) is refused."
+        ),
+    )
     name: str = Field(
         ...,
         description="Source name: 2-32 lower-case letters, digits, - or _, starting with a "
@@ -161,7 +170,7 @@ class KnowledgeSourceAddOutput(BaseModel):
     name: str
     # The source kind, normalised.
     kind: str
-    # The repository's trunk code namespace the source was registered on.
+    # The namespace the source was registered on.
     namespace: str
     # The config as stored.
     config: dict[str, Any] = Field(default_factory=dict)
@@ -174,10 +183,10 @@ class KnowledgeSourceAddOutput(BaseModel):
 class KnowledgeSourceInspectInput(BaseModel):
     """One registered document source: its config, its sync state and the
     documents it wrote (the 200 most recently ingested). Any reader of the
-    repository may; the credential is never returned."""
+    namespace may; the credential is never returned."""
 
     org: str = Field(..., description="The org.")
-    namespace: str = Field(..., description="The repository's trunk code namespace.")
+    namespace: str = Field(..., description="The namespace the source's documents live in.")
     name: str = Field(..., description="The source name.")
 
 
@@ -199,7 +208,7 @@ class KnowledgeSourceInspectOutput(BaseModel):
     kind: str
     # The ids and filters the source reads; never a credential.
     config: dict[str, Any] = Field(default_factory=dict)
-    # Token subject of the maintainer who added it; '' with auth off.
+    # Token subject of the admin who added it; '' with auth off.
     created_by: str = ""
     # When it was added, ISO UTC.
     created_at: str = ""
@@ -215,7 +224,7 @@ class KnowledgeSourceCheckInput(BaseModel):
     may, since the probe spends the source's rate limit."""
 
     org: str = Field(..., description="The org.")
-    namespace: str = Field(..., description="The repository's trunk code namespace.")
+    namespace: str = Field(..., description="The namespace the source's documents live in.")
     name: str = Field(..., description="The source name.")
 
 
@@ -243,7 +252,7 @@ class KnowledgeSourceRotateInput(BaseModel):
     the new credential is probed first, and a probe that fails stores nothing."""
 
     org: str = Field(..., description="The org.")
-    namespace: str = Field(..., description="The repository's trunk code namespace.")
+    namespace: str = Field(..., description="The namespace the source's documents live in.")
     name: str = Field(..., description="The source name.")
     credential: str = Field(
         ...,
@@ -265,10 +274,13 @@ class KnowledgeSourceRemoveInput(BaseModel):
     """Retire a registered document source: its registry row goes inactive and its
     credential is cleared. Its documents stay; with `delete_documents` true the
     request to retire them is recorded on the row, and the sync worker retires them
-    over its next passes. A namespace admin may; `confirm` must equal the name."""
+    over its next passes. With `delete_documents` true it also takes a source already
+    retired (removed keeping its documents, or retired with its namespace), so those
+    documents can still go; without it such a source answers SOURCE_NOT_FOUND. A
+    namespace admin may; `confirm` must equal the name."""
 
     org: str = Field(..., description="The org.")
-    namespace: str = Field(..., description="The repository's trunk code namespace.")
+    namespace: str = Field(..., description="The namespace the source's documents live in.")
     name: str = Field(..., description="The source name.")
     confirm: str = Field(..., description="Type the source name to confirm.")
     delete_documents: bool = Field(
@@ -291,7 +303,7 @@ class KnowledgeSourceSyncNowInput(BaseModel):
     namespace admin may."""
 
     org: str = Field(..., description="The org.")
-    namespace: str = Field(..., description="The repository's trunk code namespace.")
+    namespace: str = Field(..., description="The namespace the source's documents live in.")
     name: str = Field(..., description="The source name.")
     full: bool = Field(
         False,

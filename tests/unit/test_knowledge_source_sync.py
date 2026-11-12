@@ -19,6 +19,7 @@ import httpx
 import pytest
 
 from server.clients import gdrive
+from server.code.app.index import repo_registry
 from server.core import leases
 from server.core.ch import sequential_reads_active
 from server.core.errors import ValidationError
@@ -227,10 +228,10 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
         monkeypatch.setattr(source_sync.store, name, getattr(w, name))
     monkeypatch.setattr(source_ops, "store", source_sync.store)
 
-    async def _trunk(org: str, ns: str) -> bool:
-        return ns.startswith("code-")
+    async def _registry(**kw: Any) -> list[Any]:
+        return []
 
-    monkeypatch.setattr(source_ops, "is_trunk_namespace", _trunk)
+    monkeypatch.setattr(repo_registry, "refresh_db_repos", _registry)
     monkeypatch.setattr(source_sync, "_repo_tag", lambda src: "repo:abc")
 
     @contextlib.asynccontextmanager
@@ -817,7 +818,7 @@ def test_a_document_another_writer_holds_is_never_overwritten(world: _World) -> 
     assert not [r for r in world.requests if r.url.path.endswith("/export")]
 
 
-def test_sources_outside_a_live_trunk_are_not_synced_and_requests_go_first(
+def test_sources_on_an_inactive_namespace_are_not_synced_and_requests_go_first(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world.sources = [
@@ -836,7 +837,7 @@ def test_sources_outside_a_live_trunk_are_not_synced_and_requests_go_first(
 
     monkeypatch.setattr(source_sync, "_turn", _turn)
     asyncio.run(source_sync.run_sync())
-    assert order == ["zzz", "aaa"]
+    assert order == ["zzz", "aaa", "plain"]
 
 
 def test_a_removed_source_s_documents_are_retired_then_the_request_cleared(
@@ -849,6 +850,17 @@ def test_a_removed_source_s_documents_are_retired_then_the_request_cleared(
     assert result.retired == 1
     assert world.docs == {}
     assert world.audits[-1]["subject"]["source_name"] == "decks"
+    assert not world.sources[-1].pending_delete
+
+
+def test_a_deleted_namespace_s_source_still_has_its_documents_retired(world: _World) -> None:
+    world.files = [_file("doc1", DOCS, "2026-01-01T00:00:00.000Z")]
+    asyncio.run(source_sync.run_sync())
+    world.inactive = {(ORG, NS)}
+    world.sources = [_source(active=False, pending_delete=True, credential_enc="")]
+    result = asyncio.run(source_sync.run_sync())
+    assert result.retired == 1
+    assert world.docs == {}
     assert not world.sources[-1].pending_delete
 
 
@@ -1999,6 +2011,23 @@ def test_a_written_document_is_mined_in_the_same_pass_as_the_worker(
     assert len(world.mined) == 2
 
 
+def test_a_source_retired_after_its_sync_turn_mines_nothing(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source retired between its sync turn and the mining leg is mined nothing: the
+    leg's registry check stops it."""
+    world.files = [_file("doc1", DOCS, REV1)]
+    sync_one = source_sync._sync_one
+
+    async def _then_retired(src: Any, *args: Any) -> None:
+        await sync_one(src, *args)
+        world.sources = [dataclasses.replace(s, active=False) for s in world.sources]
+
+    monkeypatch.setattr(source_sync, "_sync_one", _then_retired)
+    asyncio.run(source_sync.run_sync())
+    assert world.upserts and world.mined == []
+
+
 @pytest.mark.parametrize("stop", ["raises", "stopped"])
 def test_a_document_written_by_a_turn_that_did_not_finish_is_mined_next_pass(
     world: _World, monkeypatch: pytest.MonkeyPatch, stop: str
@@ -2573,3 +2602,24 @@ def test_a_failed_read_of_a_source_s_documents_is_that_source_s_error(
     assert result.failed == 1 and failures == [f"{ORG}/{NS}/decks"]
     # The leg goes on: the other source's document is mined.
     assert [uri for uri, _, _ in world.mined] == [DOC2]
+
+
+def test_only_a_trunk_source_tags_its_documents_with_the_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    def entry(namespace: str, branch: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            org=ORG,
+            repo="acme/app",
+            namespace=namespace,
+            git_branch=branch,
+            git_remote="https://github.com/acme/app",
+        )
+
+    entries = [entry("code-acme-app", "main"), entry("code-acme-app-dev", "dev")]
+    monkeypatch.setattr(source_sync, "configured_repos", lambda: entries)
+    assert source_sync._repo_tag(_source(namespace="code-acme-app")).startswith("repo:")
+    assert source_sync._repo_tag(_source(namespace="code-acme-app-dev")) == ""
+    assert source_sync._repo_tag(_source(namespace="team-notes")) == ""

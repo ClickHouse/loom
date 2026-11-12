@@ -3780,7 +3780,7 @@
            "nargs": null,
            "type": null,
            "required": true,
-           "help": "The repository's trunk code namespace",
+           "help": "The namespace the sources live in",
            "metavar": null
           },
           {

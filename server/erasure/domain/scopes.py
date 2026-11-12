@@ -1,8 +1,8 @@
 """The scope values of erasure requests as `loom.erasure_requests` holds them.
 
 Pure and I/O-free: the erasure plane validates and runs its sagas by them, and the
-knowledge plane's move of originals to the bucket and its document restore read the
-ledger by them.
+knowledge plane's move of originals to the bucket, its document restore and a source's
+add read the ledger by them.
 """
 
 from __future__ import annotations

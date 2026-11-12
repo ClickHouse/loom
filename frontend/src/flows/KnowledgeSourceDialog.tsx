@@ -1,6 +1,7 @@
 /**
- * Adding, checking, syncing, rotating and retiring a repository's document source.
- * Loaded on first use, behind `lazy()`, by the repository card's Sources facet.
+ * Adding, checking, syncing, rotating and retiring a namespace's document source.
+ * Loaded on first use, behind `lazy()`, by the Sources list (a repository card's, or the
+ * Library's).
  *
  * Add probes first: the form takes a kind and that kind's ids, Check sends
  * `knowledge.source.add` with `dry_run` (the credential is tried, nothing is stored) and
@@ -171,9 +172,9 @@ export function AddSourceDialog({
   onOpenChange,
   org,
   namespace,
-  repo,
+  label,
   onAdded,
-}: DialogProps & { repo: string; onAdded: (name: string) => void }) {
+}: DialogProps & { label: string; onAdded: (name: string) => void }) {
   const [form, setForm] = useState<SourceForm>(emptySourceForm);
   const [checked, setChecked] = useState<{ fingerprint: string; probe: KnowledgeSourceProbe } | null>(null);
   const [busy, setBusy] = useState<"check" | "add" | null>(null);
@@ -218,7 +219,7 @@ export function AddSourceDialog({
       open={open}
       onOpenChange={onOpenChange}
       width={560}
-      title={`Add a document source · ${repo}`}
+      title={`Add a document source · ${label}`}
       description={KIND_FORM[form.kind].about}
       footer={
         <>

@@ -408,6 +408,11 @@ async def handle_collection_delete(input: CollectionDeleteInput) -> CollectionDe
     )
 
 
+async def in_tree(org: str, namespace: str) -> bool:
+    """Whether the collections tree holds `namespace` (it was created and not deleted)."""
+    return await collections_repo.fetch(org, namespace) is not None
+
+
 async def retire(org: str, namespace: str) -> bool:
     """A deleted collection leaves the tree; its children become top-level,
     keeping their own grants. False when it was not in the tree."""

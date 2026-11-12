@@ -126,6 +126,15 @@ class SourceReplacedError(LoomServerError):
     status_code = 409
 
 
+class ErasureRunningError(LoomServerError):
+    """409 — an erasure of the namespace is running: a document source added now would
+    outlast it, since its first step has already read the namespace's sources. Retry once
+    the erasure finishes (`erasure.status`)."""
+
+    code = "ERASURE_RUNNING"
+    status_code = 409
+
+
 class ReadsLlmFreeError(LoomServerError):
     """409 — `memory.ask` or `code.ask` asked for a model's answer while
     `LOOM_READS_LLM_FREE` is on. Resending the same request never succeeds;
@@ -463,6 +472,7 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     # statement waits for a pool slot), so there it is not retryable (`handler_failure_detail`).
     "OVERLOADED": ("capacity", True),
     "GRANT_BUSY": ("capacity", True),
+    "ERASURE_RUNNING": ("capacity", True),
     "IDEMPOTENT_IN_PROGRESS": ("capacity", True),
     "MODEL_CALL_DEFERRED": ("capacity", True),
     "MODEL_CHANGE_IN_PROGRESS": ("capacity", True),

@@ -546,7 +546,12 @@ def test_a_delete_is_never_stamped_behind_the_row_it_replaces(
         async def insert(self, _table: str, rows: list[dict[str, Any]]) -> None:
             inserted.extend(rows)
 
+    async def _no_sources(*_a: Any) -> list[str]:
+        return []
+
     monkeypatch.setattr(ns_app, "account_change", _held)
+    monkeypatch.setattr(ns_app, "sources_lease", _held)
+    monkeypatch.setattr(ns_app, "deactivate_namespace_sources", _no_sources)
     monkeypatch.setattr(ns_app, "get_client", _CH)
     monkeypatch.setattr(ns_app, "naive_utc_now_seconds", lambda: now)
     monkeypatch.setattr(ns_app.namespaces_repo, "fetch_row", _row)

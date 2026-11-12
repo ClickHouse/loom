@@ -4107,7 +4107,7 @@ export interface KnowledgeSearchOutput {
 export interface KnowledgeSourceAddInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace or collection the documents live in; a person's own (personal-…, single sign-on u-<name>-<hash>, col-me-…, or one claimed at sign-up) is refused. */
   namespace: string;
   /** Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. */
   name: string;
@@ -4139,7 +4139,7 @@ export interface KnowledgeSourceAddOutput {
 export interface KnowledgeSourceCheckInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the source's documents live in. */
   namespace: string;
   /** The source name. */
   name: string;
@@ -4158,7 +4158,7 @@ export interface KnowledgeSourceCheckOutput {
 export interface KnowledgeSourceInspectInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the source's documents live in. */
   namespace: string;
   /** The source name. */
   name: string;
@@ -4203,7 +4203,7 @@ export interface KnowledgeSourceInspectOutput {
 export interface KnowledgeSourceListInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the sources live in. */
   namespace: string;
 }
 
@@ -4219,12 +4219,13 @@ export interface KnowledgeSourceEntry {
 export interface KnowledgeSourceListOutput {
   sources?: KnowledgeSourceEntry[];
   enabled?: boolean;
+  accepts_sources?: boolean;
 }
 
 export interface KnowledgeSourceRemoveInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the source's documents live in. */
   namespace: string;
   /** The source name. */
   name: string;
@@ -4242,7 +4243,7 @@ export interface KnowledgeSourceRemoveOutput {
 export interface KnowledgeSourceRotateInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the source's documents live in. */
   namespace: string;
   /** The source name. */
   name: string;
@@ -4259,7 +4260,7 @@ export interface KnowledgeSourceRotateOutput {
 export interface KnowledgeSourceSyncNowInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the source's documents live in. */
   namespace: string;
   /** The source name. */
   name: string;
@@ -7465,6 +7466,7 @@ export interface NamespaceDeleteOutput {
   deleted: boolean;
   namespace: string;
   updated_at: string; // date-time
+  sources_retired?: string[];
 }
 
 export interface NamespaceGetInput {

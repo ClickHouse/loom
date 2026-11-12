@@ -2240,14 +2240,14 @@ class KnowledgeSettings(BaseModel):
     document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
 
     # ---- document sources ----
-    # Active document sources (knowledge.source.add) one repository namespace may
-    # register; an add past it is refused with SOURCE_QUOTA.
+    # Active document sources (knowledge.source.add) one namespace may register; an
+    # add past it is refused with SOURCE_QUOTA.
     knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
     # Seconds a document source's probe (add, check, rotate) may take in all; past it
     # add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false.
     knowledge_source_probe_timeout_s: Annotated[float, LIVE] = Field(default=20.0, gt=0, le=25.0)
     # The knowledge_source_sync worker: pulls each registered document source's changed
-    # files into its repository's documents. Off by default: it needs each source's
+    # files into its namespace's documents. Off by default: it needs each source's
     # credential, spends embedding calls on every changed document and model calls
     # mining it for decisions.
     knowledge_source_sync_enabled: bool = False

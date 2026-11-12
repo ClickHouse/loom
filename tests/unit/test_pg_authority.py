@@ -1376,7 +1376,7 @@ def test_only_an_op_whose_answer_replays_marks_its_key_committed() -> None:
     assert idempotency.bound_key() is None
 
 
-def test_the_authoritys_erasure_step_runs_first_and_only_under_it(
+def test_the_authoritys_erasure_step_leads_the_erasing_steps_and_runs_only_under_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.erasure.app.saga_steps import NAMESPACE_STEPS, USER_STEPS, authority_steps
@@ -1384,8 +1384,10 @@ def test_the_authoritys_erasure_step_runs_first_and_only_under_it(
     from server.settings import settings
 
     monkeypatch.setattr(settings, "storage_authority", "postgres")
-    for steps in (USER_STEPS, NAMESPACE_STEPS):
-        assert authority_steps(steps)[0][0] == "pg_memory.delete"
+    assert authority_steps(USER_STEPS)[0][0] == "pg_memory.delete"
+    # A namespace's sources stop first, so no sync turn writes into what the steps erase.
+    names = [name for name, _ in authority_steps(NAMESPACE_STEPS)]
+    assert names[:2] == ["knowledge_sources.retire", "pg_memory.delete"]
     assert set(PG_CENSUS) <= set(census_tables("user_id"))
     monkeypatch.setattr(settings, "storage_authority", "clickhouse")
     for steps in (USER_STEPS, NAMESPACE_STEPS):

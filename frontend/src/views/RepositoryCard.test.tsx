@@ -874,6 +874,14 @@ describe("RepositoryCard — sources", () => {
     expect(within(group()).queryByText(/Sync is off/)).toBeNull();
   });
 
+  it("says a closed repository namespace with no source takes none", async () => {
+    vi.mocked(listKnowledgeSources).mockResolvedValueOnce({ sources: [], enabled: true, accepts_sources: false });
+    mount([branch({ my_status: "member", my_role: "admin", docs_namespace: "code-clickhouse" })], []);
+    const group = screen.getByRole("group", { name: "Sources" });
+    expect(await within(group).findByText(/takes no new document sources\./)).toBeInTheDocument();
+    expect(within(group).queryByRole("button", { name: "Add a source" })).toBeNull();
+  });
+
   it("gives the namespace's admin Add a source and each source's verbs", async () => {
     const user = userEvent.setup();
     mount([branch({ my_status: "member", my_role: "admin", docs_namespace: "code-clickhouse" })], []);

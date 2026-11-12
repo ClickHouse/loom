@@ -27,6 +27,7 @@ const NS = "team";
 const GENERIC = {
   rows: [],
   entries: [],
+  sources: [],
   repos: [],
   results: {},
   missing: [],

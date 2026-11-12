@@ -726,6 +726,11 @@ def test_a_tree_or_group_row_outranks_the_row_it_replaces_whatever_the_clock() -
     )
 
 
+async def _no_sources(*_a: Any) -> list[str]:
+    """A namespace delete's retirement of its document sources, which hold none here."""
+    return []
+
+
 def test_a_collection_delete_cut_short_is_closed_by_its_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -765,6 +770,8 @@ def test_a_collection_delete_cut_short_is_closed_by_its_retry(
         return None
 
     monkeypatch.setattr(namespace, "account_change", _claim)
+    monkeypatch.setattr(namespace, "sources_lease", _claim)
+    monkeypatch.setattr(namespace, "deactivate_namespace_sources", _no_sources)
     monkeypatch.setattr(namespace, "get_client", lambda: _CH())
     monkeypatch.setattr(namespace.namespaces_repo, "fetch_row", _row)
     monkeypatch.setattr(namespace.grant_cache, "changed", _changed)
@@ -1122,6 +1129,8 @@ def test_a_collection_whose_create_stopped_short_is_still_deleted(
         return True
 
     monkeypatch.setattr(namespace, "account_change", _claim)
+    monkeypatch.setattr(namespace, "sources_lease", _claim)
+    monkeypatch.setattr(namespace, "deactivate_namespace_sources", _no_sources)
     monkeypatch.setattr(namespace, "get_client", lambda: object())
     monkeypatch.setattr(namespace.namespaces_repo, "fetch_row", _no_row)
     monkeypatch.setattr(collections, "retire", _retire)

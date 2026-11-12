@@ -21,7 +21,7 @@
  * Five words on both facets: Open · Join · Request access · Withdraw request · Leave. A
  * branch name is never in a button's label; it is in a menu item or the table.
  */
-import { memo, useId, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useId, useState, type ReactNode } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
@@ -60,10 +60,12 @@ import {
 } from "../lib/repositoryCard";
 import { RecordSourceDetails } from "./TrackerSources";
 import { RepoDocsList } from "./RepoDocs";
-import { RepoSourcesList } from "./RepoSources";
 import { oneOf } from "../lib/oneOf";
 import { canCallOn } from "../lib/canCall";
 import { useStore } from "../lib/state";
+
+// Loaded with an opened card: the Library loads it too, so it is a chunk of its own.
+const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
 
 /** The reader-grant sentence, said once for the whole card: a token reads through its
  *  subject's — or, for an `sa:` token, its creator's — reader grant, so nothing has to
@@ -897,13 +899,15 @@ export const RepositoryCard = memo(function RepositoryCard({
             {docs && (
               // Where those documents are pulled from, and each source's last sync
               <FacetRow icon="connect" label="Sources">
-                <RepoSourcesList
-                  org={docs.org}
-                  docsNamespace={docs.namespace}
-                  repo={card.repo}
-                  manageable={canCallOn("knowledge.source.add", docs, whoami)}
-                  busy={anyBusy}
-                />
+                <Suspense fallback={null}>
+                  <SourcesList
+                    org={docs.org}
+                    namespace={docs.namespace}
+                    place={{ label: card.repo, noun: "repository" }}
+                    manageable={canCallOn("knowledge.source.add", docs, whoami)}
+                    busy={anyBusy}
+                  />
+                </Suspense>
               </FacetRow>
             )}
             {card.restricted && card.joinedCount === 0 && card.pendingCount === 0 && (

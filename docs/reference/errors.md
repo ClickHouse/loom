@@ -473,6 +473,10 @@ HTTP 409, raised as `server.code.app.ingest.EntryLeaseNotHeld`. The pass that bu
 
 Raised in `server/memory/domain/record_values.py`.
 
+#### `ERASURE_RUNNING`
+
+HTTP 409, raised as `server.core.errors.ErasureRunningError`. 409 — an erasure of the namespace is running: a document source added now would outlast it, since its first step has already read the namespace's sources. Category `capacity`, retryable: yes.
+
 #### `EXPIRED`
 
 Raised in `server/memory/app/update.py`.
@@ -617,6 +621,10 @@ Raised in `server/auth/self_signup.py`.
 
 Raised in `server/insights/app/admin_routes.py`.
 
+#### `NAMESPACE_INACTIVE`
+
+Raised in `server/knowledge/app/sources.py`.
+
 #### `NAMESPACE_NOT_ACCESSIBLE`
 
 Raised in `server/transport/mcp_auth.py`. Category `auth`, retryable: no; when the check could not run, `dependency` and yes ([the error envelope](#the-error-envelope-over-http)).
@@ -628,10 +636,6 @@ Raised in `server/identity/app/claim_release.py`, `server/insights/app/admin_rou
 #### `NAMESPACE_TAKEN`
 
 Raised in `server/tracker/app/sources.py`.
-
-#### `NOT_A_CODE_NAMESPACE`
-
-Raised in `server/knowledge/app/sources.py`.
 
 #### `NOT_A_REPO`
 
@@ -688,6 +692,10 @@ HTTP 409, raised as `server.core.runtime_overrides.OverrideNotStoredError`. 409 
 #### `PASSWORD_LOGIN_SSO`
 
 Raised in `server/auth/login.py`.
+
+#### `PERSONAL_NAMESPACE`
+
+Raised in `server/knowledge/app/sources.py`.
 
 #### `PINNED_CONFLICT`
 
