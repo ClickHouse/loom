@@ -19,7 +19,9 @@ Loom with your coding agent](agent-setup.md)).
 - **The server URL**, for example `https://loom.example.com`, or `http://localhost:7777`
   for a stack started with `loom up`.
 - **A writer token for your namespace**, except against a single-user server on the same
-  machine: there the plugins connect without one. Create one in the dashboard at
+  machine: there the plugins and Cursor's
+  [install link](../features/integrations/cursor.md#mcp-tools) connect without one.
+  Create one in the dashboard at
   `<server>/settings` → **Tokens**, or ask an operator to run
   `loom mint-token --subject you --org <org> --namespaces <namespace> --roles writer`.
   On a server with self-signup open, the Claude Code plugin can sign the machine up by
@@ -66,13 +68,14 @@ the plugin installed: an entry with the same name replaces the plugin's.
 
 ## Cursor and other MCP clients
 
-In the dashboard, open **Settings → Tokens**, fill in the **New token** form (press **New
-token** first if a token exists) and press **Create token**, then choose your client
-(Cursor, VS Code, Cline, Windsurf, Zed or Claude Desktop) under **Connect**: the dialog
-shows the entry for its config file, with the token in it. For any other MCP client, copy
-the entry from [MCP clients](../features/integrations/mcp-clients.md). With the `loom` CLI
-installed (`pip install -e .` from a clone of the repository), one command writes the
-entry instead:
+For Cursor against a single-user server on the same machine, no token is needed: use the
+[install link](../features/integrations/cursor.md#mcp-tools). Otherwise, in the dashboard,
+open **Settings → Tokens**, fill in the **New token** form (press **New token** first if a
+token exists) and press **Create token**, then choose your client (Cursor, VS Code, Cline,
+Windsurf, Zed or Claude Desktop) under **Connect**: the dialog shows the entry for its
+config file, with the token in it. For any other MCP client, copy the entry from
+[MCP clients](../features/integrations/mcp-clients.md). With the `loom` CLI installed
+(`pip install -e .` from a clone of the repository), one command writes the entry instead:
 
 ```bash
 loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"

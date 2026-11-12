@@ -2,15 +2,27 @@
 
 Cursor gets Loom in two independent pieces:
 
-| Piece              | What it gives                                      | How                                                                |
-| ------------------ | -------------------------------------------------- | ------------------------------------------------------------------ |
-| MCP tools          | the `loom_*` tools in Cursor's agent               | `loom install --client cursor` ([MCP clients](mcp-clients.md))     |
-| Transcript capture | each conversation's turns in `conversation.append` | the `sessionEnd` hook `integrations/cursor/cursor-session-hook.sh` |
+| Piece              | What it gives                                      | How                                                                                                                                |
+| ------------------ | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| MCP tools          | the `loom_*` tools in Cursor's agent               | the [install link](#mcp-tools) for a local single-user server, else `loom install --client cursor` ([MCP clients](mcp-clients.md)) |
+| Transcript capture | each conversation's turns in `conversation.append` | the `sessionEnd` hook `integrations/cursor/cursor-session-hook.sh`                                                                 |
 
 There is no Cursor plugin, so no code shunt and no capture of tool calls, runs or
 working memory; the [Claude Code](claude-code.md) and [Codex](codex.md) plugins have those.
 
 ## MCP tools
+
+A single-user server on the same machine takes MCP calls without a token.
+[Add Loom to Cursor](https://cursor.com/en/install-mcp?name=loom&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0Ojc3NzcvbWNwP3Rvb2xzZXQ9Y29kaW5nIn0%3D)
+adds this entry under `mcpServers.loom`, on the `coding` toolset the dashboard gives
+Cursor. The link's `config` is the entry, base64-encoded:
+
+```json
+{ "url": "http://localhost:7777/mcp?toolset=coding" }
+```
+
+The entry points at the default port 7777; on another port, edit `url` in
+`~/.cursor/mcp.json`. For any other server, write the entry with its token:
 
 ```bash
 loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"
