@@ -71,6 +71,7 @@ One page per need, each saying what Loom does for it and where to start:
 [MCP clients](features/integrations/mcp-clients.md) ·
 [Claude Code](features/integrations/claude-code.md) ·
 [Codex](features/integrations/codex.md) · [Cursor](features/integrations/cursor.md) ·
+[VS Code](features/integrations/vscode.md) ·
 [Frameworks](features/integrations/frameworks.md) ·
 [Grep shim](features/integrations/grep-shim.md) ·
 [Langfuse](features/integrations/langfuse.md) ·

@@ -66,6 +66,7 @@ Start with docs/index.md (the map). To install Loom, a coding agent reads docs/g
 - [LibreChat](docs/features/integrations/librechat.md): Needs LibreChat v0.8.8 (MIT), a Loom server that serves the assistant toolset, and one Loom `viewer` token per person.
 - [Connecting an MCP client](docs/features/integrations/mcp-clients.md): Loom serves its operations as MCP tools at `<loom>/mcp`.
 - [OKF bundles](docs/features/integrations/okf.md): A namespace can be rendered as an OKF (Open Knowledge Format) v0.2 bundle: one Markdown file per memory with YAML frontmatter, an `index.md` per directory listing each concept with a one-line description, and a `log.md` of changes.
+- [VS Code](docs/features/integrations/vscode.md): VS Code's agent mode (GitHub Copilot) connects to Loom as a remote MCP server over streamable HTTP.
 - [Knowledge documents](docs/features/knowledge.md): A knowledge document is text an agent looks things up in: a runbook, a specification, a README.
 - [Conflicts and refusal](docs/features/memory/conflicts-and-refusal.md): Every memory write is judged against the facts the namespace already holds.
 - [Extraction from transcripts](docs/features/memory/extraction.md): `memory.set_from_messages` takes a transcript and the server decides what in it is durable.
