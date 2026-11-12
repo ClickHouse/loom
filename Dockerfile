@@ -69,7 +69,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
          arm64) GO_SHA256="${GO_SHA256_ARM64}" ;; \
          *) echo "no pinned Go tarball for ${TARGETARCH}" >&2; exit 1 ;; \
        esac \
-    && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH:-amd64}.tar.gz" -o /tmp/go.tgz \
+    && curl -fsSL --connect-timeout 20 --retry 5 --retry-all-errors --retry-delay 3 "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH:-amd64}.tar.gz" -o /tmp/go.tgz \
     && printf '%s  /tmp/go.tgz\n' "${GO_SHA256}" >/tmp/go.tgz.sha256 \
     && sha256sum -c /tmp/go.tgz.sha256 \
     && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz /tmp/go.tgz.sha256
@@ -96,7 +96,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
          arm64) NODE_ARCH=arm64 NODE_SHA256="${NODE_SHA256_ARM64}" ;; \
          *) echo "no pinned Node tarball for ${TARGETARCH}" >&2; exit 1 ;; \
        esac \
-    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.txz \
+    && curl -fsSL --connect-timeout 20 --retry 5 --retry-all-errors --retry-delay 3 "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.txz \
     && printf '%s  /tmp/node.txz\n' "${NODE_SHA256}" >/tmp/node.txz.sha256 \
     && sha256sum -c /tmp/node.txz.sha256 \
     && mkdir -p /usr/local/node && tar -C /usr/local/node --strip-components=1 -xJf /tmp/node.txz && rm /tmp/node.txz /tmp/node.txz.sha256
@@ -116,16 +116,19 @@ ARG TARGETARCH
 ARG SCIP_CLANG_VERSION=v0.4.0
 ARG SCIP_CLANG_SHA256_AMD64=06fd18c576f979a726c651594644ec4a35db4f471f2160b3f72eb89fa6001784
 ARG LLVM_SIGNER_FPR=6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+# Downloads retry a briefly unreachable host; the key goes to a file so a retry never
+# feeds gpg a repeated partial stream.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /out/bin \
     && export GNUPGHOME="$(mktemp -d)" \
-    && curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --import \
+    && curl -fsSL --connect-timeout 20 --retry 5 --retry-all-errors --retry-delay 3 https://apt.llvm.org/llvm-snapshot.gpg.key -o /tmp/llvm.key \
+    && gpg --batch --import /tmp/llvm.key \
     && gpg --batch --export "${LLVM_SIGNER_FPR}" >/out/llvm.gpg \
     && [ "$(gpg --show-keys --with-colons /out/llvm.gpg | grep -c '^pub:')" = 1 ] \
     && gpg --show-keys --with-colons /out/llvm.gpg | grep -q "^fpr:::::::::${LLVM_SIGNER_FPR}:" \
     && if [ "${TARGETARCH:-amd64}" = amd64 ]; then \
-         curl -fsSL "https://github.com/sourcegraph/scip-clang/releases/download/${SCIP_CLANG_VERSION}/scip-clang-x86_64-linux" -o /out/bin/scip-clang \
+         curl -fsSL --connect-timeout 20 --retry 5 --retry-all-errors --retry-delay 3 "https://github.com/sourcegraph/scip-clang/releases/download/${SCIP_CLANG_VERSION}/scip-clang-x86_64-linux" -o /out/bin/scip-clang \
          && printf '%s  /out/bin/scip-clang\n' "${SCIP_CLANG_SHA256_AMD64}" | sha256sum -c \
          && chmod 0755 /out/bin/scip-clang; \
        fi
