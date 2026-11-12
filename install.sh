@@ -536,13 +536,15 @@ main() {
       if [ "$http_status" = 200 ] && [ -f "$pending" ]; then
         api memory.set "{$memory,\"value\":\"A check the installer saves and deletes.\"}" >/dev/null
         http_status=$(api memory.get "{$memory}")
-        if [ "$http_status" = 200 ] && found; then
-          if [ "$(api memory.delete "{$memory}")" = 200 ]; then
-            rm -f "$pending"
-            printf '\nSaved, read back and deleted a test memory: writes and reads work.\n'
-          else
-            printf '\nSaved and read back a test memory, but could not delete loom/installer-check; the next run tries again.\n'
-          fi
+        read_back=
+        [ "$http_status" != 200 ] || ! found || read_back=1
+        # Deleted whatever the read answered: a save that landed late stays no live memory.
+        deleted=$(api memory.delete "{$memory}")
+        if [ -n "$read_back" ] && [ "$deleted" = 200 ]; then
+          rm -f "$pending"
+          printf '\nSaved, read back and deleted a test memory: writes and reads work.\n'
+        elif [ -n "$read_back" ]; then
+          printf '\nSaved and read back a test memory, but could not delete loom/installer-check; the next run tries again.\n'
         elif [ "$http_status" = 200 ]; then
           printf '\nCould not save a test memory; `docker compose --project-directory %s logs loom` says why.\n' "$INSTALL_DIR"
         fi
@@ -551,6 +553,8 @@ main() {
         200) ;;
         401 | 403)
           skip_agents=1
+          # A server with sign-in has no check to run: it is not one later either.
+          rm -f "$pending"
           printf '\nSign-in is on: agents connect with a token from Settings → Tokens in the dashboard.\n'
           ;;
         *)
@@ -599,8 +603,9 @@ main() {
     read -r answer || return 1
     case $answer in '' | [Yy]*) return 0 ;; *) return 1 ;; esac
   }
-  # node_ok: Node.js 18 or later on PATH, which both plugins' MCP header helper and
-  # hooks run on.
+  # node_ok: Node.js 18 or later on PATH. Both plugins' MCP header helper and hooks
+  # run on it; their own launcher also looks in nvm, fnm, Volta and the like, so a
+  # miss here is a hint, not a refusal.
   node_ok() {
     major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null) || return 1
     case $major in '' | *[!0-9]*) return 1 ;; esac
@@ -628,8 +633,6 @@ main() {
       elif grep -q '"loom"[[:space:]]*:' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" 2>/dev/null; then
         printf 'Claude Code: a loom MCP server is set up already (%s); the plugin would list its tools twice\n' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
         kept=1
-      elif ! node_ok; then
-        printf 'Claude Code: the Loom plugin needs Node.js 18 or later; install it and run this again, or add the MCP server alone: claude mcp add --transport http loom "%s/mcp?toolset=coding" -s user\n' "$server_url"
       elif wants claude-code "Claude Code"; then
         # A marketplace added before is no error: the install below says what fails.
         # It clones the repository: the slowest call, so it gets 5 minutes.
@@ -640,6 +643,7 @@ main() {
         if bounded claude plugin install loom@loom --config "server_url=$server_url" >/dev/null; then
           printf 'Claude Code: connected to %s (the plugin'"'"'s other settings are optional)\n' "$server_url"
           agents="$agents, Claude Code"
+          node_ok || printf 'Claude Code: the plugin runs on Node.js 18 or later, which is not on PATH here; without one it finds, add the MCP server alone instead: claude mcp add --transport http loom "%s/mcp?toolset=coding" -s user\n' "$server_url"
         else
           printf 'Claude Code: could not install the plugin (above); the README has the two commands\n'
         fi
@@ -667,8 +671,6 @@ main() {
         elif grep -q '^\[mcp_servers\.loom\]' "$codex_config" 2>/dev/null; then
           printf 'Codex: a loom MCP server is set up already (%s)\n' "$codex_config"
           kept=1
-        elif ! node_ok; then
-          printf 'Codex: the Loom plugin needs Node.js 18 or later; install it and run this again, or add the MCP server alone: codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
         elif wants codex Codex; then
           bound_s=300
           bounded codex plugin marketplace add ClickHouse/loom >/dev/null || true
@@ -676,6 +678,7 @@ main() {
           if bounded codex plugin add loom@loom >/dev/null; then
             printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
             agents="$agents, Codex"
+            node_ok || printf 'Codex: the plugin runs on Node.js 18 or later, which is not on PATH here; without one it finds, add the MCP server alone instead: codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
           else
             printf 'Codex: could not add the plugin (above); the README has the two commands\n'
           fi
@@ -700,6 +703,13 @@ main() {
         fi
       fi
     fi
+    # A client LOOM_CONNECT names that this machine does not have.
+    for client in claude-code:claude codex:codex vscode:code; do
+      case ",${LOOM_CONNECT:-}," in
+        *",${client%%:*},"*) command -v "${client#*:}" >/dev/null 2>&1 \
+          || printf '%s: `%s` is not on PATH\n' "${client%%:*}" "${client#*:}" ;;
+      esac
+    done
     if [ -n "$agents" ]; then
       printf '\nConnected: %s. Start a new session and say "Remember that I deploy only on Tuesdays";\n' "${agents#, }"
       printf 'in the next session, ask "When do I deploy?"\n'

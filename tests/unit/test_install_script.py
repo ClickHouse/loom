@@ -46,6 +46,10 @@ def installer_env(tmp_path: Path) -> dict[str, str]:
         cli = bin_dir / name
         cli.write_text("#!/bin/sh\nexit 0\n")
         cli.chmod(0o755)
+    # Node.js 20, whatever the machine has.
+    node = bin_dir / "node"
+    node.write_text("#!/bin/sh\necho 20\n")
+    node.chmod(0o755)
     return {
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "HOME": str(tmp_path),
@@ -1481,7 +1485,10 @@ def test_a_loom_mcp_server_vscode_has_is_left_as_it_is(
     run, _ = install
     _start_stubs(installer_env)
     code = _agent_cli(installer_env, "code")
-    mcp = Path(installer_env["HOME"]) / ".config/Code/User/mcp.json"
+    import platform
+
+    user_dir = "Library/Application Support" if platform.system() == "Darwin" else ".config"
+    mcp = Path(installer_env["HOME"]) / user_dir / "Code/User/mcp.json"
     mcp.parent.mkdir(parents=True)
     mcp.write_text('{"servers": {"loom": {"type": "http", "url": "https://loom.example/mcp"}}}')
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode")
@@ -1546,18 +1553,26 @@ def test_a_plugin_list_that_fails_leaves_the_client_alone(
     assert "could not list its plugins (above), so it is left as it is" in result.stdout
 
 
-@pytest.mark.skipif(Path("/usr/bin/node").exists(), reason="Node.js is in /usr/bin here")
-def test_claude_code_without_node_gets_the_mcp_entry_instead(
-    install, installer_env: dict[str, str]
+def _node_reports(installer_env: dict[str, str], body: str) -> None:
+    node = Path(installer_env["PATH"].split(":")[0]) / "node"
+    node.write_text(f"#!/bin/sh\n{body}\n")
+
+
+@pytest.mark.parametrize("node", ["exit 127", "echo 16"])
+def test_claude_code_without_node_18_on_path_gets_the_mcp_line_too(
+    install, installer_env: dict[str, str], node: str
 ) -> None:
-    """The plugin's MCP header helper and its hooks run on Node.js."""
+    """The plugin's own launcher may still find one (nvm and the like): it is
+    installed, with the MCP-only line beside it."""
     run, _ = install
     _start_stubs(installer_env)
     claude = _agent_cli(installer_env, "claude")
-    bin_dir = installer_env["PATH"].split(":")[0]
-    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", PATH=f"{bin_dir}:/usr/bin:/bin")
+    _node_reports(installer_env, node)
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
     assert result.returncode == 0, result.stderr
-    assert claude.read_text().splitlines() == ["plugin list"]
+    assert "plugin install loom@loom --config server_url=http://localhost:7777" in (
+        claude.read_text().splitlines()
+    )
     assert 'claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding"' in (
         result.stdout
     )
@@ -1575,31 +1590,17 @@ def test_a_test_memory_that_does_not_delete_is_tried_again(
     assert (target / ".memory-check-pending").exists()
 
 
-@pytest.mark.skipif(Path("/usr/bin/node").exists(), reason="Node.js is in /usr/bin here")
-def test_codex_without_node_gets_the_mcp_entry_instead(
+def test_codex_without_node_on_path_gets_the_mcp_line_too(
     install, installer_env: dict[str, str]
 ) -> None:
     run, _ = install
     _start_stubs(installer_env)
     codex = _agent_cli(installer_env, "codex")
-    bin_dir = installer_env["PATH"].split(":")[0]
-    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex", PATH=f"{bin_dir}:/usr/bin:/bin")
+    _node_reports(installer_env, "exit 127")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
     assert result.returncode == 0, result.stderr
-    assert codex.read_text().splitlines() == ["plugin list"]
+    assert "plugin add loom@loom" in codex.read_text().splitlines()
     assert 'codex mcp add loom --url "http://localhost:7777/mcp?toolset=coding"' in result.stdout
-
-
-def test_node_before_18_does_not_count(install, installer_env: dict[str, str]) -> None:
-    run, _ = install
-    _start_stubs(installer_env)
-    claude = _agent_cli(installer_env, "claude")
-    node = Path(installer_env["PATH"].split(":")[0]) / "node"
-    node.write_text("#!/bin/sh\necho 16\n")
-    node.chmod(0o755)
-    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
-    assert result.returncode == 0, result.stderr
-    assert claude.read_text().splitlines() == ["plugin list"]
-    assert "needs Node.js 18 or later" in result.stdout
 
 
 @pytest.mark.parametrize("value", ["none,claude-code", "codex,none"])
@@ -1623,3 +1624,33 @@ def test_claude_config_dir_is_read_for_an_mcp_entry(
     assert result.returncode == 0, result.stderr
     assert claude.read_text().splitlines() == ["plugin list"]
     assert "a loom MCP server is set up already" in result.stdout
+
+
+def test_sign_in_on_clears_the_memory_check(install, installer_env: dict[str, str]) -> None:
+    """A server with sign-in has no check to run, on this run or after a switch."""
+    run, target = install
+    _start_stubs(installer_env, memory_status=401)
+    assert run(LOOM_SKIP_START="0").returncode == 0
+    assert not (target / ".memory-check-pending").exists()
+
+
+def test_a_save_that_does_not_read_back_is_still_deleted(
+    install, installer_env: dict[str, str]
+) -> None:
+    """It may have landed after the read: no live test memory stays."""
+    run, _ = install
+    curl_log, _ = _start_stubs(installer_env, set_saves=False)
+    assert run(LOOM_SKIP_START="0").returncode == 0
+    assert any("memory.delete" in c for c in curl_log.read_text().splitlines())
+
+
+def test_a_client_loom_connect_names_but_this_machine_lacks_is_named(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    (bin_dir / "code").unlink()
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", PATH=f"{bin_dir}:/usr/bin:/bin")
+    assert result.returncode == 0, result.stderr
+    assert "vscode: `code` is not on PATH" in result.stdout
