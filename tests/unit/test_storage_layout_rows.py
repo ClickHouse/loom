@@ -375,7 +375,7 @@ def test_clickhouse_erasure_cells_match_the_census() -> None:
 def test_every_postgres_table_has_a_row() -> None:
     rows = set(_row_names("The Postgres tables"))
     # The runner creates its own ledger before any migration file runs.
-    tables = _postgres_tables() | set(_PG_TABLE.findall(pg_migrate._LEDGER))
+    tables = _postgres_tables() | set(_PG_TABLE.findall(pg_migrate._ledger("loom")))
     missing = sorted(tables - rows)
     assert not missing, f"add a row to {PAGE.name} for: {missing}"
 
