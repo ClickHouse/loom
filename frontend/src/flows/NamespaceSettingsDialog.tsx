@@ -13,18 +13,11 @@ import {
   type NamespaceRegisterFields,
 } from "../api";
 import { useStore } from "../lib/state";
-import { hasAdminClaim, isNamespaceAdmin } from "../lib/role";
+import { isNamespaceAdmin } from "../lib/role";
 import { canUpdateNamespace, restrictedMisses } from "../lib/namespaceUpdate";
 import { needsRole } from "../lib/namespaceRole";
 import { sharedMine } from "../lib/sharedReads";
-import {
-  holdsDirectRow,
-  needsMaintainer,
-  rolesUnseen,
-  scopedUnseen,
-  serverDecides,
-  unreadLine,
-} from "../lib/callReason";
+import { holdsDirectRow, needsMaintainer, scopedUnseen, serverDecides, unreadLine } from "../lib/callReason";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { useAbortableEffect } from "../lib/hooks";
@@ -113,10 +106,13 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
   }, [open, org, myNamespaces]);
   const mineLoading = myNamespaces === null && mineRead?.org !== org;
   const rows = myNamespaces ?? (mineLoading ? null : (mineRead?.rows ?? null));
-  // The settings round-trip namespace.register, whose update path also admits the owner of an
-  // auto-registered row (and on a restricted row only a named, directly granted admin);
-  // namespace.delete needs ADMIN on the namespace.
-  const canManage = canUpdateNamespace(whoami, rows, { org, namespace }, ns);
+  // The restricted gate (`restrictedMisses`) decides both settings and Delete on a restricted
+  // row; elsewhere namespace.register's update path also admits the owner of an
+  // auto-registered row, and namespace.delete needs ADMIN on the namespace.
+  const restricted = ns?.classification === "restricted";
+  const misses = restricted ? restrictedMisses(whoami, rows, { org, namespace }) : [];
+  const canManage = restricted ? misses.length === 0 : canUpdateNamespace(whoami, rows, { org, namespace }, ns);
+  const canDelete = restricted ? misses.length === 0 : isNamespaceAdmin(whoami, rows, namespace);
 
   // Repository mode: a code index shows only what applies to read-only source —
   // description, the join rule, danger zone.
@@ -132,37 +128,26 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
       ? needsMaintainer(name)
       : needsRole("admin", namespace);
 
-  // Why the fields are locked. On a restricted row, from what its gate finds missing
-  // (`restrictedMisses`, the same list `canUpdateNamespace` admits on), and while the grants
-  // are unread, why.
-  // Grants not read yet (or a failed read): say so, never a role the caller may well hold.
-  // Before whoami loads, the grants alone settle nothing either: still loading.
+  // Why the fields are locked. While the grants or whoami are unread (or the read failed),
+  // say so, never a role the caller may well hold. On a restricted row, from what its gate
+  // finds missing: the token's parts, the direct grant, or both; with neither, the token is
+  // scoped per namespace and the server decides.
   const unread = rows === null || !whoami;
   let lockedReason = unread ? unreadLine(mineLoading || !whoami, name) : needsAdmin;
-  const restricted = ns?.classification === "restricted";
-  // namespace.delete passes the restricted gate too, which an admin grant alone does not.
-  const canDelete = restricted
-    ? restrictedMisses(whoami, rows, { org, namespace }).length === 0
-    : isNamespaceAdmin(whoami, rows, namespace);
   if (restricted && !unread) {
-    const misses = restrictedMisses(whoami, rows, { org, namespace });
-    const grant = rows.find((m) => m.namespace === namespace);
     const tokenMisses = [
       misses.includes("org") ? `be of ${org}` : null,
       misses.includes("name") ? `name ${namespace}` : null,
       misses.includes("claim") ? "carry an admin claim" : null,
     ].filter((p): p is string => p !== null);
-    if (!misses.includes("grant") && tokenMisses.length > 0)
-      lockedReason = `To change its settings, your token must ${andList(tokenMisses)}.`;
-    // A token scoped per namespace: its role there is the server's to read.
-    else if (!misses.includes("grant") && misses.includes("unseen")) lockedReason = serverDecides(name);
-    // Both the token and the direct grant fall short: say both, whoever the caller is.
-    else if (misses.includes("grant") && tokenMisses.length > 0)
-      lockedReason = `To change its settings, your token must ${andList(tokenMisses)}, and you need a direct ${adminWord} grant on ${name}.`;
-    // An admin by claim, by an inherited or pending grant, or by a scoped role the client
-    // cannot see, whose token is complete, still lacks the direct grant the gate wants.
-    else if (misses.includes("grant") && (hasAdminClaim(whoami) || grant?.role === "admin" || rolesUnseen(whoami)))
-      lockedReason = `Changing its settings needs a direct ${adminWord} grant on ${name}.`;
+    if (misses.includes("grant"))
+      lockedReason = tokenMisses.length
+        ? `To change its settings, your token must ${andList(tokenMisses)}, and you need a direct ${adminWord} grant on ${name}.`
+        : `Changing its settings needs a direct ${adminWord} grant on ${name}.`;
+    else
+      lockedReason = tokenMisses.length
+        ? `To change its settings, your token must ${andList(tokenMisses)}.`
+        : serverDecides(name);
   }
 
   const save = async (patch: Partial<NamespaceRegisterFields>) => {
