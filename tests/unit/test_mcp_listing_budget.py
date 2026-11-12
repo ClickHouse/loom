@@ -20,6 +20,7 @@ from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
 )
 from server.settings import settings
+from server.transport import mcp_op
 from server.transport import mcp_tools as mt
 from server.transport.mcp_descriptions import (
     ATOMIC_TOOL_DESCRIPTIONS,
@@ -27,6 +28,7 @@ from server.transport.mcp_descriptions import (
     TOOL_DESCRIPTIONS,
     revision_policy,
 )
+from server.transport.mcp_op import reachable
 from server.transport.mcp_schemas import (
     DEFAULT_SCHEMA_PROFILE,
     SCHEMA_PROFILES,
@@ -175,8 +177,28 @@ _TOOLSETS = [
     ("tasks", False),
     ("tracker", False),
     ("readonly", False),
+    ("assistant", False),
     ("all", True),
 ]
+
+
+def _texts(tool: dict) -> list[str]:
+    """What a client reads of a tool: its description and every field description."""
+    out = [tool["description"]]
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "description" and isinstance(value, str):
+                    out.append(value)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(tool["inputSchema"])
+    return out
 
 
 @pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
@@ -188,29 +210,40 @@ def test_a_listed_op_is_named_by_its_tool(toolset: str, code: bool):
     for t in tools:
         if t["name"] == "loom_op":
             continue
-        dotted = {r for r in _OP_REF.findall(t["description"]) if r in listed}
-        assert not dotted, f"{toolset}: {t['name']} names listed tools by op name {dotted}"
+        for text in _texts(t):
+            dotted = {r for r in _OP_REF.findall(text) if r in listed}
+            assert not dotted, f"{toolset}: {t['name']} names listed tools by op name {dotted}"
 
 
-@pytest.mark.parametrize(
-    ("toolset", "code"),
-    # readonly: its loom_op routes reads only, so an unlisted write is left unmarked
-    [ts for ts in _TOOLSETS if ts[0] != "readonly"],
-)
-def test_an_unlisted_op_is_marked_via_loom_op(toolset: str, code: bool):
+@pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
+def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code: bool):
     """An op the listing does not carry is named by its dotted name, the one
-    loom_op takes, and its first mention says "(via loom_op)"."""
+    loom_op takes, and when loom_op routes it its first mention says "(via loom_op)"."""
     tools = _listing(toolset, code)
-    listed = {TOOL_TO_OP.get(t["name"], t["name"]) for t in tools}
+    names = {t["name"] for t in tools}
+    listed = {TOOL_TO_OP.get(n, n) for n in names}
     for t in tools:
         if t["name"] == "loom_op":
             continue
-        text = t["description"]
-        for op in _op_refs(text) - listed:
-            assert f"{op} (via loom_op)" in text or f"{op}` (via loom_op)" in text, (
-                f"{toolset}: {t['name']} names unlisted {op} without saying how to reach it"
-            )
-            assert OPS[op].mcp_tool_name not in text, f"{toolset}: {t['name']} lists {op}"
+        for text in _texts(t):
+            for op in _op_refs(text) - listed:
+                tool = re.escape(OPS[op].mcp_tool_name)
+                assert not re.search(rf"\b{tool}\b", text), f"{toolset}: {t['name']} lists {op}"
+                routed = op not in _MCP_HIDDEN_OPS and reachable(OPS[op], toolset)
+                if "loom_op" in names and routed:
+                    marked = rf"(?<![\w.]){re.escape(op)}`? \(via loom_op\)"
+                    assert re.search(marked, text), (
+                        f"{toolset}: {t['name']} names unlisted {op} without saying how to reach it"
+                    )
+
+
+def test_the_ops_loom_op_names_are_unlisted_on_the_default_listing():
+    """loom_op's text names five ops the default list does not show."""
+    named = {r for r in _OP_REF.findall(mcp_op.DESCRIPTOR["description"]) if r in OPS}
+    assert {"memory.clear", "erasure.request", "memory.related"} <= named
+    for code in (False, True):
+        listed = {t["name"] for t in _listing("core", code)}
+        assert not {OPS[op].mcp_tool_name for op in named} & listed
 
 
 def test_naming_marks_only_what_loom_op_routes():

@@ -39,11 +39,10 @@ ACTIVATION_TRIGGERS: tuple[str, ...] = (
 )
 
 
-# When to pick memory.set over the other write tools; the coding tier, which
-# lists none of them, drops it.
+# When to pick memory.set over the other write tools.
 _WHICH_WRITE = (
-    "**Other writes:** memory.pin keeps a fact against later conflicting "
-    "writes, memory.lock stops it changing, memory.apply changes many.\n\n"
+    "**Other writes:** memory.pin guards a fact from later conflicting "
+    "writes, memory.lock from change or deletion; memory.apply changes many.\n\n"
 )
 
 
@@ -71,13 +70,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`tags` for classification. Cite the response's `namespace` and "
         "`memory_key` in your confirmation; `conflict_verdict`, `peers` and "
         "`next` say what the store held (`dry_run=true` checks without "
-        "writing). `value` is stored verbatim — never base64, which "
-        "kills search.\n\n"
+        "writing). `value` is stored verbatim — never base64 (kills "
+        "search; see `advisories`).\n\n"
         "**A fact with a natural lifetime gets one at write time.** A "
         "deadline, a temporary state ('on call this week'), a rotating value: "
         "pass `ttl_seconds` AND `on_expire` (tombstone | demote | anonymize) "
-        "in the SAME call — the sweep applies it when the time passes. Without "
-        "`on_expire` the row just stops being current."
+        "in the SAME call — the expiry sweep applies it. Without "
+        "`on_expire` the row stops being current."
     ),
     "memory.aggregate": (
         "Run a SQL aggregation over typed memory records (count, sum, "

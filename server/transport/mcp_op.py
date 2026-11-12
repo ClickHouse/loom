@@ -1,11 +1,12 @@
 """`loom_op`: one listed tool that reaches every op a roster leaves unlisted.
 
-Loom's rosters list a focused subset of the registry and describe the rest as
-"callable by name". The server answers `tools/call` for an unlisted op, but
-an MCP client can only call a tool it was shown: Claude Code's ToolSearch
-finds listed tools and nothing else. Without a listed route an agent asked
-for `tracker.flaky` or `task.pull` reads Loom's source and hand-rolls `curl`
-against /v1 with the token from ~/.loom/config.json (10–14 turns a question).
+Loom's rosters list a focused subset of the registry; a listed description
+names the rest by op name, marked "(via loom_op)". The server answers
+`tools/call` for an unlisted op, but an MCP client can only call a tool it
+was shown: Claude Code's ToolSearch finds listed tools and nothing else.
+Without a listed route an agent asked for `tracker.flaky` or `task.pull` reads
+Loom's source and hand-rolls `curl` against /v1 with the token from
+~/.loom/config.json (10–14 turns a question).
 
 `loom_op {op, arguments}` is rewritten, before authorization, into the
 `tools/call` it names, so the target runs through exactly the path a listed
@@ -42,7 +43,7 @@ DESCRIPTOR: dict[str, Any] = {
         "memory.related, memory.evidence, memory.digests); a description's "
         '"(via loom_op)" means this tool. '
         "Prefer a listed tool when one fits.\n"
-        'FIND: {"op": "help", "query": "<words>"} lists up to 15 matching ops, '
+        f'FIND: {{"op": "help", "query": "<words>"}} lists up to {_CATALOG_LIMIT} matching ops, '
         "each with its required and optional arguments and a one-line purpose; "
         "an unknown op answers with the nearest ones.\n"
         'CALL: {"op": "memory.related", "arguments": {"memory_key": "deploy_day"}}. '

@@ -17,7 +17,7 @@ from server.memory.api.models_loom_search import SearchInput
 from server.memory.app.loom_search.answer_first import withheld_note
 from server.memory.app.loom_search.tracker_leg import tracker_text_lines
 from server.operations.base import Operation
-from server.operations.registry import ALL_OPERATIONS
+from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
     ASSISTANT_DROPPED_ARGS,
@@ -52,6 +52,7 @@ from server.transport.mcp_descriptions import (
     TOOL_DESCRIPTIONS as _TOOL_DESCRIPTIONS,
 )
 from server.transport.mcp_descriptions import coding_search_description
+from server.transport.mcp_op import LOOM_OP_TOOL_NAME, reachable
 from server.transport.mcp_schemas import (
     _shape_schema,
     _strip_blob_fields_from_knowledge,
@@ -69,7 +70,6 @@ log = logging.getLogger(__name__)
 
 # Tool name → op: how a `tools/call` resolves its op, and its refusal rows name it.
 TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
-_OPS_BY_NAME: dict[str, Operation] = {op.name: op for op in ALL_OPERATIONS}
 
 # An op named in prose: its tool name or its dotted op name, maybe in backticks.
 _NAMED_OP = re.compile(r"(`?)\b(loom_[a-z_]+|[a-z_]+(?:\.[a-z_]+){1,2})\b(`?)")
@@ -80,28 +80,41 @@ def name_ops_for_listing(text: str, listed: set[str], toolset: str) -> str:
     by its tool name, so every op the listing carries is named by its tool. An
     op it does not carry keeps its dotted name, the one `loom_op` takes, and its
     first mention says "(via loom_op)". An op `loom_op` does not route here (a
-    hidden op, a write on a read-only connection, any op on the assistant
-    toolset) stays as written."""
-    from server.transport.mcp_op import LOOM_OP_TOOL_NAME, reachable
-
-    routes = not is_assistant(toolset) and LOOM_OP_TOOL_NAME in listed
+    hidden op, a write on a read-only connection, any op on a listing without
+    `loom_op`) stays as written."""
+    routes = LOOM_OP_TOOL_NAME in listed
     marked: set[str] = set()
 
     def rename(m: re.Match[str]) -> str:
-        tick, word, close = m.groups()
-        op = TOOLS_BY_NAME.get(word) or _OPS_BY_NAME.get(word)
+        lead, name, trail = m.groups()
+        op = TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
         if op is None:
             return m.group(0)
         if op.mcp_tool_name in listed:
-            return f"{tick}{op.mcp_tool_name}{close}"
+            return f"{lead}{op.mcp_tool_name}{trail}"
         if not routes or op.name in _MCP_HIDDEN_OPS or not reachable(op, toolset):
             return m.group(0)
         if op.name in marked:
-            return f"{tick}{op.name}{close}"
+            return f"{lead}{op.name}{trail}"
         marked.add(op.name)
-        return f"{tick}{op.name}{close} (via loom_op)"
+        return f"{lead}{op.name}{trail} (via loom_op)"
 
     return _NAMED_OP.sub(rename, text)
+
+
+def _name_ops_in_fields(schema: Any, listed: set[str], toolset: str) -> Any:
+    """A copy of ``schema`` with every field description rendered for the
+    listing (schemas may be cached, so the walk never edits them in place)."""
+    if isinstance(schema, dict):
+        return {
+            key: name_ops_for_listing(value, listed, toolset)
+            if key == "description" and isinstance(value, str)
+            else _name_ops_in_fields(value, listed, toolset)
+            for key, value in schema.items()
+        }
+    if isinstance(schema, list):
+        return [_name_ops_in_fields(item, listed, toolset) for item in schema]
+    return schema
 
 
 def _synthetic_tool_descriptors(toolset: str = "core") -> list[dict[str, Any]]:
@@ -498,12 +511,11 @@ async def _tools_descriptor(
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset))
-    from server.transport.mcp_op import LOOM_OP_TOOL_NAME
-
     listed = {d["name"] for d in descriptors}
     for d in descriptors:
         if d["name"] != LOOM_OP_TOOL_NAME:  # its text is about dotted op names
             d["description"] = name_ops_for_listing(d["description"], listed, toolset)
+            d["inputSchema"] = _name_ops_in_fields(d["inputSchema"], listed, toolset)
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,

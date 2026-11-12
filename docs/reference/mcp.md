@@ -154,7 +154,10 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   the client that reads it (`name_ops_for_listing` in
   `server/transport/mcp_tools.py`): an op the listing carries is named by its
   tool (`loom_memory_update`), and an op it does not carry keeps its op name,
-  the one `loom_op` takes, with "(via loom_op)" after its first mention.
+  the one `loom_op` takes, with "(via loom_op)" after its first mention when
+  `loom_op` routes it on that connection (not a hidden op, a write on
+  `readonly`, or any op on `assistant`). Field descriptions are rendered the
+  same way.
 - **Input schema.** The op's Pydantic input model without the fields the
   server fills itself (`org`, `agent`, `user_id`, `session_id`, `consumer`),
   the dashboard-only fields (`_HIDDEN_OP_PROPS` in
@@ -170,11 +173,11 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
 
 Three synthetic tools are listed on every toolset but `assistant`:
 
-| Tool            | Does                                                                                                                                                                                              |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom_search`   | One call searches memory, profile, knowledge and conversations in parallel and returns all four sections. `explain: true` adds why each memory hit ranked.                                        |
-| `loom_activate` | Returns the session primer (profile, preferences, default workspace), the same text as the `loom` prompt.                                                                                         |
-| `loom_op`       | `{op, arguments}` runs any op the roster does not list, through the same path as a listed tool; `{op: "help", query}` lists up to 15 matching ops, each with its required and optional arguments. |
+| Tool            | Does                                                                                                                                                                                                                 |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom_search`   | One call searches memory, profile, knowledge and conversations in parallel and returns all four sections. `explain: true` adds why each memory hit ranked.                                                           |
+| `loom_activate` | Returns the session primer (profile, preferences, default workspace), the same text as the `loom` prompt.                                                                                                            |
+| `loom_op`       | `{op, arguments}` runs any op the roster does not list, through the same path as a listed tool; `{op: "help", query}` lists up to 15 matching ops (`_CATALOG_LIMIT`), each with its required and optional arguments. |
 
 `loom_search` is the registry's `search.query` operation (`POST /v1/search.query`
 over HTTP, the same sections without the text summary). Over MCP it runs the same
