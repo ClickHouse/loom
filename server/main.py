@@ -172,6 +172,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         )
     await boot.require_keeper(ch)
     await boot.require_storage_authority(ch)
+    # The deployment's cell state, before the first heartbeat reports this process
+    # serving and before the lease is decided on it.
+    cell_loops = await boot.start_cell_gate()
     await boot.warn_newer_schema()
     await boot.warn_collection_named_namespaces()
     # Nothing here writes a column a migration just added while another process
@@ -210,10 +213,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # who just changed LOOM_DEFAULT_NAMESPACE and is watching the boot log.
     # auth_actually_required, not auth_required: single-user identity mode
     # with auth_required=true is still an auth-off deployment.
-    if not settings.auth_actually_required():
-        from server.auth.default_namespace import ensure_default_namespace_cached
-
-        await ensure_default_namespace_cached()
+    await boot.ensure_default_namespace()
 
     from server.workers import child as _workers_child
 
@@ -293,7 +293,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await asyncio.gather(provider_refresh, return_exceptions=True)
         if lease_loop is not None:
             lease_loop.cancel()
-        for loop in (*auth_loops, overrides_loop):
+        for loop in (*cell_loops, *auth_loops, overrides_loop):
             loop.cancel()
         if probe_listener is not None:
             await probe_listener.stop()

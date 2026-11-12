@@ -616,7 +616,8 @@ async def calibrate_similarity_gates() -> None:
 
 
 async def start_cell_state() -> list[asyncio.Task[None]]:
-    """A cell's process reads its cell's rows before it serves, then on a timer."""
+    """The workers child of a cell's process reads its cell's rows before it serves,
+    then on a timer; a failed read leaves it gated."""
     from server.code.domain.index import repos
     from server.core import cell, pg_profile
 
@@ -625,6 +626,32 @@ async def start_cell_state() -> list[asyncio.Task[None]]:
         cell.set_deployment_id(await pg_profile.deployment_id())
     await cell.refresh()
     return [cell.start_refresh_loop()]
+
+
+async def start_cell_gate() -> list[asyncio.Task[None]]:
+    """A server process reads the deployment's cell state right after its storage
+    authority opened and migrated, before its first heartbeat and its lease decision,
+    then on a timer (`cell.server_reads_state`). A failed first read refuses the boot,
+    as a failed Postgres open does; later failures keep the last view."""
+    from server.core import cell
+
+    if not cell.server_reads_state():
+        return []
+    if not await cell.refresh():
+        raise RuntimeError("refusing to start: the deployment's cell state could not be read")
+    return [cell.start_refresh_loop()]
+
+
+async def ensure_default_namespace() -> None:
+    """An auth-off deployment's configured namespace gets its row at boot, unless the
+    cell gate keeps this process from writing (it is also created lazily)."""
+    from server.core import cell
+
+    if settings.auth_actually_required() or cell.gate_reason():
+        return
+    from server.auth.default_namespace import ensure_default_namespace_cached
+
+    await ensure_default_namespace_cached()
 
 
 def start_probe_listener() -> Listener | None:
@@ -655,8 +682,7 @@ async def start_token_state() -> list[asyncio.Task[None]]:
     with query_tag("grant_cache.poll"):
         await grant_cache.poll()
     await end_user_keys.refresh()
-    loops = await start_cell_state() if settings.cell else []
-    return loops + [
+    return [
         revocation.start_refresh_loop(settings.jwt_revocation_cache_ttl_seconds),
         keyring.start_refresh_loop(),
         end_user_keys.start_refresh_loop(),
@@ -724,9 +750,12 @@ async def _apply_retention_overrides(ch: Any) -> None:
 def start_lease_loop(lease: Any, supervisor: Any, ch: Any) -> asyncio.Task[None] | None:
     """In `auto` mode keep the supervisor lease: the workers start where it is
     acquired (another process's holder died or exited) and stop where it is
-    lost. A cell's `on` process runs the loop too, with no lease: its cell's gate
-    starts and stops the workers. Returns the loop task, or None otherwise."""
-    if lease.mode != "auto" and not (lease.mode == "on" and settings.cell):
+    lost. An `on` process that reads the cell state runs the loop too, with no lease:
+    the cell's gate starts and stops the workers. Returns the loop task, or None
+    otherwise."""
+    from server.core import cell
+
+    if lease.mode != "auto" and not (lease.mode == "on" and cell.server_reads_state()):
         return None
     from server.workers import leader as _leader
 
@@ -879,9 +908,9 @@ def register_readiness_checks(ch: Any) -> None:
     readiness.register("runtime_overrides", _overrides_ready)
     readiness.register("calibration", embedder_calibration.readiness_check)
     readiness.register("config_drift", deployment_config.readiness_check)
-    if settings.cell:
-        from server.core import cell
+    from server.core import cell
 
+    if cell.server_reads_state():
         readiness.register("cell", cell.readiness_check)
     readiness.register("sandbox", sandbox.readiness_check)
     # Reported, not required: a provider rebuild closes the gate on every

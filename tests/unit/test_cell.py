@@ -186,6 +186,7 @@ def test_refresh_reads_the_three_rows(monkeypatch: pytest.MonkeyPatch) -> None:
             "first": {"is_first": True, "cell": "eu-1"},
             "mode": "recording",
             "own": {"current_fp": value, "next_fp": None},
+            "tenancy": False,
         }
 
     monkeypatch.setattr(pg, "fetchrow", _row)
@@ -312,9 +313,12 @@ def test_an_on_process_runs_its_workers_only_while_its_cell_serves(
     assert lease.held is False
 
 
-def test_an_on_process_outside_a_cell_holds_from_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_on_process_outside_a_cell_holds_from_its_first_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(settings, "cell", "")
-    lease = leader.SupervisorLease("on")
+    _view(monkeypatch)  # never read: open
+    lease = asyncio.run(leader.decide_supervisor("on"))
     assert lease.held is True
     lease.step()
     assert lease.held is True
@@ -388,7 +392,7 @@ def test_an_unprepared_cell_reads_absent_rows_and_stays_gated(
     _view(monkeypatch)
 
     async def _empty(*_a, **_k):
-        return {"first": None, "mode": None, "own": None}
+        return {"first": None, "mode": None, "own": None, "tenancy": False}
 
     monkeypatch.setattr(pg, "fetchrow", _empty)
     assert asyncio.run(cell.refresh()) is True
@@ -463,6 +467,7 @@ def test_a_malformed_own_row_is_a_failed_read_and_keeps_the_last_view(
             "first": {"is_first": False, "cell": "eu-1"},
             "mode": "enforced",
             "own": {"current_fp": json.loads(bad), "next_fp": None},
+            "tenancy": False,
         }
 
     monkeypatch.setattr(pg, "fetchrow", _row)
@@ -663,8 +668,12 @@ def test_the_probe_port_needs_the_postgres_authority_and_auth(
 def test_only_the_first_cell_reads_recording(
     monkeypatch: pytest.MonkeyPatch, first: tuple[bool, str] | None, stored: str, read: str
 ) -> None:
+    _cell_settings(monkeypatch)
     _view(monkeypatch, read_at=time.monotonic(), first=first, mode=stored)
     assert cell.mode() == read
+    # With LOOM_CELL unset the heartbeat reports no mode, whatever the rows hold.
+    monkeypatch.setattr(settings, "cell", "")
+    assert cell.mode() == ""
 
 
 def test_a_cells_on_process_registers_tracker_namespaces_only_in_the_deployment(

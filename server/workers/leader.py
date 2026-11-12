@@ -116,8 +116,8 @@ class SupervisorLease:
         self._lock: KeeperLock | None = None
         # A step still running in its thread when shutdown releases.
         self._mutex = threading.Lock()
-        # A cell's `on` process starts no worker until its own rows let it serve.
-        self.held = mode == "on" and not settings.cell
+        # Decided by the first step (`decide_supervisor`), from the cell gate.
+        self.held = False
         self.reason = _mode_reason(mode) if mode != "auto" else "not acquired yet"
         self.error = ""
         self.given_up = ""
@@ -125,8 +125,8 @@ class SupervisorLease:
 
     def step(self) -> None:
         """Acquire when free, renew when held. Blocking: run it in a thread."""
-        if self.mode == "on" and settings.cell:
-            # No lease to contend for, but a cell's gate still stops and starts them.
+        if self.mode == "on":
+            # No lease to contend for, but the cell gate still stops and starts them.
             aside = cell.gate_reason()
             self.held = not aside
             self.reason = (

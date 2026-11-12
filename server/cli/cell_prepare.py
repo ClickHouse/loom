@@ -492,6 +492,12 @@ async def prepare(
             sort_keys=True,
         )
     )
+    if answer["is_first"]:
+        # The next step for the operator; stdout stays one JSON document.
+        print(
+            "prepared first cell; roll out LOOM_CELL; attach ships in a later release",
+            file=sys.stderr,
+        )
     return 0
 
 

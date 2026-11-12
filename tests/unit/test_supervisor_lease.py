@@ -710,7 +710,9 @@ def test_only_the_deployments_holder_runs_the_leader_duties(
     from server.insights.app import provider_coordinator
     from server.settings import settings
 
-    monkeypatch.setattr(leader, "_CURRENT", SupervisorLease("on"))
+    on = SupervisorLease("on")
+    on.step()  # an `on` lease is decided by its first step
+    monkeypatch.setattr(leader, "_CURRENT", on)
     monkeypatch.setattr(settings, "deployment", False)
     assert not leader.leads_deployment() and not provider_coordinator._is_leader()
     monkeypatch.setattr(settings, "deployment", True)

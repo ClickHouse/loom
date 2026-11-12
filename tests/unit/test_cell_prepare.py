@@ -5,6 +5,7 @@ The stores and the router together: tests/integration/test_cell_prepare.py."""
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -392,3 +393,10 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
         monkeypatch.setattr(cell_prepare, name, fake)
     assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
     assert written == [(cell.as_value(after), None)] and reads == []
+    # stdout stays one JSON document; a first cell's next step goes to stderr.
+    out = capsys.readouterr()
+    assert json.loads(out.out)["is_first"] is True
+    assert (
+        out.err.strip()
+        == "prepared first cell; roll out LOOM_CELL; attach ships in a later release"
+    )
