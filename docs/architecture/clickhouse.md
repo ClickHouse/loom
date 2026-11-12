@@ -725,6 +725,10 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
   `loom.graph_projections` slot keys a day old: keys whose holder died before its own
   delete. One strict-mode Keeper delete per table; a key written meanwhile fails it and
   the next sweep retries.
+- **Cell probe nonce.** `loom cell prepare` writes a nonce under the `cell-probe` key
+  of `loom._migration_lock` for the router to read back through the cell's probe
+  listener, then drops that key while it still holds that nonce, as a lease is released:
+  one strict-mode Keeper delete.
 - **Namespace write keys** (`loom.namespace_write_keys`, KeeperMap, only where the server
   has a Keeper): a write to a memory plane overwrites its namespace's key in the request
   tail. One Keeper write, no part, no mutation.

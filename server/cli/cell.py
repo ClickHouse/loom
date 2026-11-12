@@ -1,6 +1,7 @@
 """`loom cell credential | limit | which`: the operator's commands that touch the router's
 directory alone (docs/architecture/cells.md, "Operations"). None of them connects to a
-cell's stores, so they run while a cell is down.
+cell's stores, so they run while a cell is down. `loom cell prepare`, which does, is
+`server/cli/cell_prepare.py`.
 
 - `credential new` makes a router credential offline and prints it with its SHA-256;
   `credential --cell <cell> --next <sha256> | --finish | --revert` rotates a cell's.
@@ -40,7 +41,7 @@ _LOOKUP_TIMEOUT = httpx.Timeout(  # not a setting: derived
     2 * (2 * STATEMENT_TIMEOUT_S + 1) + 10.0, connect=5.0
 )
 # The statuses each refuses with, always with an `error` string.
-_OPERATOR_REFUSALS = frozenset({400, 401, 404, 409, 503})
+OPERATOR_REFUSALS = frozenset({400, 401, 404, 409, 503})
 _LOOKUP_REFUSALS = frozenset({400, 429, 503})
 
 
@@ -51,12 +52,11 @@ def new_credential(prefix: str = "lcr_") -> tuple[str, str]:
     return credential, hashlib.sha256(credential.encode()).hexdigest()
 
 
-def _router(args: argparse.Namespace) -> httpx.URL | None:
-    """The router's URL, or None after printing why."""
+def parse_router(args: argparse.Namespace) -> httpx.URL | str:
+    """The router's URL, or why it is not one."""
     url = args.router or settings.cell_router_url
     if not url:
-        print("loom cell: no router: pass --router or set LOOM_CELL_ROUTER_URL", file=sys.stderr)
-        return None
+        return "no router: pass --router or set LOOM_CELL_ROUTER_URL"
     try:
         parsed = httpx.URL(url)
     except httpx.InvalidURL:
@@ -73,18 +73,27 @@ def _router(args: argparse.Namespace) -> httpx.URL | None:
         or "?" in url
         or "#" in url
     ):
-        print(
-            "loom cell: the router URL must be http or https with a host, and no path, "
-            "query, fragment or user",
-            file=sys.stderr,
+        return (
+            "the router URL must be http or https with a host, and no path, query, fragment or user"
         )
-        return None
     return parsed
 
 
-def _at(router: httpx.URL, path: str) -> str:
+def at(router: httpx.URL, path: str) -> str:
     """`path` at the router's root, set as the path alone."""
     return str(router.copy_with(raw_path=path.encode()))
+
+
+def operator_router(args: argparse.Namespace) -> httpx.URL | str:
+    """The router the operator credential may be sent to, or why it may not."""
+    if not settings.router_operator_token:
+        return "set LOOM_ROUTER_OPERATOR_TOKEN, the router's operator credential"
+    router = parse_router(args)
+    if isinstance(router, str):
+        return router
+    if router.scheme != "https" and not (router.scheme == "http" and is_loopback_host(router.host)):
+        return "the operator credential goes only to an https router (http only on loopback)"
+    return router
 
 
 def _operator_call(args: argparse.Namespace, path: str, body: dict[str, Any], retry: str) -> int:
@@ -95,24 +104,12 @@ def _operator_call(args: argparse.Namespace, path: str, body: dict[str, Any], re
     if not NAME.fullmatch(args.cell or ""):
         print(f"loom cell: {args.cell!r} is no cell name (1 to 32 of a-z, 0-9, -)", file=sys.stderr)
         return 2
-    router = _router(args)
-    if router is None:
+    router = operator_router(args)
+    if isinstance(router, str):
+        print(f"loom cell: {router}", file=sys.stderr)
         return 2
     token = settings.router_operator_token
-    if not token:
-        print(
-            "loom cell: set LOOM_ROUTER_OPERATOR_TOKEN, the router's operator credential",
-            file=sys.stderr,
-        )
-        return 2
-    if router.scheme != "https" and not (router.scheme == "http" and is_loopback_host(router.host)):
-        print(
-            "loom cell: the operator credential goes only to an https router (http only on "
-            "loopback)",
-            file=sys.stderr,
-        )
-        return 2
-    url = _at(router, f"/cells/v1/operator/cells/{args.cell}/{path}")
+    url = at(router, f"/cells/v1/operator/cells/{args.cell}/{path}")
     try:
         # No proxy from the environment: plain http on loopback must not reach one.
         r = httpx.post(
@@ -128,9 +125,9 @@ def _operator_call(args: argparse.Namespace, path: str, body: dict[str, Any], re
     except httpx.HTTPError as e:
         print(f"loom cell: no answer from the router: {type(e).__name__}", file=sys.stderr)
     else:
-        answer = _router_answer(r, {"cell": args.cell}, _OPERATOR_REFUSALS)
+        answer = router_answer(r, {"cell": args.cell}, OPERATOR_REFUSALS)
         if answer is None:
-            _not_the_router(r)
+            print(f"loom cell: {not_the_router(r)}", file=sys.stderr)
         elif answer.get("code") == "BACKEND_UNAVAILABLE":
             print(f"loom cell: the directory did not answer: {answer['error']}", file=sys.stderr)
         else:
@@ -139,7 +136,7 @@ def _operator_call(args: argparse.Namespace, path: str, body: dict[str, Any], re
     return 1
 
 
-def _router_answer(
+def router_answer(
     r: httpx.Response, names: dict[str, str], refusals: frozenset[int]
 ) -> dict[str, Any] | None:
     """The router's own answer: 200 with a JSON object naming what was asked (`names`),
@@ -162,11 +159,8 @@ def _router_answer(
     return answer
 
 
-def _not_the_router(r: httpx.Response) -> None:
-    print(
-        f"loom cell: {r.url} did not answer as the router does ({r.status_code}): {r.text[:200]!r}",
-        file=sys.stderr,
-    )
+def not_the_router(r: httpx.Response) -> str:
+    return f"{r.url} did not answer as the router does ({r.status_code}): {r.text[:200]!r}"
 
 
 def _said(r: httpx.Response, answer: dict[str, Any]) -> int:
@@ -249,12 +243,13 @@ def _cmd_limit(args: argparse.Namespace) -> int:
 
 
 def _cmd_which(args: argparse.Namespace) -> int:
-    router = _router(args)
-    if router is None:
+    router = parse_router(args)
+    if isinstance(router, str):
+        print(f"loom cell: {router}", file=sys.stderr)
         return 2
     try:
         r = httpx.get(
-            _at(router, "/cells/lookup"), params={"org": args.org}, timeout=_LOOKUP_TIMEOUT
+            at(router, "/cells/lookup"), params={"org": args.org}, timeout=_LOOKUP_TIMEOUT
         )
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError) as e:
         print(f"loom cell: the router could not be reached: {type(e).__name__}", file=sys.stderr)
@@ -262,9 +257,9 @@ def _cmd_which(args: argparse.Namespace) -> int:
     except httpx.HTTPError as e:
         print(f"loom cell: no answer from the router: {type(e).__name__}", file=sys.stderr)
         return 1
-    answer = _router_answer(r, {"org": args.org}, _LOOKUP_REFUSALS)
+    answer = router_answer(r, {"org": args.org}, _LOOKUP_REFUSALS)
     if answer is None:
-        _not_the_router(r)
+        print(f"loom cell: {not_the_router(r)}", file=sys.stderr)
         return 1
     if answer.get("code") == "BACKEND_UNAVAILABLE":
         print(
@@ -308,3 +303,7 @@ def _add_cell_parser(sub: Any) -> None:
     which.add_argument("--org", required=True, help="The org")
     which.add_argument("--router", help="The router's URL (default: LOOM_CELL_ROUTER_URL)")
     which.set_defaults(func=_cmd_which)
+
+    from server.cli.cell_prepare import add_prepare_parser
+
+    add_prepare_parser(csub)

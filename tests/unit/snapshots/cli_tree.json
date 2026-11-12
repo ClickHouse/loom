@@ -12062,12 +12062,154 @@
            "metavar": null
           }
          ]
+        },
+        "prepare": {
+         "prog": "loom cell prepare",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_prepare:cmd_prepare"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "host",
+            "credential_sha256",
+            "probe_url",
+            "wait",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--host"
+           ],
+           "dest": "host",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The host the cell serves its orgs at",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--credential-sha256"
+           ],
+           "dest": "credential_sha256",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The sha256 of the cell's router credential (`loom cell credential new`)",
+           "metavar": "SHA256"
+          },
+          {
+           "option_strings": [
+            "--probe-url"
+           ],
+           "dest": "probe_url",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A later cell's probe listener address (not the first's)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--wait"
+           ],
+           "dest": "wait",
+           "action": "_StoreAction",
+           "default": 600,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "Seconds to retry a busy or unreachable probe listener",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
         }
        },
        "aliases_of": {
         "credential": "loom cell credential",
         "limit": "loom cell limit",
-        "which": "loom cell which"
+        "which": "loom cell which",
+        "prepare": "loom cell prepare"
        },
        "choices_help": [
         {
@@ -12084,6 +12226,11 @@
          "dest": "which",
          "help": "Print the lookup's cell and host for an org (the first cell if not placed).",
          "metavar": "which"
+        },
+        {
+         "dest": "prepare",
+         "help": "Register this cell in the router's directory and write its rows.",
+         "metavar": "prepare"
         }
        ]
       }

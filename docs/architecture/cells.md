@@ -303,9 +303,9 @@ fingerprint gate:
   from where the CLI runs (policies add up), and without one any pod can reach it.
   Likewise the cell's egress to the router's placement address and to Postgres is the
   operator's, through `networkPolicy.extraEgress` where the chart's policy is on.
-- Prepare retries the router's `PROBE_BUSY` and `PROBE_UNREACHABLE`, and attach and
-  `loom cell update --probe-url` a 429 from the listener they probe, for at most
-  `--wait` (default 10 minutes), and then name it.
+- Prepare retries the router's `PROBE_BUSY` and `PROBE_UNREACHABLE` (a listener starting
+  up is unreachable a while), and attach and `loom cell update --probe-url` a 429 from
+  the listener they probe, for at most `--wait` (default 10 minutes), and then name it.
 
 A later cell's `probe_url` is given to prepare, normalised (`http` or `https`, no
 userinfo), and accepted only when it reports the deployment id prepare reads from the
@@ -400,21 +400,23 @@ refuses a placement call whose fields match neither value of the directory's row
 with SCIM off beside cells with it on.
 
 `loom cell prepare` writes `current` into `loom.cell_self` with the `first` and mode
-rows. Until the directory row holds a fingerprint (before attach), it writes the
-fingerprint every live process reports in its heartbeat, refusing while any live process
-runs a build before N, which reports none, while the fingerprints they report differ,
-and, on a rerun, while they report a bucket name or prefix other than the one the row
-registered. Once the directory row holds a fingerprint, a rerun writes `current` and
-`next` from it, as `loom cell restore` does, refusing only while a live process's
-fingerprint matches neither. Either way the cell stays ready through the `LOOM_CELL`
-rollout. A later configuration change, while the cell is `attaching` or `serving`, goes
-through `loom cell update`; before attach has written the cell's fingerprint to the
-directory row it writes `next` only to `loom.cell_self`, reserving nothing (and
-`--finish` and `--revert` then touch only `loom.cell_self`), and a resumed attach runs
-its overlap refusals on, and writes to the directory, both values of `loom.cell_self`. A
-prepared cell's issuers and org patterns are reserved nowhere: the router routes no
-issuer to it and takes no placement from it until attach has run its overlap refusals
-and written its directory row.
+rows. Until the directory row holds a fingerprint (before attach), it writes, when the
+own row is missing, the fingerprint every live process reports in its heartbeat,
+refusing while any live process runs a build before N, which reports none, or while the
+fingerprints they report differ; a present own row stands, and a live process running
+neither its `current` nor its `next` refuses; every run, before it registers, refuses a
+live process whose deployment id, bucket name or prefix differs from prepare's own
+configuration (a field it does not report read at its default). Once the directory row
+holds a fingerprint, a rerun writes `current` and `next` from it, as `loom cell restore`
+does, refusing only while a live process's fingerprint matches neither. Either way the
+cell stays ready through the `LOOM_CELL` rollout. A later configuration change, while
+the cell is `attaching` or `serving`, goes through `loom cell update`; before attach has
+written the cell's fingerprint to the directory row it writes `next` only to
+`loom.cell_self`, reserving nothing (and `--finish` and `--revert` then touch only
+`loom.cell_self`), and a resumed attach runs its overlap refusals on, and writes to the
+directory, both values of `loom.cell_self`. A prepared cell's issuers and org patterns
+are reserved nowhere: the router routes no issuer to it and takes no placement from it
+until attach has run its overlap refusals and written its directory row.
 
 A change to what a cell accepts goes through `loom cell update --config <file>`, under
 the same directory lock as attach; it computes `next` from that configuration with the
@@ -473,35 +475,40 @@ process's heartbeat lacks `LOOM_CELL` or names another cell. Prepare does three 
 in order:
 
 1. **It refuses a cell whose stores already carry another cell's identity**: a
-   deployment id the directory records, a `first` or mode row that differs from what it
-   would write, or tenancy rows the directory does not place there.
+   deployment id the directory records, or state the directory has not placed there.
+   These are checked by the router, in the registration's own transaction, from counts
+   prepare sends: a cell the directory has no row for may hold no tenancy, `first`, mode
+   or own row, and a later one no object under its prefix but prepare's probe and no
+   live process without its `LOOM_CELL`. A rerun counts the tenancy and state rows and
+   the prefix's objects as its own; a later cell's processes run with its `LOOM_CELL` on
+   every run, which prepare checks itself.
 2. **It registers the cell** in the directory as `attaching`, under the directory lock:
    its host, the deployment id read from the cell, the SHA-256 of the credential it
    calls the router with, and its bucket name and prefix, checked against every other
-   cell's, prepared or attached. A later cell's prefix must hold no object but prepare's
-   own probe. The credential is `lcr_` and 128 lowercase hex characters (512 bits), as
-   `loom cell credential new` makes it offline, printing the credential and its hash;
-   boot and `loom doctor` refuse a `LOOM_CELL_ROUTER_TOKEN` of any other form. Prepare
-   takes the hash as an argument, 64 lowercase hex characters, so no CLI needs the
-   secret; any other value, the credential or its 128-character secret included, is
-   refused, naming `loom cell credential new`, and stored nowhere. No other cell's row
-   may hold the hash, as its current or next one.
+   cell's, prepared or attached. The credential is `lcr_` and 128 lowercase hex
+   characters (512 bits), as `loom cell credential new` makes it offline, printing the
+   credential and its hash; boot and `loom doctor` refuse a `LOOM_CELL_ROUTER_TOKEN` of
+   any other form. Prepare takes the hash as an argument, 64 lowercase hex characters,
+   so no CLI needs the secret; any other value, the credential or its 128-character
+   secret included, is refused, naming `loom cell credential new`, and stored nowhere.
+   No other cell's row may hold the hash, as its current or next one.
 3. **It writes the cell's rows**: the mode (`recording` on the first cell, `enforced` on
-   a later one), the `first` row and `current`, and prints, read-only, what attach would
-   refuse.
+   a later one), the `first` row and `current`.
 
 Prepare is resumable. A rerun for the directory row of the same name, deployment id and
 host writes whichever of the `first` row and the mode row is missing, from the
 directory's state, and `loom.cell_self` as above (before attach from the heartbeats when
 it is missing; once the directory holds the fingerprint, `current` and `next` from it,
-overwriting a present value that differs); before attach, a present `current` that
-differs from what the heartbeats report refuses, naming `loom cell update`. The
-directory's state is the `first` value the unique index names and the highest mode it
-records for the cell: `recording` for the first cell or `enforced` for a later one at
-registration, in the same transaction as the row, then each mode attach raises, recorded
-in the directory before attach sets it in the cell's mode row (a refusal reports the
-mode row as attach reads it back after any return to `recording`, and never lowers the
-directory's record). A rerun refuses a credential hash that is neither the row's
+overwriting a present value that differs); before attach, a present own row stands, and
+a live process running neither its `current` nor its `next` refuses. The directory's
+state is the `first` value the unique index names and the highest mode it records for
+the cell: `recording` for the first cell or `enforced` for a later one at registration,
+in the same transaction as the row, then each mode attach raises, recorded in the
+directory before attach sets it in the cell's mode row (a refusal reports the mode row
+as attach reads it back after any return to `recording`, and never lowers the
+directory's record). A rerun refuses a mode row above the directory's state and a later
+cell's `recording` row, neither being this cell's, and leaves a first cell's row below
+it for attach to finish. A rerun refuses a credential hash that is neither the row's
 `current` nor its `next` (rotation is `loom cell credential`'s), counts the tenancy rows
 placed in or recorded since its own registration as its own, and skips registration's
 checks it has already passed (the empty prefix and the prefix overlap), so it runs on a
@@ -1201,24 +1208,24 @@ An integration test with two cells and a router in CI's Postgres job:
   an unheld org, every process gated and `loom doctor` naming it, and a prepare rerun
   writes the rows back; a Postgres-only restore of an attached first cell to before its
   prepare is named by `loom doctor` and closed by `loom cell restore`; a prepare rerun
-  during a pending `loom cell update`, with processes on both values and
-  `loom.cell_self` lost, writes both values back and keeps both sets of processes
-  serving; a prepare rerun on an attached cell whose `current` is missing and whose
-  pods' configuration differs from the directory row refuses, and one before attach
-  whose heartbeats report another bucket prefix refuses; a prepare rerun given a
-  credential hash that is neither the row's `current` nor its `next` is refused; a
-  prepare rerun on a `serving` later cell whose prefix holds data writes a removed mode
-  row back; a cell with a mode row and no `first` row has its triggers refuse an unheld
-  org, every process gated and `loom doctor` naming it, and a prepare rerun writes the
-  row back; a later cell whose mode row is set to `recording` records nothing, its
-  trigger refuses an unheld org, a process with `LOOM_CELL` set there serves as in
-  `enforced`, a pod with `LOOM_CELL` unset there is unready and runs no worker,
-  `loom doctor` names the row, a CLI command declaring an org with
-  `LOOM_CELL_ROUTER_TOKEN` set refuses, naming it, and the router refuses its state
-  read; a build N-1 process's `memory.set` and delivery pass on a never-prepared
-  deployment after N's migration succeed and write no tenancy row, and on the first cell
-  in `recording` the trigger reads the mode and looks nothing up, a write under
-  `session_replication_role = replica` for an unheld org is still refused, an
+  during a pending `loom cell update` on an attached cell, with processes on both values
+  and `loom.cell_self` lost, writes both values back and keeps both sets of processes
+  serving, and one before attach refuses the two configurations; a prepare rerun on an
+  attached cell whose `current` is missing and whose pods' configuration differs from
+  the directory row refuses, and one before attach whose heartbeats report another
+  bucket prefix refuses; a prepare rerun given a credential hash that is neither the
+  row's `current` nor its `next` is refused; a prepare rerun on a `serving` later cell
+  whose prefix holds data writes a removed mode row back; a cell with a mode row and no
+  `first` row has its triggers refuse an unheld org, every process gated and
+  `loom doctor` naming it, and a prepare rerun writes the row back; a later cell whose
+  mode row is set to `recording` records nothing, its trigger refuses an unheld org, a
+  process with `LOOM_CELL` set there serves as in `enforced`, a pod with `LOOM_CELL`
+  unset there is unready and runs no worker, `loom doctor` names the row, a CLI command
+  declaring an org with `LOOM_CELL_ROUTER_TOKEN` set refuses, naming it, and the router
+  refuses its state read; a build N-1 process's `memory.set` and delivery pass on a
+  never-prepared deployment after N's migration succeed and write no tenancy row, and on
+  the first cell in `recording` the trigger reads the mode and looks nothing up, a write
+  under `session_replication_role = replica` for an unheld org is still refused, an
   `INSERT ... ON CONFLICT DO UPDATE` row for an unheld org is refused through the update
   trigger, and a census test fails on an org-keyed table without both triggers; and an
   org-keyed write while attach holds the mode table's lock returns at once, with new-org
@@ -1279,28 +1286,28 @@ An integration test with two cells and a router in CI's Postgres job:
   restored from another cell's snapshot is refused at prepare;
 - a prepare killed between the directory write and the cell write, with `LOOM_CELL`
   rolled out, is rerun through `probe_url` against gated processes; a prepare rerun
-  before attach whose heartbeats differ from a present `current` refuses; an attached
-  prepare rerun with only `next` lost writes it back, and one whose present `current`
-  differs from the directory overwrites it; a prepare rerun alone after a Postgres-only
-  restore of an attached first cell to before its prepare leaves `loom doctor` naming
-  the missing tenancy rows, and a pod with `LOOM_CELL` unset serves every org there
-  until the rerun and is gated after it, while with `LOOM_CELL` set an org gets its
-  tenancy row back through the placement call; a prepare rerun against `LOOM_CELL`-unset
-  pods in a one-row state reaches their probe route and writes the missing row back;
-  prepare refuses a later cell's `probe_url` that reports an id other than its stores',
-  attach refuses a cell whose host reports an id other than its `probe_url`'s, and
-  prepare refuses a probe address argument for the first cell, and the router probes
-  only `LOOM_ROUTER_UPSTREAM_PROBE_URL`; a later cell's first prepare succeeds;
-  `loom cell update --probe-url` refuses an address that reports another deployment id
-  or fails the nonce echo, and refuses the first cell; `loom cell update` moves the
-  first cell's probe and upstream addresses only once every router replica runs them,
-  after their probe and the upstream's id check, and a prepare rerun through a replica
-  still on the old values (or the new, before the move) is refused, naming the row's
-  address; `probe_url` with userinfo or another scheme is refused; the main port answers
-  only the in-memory id, with any Host, reading no store; the router probes an https
-  `probe_url` whose certificate a CA in its `SSL_CERT_FILE` signs; the probe listener
-  answers 429 past its rate; and a prepare given a copy of the first cell's stores is
-  refused by the nonce;
+  before attach whose heartbeats match neither the present `current` nor `next` refuses;
+  an attached prepare rerun with only `next` lost writes it back, and one whose present
+  `current` differs from the directory overwrites it; a prepare rerun alone after a
+  Postgres-only restore of an attached first cell to before its prepare leaves
+  `loom doctor` naming the missing tenancy rows, and a pod with `LOOM_CELL` unset serves
+  every org there until the rerun and is gated after it, while with `LOOM_CELL` set an
+  org gets its tenancy row back through the placement call; a prepare rerun against
+  `LOOM_CELL`-unset pods in a one-row state reaches their probe route and writes the
+  missing row back; prepare refuses a later cell's `probe_url` that reports an id other
+  than its stores', attach refuses a cell whose host reports an id other than its
+  `probe_url`'s, and prepare refuses a probe address argument for the first cell, and
+  the router probes only `LOOM_ROUTER_UPSTREAM_PROBE_URL`; a later cell's first prepare
+  succeeds; `loom cell update --probe-url` refuses an address that reports another
+  deployment id or fails the nonce echo, and refuses the first cell; `loom cell update`
+  moves the first cell's probe and upstream addresses only once every router replica
+  runs them, after their probe and the upstream's id check, and a prepare rerun through
+  a replica still on the old values (or the new, before the move) is refused, naming the
+  row's address; `probe_url` with userinfo or another scheme is refused; the main port
+  answers only the in-memory id, with any Host, reading no store; the router probes an
+  https `probe_url` whose certificate a CA in its `SSL_CERT_FILE` signs; the probe
+  listener answers 429 past its rate; and a prepare given a copy of the first cell's
+  stores is refused by the nonce;
 - the default first cell (`LOOM_JWT_ISSUER=loom`, an empty `LOOM_OAUTH_ISSUER`)
   attaches; a cell redeployed with the shared host as its public URL becomes unready;
 - a placement inserted at a cell's quota whose call timed out is retried and answers its

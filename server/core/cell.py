@@ -309,18 +309,18 @@ class MalformedRow(ValueError):
 
 
 def _decoded(row: Any) -> _View:
-    first = _object(row["first"]) if row else None
-    own = _object(row["own"]) if row else None
+    first = json_object(row["first"]) if row else None
+    own = json_object(row["own"]) if row else None
     return _View(
         read_at=time.monotonic(),
         first=(bool(first["is_first"]), str(first["cell"])) if first else None,
         mode=str(row["mode"] or "") if row else "",
-        current=_object(own.get("current_fp")) if own else None,
-        next=_object(own.get("next_fp")) if own else None,
+        current=json_object(own.get("current_fp")) if own else None,
+        next=json_object(own.get("next_fp")) if own else None,
     )
 
 
-def _object(value: Any) -> dict[str, Any] | None:
+def json_object(value: Any) -> dict[str, Any] | None:
     """A JSON object, as the pool's codec decodes it; None for SQL NULL."""
     if value is None:
         return None

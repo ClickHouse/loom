@@ -748,7 +748,7 @@ settings:
   # router_upstream_probe_url: ""
 
   # SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell
-  # limit`, `loom cell credential` and a cell's registration call its operator API with;
+  # limit`, `loom cell credential` and `loom cell prepare` call its operator API with;
   # "" = that API refuses. [restart]
   # router_operator_sha256: ""
 

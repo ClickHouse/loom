@@ -280,6 +280,7 @@ def test_a_router_url_that_is_no_url_is_refused_before_any_call(operator, capsys
     assert cell_cli._cmd_limit(_args(cell="eu-1", closed=True, router=router)) == 2
     err = capsys.readouterr().err
     assert operator.calls == [] and "canary" not in err  # the user part is never echoed
+    assert err.count("\n") == 1 and "router URL must be" in err
 
 
 @pytest.mark.parametrize("base", ["https://h.test", "https://h.test/"])

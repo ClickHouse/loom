@@ -1,5 +1,5 @@
-"""The router's registration API (server/router/app.py `register`): a cell's preparation
-registers it once its probe address answers the deployment id, the nonces prepare
+"""The router's registration API (server/router/app.py `register`): `loom cell prepare`
+registers a cell once its probe address answers the deployment id, the nonces prepare
 wrote and the bucket and prefix it stores under; the first cell is probed at the router's
 own address."""
 
@@ -24,6 +24,9 @@ NONCES = {"postgres": "n-pg", "clickhouse": "n-ch", "bucket": "n-b"}
 SERVED = {"name": "docs", "prefix": "eu-1"}
 
 
+HELD = {"tenancy_rows": 0, "state_rows": 0, "prefix_objects": 0, "processes_without_cell": 0}
+
+
 def _body(**over: Any) -> dict[str, Any]:
     body = {
         "host": "loom.example",
@@ -32,6 +35,7 @@ def _body(**over: Any) -> dict[str, Any]:
         "bucket": "docs",
         "bucket_prefix": "eu-1",
         "nonces": dict(NONCES),
+        "held": dict(HELD),
     }
     body.update(over)
     return {k: v for k, v in body.items() if v is not ...}
@@ -139,9 +143,13 @@ def test_the_first_cell_is_probed_at_the_routers_own_address(router) -> None:
         "state": "attaching",
         "mode": "recording",
         "registered": True,
+        "current_fp": None,
+        "next_fp": None,
     }
     assert listener.asked == ["http://upstream.internal:7790/v1/health/deployment"]
     (reg,) = calls
+    assert (reg.tenancy_rows, reg.state_rows, reg.prefix_objects) == (0, 0, 0)
+    assert reg.processes_without_cell == 0
     # Its row keeps the routes the router already had: the deployment it fronts.
     assert (reg.is_first, reg.probe_url, reg.upstream_url, reg.host) == (
         True,
@@ -186,6 +194,15 @@ def test_an_upstream_without_the_postgres_authority_is_refused(router) -> None:
     listener.upstream_text = '{"deployment_id": ""}'
     r = _post(client, _body())
     assert r.status_code == 409 and "Postgres authority" in r.json()["error"] and calls == []
+
+
+def test_what_prepare_found_in_the_stores_reaches_the_directory(router) -> None:
+    client, _listener, calls = router
+    held = {"tenancy_rows": 3, "state_rows": 2, "prefix_objects": 1, "processes_without_cell": 4}
+    assert _post(client, _body(held=held)).status_code == 200
+    reg = calls[0]
+    assert (reg.tenancy_rows, reg.state_rows, reg.prefix_objects) == (3, 2, 1)
+    assert reg.processes_without_cell == 4
 
 
 def test_a_host_that_normalises_to_the_shared_host_is_the_first_cell(router) -> None:
@@ -462,6 +479,12 @@ def test_a_busy_or_unreachable_probe_answers_503_with_a_code(router) -> None:
         _body(bucket_prefix="eu-1/"),
         _body(bucket_prefix="/eu-1"),
         _body(deployment_id="dep\x001"),
+        _body(held=...),  # what prepare found in the stores is always named
+        _body(held={"tenancy_rows": 0}),
+        _body(held={**HELD, "tenancy_rows": -1}),
+        _body(held={**HELD, "state_rows": True}),
+        _body(held={**HELD, "prefix_objects": 2**31}),
+        _body(held={**HELD, "other": 0}),
         [],
     ],
 )
@@ -578,6 +601,10 @@ def test_the_registration_bounds_count_the_statements_the_code_sends(monkeypatch
         bucket_prefix="eu-2",
         probe_url="http://eu-2.internal:7790",
         is_first=False,
+        tenancy_rows=0,
+        state_rows=0,
+        prefix_objects=0,
+        processes_without_cell=0,
     )
     read = _CountingConnection(first="eu-1")
     _connected(read)
