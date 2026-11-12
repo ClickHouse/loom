@@ -43,12 +43,14 @@ provenance (`promoted_from`) names exactly one source, the namespace-wide row un
 key, which is the slug of the value's `term` (`user_id`, `agent` and `session_id` all
 `'-'`); and that source is live (`status = 'active'`, not tombstoned, superseded, or past
 its `expires_at` or `valid_to`), not `sensitivity = 'high'`, and holds the same text as
-the shared copy. The source is read from the memory authority (Postgres when it holds live
-memory, [storage authority](storage-authority.md)), and a source whose head cannot be read
-fails closed: the definition is not served. A read-time check covers every path into that
-state that it can see, rows promoted before this design and through N-1 included; what it
-cannot see is named under rolling upgrades. The shared layer already is the namespace's
-admin-approved copy of a fact ([the shared
+the shared copy: the source's `content_sha256` equals the canonical-JSON hash of the
+shared `value` (the hash the approved-content check below uses), so a store that orders an
+object's keys differently is not a change. The source is read from the memory authority
+(Postgres when it holds live memory, [storage authority](storage-authority.md)), and a
+source whose head cannot be read fails closed: the definition is not served. A read-time
+check covers every path into that state that it can see, rows promoted before this design
+and through N-1 included; what it cannot see is named under rolling upgrades. The shared
+layer already is the namespace's admin-approved copy of a fact ([the shared
 layer](../concepts/identities-and-namespaces.md#agent-written-rows-and-the-shared-layer)):
 `memory.promote` and `memory.demote` need `admin`, the shared row records its source
 (`promoted_from`) and, on the review path, the candidate it came from
@@ -75,7 +77,8 @@ mark, `memory.dedup_resolve` for a `duplicate` one), which governs it again when
 is the approved one, and is promoted again otherwise.
 
 The shared layer needs eight changes for this, each in the pull request that adds the term
-leg, because the term leg serves shared rows to every reader:
+leg except where a change names another, because the term leg serves shared rows to every
+reader:
 
 - **Namespace erasure** gains a step and a census row for `loom.shared`. Today only user
   erasure reaches it, by provenance, and a definition promoted from the namespace-wide row
@@ -394,14 +397,15 @@ tracker source. The registration names the team that owns its definitions and th
 databases it covers, so a source on a shared cluster drafts only from its team's own
 tables. Each turn:
 
-1. reads finished `SELECT` queries of the source's window whose `databases` all lie within
-   the registration's (a query touching any other database is not read), from every
-   replica when the registration names the cluster (`clusterAllReplicas`) and from the
-   node it connects to otherwise, grouped by `normalized_query_hash`, counting initial
-   queries only (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and
-   then by recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct
-   users ran. A user here is a ClickHouse account, not a person: the threshold holds only
-   where each person queries under their own account, and a shared account (a BI tool's, a
+1. reads finished `SELECT` queries of the source's window whose `databases` are not empty
+   and all lie within the registration's (a query touching any other database, or none, as
+   a health check's `SELECT 1` does, is not read), from every replica when the
+   registration names the cluster (`clusterAllReplicas`) and from the node it connects to
+   otherwise, grouped by `normalized_query_hash`, counting initial queries only
+   (`is_initial_query = 1`) by `initial_user`, ranked by distinct users and then by
+   recency, and drops a group that fewer than `knowledge_gaps_min_askers` distinct users
+   ran. A user here is a ClickHouse account, not a person: the threshold holds only where
+   each person queries under their own account, and a shared account (a BI tool's, a
    service's) counts as one asker however many people stand behind it, while one person
    with several accounts counts once per account. The threshold is a floor against
    drafting from one account's queries, not an anonymity guarantee. Only the normalised
@@ -453,6 +457,11 @@ governed, and the admin edits that row to the draft's text and promotes it with
 `memory.promote` and its hash instead. A retry so completes the promotion; rejecting the
 draft instead leaves the written row, which the admin restores from the row's history or
 promotes.
+
+A `memory_supporters` candidate of type `definition` promotes its supporter row through
+`learnings.review` too, and today's path splits the supporter tuple on `/` into exactly
+six parts, which a `definition/<slug>` key breaks; the implementing pull request splits
+off the five identity parts and keeps the rest as the key.
 
 ## Erasure and audit
 
