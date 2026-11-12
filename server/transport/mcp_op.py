@@ -139,7 +139,10 @@ def catalog(
 # "no op reachable" plus look-alikes and guess: a help call, a grep of the
 # source, a wrong argument name.
 _INSTEAD: dict[str, str] = {
-    "memory.bulk_set": "call loom_memory_set once per fact; a batch saves no round trip here",
+    "memory.bulk_set": (
+        "call memory.set once per fact (via loom_op where unlisted); a batch saves no "
+        "round trip here"
+    ),
     "memory.bulk_get": (
         "call memory.get per key, or memory.list with a key prefix (via loom_op where unlisted)"
     ),

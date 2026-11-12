@@ -250,8 +250,8 @@ _MCP_TRACKER_OPS: frozenset[str] = frozenset(
 # the run scratchpad and the run ledger. Create and update are one tool —
 # memory.set under a key a read returned IS the update — and read is
 # loom_search (the synthetic search tool, always listed) plus memory.get. The
-# ops below plus the three synthetic tools; a small verb set plans better than
-# the core surface.
+# ops below plus the three synthetic tools: one verb creates and updates, so
+# there is no revision split to choose between.
 _MCP_ATOMIC_OPS: frozenset[str] = frozenset(
     {
         "memory.set",

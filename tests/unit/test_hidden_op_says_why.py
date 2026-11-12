@@ -22,7 +22,7 @@ def test_bulk_set_names_memory_set_instead() -> None:
     res = _call("memory.bulk_set", {"items": []})
     body = res["structuredContent"]
     assert res["isError"] is True and body["code"] == "OP_NOT_ON_MCP"
-    assert "loom_memory_set" in body["instead"] and "did_you_mean" not in body
+    assert "memory.set once per fact" in body["instead"] and "did_you_mean" not in body
 
 
 def test_unlock_says_only_the_owner_unlocks() -> None:

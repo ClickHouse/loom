@@ -518,9 +518,8 @@ def duplicate_registration_check(name: str, entry: dict[str, Any]) -> Check:
         WARN,
         f"Loom is registered twice: the plugin's own mount and the user-scope entry "
         f"{name!r} (toolset={toolset}: a second roster on every turn). The model calls "
-        f"either copy; the user-scope one carries no code scope for this checkout and its "
-        f"own static "
-        f"bearer. Fix: `claude mcp remove {name} -s user` (the plugin keeps the tools).",
+        f"either copy; the user-scope one carries no code scope for this checkout and its own "
+        f"static bearer. Fix: `claude mcp remove {name} -s user` (the plugin keeps the tools).",
     )
 
 
