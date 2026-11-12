@@ -604,27 +604,26 @@ candidates. A draft rejected before any promotion attempt leaves nothing behind 
 queue row. Between the write and the promotion the row is an ordinary namespace-wide row,
 which the ordinary legs read for those moments. A promotion refused after the write (a
 racing edit, a racing term, or `memory.set` answering `PUBLICATION_PENDING`, which today's
-review path swallows) tombstones the review's own row again, with `if_match_sha256`
-against the version it wrote, so a row a writer changed since is left to that writer, and
-leaves the candidate pending; for a revision, the old definition lapses meanwhile and the
-admin read lists it.
+review path swallows) undoes the review's own write, with `if_match_sha256` against the
+version it wrote, so a row a writer changed since is left to that writer, and leaves the
+candidate pending. For a revision it writes the previous head's text back, so the old
+definition is governed again with no new promotion; for a new term it tombstones the row.
 
 Every attempt, the first and each retry, decides from the head it reads, checking these in
 order, the first that matches deciding:
 
+- a head that is live and `active`, carries no `expires_at` and whose text hashes to the
+  draft's is promoted without a write, pinned or locked or not, since nothing changes;
 - a pinned or locked head refuses the review, as a pinned key or a lock refuses a changed
   value; the admin unpins or unlocks it (`memory.unpin`, `memory.unlock`) and reviews
   again;
-- a head that is live and `active`, carries no `expires_at` and whose text hashes to the
-  draft's is promoted without a write;
 - a head holding the governed shared copy's text is written with `if_match_sha256` against
   that head;
 - no head is written with `if_absent`, a precondition the implementing pull request adds
   to `memory.set` that refuses the write when a live row holds the key, so a writer who
   creates the row first is never overwritten;
-
 - a demoted term's live row refuses it, since no shared copy is governed; the admin edits
-  that row to the draft's text and reviews again, which the first case then promotes;
+  that row to the draft's text and reviews again, which the no-write case then promotes;
 - any other head is a writer's edit, or a head the read-time check would not serve
   (`conflicted`, `duplicate`, expired), and the review is refused rather than overwrite or
   promote it.
@@ -641,8 +640,8 @@ govern it.
 ## Erasure and audit
 
 - Definitions are memory and shared-layer rows and take every path those take, with the
-  shared layer's namespace erasure and the redact added above: tombstone, demote, redact,
-  namespace erasure, history, audit. A user erasure tombstones a shared row whose
+  shared layer's namespace erasure and the redact this design adds: tombstone, demote,
+  redact, namespace erasure, history, audit. A user erasure tombstones a shared row whose
   provenance names the user (`shared.tombstone`); a definition promoted from the
   namespace-wide row names none, so erasing the admin who promoted it leaves it governed,
   and `promoted_by` on the shared row names the admin as an audit actor does, as it does
@@ -752,13 +751,14 @@ promoted again:
 - a source its `memory.consolidate` tombstoned: `memory.restore` within 14 days; past
   them, the definition is written again from its shared copy's text.
 
-An N-1 relabel of a definition's source to `high` leaves its shared copy's
-embedding served by the ordinary legs: once N serves, the operator runs the retirement N's
-relabel performs (the shared embedding retired, the row kept) over every definition the
-admin read lists as lapsed for `high`, an operator step the implementing pull request's
-rollout section names, so a relabel back governs it again as on N. N-1's redact and
-namespace erasure do not reach the shared row's text, as today: one run during the rollout
-or after a rollback is run again once N serves.
+An N-1 relabel of a definition's source to `high` leaves its shared copy's embedding
+served by the ordinary legs: once N serves, the operator runs the retirement N's relabel
+performs (the shared embedding retired, the row kept) over every definition the admin read
+lists as lapsed for `high`, an operator step the implementing pull request's rollout
+section names, so a relabel back governs it again as on N. N-1's redact does not reach the
+shared row's text, as today: one run during the rollout or after a rollback is run again
+once N serves. A namespace erasure an older build without the shared step ran is cleared
+as [rolling upgrades](rolling-upgrades.md) rule 45 says.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` and `knowledge_query_history_enabled` off, which stop recording,
