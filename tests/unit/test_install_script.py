@@ -1367,12 +1367,14 @@ def test_vscode_inside_a_remote_is_not_offered(
 def test_loom_connect_all_connects_every_client(install, installer_env: dict[str, str]) -> None:
     run, _ = install
     _start_stubs(installer_env)
-    claude = _agent_cli(installer_env, "claude")
+    claude = _agent_cli(installer_env, "claude", mcp=_mcp_line("http://localhost:7777"))
     codex = _agent_cli(installer_env, "codex")
     code = _agent_cli(installer_env, "code")
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="all")
     assert result.returncode == 0, result.stderr
-    assert "plugin install loom@loom" in claude.read_text().splitlines()
+    assert "plugin install loom@loom --config server_url=http://localhost:7777" in (
+        claude.read_text().splitlines()
+    )
     assert "plugin add loom@loom" in codex.read_text().splitlines()
     assert any(c.startswith("--add-mcp ") for c in code.read_text().splitlines())
     assert "Connected: Claude Code Codex VS Code." in result.stdout
@@ -1381,8 +1383,8 @@ def test_loom_connect_all_connects_every_client(install, installer_env: dict[str
 @pytest.mark.parametrize(
     ("listing", "counted"),
     [
-        ("loom@loom  installed, enabled  1.0.0  /x", True),
-        ("loom@loom  installed  1.0.0  /x", False),
+        ("loom@loom  installed, enabled   1.2.21  /x", True),
+        ("loom@loom  installed, disabled  1.2.21  /x", False),
     ],
 )
 def test_a_codex_plugin_from_before_is_counted_only_when_enabled(
@@ -1453,4 +1455,52 @@ def test_a_terminal_is_asked_before_an_agent_is_connected(
     env = {k: v for k, v in installer_env.items() if k != "LOOM_CONNECT"}
     seen = _answer_connect_prompts({**env, "LOOM_SKIP_START": "0"}, answer)
     assert b"Connect Claude Code to Loom? [Y/n]" in seen
-    assert ("plugin install loom@loom" in claude.read_text().splitlines()) == installs
+    installed = "plugin install loom@loom --config server_url=http://localhost:7777"
+    assert (installed in claude.read_text().splitlines()) == installs
+
+
+def test_a_codex_marketplace_without_the_plugin_is_offered_the_plugin(
+    install, installer_env: dict[str, str]
+) -> None:
+    """`codex plugin list` shows `not installed` once the marketplace is added."""
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex", "loom@loom  not installed           /x")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
+    assert result.returncode == 0, result.stderr
+    assert "plugin add loom@loom" in codex.read_text().splitlines()
+    assert "not enabled" not in result.stdout
+
+
+def test_a_client_loom_connect_does_not_know_is_refused(install) -> None:
+    run, _ = install
+    result = run(LOOM_CONNECT="claude,codex")
+    assert result.returncode == 1
+    assert "LOOM_CONNECT takes claude-code, codex, vscode, all or none" in result.stderr
+    assert ": claude" in result.stderr
+
+
+def test_loom_connect_none_runs_no_agent_cli(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    logs = [
+        _agent_cli(installer_env, name, "  ❯ loom@loom") for name in ("claude", "codex", "code")
+    ]
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert [log.read_text() for log in logs] == ["", "", ""]
+
+
+def test_a_plugin_from_before_is_not_checked_without_consent(
+    install, installer_env: dict[str, str]
+) -> None:
+    """`claude mcp list` starts the servers it checks: a run that may not connect
+    Claude Code does not run it."""
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(
+        installer_env, "claude", "  ❯ loom@loom", _mcp_line("http://localhost:7777")
+    )
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]

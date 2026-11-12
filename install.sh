@@ -86,6 +86,14 @@ main() {
       || fail "LOOM_PORT must be between 1 and 65535: $LOOM_PORT" ;;
   esac
 
+  # LOOM_CONNECT: which coding agents to connect without asking.
+  for client in $(printf '%s' "${LOOM_CONNECT:-}" | tr ',' ' '); do
+    case $client in
+      claude-code | codex | vscode | all | none) ;;
+      *) fail "LOOM_CONNECT takes claude-code, codex, vscode, all or none, separated by commas: $client" ;;
+    esac
+  done
+
   while [ $# -gt 0 ]; do
     case $1 in
       --clickhouse)
@@ -549,13 +557,21 @@ main() {
   bounded() {
     "$@" &
     cmd_pid=$!
-    (sleep 60 && kill "$cmd_pid" 2>/dev/null) >/dev/null 2>&1 &
+    # The watchdog takes its sleep with it when it is stopped.
+    (
+      trap 'kill "$nap" 2>/dev/null; exit 0' TERM
+      sleep 60 &
+      nap=$!
+      wait "$nap" && kill "$cmd_pid" 2>/dev/null
+    ) >/dev/null 2>&1 &
     dog_pid=$!
     cmd_status=0
     wait "$cmd_pid" || cmd_status=$?
     cmd_pid=
     kill "$dog_pid" 2>/dev/null || true
     dog_pid=
+    # 143: the watchdog stopped it.
+    [ "$cmd_status" != 143 ] || printf '%s did not finish within 60 seconds\n' "$1" >&2
     return "$cmd_status"
   }
   # wants CLIENT NAME: whether to connect CLIENT. LOOM_CONNECT (a comma list of
@@ -570,6 +586,16 @@ main() {
     printf 'Connect %s to Loom? [Y/n] ' "$2"
     read -r answer || return 1
     case $answer in '' | [Yy]*) return 0 ;; *) return 1 ;; esac
+  }
+  # asked CLIENT: whether this run may look further at CLIENT (LOOM_CONNECT names
+  # it, or a terminal could be asked), without asking.
+  asked() {
+    case ",${LOOM_CONNECT:-}," in *,all,* | *",$1,"*) return 0 ;; esac
+    [ -z "${LOOM_CONNECT:-}" ] && [ -t 0 ] && [ -t 1 ]
+  }
+  # points_here FILE: `claude mcp list` output in FILE shows the plugin at this server.
+  points_here() {
+    awk -v line="plugin:loom:loom: $server_url/mcp" 'index($0, line) == 1 { found = 1 } END { exit !found }' "$1"
   }
 
   # Agents on this machine, connected the way the README does it, with no token:
@@ -586,27 +612,30 @@ main() {
       claude_loom=$(awk '/(^|[[:space:]])loom@loom$/ { on = 1 } on { print } on && /Status:/ { exit }' \
         "$tmp_dir/claude.plugins")
       if [ -n "$claude_loom" ]; then
-        bounded claude mcp list >"$tmp_dir/claude.mcp" 2>/dev/null || true
+        # `claude mcp list` starts the servers it checks: only for a run that may
+        # connect Claude Code.
         if printf '%s' "$claude_loom" | grep -q 'disabled'; then
           printf 'Claude Code: the Loom plugin is disabled; `claude plugin enable loom@loom` turns it on\n'
-        elif grep -q "^plugin:loom:loom: $server_url/mcp" "$tmp_dir/claude.mcp"; then
-          agents="$agents Claude Code"
-        else
-          printf 'Claude Code: the Loom plugin installed before points at another server; for this one: claude plugin install loom@loom --config server_url=%s\n' "$server_url"
+        elif asked claude-code; then
+          bounded claude mcp list >"$tmp_dir/claude.mcp" 2>/dev/null || true
+          if points_here "$tmp_dir/claude.mcp"; then
+            agents="$agents Claude Code"
+          else
+            printf 'Claude Code: the Loom plugin installed before points at another server; for this one: claude plugin install loom@loom --config server_url=%s\n' "$server_url"
+          fi
         fi
       elif wants claude-code "Claude Code"; then
-        set --
-        [ "$server_url" = "$default_url" ] || set -- --config "server_url=$server_url"
         # A marketplace added before is no error: the install below says what fails.
-        bounded claude plugin marketplace add ClickHouse/loom >/dev/null 2>&1 || true
-        if bounded claude plugin install loom@loom "$@" >/dev/null; then
+        bounded claude plugin marketplace add ClickHouse/loom >/dev/null || true
+        # The URL is always given: the plugin's default reads LOOM_BASE_URL.
+        if bounded claude plugin install loom@loom --config "server_url=$server_url" >/dev/null; then
           bounded claude mcp list >"$tmp_dir/claude.mcp" 2>/dev/null || true
-          if grep -q '^plugin:loom:loom:.*Connected' "$tmp_dir/claude.mcp"; then
+          if points_here "$tmp_dir/claude.mcp"; then
             printf 'Claude Code: connected (the plugin'"'"'s other settings are optional)\n'
+            agents="$agents Claude Code"
           else
-            printf 'Claude Code: the plugin is installed; `claude mcp list` shows whether it reaches Loom\n'
+            printf 'Claude Code: the plugin is installed; `claude mcp list` shows whether it reaches %s\n' "$server_url"
           fi
-          agents="$agents Claude Code"
         else
           printf 'Claude Code: could not install the plugin (above); the README has the two commands\n'
         fi
@@ -620,21 +649,22 @@ main() {
     fi
     if command -v codex >/dev/null 2>&1; then
       bounded codex plugin list >"$tmp_dir/codex.plugins" 2>/dev/null || true
-      codex_loom=$(grep '^loom@loom[[:space:]]' "$tmp_dir/codex.plugins") || codex_loom=
+      # Its STATUS column: "installed, enabled", "installed, disabled", "not installed".
+      codex_loom=$(awk '$1 == "loom@loom" { print $2, $3; exit }' "$tmp_dir/codex.plugins")
       if [ "$server_url" != "$default_url" ]; then
         # Codex plugins take no install options: the URL is fixed in the plugin.
         # Said when Codex has the plugin or the run asked for Codex.
         case ",${LOOM_CONNECT:-},$codex_loom" in
-          *,codex,* | *,all,* | *,loom@loom*)
+          *,codex,* | *,all,* | *,installed*)
             printf 'Codex: its Loom plugin uses %s; to reach %s, see https://github.com/%s/blob/main/docs/features/integrations/codex.md\n' "$default_url" "$server_url" "$REPOSITORY"
             ;;
         esac
-      elif printf '%s' "$codex_loom" | grep -q 'installed, enabled'; then
+      elif [ "$codex_loom" = "installed, enabled" ]; then
         agents="$agents Codex"
-      elif [ -n "$codex_loom" ] && printf '%s' "$codex_loom" | grep -q 'installed'; then
+      elif [ "${codex_loom%%,*}" = installed ]; then
         printf 'Codex: the Loom plugin is installed but not enabled\n'
       elif wants codex Codex; then
-        bounded codex plugin marketplace add ClickHouse/loom >/dev/null 2>&1 || true
+        bounded codex plugin marketplace add ClickHouse/loom >/dev/null || true
         if bounded codex plugin add loom@loom >/dev/null; then
           printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
           agents="$agents Codex"
