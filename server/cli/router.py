@@ -25,9 +25,18 @@ def _refusal() -> str:
         return "LOOM_ROUTER_PG_DSN is LOOM_PG_DSN: give the directory a database of its own"
     from server.router.routing import usable_upstream
 
-    upstream = settings.router_upstream_url
-    if upstream and not usable_upstream(upstream):
-        return "LOOM_ROUTER_UPSTREAM_URL is no http(s)://host[:port] with no path"
+    for name, value in (
+        ("LOOM_ROUTER_UPSTREAM_URL", settings.router_upstream_url),
+        ("LOOM_ROUTER_UPSTREAM_PROBE_URL", settings.router_upstream_probe_url),
+    ):
+        if value and not usable_upstream(value):
+            return f"{name} is no http(s)://host[:port] with a valid host and no path"
+    from server.core.cell import normalise_host
+    from server.router.routing import usable_host
+
+    shared = settings.router_shared_host
+    if shared and not usable_host(normalise_host(shared)):
+        return "LOOM_ROUTER_SHARED_HOST names no valid host"
     return ""
 
 

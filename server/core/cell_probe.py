@@ -1,5 +1,6 @@
-"""The probe route: what a deployment answers so `loom cell prepare` and attach can tell
-it is the one whose stores they write to (docs/architecture/cells.md, "Preparing a cell").
+"""The probe route: what a deployment answers so the router (registering a cell for
+`loom cell prepare`) and attach can tell it is the one whose stores they write to
+(docs/architecture/cells.md, "Preparing a cell").
 
 - On the main port, `GET /v1/health/deployment` answers only the deployment id this
   process verified at boot, held in memory: it reads no store, needs no credential and
@@ -12,8 +13,9 @@ it is the one whose stores they write to (docs/architecture/cells.md, "Preparing
   these values is secret. It answers 429 past PROBES_PER_MINUTE per process. Every web
   process of a host accepts on the port (SO_REUSEPORT); the workers child opens none.
 
-Prepare writes a nonce to each store, reads it back here, and deletes it. A copy of
-another deployment's stores answers that deployment's id with none of this nonce.
+Prepare writes a nonce to each store; the router reads them back here as it registers the
+cell (so the router's pods reach this port), and prepare deletes them. A copy of another
+deployment's stores answers that deployment's id with none of these nonces.
 """
 
 from __future__ import annotations

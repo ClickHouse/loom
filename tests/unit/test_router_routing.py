@@ -405,6 +405,12 @@ def test_an_upstream_that_is_no_bare_http_address_answers_503(upstream: str) -> 
     assert _to(_table(cells=cells), host="eu-2.example") == 503
     assert not routing.usable_upstream(upstream)
     assert routing.usable_upstream("http://eu-2.internal:7777/")
+    assert routing.usable_upstream("http://[fd00::7]:7777")
+    assert routing.usable_upstream("http://eu-2.internal.:7777")  # fully qualified
+    for port in ("77900", "-1", "1_0", "0"):
+        assert not routing.usable_upstream(f"http://eu-2.internal:{port}")
+    assert not routing.usable_upstream("http://eu-2.internal..:7777")
+    assert routing.usable_upstream("https://b\u00fccher.example")
 
 
 def test_the_router_refuses_to_serve_with_an_unusable_pass_through(monkeypatch) -> None:

@@ -12,6 +12,10 @@
 - `POST /cells/v1/operator/cells/<cell>/limit` and `.../credential`: the operator's
   changes to a cell's row (`loom cell limit`, `loom cell credential`), with the router's
   operator credential;
+- `POST /cells/v1/operator/cells/<cell>/register`: a cell's preparation registers it,
+  once the probe listener (the first cell's at LOOM_ROUTER_UPSTREAM_PROBE_URL, a later
+  cell's at its `probe_url`) answers its deployment id, prepare's nonces and the bucket
+  and prefix it stores under;
 - `GET /livez` and `GET /readyz` (the directory answers, read at most once a second).
 
 Every refusal of a placement answers 503 and writes nothing, so the cell's request
@@ -23,10 +27,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
+import re
+import ssl
 import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -43,6 +51,7 @@ from starlette.routing import Route
 
 from server.auth.tenancy import ORG_FREE
 from server.core import cell as cell_state
+from server.core.cell_probe import PATH as PROBE_PATH
 from server.router import directory, routing
 from server.router.limits import MAX_KEYS, Limiter
 from server.settings import settings
@@ -165,8 +174,15 @@ def _answer(org: str, cell: str, host: str) -> JSONResponse:
 
 
 class Router:
-    def __init__(self, *, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        probe_transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self._clock = clock
+        # Where registration's probe goes: None is the network.
+        self._probe_transport = probe_transport
         self.placements = Limiter(settings.router_placements_per_minute, clock=clock)
         self.lookups = Limiter(settings.router_lookups_per_minute, clock=clock)
         # The cells' credential hashes, read from the directory at most once per
@@ -468,8 +484,10 @@ class Router:
                 code="NO_OPERATOR_CREDENTIAL",
             )
         token = _bearer(request)
-        presented = hashlib.sha256(token.encode()).hexdigest() if token else ""
-        if presented and hmac.compare_digest(presented, expected):
+        # Only an operator credential (`lco_`, as `loom cell credential new --operator`
+        # makes it): a cell's (`lcr_`) never operates, even if its hash were configured here.
+        presented = hashlib.sha256(token.encode()).hexdigest()
+        if token.startswith("lco_") and hmac.compare_digest(presented, expected):
             return None
         return _refused(401, "the operator credential is not the router's")
 
@@ -512,6 +530,8 @@ class Router:
             return _refused(400, "a rotation step is next (with sha256), finish or revert")
         if step == "next" and not (isinstance(sha, str) and cell_state.SHA256.fullmatch(sha)):
             return _refused(400, "sha256 is 64 lowercase hex characters: the credential's hash")
+        if step == "next" and _is_operator_hash(sha):
+            return _refused(400, _OPERATOR_HASH_REFUSAL)
         response = await _operator_answer(
             lambda: directory.rotate_credential(request.path_params["cell"], step, sha)
         )
@@ -520,6 +540,48 @@ class Router:
         if response.status_code in (200, 503):
             self._forget_credentials()
         return response
+
+    async def register(self, request: Request) -> JSONResponse:
+        """A cell's preparation: register the cell once its probe address shows the stores
+        prepare wrote its nonces to are the ones the cell serves from. The first cell
+        (its host is the shared host) is probed at LOOM_ROUTER_UPSTREAM_PROBE_URL, never an
+        address prepare names; a later cell at its own `probe_url`."""
+        if refusal := self._operator(request):
+            return refusal
+        if refusal := _malformed_cell_refusal(request):
+            return refusal
+        parsed = _registration(request.path_params["cell"], await _body(request))
+        if isinstance(parsed, JSONResponse):
+            return parsed
+        reg, nonces = parsed
+        try:
+            if refused := await directory.refusal_before_probe(reg):
+                return _refused(409, refused)
+        except directory.DirectoryUnavailable as e:
+            return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
+        if refusal := await _probe(reg, nonces, self._probe_transport):
+            return refusal
+        # Only a first cell has an upstream, and a rerun may come with none: it copies none.
+        if reg.upstream_url and (refusal := await _upstream_check(reg, self._probe_transport)):
+            return refusal
+        try:
+            row, written = await directory.register(reg)
+        except directory.OperatorRefused as e:
+            return _refused(409, e.reason)
+        except directory.DirectoryUnavailable as e:
+            # Its commit may have landed: this replica reads the hashes again.
+            self._forget_credentials()
+            return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
+        self._forget_credentials()  # its credential places from this replica at once
+        return JSONResponse(
+            {
+                "cell": row.cell,
+                "is_first": row.is_first,
+                "state": row.state,
+                "mode": row.mode,
+                "registered": written,
+            }
+        )
 
     async def livez(self, _request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok"})
@@ -595,6 +657,304 @@ def _malformed_cell_refusal(request: Request) -> JSONResponse | None:
     return None
 
 
+# A probe answers from memory or reads three keys: a few seconds is ample.
+PROBE_TIMEOUT = httpx.Timeout(10.0, connect=5.0)  # not a setting: the probe's shape bounds it
+PROBE_DEADLINE_S = 15.0  # not a setting: the whole probe, however slowly it answers
+# The longest a registration's answer can take: the read before the probe, the probe and
+# the first cell's upstream check, then the write. A client waits at least this long.
+REGISTER_ANSWER_MAX_S = (  # not a setting: derived
+    directory.REFUSAL_READ_MAX_S + 2 * PROBE_DEADLINE_S + directory.REGISTER_MAX_S
+)
+_SECONDS = re.compile(r"[0-9]{1,6}")  # ASCII digits: str.isdigit takes any script's
+_TEXT_MAX = 1024  # not a setting: a host, an id, a bucket name or prefix is far shorter
+_NONCE_MAX = 128  # not a setting: prepare's nonces are 32 hex characters
+# The listener echoes the deployment id, bucket and prefix (each at most _TEXT_MAX) and
+# three nonces (each at most _NONCE_MAX), 6 bytes a character at most as JSON; the rest
+# is room for the keys.
+PROBE_ANSWER_MAX = 6 * (3 * _TEXT_MAX + 3 * _NONCE_MAX) + 4096  # not a setting: derived
+_NONCES = ("postgres", "clickhouse", "bucket")
+
+
+def _text(body: dict[str, Any], key: str, *, needed: bool = False) -> str | None:
+    value = body.get(key, "")
+    if not isinstance(value, str) or len(value) > _TEXT_MAX or "\x00" in value:
+        return None
+    try:
+        value.encode()  # a lone surrogate: malformed, never a directory outage
+    except UnicodeEncodeError:
+        return None
+    return value if value or not needed else None
+
+
+def _nonce(value: Any) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= _NONCE_MAX and value.isascii()
+
+
+_OPERATOR_HASH_REFUSAL = (
+    "that is the operator credential's hash: a cell's credential must be its own "
+    "(`loom cell credential new`)"
+)
+
+
+def _is_operator_hash(sha: str) -> bool:
+    """Whether `sha` is the router's operator credential's: a cell holding it could make
+    every operator change."""
+    return hmac.compare_digest(sha, settings.router_operator_sha256)
+
+
+def _cell_address(value: str) -> str | None:
+    """A cell's probe or upstream address in the shape the forward's upstreams take
+    (`http(s)://host[:port]`, `routing.usable_upstream`), written one way however it is
+    spelled (host in lower case, IDNA-encoded, an IPv6 address compressed; no default
+    port and no trailing `/`; a fully qualified name keeps its final dot, as the forward
+    resolves it), so replicas that spell one address differently agree on it; the router
+    appends the path."""
+    if not routing.usable_upstream(value):
+        return None
+    u = httpx.URL(value)
+    # httpx lower-cases a name; an IPv6 address is compressed (lower-cased) below.
+    host = u.raw_host.decode("ascii")
+    if ":" in host:  # an IPv6 address, which httpx gives without its brackets
+        host = f"[{ipaddress.ip_address(host).compressed}]"
+    default = {"http": 80, "https": 443}[u.scheme]
+    return f"{u.scheme}://{host}" + ("" if u.port in (None, default) else f":{u.port}")
+
+
+def _registration(
+    cell: str, body: Any
+) -> tuple[directory.Registration, dict[str, str | None]] | JSONResponse:
+    known = {"host", "deployment_id", "credential_sha256", "bucket", "bucket_prefix"}
+    if not isinstance(body, dict) or set(body) - known - {"probe_url", "nonces"}:
+        return _refused(
+            400,
+            "a registration is a JSON object of " + ", ".join(sorted(known)) + " and nonces, "
+            "with a later cell's probe_url",
+        )
+    host_text = _text(body, "host", needed=True)
+    deployment_id = _text(body, "deployment_id", needed=True)
+    sha = _text(body, "credential_sha256", needed=True)
+    bucket, prefix = _text(body, "bucket"), _text(body, "bucket_prefix")
+    probe = _text(body, "probe_url")
+    if (
+        host_text is None
+        or deployment_id is None
+        or bucket is None
+        or prefix is None
+        or probe is None
+    ):
+        return _refused(
+            400,
+            f"host and deployment_id are required; each field is text of at most {_TEXT_MAX} "
+            "characters, with no NUL and no lone surrogate",
+        )
+    host = cell_state.normalise_host(host_text)
+    # A host is written once and never moved: the address rule, one spelling.
+    if not routing.usable_host(host):
+        return _refused(400, "host names no valid host")
+    if sha is None or not cell_state.SHA256.fullmatch(sha):
+        return _refused(400, "credential_sha256 is 64 lowercase hex characters: the hash")
+    if _is_operator_hash(sha):
+        return _refused(400, _OPERATOR_HASH_REFUSAL)
+    nonces = body.get("nonces")
+    if not (
+        isinstance(nonces, dict)
+        and set(nonces) == set(_NONCES)
+        and _nonce(nonces["postgres"])
+        and _nonce(nonces["clickhouse"])
+        and (nonces["bucket"] is None if not bucket else _nonce(nonces["bucket"]))
+    ):
+        return _refused(
+            400,
+            "nonces names postgres, clickhouse and bucket (null with no bucket), each ASCII "
+            f"text of 1 to {_NONCE_MAX} characters",
+        )
+    if prefix and not bucket:
+        return _refused(400, "a bucket_prefix is named with its bucket")
+    if bucket and (not prefix or prefix != prefix.strip("/")):
+        # A cell's own settings refuse these (LOOM_DOCUMENT_S3_PREFIX), so no listener
+        # could echo them back.
+        return _refused(400, "a bucket's prefix is named, with no leading or trailing /")
+    probe_address = _cell_address(probe) if probe else ""
+    if probe_address is None:
+        return _refused(400, "probe_url, when given, is http(s)://host[:port] with a valid host")
+    # What needs no configuration is judged above; what depends on the first cell, below.
+    shared_host = cell_state.normalise_host(settings.router_shared_host)
+    if not shared_host:  # unset, or no host it can read (`loom router serve` refuses that)
+        return _refused(
+            409,
+            "the router needs LOOM_ROUTER_SHARED_HOST, a valid host, to tell the first cell "
+            "from a later one",
+        )
+    is_first = host == shared_host
+    upstream = ""
+    if is_first:
+        if probe:
+            return _refused(
+                400, "the first cell is probed at the router's own address: no probe_url"
+            )
+        # The router's own configuration, never prepare's: the deployment it fronts.
+        address = _cell_address(settings.router_upstream_probe_url) or ""
+        if not address:
+            return _refused(
+                409,
+                "the router needs LOOM_ROUTER_UPSTREAM_PROBE_URL (http or https with a host) "
+                "to register the first cell",
+            )
+        # The upstream may be '': only a new row copies it (the directory refuses one
+        # without it), and a rerun probes and answers without it.
+        upstream = _cell_address(settings.router_upstream_url) or ""
+    else:
+        if not probe_address:
+            return _refused(400, "a later cell names its probe_url")
+        address = probe_address
+    reg = directory.Registration(
+        cell=cell,
+        host=host,
+        deployment_id=deployment_id,
+        credential_sha256=sha,
+        bucket=bucket,
+        bucket_prefix=prefix,
+        probe_url=address,
+        is_first=is_first,
+        upstream_url=upstream,
+    )
+    return reg, dict(nonces)
+
+
+@functools.cache
+def _trusted_cas() -> ssl.SSLContext:
+    """The certificate authorities the forward trusts (SSL_CERT_FILE, SSL_CERT_DIR): the
+    probe reads no proxy from the environment, but a cell behind a private CA is reached
+    as the forward reaches it. Built once: the environment it reads is the process's, and
+    reading the bundle again would block the loop on every probe."""
+    return httpx.create_ssl_context(trust_env=True)
+
+
+async def _fetch(
+    url: str, transport: httpx.AsyncBaseTransport | None
+) -> tuple[int, str, Any] | None:
+    """GET `url` within the probe's bounds: its status, Retry-After and JSON answer (None
+    when it is no JSON, or past the cap); None when it could not be reached. The whole
+    call is bounded, and so is the answer's size: it is asked uncompressed and an encoded
+    answer is read as none, so the cap counts what was received."""
+    try:
+        async with asyncio.timeout(PROBE_DEADLINE_S):
+            async with (
+                httpx.AsyncClient(
+                    timeout=PROBE_TIMEOUT,
+                    trust_env=False,
+                    verify=_trusted_cas(),
+                    transport=transport,
+                ) as client,
+                client.stream("GET", url, headers={"Accept-Encoding": "identity"}) as r,
+            ):
+                status, retry_after = r.status_code, r.headers.get("retry-after", "")
+                # Never inflated: an encoded answer is no listener's, which sends none.
+                encoded = r.headers.get("content-encoding", "identity") not in ("", "identity")
+                raw = b""
+                if not encoded:
+                    async for chunk in r.aiter_bytes():
+                        raw += chunk
+                        if len(raw) > PROBE_ANSWER_MAX:
+                            break
+    except (httpx.HTTPError, TimeoutError) as e:
+        # The error's text goes to the router's log only (a certificate it cannot verify
+        # reads as unreachable to the caller): never into an answer.
+        log.warning("register: %s unreachable: %s: %s", url, type(e).__name__, e)
+        return None
+    try:
+        answer = json.loads(raw) if not encoded and len(raw) <= PROBE_ANSWER_MAX else None
+    except (ValueError, RecursionError):  # nested past the parser's depth
+        answer = None
+    return status, retry_after, answer
+
+
+async def _probe(
+    reg: directory.Registration,
+    nonces: dict[str, str | None],
+    transport: httpx.AsyncBaseTransport | None,
+) -> JSONResponse | None:
+    """None when the probe listener at the cell's probe address answers its deployment
+    id, the nonces prepare wrote and the bucket and prefix it names, else the refusal. A
+    busy listener answers 503 `PROBE_BUSY` with its Retry-After; an unreachable one, or
+    one that cannot read a store, 503 `PROBE_UNREACHABLE`: prepare waits and asks again."""
+    fetched = await _fetch(reg.probe_url + PROBE_PATH, transport)
+    if fetched is None:
+        return _refused(503, "the probe address could not be reached", code="PROBE_UNREACHABLE")
+    status, retry_after, answer = fetched
+    if status == 429:
+        # Passed on only as a short count of seconds: the listener's text is not ours.
+        # At least 1: a 0 would have prepare ask again at once.
+        ok = _SECONDS.fullmatch(retry_after) and int(retry_after) > 0
+        retry_after = retry_after if ok else "1"
+        return _refused(
+            503, "the probe listener is busy", {"Retry-After": retry_after}, code="PROBE_BUSY"
+        )
+    if status == 503 and isinstance(answer, dict) and answer.get("store") in _NONCES:
+        # The listener's own answer names the store it could not read.
+        store = answer["store"]
+        return _refused(503, f"the probe listener could not read {store}", code="PROBE_UNREACHABLE")
+    if status in (502, 503, 504):  # a gateway in front of a listener it could not reach
+        return _refused(503, "the probe address could not be reached", code="PROBE_UNREACHABLE")
+    if status != 200 or not isinstance(answer, dict):
+        return _refused(409, f"the probe address did not answer as a probe listener ({status})")
+    if answer.get("deployment_id") != reg.deployment_id:
+        return _refused(409, "the probe address reports another deployment id")
+    if "nonces" not in answer:
+        # The main port answers the same path with the id alone.
+        return _refused(
+            409,
+            "the probe address answered as a main port, not the probe listener "
+            "(LOOM_CELL_PROBE_PORT)",
+        )
+    # Before the nonces: a listener storing elsewhere reads no bucket nonce, and its bucket
+    # names what to fix.
+    if answer.get("bucket") != {"name": reg.bucket, "prefix": reg.bucket_prefix}:
+        return _refused(409, "the probe listener stores under another bucket or prefix")
+    if answer.get("nonces") != nonces:
+        return _refused(409, "the probe listener does not read the stores prepare wrote to")
+    return None
+
+
+async def _upstream_check(
+    reg: directory.Registration, transport: httpx.AsyncBaseTransport | None
+) -> JSONResponse | None:
+    """None when the first cell's upstream (the deployment the shared host forwards to)
+    reports the deployment id its probe listener did, else the refusal: registration
+    copies the upstream into the row, so it must be the same deployment. The main port
+    answers the id from memory and sets no rate of its own: a 429, 502, 503 or 504 there
+    is a proxy's in front of it, and is asked again."""
+    fetched = await _fetch(reg.upstream_url + PROBE_PATH, transport)
+    if fetched is None or fetched[0] in (429, 502, 503, 504):
+        return _refused(
+            503, "LOOM_ROUTER_UPSTREAM_URL could not be reached", code="PROBE_UNREACHABLE"
+        )
+    status, _retry_after, answer = fetched
+    if status != 200 or not isinstance(answer, dict):
+        return _refused(409, f"LOOM_ROUTER_UPSTREAM_URL did not answer as Loom ({status})")
+    if "nonces" in answer:
+        # The probe listener answers the same path with its nonces.
+        return _refused(
+            409,
+            "LOOM_ROUTER_UPSTREAM_URL answered as the probe listener, not the main port",
+        )
+    if answer.get("deployment_id") == "":
+        # A serving process has verified its deployment at boot, so '' never changes: it
+        # runs without the Postgres authority, which a cell needs.
+        return _refused(
+            409,
+            "LOOM_ROUTER_UPSTREAM_URL reports no deployment id: it runs without the "
+            "Postgres authority (LOOM_STORAGE_AUTHORITY=postgres), which a cell needs",
+        )
+    if answer.get("deployment_id") != reg.deployment_id:
+        return _refused(
+            409,
+            "LOOM_ROUTER_UPSTREAM_URL reports another deployment id than "
+            "LOOM_ROUTER_UPSTREAM_PROBE_URL: they must name one deployment",
+        )
+    return None
+
+
 async def _operator_answer(change: Callable[[], Awaitable[directory.Cell]]) -> JSONResponse:
     try:
         row = await change()
@@ -637,6 +997,7 @@ def build_app(router: Router | None = None) -> Starlette:
             Route("/cells/v1/placements", router.place, methods=["POST"]),
             Route("/cells/v1/cells/{cell}", router.cell_state, methods=["GET"]),
             Route("/cells/v1/operator/cells/{cell}/limit", router.set_limit, methods=["POST"]),
+            Route("/cells/v1/operator/cells/{cell}/register", router.register, methods=["POST"]),
             Route(
                 "/cells/v1/operator/cells/{cell}/credential",
                 router.rotate_credential,

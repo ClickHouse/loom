@@ -349,13 +349,18 @@ class AuthSettings(BaseModel):
     # replica (`GET /cells/lookup`).
     router_lookups_per_minute: int = Field(default=60, ge=1)
     # The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4,
-    # beside the first cell's own host and aliases; "" = only those, once it is registered.
+    # beside the first cell's own host and aliases; "" = no cell registers (registration
+    # tells the first cell by this host), and once one has, only its own host and aliases.
     router_shared_host: str = ""
-    # The address the router forwards the shared host to before a first cell is
-    # registered (the deployment it was put in front of); "" = none: those answer 503.
+    # Where the router forwards the shared host until a first cell registers, which copies
+    # it into its row; "" = 503 there and no first cell registers.
     router_upstream_url: str = ""
+    # The probe listener address of the deployment behind the shared host, at which the
+    # first cell's registration is checked; "" = no first cell can be registered.
+    router_upstream_probe_url: str = ""
     # SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell
-    # limit` and `loom cell credential` call its operator API with; "" = that API refuses.
+    # limit`, `loom cell credential` and a cell's registration call its operator API with;
+    # "" = that API refuses.
     router_operator_sha256: Annotated[str, Field(pattern=r"^(?:[0-9a-f]{64})?$")] = ""
     # The operator credential itself, for the CLI that calls the router's operator API:
     # `lco_` then `openssl rand -hex 64` (`loom cell credential new --operator`). "" = none.
