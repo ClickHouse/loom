@@ -22,8 +22,12 @@ import threading
 import time
 from collections.abc import Callable
 
+# How long a client may stay silent once the proxy has ended its tunnel. Not a
+# setting: the relay runs inside the sandbox on the standard library alone.
+_LINGER_S = 1.0
 
-def _to_client(src: socket.socket, dst: socket.socket, done: threading.Event) -> None:
+
+def _to_client(src: socket.socket, dst: socket.socket, proxy_done: threading.Event) -> None:
     """Proxy to client, to the proxy's EOF."""
     try:
         while data := src.recv(65536):
@@ -31,17 +35,17 @@ def _to_client(src: socket.socket, dst: socket.socket, done: threading.Event) ->
     except OSError:
         pass
     finally:
-        done.set()
+        proxy_done.set()
         with contextlib.suppress(OSError):
             dst.shutdown(socket.SHUT_WR)
 
 
 def _to_proxy(src: socket.socket, dst: socket.socket, proxy_done: threading.Event) -> None:
-    """Client to proxy, to the client's EOF, or to a second without a byte once the
-    proxy's side has ended: a client may keep a finished connection open."""
+    """Client to proxy, to the client's EOF, or to `_LINGER_S` without a byte once
+    the proxy's side has ended: a client may keep a finished connection open."""
     try:
         while True:
-            if not select.select([src], [], [], 1.0)[0]:
+            if not select.select([src], [], [], _LINGER_S)[0]:
                 if proxy_done.is_set():
                     return
                 continue

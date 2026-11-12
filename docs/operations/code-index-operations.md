@@ -538,7 +538,8 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   first refusal, and the total when the job ends if there was more than one. A tunnel
   idle for 5 minutes is closed; once its client has finished, it is closed after
   `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` (10 s by default) without a byte either way,
-  or, while bytes still wait for a slow client, after the idle timeout.
+  or, while bytes still wait for a slow client, after the idle timeout. A client that
+  never reads what it was sent keeps its relay connection, and so its relay slot.
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are

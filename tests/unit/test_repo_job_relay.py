@@ -1,8 +1,9 @@
 """The relay inside a repository-job sandbox bridges at most a fixed number of
-connections at a time. A thread it cannot start waits for the job's task limit,
-and a socket it cannot open or a failed accept costs at most one connection,
-never the relay: a client opening hundreds at once (pnpm's metadata check) would
-otherwise reach the job's task limit and leave the job with no route out."""
+connections at a time. A thread it cannot start is retried while the job is at its
+task limit, and a socket it cannot open or a failed accept costs at most one
+connection, never the relay: a client opening hundreds at once (pnpm's metadata
+check) would otherwise reach the job's task limit and leave the job with no route
+out."""
 
 from __future__ import annotations
 
@@ -176,7 +177,9 @@ def test_a_thread_that_cannot_start_is_started_again(
         client = socket.create_connection(("127.0.0.1", port), timeout=5)
         assert upstream.arrived.acquire(timeout=5)
         upstream.held[0].sendall(b"hi")
-        assert client.recv(2) == b"hi"  # both directions run
+        assert client.recv(2) == b"hi"
+        client.sendall(b"yo")
+        assert upstream.held[0].recv(2) == b"yo"
         client.close()
 
 

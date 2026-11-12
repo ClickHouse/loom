@@ -358,7 +358,7 @@ async def test_a_slow_client_after_its_eof_still_gets_the_whole_response(
         server.close()
 
 
-async def test_a_client_that_never_reads_is_closed_at_the_idle_timeout(
+async def test_a_client_that_never_reads_frees_its_slot_at_the_idle_timeout(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     done = asyncio.Event()
@@ -398,10 +398,11 @@ async def test_close_ends_a_tunnel_in_its_half_close_wait(
         await done.wait()
         writer.close()
 
+    monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 30.0)
     proxy, server, reader, writer = await _tunnel_to(quiet, sock_dir, monkeypatch)
     try:
         writer.write_eof()
-        await asyncio.sleep(0.2)  # in the 10 s half-close wait
+        await asyncio.sleep(0.2)  # in the half-close wait
         await asyncio.wait_for(proxy.close(), timeout=5)
         assert await asyncio.wait_for(reader.read(), timeout=5) == b""
         writer.close()

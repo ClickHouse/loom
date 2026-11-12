@@ -1853,7 +1853,7 @@ class CodeSettings(BaseModel):
     # kept, in this process only.
     code_coverage_control_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
     # Seconds a repository job's egress tunnel may move no byte, once its client has sent
-    # EOF, before it is closed: a server need not close a finished connection.
+    # EOF, before it is closed (up to the idle timeout while bytes wait for the client).
     code_egress_half_close_timeout_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Seconds a repository job's egress tunnel may move no byte before it is closed.
     code_egress_idle_timeout_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)

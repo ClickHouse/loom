@@ -91,15 +91,13 @@ async def _until_server_quiet(
     finished with. Bytes still on their way to a slow client are not silence, up to
     `code_egress_idle_timeout_s`."""
     while not server_side.done():
-        timeout = settings.code_egress_half_close_timeout_s
+        half_close = settings.code_egress_half_close_timeout_s
+        buffered = to_client.transport.get_write_buffer_size()
+        limit = settings.code_egress_idle_timeout_s if buffered else half_close
         quiet = time.monotonic() - last_active[0]
-        left = timeout - quiet
-        if left <= 0:
-            buffered = to_client.transport.get_write_buffer_size()
-            if not buffered or quiet >= settings.code_egress_idle_timeout_s:
-                return
-            left = timeout
-        await asyncio.wait({server_side}, timeout=left)
+        if quiet >= limit:
+            return
+        await asyncio.wait({server_side}, timeout=min(limit - quiet, half_close))
 
 
 class EgressProxy:
