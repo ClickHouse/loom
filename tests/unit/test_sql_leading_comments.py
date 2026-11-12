@@ -19,27 +19,32 @@ from server.core.ch_class_settings import is_read_statement
 _HOSTILE = ["/**/" * 26 + "!", "/*" + "*/ /*" * 26 + "!"]
 
 
-def test_leading_comments_are_skipped() -> None:
-    sql = "-- a\n/* b */ /* c * / d */\nINSERT INTO t VALUES (1)"
-    assert statement_class(sql) == "write"
-    assert is_read_statement("/* x */ -- y\n  select 1")
+# Leading comments every reader skips: `--`, `/* */`, a `* /` inside a comment, and a
+# `*` just before the close.
+_HEADS = ["-- a\n", "/* b */ ", "/* c * / d */\n", "/** doc **/ ", "/***/", "-- x\n/* y */ "]
+# A known limit, not wanted behaviour: ClickHouse nests `/* */`, these readers do not,
+# so the text after the first `*/` is read as the statement's start.
+_NESTED = ["/* a /* b */ (c) */ ", "/* a /* b */ x */ "]
+
+
+@pytest.mark.parametrize("head", _HEADS)
+def test_leading_comments_are_skipped(head: str) -> None:
+    assert statement_class(head + "INSERT INTO t VALUES (1)") == "write"
+    assert is_read_statement(head + "SELECT 1")
+    assert looks_like_sql(head + "SELECT a FROM t", inside_client=True)
+    assert _sql_head(head + "SELECT 1") == "SELECT 1"
+
+
+def test_a_keyword_inside_a_comment_is_not_the_statement() -> None:
     assert not is_read_statement("/* SELECT */ INSERT INTO t VALUES (1)")
-    assert looks_like_sql("/* q */ SELECT a FROM t", inside_client=True)
-    # A `*` just before the close still closes the comment.
-    assert statement_class("/** doc **/ /***/ INSERT INTO t VALUES (1)") == "write"
-    assert is_read_statement("/** doc **/ SELECT 1")
-    assert looks_like_sql("/***/ SELECT a FROM t", inside_client=True)
-    assert _sql_head("-- name: Get :one\n/* a */ /** b **/ SELECT 1") == "SELECT 1"
 
 
-def test_a_comment_ends_at_its_first_close() -> None:
-    # A known limit, not wanted behaviour: ClickHouse nests `/* */`, these readers do not,
-    # so the text after the first `*/` is read as the statement's start.
-    assert statement_class("/* a /* b */ (c) */ INSERT INTO t VALUES (1)") == "read"
-    assert not is_read_statement("/* a /* b */ (c) */ SELECT 1")
-    assert not looks_like_sql("/* a /* b */ (c) */ SELECT a FROM t", inside_client=True)
-    assert not is_read_statement("/* a /* b */ x */ SELECT 1")
-    assert not looks_like_sql("/* a /* b */ x */ SELECT a FROM t", inside_client=True)
+@pytest.mark.parametrize("head", _NESTED)
+def test_a_comment_ends_at_its_first_close(head: str) -> None:
+    assert statement_class(head + "INSERT INTO t VALUES (1)") == "read"
+    assert not is_read_statement(head + "SELECT 1")
+    assert not looks_like_sql(head + "SELECT a FROM t", inside_client=True)
+    assert _sql_head(head + "SELECT 1") == head[head.index("*/") + 3 :] + "SELECT 1"
 
 
 @pytest.mark.parametrize("text", _HOSTILE)
