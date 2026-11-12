@@ -83,7 +83,7 @@ ids=(); for id in $(gh api "repos/ClickHouse/loom/actions/runs/$dispatch/pending
 gh api -X POST "repos/ClickHouse/loom/actions/runs/$dispatch/pending_deployments" "${ids[@]}" -f state=approved -f comment="Release $tag"   # the owner's go-ahead first
 ```
 
-To publish only the images and the GitHub Release, as for a `clickhouse_image` or `allow_clickhouse_downgrade` dispatch that stands in for a stopped tag run ([release process](../../../docs/development/release-process.md)), send the POST with `-f state=rejected -f comment="SDKs not published for $tag"`.
+To publish only the images and the GitHub Release, as for a `clickhouse_image` or `allow_clickhouse_downgrade` dispatch that stands in for a stopped tag run ([release process](../../../docs/development/release-process.md)), send the POST with `-f state=rejected -f comment="SDKs not published for $tag"`. The run then ends failed on those jobs, while the images and the GitHub Release stay published.
 
 The final's bundle keeps the ClickHouse release its candidate soaked with. GitHub generates the Release's notes from the previous final (`prepare.py previous`); paste the release pull request's notes above them (release process, step 6). The tag run ends with `release-check` on the published installer. A failed job: `loom-investigate-ci`; the workflow's own recovery paths (a package first pushed private, a refused ClickHouse downgrade, and [a failed tag or signature](../../../docs/development/release-process.md#a-failed-tag-or-signature)) are in the release process.
 
@@ -100,7 +100,7 @@ Signed in to nothing, it runs the one-line installer (`curl -fsSL https://github
 ```bash
 curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom" | jq '.servers[].server.version'   # lists X.Y.Z
 npm view @clickhouse/loom dist-tags   # latest names the highest final
-curl -fsS -o /dev/null https://pypi.org/integrity/clickhouse-loom/X.Y.Z/clickhouse_loom-X.Y.Z-py3-none-any.whl/provenance   # exits 0: PyPI holds the wheel's provenance
+curl -fsS -o /dev/null https://pypi.org/integrity/clickhouse-loom/X.Y.Z/clickhouse_loom-X.Y.Z-py3-none-any.whl/provenance   # exits 0: PyPI holds the wheel's provenance; X.Y.ZrcN in both places for a candidate
 ```
 
 npm can take several minutes to list a version it has just accepted ("Your package is being processed"), so re-run a failed `sdks` job of `release-check` and read `dist-tags` again before calling the publish missing. Both SDKs publish through trusted publishing, with no token in the workflow, which is why PyPI holds the wheel's provenance and `npm audit signatures` finds an attestation.
