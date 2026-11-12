@@ -199,6 +199,27 @@ test("loom-status Node check under Claude Code judges the node on PATH, not the 
   }
 });
 
+test("after an install that leaves no Node 18+, the helper names what it found, per client", () => {
+  const f = fixture();
+  try {
+    f.put("uname", "echo Linux");
+    f.put("id", "echo 0");
+    // The package manager installs an old Node, as an old Alpine's does.
+    fs.symlinkSync(whichSync("chmod"), path.join(f.bin, "chmod"));
+    f.put("apk", `printf '#!/bin/sh\\necho v16.20.2\\n' > "$TEST_BIN/node"; chmod +x "$TEST_BIN/node"`);
+    const codex = f.run();
+    assert.equal(codex.status, 2);
+    assert.match(codex.stderr, /the first Node found, .*node \(v16\.20\.2\), is older/);
+    fs.rmSync(path.join(f.bin, "node"));
+    f.env.CLAUDE_PLUGIN_ROOT = path.join(f.dir, "plugin");
+    const claude = f.run();
+    assert.equal(claude.status, 2);
+    assert.match(claude.stderr, /first `node` on this PATH, .*node \(v16\.20\.2\), is not Node\.js 18\+/);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
 // The helper and its launcher copied to where a client installs the plugin.
 function installAt(root) {
   const scripts = path.join(root, "skills", "loom-status", "scripts");

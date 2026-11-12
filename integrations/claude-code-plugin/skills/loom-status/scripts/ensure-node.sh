@@ -172,10 +172,16 @@ case "$(uname -s)" in
     ;;
 esac
 
-ready || {
-  echo 'Node.js was installed, but the first `node` on this PATH is not 18+; put the new one first.' >&2
-  exit 2
-}
+# After an install: Claude Code needs it first on PATH; the launcher says
+# itself what it found.
+if claude_code; then
+  path_node || {
+    echo "Node.js was installed, but the first \`node\` on this PATH, $(command -v node || echo none) ($(node --version 2>/dev/null || echo 'no version')), is not Node.js 18+; put Node.js 18+ first on PATH." >&2
+    exit 2
+  }
+else
+  sh "$LAUNCHER" --check || exit 2
+fi
 if claude_code && [ "$(uname -s)" = Darwin ] && ! gui_check; then
   echo 'Claude Code started from the Dock or a desktop launcher still finds no Node.js 18+ as `node`. Fix: '"$GUI_FIX"
 fi

@@ -93,6 +93,8 @@ finding.
   started from the Dock or a desktop launcher on macOS it is only
   `/usr/bin:/bin:/usr/sbin:/sbin`, which holds no Node from Homebrew, the nodejs.org
   installer or a version manager. Then set `PATH` in the `env` block of `~/.claude/settings.json` to the whole search path with that Node's directory first, such as `"PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"`.
+  The `env` block applies to every Claude Code session, terminal ones too, so it needs
+  the whole path, not only Node's directory.
   If a hook says `node` was not found, run the `loom-status` skill; it diagnoses
   read-only and offers to install Node, running the installer only when you say yes.
 - Supported platforms: macOS (Apple silicon, Intel), Linux (x86_64, arm64; glibc or musl;
