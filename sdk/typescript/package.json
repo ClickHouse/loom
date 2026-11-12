@@ -61,6 +61,8 @@
     "ai-agents",
     "document-search",
     "code-search",
+    "rag",
+    "knowledge-base",
     "llm",
     "sdk"
   ],
