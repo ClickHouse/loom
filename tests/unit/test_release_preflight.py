@@ -571,3 +571,32 @@ def test_npm_latest_follows_the_github_releases_latest(
     assert result.returncode == 0, result.stderr
     (call,) = (tmp_path / "calls").read_text().splitlines()
     assert call.endswith(f"--tag {tag}")
+
+
+@pytest.mark.parametrize(
+    ("tag_version", "python_version"), [("1.2.0-rc.1", "1.2.0rc1"), ("1.2.0", "1.2.0")]
+)
+def test_the_python_sdk_takes_the_tags_pep440_version(
+    tmp_path: Path, tag_version: str, python_version: str
+) -> None:
+    """The wheel's METADATA names the version as written, and the verify step reads the PEP 440 form."""
+    jobs = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())["jobs"]
+    (step,) = [s for s in jobs["build"]["steps"] if s.get("id") == "sync-python"]
+    sdk = tmp_path / "sdk" / "python"
+    (sdk / "loom").mkdir(parents=True)
+    (sdk / "pyproject.toml").write_text('[project]\nname = "clickhouse-loom"\nversion = "0.0.0"\n')
+    (sdk / "loom" / "_version.py").write_text('__version__ = "0.0.0"\n')
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    # pip installs nothing; python is this interpreter, which has packaging.
+    (bin_dir / "pip").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "python").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    for tool in ("pip", "python"):
+        (bin_dir / tool).chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "VERSION": tag_version}
+    result = subprocess.run(
+        ["bash", "-e", "-c", step["run"]], env=env, cwd=tmp_path, capture_output=True
+    )
+    assert result.returncode == 0, result.stderr
+    assert f'version = "{python_version}"' in (sdk / "pyproject.toml").read_text()
+    assert (sdk / "loom" / "_version.py").read_text() == f'__version__ = "{python_version}"\n'
