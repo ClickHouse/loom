@@ -1,14 +1,17 @@
 name: codeql
 
 # Static analysis of the server, SDKs, dashboard, plugins and workflows; results
-# go to the repository's code scanning alerts. Tests, fixtures and benchmark
-# harnesses are left out: their findings are about code that never ships.
-# Push runs are keyed by commit so a later merge never cancels an earlier scan.
+# go to the repository's code scanning alerts and block no merge. Left out:
+# tests, fixtures and benchmark harnesses (code that never ships), the Codex
+# plugin's copies of the Claude Code plugin's files (agent_plugin_sync keeps
+# them identical, so each finding would show twice) and the generated settings
+# reference, whose thousands of comment lines overflow the YAML indexer.
+# release/** too: a supported line's patches get the same checks.
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"]
   schedule:
     - cron: "23 4 * * 1"
   workflow_dispatch:
@@ -27,7 +30,6 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      actions: read
       security-events: write
     strategy:
       fail-fast: false
@@ -43,12 +45,17 @@ jobs:
           build-mode: none
           config: |
             paths-ignore:
-              - tests/**
               - "**/tests/**"
               - "**/*.test.ts"
               - "**/*.test.tsx"
+              - "**/*.test-d.ts"
+              - sdk/typescript/test/**
               - frontend/e2e/**
               - bench/**
+              - integrations/codex-plugin/bin/**
+              - integrations/codex-plugin/hooks/**
+              - integrations/codex-plugin/lib/**
+              - loom.example.yaml
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: /language:${{ matrix.language }}
