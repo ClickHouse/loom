@@ -118,10 +118,11 @@ it, the page says so, and names a deployment setting only to whoever runs the de
 platform admin, or anyone with auth off). A viewer's empty Memories page also opens the
 namespace's members, where its admins are listed.
 
-A control inside a page that your role cannot use stays in view, unavailable, and says the
-role it needs and who grants it: "Needs writer on team. An admin of it can grant that."
-Choosing it sends nothing. Only a page or tab meant for another audience, such as the admin
-drawer's pages, is left out.
+In the members and namespace settings dialogs, Settings → Structure, the Library's add and
+re-upload, the memory drawer, **Ask about this** and the assistant's cards, a control your
+role cannot use stays in view, unavailable, and says the role it needs and who grants it:
+"Needs writer on team. An admin of it can grant that." Choosing it sends nothing. While your
+role is still loading, or the server decides it, the control says that instead.
 
 ### The assistant panel
 

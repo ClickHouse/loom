@@ -9,6 +9,7 @@ import { Unavailable } from "../../../components/ui";
 import { GuideDialog } from "../../../flows/GuideDialog";
 import { useNamespaceRoleRead } from "../../../lib/namespaceRole";
 import { callReason } from "../../../lib/callReason";
+import { canCall } from "../../../lib/canCall";
 import { useStore } from "../../../lib/state";
 import { ReviewChanges } from "../ReviewChanges";
 
@@ -88,7 +89,7 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
           }}
           org={scope.org}
           namespace={scope.namespace}
-          canEdit={callReason("namespace.guide_set", roleRead, whoami, tune.namespace) === null}
+          canEdit={canCall("namespace.guide_set", roleRead.role, whoami)}
           initialContent={String(guideDraft.apply.args.content ?? guideDraft.proposed)}
           baseRevision={
             typeof guideDraft.apply.args.expected_revision === "number"
