@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { PHONE_QUERY } from "../lib/useMedia";
 import { Documents } from "./Documents";
 
 // The Library's Sources section: the sources of the place in view, with Add for its
@@ -283,6 +284,21 @@ describe("Library sources", () => {
     const button = screen.getByRole("button", { name: "Sources (1)" });
     expect(section).not.toBeNull();
     expect(section?.contains(button)).toBe(false);
-    expect(button.compareDocumentPosition(section as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelector("[data-page-header]")?.contains(section as Node)).toBe(false);
+  });
+
+  it("is an icon button named with the count on a phone, and still opens the list", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === PHONE_QUERY,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    show("viewer");
+    const button = await screen.findByRole("button", { name: "Sources (1)" });
+    expect(button).not.toHaveTextContent("Sources");
+    await userEvent.setup().click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(await screen.findByText("team-notes")).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 });
