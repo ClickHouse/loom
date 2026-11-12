@@ -649,8 +649,13 @@ async def start_cell_gate() -> list[asyncio.Task[None]]:
 
 
 async def ensure_default_namespace() -> None:
-    """An auth-off deployment's configured namespace gets its row at boot, unless the
-    cell gate keeps this process from writing (it is also created lazily)."""
+    """An auth-off deployment serves a single configured namespace: give it a
+    loom.namespaces row now (and warn about data stranded in others) rather than on the
+    first dashboard load, since the warning matters most to an operator who just changed
+    LOOM_DEFAULT_NAMESPACE and is watching the boot log. Not while the cell gate keeps
+    this process from writing (the row is also created lazily).
+    `auth_actually_required`, not `auth_required`: single-user identity mode with
+    auth_required=true is still an auth-off deployment."""
     from server.core import cell
 
     if settings.auth_actually_required() or cell.gate_reason():

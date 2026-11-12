@@ -165,13 +165,14 @@ def test_pending_postgres_migrations_boot_unready_rather_than_refuse(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With LOOM_BOOT_MIGRATE off and 008 pending the state tables do not exist yet: the
-    process boots, unready on its `migrations` check, and keeps reading."""
+    process boots, gated (and unready on its `cell` check) until a read lands."""
     monkeypatch.setattr(cell, "refresh", AsyncMock(return_value=False))
     monkeypatch.setattr(cell, "start_refresh_loop", lambda: "loop")
     monkeypatch.setattr(boot, "SKIPPED_PG_MIGRATIONS", ("pg:008_cells.sql",))
     assert asyncio.run(boot.start_cell_gate()) == ["loop"]
     # Gated until a read lands: a failed read is never taken for an absent row.
     assert "not read yet" in cell.gate_reason()
+    assert not cell.readiness_check().ok
     assert asyncio.run(leader.decide_supervisor("on")).held is False
     monkeypatch.setattr(cell, "_view", cell._View(read_at=time.monotonic()))
     assert cell.gate_reason() == ""

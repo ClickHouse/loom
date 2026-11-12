@@ -207,12 +207,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     emitter = get_emitter()
     await emitter.start()
 
-    # Auth-off deployments serve a single configured namespace: give it a
-    # loom.namespaces row now (and warn about data stranded in others) rather
-    # than on first dashboard load — the warning matters most to an operator
-    # who just changed LOOM_DEFAULT_NAMESPACE and is watching the boot log.
-    # auth_actually_required, not auth_required: single-user identity mode
-    # with auth_required=true is still an auth-off deployment.
+    # An auth-off deployment's namespace row (`boot.ensure_default_namespace`).
     await boot.ensure_default_namespace()
 
     from server.workers import child as _workers_child

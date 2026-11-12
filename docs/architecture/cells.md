@@ -339,18 +339,17 @@ Both present with the own row otherwise: `enforced`, a later cell's mode reading
 `enforced` whatever its row says (its triggers, mode cache and CLI treat it so, and
 `loom doctor` names a row that is not). Either row alone, both without the own row, or
 both absent beside a tenancy or own row (the one-row states), which prepare never
-leaves: the org triggers act as in `enforced`,
-every process is gated as by an unread row, `loom doctor` names it, and a rerun of
-`loom cell prepare` writes the missing rows back from the directory while the cell runs.
-A unique index in the directory allows one first cell, and the value holds no memory
-content and is classified so. Attach rechecks the host and deployment id. A process
-reads the value with the mode, and "not yet read", "absent" and "false" are distinct:
-only a row that has been read makes a process ready, and a row whose cell is not
-`LOOM_CELL` gates it (below) and is reported by `scim_settings_problem`. Boot refuses on
-settings alone (`scim_settings_problem` with the row unread checks only the token's form
-against `LOOM_CELL`); the comparison with the `first` row runs per request once the row
-is read, and `loom doctor` reads the value from the cell's Postgres or reports it
-unknown.
+leaves: the org triggers act as in `enforced`, every process is gated as by an unread
+row, `loom doctor` names it, and a rerun of `loom cell prepare` writes the missing rows
+back from the directory while the cell runs. A unique index in the directory allows one
+first cell, and the value holds no memory content and is classified so. Attach rechecks
+the host and deployment id. A process reads the value with the mode, and "not yet read",
+"absent" and "false" are distinct: only a row that has been read makes a process ready,
+and a row whose cell is not `LOOM_CELL` gates it (below) and is reported by
+`scim_settings_problem`. Boot refuses on settings alone (`scim_settings_problem` with
+the row unread checks only the token's form against `LOOM_CELL`); the comparison with
+the `first` row runs per request once the row is read, and `loom doctor` reads the value
+from the cell's Postgres or reports it unknown.
 
 ## The cell's own row
 
@@ -452,30 +451,29 @@ A process with `LOOM_CELL` unset runs no tenancy check. Under the Postgres autho
 reads, in one statement, the mode row, the `first` row and whether any `loom.tenancy` or
 `loom.cell_self` row exists, with the mode cache's rules (below), and so does a CLI
 command that declares an org (the CLI's read ships with attach); an org-free command,
-such as a token revocation,
-`loom migrate` or `loom doctor`, is not gated by the mode and runs as it does today,
-Postgres outage included. Both rows absent with no tenancy or own row, as on a
-deployment never prepared, or the first cell in `recording`, leave the process serving
-as a single deployment; every state the `first` row's rule (above) counts as `enforced`,
-or as a one-row state, gates it as `enforced` does. `enforced` (which attach sets on the
-first cell once every live process has `LOOM_CELL` set, and prepare on a later cell,
-whose processes run with it from their first boot) makes a server process unready, run
-no worker and answer nothing but its health probes and the probe route (so a prepare
-rerun can reach it), and makes the CLI command refuse; the readiness reason and the
-refusal name `LOOM_CELL`. So a pod or an operator's CLI that loses `LOOM_CELL` on an
-`enforced` cell writes for no org; one that also loses `LOOM_PG_DSN` or
-`LOOM_STORAGE_AUTHORITY` is refused by the authority check the deployment already runs
-(ClickHouse's `loom.storage_authority` record). The `loom cell` commands that connect to
-a cell's stores (prepare, attach, place, restore, update) refuse without `LOOM_CELL`,
-and, once the directory has a row for `LOOM_CELL`, refuse stores whose deployment id is
-not the one that row records. A deployment started with `LOOM_CELL` unset is a single
-deployment until prepared, and pointing it at another deployment's bucket prefix is the
-misconfiguration it is for any deployment. On the first cell, `loom cell prepare` runs
-before `LOOM_CELL` is rolled out; a later cell runs with `LOOM_CELL` set from its first
-boot, so its processes are gated and stand aside from the workers (its blob sweep
-included) until prepare writes its row, and prepare refuses a later cell while any live
-process's heartbeat lacks `LOOM_CELL` or names another cell. Prepare does three things,
-in order:
+such as a token revocation, `loom migrate` or `loom doctor`, is not gated by the mode
+and runs as it does today, Postgres outage included. Both rows absent with no tenancy or
+own row, as on a deployment never prepared, or the first cell in `recording`, leave the
+process serving as a single deployment; every state the `first` row's rule (above)
+counts as `enforced`, or as a one-row state, gates it as `enforced` does. `enforced`
+(which attach sets on the first cell once every live process has `LOOM_CELL` set, and
+prepare on a later cell, whose processes run with it from their first boot) makes a
+server process unready, run no worker and answer nothing but its health probes and the
+probe route (so a prepare rerun can reach it), and makes the CLI command refuse; the
+readiness reason and the refusal name `LOOM_CELL`. So a pod or an operator's CLI that
+loses `LOOM_CELL` on an `enforced` cell writes for no org; one that also loses
+`LOOM_PG_DSN` or `LOOM_STORAGE_AUTHORITY` is refused by the authority check the
+deployment already runs (ClickHouse's `loom.storage_authority` record). The `loom cell`
+commands that connect to a cell's stores (prepare, attach, place, restore, update)
+refuse without `LOOM_CELL`, and, once the directory has a row for `LOOM_CELL`, refuse
+stores whose deployment id is not the one that row records. A deployment started with
+`LOOM_CELL` unset is a single deployment until prepared, and pointing it at another
+deployment's bucket prefix is the misconfiguration it is for any deployment. On the
+first cell, `loom cell prepare` runs before `LOOM_CELL` is rolled out; a later cell runs
+with `LOOM_CELL` set from its first boot, so its processes are gated and stand aside
+from the workers (its blob sweep included) until prepare writes its row, and prepare
+refuses a later cell while any live process's heartbeat lacks `LOOM_CELL` or names
+another cell. Prepare does three things, in order:
 
 1. **It refuses a cell whose stores already carry another cell's identity**: a
    deployment id the directory records, or state the directory has not placed there.
@@ -522,21 +520,20 @@ cell's Postgres holds `loom.tenancy` (org, since) and `loom.tenancy_mode` (`reco
 `enforced`); a process reads the mode through a cache of at most
 `LOOM_TENANCY_MODE_CACHE_S` (default 5 s), keeps the last mode it read when it cannot
 read it, and keeps serving the orgs it holds, for at most
-`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, past which it is gated until a read lands; a
-server process reads the rows before it serves and a failed first read fails its boot
-(with Postgres migrations pending it boots gated and unready until a read lands), and
-the workers child, which reads its own, is gated until a read lands. With `LOOM_CELL`
-unset a
-server process under the Postgres authority reads the same rows right after its stores
-open and migrate, before its first heartbeat and its lease decision; a failed first read
-fails its boot (with Postgres migrations pending it boots gated and unready until a read
-lands), and after that it keeps its verdict through failed reads with no stale bound,
-as a single deployment rides out a Postgres outage (the first exception under
-Invariants). There absent mode and `first` rows with no tenancy or own row are a
-deployment never prepared, and a failed read is never taken for an absent row. A
-process that reads no state (the workers child and a CLI with `LOOM_CELL` unset, and
-every process under the ClickHouse authority) is not gated by it. In
-`enforced`, a cell serves exactly the orgs it holds a row for; an org a process read as
+`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, past which it is gated until a read lands.
+Every server process under the Postgres authority, `LOOM_CELL` set or not, reads the
+rows right after its stores open and migrate, before its first heartbeat and its lease
+decision; a failed first read fails its boot (with Postgres migrations pending it boots
+gated and unready until a read lands). After that a process with `LOOM_CELL` set keeps
+the stale bound above, and one with it unset keeps its verdict through failed reads
+with no stale bound, as a single deployment rides out a Postgres outage (the first
+exception under Invariants). A cell's workers child reads its own rows and is gated
+until a read lands. With `LOOM_CELL` unset absent mode and `first` rows with no tenancy
+or own row are a deployment never prepared, and a failed read is never taken for an
+absent row; a process that reads no state (the workers child and a CLI with
+`LOOM_CELL` unset, and every process under the ClickHouse authority) is not gated by
+it. In `enforced`, a cell serves exactly the orgs it holds a row for; an org a process
+read as
 not held, for a caller acting in another org, is read again after
 `LOOM_TENANCY_MODE_CACHE_S`. A `recording` row is written by one statement that inserts
 it only while the mode is `recording`, reading the mode row `FOR SHARE`; it runs at
@@ -1041,9 +1038,8 @@ the triggers do nothing on a deployment never prepared (no state rows, the `firs
 row's rule). With `LOOM_CELL` unset a process reads only the mode and `first` rows and
 whether a tenancy or own row exists, and only under the Postgres authority, where a
 deployment never prepared has none (the tables are created empty), so builds N-1 and N
-serve side by side unchanged. The router routes by
-host, issuer and the first cell, never by a cell's ops, so a cell's release does not
-wait on the router's.
+serve side by side unchanged. The router routes by host, issuer and the first cell,
+never by a cell's ops, so a cell's release does not wait on the router's.
 
 ## Invariants
 
@@ -1063,12 +1059,12 @@ wait on the router's.
   is, and gated in every other state; a failed first read fails its boot, or with
   Postgres migrations pending leaves it gated until a read lands. Second, a registered
   cell with no state, tenancy or own row (its Postgres restored to before its prepare,
-  or a prepare stopped before its
-  row write), which is open until `loom cell restore` (after a restore) or a prepare
-  rerun (after a stopped prepare) and named by `loom doctor` meanwhile: an unread row,
-  mode or `first` value refuses; with the directory unreachable, placements, uncached
-  lookups, the `loom cell` commands that read or write it and the recording cells' state
-  reads refuse while each cell keeps serving the orgs it holds.
+  or a prepare stopped before its row write), which is open until `loom cell restore`
+  (after a restore) or a prepare rerun (after a stopped prepare) and named by
+  `loom doctor` meanwhile: an unread row, mode or `first` value refuses; with the
+  directory unreachable, placements, uncached lookups, the `loom cell` commands that
+  read or write it and the recording cells' state reads refuse while each cell keeps
+  serving the orgs it holds.
 
 ## Source entry points
 
@@ -1161,13 +1157,12 @@ An integration test with two cells and a router in CI's Postgres job:
   cell in `recording`, and keeps the last mode it read through a failed read,
   `recording` included after step 3 or step 4 returned the cell to it; a CLI command
   declaring an org with it unset is refused on an `enforced` cell (with attach), an
-  org-free one (a
-  token revocation) runs, also with Postgres down on a deployment never prepared, and a
-  `loom cell` store command refuses; `loom cell limit --closed` succeeds with the cell's
-  Postgres down; after `loom cell credential --cell <cell> --next` both credentials
-  place and read state, `--finish` refuses the old credential, for a cell finished
-  before its pods hold the new one the router refuses its calls with 401, its request
-  answers 503 writing nothing, and it recovers by recording the old hash again,
+  org-free one (a token revocation) runs, also with Postgres down on a deployment never
+  prepared, and a `loom cell` store command refuses; `loom cell limit --closed` succeeds
+  with the cell's Postgres down; after `loom cell credential --cell <cell> --next` both
+  credentials place and read state, `--finish` refuses the old credential, for a cell
+  finished before its pods hold the new one the router refuses its calls with 401, its
+  request answers 503 writing nothing, and it recovers by recording the old hash again,
   `--revert` drops a pending `next`, which is then refused, and the old credential keeps
   placing, and a second `--next` while one is pending and a hash another cell records as
   current or next are refused; `loom cell limit` and `loom cell credential --next`,
@@ -1217,29 +1212,28 @@ An integration test with two cells and a router in CI's Postgres job:
   row was deleted is refused and the state named by `loom doctor`; on that cell a pod
   with `LOOM_CELL` unset is unready and runs no worker, and a CLI command declaring an
   org with it unset is refused (with attach); updating, deleting or truncating the
-  `first` row on an
-  `enforced` cell is refused, also under `session_replication_role = replica`, and a
-  missing or disabled `first`-row trigger is refused by attach and named by
-  `loom doctor`; a running process with `LOOM_CELL` set on a cell whose mode row is
-  removed answers 503 to a bearer request and runs no worker pass, and serves again
-  after a rerun of `loom cell prepare` writes the row back while it runs; a cell the
-  directory registers with no state, tenancy or own row is named by `loom doctor`, its
-  processes with `LOOM_CELL` set stay unready, a process with it unset serves as a
-  single deployment, and `loom cell restore` writes both rows back, an attached cell
-  then serving again and an unattached one after a prepare rerun; a cell with both rows
-  absent beside a tenancy row, and one beside only its own row, has its triggers refuse
-  an unheld org, every process gated and `loom doctor` naming it, and a prepare rerun
-  writes the rows back; a Postgres-only restore of an attached first cell to before its
-  prepare is named by `loom doctor` and closed by `loom cell restore`; a prepare rerun
-  during a pending `loom cell update` on an attached cell, with processes on both values
-  and `loom.cell_self` lost, writes both values back and keeps both sets of processes
-  serving, and one before attach refuses the two configurations; a prepare rerun on an
-  attached cell whose `current` is missing and whose pods' configuration differs from
-  the directory row refuses, and one before attach whose heartbeats report another
-  bucket prefix refuses; a prepare rerun given a credential hash that is neither the
-  row's `current` nor its `next` is refused; a prepare rerun on a `serving` later cell
-  whose prefix holds data writes a removed mode row back; a cell with a mode row and no
-  `first` row has its triggers refuse an unheld org, every process gated and
+  `first` row on an `enforced` cell is refused, also under
+  `session_replication_role = replica`, and a missing or disabled `first`-row trigger is
+  refused by attach and named by `loom doctor`; a running process with `LOOM_CELL` set
+  on a cell whose mode row is removed answers 503 to a bearer request and runs no worker
+  pass, and serves again after a rerun of `loom cell prepare` writes the row back while
+  it runs; a cell the directory registers with no state, tenancy or own row is named by
+  `loom doctor`, its processes with `LOOM_CELL` set stay unready, a process with it
+  unset serves as a single deployment, and `loom cell restore` writes both rows back, an
+  attached cell then serving again and an unattached one after a prepare rerun; a cell
+  with both rows absent beside a tenancy row, and one beside only its own row, has its
+  triggers refuse an unheld org, every process gated and `loom doctor` naming it, and a
+  prepare rerun writes the rows back; a Postgres-only restore of an attached first cell
+  to before its prepare is named by `loom doctor` and closed by `loom cell restore`; a
+  prepare rerun during a pending `loom cell update` on an attached cell, with processes
+  on both values and `loom.cell_self` lost, writes both values back and keeps both sets
+  of processes serving, and one before attach refuses the two configurations; a prepare
+  rerun on an attached cell whose `current` is missing and whose pods' configuration
+  differs from the directory row refuses, and one before attach whose heartbeats report
+  another bucket prefix refuses; a prepare rerun given a credential hash that is neither
+  the row's `current` nor its `next` is refused; a prepare rerun on a `serving` later
+  cell whose prefix holds data writes a removed mode row back; a cell with a mode row
+  and no `first` row has its triggers refuse an unheld org, every process gated and
   `loom doctor` naming it, and a prepare rerun writes the row back; a later cell whose
   mode row is set to `recording` records nothing, its trigger refuses an unheld org, a
   process with `LOOM_CELL` set there serves as in `enforced`, a pod with `LOOM_CELL`
