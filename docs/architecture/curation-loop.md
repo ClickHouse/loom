@@ -41,20 +41,22 @@ who governed it and when. Only an admin op writes it: promotion (below) and an a
 explicit govern or ungovern of a namespace-wide definition. No memory write reaches it, so
 `memory.set`, `memory.pin`, `memory.verify`, `memory.update` and the bulk and import paths
 cannot make a row governed. A definition is governed exactly while its record exists and
-the hash of the row's current value (computed from the value, as `verification_state` in
-`server/memory/domain/trust.py` computes it) equals the approved one; any change to the
-text ends that, and the admin governs it again. Only namespace-wide rows (`user_id = '-'`,
-`agent = '-'`) of type `definition` under the `definition/` key can be governed.
+the row's current hash (`live_sha256` in `server/memory/domain/trust.py`) equals the
+approved one; any change to the text ends that, and the admin governs it again. Only
+namespace-wide rows (`user_id`, `agent` and `session_id` all `'-'`) of type `definition`
+under the `definition/` key can be governed, and the term leg serves one only while its
+status is `active`.
 
 No two governed definitions share a term or an alias: governing one whose term or alias
 is already another governed definition's is refused, and that check runs on every
 govern, a renewed one included. Should two records still match one name (two governs
 racing), the term leg serves the one governed last.
 
-`definition` joins `KEY_IDENTIFIED_TYPES`, as `decision` is: two definitions under
-different keys are two definitions however alike they read. Unlike a decision, a
-definition is not marked conflicting with a close definition under another key, by the
-write-time check or by the conflict resolver ([conflicts and
+A caller may already write rows of type `definition`; they stay plain rows, governed only
+once an admin governs them. `definition` joins `KEY_IDENTIFIED_TYPES`, as `decision` is:
+two definitions under different keys are two definitions however alike they read. Unlike a
+decision, a definition is not marked conflicting with a close definition under another
+key, by the write-time check or by the conflict resolver ([conflicts and
 refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)), since its
 key is its term and `MRR` is not a revision of `ARR`. Conflict surfacing compares a row
 only with rows of its own `memory_type`, so a learned fact that contradicts a definition
@@ -69,8 +71,9 @@ design.
 reads the matched definitions whose text is still the approved one, and places them at the
 top of the served list with `governed = true` on the hit.
 A term or alias matches where it appears in the query with no letter, digit, `+` or `#`
-next to it. One written with a capital letter matches only as written, so `IT` does not
-match "what is it"; any other matches case-folded, so `churn rate` matches "Churn rate".
+next to it. One written all in capitals, or with a capital after its first letter, matches
+only as written, so `IT` does not match "what is it" and `GitHub` stays exact; any other
+matches case-folded, so `Churn rate` matches "what is our churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -109,7 +112,8 @@ another op runs on its behalf:
 - `memory.search` that abstained, or answered with `retrieval_risk` `high` or `abstain`,
   and served no governed definition;
 - `knowledge.search` with no hit as close as the noise filter's threshold (`_close` in
-  `server/knowledge/app/knowledge_search.py`) and no exact-key hit;
+  `server/knowledge/app/knowledge_search.py`), no exact-key hit and, in `lexical` mode, no
+  hit at all;
 - `loom_search` (`search.query`) whose memory and knowledge sections both came back empty,
   with no leg failed. Its own memory and knowledge searches record nothing, so a question
   that knowledge answers is not a gap because memory abstained.
@@ -198,9 +202,11 @@ Nothing reaches search until an admin promotes a draft.
 
 ## Promotion
 
-`learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate writes
-the definition through `memory.set` for the whole namespace, so the blacklist, the
-pinned-key check and conflict surfacing run as for any write ([learnings review
+`learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate first
+checks the term and aliases against the governed definitions, so a refused promotion
+writes nothing; then it writes the definition through `memory.set` for the whole
+namespace, so the blacklist, the pinned-key check and conflict surfacing run as for any
+write ([learnings review
 queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). Then the
 same call governs it as the reviewer's server-stamped actor: the admin promoting a
 definition is the person standing behind it. A draft for a term already governed revises
@@ -225,7 +231,9 @@ A rejected draft leaves nothing behind but its queue row.
 ## Cost bounds
 
 - Recording a miss is one asynchronous insert; a hit records nothing.
-- The gaps worker embeds at most `knowledge_gaps_max_groups` texts per namespace per day.
+- The gaps worker's grouping and its threshold run in ClickHouse (`GROUP BY` the normalised
+  query, `HAVING` enough distinct users), so at most `knowledge_gaps_max_groups` groups
+  leave the store, and it embeds at most that many texts per namespace per day.
 - `knowledge.gaps.draft` and a query-history turn make one LLM call per draft, a turn at
   most its setting's number. Both run inside the namespace's daily cost cap
   (`server/observability/budget.py`): over the cap, a draft is refused and a turn ends
@@ -241,16 +249,18 @@ serves:
 - it records no misses and serves no gap op; N's worker groups what N's replicas record;
 - a user or namespace erasure it runs leaves rows in the tables this design adds; an
   erasure that ran during the rollout is run again once N-1 stops serving;
-- it serves a `definition` row as a plain memory row with no term leg, and refuses a close
-  write to another definition as a pinned peer;
-- it marks close definitions conflicting, at write time and in its conflict resolver, and
-  N does not clear those marks: an admin clears them with `conflicts.resolve` (`allow`);
+- it serves a `definition` row as a plain memory row with no term leg, and gives a close
+  write to another definition today's verdicts: merged into it (not inserted), marked
+  `duplicate`, or marked `conflicted`, at write time and in its conflict resolver. N clears
+  none of these: the term leg serves only an `active` row, so an admin clears a conflict
+  with `conflicts.resolve` (`allow`) and writes a merged or duplicate definition again on
+  N;
 - it never writes `loom.governed_definitions`, so nothing N-1 does makes a row governed;
 - it promotes a `knowledge_gap` or `query_history` candidate as a row under the approver,
   which is never governed, or, with `destination` `knowledge` or `both`, as a
-  `learning://<candidate_id>` document. The admin deletes that document
-  (`knowledge.delete`) and writes the definition again on N, then governs it, since the
-  candidate is already promoted.
+  `learning://<candidate_id>` document. The admin deletes that row (`memory.delete`) or
+  document (`knowledge.delete`), then writes the definition again on N and governs it,
+  since the candidate is already promoted.
 
 ## Invariants
 
