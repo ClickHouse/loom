@@ -2,8 +2,8 @@
 
 Loom serves its operations as MCP tools at `<loom>/mcp`. A streamable-HTTP client connects
 with a URL and a bearer token (none on a single-user server; Cursor and VS Code have
-install links for that case: [Cursor](cursor.md#mcp-tools), [VS
-Code](vscode.md#local-single-user-server)); a stdio-only client goes through the
+install links for that case: [Cursor](cursor.md#mcp-tools),
+[VS Code](vscode.md#local-single-user-server)); a stdio-only client goes through the
 `mcp-remote` bridge. A tool call runs the same auth, rate limit, audit and idempotency
 path as `POST /v1/<op>`. The protocol is in the [MCP reference](../../reference/mcp.md).
 
