@@ -68,6 +68,8 @@ The two entry shapes:
 { "url": "https://loom.example.com/mcp", "headers": { "Authorization": "Bearer <JWT>" } }
 ```
 
+Cursor's URL carries `?toolset=coding`; see `--toolset` above.
+
 ```json
 {
   "command": "npx",
@@ -81,8 +83,6 @@ The two entry shapes:
   ]
 }
 ```
-
-Cursor's URL carries `?toolset=coding`; see `--toolset` above.
 
 The second is for stdio-only clients: `mcp-remote` bridges stdio to HTTP, and
 `--allow-http` lets it reach a local plain-HTTP server. Both shapes store the token in the

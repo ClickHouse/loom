@@ -12,7 +12,7 @@ _STDIO_VIA_NPX = {"claude-desktop", "zed", "cline"}
 
 # Coding agents mount the `coding` toolset, on the URL, as the dashboard's snippets do
 # (frontend/src/lib/clients.ts CODING_TOOLSET_CLIENTS) and `loom install` does.
-CODING_CLIENTS = {"claude-code", "codex", "cursor"}
+CODING_CLIENTS = frozenset({"claude-code", "codex", "cursor"})
 
 
 # Where each client keeps its MCP config, per platform. `loom install` writes the same

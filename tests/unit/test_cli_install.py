@@ -91,7 +91,7 @@ def test_install_one_toolset_rides_the_url(tmp_path, monkeypatch: pytest.MonkeyP
     """`--toolset coding` selects the coding listing per request
     (`?toolset=` on the MCP URL) so one deployment serves both archetypes, and a
     named toolset wins over a client's default."""
-    cfg = tmp_path / "windsurf" / "mcp.json"
+    cfg = tmp_path / "mcp.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
     assert cli._install_one(
         "windsurf",
@@ -299,7 +299,9 @@ def test_claude_code_toolset_flag_overrides_the_coding_default(
     """Claude Code is a coding agent, so the URL carries `?toolset=coding`
     unless --toolset names another tier."""
     _no_claude_binary(monkeypatch)
-    cli._install_claude_code_mcp(server_url="https://h", name="mem", dry_run=True, toolset="core")
+    cli._install_one(
+        "claude-code", token="T", server_url="https://h", name="mem", dry_run=True, toolset="core"
+    )
     out = capsys.readouterr().out
     assert 'mem "https://h/mcp?toolset=core"' in out
     assert "toolset=coding" not in out
