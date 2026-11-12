@@ -887,7 +887,7 @@ jobs:
       name: npm
       url: https://www.npmjs.com/package/@clickhouse/loom
     permissions:
-      id-token: write # npm provenance; trusted publishing once registered on npmjs.com
+      id-token: write # npm trusted publishing (OIDC) and provenance
     env:
       VERSION: ${{ needs.version.outputs.version }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
@@ -908,8 +908,6 @@ jobs:
       # keeps the highest final.
       - name: Publish the verified tarball (provenance)
         id: publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # fallback while trusted publishing is not registered
         run: |
           if npm view "@clickhouse/loom@$VERSION" version >/dev/null 2>&1; then
             echo "@clickhouse/loom@$VERSION is already published"
