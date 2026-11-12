@@ -64,14 +64,15 @@ def effect_class(op: Operation) -> str:
     return "destructive" if ann["destructiveHint"] else "write"
 
 
-def _description(op: Operation, tools: set[str]) -> str:
+def _description(op: Operation, listed: set[str]) -> str:
     from server.transport.mcp_descriptions import TOOL_DESCRIPTIONS
     from server.transport.mcp_tools import name_ops_for_listing
 
     custom = TOOL_DESCRIPTIONS.get(op.name)
     if custom:
-        # an op in the manifest is named by its tool name, any other by its op name
-        return name_ops_for_listing(str(custom).strip(), tools, None)
+        # an op in the manifest is named by its tool name, any other by its op
+        # name; a manifest carries no loom_op, so nothing is marked
+        return name_ops_for_listing(str(custom).strip(), listed, None)
     return (
         f"Loom operation `{op.name}` "
         f"({'idempotent' if op.idempotent else 'state-transition'}, "

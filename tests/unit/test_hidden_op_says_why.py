@@ -27,7 +27,10 @@ def test_bulk_set_names_memory_set_instead() -> None:
 
 
 def test_a_refusal_names_ops_as_the_callers_listing_does() -> None:
-    instead = {ts: mcp_op.hidden_refusal("memory.bulk_get", ts)["instead"] for ts in _TS}
+    instead = {
+        ts: mcp_op.hidden_refusal("memory.bulk_get", ts)["instead"]
+        for ts in ("core", "coding", "readonly")
+    }
     assert instead["core"] == (
         "call loom_memory_get per key, or memory.list (via loom_op) with a key prefix"
     )
@@ -40,9 +43,6 @@ def test_a_refusal_names_ops_as_the_callers_listing_does() -> None:
     assert mcp_op.hidden_refusal("memory.bulk_set", "readonly")["instead"].startswith(
         "call memory.set once per fact"
     )
-
-
-_TS = ("core", "coding", "readonly")
 
 
 def test_a_readonly_deployment_default_routes_reads_only(monkeypatch) -> None:
@@ -58,6 +58,16 @@ def test_a_readonly_deployment_default_routes_reads_only(monkeypatch) -> None:
     assert mcp_op.hidden_refusal("memory.bulk_set", None)["instead"].startswith(
         "call memory.set once"
     )
+    # a request that names another toolset keeps that toolset's routing
+    assert mcp_op.routes_writes("core")
+    req = {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "tools/call",
+        "params": {"name": "loom_op", "arguments": {"op": "memory.set", "arguments": {}}},
+    }
+    rewritten, early = mcp_op.route(req, toolset="core", auth=None)
+    assert early is None and rewritten["params"]["name"] == "loom_memory_set"
 
 
 def test_unlock_says_only_the_owner_unlocks() -> None:

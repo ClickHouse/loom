@@ -20,9 +20,12 @@ from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
 )
 from server.settings import settings
+from server.transport import mcp_op
 from server.transport import mcp_tools as mt
 from server.transport.mcp_descriptions import (
+    ASSISTANT_TOOL_DESCRIPTIONS,
     ATOMIC_TOOL_DESCRIPTIONS,
+    CODING_TOOL_DESCRIPTIONS,
     REVISION_POLICY,
     TOOL_DESCRIPTIONS,
     revision_policy,
@@ -254,6 +257,8 @@ def test_naming_marks_only_what_loom_op_routes():
     )
     # a dotted name that is no op, such as a response field path, stays
     assert mt.name_ops_for_listing("`memory.next_page`", listed, "core") == "`memory.next_page`"
+    # a field path under a listed op is not an op mention and stays whole
+    assert mt.name_ops_for_listing("`memory.set.value`", listed, "core") == "`memory.set.value`"
 
 
 def test_a_listing_build_leaves_the_source_texts_as_written():
@@ -261,21 +266,25 @@ def test_a_listing_build_leaves_the_source_texts_as_written():
     source texts keep op names and carry no hand-written marker."""
     assert _listing("core", True) == _listing("core", True)
     assert "memory.update" in TOOL_DESCRIPTIONS["memory.set"]
-    for texts in (TOOL_DESCRIPTIONS, ATOMIC_TOOL_DESCRIPTIONS):
+    sources = (
+        TOOL_DESCRIPTIONS,
+        ATOMIC_TOOL_DESCRIPTIONS,
+        CODING_TOOL_DESCRIPTIONS,
+        ASSISTANT_TOOL_DESCRIPTIONS,
+        mcp_op._INSTEAD,
+    )
+    for texts in sources:
         for name, text in texts.items():
             assert "(via loom_op)" not in text, f"{name}: the listing adds the marker"
 
 
 @pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
-def test_listed_tool_names_is_what_the_listing_shows(toolset: str, code: bool):
+def test_listed_tool_names_is_what_the_listing_shows(toolset: str, code: bool, monkeypatch):
     """A refusal names ops by listed_tool_names; it must be the listing's own set."""
-    monkey = pytest.MonkeyPatch()
-    monkey.setattr(settings, "mcp_toolset", toolset)
-    monkey.setattr(settings, "mcp_code_tools", code)
-    try:
-        assert mt.listed_tool_names(None) == {t["name"] for t in _listing(toolset, code)}
-    finally:
-        monkey.undo()
+    listing = {t["name"] for t in _listing(toolset, code)}
+    monkeypatch.setattr(settings, "mcp_toolset", toolset)
+    monkeypatch.setattr(settings, "mcp_code_tools", code)
+    assert mt.listed_tool_names(None) == listing
 
 
 def test_the_compact_profile_keeps_the_tool_names():

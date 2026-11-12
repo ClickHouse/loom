@@ -16,7 +16,8 @@ ledger. `loom_op {op: "help", query}` (or an unknown op) answers a compact
 catalog: op names, required and optional args and one line of
 purpose. Ops hidden from MCP (`_MCP_HIDDEN_OPS`) stay hidden: they are not in
 the catalog and the rewritten call meets the same "not available" refusal a
-direct call does. A `?toolset=readonly` connection routes read ops only.
+direct call does. A connection whose resolved toolset is `readonly` routes
+read ops only.
 """
 
 from __future__ import annotations
@@ -96,10 +97,9 @@ def reachable(op: Any, toolset: str | None) -> bool:
 # it out and where loom_op routes it, so the text holds on every toolset.
 _EXAMPLES: tuple[tuple[str, str], ...] = (
     ("memory.related", "related memories"),
-    ("memory.evidence", "evidence"),
+    ("memory.evidence", "the source turns behind a memory"),
     ("memory.digests", "session digests"),
     ("erasure.request", "erasure requests"),
-    ("memory.clear", "wiping an agent's or user's memories"),
 )
 
 
@@ -191,7 +191,7 @@ _INSTEAD: dict[str, str] = {
     "code.context_packs": "call code.context_pack with the pr_number you want",
     "memory.extraction_status": (
         "call memory.extraction_status_mine with the queue_id "
-        "each deferred memory.set_from_messages returned"
+        "each deferred extraction call returned"
     ),
     "erasure.status": "call erasure.list; each saga row carries its status",
     "memory.search_trace": (
