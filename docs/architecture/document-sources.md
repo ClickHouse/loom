@@ -792,11 +792,14 @@ The redirect URI to register with each store is
   the steps for a source added mid-saga; the deleted readers rows landing before a
   listing row's new start, with the sync killed between them; a stopped crawl, with or
   without holds, leaving no listing or group-members row, also when its name is added
-  again before the cleanup pass; a hold of a source N-1 removed and re-added under its
-  name, cleaned by the anti-join; a person dropped from a crawl's expansion leaving no
-  readers or listing row; a directory read that fails mid-group, or returns over the
-  cap, dropping nobody; a user erasure leaving no row, of any version, keyed by the
-  person's pseudonyms; `erasure.request` refusing an `acl-` scope for an org admin and a
+  again before the cleanup pass; a hold of a source N-1 removed, with and without a
+  re-add under its name, cleaned by the anti-join; a cleaned source opened by no later
+  anti-join; a `remove` without `delete_documents` on a `namespace` source keeping its
+  documents through the cleanup; a source whose registry row a lagging replica does not
+  show yet left alone; a person dropped from a crawl's expansion leaving no readers or
+  listing row; a directory read that fails mid-group, or returns over the cap, dropping
+  nobody; a user erasure leaving no row, of any version, keyed by the person's
+  pseudonyms; `erasure.request` refusing an `acl-` scope for an org admin and a
   namespace admin and admitting a platform admin; a user erasure leaving no address of
   the person in `loom.knowledge_sources`, nor a crawl readers or listing row naming
   them; `erasure.request` and `erasure.export` refusing an `acl-` scope with auth off;
