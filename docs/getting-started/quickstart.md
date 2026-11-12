@@ -118,11 +118,13 @@ The repository's dev container runs the latest release in a codespace, with noth
 your machine: it installs Loom with the installer above, starts it, and connects Claude
 Code to it. The first start downloads about 3 GB of images and takes a few minutes. Open
 the dashboard from the **Ports** tab (port 7777). In the codespace's terminal, run
-`claude`, sign in, and say "Remember that I deploy only on Tuesdays"; in a new `claude`
+`cd ~ && claude` (outside the checkout, whose instructions are for working on Loom
+itself), sign in, and say "Remember that I deploy only on Tuesdays"; in a new `claude`
 session, ask "When do I deploy?".
 
 The try-out runs single-user, with no sign-in. In the browser, port 7777 is forwarded
-privately: its address answers only your GitHub account, so do not make the port public.
+privately: its address answers only your GitHub account. Keep it private: public, or
+private to an organization, opens a server with no sign-in to everyone it is shared with.
 Agents inside the codespace, such as its `claude`, use `http://localhost:7777`; the
 dashboard's connection lines name the forwarded address instead, which needs a GitHub
 sign-in that agents in the codespace do not have. Opened in desktop VS Code, the codespace
@@ -131,7 +133,8 @@ install to every program on the laptop.
 
 The install lives in `/workspaces/.loom`, so a rebuilt codespace keeps its `.env` and
 Compose project. Wherever these docs name `~/.loom` or `"$HOME/.loom"`, a codespace uses
-`/workspaces/.loom`. Once the stack is up, Codespaces offers to open port 7777.
+`/workspaces/.loom`. Codespaces offers to open port 7777 as soon as it listens; the
+dashboard answers once the creation log prints "Loom is running".
 
 ### Start in multi-user mode
 

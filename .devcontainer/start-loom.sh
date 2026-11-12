@@ -53,6 +53,6 @@ claude plugin install loom@loom
 cat <<'TEXT'
 
 Loom is running. The dashboard is the forwarded port 7777 (Ports tab).
-Try it: run `claude`, sign in, and say "Remember that I deploy only on Tuesdays".
-In a new `claude` session, ask "When do I deploy?".
+Try it: run `cd ~ && claude`, sign in, and say "Remember that I deploy only on
+Tuesdays". In a new `claude` session, ask "When do I deploy?".
 TEXT

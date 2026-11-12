@@ -2,7 +2,7 @@
   // A try-out of Loom in GitHub Codespaces: the released stack, started by the
   // released installer, with Claude Code connected to it. It is not a development
   // environment: a checkout's own setup is docs/development. Codespaces forwards
-  // port 7777 privately, to the signed-in GitHub user, unless it is made public.
+  // port 7777 privately, to the signed-in GitHub user; keep it that way.
   "name": "Loom try-out",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
