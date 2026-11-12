@@ -42,6 +42,16 @@ main() {
     exit 1
   }
 
+  # Ctrl-C stops the run, and an agent CLI it started (a job of this shell, which
+  # ignores the signal) with it.
+  cmd_pid=
+  on_interrupt() {
+    [ -z "$cmd_pid" ] || kill "$cmd_pid" 2>/dev/null || true
+    printf '\n' >&2
+    exit 130
+  }
+  trap on_interrupt HUP INT TERM
+
   # Prints 1 when release $1 is below $2, else 0 (X.Y.Z or X.Y.Z-rc.N; a
   # candidate is below its own final release, and rc.1 below rc.2).
   version_below() {
@@ -184,7 +194,7 @@ main() {
     stty -echo </dev/tty
     IFS= read -r CH_PASSWORD </dev/tty || CH_PASSWORD=
     stty echo </dev/tty
-    trap - HUP INT TERM
+    trap on_interrupt HUP INT TERM
     printf '\n' >/dev/tty
   }
 
@@ -238,7 +248,7 @@ main() {
     LOOM_CH_READER_USER LOOM_VERSION COMPOSE_PROJECT_NAME
 
   tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/loom-install.XXXXXX")
-  trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+  trap 'rm -rf "$tmp_dir"' EXIT
 
   if [ -n "${LOOM_INSTALL_BUNDLE:-}" ]; then
     cp "$LOOM_INSTALL_BUNDLE" "$tmp_dir/loom-stack.tar.gz"
@@ -476,44 +486,59 @@ main() {
 
   # The first memory: proof that a write and a read work with no token, which
   # is also how this run learns that sign-in is off. Only a new install writes
-  # it, once: the marker its .env came with is removed when the memory reads
-  # back, so a rerun never brings back a memory the user deleted or edited.
+  # it, and only when no loom/welcome is there (another install on the same
+  # ClickHouse may have one): the marker its .env came with is removed once the
+  # memory reads back, so a rerun never brings back one the user deleted or edited.
   org=$(get_env LOOM_SELF_SIGNUP_ORG)
   org=${org:-dev}
   namespace=$(get_env LOOM_DEFAULT_NAMESPACE)
   namespace=${namespace:-local}
-  # Both go into a JSON body as they are.
-  case $org$namespace in *[!A-Za-z0-9._-]*) namespace= ;; esac
   # api OP BODY: POST to the server, the body to $tmp_dir/api.out; prints the status.
   api() {
     curl -s --noproxy '*' --max-time 20 -o "$tmp_dir/api.out" -w '%{http_code}' -X POST \
       -H 'Content-Type: application/json' -d "$2" "http://$host:$port/v1/$1" || true
   }
+  found() {
+    grep -q '"found"[[:space:]]*:[[:space:]]*true' "$tmp_dir/api.out"
+  }
+  pending="$INSTALL_DIR/.welcome-pending"
   memory="\"org\":\"$org\",\"namespace\":\"$namespace\",\"agent\":\"installer\",\"memory_key\":\"loom/welcome\""
   signed_in=
-  if [ -n "$namespace" ] && [ -f "$INSTALL_DIR/.welcome-pending" ]; then
-    value="This Loom server is personal: single-user, on this machine only. Save facts with loom_memory_set and find them with loom_search; the dashboard is $dashboard"
-    api memory.set "{$memory,\"value\":\"$value\"}" >/dev/null
-  fi
-  status=000
-  [ -z "$namespace" ] || status=$(api memory.get "{$memory}")
-  case $status in
-    200)
-      if [ -f "$INSTALL_DIR/.welcome-pending" ] \
-        && grep -q '"found"[[:space:]]*:[[:space:]]*true' "$tmp_dir/api.out"; then
-        rm -f "$INSTALL_DIR/.welcome-pending"
-        printf '\nSaved and read back a first memory, loom/welcome: %smemories\n' "$dashboard"
-      fi
-      ;;
-    401 | 403)
+  case $org$namespace in
+    # Both go into a JSON body as they are.
+    *[!A-Za-z0-9._-]*)
       signed_in=1
-      printf '\nSign-in is on: agents connect with a token from Settings → Tokens in the dashboard.\n'
+      printf '\nSkipped the first memory and the agent setup: LOOM_SELF_SIGNUP_ORG or LOOM_DEFAULT_NAMESPACE in .env holds a character other than letters, digits and . _ -\n'
       ;;
     *)
-      signed_in=1
-      what="read memories"
-      [ ! -f "$INSTALL_DIR/.welcome-pending" ] || what="save a first memory"
-      printf '\nCould not %s (HTTP %s); `docker compose --project-directory %s logs loom` says why.\n' "$what" "$status" "$INSTALL_DIR"
+      http_status=$(api memory.get "{$memory}")
+      saved=
+      if [ "$http_status" = 200 ] && [ -f "$pending" ] && ! found; then
+        value="This Loom server is personal: single-user, on this machine only. Save facts with loom_memory_set and find them with loom_search; the dashboard is $dashboard"
+        api memory.set "{$memory,\"value\":\"$value\"}" >/dev/null
+        saved=1
+        http_status=$(api memory.get "{$memory}")
+      fi
+      case $http_status in
+        200)
+          if [ -f "$pending" ] && found; then
+            rm -f "$pending"
+            if [ -n "$saved" ]; then
+              printf '\nSaved and read back a first memory, loom/welcome: %smemories\n' "$dashboard"
+            fi
+          elif [ -f "$pending" ]; then
+            printf '\nCould not save a first memory; `docker compose --project-directory %s logs loom` says why.\n' "$INSTALL_DIR"
+          fi
+          ;;
+        401 | 403)
+          signed_in=1
+          printf '\nSign-in is on: agents connect with a token from Settings → Tokens in the dashboard.\n'
+          ;;
+        *)
+          signed_in=1
+          printf '\nCould not read memories (HTTP %s); `docker compose --project-directory %s logs loom` says why.\n' "$http_status" "$INSTALL_DIR"
+          ;;
+      esac
       ;;
   esac
 
@@ -525,6 +550,7 @@ main() {
     dog_pid=$!
     cmd_status=0
     wait "$cmd_pid" || cmd_status=$?
+    cmd_pid=
     kill "$dog_pid" 2>/dev/null || true
     return "$cmd_status"
   }
@@ -543,18 +569,28 @@ main() {
   }
 
   # Agents on this machine, connected the way the README does it, with no token:
-  # only a server without sign-in takes that.
-  connected=
-  # LOOM_CONNECT=none leaves every agent alone, and looks for none.
+  # only a server without sign-in takes that. LOOM_CONNECT=none looks for none.
+  agents=
   if [ -z "$signed_in" ] && [ "${LOOM_CONNECT:-}" != none ]; then
     server_url=http://localhost:$port
     [ "$host" = 127.0.0.1 ] || server_url=http://$host:$port
+    # The plugins' own server URL, which a plugin installed before keeps.
+    default_url=http://localhost:7777
     if command -v claude >/dev/null 2>&1; then
-      if bounded claude plugin list 2>/dev/null | grep -q 'loom@loom'; then
-        connected="$connected Claude Code"
+      # The block `claude plugin list` prints for loom@loom, up to its Status line.
+      claude_loom=$(bounded claude plugin list 2>/dev/null \
+        | awk '/(^|[[:space:]])loom@loom$/ { on = 1 } on { print } on && /Status:/ { exit }') || claude_loom=
+      if [ -n "$claude_loom" ]; then
+        if printf '%s' "$claude_loom" | grep -q 'disabled'; then
+          printf 'Claude Code: the Loom plugin is disabled; `claude plugin enable loom@loom` turns it on\n'
+        elif [ "$server_url" != "$default_url" ]; then
+          printf 'Claude Code: the Loom plugin installed before keeps its server URL; for this install: claude plugin install loom@loom --config server_url=%s\n' "$server_url"
+        else
+          agents="$agents Claude Code"
+        fi
       elif wants claude-code "Claude Code"; then
         set --
-        [ "$server_url" = http://localhost:7777 ] || set -- --config "server_url=$server_url"
+        [ "$server_url" = "$default_url" ] || set -- --config "server_url=$server_url"
         # A marketplace added before is no error: the install below says what fails.
         bounded claude plugin marketplace add ClickHouse/loom >/dev/null 2>&1 || true
         if bounded claude plugin install loom@loom "$@" >/dev/null; then
@@ -563,38 +599,55 @@ main() {
           else
             printf 'Claude Code: the plugin is installed; `claude mcp list` shows whether it reaches Loom\n'
           fi
-          connected="$connected Claude Code"
+          agents="$agents Claude Code"
         else
           printf 'Claude Code: could not install the plugin (above); the README has the two commands\n'
         fi
       fi
-      command -v node >/dev/null 2>&1 \
-        || printf 'Claude Code: install Node.js 18 or later so the plugin'"'"'s session hooks run; its tools work without it\n'
+      case $agents in
+        *"Claude Code"*)
+          command -v node >/dev/null 2>&1 \
+            || printf 'Claude Code: install Node.js 18 or later so the plugin'"'"'s session hooks run; its tools work without it\n'
+          ;;
+      esac
     fi
     if command -v codex >/dev/null 2>&1; then
-      if bounded codex plugin list 2>/dev/null | grep -q '^loom@loom[[:space:]][[:space:]]*installed'; then
-        connected="$connected Codex"
+      codex_loom=$(bounded codex plugin list 2>/dev/null | grep '^loom@loom[[:space:]]') || codex_loom=
+      if [ "$server_url" != "$default_url" ]; then
+        # Codex plugins take no install options: the URL is fixed in the plugin.
+        # Said when Codex has the plugin or the run asked for Codex.
+        case ",${LOOM_CONNECT:-},$codex_loom" in
+          *,codex,* | *,all,* | *,loom@loom*)
+            printf 'Codex: its Loom plugin uses %s; to reach %s, see https://github.com/%s/blob/main/docs/features/integrations/codex.md\n' "$default_url" "$server_url" "$REPOSITORY"
+            ;;
+        esac
+      elif printf '%s' "$codex_loom" | grep -q 'installed, enabled'; then
+        agents="$agents Codex"
+      elif [ -n "$codex_loom" ] && printf '%s' "$codex_loom" | grep -q 'installed'; then
+        printf 'Codex: the Loom plugin is installed but not enabled\n'
       elif wants codex Codex; then
         bounded codex plugin marketplace add ClickHouse/loom >/dev/null 2>&1 || true
         if bounded codex plugin add loom@loom >/dev/null; then
           printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
-          connected="$connected Codex"
+          agents="$agents Codex"
         else
           printf 'Codex: could not add the plugin (above); the README has the two commands\n'
         fi
       fi
     fi
-    # VS Code's own CLI adds an MCP server; inside a remote session `code` is
-    # the remote's, so it is not offered there.
+    # VS Code's own CLI adds an MCP server, asked each run since it lists none;
+    # inside a remote session `code` is the remote's, so it is not offered there.
     if command -v code >/dev/null 2>&1 && [ -z "${REMOTE_CONTAINERS:-}${CODESPACES:-}${SSH_CONNECTION:-}" ] \
       && wants vscode "VS Code"; then
       if bounded code --add-mcp "{\"name\":\"loom\",\"type\":\"http\",\"url\":\"$server_url/mcp?toolset=coding\"}" >/dev/null; then
         printf 'VS Code: added the loom MCP server\n'
-        connected="$connected VS Code"
+        agents="$agents VS Code"
+      else
+        printf 'VS Code: could not add the MCP server (above)\n'
       fi
     fi
-    if [ -n "$connected" ]; then
-      printf '\nConnected:%s. Start a new session and say "Remember that I deploy only on Tuesdays";\n' "$connected"
+    if [ -n "$agents" ]; then
+      printf '\nConnected:%s. Start a new session and say "Remember that I deploy only on Tuesdays";\n' "$agents"
       printf 'in the next session, ask "When do I deploy?"\n'
     else
       printf '\nConnect an agent: https://github.com/%s/blob/main/docs/getting-started/connect-a-coding-agent.md\n' "$REPOSITORY"
