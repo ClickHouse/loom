@@ -1,4 +1,4 @@
-<h1 align="center">Loom</h1>
+<h1 align="center">ClickHouse Loom</h1>
 
 <p align="center">
   <b>Shared memory, document search and code intelligence for AI agents.</b><br>

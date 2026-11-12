@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use ClickHouse Loom in research, please cite it as below."
+title: "ClickHouse Loom"
+abstract: >-
+  A self-hosted MCP server and HTTP API that gives AI agents shared long-term
+  memory, document search with citations and a code index, stored in ClickHouse.
+type: software
+authors:
+  - name: "ClickHouse, Inc."
+repository-code: "https://github.com/ClickHouse/loom"
+url: "https://github.com/ClickHouse/loom"
+license: Apache-2.0
+keywords:
+  - agent memory
+  - model context protocol
+  - retrieval-augmented generation
+  - code search
+  - ClickHouse
