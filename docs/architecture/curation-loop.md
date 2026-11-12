@@ -99,17 +99,19 @@ leg except where a change names another, because the term leg serves shared rows
 reader:
 
 - **A redact** of a version of a definition's source (a past version: `memory.redact`
-  refuses the live head) scrubs the shared row whose text is that version's, and that
-  row's embedding, which a redact does not reach today, and blanks the text of every
-  `knowledge_gap` and `query_history` candidate whose drafted value hashes (canonical
-  JSON) to that version's `content_sha256`, or that the version's `candidate-id:` tag
-  names, promoted or not, which `learnings.list` shows (a `knowledge_gap` draft to
-  viewers, a `query_history` one to admins), and no other draft of the term; the pull
-  request that adds those candidate kinds adds that part. When the live head still holds
-  the redacted text (an edit reverted byte for byte), the shared copy and the drafts are
-  left, as `memory.redact` leaves a live copy of a text it scrubs from history. A blanked
-  candidate is not promoted: `learnings.review` answers it not found, as it does a blanked
-  `assistant_turn` candidate today.
+  refuses the live head) scrubs the shared row whose `value` hashes (canonical JSON) to
+  that version's `content_sha256`, which the redact keeps, so a redact run again after an
+  older build scrubbed the version's text still finds it, and that row's embedding, which
+  a redact does not reach today, and blanks the text of every `knowledge_gap` and
+  `query_history` candidate whose drafted value hashes (canonical JSON) to that version's
+  `content_sha256`, or that the version's `candidate-id:` tag names, promoted or not,
+  which `learnings.list` shows (a `knowledge_gap` draft to viewers, a `query_history` one
+  to admins), and no other draft of the term; the pull request that adds those candidate
+  kinds adds that part. When the live head still holds the redacted text (an edit reverted
+  byte for byte), the shared copy and the drafts are left, as `memory.redact` leaves a
+  live copy of a text it scrubs from history. A blanked candidate is not promoted:
+  `learnings.review` answers it not found, as it does a blanked `assistant_turn` candidate
+  today.
 - **A relabel to `medium` or `high`** of a promoted definition's source, by a writer or
   the sensitivity sweep, retires that row's shared embedding, keeping the row:
   `loom.shared` has no sensitivity of its own, so the ordinary legs would otherwise keep
@@ -365,9 +367,10 @@ search another op runs on its behalf:
   conversations) came back empty, with no leg failed, no hit withheld because an answer
   led (`withheld` with reason `home_fact_leads` or `tracker_verdict_leads`; any other
   reason, such as `below_precision_floor` or `loom_output`, means nothing usable was
-  found), no tracker verdict, no namespace skipped (`namespaces_skipped`) and no `tags`,
-  under a read scope of the whole namespace. Its own memory and knowledge searches record
-  nothing, so a question that knowledge answers is not a gap because memory abstained.
+  found), no tracker verdict, no namespace skipped (`namespaces_skipped`), no document
+  left out that its reader may not see (as for `knowledge.search`) and no `tags`, under a
+  read scope of the whole namespace. Its own memory and knowledge searches record nothing,
+  so a question that knowledge answers is not a gap because memory abstained.
 
 Only a search's first page can record a miss (a call with a `page` handle never does), and
 a search that could not answer for another reason is not a miss: a degraded answer whose
@@ -408,8 +411,8 @@ implementing pull request adds a helper beside it that returns the handle. A spe
 to two accounts, or a tie that cannot be read, records no miss.
 
 **The stored row.** Each miss writes one row to `loom.search_misses` under the namespace
-the search was addressed to: the identity tuple, the asker, `actor`, the plane and the
-query's normalised form. That form is case-folded, with every run of characters other than
+the search was addressed to: the identity tuple, the asker, the plane and the query's
+normalised form. That form is case-folded, with every run of characters other than
 letters, digits, `_`, `+` and `#` made one space, so `C++`, `C#` and `arr_v2` stay apart
 as the term leg keeps them. It is still the query's words, kept as the trace of a question
 under the request's capture level; only the threshold below decides what an admin sees. A
@@ -628,8 +631,9 @@ order, the first that matches deciding:
 - no head is written with `if_absent`, a precondition the implementing pull request adds
   to `memory.set` that refuses the write when a live row holds the key, so a writer who
   creates the row first is never overwritten;
-- a demoted term's live row refuses it, since no shared copy is governed; the admin edits
-  that row to the draft's text and reviews again, which the no-write case then promotes;
+- a live row with no governed shared copy, demoted or never promoted (a caller may write
+  `definition` rows), refuses it; the admin edits that row to the draft's text and reviews
+  again, which the no-write case then promotes;
 - any other head is a writer's edit, or a head the read-time check would not serve
   (`conflicted`, `duplicate`, expired), and the review is refused rather than overwrite or
   promote it.
@@ -656,20 +660,19 @@ govern it.
   its text, and the `knowledge_gap` and `query_history` candidates whose draft is that
   text or named by its `candidate-id:` tag (the change above), not the gap it came from,
   which holds only normalised queries enough askers asked and expires after 7 days.
-- `loom.search_misses`: a namespace step, a user step deleting every miss whose asker,
-  `user_id` or `actor` is the user, matching every spelling the directory ties to the
-  named subject (`spellings` in `server/auth/aliases.py`, unverified ties included, as a
-  revocation does), compared lower-cased on both sides (`lower(asker)` and
-  `lower(user_id)` against the lower-cased spellings), since the tie may have changed
-  since the miss was recorded and a subject such as `ASmith` is stored as given; a
-  directory that cannot be read fails the step closed (a token subject spelled as the
-  user's id goes too, which costs only a trace row), and a census row counting the step's
-  own predicate, over the asker and `user_id` under every spelling it deletes, so a miss
-  the step left fails the saga's verify; today a census row binds only the user's id
-  (`{uid:String}`), so the implementing pull request passes the spellings the step
-  resolved to the census, which compares them lower-cased and fails closed when the
-  directory cannot be read; an end user's asker is stored as their id, the form the
-  erasure names.
+- `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
+  `user_id` is the user, matching every spelling the directory ties to the named subject
+  (`spellings` in `server/auth/aliases.py`, unverified ties included, as a revocation
+  does), compared lower-cased on both sides (`lower(asker)` and `lower(user_id)` against
+  the lower-cased spellings), since the tie may have changed since the miss was recorded
+  and a subject such as `ASmith` is stored as given; a directory that cannot be read fails
+  the step closed (a token subject spelled as the user's id goes too, which costs only a
+  trace row), and a census row counting the step's own predicate, over the asker and
+  `user_id` under every spelling it deletes, so a miss the step left fails the saga's
+  verify; today a census row binds only the user's id (`{uid:String}`), so the
+  implementing pull request passes the spellings the step resolved to the census, which
+  compares them lower-cased and fails closed when the directory cannot be read; an end
+  user's asker is stored as their id, the form the erasure names.
 - `loom.knowledge_gaps` keeps counts, not askers, so no op or page names who asked: a
   namespace step, and, inside the user's miss step before it deletes the misses, a read of
   the namespaces the user has misses in and a delete of those namespaces' builds (derived
