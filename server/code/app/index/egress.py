@@ -13,12 +13,11 @@ or a package download gets the same answer:
   second DNS answer cannot point the tunnel inward.
 
 Anything that is not CONNECT (plain http) is refused. One job holds at most
-`MAX_TUNNELS` connections at a time; one more waits up to `code_egress_slot_wait_s` for a
-free slot and is then refused (503; the first refusal is logged, and the count when the
-job ends), and a tunnel with no bytes either way for
-`code_egress_idle_timeout_s` is closed, or for `code_egress_half_close_timeout_s` once
-the client has sent EOF. The relay inside the sandbox bridges at most `MAX_TUNNELS`
-connections at a time, so a client that opens hundreds waits in its listen backlog.
+`MAX_TUNNELS` tunnels; one more waits up to `code_egress_slot_wait_s` and is refused with
+a 503 (the first refusal and the job's count are logged). A tunnel with no byte either
+way for `code_egress_idle_timeout_s` is closed, or for `code_egress_half_close_timeout_s`
+once its client has sent EOF. The relay inside the sandbox bridges at most `MAX_TUNNELS`
+connections, so the rest wait in its listen backlog.
 """
 
 from __future__ import annotations

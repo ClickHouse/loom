@@ -11,8 +11,9 @@ import errno
 import socket
 import threading
 import types
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -73,15 +74,16 @@ class _FlakyListener:
 
 
 @contextlib.contextmanager
-def _relay(path: str, slots: int, flaky: bool = False) -> Iterator[int]:
+def _relay(
+    path: str, slots: int, accept_on: Callable[[socket.socket], Any] = lambda listener: listener
+) -> Iterator[int]:
     """Run the relay's accept loop on a free port; yields the port."""
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen(128)
-    accepting = _FlakyListener(listener) if flaky else listener
     loop = threading.Thread(
         target=egress_relay.accept_loop,
-        args=(accepting, path, threading.Semaphore(slots)),
+        args=(accept_on(listener), path, threading.BoundedSemaphore(slots)),
         daemon=True,
     )
     loop.start()
@@ -122,21 +124,21 @@ def test_a_thread_that_cannot_start_costs_one_connection(
                 raise RuntimeError("can't start new thread")
             super().start()
 
-    stand_in = types.SimpleNamespace(Thread=Thread, Semaphore=threading.Semaphore)
+    stand_in = types.SimpleNamespace(Thread=Thread)
     monkeypatch.setattr(egress_relay, "threading", stand_in)
     with _relay(upstream.server.getsockname(), 1) as port:
         first = socket.create_connection(("127.0.0.1", port), timeout=5)
         assert first.recv(1) == b""  # closed: one of its threads could not start
         first.close()
-        while upstream.arrived.acquire(timeout=0.3):  # the second case reached it
-            pass
+        if failing_start == 2:  # its bridge had reached the proxy
+            assert upstream.arrived.acquire(timeout=5)
         second = socket.create_connection(("127.0.0.1", port))
         assert upstream.arrived.acquire(timeout=5)  # its slot came back
         second.close()
 
 
 def test_an_accept_that_fails_is_retried(upstream: _Upstream) -> None:
-    with _relay(upstream.server.getsockname(), 1, flaky=True) as port:
+    with _relay(upstream.server.getsockname(), 1, _FlakyListener) as port:
         client = socket.create_connection(("127.0.0.1", port))
         assert upstream.arrived.acquire(timeout=5)
         client.close()

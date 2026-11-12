@@ -5,6 +5,7 @@ public, and always to the address it vetted (never the name again)."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -249,12 +250,34 @@ async def test_a_tunnel_with_no_bytes_either_way_is_closed(
         server.close()
 
 
+async def _tunnel_to(
+    handler: Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]],
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[egress.EgressProxy, asyncio.Server, asyncio.StreamReader, asyncio.StreamWriter]:
+    """A proxy whose every tunnel reaches `handler`, and one open tunnel through it."""
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    real_open = asyncio.open_connection
+
+    async def open_connection(_host: str, _port: int, **kw: Any) -> Any:
+        return await real_open("127.0.0.1", port, **kw)
+
+    monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
+    sock = str(sock_dir / "p.sock")
+    proxy = await egress.start_proxy(sock, None)
+    reader, writer = await asyncio.open_unix_connection(sock)
+    writer.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
+    head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
+    assert head.startswith(b"HTTP/1.1 200")
+    return proxy, server, reader, writer
+
+
 async def test_a_tunnel_whose_client_sent_eof_closes_when_the_server_goes_quiet(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A registry need not close a connection its client has finished with; the
     tunnel would otherwise hold its slot for the whole idle timeout."""
-
     done = asyncio.Event()
 
     async def never_closes(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -263,22 +286,9 @@ async def test_a_tunnel_whose_client_sent_eof_closes_when_the_server_goes_quiet(
         await done.wait()
         writer.close()
 
-    server = await asyncio.start_server(never_closes, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    real_open = asyncio.open_connection
-
-    async def open_connection(_host: str, _port: int, **kw: Any) -> Any:
-        return await real_open("127.0.0.1", port, **kw)
-
-    monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
     monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.2)
-    sock = str(sock_dir / "p.sock")
-    proxy = await egress.start_proxy(sock, None)
+    proxy, server, reader, writer = await _tunnel_to(never_closes, sock_dir, monkeypatch)
     try:
-        reader, writer = await asyncio.open_unix_connection(sock)
-        writer.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
-        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
-        assert head.startswith(b"HTTP/1.1 200")
         writer.write_eof()
         # the server's last bytes still arrive, then the proxy hangs up
         assert await asyncio.wait_for(reader.read(), timeout=5) == b"bye"
@@ -286,4 +296,50 @@ async def test_a_tunnel_whose_client_sent_eof_closes_when_the_server_goes_quiet(
     finally:
         done.set()
         await proxy.close()
+        server.close()
+
+
+async def test_a_server_still_sending_after_the_clients_eof_keeps_its_tunnel(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    done = asyncio.Event()
+
+    async def streams(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read()
+        for chunk in b"012345":  # three half-close timeouts of steady bytes
+            writer.write(bytes([chunk]))
+            await asyncio.sleep(0.1)
+        await done.wait()
+        writer.close()
+
+    monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.2)
+    proxy, server, reader, writer = await _tunnel_to(streams, sock_dir, monkeypatch)
+    try:
+        writer.write_eof()
+        assert await asyncio.wait_for(reader.read(), timeout=5) == b"012345"
+        writer.close()
+    finally:
+        done.set()
+        await proxy.close()
+        server.close()
+
+
+async def test_close_ends_an_open_tunnel_and_its_server_side(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upstream_eof = asyncio.Event()
+
+    async def silent(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read()
+        upstream_eof.set()
+        writer.close()
+
+    proxy, server, _reader, writer = await _tunnel_to(silent, sock_dir, monkeypatch)
+    try:
+        await proxy.close()
+        await asyncio.wait_for(upstream_eof.wait(), timeout=5)
+        splices = [t for t in asyncio.all_tasks() if t.get_coro().__name__ == "_splice"]
+        assert not splices
+    finally:
+        writer.close()
         server.close()

@@ -57,7 +57,7 @@ def accept_loop(listener: socket.socket, path: str, slots: threading.Semaphore) 
         slots.acquire()
         try:
             conn, _ = listener.accept()
-        except OSError:  # EMFILE: retried; a closed listener (shut down) ends the loop
+        except OSError:  # EMFILE and the like: retried; a closed listener (tests) ends it
             slots.release()
             if listener.fileno() == -1:
                 return
@@ -80,7 +80,7 @@ def serve(port: int, path: str, max_bridges: int, argv: list[str]) -> None:
         # The relay is a grandchild handed to the sandbox's init, so ARGV has no
         # stray child; it dies with the sandbox's pid namespace.
         if os.fork() == 0:
-            accept_loop(listener, path, threading.Semaphore(max_bridges))
+            accept_loop(listener, path, threading.BoundedSemaphore(max_bridges))
         os._exit(0)
     os.waitpid(child, 0)
     listener.close()
