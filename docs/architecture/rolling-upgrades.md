@@ -624,7 +624,8 @@ schema. These rules keep that safe. The operator procedure is in
     search rows are gone (`memory_embeddings.tombstone`), but `memory.lineage` and the
     shared reads still return them. Once N serves alone, the [upgrade
     procedure](../operations/upgrades.md#upgrade-procedure), step 14, lists those of the
-    erasures the ledger still holds (90 days) for `memory.demote`, or for a purge again;
+    erasures the ledger still holds (90 days) for `memory.demote`, or, where the erasure
+    purged, for a delete of the listed keys;
     an older erasure's rows cannot be found and stay. No gate holds the rollout, and the
     mixed-version gate does not check this rule.
 

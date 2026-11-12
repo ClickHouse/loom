@@ -222,7 +222,8 @@ checkout.
 
     ```sql
     SELECT s.org, s.namespace, s.memory_key, groupArray(e.id) AS erasures,
-           max(e.purged)::UInt8 AS purged, (any(s.tombstoned_at) IS NULL)::UInt8 AS live
+           max(e.purged)::UInt8 AS purged, (any(s.tombstoned_at) IS NULL)::UInt8 AS live,
+           max(e.completed_at) AS erased_at
     FROM (
         SELECT org, namespace, memory_key, promoted_at, tombstoned_at
         FROM loom.shared FINAL
@@ -242,20 +243,18 @@ checkout.
     GROUP BY s.org, s.namespace, s.memory_key
     ```
 
-    For a namespace whose erasure did not purge (`purged = 0`), demote each live listed row
-    (`live = 1`) with `memory.demote`, with a token that holds `admin` on the namespace (a
-    grant on it, or a platform admin's token for a collection, which an org admin's role
-    does not open). For one whose erasure purged (`purged = 1`), delete the rows instead,
-    live and demoted alike, since a demotion keeps the text: if nobody has written to the
-    namespace since (for example one that `collection.delete` or the namespace sweep
-    removed), request a one-name `namespace_list` erasure with
-    `{"namespaces": ["<namespace>"], "purge": true}`, which an org admin may request for any
-    namespace of the org (a `namespace` scope never purges); if it is in use again, delete
-    the listed keys alone, so nothing else in the namespace goes:
+    For a row whose erasure did not purge (`purged = 0`), demote it when live (`live = 1`)
+    with `memory.demote`, with a token that holds `admin` on the namespace: a grant on it,
+    a platform admin's token for a collection (an org admin's role opens none), or, for a
+    restricted namespace, a token that names it and a direct grant. For a row whose erasure
+    purged (`purged = 1`), delete it instead, live or demoted, since a demotion keeps the
+    text. The older build's purge removed the namespace's other rows, so the listed keys are
+    all there is to delete, and `promoted_at` keeps a row promoted since:
 
     ```sql
     ALTER TABLE loom.shared DELETE
     WHERE org = '<org>' AND namespace = '<namespace>' AND memory_key IN ('<key>', ...)
+      AND promoted_at <= '<erased_at>'
     ```
 
     A namespace erasure requested before the ledger's 90 days is not listed, and the
