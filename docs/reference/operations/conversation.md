@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `conversation.append`
 
-Log one chat turn (role + content) to the active thread.
+Log one chat turn (role + content) to a thread.
 
 `POST /v1/conversation.append` · MCP `loom_conversation_append` · role `writer` · idempotent
 

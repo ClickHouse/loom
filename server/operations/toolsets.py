@@ -135,17 +135,8 @@ _MCP_CODE_CORE_OPS: frozenset[str] = frozenset(
 )
 
 
-# The "core" MCP toolset (settings.mcp_toolset == "core", the default): the
-# listing every client that names no toolset sees. It carries the memory loop
-# only: the belief-revision verbs (set, update by key, delete, pin, and
-# blacklist.add to refuse), reads by key, the two wide-write shapes and task
-# context. Every
-# other op (documents, the scratchpad, conversation capture, profile,
-# namespaces, erasure) stays callable by name through loom_op and on /v1/* and
-# the SDKs: each listed tool is read on every turn, and a model picks among
-# fewer tools more reliably. The primer names loom_op for the ones it points
-# at. Synthetic tools are always shown. LOOM_MCP_TOOLSET=all exposes the full
-# surface.
+# The "core" MCP toolset, the default listing: the memory loop only. Every other op
+# runs through loom_op, since each listed tool is read on every turn.
 _MCP_CORE_OPS: frozenset[str] = frozenset(
     {
         # Save, revise, forget, keep: the belief-revision verbs.

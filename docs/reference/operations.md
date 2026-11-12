@@ -167,7 +167,7 @@ Fields for every `blacklist` op: [operations/blacklist.md](operations/blacklist.
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`blacklist.add`](operations/blacklist.md#blacklistadd) | WHAT: Refuse future saves of matching content: every later memory write in the namespace whose value matches `pattern` is refused. | writer | idempotent | yes | yes |
+| [`blacklist.add`](operations/blacklist.md#blacklistadd) | Refuse future memory writes whose value matches a pattern. | writer | idempotent | yes | yes |
 | [`blacklist.list`](operations/blacklist.md#blacklistlist) | List patterns that suppress memory storage. | viewer | read | no |  |
 | [`blacklist.remove`](operations/blacklist.md#blacklistremove) | Remove a previously-added blacklist pattern. | admin | idempotent | no | yes |
 | [`blacklist.sweep`](operations/blacklist.md#blacklistsweep) | Tombstone the live rows an existing pattern matches. | writer | idempotent | no | yes |
@@ -286,7 +286,7 @@ Fields for every `conversation` op: [operations/conversation.md](operations/conv
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`conversation.append`](operations/conversation.md#conversationappend) | Log one chat turn (role + content) to the active thread. | writer | idempotent | yes |  |
+| [`conversation.append`](operations/conversation.md#conversationappend) | Log one chat turn (role + content) to a thread. | writer | idempotent | yes |  |
 | [`conversation.compact`](operations/conversation.md#conversationcompact) | Summarize old turns into one embedded system turn and tombstone the originals. | writer | idempotent | no | yes |
 | [`conversation.create`](operations/conversation.md#conversationcreate) | Open a thread container. | writer | idempotent | no |  |
 | [`conversation.delete`](operations/conversation.md#conversationdelete) | Soft-delete one thread: its messages, thread row and embeddings no other agent holds. | admin | idempotent | no | yes |
@@ -777,12 +777,12 @@ Fields for every `working_memory` op: [operations/working_memory.md](operations/
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`working_memory.append`](operations/working_memory.md#working_memoryappend) | WHAT: Add `addition` to the end of a working-memory block, creating the block when it is missing. | writer | write | yes |  |
+| [`working_memory.append`](operations/working_memory.md#working_memoryappend) | Append text to a working-memory block, creating it when missing. | writer | write | yes |  |
 | [`working_memory.delete`](operations/working_memory.md#working_memorydelete) | Delete one working-memory block. | writer | idempotent | no |  |
 | [`working_memory.get`](operations/working_memory.md#working_memoryget) | Fetch one working-memory block by key. | viewer | read | no |  |
 | [`working_memory.render`](operations/working_memory.md#working_memoryrender) | Render working-memory blocks as XML or markdown. context.pack already includes this section; direct render is mainly for SDK or custom orchestration code. | viewer | read | yes |  |
 | [`working_memory.replace`](operations/working_memory.md#working_memoryreplace) | Replace exact text inside a working-memory block. | writer | idempotent | no |  |
-| [`working_memory.set`](operations/working_memory.md#working_memoryset) | WHAT: Overwrite one working-memory block (the scratchpad context.pack loads into the prompt) with `content`. | writer | idempotent | yes |  |
+| [`working_memory.set`](operations/working_memory.md#working_memoryset) | Overwrite one working-memory block. | writer | idempotent | yes |  |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: operations -->

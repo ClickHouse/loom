@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `working_memory.append`
 
-WHAT: Add `addition` to the end of a working-memory block, creating the block when it is missing.
+Append text to a working-memory block, creating it when missing.
 
 `POST /v1/working_memory.append` · MCP `loom_working_memory_append` · role `writer` · write
 
@@ -134,7 +134,7 @@ Replace exact text inside a working-memory block.
 
 ## `working_memory.set`
 
-WHAT: Overwrite one working-memory block (the scratchpad context.pack loads into the prompt) with `content`.
+Overwrite one working-memory block.
 
 `POST /v1/working_memory.set` · MCP `loom_working_memory_set` · role `writer` · idempotent
 

@@ -414,6 +414,13 @@ def test_the_primer_sends_documents_through_loom_op() -> None:
     assert "`loom_memory_set`" in coding and "`loom_context_pack`" in coding
 
 
+def test_the_primer_names_the_scratchpad_route_each_listing_has() -> None:
+    assert "`loom_op` (op `working_memory.set`)" in mcp_primer._loom_rules("core", None)
+    for toolset in ("coding", "atomic", "all"):
+        rules = mcp_primer._loom_rules(toolset, None)
+        assert "leases and pointers go to `loom_working_memory_set`" in rules, toolset
+
+
 def test_the_guide_is_named_at_initialize_except_on_the_compact_coding_form() -> None:
     guide = "`loom_op` (op `mentor.guide`)"
     for toolset in ("core", "readonly", None):

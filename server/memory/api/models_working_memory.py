@@ -14,6 +14,8 @@ MAX_CHAR_LIMIT = 16384
 
 
 class WorkingMemorySetInput(_Identity):
+    """Overwrite one working-memory block."""
+
     # The block to write, within the caller's (agent, user, session, run) scope.
     block_key: str = Field(default="scratchpad", min_length=1, max_length=80)
     # The block's whole new text, replacing what it held; empty stores an empty block.
@@ -23,6 +25,8 @@ class WorkingMemorySetInput(_Identity):
 
 
 class WorkingMemoryAppendInput(_Identity):
+    """Append text to a working-memory block, creating it when missing."""
+
     # The block to append to; a missing block is created with the default size cap.
     block_key: str = Field(default="scratchpad", min_length=1, max_length=80)
     # Text added at the end of the block.

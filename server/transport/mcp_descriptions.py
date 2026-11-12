@@ -575,7 +575,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "AMBIGUOUS_KEY lists them). updated=false with reason=not_found means "
         "the key has no live row — save it with memory.set instead. Pass "
         "if_match_sha256 from the read for a no-clobber update. Given a "
-        "memory_id rather than a key, call memory.update_by_id via loom_op."
+        "memory_id rather than a key, call memory.update_by_id (via loom_op where "
+        "it is not listed)."
     ),
     "memory.update_by_id": (
         "Update a memory by UUID with an optimistic concurrency check. "
@@ -1139,7 +1140,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "nothing. Returns turns, never facts — cite them as quotes."
     ),
     "conversation.append": (
-        "Log one chat turn (role + content) to the active thread. Call "
+        "Log one chat turn (role + content) to a thread. Use one stable "
+        "`thread_id` per session (a ULID or 'session-' + timestamp) and reuse "
+        "it for every turn; the thread need not exist first. Call "
         "for every user message and reply; a missed turn is missing from "
         "the transcript. If the user disables logging, call "
         "conversation.set_logging (via loom_op) with `enabled=false` — "

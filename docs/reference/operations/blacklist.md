@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `blacklist.add`
 
-WHAT: Refuse future saves of matching content: every later memory write in the namespace whose value matches `pattern` is refused.
+Refuse future memory writes whose value matches a pattern.
 
 `POST /v1/blacklist.add` · MCP `loom_blacklist_add` · role `writer` · idempotent · audited
 
