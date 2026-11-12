@@ -133,8 +133,9 @@ and the MCP schema carry the hash field, and the implementing pull request names
 break.
 
 Should two shared rows match one name despite that refusal (two promotions racing, or one
-promoted through a build without the check), the term leg serves the one promoted last, by
-the shared row's `version` (its whole-second `promoted_at` can tie).
+promoted through a build without the check), the term leg serves, among the rows the
+read-time check passes, the latest promotion (`promoted_at`, a tie by `promotion_event`);
+a rewrite of a shared row that is not a promotion, such as a scrub, does not count.
 
 A caller may already write rows of type `definition`; they are governed only once an admin
 promotes them, but their write-time verdicts change with this design: `definition` joins
@@ -174,19 +175,22 @@ answer from before a promotion or demotion on N is reused after it (rolling upgr
 covers N-1's). It reads the addressed namespace's live `loom.shared` rows of type
 `definition` under a `definition/` key (only that namespace, whatever `namespace_scope`
 fans out over), matches the query against each one's term and aliases, and places the
-matched rows at the top of the served list with `governed = true` on the hit, removing any
-other hit under the same key in the addressed namespace, so an edited private copy is not
-served beside the governed text. A term or alias matches where it appears in the query
-with no character next to it that continues its edge: next to a Latin letter (accented
-ones included), digit, `_`, `+` or `#`, another of those; next to a letter of another
-script written with spaces (Cyrillic, Greek), a letter or digit that is not Latin; next to
-Hangul, whose particles attach to the word before them, or a script written without spaces
-(Han, Kana, Thai, Lao, Khmer, Myanmar) or punctuation, nothing. So `рост` does not match
-inside "простой" and `café` not inside "cafés", while `MRR` matches in "什么是MRR", `ARR` in
-"ARR은" and `매출` in "매출은 얼마야". One written all in capitals, or with a capital after its
-first letter, matches only as written, so `IT` does not match "what is it" and `GitHub`
-stays exact; any other matches case-folded, so `Churn rate` matches "what is our churn
-rate".
+matched rows at the top of the served list with `governed = true` on the hit (its
+`similarity` and `distance` its shared embedding's to the query, null when it has none,
+and a `rank_score` above the pool's; the response's `abstain`, `below_threshold`,
+`retrieval_confidence` and `retrieval_risk` read the first hit that is not governed, and a
+response that serves a governed hit does not abstain), removing any other hit under the
+same key in the addressed namespace, so an edited private copy is not served beside the
+governed text. A term or alias matches where it appears in the query with no character
+next to it that continues its edge: next to a Latin letter (accented ones included),
+digit, `_`, `+` or `#`, another of those; next to a letter of another script written with
+spaces (Cyrillic, Greek), a letter or digit that is not Latin; next to Hangul, whose
+particles attach to the word before them, or a script written without spaces (Han, Kana,
+Thai, Lao, Khmer, Myanmar) or punctuation, nothing. So `рост` does not match inside
+"простой" and `café` not inside "cafés", while `MRR` matches in "什么是MRR", `ARR` in "ARR은"
+and `매출` in "매출은 얼마야". One written all in capitals, or with a capital after its first
+letter, matches only as written, so `IT` does not match "what is it" and `GitHub` stays
+exact; any other matches case-folded, so `Churn rate` matches "what is our churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -202,32 +206,35 @@ and no ordinary hit is skipped, and is off when a field asks for other rows (any
 `memory_type`, since `definition` is not one of the field's values; `tags` or `category`
 filtering, not with `tags_soft` or `category_soft`; an explicit `agent`, `run_id` or
 `session_ids`; `as_of`; a body `user_id` or `session_id` under a whole-namespace read;
-`min_body_chars`). A `user_id` or `session_id` the read scope pins, `scope`,
-`exclude_keys` and `min_similarity` keep it on, as do a soft tag or category and
-`entity_filter`, which only boost rows; it drops any key in `exclude_keys`. It serves no
-definition whose source is `sensitivity = 'high'` (the read-time check above). Its read is
-bounded by a setting; past the bound, the most recently promoted definitions (by
-`version`) are read. It runs concurrently with the other legs under its own time bound,
-which never shortens theirs (a leg past its bound adds nothing); an added output field,
-`term_leg` (`complete`, `capped` or `timed_out`, and `off` when the leg did not run: a
-page handle, a field that turns it off, or a namespace with no definition), says which; a
-miss reads `off` as finished, and its latency is measured against the op's budget
-(`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull request that adds it.
-`governed` is an added output field: the SDKs and the MCP schema carry it.
+`min_body_chars`; and `recent_first` or `anchor_first` above 0, whose rows are documented
+to come first). A derived aggregate's synthetic row (`derived_aggregate`, an exact count
+over the namespace's rows) stays first, above the governed hits, as the response documents
+it. A `user_id` or `session_id` the read scope pins, `scope`, `exclude_keys` and
+`min_similarity` keep it on, as do a soft tag or category and `entity_filter`, which only
+boost rows; it drops any key in `exclude_keys`. It serves no definition whose source is
+`sensitivity = 'high'` (the read-time check above). Its read is bounded by a setting; past
+the bound, the most recently promoted definitions (by `promoted_at`) are read. It runs
+concurrently with the other legs under its own time bound, which never shortens theirs (a
+leg past its bound adds nothing); an added output field, `term_leg` (`complete`, `capped`
+or `timed_out`, and `off` when the leg did not run: a page handle, a field that turns it
+off, or a namespace with no definition), says which; a miss reads `off` as finished, and
+its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
+`server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
+output field: the SDKs and the MCP schema carry it.
 
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
 defines (`server/knowledge/domain/exact_keys.py`), and a definition's `rests_on` already
 points at the documents behind it. `loom_search` serves the leg through its memory
 section, and one rule holds for every later stage of `memory.search`, `loom_search` and
 the ops that run `memory.search` inside them: no stage or floor reorders governed hits,
-moves one below a hit that is not governed, or drops one in favour of such a hit, a stage
-added later included; a cap cuts governed hits last. Governed hits come first, in the
-order their names first appear in the query (a tie by the later `version`), and count
-within `top_k`, within a stage's cap on the memory section (the tracker verdict's
-`verdict_leads`, which keeps `VERDICT_MEMORY_MAX` memory hits) and within the token
-budgets (`body_budget_tokens`, `context.pack`'s block budget). When more governed hits
-match than fit, the later ones in that order are not served; a budget may shorten a body
-but never reorders the hits.
+moves one below a hit that is not governed (the derived aggregate's row aside), or drops
+one in favour of such a hit, a stage added later included; a cap cuts governed hits last.
+Governed hits come first, in the order their names first appear in the query (a tie by the
+later `version`), and count within `top_k`, within a stage's cap on the memory section
+(the tracker verdict's `verdict_leads`, which keeps `VERDICT_MEMORY_MAX` memory hits) and
+within the token budgets (`body_budget_tokens`, `context.pack`'s block budget). When more
+governed hits match than fit, the later ones in that order are not served; a budget may
+shorten a body but never reorders the hits.
 
 **Ranking-neutral rule:** when no governed term matches, the leg adds nothing and the
 served list is exactly what it was before. The memory-plane rule asks for a paired
@@ -247,8 +254,13 @@ column: the request's capture level (`current_capture_level()` in
 `capture_generation_io`, else the operator's `langfuse_capture_io_level`, and narrows to
 the most restrictive namespace a fan-out reads). A miss is recorded only when that level
 is not `off`; an unreadable consent reads as `off`. A deployment that wants gaps therefore
-turns on both: gaps, and capture at `query` or `all` for the namespace (its
-`capture_generation_io`, which wins, else `langfuse_capture_io_level`). No miss is
+turns on both: gaps, and capture at `query` or `all` for the namespace. The operator's
+`langfuse_capture_io_level = query` is the only way to the `query` level; a namespace's
+own `capture_generation_io` is a boolean that wins, `true` meaning `all`, so a namespace
+that opts in that way also captures every LLM prompt and completion. Turning
+`knowledge_gaps_enabled` off stops recording, the gaps pass and `knowledge.gaps.list`
+(which then answers an empty list); the stored misses and builds expire by their TTL, and
+an operator who wants them gone sooner deletes them as the rollback below does. No miss is
 recorded while a replica below N serves (the rollout gate below). A gap needs several
 distinct askers, so a deployment that has one identity for every caller
 (`effective_identity_provider()` is `single-user`, set explicitly or inferred when
@@ -282,8 +294,9 @@ a search that could not answer for another reason is not a miss: a degraded answ
 provider fell back, one with writes still waiting for extraction (`pending_extraction >
 0`), one whose fan-out stopped short (`namespaces_skipped`), or one whose hits the memory
 authority dropped (`stale_dropped > 0`), or one whose term leg did not finish (`term_leg`
-other than `complete`, or a source read that failed closed), so a defined term is never
-recorded as a gap because its leg was cut.
+`capped` or `timed_out`, or a source read that failed closed; `off`, a leg with no
+definition to read, is finished), so a defined term is never recorded as a gap because its
+leg was cut.
 
 The **asker** is the person the token stands for, never a body field: the end user of an
 end-user token; else the token's `creator` claim, the person at the root of a delegated
@@ -579,10 +592,10 @@ again every definition promoted before then, through N-1 or before this design
 the hash check or a token-stamped `promoted_by`; that promotion on N also moves the write
 mark, which N-1's promotions and demotions never move, so a stored `memory.ask` answer
 from the rollout is not reused past it (until then such an answer lives at most
-`memory_ask_precedents_fast_max_age_hours`). N-1, which does not know `definition` as
-key-identified, can merge, supersede or retire one definition's source while writing
-another; the rows it retired are listed by `memory.auto_retirements` (reasons
-`conflict_resolver`, `newest_wins_contradiction`, `value_update` and
+`memory_ask_precedents_fast_max_age_hours`, with no bound when it is 0). N-1, which does
+not know `definition` as key-identified, can merge, supersede or retire one definition's
+source while writing another; the rows it retired are listed by `memory.auto_retirements`
+(reasons `conflict_resolver`, `newest_wins_contradiction`, `value_update` and
 `same_key_newest_wins`), restored with its Undo (or `memory.restore` past its 30-day
 window), and promoted again; a source it marked `conflicted` is cleared with
 `conflicts.resolve`, one it marked `duplicate` with `memory.dedup_resolve`, and promoted
