@@ -325,10 +325,10 @@ missed path leaks.
 A mirrored source's documents are never kept past it: `remove` retires every one no
 other live source holds (`delete_documents` is implied), and so do a disconnect, a SCIM
 deactivation, the owner check and every retirement of a namespace's sources
-(`namespace.delete`, `collection.delete`, an erasure, `code.repo.remove`). The one
-trigger is an inactive source that still holds addresses (its holds name the mirror),
-whatever the row's `pending_delete` or `access` columns say, so an N-1 worker that
-clears `pending_delete` after counting no document in the namespace stops nothing. The
+(`namespace.delete`, `collection.delete`, an erasure, `code.repo.remove`). The trigger
+is an open cleanup row ([below](#who-the-store-says-may-read)), whatever the source
+row's `pending_delete` or `access` columns say, so an N-1 worker that clears
+`pending_delete` after counting no document in the namespace stops nothing. The
 retention pass reads `loom.knowledge_mirrors` and applies the namespace's
 `retention_days` to its mirror. `count_documents`, the name checks of `add` and the
 sync's retirement read the mirror for a mirrored source.
@@ -376,21 +376,21 @@ Four tables under the mirror say who may read, each written as new versions with
   file shared with it.
 
 A stopped source's rows go on one trigger, whichever path stopped it (an N-1 `remove`
-included): an inactive source that still has any hold, readers, listing or group-members
-row. The sync writes `deleted` its readers, listing and group-members rows and then
-drops its holds, retiring the documents no other source holds. So no row of a source
-that no longer lists can admit anyone, and none names an account in any form other than
-its pseudonym, even for a source that never reached a file. A document's rows are
-written `deleted` when the document is retired. Every stop N makes writes, under the
-source lease, a row of `loom.knowledge_source_cleanups` (the source's id, namespace and
-mirror), so a source added later under the same name, which replaces the stopped row in
-the registry, cannot hide it. A pass cleans at most 100 open cleanup rows, oldest first:
-the source's holds wherever they live (the namespace or its mirror) and its rows, then
-marks the cleanup done. It also reads `loom.knowledge_sources` for inactive rows N-1
-stopped, which wrote no cleanup row, and opens one for each. An N-1 `add` that reuses
-the name of a source N-1 removed before any N pass saw it leaves that source's rows
-until the namespace's erasure; they admit nobody once stale. A source whose registry row
-a purge deleted went with its namespace's erasure, mirror included.
+included): an open row of `loom.knowledge_source_cleanups`. The sync writes `deleted`
+its readers, listing and group-members rows and then drops its holds, retiring the
+documents no other source holds. So no row of a source that no longer lists can admit
+anyone, and none names an account in any form other than its pseudonym, even for a
+source that never reached a file. A document's rows are written `deleted` when the
+document is retired. Every stop N makes writes, under the source lease, a row of
+`loom.knowledge_source_cleanups` (the source's id, namespace and mirror), so a source
+added later under the same name, which replaces the stopped row in the registry, cannot
+hide it. A pass cleans at most 100 open cleanup rows, oldest first: the source's holds
+wherever they live (the namespace or its mirror) and its rows, then marks the cleanup
+done. It also opens one for every `source_id` that a namespace's holds or its mirror's
+tables carry and no current registry row does: one anti-join against
+`loom.knowledge_sources FINAL`, which finds a source N-1 stopped and wrote no cleanup
+row for, even when an N-1 `add` has since reused its name. A source whose registry row a
+purge deleted went with its namespace's erasure, mirror included.
 
 A person a crawl no longer reads (gone from a group it expands, taken out of `subjects`,
 or excluded) is treated the same way, on positive evidence only, as today's sync retires
@@ -703,8 +703,8 @@ knowledge mirror erase --all`, a server CLI command that reads
   of the other holder writes it again. The cost is a document missing for up to one
   interval.
 - **State.** Sync state stays in `loom.code_index_state`; N-1 ignores the per-account
-  cursors and `cleaned_at` N keeps in it and the listings position row (its own turns
-  merge into the state and leave them).
+  cursors N keeps in it and the listings position row (its own turns merge into the
+  state and leave them).
 - **`meet`.** N-1 still syncs a stored `meet` source on its turns; N skips it.
 - **Erasure.** N-1's erasure misses the mirror and the new tables (rule 14): run again
   with N every erasure completed while an N-1 replica served.
@@ -792,7 +792,8 @@ The redirect URI to register with each store is
   the steps for a source added mid-saga; the deleted readers rows landing before a
   listing row's new start, with the sync killed between them; a stopped crawl, with or
   without holds, leaving no listing or group-members row, also when its name is added
-  again before the cleanup pass; a person dropped from a crawl's expansion leaving no
+  again before the cleanup pass; a hold of a source N-1 removed and re-added under its
+  name, cleaned by the anti-join; a person dropped from a crawl's expansion leaving no
   readers or listing row; a directory read that fails mid-group, or returns over the
   cap, dropping nobody; a user erasure leaving no row, of any version, keyed by the
   person's pseudonyms; `erasure.request` refusing an `acl-` scope for an org admin and a
