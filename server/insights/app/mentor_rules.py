@@ -259,7 +259,7 @@ _LISTED_VIA_ALIAS = frozenset(
 def _unlisted(ops: tuple[str, ...]) -> str:
     """A trailing note for the first recommended op that is not on the core
     listing, so the agent knows not to look for it in its tool list (the
-    reference lint's "callable by name" phrase)."""
+    reference lint's "via loom_op" marker)."""
     try:
         from server.operations.toolsets import _MCP_HIDDEN_OPS, op_toolsets
     except Exception:  # noqa: BLE001 — no MCP config in this process: no note
