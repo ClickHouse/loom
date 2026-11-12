@@ -97,16 +97,17 @@ Agent(org="", namespace="", agent=None, *, base_url=None, api_key=None, timeout_
 
 `org` may be left empty: a `code.*` or `tracker.*` op then runs in its plane's org, and
 any other op in the token's org, or, on a single-user server with no token, the install's.
-`namespace` may be left empty only for a single-user server and a call with no token, on
-the everyday memory and search ops ([which ops](http-api.md#request)). An empty
-`namespace` is left out of the body: any other server, or any other op, that requires one
-answers `VALIDATION_FAILED` naming it rather than reading `""` as a namespace, and an op
-where it is optional runs without it. The SDK sends any credential it finds
-([Credentials](#credentials)): `api_key=`, `LOOM_API_KEY`, a bot's `LOOM_CLIENT_ID`, a
-`loom login` session for that server, or `~/.loom/token`; a call with one gets no
-namespace filled in. `auto_run`, `run_scope()` and `session()` need the namespace named
-(their `run.begin`, `context.pack` and `conversation.append` are not on the list; an
-ambient run that cannot begin is skipped), and so do `knowledge.upload` and
+The server fills an empty `namespace` in only for a single-user server and a call with no
+token, on the everyday memory and search ops ([which ops](http-api.md#request)); a
+`code.*` or `tracker.*` op takes its plane's. An empty `namespace` is left out of the
+body: any other server, or any other op, that requires one answers `VALIDATION_FAILED`
+naming it rather than reading `""` as a namespace, and an op where it is optional runs
+without it. The SDK sends any credential it finds ([Credentials](#credentials)):
+`api_key=`, `LOOM_API_KEY`, a bot's `LOOM_CLIENT_ID`, a `loom login` session for that
+server, or `~/.loom/token`; a call with one gets no namespace filled in. `auto_run`,
+`run_scope()`, `session()`, `mentor_brief=True` and `mentor()` need the namespace named
+(their `run.begin`, `context.pack`, `conversation.append` and `mentor.brief` are not on
+the list; an ambient run that cannot begin is skipped), and so do `knowledge.upload` and
 `knowledge.download`, which the SDK refuses without both. An `agent` not given is
 `sdk-python:<script>`.
 
