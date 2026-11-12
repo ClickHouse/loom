@@ -52,14 +52,20 @@ a redact or a tombstone of the source, by any writer or worker on any build, end
 governance until an admin promotes the source again; a copy that keeps the text (the
 entity pass, a touch) keeps it. `memory.demote` ends governance.
 
-The shared layer needs six changes for this, each in the pull request that adds the term
+The shared layer needs eight changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
 
 - **Namespace erasure** gains a step and a census row for `loom.shared`. Today only user
   erasure reaches it, by provenance, and a definition promoted from the namespace-wide row
   names no user.
 - **A redact** of a definition reaches its shared row and that row's embedding, which a
-  redact of the source does not reach today.
+  redact of the source does not reach today, and blanks the text of the learnings
+  candidate it was promoted from (`promoted_from_candidate_id`), which `learnings.list`
+  shows to viewers.
+- **A promotion of a definition carries the content hash it approves**, the one
+  `memory.set` returned on the review path or one the caller passes to `memory.promote`,
+  and is refused when the source's text no longer has it, so a writer's change between the
+  write and the promotion is never signed off as the admin's.
 - **`promoted_by`** is stamped from the token's actor on every promotion of a definition,
   `memory.promote` or `learnings.review`, never taken from the body's `approver`.
 - **`check_against_shared`**, the promotion's conflict check, skips `definition` (only),
@@ -110,8 +116,9 @@ them for every reader of the namespace, and a user-bounded reader who could not 
 would read the term as undefined. This narrows the read-scope rule that a bounded read
 serves no namespace-wide row ([read scope inside a
 namespace](../concepts/identities-and-namespaces.md#read-scope-inside-a-namespace)), for
-governed definitions through this leg only. The leg runs only on a search's first page,
-and is off when a field asks for other rows (any `memory_type`, whose filter cannot name
+governed definitions through this leg only. The leg runs only on a search's first page
+(the governed keys it served there stay out of every later page of that search), and is
+off when a field asks for other rows (any `memory_type`, whose filter cannot name
 `definition`; `tags`; `category`; an explicit `agent`, `run_id` or `session_ids`;
 `as_of`). A `user_id` or `session_id` the read scope pins, `scope`, `exclude_keys` and
 `min_similarity` keep it on; it drops any key in `exclude_keys`. It serves no definition
@@ -172,14 +179,14 @@ The **asker** is the person the token stands for, never a body field: the end us
 end-user token; else the token's `creator` claim, the person at the root of a delegated
 token or service account ([tokens and grants](../guides/tokens-and-grants.md)); else, for
 a service account's token minted without the claim, its creator as the registry records it
-(`sa_creator` in `server/auth/service_accounts.py`), and for a claimed agent sign-up, the
-person who claimed it; else the token's subject. Tokens a person mints for themselves
-therefore count as that person. Each miss writes one row to `loom.search_misses` under the
-namespace the search was addressed to: the identity tuple, the asker, `actor`, the plane
-and the query's normalised form, never the raw text: nothing reads it, and it is one
-asker's words below the threshold. No memory key or document URI is kept: one naming
-another user's row or document would outlive that user's erasure, or the document's
-delete, in someone else's miss. The table has a 30-day TTL: it is a trace, not memory.
+(`sa_creator` in `server/auth/service_accounts.py`); else the token's subject. Tokens a
+person mints for themselves therefore count as that person. Each miss writes one row to
+`loom.search_misses` under the namespace the search was addressed to: the identity tuple,
+the asker, `actor`, the plane and the query's normalised form, never the raw text: nothing
+reads it, and it is one asker's words below the threshold. No memory key or document URI
+is kept: one naming another user's row or document would outlive that user's erasure, or
+the document's delete, in someone else's miss. The table has a 7-day TTL, the window a
+gaps pass reads: it is a trace, not memory, and no miss outlives the only reader of it.
 
 Neither existing log is reused. `loom.search_trace_log` records every query rather than
 misses and has no `user_id` to count askers or erase by. `loom.query_nodes` keeps one row
@@ -188,7 +195,7 @@ per query text with its sessions, not its people, and only for memory searches.
 ### Grouping
 
 The `knowledge_gaps` worker runs once a day for each namespace with misses. It reads the
-last `knowledge_gaps_window_days` (default 7) of misses and groups them by normalised
+namespace's misses (the last 7 days, all the table keeps) and groups them by normalised
 query. **Privacy threshold:** a group with fewer than `knowledge_gaps_min_askers` distinct
 askers (default three, never below three, one value for the deployment) is dropped before
 anything else, so every query a gap shows was asked in that form by at least that many
@@ -281,10 +288,9 @@ candidates. A rejected draft leaves nothing behind but its queue row.
   namespace erasure, history, audit. A user erasure tombstones a shared row whose
   provenance names the user (`shared.tombstone`); a definition promoted from the
   namespace-wide row names none, so erasing the admin who promoted it leaves it governed.
-- A redact of a definition reaches its memory and shared rows (the change above), not the
-  text of the draft it was promoted from (in `loom.learnings_queue`) or of the gap it came
-  from: those are threshold-protected and leave with their namespace or, for gaps, their
-  14-day expiry.
+- A redact of a definition reaches its memory and shared rows and the candidate it was
+  promoted from (the change above), not the gap it came from, which holds only normalised
+  queries enough askers asked and expires after 14 days.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
   `user_id` is the user (a token subject spelled as the user's id goes too, which costs
   only a trace row), and a census row.
@@ -330,9 +336,12 @@ does for assistant-turn learnings. Governed definitions are memory and shared ro
 N-1 knows: it serves them as plain rows with no term leg. What N-1 does to them is caught
 by the read-time check: a promotion from another source, or an edit, relabel or redact of
 the source, leaves a row the term leg does not serve, and the term leg's last-promoted
-rule covers a promotion that skipped the term check. N-1's redact and namespace erasure do
-not reach the shared row's text, as today: one run during the rollout or after a rollback
-is run again once N serves.
+rule covers a promotion that skipped the term check. N-1, which does not know `definition`
+as key-identified, can merge, supersede or retire one definition's source while writing
+another; the rows its conflict resolver retired are listed by `memory.auto_retirements`
+(reason `conflict_resolver`), restored with its Undo, and promoted again. N-1's redact and
+namespace erasure do not reach the shared row's text, as today: one run during the rollout
+or after a rollback is run again once N serves.
 
 A rollback to N-1 meets what N wrote. Before it, the operator turns
 `knowledge_gaps_enabled` off and deletes the rows of `loom.search_misses` and
