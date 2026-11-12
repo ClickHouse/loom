@@ -20,7 +20,7 @@ import threading
 import time
 
 
-def _pipe(src: socket.socket, dst: socket.socket) -> None:
+def _pipe(src: socket.socket, dst: socket.socket, how: int = socket.SHUT_WR) -> None:
     try:
         while data := src.recv(65536):
             dst.sendall(data)
@@ -28,46 +28,50 @@ def _pipe(src: socket.socket, dst: socket.socket) -> None:
         pass
     finally:
         try:
-            dst.shutdown(socket.SHUT_WR)
+            dst.shutdown(how)
         except OSError:
             pass
 
 
 def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
-    upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        upstream.connect(path)
-        back = threading.Thread(target=_pipe, args=(upstream, conn), daemon=True)
-        back.start()
-        _pipe(conn, upstream)
-        back.join()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
+            upstream.connect(path)
+            # Once the proxy's side ends, the client's ends too: a CONNECT client
+            # has nothing left to send, and one that keeps its socket open would
+            # hold the slot.
+            args = (upstream, conn, socket.SHUT_RDWR)
+            back = threading.Thread(target=_pipe, args=args, daemon=True)
+            back.start()
+            _pipe(conn, upstream)
+            back.join()
     except (OSError, RuntimeError):  # RuntimeError: the job's task limit refused a thread
         pass
     finally:
         conn.close()
-        upstream.close()
         slots.release()
 
 
 def accept_loop(listener: socket.socket, path: str, slots: threading.Semaphore) -> None:
     """Bridge each connection in two threads, as many at a time as `slots` allows;
-    the rest wait in the listen backlog. A bridge ends when both its client and the
-    proxy have closed."""
+    the rest wait in the listen backlog."""
     while True:
         slots.acquire()
         try:
             conn, _ = listener.accept()
-        except OSError:  # EMFILE and the like: retried; a closed listener (tests) ends it
+        except OSError:  # ENFILE, ECONNABORTED and the like: retried
             slots.release()
-            if listener.fileno() == -1:
+            if listener.fileno() == -1:  # closed: only the tests stop the relay so
                 return
             time.sleep(0.1)
             continue
-        try:
-            threading.Thread(target=_bridge, args=(conn, path, slots), daemon=True).start()
-        except RuntimeError:
-            conn.close()
-            slots.release()
+        bridge = threading.Thread(target=_bridge, args=(conn, path, slots), daemon=True)
+        while True:
+            try:
+                bridge.start()
+                break
+            except RuntimeError:  # the job is at its task limit: wait, as the backlog does
+                time.sleep(0.1)
 
 
 def serve(port: int, path: str, max_bridges: int, argv: list[str]) -> None:

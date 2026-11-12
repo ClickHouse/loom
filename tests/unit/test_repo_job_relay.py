@@ -1,6 +1,6 @@
 """The relay inside a repository-job sandbox bridges at most a fixed number of
-connections at a time, and a thread it cannot start or a failed accept costs at
-most one connection, never the relay: a client opening hundreds at once (pnpm's
+connections at a time, and a thread it cannot start, a socket it cannot open or a
+failed accept costs at most one connection, never the relay: a client opening hundreds at once (pnpm's
 metadata check) would otherwise reach the job's task limit and leave the job
 with no route out."""
 
@@ -110,30 +110,74 @@ def test_connections_past_the_cap_wait_until_a_bridge_ends(upstream: _Upstream) 
                 client.close()
 
 
-@pytest.mark.parametrize("failing_start", [1, 2], ids=["the bridge's", "its second pipe's"])
-def test_a_thread_that_cannot_start_costs_one_connection(
-    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch, failing_start: int
-) -> None:
+def _thread_failing_on(start: int) -> types.SimpleNamespace:
+    """A stand-in for the relay's `threading` whose `start`-th thread start fails."""
     starts = 0
 
     class Thread(threading.Thread):
         def start(self) -> None:
             nonlocal starts
             starts += 1
-            if starts == failing_start:
+            if starts == start:
                 raise RuntimeError("can't start new thread")
             super().start()
 
-    stand_in = types.SimpleNamespace(Thread=Thread)
-    monkeypatch.setattr(egress_relay, "threading", stand_in)
+    return types.SimpleNamespace(Thread=Thread)
+
+
+def _socket_failing_once() -> types.SimpleNamespace:
+    """A stand-in for the relay's `socket` whose first socket() fails."""
+    calls = 0
+
+    def make(*args: Any) -> socket.socket:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError(errno.ENFILE, "Too many open files in system")
+        return socket.socket(*args)
+
+    names = ("AF_UNIX", "SOCK_STREAM", "SHUT_WR", "SHUT_RDWR")
+    return types.SimpleNamespace(socket=make, **{n: getattr(socket, n) for n in names})
+
+
+def test_a_bridge_thread_that_cannot_start_is_retried(
+    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(egress_relay, "threading", _thread_failing_on(1))
+    with _relay(upstream.server.getsockname(), 1) as port:
+        client = socket.create_connection(("127.0.0.1", port))
+        assert upstream.arrived.acquire(timeout=5)
+        client.close()
+
+
+@pytest.mark.parametrize("failure", ["its second pipe's thread", "its upstream socket"])
+def test_a_failure_inside_a_bridge_costs_its_connection_only(
+    upstream: _Upstream, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    if failure == "its second pipe's thread":
+        monkeypatch.setattr(egress_relay, "threading", _thread_failing_on(2))
+    else:
+        monkeypatch.setattr(egress_relay, "socket", _socket_failing_once())
     with _relay(upstream.server.getsockname(), 1) as port:
         first = socket.create_connection(("127.0.0.1", port), timeout=5)
-        assert first.recv(1) == b""  # closed: one of its threads could not start
+        assert first.recv(1) == b""  # closed
         first.close()
-        if failing_start == 2:  # its bridge had reached the proxy
+        if failure == "its second pipe's thread":  # its bridge had reached the proxy
             assert upstream.arrived.acquire(timeout=5)
         second = socket.create_connection(("127.0.0.1", port))
         assert upstream.arrived.acquire(timeout=5)  # its slot came back
+        second.close()
+
+
+def test_a_client_left_open_after_the_proxy_closed_frees_its_slot(upstream: _Upstream) -> None:
+    with _relay(upstream.server.getsockname(), 1) as port:
+        first = socket.create_connection(("127.0.0.1", port), timeout=5)
+        assert upstream.arrived.acquire(timeout=5)
+        upstream.held[0].close()  # the proxy ends the tunnel
+        assert first.recv(1) == b""
+        second = socket.create_connection(("127.0.0.1", port))  # first is still open
+        assert upstream.arrived.acquire(timeout=5)
+        first.close()
         second.close()
 
 

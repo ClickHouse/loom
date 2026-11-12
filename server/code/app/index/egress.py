@@ -83,7 +83,7 @@ async def _splice(
         pass
 
 
-async def _until_server_done(server_side: asyncio.Task[None], last_active: list[float]) -> None:
+async def _until_server_quiet(server_side: asyncio.Task[None], last_active: list[float]) -> None:
     """Wait for the server's direction until `code_egress_half_close_timeout_s` passes
     with no byte: a server need not close a connection its client has finished with."""
     while not server_side.done():
@@ -154,7 +154,7 @@ class EgressProxy:
         server_side = asyncio.create_task(_splice(up_reader, writer, last_active))
         try:
             await _splice(reader, up_writer, last_active)
-            await _until_server_done(server_side, last_active)
+            await _until_server_quiet(server_side, last_active)
         finally:
             server_side.cancel()
             await asyncio.gather(server_side, return_exceptions=True)
