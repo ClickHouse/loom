@@ -15,11 +15,11 @@ log = logging.getLogger(__name__)
 
 _CLASS_SETTINGS_RAW: str | None = None
 _CLASS_SETTINGS: dict[str, dict[str, Any]] = {}
-# A comment body holds no `*/`, so each comment ends at its first one and a
-# statement that fails to match backtracks in linear time.
-_READ_HEAD = re.compile(
-    r"^\s*(?:--[^\n]*\n\s*|/\*(?:[^*]|\*(?!/))*\*/\s*)*(SELECT|WITH)\b", re.I | re.S
-)
+# A statement's leading `--` and `/* */` comments. A comment body holds no `*/`, so
+# each comment ends at its first one (nesting is not modelled) and a statement that
+# fails to match backtracks in linear time.
+LEADING_COMMENTS = r"^\s*(?:--[^\n]*\n\s*|/\*(?:[^*]|\*(?!/))*\*/\s*)*"
+_READ_HEAD = re.compile(LEADING_COMMENTS + r"(SELECT|WITH)\b", re.I | re.S)
 
 
 def traffic_class_settings(traffic_class: str) -> dict[str, Any]:

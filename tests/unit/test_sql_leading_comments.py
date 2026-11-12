@@ -25,8 +25,14 @@ def test_leading_comments_are_skipped() -> None:
     assert looks_like_sql("/* q */ SELECT a FROM t", inside_client=True)
 
 
+def test_a_comment_ends_at_its_first_close() -> None:
+    # Nesting is not modelled: the text after the first `*/` is not a keyword.
+    assert statement_class("/* a /* b */ (c) */ INSERT INTO t VALUES (1)") == "read"
+    assert not is_read_statement("/* a /* b */ (c) */ SELECT 1")
+
+
 @pytest.mark.parametrize("text", _HOSTILE)
-def test_unclosed_comment_runs_finish_quickly(text: str) -> None:
+def test_comment_runs_before_a_non_keyword_finish_quickly(text: str) -> None:
     started = time.monotonic()
     statement_class(text)
     is_read_statement(text)

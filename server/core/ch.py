@@ -28,7 +28,11 @@ from clickhouse_connect.driver.asyncclient import AsyncClient
 from clickhouse_connect.driver.binding import quote_identifier
 from clickhouse_connect.driver.external import ExternalData
 
-from server.core.ch_class_settings import is_read_statement, traffic_class_settings
+from server.core.ch_class_settings import (
+    LEADING_COMMENTS,
+    is_read_statement,
+    traffic_class_settings,
+)
 from server.core.ch_errors import (
     QUANTIZED_SETTING,
     WIDTH_MISMATCH_CODE,
@@ -348,9 +352,7 @@ _DDL_LEADS = (
     "DELETE",  # DELETE FROM is a lightweight mutation
 )
 _WRITE_LEADS = ("INSERT", "UPDATE")
-# A comment body holds no `*/`, so each comment ends at its first one and a
-# statement that fails to match backtracks in linear time.
-_LEAD_RE = re.compile(r"^\s*(?:--[^\n]*\n\s*|/\*(?:[^*]|\*(?!/))*\*/\s*)*([A-Za-z]+)", re.S)
+_LEAD_RE = re.compile(LEADING_COMMENTS + r"([A-Za-z]+)", re.S)
 
 # A block that knows it runs long (a CLI mutation that waits on
 # `mutations_sync = 2`, a backfill) raises the bound for every statement it
