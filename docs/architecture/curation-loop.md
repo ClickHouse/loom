@@ -21,8 +21,9 @@ flowchart LR
 ## Governed definitions
 
 A definition is a memory row with `memory_type = 'definition'` under the key
-`definition/<slug>`, where the slug is the term in lower case with runs of other characters
-replaced by `-`. Its value is a JSON object, which `memory.set` stores whole in `value` and
+`definition/<slug>`, where the slug is the case-folded term with runs of other characters
+replaced by `-`, followed by a short hash of the case-folded term, so `C++` and `C#` get
+two keys. Its value is a JSON object, which `memory.set` stores whole in `value` and
 in `value_json`, so the embedding and the attestation hash cover all of it:
 
 | Field      | Meaning                                                             |
@@ -39,10 +40,11 @@ reader of the namespace, and a user-bounded reader who could not see it would re
 term as undefined. Erasing the person who promoted it does not remove it; erasing the
 namespace does.
 
-A definition is **governed** when it is pinned and its attestation is current
-(`server/memory/domain/trust.py`, `verification_state`). Governance has no column of
-its own. A change to the text leaves the attestation behind, so a revised definition is
-ungoverned until an admin attests it again. Pinning or attesting a `definition` row takes
+A definition is **governed** when it is a namespace-wide `definition/` row, pinned, and its
+attestation is current (`server/memory/domain/trust.py`, `verification_state`). Governance
+has no column of its own, and a row under a user or an agent is never governed. A change
+to the text leaves the attestation behind, so a revised definition is ungoverned until an
+admin attests it again. Pinning or attesting a `definition` row takes
 `admin` on its namespace, where any other row takes `writer`: a governed definition ranks
 first for every reader, so only the role that promotes it may make it governed.
 
@@ -60,15 +62,16 @@ this design.
 
 ### The term leg
 
-`memory.search` gains one leg. It reads the namespace's governed definitions (`pinned = 1`
-and `memory_type = 'definition'` on the `(org, namespace)` key prefix), matches the query
-against each one's term and aliases, and places the matched rows at the top of the served
-list with `governed = true` on the hit. Matching is on whole words after case folding and
-collapsing punctuation to spaces, so `ARR` matches "what is our ARR" and not "arrow". The
+`memory.search` gains one leg. It reads the namespace's governed definitions on the
+`(org, namespace)` key prefix, matches the query against each one's term and aliases, and
+places the matched rows at the top of the served list with `governed = true` on the hit. A
+term matches when its case-folded form appears in the case-folded query with no letter or
+digit on either side, so `ARR` matches "what is our ARR" and not "arrow", and `C++` matches
+"C++ style" and not "C". The
 read is bounded by a setting; past the bound, the most recently updated definitions are
 read and the response says the leg was cut. The leg runs beside the others under the same
-time budget; its latency is measured against the op's budget
-(`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
+time budget; its latency is measured against the op's budget (`OP_BUDGETS_P99_MS` in
+`server/settings/catalog.py`) in the pull request that adds it. `governed` is an added
 output field: the SDKs and the MCP schema carry it.
 
 The leg covers memory only. Knowledge has its own exact-key leg for identifiers a document
@@ -114,23 +117,25 @@ for memory searches.
 
 The `knowledge_gaps` worker runs once a day for each namespace with misses. It reads the
 last `knowledge_gaps_window_days` (default 7) of misses and groups them by normalised
-query. **Privacy threshold:** a group with fewer than `knowledge_gaps_min_askers` (default 3) distinct askers, counted as `(actor, user_id)` pairs, is dropped before anything else, so
-every query a gap shows was asked by at least that many people in that form. The worker
-embeds the remaining groups' queries (at most `knowledge_gaps_max_groups`), merges groups
-whose vectors are at least `knowledge_gaps_merge_similarity` alike, and writes the result
-as a new build of the namespace in `loom.knowledge_gaps`:
+query. **Privacy threshold:** a group with fewer than `knowledge_gaps_min_askers` (default 3) distinct askers is dropped before anything else, so every query a gap shows was asked
+by at least that many askers in that form. An asker is the end user (`user_id`) when the
+request names one, else the token's `actor`. The worker embeds the remaining groups'
+queries (at most `knowledge_gaps_max_groups`), merges groups whose vectors are at least
+`knowledge_gaps_merge_similarity` alike, and writes the result as a new build of the
+namespace in `loom.knowledge_gaps`:
 
 | Column            | Meaning                                                            |
 | ----------------- | ------------------------------------------------------------------ |
 | `gap_id`          | Stable id: a hash of the namespace and the gap's most asked query. |
 | `head`, `samples` | The most asked normalised query, and the others merged into it.    |
 | `user_ids`        | The end users behind it, for erasure.                              |
-| `askers`, `asks`  | How many distinct people, how many times.                          |
+| `askers`, `asks`  | How many distinct askers, how many times.                          |
 | `last_at`         | When it was last asked.                                            |
 | `nearest`         | The keys and document URIs the misses came closest to.             |
 
-Readers take the latest build; a build with no gap still writes a marker row, so it
-replaces the last one.
+Every build writes a marker row beside its gaps, and readers take the latest build, so a
+build with no gap left, or one whose gaps an erasure deleted, still replaces the last one.
+Builds expire after 14 days.
 
 ### Ops and dashboard
 
@@ -139,10 +144,11 @@ replaces the last one.
 | `knowledge.gaps.list`  | admin | The namespace's gaps, most askers first.                                                                                               |
 | `knowledge.gaps.draft` | admin | Drafts a definition for one gap with the LLM, from its queries and nearest documents, and queues it (`source_kind = 'knowledge_gap'`). |
 
-Both serve other people's questions, so neither honours a read-narrowed token: they are
-left out of `NARROW_SAFE_OPS` (`server/identity/domain/read_scope.py`), which otherwise
-admits the `knowledge.` group. The Library page shows a gaps tile for a namespace the viewer
-administers, with a **Draft definition** action per gap.
+Both serve other people's questions, so neither honours a read-narrowed token: the check
+that admits the `knowledge.` group to such a token (`honours_read_scope` in
+`server/identity/domain/read_scope.py`) refuses `knowledge.gaps.` first. The Library page
+shows a gaps tile for a namespace the viewer administers, with a **Draft definition**
+action per gap.
 
 ## Definitions from query history
 
@@ -156,7 +162,9 @@ the namespace whose learnings queue receives the drafts. Each turn:
 
 1. reads finished `SELECT` queries of the source's window, grouped by
    `normalized_query_hash`, ranked by distinct users and then by recency, and drops a group
-   that fewer than `knowledge_gaps_min_askers` distinct users ran;
+   that fewer than `knowledge_gaps_min_askers` distinct users ran. Only the normalised text
+   is read (`normalizeQuery`, which replaces literals), so no user's literal values reach
+   the LLM or the draft;
 2. skips groups already drafted (a draft's id derives from the source and the hash);
 3. asks the LLM to draft a metric definition (name, SQL, tables, columns) for at most a
    setting's number of groups, and queues each (`source_kind = 'query_history'`).
@@ -166,12 +174,13 @@ Nothing reaches search until an admin promotes a draft.
 ## Promotion
 
 `learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate writes
-the definition through `memory.set` for the whole namespace, so the blacklist, the
-pinned-key check and conflict surfacing run as for any write
+the definition, unpinned, through `memory.set` for the whole namespace, so the blacklist,
+the pinned-key check and conflict surfacing run as for any write
 ([learnings review queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)).
-The same call pins the row and attests it as the reviewer's server-stamped actor: the admin
-promoting a definition is the person standing behind it. A rejected draft leaves nothing
-behind but its queue row.
+Then the same call pins the row and attests it as the reviewer's server-stamped actor: the
+admin promoting a definition is the person standing behind it. A definition promotes to
+memory only; a `destination` of `knowledge` or `both` is refused for these candidates. A
+rejected draft leaves nothing behind but its queue row.
 
 ## Erasure and audit
 
@@ -183,7 +192,7 @@ behind but its queue row.
   misses before the erasure deleted them can write such a gap back; the census then finds
   it, the saga fails closed, and the resumed saga deletes it again. The next build drops the
   user, whose misses are gone.
-- A drafted definition holds only queries at least `knowledge_gaps_min_askers` people
+- A drafted definition holds only queries at least `knowledge_gaps_min_askers` askers
   asked in that form and the namespace's documents, never one person's words, so it is
   erased with its namespace, not per user.
 - `learnings.review` writes the audit row of each promotion, attestation included, and
@@ -207,18 +216,22 @@ serves:
 - it records no misses and serves no gap op; N's worker groups what N's replicas record;
 - a user or namespace erasure it runs leaves rows in both tables; an erasure that ran during
   the rollout is run again once N-1 stops serving;
-- it serves a `definition` row as a plain memory row with no term leg, lets a writer pin or
-  attest one, and refuses a close write to another definition as a pinned peer;
-- it promotes a `knowledge_gap` or `query_history` candidate as an unpinned row under the
-  approver, which an admin promotes again once N serves.
+- it serves a `definition` row as a plain memory row with no term leg, and refuses a close
+  write to another definition as a pinned peer;
+- it lets a writer pin and attest a `definition` row, which N then serves as governed; once
+  N-1 stops serving, an admin reviews the namespace's pinned definitions
+  (`memory.list` with `memory_type = 'definition'`) and unpins any no admin stands behind;
+- it promotes a `knowledge_gap` or `query_history` candidate as a row under the approver,
+  which is never governed; the admin writes that definition again on N (`memory.set` for
+  the whole namespace, then pin and attest), since the candidate is already promoted.
 
 ## Invariants
 
-- A gap shows only queries that at least `knowledge_gaps_min_askers` people asked in that
-  form; a query-history draft only queries that many people ran.
+- A gap shows only queries that at least `knowledge_gaps_min_askers` askers asked in that
+  form; a query-history draft only the normalised text of queries that many users ran.
 - A miss is recorded only under the request's consent to store query text.
-- A governed definition is pinned and attested by an admin; nothing else ranks above the
-  served list.
+- A governed definition is namespace-wide, pinned and attested by an admin; only governed
+  definitions are placed above the served list.
 - A query naming no governed term is served exactly as without the term leg.
 
 ## Source entry points
@@ -226,7 +239,7 @@ serves:
 - `server/memory/domain/memory_types.py` (`KEY_IDENTIFIED_TYPES`)
 - `server/memory/app/search/handler.py` (the legs of `memory.search`)
 - `server/memory/app/learnings.py` (`handle_learnings_review`)
-- `server/identity/domain/read_scope.py` (`NARROW_SAFE_OPS`)
+- `server/identity/domain/read_scope.py` (`honours_read_scope`)
 - `server/observability/budget.py` (`namespaces_over_cap`)
 
 ## Related
