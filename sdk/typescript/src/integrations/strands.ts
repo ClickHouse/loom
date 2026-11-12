@@ -19,6 +19,7 @@
 import type { Agent, Scope } from "../agent.js";
 import { LoomError } from "../errors.js";
 import type { MemorySearchInput } from "../generated/ops.js";
+import { trimSlashes } from "../slashes.js";
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -77,7 +78,7 @@ export class LoomMemoryStore {
     this.memoryType = opts.memoryType ?? "semantic";
     this.tags = [...(opts.tags ?? [])];
     this.honourAbstain = opts.honourAbstain ?? true;
-    this.keyPrefix = (opts.keyPrefix ?? "strands").replace(/^\/+|\/+$/g, "") || "strands";
+    this.keyPrefix = trimSlashes(opts.keyPrefix ?? "strands") || "strands";
     this.scope = opts.scope ?? {};
   }
 
