@@ -13513,7 +13513,7 @@
        "nargs": null,
        "type": "server.cli.install:_toolset_arg",
        "required": false,
-       "help": "MCP toolset the client lists, as `?toolset=` on the URL: `coding` for a coding agent, empty for the server default (core; claude-code and codex default to `coding`).",
+       "help": "MCP toolset the client lists, as `?toolset=` on the URL: `coding` for a coding agent, empty for the server default (core; claude-code, codex and cursor default to `coding`).",
        "metavar": null
       },
       {

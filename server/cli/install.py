@@ -12,7 +12,7 @@ from typing import Any
 
 from server.cli._client import DEFAULT_BASE_URL, agent_mode, default_base_url, resolve_token
 from server.cli._paths import write_private
-from server.identity.app.token_clients import CONFIG_PATHS, config_key, mcp_entry
+from server.identity.app.token_clients import CODING_CLIENTS, CONFIG_PATHS, config_key, mcp_entry
 
 # ============================================================
 # `loom install` — wire Loom into a local AI client's config
@@ -83,10 +83,9 @@ def _install_mcp_url(server_url: str, toolset: str) -> str:
     return mcp_url
 
 
-# Claude Code is a coding agent: its listing defaults to the `coding` tier
-# (19 tools) rather than the deployment default `core` (41 with the code tools
-# on) — the same choice the coding-agent plugin's .mcp.json makes.
-_CLAUDE_CODE_DEFAULT_TOOLSET = "coding"
+# A coding agent (CODING_CLIENTS: Claude Code, Codex, Cursor) lists the `coding`
+# tier unless --toolset names another, as the plugins and the dashboard do.
+_CODING_TOOLSET = "coding"
 
 
 def _shell_words(argv: list[str]) -> str:
@@ -181,7 +180,7 @@ def _install_claude_code_mcp(
 
     if _plugin_mounts_the_server(force):
         return True
-    mcp_url = _install_mcp_url(server_url, toolset or _CLAUDE_CODE_DEFAULT_TOOLSET)
+    mcp_url = _install_mcp_url(server_url, toolset or _CODING_TOOLSET)
     argv = _claude_mcp_add_argv(name=name, mcp_url=mcp_url)
     line = _shell_words(argv)
     claude_bin = shutil.which("claude")
@@ -249,7 +248,7 @@ def _install_codex_mcp(
     import shutil
     import subprocess
 
-    mcp_url = _install_mcp_url(server_url, toolset or _CLAUDE_CODE_DEFAULT_TOOLSET)
+    mcp_url = _install_mcp_url(server_url, toolset or _CODING_TOOLSET)
     argv = _codex_mcp_add_argv(name=name, mcp_url=mcp_url)
     line = _shell_words(argv)
     codex_bin = shutil.which("codex")
@@ -369,7 +368,8 @@ def _install_one(
         )
     section = config_key(client)
     cfg_path = _resolve_install_path(client)
-    mcp_url = _install_mcp_url(server_url, toolset)
+    default = _CODING_TOOLSET if client in CODING_CLIENTS else ""
+    mcp_url = _install_mcp_url(server_url, toolset or default)
     entry = mcp_entry(client, mcp_url, token)
 
     existing: dict[str, Any] = {}
@@ -502,7 +502,7 @@ def _add_install_flags(p_install: argparse.ArgumentParser) -> None:
         help=(
             "MCP toolset the client lists, as `?toolset=` on the URL: "
             "`coding` for a coding agent, empty for the server default (core; "
-            "claude-code and codex default to `coding`)."
+            "claude-code, codex and cursor default to `coding`)."
         ),
     )
     p_install.add_argument(

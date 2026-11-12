@@ -12,7 +12,7 @@ _STDIO_VIA_NPX = {"claude-desktop", "zed", "cline"}
 
 # Coding agents mount the `coding` toolset, on the URL, as the dashboard's snippets do
 # (frontend/src/lib/clients.ts CODING_TOOLSET_CLIENTS).
-_CODING_CLIENTS = {"claude-code", "codex", "cursor"}
+CODING_CLIENTS = {"claude-code", "codex", "cursor"}
 
 
 # Where each client keeps its MCP config, per platform. `loom install` writes the same
@@ -104,7 +104,7 @@ def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
     on the `coding` toolset), the file's own text when it is not JSON, the one-line
     registration command, the variables to export before the client starts, and the
     file's path per platform."""
-    url = _coding_url(mcp_url) if client in _CODING_CLIENTS else mcp_url
+    url = _coding_url(mcp_url) if client in CODING_CLIENTS else mcp_url
     toml, command, env = "", "", {}
     if client == "codex":
         toml = f'[mcp_servers.loom]\nurl = "{url}"\nbearer_token_env_var = "LOOM_API_KEY"\n'

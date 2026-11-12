@@ -30,9 +30,21 @@ def test_install_one_url_form_preserves_keys(tmp_path, monkeypatch: pytest.Monke
 
     assert cli._install_one("cursor", token="T", server_url="https://h", name="loom", dry_run=False)
     d = json.loads(cfg.read_text())
-    assert d["mcpServers"]["loom"]["url"] == "https://h/mcp"
+    # Cursor is a coding agent: the coding listing, as the dashboard gives it
+    assert d["mcpServers"]["loom"]["url"] == "https://h/mcp?toolset=coding"
     assert d["mcpServers"]["loom"]["headers"]["Authorization"] == "Bearer T"
     assert d["other"] == 1 and "keep" in d["mcpServers"]  # unrelated keys preserved
+
+
+def test_install_one_lists_the_server_default_for_a_chat_client(tmp_path, monkeypatch) -> None:
+    cfg = tmp_path / "windsurf" / "mcp_config.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
+    cfg.parent.mkdir(parents=True)
+
+    assert cli._install_one(
+        "windsurf", token="T", server_url="https://h", name="loom", dry_run=False
+    )
+    assert json.loads(cfg.read_text())["mcpServers"]["loom"]["url"] == "https://h/mcp"
 
 
 def test_install_one_npx_form_for_stdio_clients(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -87,8 +99,8 @@ def test_claude_code_capture_writes_env_preserving_settings(
 
 def test_install_one_toolset_rides_the_url(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """`--toolset coding` selects the coding listing per request
-    (`?toolset=` on the MCP URL) so one deployment serves both archetypes; the
-    default leaves the URL bare and the server's default applies."""
+    (`?toolset=` on the MCP URL) so one deployment serves both archetypes; a
+    coding agent such as Cursor gets `coding` by default, and a named toolset wins."""
     cfg = tmp_path / "cursor" / "mcp.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
     assert cli._install_one(
@@ -101,8 +113,12 @@ def test_install_one_toolset_rides_the_url(tmp_path, monkeypatch: pytest.MonkeyP
     )
     d = json.loads(cfg.read_text())
     assert d["mcpServers"]["loom"]["url"] == "https://h/mcp?toolset=coding"
-    assert cli._install_one("cursor", token="T", server_url="https://h", name="loom", dry_run=False)
-    assert json.loads(cfg.read_text())["mcpServers"]["loom"]["url"] == "https://h/mcp"
+    assert cli._install_one(
+        "cursor", token="T", server_url="https://h", name="loom", dry_run=False, toolset="tracker"
+    )
+    assert (
+        json.loads(cfg.read_text())["mcpServers"]["loom"]["url"] == "https://h/mcp?toolset=tracker"
+    )
     # the stdio bridge form carries the same URL
     cfg2 = tmp_path / "cd" / "c.json"
     monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg2)
@@ -373,7 +389,7 @@ def test_install_reads_the_saved_token_and_the_shared_base_url(
     assert cli._cmd_install(args) == 0
     entry = json.loads(cfg.read_text())["mcpServers"]["loom"]
     assert entry == {
-        "url": "https://hosted.example/mcp",
+        "url": "https://hosted.example/mcp?toolset=coding",
         "headers": {"Authorization": "Bearer SAVED"},
     }
 
@@ -405,7 +421,7 @@ def test_dry_run_previews_only_the_keys_it_sets_and_masks_the_token(
     for secret in (tok, "OTHER-SECRET", "sk-ENV-SECRET", "OLD-SECRET"):
         assert secret not in out
     assert out.count("<token>") == 3
-    assert '"url": "https://h/mcp"' in out and '"LOOM_BASE_URL": "https://h"' in out
+    assert '"url": "https://h/mcp?toolset=coding"' in out and '"LOOM_BASE_URL": "https://h"' in out
     # nothing was written
     assert json.loads(cfg.read_text()) == other
     assert json.loads(lcfg.read_text()) == {"token": "OLD-SECRET", "note": "kept"}

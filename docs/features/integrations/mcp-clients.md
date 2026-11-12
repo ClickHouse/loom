@@ -28,15 +28,15 @@ and Codex, runs their `mcp add` command:
 loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"
 ```
 
-| Flag           | Default                                                                   | Meaning                                                                                                                                      |
-| -------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--client`     | every supported client whose config directory exists                      | one or more of `claude-desktop`, `claude-code`, `codex`, `cursor`, `vscode`, `cline`, `windsurf`, `zed`                                      |
-| `--server-url` | `LOOM_BASE_URL`, then `~/.loom/config.json`, else `http://localhost:7777` | the Loom base URL; the entry points at `<url>/mcp`                                                                                           |
-| `--token`      | `LOOM_API_KEY`, then `~/.loom/config.json`, then `~/.loom/token`          | the JWT the entry authenticates with; required                                                                                               |
-| `--name`       | `loom`                                                                    | the server key in the config file, and the name `claude mcp add` / `codex mcp add` registers                                                 |
-| `--toolset`    | empty: the server default (`core`); `coding` for Claude Code and Codex    | appended as `?toolset=`; a toolset name or a `+` union of curated rosters such as `coding+tracker`; anything else is rejected before writing |
-| `--dry-run`    | off                                                                       | print what would be written or run, touching nothing                                                                                         |
-| `--force`      | off                                                                       | Claude Code only: add the user-scope entry even when the `loom` plugin is installed                                                          |
+| Flag           | Default                                                                        | Meaning                                                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--client`     | every supported client whose config directory exists                           | one or more of `claude-desktop`, `claude-code`, `codex`, `cursor`, `vscode`, `cline`, `windsurf`, `zed`                                      |
+| `--server-url` | `LOOM_BASE_URL`, then `~/.loom/config.json`, else `http://localhost:7777`      | the Loom base URL; the entry points at `<url>/mcp`                                                                                           |
+| `--token`      | `LOOM_API_KEY`, then `~/.loom/config.json`, then `~/.loom/token`               | the JWT the entry authenticates with; required                                                                                               |
+| `--name`       | `loom`                                                                         | the server key in the config file, and the name `claude mcp add` / `codex mcp add` registers                                                 |
+| `--toolset`    | empty: the server default (`core`); `coding` for Claude Code, Codex and Cursor | appended as `?toolset=`; a toolset name or a `+` union of curated rosters such as `coding+tracker`; anything else is rejected before writing |
+| `--dry-run`    | off                                                                            | print what would be written or run, touching nothing                                                                                         |
+| `--force`      | off                                                                            | Claude Code only: add the user-scope entry even when the `loom` plugin is installed                                                          |
 
 Restart the client afterwards. Exit codes: `2` no token, `5` no client detected, `1` any
 client failed (the others still run). See the [CLI reference](../../reference/cli.md).
