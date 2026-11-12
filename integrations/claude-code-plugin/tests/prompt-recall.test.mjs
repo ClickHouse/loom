@@ -289,6 +289,17 @@ test("a second link with any other name is not taken for a stray: the key is ref
   assert.equal(fs.statSync(file).nlink, 2);
 });
 
+test("a key file's name is matched as text: a link whose name only matches it as a pattern is not a stray", {
+  skip: !posix,
+}, (t) => {
+  const file = path.join(keyDir(t), ".loom", "recall+key");
+  loadRecallKey(file);
+  const other = path.join(path.dirname(file), "recallkey.77.abcdefabcdef");
+  fs.linkSync(file, other);
+  assert.equal(clearStrayLinks(file, file), "refuse");
+  assert.ok(fs.existsSync(other));
+});
+
 test("a good key still linked under its creator's temporary name is put back, not removed", { skip: !posix }, (t) => {
   // A hook moving a bad key aside can catch the good key another hook just linked
   // in its place, before that hook unlinks its temporary name.
