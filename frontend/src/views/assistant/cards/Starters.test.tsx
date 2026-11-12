@@ -814,6 +814,10 @@ describe("the tune card's actions", () => {
     expect(register).toHaveAttribute("aria-disabled", "true");
     await userEvent.click(register);
     expect(registerCategory).not.toHaveBeenCalled();
+    // The guide draft beside it says the same, from the same gate.
+    const guide = within(review).getByRole("button", { name: "Review in the guide editor" });
+    expect(guide).toHaveAttribute("aria-disabled", "true");
+    expect(guide).toHaveAccessibleDescription(/^Needs writer on .+\. An admin of it can grant that\.$/);
   });
 
   it("follows the person's role in the conversation's namespace, not the header's", async () => {

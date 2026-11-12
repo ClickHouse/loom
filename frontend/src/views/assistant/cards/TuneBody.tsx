@@ -7,8 +7,9 @@ import { CopyButton } from "../../../components/CopyButton";
 import { toast, toastError } from "../../../components/Toast";
 import { Unavailable } from "../../../components/ui";
 import { GuideDialog } from "../../../flows/GuideDialog";
+import { useNamespaceRoleRead } from "../../../lib/namespaceRole";
+import { callReason } from "../../../lib/callReason";
 import { canCall } from "../../../lib/canCall";
-import { canWrite, useNamespaceRole } from "../../../lib/namespaceRole";
 import { useStore } from "../../../lib/state";
 import { ReviewChanges } from "../ReviewChanges";
 
@@ -29,7 +30,7 @@ export const staleReason = (readAt: number | undefined) =>
 export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: boolean; readAt?: number }) {
   const identity = useStore((s) => s.identity);
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(tune.namespace);
+  const roleRead = useNamespaceRoleRead(tune.namespace);
   const [guideDraft, setGuideDraft] = useState<TuneProposal | null>(null);
   if (!identity) return null;
   const scope = { org: identity.org, namespace: tune.namespace };
@@ -60,14 +61,7 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
     const op = (a.via ?? "op") === "op";
     if (op && a.op === "namespace.register_category" && a.args_complete)
       return (
-        <Unavailable
-          reason={
-            stale ??
-            (canCall("namespace.register_category", role, whoami)
-              ? null
-              : "Registering a category needs the writer role on this namespace.")
-          }
-        >
+        <Unavailable reason={stale ?? callReason("namespace.register_category", roleRead, whoami, tune.namespace)}>
           <Button type="secondary" htmlType="button" onClick={() => void register(p)}>
             Register this category
           </Button>
@@ -75,9 +69,7 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
       );
     if (op && a.op === "namespace.guide_set")
       return (
-        <Unavailable
-          reason={stale ?? (canWrite(role) ? null : "Editing the guide needs the writer role on this namespace.")}
-        >
+        <Unavailable reason={stale ?? callReason("namespace.guide_set", roleRead, whoami, tune.namespace)}>
           <Button type="secondary" htmlType="button" onClick={() => setGuideDraft(p)}>
             Review in the guide editor
           </Button>
@@ -97,7 +89,7 @@ export function TuneBody({ tune, fresh, readAt }: { tune: NamespaceTune; fresh: 
           }}
           org={scope.org}
           namespace={scope.namespace}
-          canEdit={canWrite(role)}
+          canEdit={canCall("namespace.guide_set", roleRead.role, whoami)}
           initialContent={String(guideDraft.apply.args.content ?? guideDraft.proposed)}
           baseRevision={
             typeof guideDraft.apply.args.expected_revision === "number"

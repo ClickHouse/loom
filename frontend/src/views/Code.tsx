@@ -3590,6 +3590,7 @@ export function AccessTab({
         }}
         org={id.org}
         namespace={id.namespace}
+        label={repoRow ? `${repoRow.repo} @ ${repoRow.branch}` : undefined}
       />
     </div>
   );

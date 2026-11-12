@@ -7,6 +7,11 @@ import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { StructureTab } from "./StructureTab";
 
+const listMine = vi.hoisted(() => vi.fn());
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  listMine: (org: string) => listMine(org),
+}));
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
 import { confirmAction } from "../components/ConfirmDialog";
 import { toast } from "../components/Toast";
@@ -79,19 +84,65 @@ afterEach(() => {
 });
 
 describe("StructureTab", () => {
-  it("shows a viewer the schemas, records, ontology and categories, with no change offered", async () => {
+  it("shows a viewer the schemas, records, ontology and categories, each change unavailable with the role it needs", async () => {
     signIn("viewer");
     render(<StructureTab />);
     expect(await screen.findByText("invoice")).toBeInTheDocument();
     expect(screen.getByText("Billing")).toBeInTheDocument();
     expect(screen.getByText("works_at")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "New schema" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Accept works_at" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Add category" })).toBeNull();
+    const admin = "Needs admin on team. An admin of it can grant that.";
+    const writer = "Needs writer on team. An admin of it can grant that.";
+    for (const [name, reason] of [
+      ["New schema", admin],
+      ["Approve", admin],
+      ["Reject", admin],
+      ["Save schema", admin],
+      ["Accept works_at", admin],
+      ["Add term", admin],
+      ["Add category", writer],
+    ]) {
+      const control = await screen.findByRole("button", { name });
+      expect(control).toHaveAttribute("aria-disabled", "true");
+      expect(control).toHaveAccessibleDescription(reason);
+    }
+    // The forms are for whoever can register.
+    expect(screen.queryByLabelText("Name")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await userEvent.click(screen.getByRole("button", { name: "New schema" }));
+    expect(api.decideRecordSchema).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: /schema/i })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Records" }));
     const dialog = await screen.findByRole("dialog", { name: "Records of invoice" });
     expect(await within(dialog).findByText("A-1")).toBeInTheDocument();
+  });
+
+  it("says why a role not known yet is missing, in place of the role a change needs", async () => {
+    const reasonOf = async () =>
+      (await screen.findByRole("button", { name: "New schema" })).getAttribute("aria-describedby");
+    const describedBy = async (text: string) =>
+      waitFor(async () => expect(document.getElementById((await reasonOf()) ?? "")).toHaveTextContent(text));
+
+    // A request to join, waiting.
+    signIn("viewer");
+    useStore.setState({ myNamespaces: [{ namespace: "team", role: "viewer", status: "pending" } as MyNamespaceEntry] });
+    render(<StructureTab />);
+    await describedBy("Your request to join team is waiting for an admin.");
+    cleanup();
+
+    // list_mine still being read.
+    resetNamespaceRoleCache();
+    listMine.mockReturnValueOnce(new Promise(() => {}));
+    useStore.setState({ myNamespaces: null });
+    render(<StructureTab />);
+    await describedBy("Your role on this namespace is still loading.");
+    cleanup();
+
+    // list_mine could not be read.
+    resetNamespaceRoleCache();
+    listMine.mockRejectedValueOnce(new Error("down"));
+    render(<StructureTab />);
+    await describedBy("Couldn't check your access to team.");
+    expect(screen.getByRole("button", { name: "New schema" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("lets an admin approve a proposed schema, accept a pending term and register a schema", async () => {

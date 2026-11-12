@@ -42,10 +42,11 @@ export interface OpGate {
 
 // One shared object per gate: the table sits in the index chunk, and a literal per entry
 // costs bytes on every page load.
-const VIEWER: OpGate = { min: "viewer", by: "namespace" };
-const WRITER: OpGate = { min: "writer", by: "namespace" };
-const ADMIN: OpGate = { min: "admin", by: "namespace" };
-const ADMIN_CLAIM: OpGate = { min: "admin", by: "claim" };
+// Each keeps its literal type, so `NamespaceOp` can tell the two kinds of gate apart.
+const VIEWER = { min: "viewer", by: "namespace" } as const satisfies OpGate;
+const WRITER = { min: "writer", by: "namespace" } as const satisfies OpGate;
+const ADMIN = { min: "admin", by: "namespace" } as const satisfies OpGate;
+const ADMIN_CLAIM = { min: "admin", by: "claim" } as const satisfies OpGate;
 
 export const OP_MIN_ROLE = {
   // Gated at a call site: Sidebar badge polls, Recent / MemoryInspector
@@ -161,6 +162,8 @@ export const OP_MIN_ROLE = {
   "profile_schema.clear": ADMIN,
   "namespace.register_ontology": ADMIN,
   "namespace.register_category": WRITER,
+  // The assistant's draft of a namespace guide opens the guide editor.
+  "namespace.guide_set": WRITER,
   // The task inbox plane. The header bell polls `task.counts` only for a known role; the
   // Tasks view offers each action to a role that reaches it (the handler still authorizes
   // against the inbox's owner namespace).
@@ -188,7 +191,12 @@ export const OP_MIN_ROLE = {
 
 export type GatedOp = keyof typeof OP_MIN_ROLE;
 
-const RANK: Record<MinRole, number> = { viewer: 1, writer: 2, admin: 3 };
+/** The ops gated on the caller's role on a namespace (not on the token's flat claim). */
+export type NamespaceOp = {
+  [K in GatedOp]: (typeof OP_MIN_ROLE)[K]["by"] extends "namespace" ? K : never;
+}[GatedOp];
+
+export const RANK: Record<MinRole, number> = { viewer: 1, writer: 2, admin: 3 };
 
 /**
  * True when the client can show that the current principal is allowed to

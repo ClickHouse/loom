@@ -694,13 +694,13 @@ describe("AssistantChat", () => {
   });
 
   it("asks nothing while blocked, and says why", async () => {
-    render(<AssistantChat namespace="team" blocked="Your role on this namespace is not known." />);
+    render(<AssistantChat namespace="team" blocked="Needs viewer on team. An admin of it can grant that." />);
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Question"), "Who?{Enter}");
     await user.click(screen.getByRole("button", { name: "Ask" }));
     expect(calls).toHaveLength(0);
     expect(screen.getByRole("button", { name: "Ask" })).toHaveAccessibleDescription(
-      "Your role on this namespace is not known.",
+      "Needs viewer on team. An admin of it can grant that.",
     );
   });
 

@@ -92,6 +92,18 @@ describe("Memories empty state", () => {
     expect(await axeViolations(container)).toEqual([]);
   });
 
+  it("keeps Add memory live for a `*` writer token that list_mine holds no row for", async () => {
+    seed("writer", ["WRITER"]);
+    useStore.setState({
+      whoami: { authenticated: true, subject: "n@x", org: "dev", roles: ["WRITER"], namespaces: ["*"] },
+      myNamespaces: [personal, { ...row("writer"), namespace: "elsewhere" }],
+    });
+    render(<Recent />);
+    const state = await empty();
+    const add = within(state).getByRole("button", { name: "Add memory" });
+    expect(add).not.toHaveAttribute("aria-disabled");
+  });
+
   it("tells a viewer who writes here and opens the members list, with no Add memory or connect", async () => {
     seed("viewer", ["VIEWER"]);
     const { container } = render(<Recent />);
@@ -108,8 +120,10 @@ describe("Memories empty state", () => {
     await userEvent.click(within(state).getByRole("button", { name: "See who the admins are" }));
     const dialog = await screen.findByRole("dialog", undefined, WAIT);
     expect(await within(dialog).findByText("boss@x", undefined, WAIT)).toBeInTheDocument();
-    // Read only: a viewer is offered no way to add a member.
-    expect(within(dialog).queryByRole("button", { name: /Add member/i })).toBeNull();
+    // A viewer sees Add member unavailable, with the role it needs.
+    const add = within(dialog).getByRole("button", { name: "Add member" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    expect(add).toHaveAccessibleDescription(`Needs admin on ${NS}. An admin of it can grant that.`);
   });
 
   it("with auth off reads as a writer's, and the connect dialog shows the plugin lines", async () => {

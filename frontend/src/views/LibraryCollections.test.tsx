@@ -601,14 +601,16 @@ describe("the Library on a collection", () => {
     expect(api.getKnowledge.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "col-q3" });
   });
 
-  it("offers a viewer no Add document and no write on a document", async () => {
+  it("shows a viewer Add document and the preview's writes unavailable, and no write in a row's menu", async () => {
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
     api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
     history.replaceState(null, "", "/library?collection=col-plans");
     render(<Documents />);
     await settle();
     expect(screen.getByRole("button", { name: "Show the documents of" })).toHaveTextContent("col-plans");
-    expect(screen.queryByRole("button", { name: "Add document" })).not.toBeInTheDocument();
+    const needs = /^Needs writer on .+\. An admin of it can grant that\.$/;
+    expect(screen.getByRole("button", { name: "Add document" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Add document" })).toHaveAccessibleDescription(needs);
     fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for A" }), { button: 0, ctrlKey: false });
     await settle();
     expect(screen.getByRole("menuitem", { name: "Preview" })).toBeInTheDocument();
@@ -622,8 +624,10 @@ describe("the Library on a collection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preview A" }));
     await settle();
     expect(screen.getByRole("dialog", { name: "A" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Edit content" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Re-upload" })).not.toBeInTheDocument();
+    for (const name of ["Edit content", "Re-upload"]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByRole("button", { name })).toHaveAccessibleDescription(needs);
+    }
   });
 
   it("closes a preview when Back shows another place, so nothing opened for one is written to the other", async () => {

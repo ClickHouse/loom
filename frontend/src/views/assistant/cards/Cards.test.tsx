@@ -952,12 +952,40 @@ describe("Assistant: overview", () => {
     for (const name of [INVENTORY_STARTER, "What could be improved here?", "What documents does it hold?"]) {
       const starter = screen.getByRole("button", { name });
       expect(starter).toHaveAttribute("aria-disabled", "true");
-      expect(starter).toHaveAccessibleDescription("Your role on this namespace is not known.");
+      expect(starter).toHaveAccessibleDescription("Needs viewer on team. An admin of it can grant that.");
     }
     await userEvent.click(screen.getByRole("button", { name: "What could be improved here?" }));
     expect(tuneNamespace).not.toHaveBeenCalled();
     expect(namespaceInventory).not.toHaveBeenCalled();
     expect(screen.queryByTestId("assistant-card")).toBeNull();
+  });
+
+  it("says a request to join is waiting while it is", async () => {
+    useStore.setState({ myNamespaces: [{ ...row("team", "viewer"), status: "pending" }] });
+    await renderCards();
+    const starter = screen.getByRole("button", { name: INVENTORY_STARTER });
+    expect(starter).toHaveAttribute("aria-disabled", "true");
+    expect(starter).toHaveAccessibleDescription("Your request to join team is waiting for an admin.");
+  });
+
+  it("says list_mine could not be read when it failed", async () => {
+    useStore.setState({ myNamespaces: null });
+    vi.mocked(listMine).mockRejectedValueOnce(new Error("down"));
+    render(<InsightsHarness />);
+    const starter = await screen.findByRole("button", { name: INVENTORY_STARTER });
+    await waitFor(() => expect(starter).toHaveAccessibleDescription("Couldn't check your access to team."));
+    expect(starter).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("says the server decides a `*` token's access when list_mine holds no row, and reads nothing", async () => {
+    useStore.setState({ whoami: { ...viewer, roles: ["VIEWER"], namespaces: ["*"] }, myNamespaces: [] });
+    await renderCards();
+    const starter = screen.getByRole("button", { name: INVENTORY_STARTER });
+    expect(starter).toHaveAttribute("aria-disabled", "true");
+    expect(starter).toHaveAccessibleDescription(
+      "The server decides this token's access to team; it does not show here.",
+    );
+    expect(namespaceInventory).not.toHaveBeenCalled();
   });
 
   it("waits for the role, saying so, and reads once it is known", async () => {

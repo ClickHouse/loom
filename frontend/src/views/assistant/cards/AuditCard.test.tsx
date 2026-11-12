@@ -341,7 +341,7 @@ describe("Assistant: the audit card", () => {
     render(<InsightsHarness />);
     const starter = await screen.findByRole("button", { name: STARTER });
     expect(starter).toHaveAttribute("aria-disabled", "true");
-    expect(starter).toHaveAccessibleDescription("Your role on this namespace is not known.");
+    expect(starter).toHaveAccessibleDescription("Needs viewer on team-alerts. An admin of it can grant that.");
     await userEvent.click(starter);
     expect(screen.queryByTestId("assistant-card")).toBeNull();
     expect(auditNamespace).not.toHaveBeenCalled();

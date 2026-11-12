@@ -1,5 +1,12 @@
 import { Chip } from "./ui";
-import { ROLE_TIP, useNamespaceRole } from "../lib/namespaceRole";
+import { type NamespaceRole, useNamespaceRole } from "../lib/namespaceRole";
+
+// Here, not in lib/namespaceRole.ts, which the boot chunk holds: only the chip reads it.
+const ROLE_TIP: Record<NamespaceRole, string> = {
+  admin: "You're an admin here — you can add memories, manage members and change settings",
+  writer: "You're a writer here — you can add and edit memories",
+  viewer: "You're a viewer here — you can read; an admin of it can grant writer",
+};
 
 /**
  * RoleChip — "admin" / "writer" / "viewer" for the caller on one namespace. Sits beside

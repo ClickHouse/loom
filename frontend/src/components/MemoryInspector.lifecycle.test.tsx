@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryDetail, MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { axeViolations } from "../test/axe";
 import { MemoryInspector } from "./MemoryInspector";
 
 // The drawer's lifecycle actions write through the row's own identity, and each is
@@ -104,6 +105,9 @@ async function open(role: MyNamespaceEntry["role"], detail: MemoryDetail = LIVE)
   await screen.findByText("oat milk, no sugar");
 }
 
+const W = "Needs writer on team. An admin of it can grant that.";
+const A = "Needs admin on team. An admin of it can grant that.";
+
 async function menu() {
   await userEvent.click(screen.getByRole("button", { name: "More actions" }));
   return screen.findByRole("menu", { name: "More actions" });
@@ -120,27 +124,36 @@ afterEach(() => {
 });
 
 describe("MemoryInspector lifecycle actions", () => {
-  it("offers a viewer no lifecycle action", async () => {
+  it("shows a viewer each lifecycle action unavailable, with the role it needs, and sends nothing", async () => {
     await open("viewer");
-    const items = within(await menu())
-      .getAllByRole("menuitem")
-      .map((i) => i.textContent);
-    for (const label of [
-      "Lock…",
-      "Mark as wrong…",
-      "Share with every agent",
-      "Stop sharing",
-      "This helped",
-      "This misled",
-    ])
-      expect(items).not.toContain(label);
+    const list = await menu();
+    for (const [name, reason] of [
+      ["Pin", W],
+      ["Lock…", W],
+      ["Mark as wrong…", W],
+      ["Share with every agent", A],
+      ["Stop sharing", A],
+      ["This helped", W],
+      ["This misled", W],
+      ["Rename", W],
+    ]) {
+      const item = within(list).getByRole("menuitem", { name });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription(reason);
+    }
+    // Each reason is said once, below the items.
+    expect(within(list).getAllByText(W)).toHaveLength(1);
+    await userEvent.click(within(list).getByRole("menuitem", { name: "Share with every agent" }));
+    await userEvent.click(within(list).getByRole("menuitem", { name: "This helped" }));
+    expect(confirmAction).not.toHaveBeenCalled();
+    expect(lc.shareMemory).not.toHaveBeenCalled();
+    expect(lc.recordMemoryOutcome).not.toHaveBeenCalled();
+    expect(await axeViolations(list)).toEqual([]);
     cleanup();
 
     await open("viewer", { ...LIVE, lock_mode: "read_only" });
-    const locked = within(await menu())
-      .getAllByRole("menuitem")
-      .map((i) => i.textContent);
-    expect(locked).not.toContain("Unlock");
+    const unlock = within(await menu()).getByRole("menuitem", { name: "Unlock" });
+    expect(unlock).toHaveAccessibleDescription(A);
   });
 
   it("writes an expiry and an edit to the row it shows, not under the drawer's identity", async () => {
@@ -201,17 +214,16 @@ describe("MemoryInspector lifecycle actions", () => {
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   });
 
-  it("offers sharing to an admin only, and no share of a profile or a high memory", async () => {
+  it("lets an admin alone share, and offers no share of a profile or a high memory", async () => {
     await open("writer");
-    let items = within(await menu())
-      .getAllByRole("menuitem")
-      .map((i) => i.textContent);
-    expect(items).not.toContain("Share with every agent");
-    expect(items).not.toContain("Stop sharing");
+    const list = await menu();
+    for (const name of ["Share with every agent", "Stop sharing"])
+      expect(within(list).getByRole("menuitem", { name })).toHaveAccessibleDescription(A);
+    expect(within(list).getByRole("menuitem", { name: "Lock…" })).not.toHaveAttribute("aria-disabled");
     cleanup();
 
     await open("admin", { ...LIVE, sensitivity: "high" });
-    items = within(await menu())
+    const items = within(await menu())
       .getAllByRole("menuitem")
       .map((i) => i.textContent);
     expect(items).not.toContain("Share with every agent");
@@ -431,10 +443,13 @@ describe("MemoryInspector lifecycle actions", () => {
     const locked = { ...LIVE, lock_mode: "read_only", lock_reason: "legal hold" };
     await open("writer", locked);
     expect(screen.getByRole("contentinfo")).toHaveTextContent("Read only");
-    const items = within(await menu())
+    const list = await menu();
+    const items = within(list)
       .getAllByRole("menuitem")
       .map((i) => i.textContent);
-    expect(items).not.toContain("Unlock");
+    expect(within(list).getByRole("menuitem", { name: "Unlock" })).toHaveAccessibleDescription(A);
+    await userEvent.click(within(list).getByRole("menuitem", { name: "Unlock" }));
+    expect(lc.unlockMemory).not.toHaveBeenCalled();
     expect(items).not.toContain("Lock…");
     // A locked memory is not retired from the drawer.
     expect(items).not.toContain("Mark as wrong…");

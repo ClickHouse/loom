@@ -176,7 +176,26 @@ describe("Ask about this in the document preview", () => {
     expect(ask).toHaveAccessibleDescription("The assistant answers about a memory namespace.");
   });
 
-  it("offers no Ask about this to a role the assistant's route does not admit", async () => {
+  it("shows a viewer of a collection its writes unavailable, with the role they need", async () => {
+    history.replaceState(null, "", "/library?collection=col-plans");
+    render(<Documents />);
+    await settle();
+    const reason = "Needs writer on Plans. An admin of it can grant that.";
+    const add = screen.getByRole("button", { name: "Add document" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    expect(add).toHaveAccessibleDescription(reason);
+    fireEvent.click(add);
+    expect(screen.queryByRole("dialog", { name: /Add/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Preview Billing notes" }));
+    await settle();
+    for (const name of ["Edit content", "Re-upload"]) {
+      const control = screen.getByRole("button", { name });
+      expect(control).toHaveAttribute("aria-disabled", "true");
+      expect(control).toHaveAccessibleDescription(reason);
+    }
+  });
+
+  it("shows Ask about this unavailable, with the role it needs, to a role the assistant's route does not admit", async () => {
     useStore.setState({ myNamespaces: [] });
     render(<Documents />);
     await settle();
@@ -184,6 +203,8 @@ describe("Ask about this in the document preview", () => {
     await settle();
     const preview = screen.getByRole("dialog", { name: "Billing notes" });
     expect(within(preview).getByRole("button", { name: "Download text (.md)" })).toBeInTheDocument();
-    expect(within(preview).queryByRole("button", { name: "Ask the assistant about this document" })).toBeNull();
+    const ask = within(preview).getByRole("button", { name: "Ask the assistant about this document" });
+    expect(ask).toHaveAttribute("aria-disabled", "true");
+    expect(ask).toHaveAccessibleDescription(/^Needs viewer on .+\. An admin of it can grant that\.$/);
   });
 });

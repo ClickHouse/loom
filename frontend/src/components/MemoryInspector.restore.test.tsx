@@ -309,10 +309,14 @@ describe("MemoryInspector restore of a superseded row", () => {
     expect(button).toBeDisabled();
   });
 
-  it("offers no Restore to a viewer", async () => {
+  it("shows a viewer Restore unavailable, with the role it needs", async () => {
     seed("viewer");
     await open();
     expect(screen.getByText("Superseded by a newer version")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+    const restore = screen.getByRole("button", { name: "Restore" });
+    expect(restore).toHaveAttribute("aria-disabled", "true");
+    expect(restore).toHaveAccessibleDescription("Needs writer on team. An admin of it can grant that.");
+    await userEvent.click(restore);
+    expect(restoreMemory).not.toHaveBeenCalled();
   });
 });

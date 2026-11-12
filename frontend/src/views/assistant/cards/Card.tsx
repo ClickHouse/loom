@@ -24,7 +24,8 @@ import { CardSection } from "./section";
 import { InventoryPopulations, InventoryScopeNote, InventorySections } from "../Inventory";
 import { INSPECTED_AS } from "../subjects";
 import { AuditBody } from "./AuditBody";
-import { ROLE_LOADING, isFresh, readCard, startStarter, useCardGate } from "./cardStore";
+import { ROLE_LOADING } from "../../../lib/callReason";
+import { isFresh, readCard, startStarter, useCardGate } from "./cardStore";
 import { MentorBody } from "./MentorBody";
 import { askNow, asks, useStarterPrefs } from "./prefs";
 import { AUDIT_WINDOWS, MENTOR_WINDOWS, DEFAULT_WINDOW, starterOf } from "./starters";
@@ -217,7 +218,7 @@ export function Card({ turn, level }: { turn: Turn; level: 2 | 3 }) {
   const fresh = isFresh(turn.id);
   const blockedNow = gate(card.op);
   const reread = (args?: CardArgs) => readCard(turn.id, blockedNow, args);
-  // A turn asked again reads its card again, once the person's role is known.
+  // A turn asked again reads its card again once the role has loaded; a gate that still refuses is said on the card.
   useEffect(() => {
     if (card.again && blockedNow !== ROLE_LOADING) readCard(turn.id, blockedNow);
   }, [card.again, blockedNow, turn.id]);

@@ -210,9 +210,24 @@ describe("Ask about this in the memory drawer", () => {
     expect(useDock.getState().item).toBeNull();
   });
 
-  it("is not offered to a role the assistant's route does not admit", async () => {
+  it("is unavailable, saying so, while the role is still loading", async () => {
+    const api = await import("../api");
+    vi.mocked(api.listMine).mockReturnValueOnce(new Promise(() => {}));
+    useStore.setState({ myNamespaces: null });
+    await openDrawer();
+    const ask = footer().getByRole("button", { name: "Ask the assistant about this memory" });
+    expect(ask).toHaveAttribute("aria-disabled", "true");
+    expect(ask).toHaveAccessibleDescription("Your role on this namespace is still loading.");
+  });
+
+  it("is unavailable, with the role it needs, to a role the assistant's route does not admit", async () => {
     useStore.setState({ myNamespaces: [] });
     await openDrawer();
-    expect(footer().queryByRole("button", { name: "Ask the assistant about this memory" })).toBeNull();
+    const ask = footer().getByRole("button", { name: "Ask the assistant about this memory" });
+    expect(ask).toHaveAttribute("aria-disabled", "true");
+    expect(ask).toHaveAccessibleDescription(/^Needs viewer on .+\. An admin of it can grant that\.$/);
+    await userEvent.setup().click(ask);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(useDock.getState().item).toBeNull();
   });
 });

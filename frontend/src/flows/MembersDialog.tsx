@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { IconButton as ClickIconButton } from "@clickhouse/click-ui/IconButton";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import {
@@ -14,11 +15,13 @@ import {
 } from "../api";
 import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
+import { needsRole } from "../lib/namespaceRole";
+import { needsMaintainer, scopedUnseen, serverDecides } from "../lib/callReason";
 import { toast, toastError, toastErrorLine } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { fieldError, ListTime, Loading, Tip } from "../components/ui";
+import { fieldError, ListTime, Loading, Unavailable } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { humanizeError } from "../lib/errorWords";
 import { oneOf } from "../lib/oneOf";
@@ -29,7 +32,7 @@ interface Props {
   org: string;
   namespace: string;
   /** "code" switches the dialog to repository mode: members are readers (viewer only);
-   *  maintainers (admin) are named by an org admin. */
+   *  maintainers (admin) are named by an org admin or a maintainer of it. */
   kind?: string;
   /** A human name for the namespace — for a code index "owner/name @ branch"
    *  — shown in the heading with the identifier beneath it, so the approver
@@ -67,10 +70,8 @@ export function MembersDialog({
 }: Props) {
   const whoami = useStore((s) => s.whoami);
   const isCode = kind === "code";
-  // A code index has two roles: readers (viewer) and maintainers (admin),
-  // and only an org admin may name a maintainer (the server enforces the
-  // same ceiling — ROLE_CEILING).
-  // Any maintainer may name another maintainer.
+  // A code index has two roles: readers (viewer) and maintainers (admin); an org admin or a
+  // maintainer of it names a maintainer (the server enforces the ceiling — ROLE_CEILING).
   const roles = isCode
     ? ROLES.filter((r) => r.value === "viewer" || r.value === "admin").map((r) =>
         r.value === "viewer"
@@ -133,6 +134,20 @@ export function MembersDialog({
       whoami,
       rows?.find((r) => r.subject === me),
     );
+  // A repository is named by its label.
+  const name = isCode ? (label ?? namespace) : namespace;
+  // A scoped token with no grant here may be an admin the client cannot see; a grant of its own caps it.
+  const manageReason =
+    canManage || rows === null
+      ? null
+      : scopedUnseen(
+            whoami,
+            rows.some((r) => r.subject === me),
+          )
+        ? serverDecides(name)
+        : isCode
+          ? needsMaintainer(name)
+          : needsRole("admin", name);
 
   const onAdd = async () => {
     const subj = newSubject.trim();
@@ -301,11 +316,11 @@ export function MembersDialog({
                         )}
                       </div>
                     </div>
-                    {canManage ? (
+                    {r.subject !== me || canManage ? (
                       <>
-                        <Tip
-                          content={`Also approves: ${elsewhere.map((t) => t.label).join(", ")}`}
-                          disabled={targets <= 1}
+                        <Unavailable
+                          reason={manageReason}
+                          tip={targets > 1 ? `Also approves: ${elsewhere.map((t) => t.label).join(", ")}` : undefined}
                         >
                           <Button
                             type="secondary"
@@ -315,17 +330,19 @@ export function MembersDialog({
                           >
                             {`Approve as ${isCode ? (r.requested_role === "admin" ? "maintainer" : "reader") : r.requested_role}${targets > 1 ? ` on ${targets} branches` : ""}`}
                           </Button>
-                        </Tip>
-                        <Button
-                          type="empty"
-                          htmlType="button"
-                          onClick={() => onApprove(r.subject, "reject")}
-                          disabled={busy === r.subject}
-                        >
-                          Reject
-                        </Button>
+                        </Unavailable>
+                        <Unavailable reason={manageReason}>
+                          <Button
+                            type="empty"
+                            htmlType="button"
+                            onClick={() => onApprove(r.subject, "reject")}
+                            disabled={busy === r.subject}
+                          >
+                            Reject
+                          </Button>
+                        </Unavailable>
                       </>
-                    ) : r.subject === me ? (
+                    ) : (
                       <Button
                         type="secondary"
                         htmlType="button"
@@ -353,8 +370,6 @@ export function MembersDialog({
                       >
                         Withdraw
                       </Button>
-                    ) : (
-                      <span className="px-2 text-xs text-text-muted">awaiting admin</span>
                     )}
                   </div>
                 );
@@ -404,7 +419,14 @@ export function MembersDialog({
                     />
                   </>
                 ) : (
-                  <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
+                  <>
+                    <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
+                    {manageReason && r.subject !== me && (
+                      <Unavailable reason={manageReason}>
+                        <ClickIconButton type="danger" size="sm" icon="trash" aria-label={`Remove ${r.subject}`} />
+                      </Unavailable>
+                    )}
+                  </>
                 )}
               </div>
             ))}
@@ -442,6 +464,15 @@ export function MembersDialog({
         </div>
       )}
 
+      {manageReason && (
+        <ModalFooter>
+          <Unavailable reason={manageReason}>
+            <Button type="primary" htmlType="button" iconLeft="plus">
+              {addLabel}
+            </Button>
+          </Unavailable>
+        </ModalFooter>
+      )}
       {canManage && (
         <ModalFooter>
           {adding ? (

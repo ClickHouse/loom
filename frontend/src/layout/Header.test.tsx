@@ -52,7 +52,9 @@ describe("Header", () => {
     // The live button is replaced by the disabled one once list_mine resolves.
     // aria-disabled, not disabled: the trigger stays focusable so its tooltip can say why.
     await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toHaveAttribute("aria-disabled", "true"));
-    expect(screen.getByRole("button", { name: "New" })).toHaveAccessibleDescription(/You have read-only access here/);
+    expect(screen.getByRole("button", { name: "New" })).toHaveAccessibleDescription(
+      /^Needs writer on .+\. An admin of it can grant that\.$/,
+    );
   });
 
   it("keeps New live for a writer token on the same namespace", async () => {
@@ -61,6 +63,19 @@ describe("Header", () => {
     render(<Header />);
     await waitFor(() => expect(listMine).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
+  });
+
+  it("keeps New live for a `*` writer token that list_mine holds no row for", async () => {
+    listMine.mockResolvedValue([]);
+    useStore.setState({
+      whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"], namespaces: ["*"] },
+    });
+    render(<Header />);
+    await waitFor(() => expect(listMine).toHaveBeenCalled());
+    await act(async () => {});
+    const add = screen.getByRole("button", { name: "New" });
+    expect(add).toBeEnabled();
+    expect(add).not.toHaveAttribute("aria-disabled");
   });
 
   it("names the icon-only New in a tooltip below lg", async () => {

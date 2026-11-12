@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { NumberField } from "@clickhouse/click-ui/NumberField";
@@ -8,17 +8,22 @@ import {
   getNamespace,
   reregisterNamespace,
   deleteNamespace,
+  type MyNamespaceEntry,
   type NamespaceInfo,
   type NamespaceRegisterFields,
 } from "../api";
 import { useStore } from "../lib/state";
-import { canUpdateNamespace, isNamespaceAdmin } from "../lib/role";
+import { isNamespaceAdmin } from "../lib/role";
+import { canUpdateNamespace, restrictedMisses } from "../lib/namespaceUpdate";
+import { needsRole } from "../lib/namespaceRole";
+import { sharedMine } from "../lib/sharedReads";
+import { holdsDirectRow, needsMaintainer, scopedUnseen, serverDecides, unreadLine } from "../lib/callReason";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { useAbortableEffect } from "../lib/hooks";
 import { oneOf } from "../lib/oneOf";
 import { Modal } from "../components/ui/Modal";
-import { Loading } from "../components/ui";
+import { Loading, Unavailable } from "../components/ui";
 
 const REPO_JOIN_RULES = [
   ["open", "Open", "Anyone in the org joins instantly as a reader."],
@@ -38,6 +43,8 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   org: string;
   namespace: string;
+  /** A repository's name ("owner/name @ branch"), which its reasons name it by. */
+  label?: string;
 }
 
 /**
@@ -50,7 +57,7 @@ interface Props {
  *
  * Both open from Discover's "Namespaces you manage" section.
  */
-export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: Props) {
+export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, label }: Props) {
   const whoami = useStore((s) => s.whoami);
   const myNamespaces = useStore((s) => s.myNamespaces);
   // A loaded row is kept with the (org, namespace) it was read for, so a row read for a
@@ -83,15 +90,65 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
     [open, org, namespace],
   );
 
-  // The settings round-trip namespace.register, whose update path also admits the owner of an
-  // auto-registered row (and on a restricted row only a named, directly granted admin);
-  // namespace.delete needs ADMIN on the namespace.
-  const canManage = canUpdateNamespace(whoami, myNamespaces, namespace, ns);
-  const canDelete = isNamespaceAdmin(whoami, myNamespaces, namespace);
+  const [mineRead, setMineRead] = useState<{ org: string; rows: MyNamespaceEntry[] | null } | null>(null);
+  // The caller's grants: App's boot read, else this dialog's own (a restricted row's gate
+  // wants the grant even under an admin claim). Null until read, and on a failed read.
+  useEffect(() => {
+    if (!open || myNamespaces !== null) return;
+    let live = true;
+    sharedMine(org).then(
+      (r) => live && setMineRead({ org, rows: r }),
+      () => live && setMineRead({ org, rows: null }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, org, myNamespaces]);
+  const mineLoading = myNamespaces === null && mineRead?.org !== org;
+  const rows = myNamespaces ?? (mineLoading ? null : (mineRead?.rows ?? null));
+  // The restricted gate (`restrictedMisses`) decides both settings and Delete on a restricted
+  // row; elsewhere namespace.register's update path also admits the owner of an
+  // auto-registered row, and namespace.delete needs ADMIN on the namespace.
+  const restricted = ns?.classification === "restricted";
+  const misses = restricted ? restrictedMisses(whoami, rows, { org, namespace }) : [];
+  const canManage = restricted ? misses.length === 0 : canUpdateNamespace(whoami, rows, { org, namespace }, ns);
+  const canDelete = restricted ? misses.length === 0 : isNamespaceAdmin(whoami, rows, namespace);
 
   // Repository mode: a code index shows only what applies to read-only source —
   // description, the join rule, danger zone.
   const isRepo = ns?.kind === "code";
+  // A repository's admins are its maintainers, and it is named by its label.
+  const name = isRepo ? (label ?? namespace) : namespace;
+  const adminWord = isRepo ? "maintainer" : "admin";
+  // A token scoped per namespace with no direct grant here may be an admin the client cannot
+  // see; a direct grant caps it.
+  const needsAdmin = scopedUnseen(whoami, holdsDirectRow(rows, namespace))
+    ? serverDecides(name)
+    : isRepo
+      ? needsMaintainer(name)
+      : needsRole("admin", name);
+
+  // Why the fields are locked. While the grants or whoami are unread (or the read failed),
+  // say so, never a role the caller may well hold. On a restricted row, from what its gate
+  // finds missing: the token's parts, the direct grant, or both; with neither, the token is
+  // scoped per namespace and the server decides.
+  const unread = rows === null || !whoami;
+  let lockedReason = unread ? unreadLine(mineLoading || !whoami, name) : needsAdmin;
+  if (restricted && !unread) {
+    const tokenMisses = [
+      misses.includes("org") ? `be of ${org}` : null,
+      misses.includes("name") ? `name ${namespace}` : null,
+      misses.includes("claim") ? "carry an admin claim" : null,
+    ].filter((p): p is string => p !== null);
+    if (misses.includes("grant"))
+      lockedReason = tokenMisses.length
+        ? `To change its settings, your token must ${andList(tokenMisses)}, and you need a direct ${adminWord} grant on ${name}.`
+        : `Changing its settings needs a direct ${adminWord} grant on ${name}.`;
+    else
+      lockedReason = tokenMisses.length
+        ? `To change its settings, your token must ${andList(tokenMisses)}.`
+        : serverDecides(name);
+  }
 
   const save = async (patch: Partial<NamespaceRegisterFields>) => {
     if (!ns) return;
@@ -176,6 +233,12 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
         {!ns && <Loading label="Loading namespace settings" />}
         {ns && (
           <div className="space-y-5">
+            {/* The fields stay in view, locked, and say once what changing them needs. */}
+            {!canManage && (
+              <p className="m-0 text-xs text-text-muted" data-testid="settings-locked">
+                {lockedReason}
+              </p>
+            )}
             <div className="flex items-end gap-2">
               <div className="min-w-0 flex-1">
                 <TextField
@@ -337,14 +400,14 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
               </>
             )}
 
-            {canDelete && (
-              <div className="mt-2 border-t border-border pt-4">
-                <div className="mb-2 text-xs font-medium text-danger">Danger zone</div>
-                <div className="flex items-start justify-between gap-3">
-                  <p className="text-xs text-text-muted">
-                    Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run
-                    an erasure.request separately.
-                  </p>
+            <div className="mt-2 border-t border-border pt-4">
+              <div className="mb-2 text-xs font-medium text-danger">Danger zone</div>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs text-text-muted">
+                  Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run an
+                  erasure.request separately.
+                </p>
+                <Unavailable reason={canDelete ? null : lockedReason}>
                   <Button
                     type="danger"
                     htmlType="button"
@@ -355,12 +418,17 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                   >
                     Delete namespace
                   </Button>
-                </div>
+                </Unavailable>
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>
     </Modal>
   );
+}
+
+/** "a", "a and b", "a, b and c". */
+function andList(parts: string[]): string {
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
 }
