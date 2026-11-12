@@ -367,25 +367,23 @@ Claims, roles and grants are in [Tokens and grants](../guides/tokens-and-grants.
 
 ## 4. First memory over HTTP
 
-Every operation is a `POST /v1/<op>` with a JSON body that names the identity
-`(org, namespace, agent)`. A fresh install with the stock `.env`, from the installer
-or a checkout, is single-user: org `dev`, namespace `local`, and no token, so the calls
-below work as written. If a call without a token answers 401 `AUTH_INVALID`, auth is on:
-add `-H "Authorization: Bearer $LOOM_API_KEY"` and use your account's org and namespace;
-a header with an empty token is refused.
+Every operation is a `POST /v1/<op>` with a JSON body. A fresh install with the stock
+`.env`, from the installer or a checkout, is single-user: no token, and a call that names
+no `org`, `namespace` or `agent` runs in the install's own (org `dev`, namespace `local`,
+agent `http`), the ones MCP and the dashboard use. So the calls below need only their own
+fields. If a call without a token answers 401 `AUTH_INVALID`, auth is on: add
+`-H "Authorization: Bearer $LOOM_API_KEY"` and name your account's `org`, `namespace`
+and `agent`; a header with an empty token is refused.
 
 ```bash
 curl -sX POST http://localhost:7777/v1/memory.set -H 'Content-Type: application/json' \
-  -d '{"org":"dev","namespace":"local","agent":"quickstart",
-       "memory_key":"deploy_window","value":"Tue and Thu only; never Friday."}'
+  -d '{"memory_key":"deploy_window","value":"Tue and Thu only; never Friday."}'
 
 curl -sX POST http://localhost:7777/v1/memory.get -H 'Content-Type: application/json' \
-  -d '{"org":"dev","namespace":"local","agent":"quickstart","memory_key":"deploy_window"}' \
-  | jq '{found, value}'
+  -d '{"memory_key":"deploy_window"}' | jq '{found, value}'
 
 curl -sX POST http://localhost:7777/v1/memory.search -H 'Content-Type: application/json' \
-  -d '{"org":"dev","namespace":"local","query":"when can we deploy?"}' \
-  | jq '.results[0].content_excerpt'
+  -d '{"query":"when can we deploy?"}' | jq '.results[0].content_excerpt'
 ```
 
 The `memory.set` response carries `memory_id`, `content_sha256` and `status`.
@@ -413,12 +411,12 @@ from loom import Agent
 
 
 async def main():
+    # Single-user: the server fills in its org and namespace. With a token
+    # (LOOM_API_KEY), name them: Agent(org=..., namespace=..., agent=...).
     async with Agent(
-        org="dev",
-        namespace="local",
         agent="quickstart",  # names the writer in the audit log
         base_url="http://localhost:7777",
-    ) as a:  # reads LOOM_API_KEY; none needed in single-user mode
+    ) as a:
         await a.memory.set("deploy_window", "Tue and Thu only; never Friday.")
         row = await a.memory.get("deploy_window")  # None when the key is unset
         print(row["value"] if row else "unset")

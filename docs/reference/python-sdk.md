@@ -76,14 +76,14 @@ only with a real LLM provider configured.
 ## Construction
 
 ```python
-Agent(org, namespace, agent, *, base_url=None, api_key=None, timeout_s=60.0,
+Agent(org="", namespace="", agent=None, *, base_url=None, api_key=None, timeout_s=60.0,
       pacing=True, coalesce_sets=True, ratelimit_max_wait_s=None, auto_run=None,
       retry=None, consumer="", mentor_brief=None, profile=None)
 ```
 
 | Argument                    | Meaning                                                                                                                                                                                                                                                                                                                                   |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `org`, `namespace`, `agent` | The identity stamped on every call. `user_id`, `session_id` and `run_id` are per call (the wire's `"-"` when omitted).                                                                                                                                                                                                                    |
+| `org`, `namespace`, `agent` | The identity stamped on every call. `user_id`, `session_id` and `run_id` are per call (the wire's `"-"` when omitted). Left empty, `org` and `namespace` are filled by a single-user server for a call with no token; any other server needs them. An `agent` not given is `sdk-python:<script>`.                                         |
 | `timeout_s`                 | Per-request timeout.                                                                                                                                                                                                                                                                                                                      |
 | `profile`                   | The `loom login` session to use, on the server it signed in to; not combined with `api_key` or another `base_url` ([Credentials](#credentials)).                                                                                                                                                                                          |
 | `consumer`                  | The product this process speaks for; stamped on every body that does not name its own and stored on the ledgers. `""` stamps nothing.                                                                                                                                                                                                     |

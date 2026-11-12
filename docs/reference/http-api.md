@@ -155,7 +155,12 @@ curl -sX POST "$LOOM/v1/memory.set" \
 - **Identity.** `org`, `namespace` and `agent` travel in the body; `user_id`
   and `session_id` default to `"-"`. The token decides which of them the caller
   may address. `code.*` and `tracker.*` ops default `org` and `namespace` to the
-  deployment's code or tracker plane when the body omits them.
+  deployment's code or tracker plane when the body omits them. On a single-user
+  server, a call with no token that leaves out `org` or `namespace`, or sends one
+  blank or `"-"`, runs in the install's org and namespace (`LOOM_SELF_SIGNUP_ORG`,
+  `LOOM_DEFAULT_NAMESPACE`), the ones MCP and the dashboard use; an op that requires
+  `agent` gets `http`. A call with a token, and every other identity mode, names
+  its own.
 - **`consumer`.** Any body may carry `consumer`, a short tag for the product or
   module calling; it is stored on the request and audit ledgers. A token minted
   with a consumer overrides it. See

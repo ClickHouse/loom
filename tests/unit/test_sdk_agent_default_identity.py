@@ -1,0 +1,50 @@
+"""An Agent built with no identity sends the org and namespace empty, for a
+single-user server to fill, and names its agent after the script without the
+anonymous-agent warning; an anonymous name passed on purpose still warns."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+
+import httpx
+import pytest
+from loom import Agent
+
+
+def _sent_body(agent: Agent) -> dict[str, object]:
+    sent: list[dict[str, object]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(req.content))
+        return httpx.Response(200, json={"status": "active"}, headers={"X-Request-Id": "r1"})
+
+    async def go() -> None:
+        agent.transport._client = httpx.AsyncClient(
+            base_url="http://x", transport=httpx.MockTransport(handler)
+        )
+        await agent.call("memory.set", {"memory_key": "k", "value": "v"})
+        await agent.close()
+
+    asyncio.run(go())
+    return sent[0]
+
+
+def test_an_agent_with_no_identity_leaves_it_to_the_server(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="loom"):
+        body = _sent_body(Agent(base_url="http://x", coalesce_sets=False))
+    assert (body["org"], body["namespace"]) == ("", "")
+    assert str(body["agent"]).startswith("sdk-python:")
+    assert "anonymous" not in caplog.text
+
+
+def test_an_anonymous_agent_name_passed_on_purpose_still_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="loom"):
+        body = _sent_body(Agent("dev", "local", "*", base_url="http://x", coalesce_sets=False))
+    assert body["org"] == "dev" and str(body["agent"]).startswith("sdk-python:")
+    assert "anonymous" in caplog.text

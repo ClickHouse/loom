@@ -165,6 +165,38 @@ def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None
     return {**args, **update} if update else args
 
 
+# The writer an HTTP call with no token and no agent is recorded as.
+SINGLE_USER_HTTP_AGENT: Final = "http"
+
+
+def with_single_user_identity(
+    op: Operation, args: dict[str, Any], auth: AuthInfo | None
+) -> dict[str, Any]:
+    """The arguments with the single-user install's identity where a call left it
+    out: the org and namespace the MCP endpoint and the dashboard use
+    (`caller_org`, `default_namespace`), and the agent `http` where the op needs
+    one; an op that takes an optional agent reads every agent's rows without it.
+    Only a call with no token on a single-user server is filled, the one caller
+    such a server has; any token, and every other identity mode, still names its
+    own. Code ops keep their plane defaults. A copy, like `with_resolved_org`."""
+    from server.settings import settings
+
+    if auth is not None or settings.effective_identity_provider() != "single-user":
+        return args
+    if op.name.startswith("code."):
+        return args
+    fields = op.input_model.model_fields
+    update: dict[str, str] = {}
+    if "org" in fields and present(args.get("org")) is None:
+        update["org"] = settings.self_signup_org
+    if "namespace" in fields and present(args.get("namespace")) is None:
+        update["namespace"] = settings.default_namespace
+    agent = fields.get("agent")
+    if agent is not None and agent.is_required() and present(args.get("agent")) is None:
+        update["agent"] = SINGLE_USER_HTTP_AGENT
+    return {**args, **update} if update else args
+
+
 def with_target(input_obj: Any, target: Target) -> Any:
     """The input with an absent namespace set to the one the gate authorized
     (a code op's plane namespace). A namespace the op requires (the code.repo.*

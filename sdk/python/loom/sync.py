@@ -240,9 +240,9 @@ class SyncAgent:
 
     def __init__(
         self,
-        org: str,
-        namespace: str,
-        agent: str,
+        org: str = "",
+        namespace: str = "",
+        agent: str | None = None,
         *,
         base_url: str | None = None,
         api_key: str | None = None,

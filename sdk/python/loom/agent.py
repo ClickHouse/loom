@@ -120,9 +120,9 @@ class Agent:
 
     def __init__(
         self,
-        org: str,
-        namespace: str,
-        agent: str,
+        org: str = "",
+        namespace: str = "",
+        agent: str | None = None,
         *,
         base_url: str | None = None,
         api_key: str | None = None,
@@ -141,12 +141,15 @@ class Agent:
         write under a run is scoped to it: a restatement of another scope's
         row is inserted as a `duplicate`, not merged. `consumer` is stamped
         on every op body that names none; '' stamps nothing."""
+        # Left empty, the org and namespace are the server's to fill, which only
+        # a single-user server does for a call with no token.
         self.org = org
         self.namespace = namespace
         # An agent that names itself "", "-" or "*" is every
-        # other unnamed caller to the ledger, the mentor and the cost views.
+        # other unnamed caller to the ledger, the mentor and the cost views;
+        # one not given at all is named after the script without a warning.
         self.agent = default_agent_name(agent)
-        if self.agent != agent:
+        if agent is not None and self.agent != agent:
             logger.warning(
                 "loom: agent name %r is anonymous; using %r — pass a real agent name so the "
                 "mentor, cost and provenance can tell this bot apart",
