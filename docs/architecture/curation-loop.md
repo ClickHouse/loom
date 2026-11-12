@@ -45,7 +45,7 @@ knows it. So governance needs no table or state of its own. Edits to the private
 not change the shared copy: the governed text changes only when an admin promotes the
 revision, and `memory.demote` ends governance.
 
-The shared layer needs four changes for this, each in the pull request that adds the term
+The shared layer needs six changes for this, each in the pull request that adds the term
 leg, because the term leg serves shared rows to every reader:
 
 - **Namespace erasure** gains a step and a census row for `loom.shared`. Today only user
@@ -57,6 +57,12 @@ leg, because the term leg serves shared rows to every reader:
   `memory.promote` or `learnings.review`, never taken from the body's `approver`.
 - **`check_against_shared`**, the promotion's conflict check, skips `KEY_IDENTIFIED_TYPES`,
   so promoting `MRR` is not refused as a conflict with `ARR`.
+- **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
+  key) whose source is not the namespace-wide row, so no one user's text reaches a
+  bounded reader through the term leg.
+- **A relabel to `high`** of a promoted definition's source row (`memory.set`,
+  `memory.bulk_set`, `memory.update_by_id`, `loom sensitivity-sweep`) demotes its shared
+  row, since `loom.shared` has no sensitivity of its own.
 
 No two governed definitions share a term or an alias, compared case-folded as the key is
 built, so `SAT` and `Sat` are one name: promoting a definition whose term or alias is
@@ -84,10 +90,12 @@ would add a candidate read to every write, and is not part of this design.
 of type `definition` under a `definition/` key (only that namespace, whatever
 `namespace_scope` fans out over), matches the query against each one's term and aliases,
 and places the matched rows at the top of the served list with `governed = true` on the
-hit. A term or alias matches where it appears in the query with no letter, digit, `+` or
-`#` next to it. One written all in capitals, or with a capital after its first letter,
-matches only as written, so `IT` does not match "what is it" and `GitHub` stays exact; any
-other matches case-folded, so `Churn rate` matches "what is our churn rate".
+hit, removing any other hit under the same key, so an edited private copy is not served
+beside the governed text. A term or alias matches where it appears in the query with no
+letter, digit, `+` or `#` next to it. One written all in capitals, or with a capital after
+its first letter, matches only as written, so `IT` does not match "what is it" and
+`GitHub` stays exact; any other matches case-folded, so `Churn rate` matches "what is our
+churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -99,8 +107,8 @@ page, and is off when a field asks for other rows (`memory_type`, which cannot n
 `definition`, `tags`, `category`, an explicit `agent`, `run_id` or `session_ids`,
 `as_of`). A `user_id` or `session_id` the read scope pins, `scope`, `exclude_keys` and
 `min_similarity` keep it on; it drops any key in `exclude_keys`. No `sensitivity = 'high'`
-row is in the shared layer, since `memory.promote` refuses one; a definition relabelled
-`high` after its promotion is demoted. Its read is bounded by a setting; past
+row is in the shared layer: `memory.promote` refuses one, and a relabel demotes one (the
+changes above). Its read is bounded by a setting; past
 the bound, the most recently promoted definitions are read and the response says the leg
 was cut. It runs beside the others under the same time budget, and its latency is measured
 against the op's budget (`OP_BUDGETS_P99_MS` in `server/settings/catalog.py`) in the pull
@@ -141,8 +149,9 @@ invoked, never by a search another op runs on its behalf:
   hit at all, when no field removed candidates (for example `namespaces`, `tags`,
   `uri_prefix`, `since_seconds`, `session_ids`, `source_classes`, `formats` or
   `block_types` away from its default); documents are the namespace's under any read scope;
-- `loom_search` (`search.query`) whose memory and knowledge sections both came back empty,
-  with no leg failed, under a read scope of the whole namespace. Its own memory and
+- `loom_search` (`search.query`) whose every section (memory, knowledge, profile,
+  conversations) came back empty, with no leg failed and no `tags`, under a read scope of
+  the whole namespace. Its own memory and
   knowledge searches record nothing, so a question that knowledge answers is not a gap
   because memory abstained.
 
@@ -151,8 +160,9 @@ A search that could not answer for another reason is not a miss: an expired page
 writes still waiting for extraction (`pending_extraction > 0`).
 
 The **asker** is the person the token stands for, never a body field: the end user of an
-end-user token; else the first ancestor of a delegated token's chain (`parent_subjects`);
-else the creator of a service account; else the token's subject. Tokens a person mints for
+end-user token; else the token's `creator` claim, the person at the root of a delegated
+token or service account
+([tokens and grants](../guides/tokens-and-grants.md)); else the token's subject. Tokens a person mints for
 themselves therefore count as that person. Each miss writes one row to
 `loom.search_misses` under the namespace the search was addressed to: the identity tuple,
 the asker, `actor`, the plane, the query and its normalised form. No memory key or document
@@ -241,16 +251,17 @@ Nothing reaches search until an admin promotes a draft.
 ## Promotion
 
 `learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate first
-checks the term and aliases against the governed definitions, so a refused promotion
-writes nothing. Then it writes the definition through `memory.set` for the whole
-namespace, so the blacklist and the pinned-key check run as for any write, and promotes
-that row into the shared layer through `memory.promote`, with the reviewer's
-server-stamped actor as `promoted_by` and the candidate's id
-([learnings review queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)).
-The admin promoting a definition is the person standing behind it. A draft for a term
-already governed revises that definition: the promotion replaces its shared row. A
-definition promotes to memory only; a `destination` of `knowledge` or `both` is refused for
-these candidates. A rejected draft leaves nothing behind but its queue row.
+checks the term and aliases against the governed definitions and the draft for a
+credential-shaped value (`value_reads_high`), so a refused promotion writes nothing. Then
+it writes the definition through `memory.set` for the whole namespace, so the blacklist
+and the pinned-key check run as for any write, and promotes that row into the shared layer
+through `memory.promote`, with the reviewer's server-stamped actor as `promoted_by` and
+the candidate's id ([learnings review
+queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). The admin
+promoting a definition is the person standing behind it. A draft for a term already
+governed revises that definition: the promotion replaces its shared row. A definition
+promotes to memory only; a `destination` of `knowledge` or `both` is refused for these
+candidates. A rejected draft leaves nothing behind but its queue row.
 
 ## Erasure and audit
 
