@@ -354,19 +354,21 @@ check and every retirement of a namespace's sources (`namespace.delete`,
 `access` columns say, so an N-1 worker that clears `pending_delete` after counting no
 document in the namespace stops nothing. A `namespace` source's documents go as today:
 `remove` with `delete_documents` sets `pending_delete`, and the retirement pass both
-builds run retires them by tag in the namespace. Under the ClickHouse authority the
-retention TTL override a namespace's `retention_days` sets on `loom.documents` and
-`loom.chunks` (`server/storage/retention_overrides.py`) also covers its mirror, read
-from `loom.knowledge_mirrors`; under the Postgres authority no retention TTL deletes
-from `loom.documents` and a namespace's `retention_days` leaves its chunks, while
-`LOOM_RETENTION_CHUNKS_DAYS` still expires a mirror's chunks as any namespace's. Every
-`add` runs today's name checks on the namespace (`SOURCE_DELETE_PENDING`,
-`SOURCE_DOCUMENTS_KEPT`), mirrored or not, so a mirrored source never replaces the row
-of a `namespace` source whose documents wait to be retired or were kept; the mirror
-needs no name check, since a mirrored document is never kept and ownership there goes by
-source id. In a mirror, every per-source document read and check (`count_documents`,
-`source_documents`, `source_revisions`, the ownership check `_ours` that gates each
-write and retirement) goes by `source-id:<id>`, not by name.
+builds run retires them by tag in the namespace. The retention overrides
+(`server/storage/retention_overrides.py`) give each mirror, read from
+`loom.knowledge_mirrors`, its namespace's `retention_days` and `warm_days` on every
+managed table, `loom.agent_events` (which files mirrored reads) included. Under the
+ClickHouse authority that covers `loom.documents` and `loom.chunks` too; under the
+Postgres authority no retention TTL deletes from `loom.documents` and a namespace's
+`retention_days` leaves its chunks, while `LOOM_RETENTION_CHUNKS_DAYS` still expires a
+mirror's chunks as any namespace's. Every `add` runs today's name checks on the
+namespace (`SOURCE_DELETE_PENDING`, `SOURCE_DOCUMENTS_KEPT`), mirrored or not, so a
+mirrored source never replaces the row of a `namespace` source whose documents wait to
+be retired or were kept; the mirror needs no name check, since a mirrored document is
+never kept and ownership there goes by source id. In a mirror, every per-source document
+read and check (`count_documents`, `source_documents`, `source_revisions`, the ownership
+check `_ours` that gates each write and retirement) goes by `source-id:<id>`, not by
+name.
 
 A namespace source and a mirrored source that reach the same file own two documents, one
 in the namespace and one in its mirror. The namespace copy is readable by every reader,
@@ -379,32 +381,34 @@ tables are written as new versions with a `deleted` flag; only a user erasure de
 rows ([below](#erasure-and-audit)):
 
 - The document's permission list, in an `access_json` column of the document row
-  (`loom.documents`, and the knowledge head under the Postgres authority), as of the
-  newest read by the source that owns the document: `emails` (people the store grants
-  any role, lower-cased), `groups` (group emails), `domains` (a domain permission the
-  store marks discoverable), `anyone` (a public permission the store marks
-  discoverable), `changed_at` (when the list last differed from the one before it, a
-  change into `unread` included; an `unread` list refused again changes nothing) and
-  `unread` (no current list is known: no account that lists the file could read it, or
-  the source stopped listing the file and its retirement is not confirmed yet). A new
-  document is written with the list its fetch reads with the file's metadata. A listing
-  that reads a list unlike the stored one rewrites the document's row with the same
-  content and the new list, as `knowledge.update_metadata` without `reindex` does today,
-  so no chunk or embedding is rebuilt; an unchanged list costs no write. The sync's
-  comparison read changes from today's `(source_uri, version)` match against
-  `loom.chunks` to a match on the document's `revision` (`loom.documents.revision`
-  against the chunks' `chunk_metadata` `revision`), which the rewrite keeps, so the next
-  turn finds the copy current and fetches nothing; a chunk written before chunks
-  recorded a revision (`revision` 0) still matches by `(source_uri, version)`, so no
-  existing copy is fetched again. Under the Postgres authority the comparison starts to
-  read each copy's live chunks (their `revision` and `doc_version`) from `loom.chunks`
-  and judges them with `serves()` against the head, which records `chunks_revision`, and
-  it compares the list against the head's ([reads under the Postgres
-  authority](#reads-under-the-postgres-authority)). The list lives and dies with its
-  document: a retirement, an erasure or (under the ClickHouse authority) the mirror's
-  retention TTL removes it with the row, and no read op returns the column. Only the
-  owning source's turn writes it, under its turn lease, so the document's own version
-  order is the list's.
+  (`loom.documents`; under the Postgres authority it rides in the head's `row` jsonb
+  with no Postgres migration), as of the newest read by the source that owns the
+  document: `emails` (people the store grants any role, lower-cased), `groups` (group
+  emails), `domains` (a domain permission the store marks discoverable), `anyone` (a
+  public permission the store marks discoverable), `changed_at` (when the list last
+  differed from the one before it, a change into `unread` included; an `unread` list
+  refused again changes nothing; for a document's first list, the start of the listing
+  that found the file, so a document rule 3 alone admits shows once its row is
+  published) and `unread` (no current list is known: no account that lists the file
+  could read it, or the source stopped listing the file and its retirement is not
+  confirmed yet). A new document is written with the list its fetch reads with the
+  file's metadata. A listing that reads a list unlike the stored one rewrites the
+  document's row with the same content and the new list, as `knowledge.update_metadata`
+  without `reindex` does today, so no chunk or embedding is rebuilt; an unchanged list
+  costs no write. The sync's comparison read changes from today's `(source_uri,
+version)` match against `loom.chunks` to a match on the document's `revision`
+  (`loom.documents.revision` against the chunks' `chunk_metadata` `revision`), which the
+  rewrite keeps, so the next turn finds the copy current and fetches nothing; a chunk
+  written before chunks recorded a revision (`revision` 0) still matches by
+  `(source_uri, version)`, so no existing copy is fetched again. Under the Postgres
+  authority the comparison starts to read each copy's live chunks (their `revision` and
+  `doc_version`) from `loom.chunks` and judges them with `serves()` against the head,
+  which records `chunks_revision`, and it compares the list against the head's ([reads
+  under the Postgres authority](#reads-under-the-postgres-authority)). The list lives
+  and dies with its document: a retirement, an erasure or (under the ClickHouse
+  authority) the mirror's retention TTL removes it with the row, and no read op returns
+  the column. Only the owning source's turn writes it, under its turn lease, so the
+  document's own version order is the list's.
 - `loom.knowledge_document_readers`, one row per mirrored address, source and reading
   account: the connection (its kind and store account id) for a connected source, or the
   person a crawl listed it as. The `account` column holds a pseudonym of that account,
@@ -590,24 +594,28 @@ each address it is about to answer by its head: a deleted head or a missing one 
 the address (a mirror leg does not take `serves()`'s rule that a missing head serves),
 and otherwise rules 2 and 3 are evaluated again with the head's `emails`, `groups`,
 `domains`, `anyone`, `unread` and `changed_at`, against the same readers, listing and
-group-members rows. The head read search, synthesize and `outline` make through
-`pg_serving` (`pg_documents.serving`, the `Serving` row) gains the head's list for this.
-The other legs (`get`, `download`, `list`, `knowledge.inspect`,
-`knowledge.source.inspect`) read the heads themselves through `pg_documents.heads`,
-which answers only heads, so a missing one shows; `get_one` and `get_many_by_uris` fall
-back to ClickHouse's row and cannot tell. That is one head read per page of addresses,
-which the cost measurement above covers. A leg that cannot read the heads shows no
-mirrored document (`degraded: mirror_unread`); for `knowledge.inspect` that means every
-path on which its `served` read falls back to ClickHouse's rows (the authority down,
-`PostgresUnavailableError`, any other failure) lists no mirrored title. So a narrowing
-or a retirement committed and not yet published, or held by a parked delivery, already
-applies; a widening applies once published.
+group-members rows. Every leg that reads chunks checks heads through `pg_serving`, whose
+`pg_documents.serving` read gains `row->'access_json'` for this; every leg that reads
+documents (each op whose answer names documents or their content without reading chunks)
+reads the heads through `pg_documents.heads`, which answers only heads, so a missing one
+shows, where `get_one` and `get_many_by_uris` fall back to ClickHouse's row and cannot
+tell. That is one head read per page of addresses, which the cost measurement above
+covers. A leg that cannot read the heads shows no mirrored document (`degraded:
+mirror_unread`); for `knowledge.inspect` that means every path on which its `served`
+read falls back to ClickHouse's rows (the authority down, `PostgresUnavailableError`,
+any other failure) lists no mirrored title. So a narrowing or a retirement committed and
+not yet published, or held by a parked delivery, already applies; a widening applies
+once published.
 
-Under this authority every mirror document has a head: only N writes mirrors, and each
-of its writes commits one. A deployment that moves to the Postgres authority while
-mirrors exist erases them first (`loom knowledge mirror erase --all`, as the rollback
-does) and its mirrored sources list again; a mirror document found without a head anyway
-is dropped by the rule above.
+Under this authority every mirror document has a head: the authority never changes after
+first boot, only N writes mirrors, and each of its writes commits one. A Postgres
+point-in-time restore loses the heads committed after its point while ClickHouse keeps
+their rows, and the sync would then count such a copy current (`serves()` with no head)
+and never write it again; so the restore procedure ([backup and
+recovery](../operations/backup-and-recovery.md)) gains a step, which the implementing
+pull request adds: erase the mirrors (`loom knowledge mirror erase --all`) and let the
+mirrored sources list again. Until then a mirror document without a head is dropped by
+the rule above.
 
 Under either authority the admitted set holds only addresses with a live
 `loom.documents` row: an address whose row is absent, superseded or not yet published
@@ -713,16 +721,16 @@ base>/settings/connected-accounts?kind=<kind>` to hand back.
 
 ClickHouse, additive migrations:
 
-| Table                              | Key                                                | Holds                                                                                                                                                                                                       |
-| ---------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom.knowledge_sources` (columns) | `(org, namespace, name)`                           | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject`, `subjects` and `excluded`), `secret_enc` |
-| `loom.knowledge_mirrors`           | `(org, namespace)`                                 | `mirror`, `created_at`                                                                                                                                                                                      |
-| `loom.documents` (column)          | as today                                           | `access_json`: a mirrored document's permission list (`emails`, `groups`, `domains`, `anyone`, `changed_at`, `unread`); empty elsewhere; the knowledge head under the Postgres authority gains it too       |
-| `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `name`, `deleted`, `version`; `namespace` is the mirror; `account` is the UUIDv5 pseudonym of `<kind>:<account id>` or of the lower-cased email                                                             |
-| `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `name`, `started_at`, `deleted`, `version`; `account` is the pseudonym, or `shared:<source id>`; the start of the account's last complete listing; `namespace` is the mirror                                |
-| `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`               | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                               |
-| `loom.knowledge_source_cleanups`   | `(org, namespace, source_id)`                      | `name`, `mirror`, `done`, `version`; a stopped mirrored source whose documents and rows wait to be cleaned                                                                                                  |
-| `loom.connected_accounts`          | `(org, subject, kind)`                             | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                           |
+| Table                              | Key                                                | Holds                                                                                                                                                                                                                  |
+| ---------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.knowledge_sources` (columns) | `(org, namespace, name)`                           | `source_kind`, `credential_mode` (default `shared`), `access` (default `namespace`), `owner_subject`, `items_json`, `options_json` (a crawl's `directory_subject`, `subjects` and `excluded`), `secret_enc`            |
+| `loom.knowledge_mirrors`           | `(org, namespace)`                                 | `mirror`, `created_at`                                                                                                                                                                                                 |
+| `loom.documents` (column)          | as today                                           | `access_json`: a mirrored document's permission list (`emails`, `groups`, `domains`, `anyone`, `changed_at`, `unread`); empty elsewhere; under the Postgres authority it rides in the head's `row` jsonb, no migration |
+| `loom.knowledge_document_readers`  | `(org, namespace, source_uri, source_id, account)` | `name`, `deleted`, `version`; `namespace` is the mirror; `account` is the UUIDv5 pseudonym of `<kind>:<account id>` or of the lower-cased email                                                                        |
+| `loom.knowledge_source_listings`   | `(org, namespace, source_id, account)`             | `name`, `started_at`, `deleted`, `version`; `account` is the pseudonym, or `shared:<source id>`; the start of the account's last complete listing; `namespace` is the mirror                                           |
+| `loom.knowledge_group_members`     | `(org, namespace, source_id, group)`               | `name`, `members`, `read_at`, `deleted`, `version`; `namespace` is the mirror                                                                                                                                          |
+| `loom.knowledge_source_cleanups`   | `(org, namespace, source_id)`                      | `name`, `mirror`, `done`, `version`; a stopped mirrored source whose documents and rows wait to be cleaned                                                                                                             |
+| `loom.connected_accounts`          | `(org, subject, kind)`                             | `account_id`, `account_email`, `scopes`, `credential_enc`, `active`, `connected_at`, `disconnected_at`, `version`                                                                                                      |
 
 A source N-1 can operate on (`shared`, `access: namespace`, with items today's config
 can express) keeps today's columns as they are: `kind`, its credential in
@@ -937,54 +945,56 @@ The redirect URI to register with each store is
   authority, on every leg with the check, a narrowed list and a retirement each
   committed but not yet published, or held by a parked delivery, already applying, a
   widening committed but not yet published not applying until it is, a mirror address
-  with no head dropped by `get`, `download` and `knowledge.inspect` as by the chunk
-  legs, a new mirror document whose head is committed and whose row is unpublished
-  admitting nobody through rule 3, a head read that fails showing no mirrored document,
-  and `knowledge.inspect` listing no mirrored title on any path where its `served` read
-  falls back to ClickHouse's rows; under either authority, an address with no live
-  document row admitting nobody; a rule-2 check that admits nobody through the list when
-  one of the source's accounts has a stale listing row and the reader's own is fresh; a
-  document admitted only through `groups`, `domains` or `anyone` passing the
-  admitted-set read; a head moved to `unread` and not yet published admitting nobody
-  through a readers row older than its `changed_at`, and a connected `notion` page,
-  admitted by rule 3 alone, still shown; a source over
-  `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` after an item swap writing no new document,
-  rewriting a narrowed list, landing its listing row, retiring, and draining back under
-  it; a file only one account lists whose permissions read is refused marked `unread`
-  before that account's listing row lands, its old list admitting nobody; a chunk with
-  `revision` 0 matching by version, with no refetch after the upgrade; a crawl where one
-  account drops a file another still lists, neither retiring nor marking it, and the
-  dropping account's row not held back; a file whose first listing account's permissions
-  read is refused and whose next account's succeeds, not marked `unread`; an `unread`
-  list refused again writing nothing and moving no `changed_at`; a cleanup killed
-  mid-retirement, whose rerun finds the documents still tagged and retires them; an
-  anti-join over a mirrored source N-1 removed, whose lease key and re-check use the
-  source's namespace; no readers, listing or group-members row left by a turn that
-  starts after a cleanup; a `remove` without `delete_documents` on a `namespace` source
-  keeping its documents, also when a same-named mirrored source's cleanup runs; a
-  connected source N-1 removed during its first listing leaving no readers row after the
-  anti-join's cleanup; a new document written with the list its fetch read; no read op
-  returning `access_json`; a mirrored `add` over a `namespace` source of the same name
-  removed with `delete_documents`, refused with `SOURCE_DELETE_PENDING`, and over its
-  kept documents with `SOURCE_DOCUMENTS_KEPT`; a mirrored `add` reusing the name of a
-  source N stopped while its cleanup is open, the two sharing the turn lease, the
-  cleanup retiring only documents of the old id and the new source writing each freed
-  address at its next complete listing; a mirrored `add` reusing the name of a stopped
-  mirrored source whose documents are still in the mirror, before the anti-join runs,
-  owning none of them and counting them `skipped`; a source whose registry row a lagging
-  replica does not show yet left alone; a person dropped from a crawl's expansion
-  leaving no readers or listing row; a directory read that fails mid-group, or returns
-  over the cap, dropping nobody; a user erasure leaving no row, of any version, keyed by
-  the person's pseudonyms; `erasure.request` refusing an `acl-` scope for an org admin
-  and a namespace admin and admitting a platform admin; a user erasure leaving no
-  address of the person in `loom.knowledge_sources`, nor a crawl readers or listing row
-  naming them; `erasure.request` and `erasure.export` refusing an `acl-` scope with auth
-  off; the mirror cache after an erasure followed by a new mirrored `add`; a connected
-  `notion` page shown to its owner only; a consent callback without the starting
-  browser's cookie, or in another subject's session, storing nothing; an admin's
-  `update` adding items to someone else's connected source refused; scope refusals on
-  the connect callback and a crawl's probe; today's `check`, `rotate`, `remove` and turn
-  over a row N wrote with `kind` empty.
+  with no head dropped by every document leg as by the chunk legs, a Postgres
+  point-in-time restore followed by the mirror erase leaving no headless mirror
+  document, a namespace's `retention_days` applied to its mirror's `loom.agent_events`
+  rows, a document rule 3 alone admits shown once its row is published, a new mirror
+  document whose head is committed and whose row is unpublished admitting nobody through
+  rule 3, a head read that fails showing no mirrored document, and `knowledge.inspect`
+  listing no mirrored title on any path where its `served` read falls back to
+  ClickHouse's rows; under either authority, an address with no live document row
+  admitting nobody; a rule-2 check that admits nobody through the list when one of the
+  source's accounts has a stale listing row and the reader's own is fresh; a document
+  admitted only through `groups`, `domains` or `anyone` passing the admitted-set read; a
+  head moved to `unread` and not yet published admitting nobody through a readers row
+  older than its `changed_at`, and a connected `notion` page, admitted by rule 3 alone,
+  still shown; a source over `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` after an item swap
+  writing no new document, rewriting a narrowed list, landing its listing row, retiring,
+  and draining back under it; a file only one account lists whose permissions read is
+  refused marked `unread` before that account's listing row lands, its old list
+  admitting nobody; a chunk with `revision` 0 matching by version, with no refetch after
+  the upgrade; a crawl where one account drops a file another still lists, neither
+  retiring nor marking it, and the dropping account's row not held back; a file whose
+  first listing account's permissions read is refused and whose next account's succeeds,
+  not marked `unread`; an `unread` list refused again writing nothing and moving no
+  `changed_at`; a cleanup killed mid-retirement, whose rerun finds the documents still
+  tagged and retires them; an anti-join over a mirrored source N-1 removed, whose lease
+  key and re-check use the source's namespace; no readers, listing or group-members row
+  left by a turn that starts after a cleanup; a `remove` without `delete_documents` on a
+  `namespace` source keeping its documents, also when a same-named mirrored source's
+  cleanup runs; a connected source N-1 removed during its first listing leaving no
+  readers row after the anti-join's cleanup; a new document written with the list its
+  fetch read; no read op returning `access_json`; a mirrored `add` over a `namespace`
+  source of the same name removed with `delete_documents`, refused with
+  `SOURCE_DELETE_PENDING`, and over its kept documents with `SOURCE_DOCUMENTS_KEPT`; a
+  mirrored `add` reusing the name of a source N stopped while its cleanup is open, the
+  two sharing the turn lease, the cleanup retiring only documents of the old id and the
+  new source writing each freed address at its next complete listing; a mirrored `add`
+  reusing the name of a stopped mirrored source whose documents are still in the mirror,
+  before the anti-join runs, owning none of them and counting them `skipped`; a source
+  whose registry row a lagging replica does not show yet left alone; a person dropped
+  from a crawl's expansion leaving no readers or listing row; a directory read that
+  fails mid-group, or returns over the cap, dropping nobody; a user erasure leaving no
+  row, of any version, keyed by the person's pseudonyms; `erasure.request` refusing an
+  `acl-` scope for an org admin and a namespace admin and admitting a platform admin; a
+  user erasure leaving no address of the person in `loom.knowledge_sources`, nor a crawl
+  readers or listing row naming them; `erasure.request` and `erasure.export` refusing an
+  `acl-` scope with auth off; the mirror cache after an erasure followed by a new
+  mirrored `add`; a connected `notion` page shown to its owner only; a consent callback
+  without the starting browser's cookie, or in another subject's session, storing
+  nothing; an admin's `update` adding items to someone else's connected source refused;
+  scope refusals on the connect callback and a crawl's probe; today's `check`, `rotate`,
+  `remove` and turn over a row N wrote with `kind` empty.
 - Integration: `tests/integration/test_document_source_leakage.py`, beside
   `test_cross_principal_leakage.py`, seeds mirrored documents with canary text and reads
   every knowledge read op, `knowledge.reads`, `knowledge.query` and
