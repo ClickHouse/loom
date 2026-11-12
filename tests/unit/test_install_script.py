@@ -961,7 +961,7 @@ def test_a_port_another_program_holds_stops_before_any_pull(
     result = run(LOOM_SKIP_START="0", LOOM_PORT="28977")
     assert result.returncode == 1
     assert "port 28977 on 127.0.0.1 is in use by another program:" in result.stderr
-    assert "again with LOOM_PORT=7778 in front of sh" in result.stderr
+    assert "again with LOOM_PORT=28978 in front of sh" in result.stderr
     assert not _started(docker_log)
 
 
@@ -991,16 +991,37 @@ def test_a_listener_that_resets_or_answers_nothing_holds_the_port(
 
 
 @pytest.mark.parametrize("connect_time", ["0.000000", "0.000"])
-def test_a_port_that_does_not_connect_in_time_is_not_called_in_use(
+def test_a_timeout_with_no_connect_time_names_both_causes(
     install, installer_env: dict[str, str], connect_time: str
 ) -> None:
-    """Zero as curl prints it now and as releases before 7.61 printed it."""
+    """Zero as curl prints it now and as old releases print it, also for a fast
+    connect: a silent listener and an unreachable address are both named."""
     run, _ = install
     _start_stubs(installer_env, probe_exit=28, connect_time=connect_time)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 1
-    assert "cannot reach 127.0.0.1:7777 within 3 seconds" in result.stderr
-    assert "in use" not in result.stderr
+    assert "port 7777 on 127.0.0.1 does not answer within 5 seconds" in result.stderr
+    assert "a program may hold it" in result.stderr and "firewall" in result.stderr
+
+
+@pytest.mark.parametrize("code", [0, 52, 1])
+def test_a_listener_is_named_by_curls_exit_alone(
+    install, installer_env: dict[str, str], code: int
+) -> None:
+    """Old curls print a fast loopback connect as 0.000: the exit code still says a
+    listener answered."""
+    run, _ = install
+    _start_stubs(installer_env, probe_exit=code, connect_time="0.000")
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
+
+
+def test_the_suggested_port_is_the_next_one(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env, probe_exit=0, connect_time="0.000100")
+    result = run(LOOM_SKIP_START="0", LOOM_PORT="7779")
+    assert "LOOM_PORT=7780 in front of sh" in result.stderr
 
 
 def test_a_probe_curl_cannot_make_is_not_called_in_use(
