@@ -331,10 +331,10 @@ operator access and [TLS](../operations/deployment.md#proxy-and-tls).
 ## 3. Get a token
 
 In single-user mode a token is optional. Minting one anyway keeps your scripts working
-when auth is turned on, as long as they name their `namespace` and `agent`: a call that
-sends a credential, as the SDK does when it finds any ([Python SDK →
-Credentials](../reference/python-sdk.md#credentials)), gets neither filled in (a blank
-`org` is the token's own).
+when auth is turned on, as long as they name their `org` (or send it blank), `namespace`
+and `agent`: a call that sends a credential, as the SDK does when it finds any ([Python
+SDK → Credentials](../reference/python-sdk.md#credentials)), gets none of them filled in,
+and a blank `org` is the token's own.
 
 - **Dashboard:** **Settings → Tokens → New token**. By default the token reads every
   namespace and repository you belong to (a restricted repository only when you add it),
