@@ -417,7 +417,7 @@ main() {
         --connect-timeout 3 --max-time 5 "http://$host:$port/" 2>/dev/null) || probe=$?
       case $probe,$connected in
         7,*) ;;
-        28,0.000 | 28,0.000000 | 28,) fail "port $port on $host does not answer within 5 seconds: a program may hold it without answering, or LOOM_BIND_HOST, LOOM_PORT or a firewall keeps this host from reaching it" ;;
+        28,0.000 | 28,0.000000) fail "port $port on $host does not answer: a program may hold it without answering, or LOOM_BIND_HOST, LOOM_PORT or a firewall keeps this host from reaching it" ;;
         0,* | 1,* | 8,* | 52,* | 56,* | *,*[1-9]*)
           other_port=$((port + 1))
           [ "$port" -lt 65535 ] || other_port=7778

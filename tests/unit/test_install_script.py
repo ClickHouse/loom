@@ -1000,7 +1000,7 @@ def test_a_timeout_with_no_connect_time_names_both_causes(
     _start_stubs(installer_env, probe_exit=28, connect_time=connect_time)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 1
-    assert "port 7777 on 127.0.0.1 does not answer within 5 seconds" in result.stderr
+    assert "port 7777 on 127.0.0.1 does not answer:" in result.stderr
     assert "a program may hold it" in result.stderr and "firewall" in result.stderr
 
 
