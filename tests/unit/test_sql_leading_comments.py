@@ -1,6 +1,6 @@
 """The three readers of a statement's first keyword skip leading `--` and
-`/* */` comments in time linear in the text: insights.query hands `ch.py` a
-caller's SQL. A comment body that may hold `*/` makes a
+`/* */` comments in time linear in the text: `looks_like_sql` reads string
+literals from indexed repositories. A comment body that may hold `*/` makes a
 failed match backtrack exponentially in the number of `*/` runs."""
 
 from __future__ import annotations
