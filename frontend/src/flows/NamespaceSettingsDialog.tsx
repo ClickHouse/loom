@@ -12,7 +12,7 @@ import {
   type NamespaceRegisterFields,
 } from "../api";
 import { useStore } from "../lib/state";
-import { canUpdateNamespace, isNamespaceAdmin } from "../lib/role";
+import { canUpdateNamespace, hasAdminClaim, isNamespaceAdmin } from "../lib/role";
 import { needsRole } from "../lib/namespaceRole";
 import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
@@ -89,12 +89,22 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
   // namespace.delete needs ADMIN on the namespace.
   const canManage = canUpdateNamespace(whoami, myNamespaces, namespace, ns);
   const canDelete = isNamespaceAdmin(whoami, myNamespaces, namespace);
-  // Why the fields are locked: a restricted namespace also wants the token itself to name it
-  // with an admin claim, which an admin grant alone does not give (`canUpdateNamespace`).
+  // Why the fields are locked: a restricted namespace also wants the token itself to be of
+  // its org (never `*`), name it and carry an admin claim, which an admin grant alone does
+  // not give (`canUpdateNamespace`). The line names only the parts the token misses.
   const grant = myNamespaces?.find((m) => m.namespace === namespace);
+  const tokenMisses = [
+    whoami?.org === org ? null : `be of ${org}`,
+    whoami?.namespaces?.includes(namespace) ? null : `name ${namespace}`,
+    hasAdminClaim(whoami) ? null : "carry an admin claim",
+  ].filter((p): p is string => p !== null);
   const lockedReason =
-    ns?.classification === "restricted" && grant?.role === "admin" && grant.status !== "pending" && !grant.inherited
-      ? `Your token must name ${namespace} with an admin claim to change its settings.`
+    ns?.classification === "restricted" &&
+    grant?.role === "admin" &&
+    grant.status !== "pending" &&
+    !grant.inherited &&
+    tokenMisses.length > 0
+      ? `To change its settings, your token must ${andList(tokenMisses)}.`
       : needsRole("admin", namespace);
 
   // Repository mode: a code index shows only what applies to read-only source —
@@ -377,4 +387,9 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
       </div>
     </Modal>
   );
+}
+
+/** "a", "a and b", "a, b and c". */
+function andList(parts: string[]): string {
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
 }

@@ -9,8 +9,9 @@ export const ROLE_LOADING = "Your role on this namespace is still loading.";
 
 /**
  * Why the caller's role on `namespace` is not known, or null when it is: list_mine is still
- * being read (or whoami is), the caller's request to join waits for an admin, or list_mine
- * could not be read. A null role with list_mine read and none of these is no grant at all.
+ * being read (or whoami is), the caller's request to join waits for an admin, list_mine
+ * could not be read, or a `*` claim, which list_mine answers no row for, leaves it to the
+ * server. A null role with list_mine read and none of these is no grant at all.
  */
 export function roleGap(read: NamespaceRoleRead, whoami: WhoAmI | null, namespace: string): string | null {
   if (read.role !== null) return null;
@@ -18,6 +19,8 @@ export function roleGap(read: NamespaceRoleRead, whoami: WhoAmI | null, namespac
   if (read.rows?.some((m) => m.namespace === namespace && m.status === "pending"))
     return `Your request to join ${namespace} is waiting for an admin.`;
   if (read.rows === null) return `Couldn't check your access to ${namespace}.`;
+  if (whoami.namespaces?.includes("*"))
+    return `The server decides this token's access to ${namespace}; it does not show here.`;
   return null;
 }
 

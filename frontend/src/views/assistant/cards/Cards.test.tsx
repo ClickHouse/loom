@@ -977,12 +977,15 @@ describe("Assistant: overview", () => {
     expect(starter).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("reads for a `*` token whose own claim covers the namespace, with no grant row", async () => {
+  it("says the server decides a `*` token's access when list_mine holds no row, and reads nothing", async () => {
     useStore.setState({ whoami: { ...viewer, roles: ["VIEWER"], namespaces: ["*"] }, myNamespaces: [] });
     await renderCards();
-    expect(screen.getByRole("button", { name: INVENTORY_STARTER })).not.toHaveAttribute("aria-disabled");
-    await screen.findByTestId("assistant-inventory");
-    expect(namespaceInventory).toHaveBeenCalledTimes(1);
+    const starter = screen.getByRole("button", { name: INVENTORY_STARTER });
+    expect(starter).toHaveAttribute("aria-disabled", "true");
+    expect(starter).toHaveAccessibleDescription(
+      "The server decides this token's access to team; it does not show here.",
+    );
+    expect(namespaceInventory).not.toHaveBeenCalled();
   });
 
   it("waits for the role, saying so, and reads once it is known", async () => {

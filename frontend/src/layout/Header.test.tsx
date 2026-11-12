@@ -65,6 +65,19 @@ describe("Header", () => {
     expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
   });
 
+  it("keeps New live for a `*` writer token that list_mine holds no row for", async () => {
+    listMine.mockResolvedValue([]);
+    useStore.setState({
+      whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"], namespaces: ["*"] },
+    });
+    render(<Header />);
+    await waitFor(() => expect(listMine).toHaveBeenCalled());
+    await act(async () => {});
+    const add = screen.getByRole("button", { name: "New" });
+    expect(add).toBeEnabled();
+    expect(add).not.toHaveAttribute("aria-disabled");
+  });
+
   it("names the icon-only New in a tooltip below lg", async () => {
     listMine.mockResolvedValue(jwtOnly);
     useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });

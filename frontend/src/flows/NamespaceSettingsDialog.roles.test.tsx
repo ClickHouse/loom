@@ -76,17 +76,25 @@ describe("NamespaceSettingsDialog roles", () => {
 });
 
 describe("NamespaceSettingsDialog on a restricted namespace", () => {
-  it("tells an admin by grant that the token must name the namespace with an admin claim", async () => {
+  it.each([
+    [
+      { org: "dev", namespaces: ["*"], roles: [] },
+      "To change its settings, your token must name team and carry an admin claim.",
+    ],
+    [{ org: "*", namespaces: ["team"], roles: ["ADMIN"] }, "To change its settings, your token must be of dev."],
+    [
+      { org: "*", namespaces: ["*"], roles: [] },
+      "To change its settings, your token must be of dev, name team and carry an admin claim.",
+    ],
+  ])("tells an admin by grant what the token misses: %j", async (token, line) => {
     useStore.setState({
-      whoami: { authenticated: true, subject: "me@example.com", org: "dev", roles: [], namespaces: ["*"] },
+      whoami: { authenticated: true, subject: "me@example.com", ...token },
       myNamespaces: [grant("admin")],
     });
     vi.mocked(api.getNamespace).mockResolvedValue({ ...info, classification: "restricted" });
     render(<NamespaceSettingsDialog open onOpenChange={() => {}} org="dev" namespace="team" />);
     await act(async () => undefined);
-    expect(screen.getByTestId("settings-locked")).toHaveTextContent(
-      "Your token must name team with an admin claim to change its settings.",
-    );
+    expect(screen.getByTestId("settings-locked")).toHaveTextContent(line);
     expect(screen.getByLabelText("Description")).toBeDisabled();
   });
 });

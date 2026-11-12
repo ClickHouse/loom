@@ -92,6 +92,18 @@ describe("Memories empty state", () => {
     expect(await axeViolations(container)).toEqual([]);
   });
 
+  it("keeps Add memory live for a `*` writer token that list_mine holds no row for", async () => {
+    seed("writer", ["WRITER"]);
+    useStore.setState({
+      whoami: { authenticated: true, subject: "n@x", org: "dev", roles: ["WRITER"], namespaces: ["*"] },
+      myNamespaces: [personal, { ...row("writer"), namespace: "elsewhere" }],
+    });
+    render(<Recent />);
+    const state = await empty();
+    const add = within(state).getByRole("button", { name: "Add memory" });
+    expect(add).not.toHaveAttribute("aria-disabled");
+  });
+
   it("tells a viewer who writes here and opens the members list, with no Add memory or connect", async () => {
     seed("viewer", ["VIEWER"]);
     const { container } = render(<Recent />);

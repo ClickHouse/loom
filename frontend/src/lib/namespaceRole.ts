@@ -19,12 +19,11 @@ import { isPersonalCollection } from "./namespace";
  *   VIEWER / WRITER claim, which the server honours there
  *   (`server/auth/authz.py::check_authorized`). list_mine answers a `jwt` row for each
  *   namespace the token names whose claim still reaches it (`live_claims`), never for `*`;
- * - no row on a namespace a `*` token covers without naming it: viewer, whatever the flat
- *   claim. The client cannot see what else holds such a token to less (`ns_write`, a
- *   delegated token's creator grant), so it offers reads only and no write;
- * - anything else (list_mine not loaded yet, failed, a pending request, or no row on a
- *   named namespace, whose claim a revoked grant caps): `null` — no request is sent. A
- *   pending row is unknown on purpose, whatever the token claims.
+ * - anything else (list_mine not loaded yet, failed, a pending request, or no row):
+ *   `null`, so no gated request is sent and no write is locked. A pending row is unknown
+ *   on purpose, whatever the token claims. No row on a named namespace means a revoked
+ *   grant caps its claim; no row under a `*` claim is the server's to decide (`ns_write`,
+ *   a delegated token's creator grant), which the client cannot see.
  */
 export type NamespaceRole = "admin" | "writer" | "viewer";
 
@@ -54,11 +53,7 @@ export function roleOnNamespace(
   const claim = flatClaim(whoami);
   if (mine === null) return null;
   const row = mine.find((m) => m.namespace === namespace);
-  if (row?.status === "pending") return null;
-  if (!row) {
-    const named = whoami.namespaces ?? [];
-    return claim && named.includes("*") && !named.includes(namespace) ? "viewer" : null;
-  }
+  if (!row || row.status === "pending") return null;
   if (row.role === "jwt") return claim;
   return row.role;
 }

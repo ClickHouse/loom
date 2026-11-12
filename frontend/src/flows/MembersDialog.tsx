@@ -20,7 +20,7 @@ import { toast, toastError, toastErrorLine } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { fieldError, ListTime, Loading, Tip, Unavailable } from "../components/ui";
+import { fieldError, ListTime, Loading, Unavailable } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { humanizeError } from "../lib/errorWords";
 import { oneOf } from "../lib/oneOf";
@@ -241,17 +241,6 @@ export function MembersDialog({
 
   const addLabel = isCode ? "Add reader" : "Add member";
 
-  const approveButton = (r: PendingEntry, targets: number) => (
-    <Button
-      type="secondary"
-      htmlType="button"
-      onClick={() => onApprove(r.subject, "approve")}
-      disabled={busy === r.subject}
-    >
-      {`Approve as ${isCode ? (r.requested_role === "admin" ? "maintainer" : "reader") : r.requested_role}${targets > 1 ? ` on ${targets} branches` : ""}`}
-    </Button>
-  );
-
   return (
     <Modal
       open={open}
@@ -319,16 +308,19 @@ export function MembersDialog({
                     </div>
                     {r.subject !== me || canManage ? (
                       <>
-                        {manageReason ? (
-                          <Unavailable reason={manageReason}>{approveButton(r, targets)}</Unavailable>
-                        ) : (
-                          <Tip
-                            content={`Also approves: ${elsewhere.map((t) => t.label).join(", ")}`}
-                            disabled={targets <= 1}
+                        <Unavailable
+                          reason={manageReason}
+                          tip={targets > 1 ? `Also approves: ${elsewhere.map((t) => t.label).join(", ")}` : undefined}
+                        >
+                          <Button
+                            type="secondary"
+                            htmlType="button"
+                            onClick={() => onApprove(r.subject, "approve")}
+                            disabled={busy === r.subject}
                           >
-                            {approveButton(r, targets)}
-                          </Tip>
-                        )}
+                            {`Approve as ${isCode ? (r.requested_role === "admin" ? "maintainer" : "reader") : r.requested_role}${targets > 1 ? ` on ${targets} branches` : ""}`}
+                          </Button>
+                        </Unavailable>
                         <Unavailable reason={manageReason}>
                           <Button
                             type="empty"
