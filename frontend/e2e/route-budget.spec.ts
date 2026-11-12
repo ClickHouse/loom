@@ -25,7 +25,6 @@ const ROUTES: Array<[string, string]> = [
   ["Library", "/library"],
   ["Conversations", "/conversations"],
   ["Graph", "/graph"],
-  ["Assistant", "/assistant"],
   ["Spaces", "/spaces"],
   ["Profile", "/profile"],
   ["Runs", "/runs"],
@@ -73,8 +72,7 @@ for (const [name, path] of ROUTES) {
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
     await page.goto(path, { waitUntil: "domcontentloaded" });
     // The shell's own <main id="main">: the boot screens' sr-only <h1> sits in a bare <main>.
-    // On /assistant the page is the expanded assistant panel, in its place.
-    await expect(page.locator("#main:not([hidden]) :is(h1, h2), [data-assistant-panel] h1").first()).toBeVisible();
+    await expect(page.locator("#main :is(h1, h2)").first()).toBeVisible();
     await page.waitForTimeout(1500);
     const { lcp, lt } = await page.evaluate(() => ({
       lcp: window.__lcp,

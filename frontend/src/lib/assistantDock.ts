@@ -1,16 +1,18 @@
 // The assistant panel's shell state, which every page pays for: whether the panel is open,
 // how wide, the mode the window gives it, the launcher's marks, the question being typed,
 // and a reason the assistant cannot answer when one is known. What the panel does (open,
-// close, the phone sheet's history entry, the inert) loads with it
+// close, expand, the phone sheet's history entry, the inert) loads with it
 // (./assistantDockRuntime.ts); the chat and its stored conversations are its body's chunk
-// (views/assistant/Dock.tsx).
+// (views/assistant/Dock.tsx). It opens from the assistant edge at the window's right from
+// md, and from the bottom navigation below md (App.tsx, layout/MobileNav.tsx).
 //
 // One panel element serves every mode, and only its position, the trap and the page's
 // inert change between them, so a resize keeps the focus and the draft:
 //   push     beside <main> while <main> keeps PAGE_MIN px; non-modal.
 //   overlay  over the page at the right, full height, a scrim and the page inert; modal.
 //   sheet    below PHONE_MIN px wide, full screen with a history entry of its own; modal.
-//   expanded on /assistant, in <main>'s place at any width; non-modal.
+//   expanded a window over the page from EXPAND_MIN px, anchored at the right; modal. It
+//            changes neither the address nor the history, and a reload never restores it.
 import { create } from "zustand";
 import { isAuthDisabled } from "../api";
 import { INDEX_KEY, PANEL_KEY } from "./assistantStorage";
@@ -62,17 +64,32 @@ export interface DockState {
   askSeq: number;
   // Set only once the panel's behaviour loads (absent reads as false or 0), so the shell
   // carries no default for them.
-  /** The /assistant page shows: the panel is the page (its open state is kept for after). */
+  /** The open panel is the window over the page; only ever set while open. */
   expanded?: boolean;
+  /** Expand found the panel beside the page: <main> keeps a spacer of its width under the
+   *  window, so the page does not reflow. */
+  expandedFromPush?: boolean;
+  /** The panel slides in: it appeared from closed over the page (overlay, sheet, window). */
+  entering?: boolean;
   /** Bumped by the Memories page's Insights button: the panel opens on the starters. */
   startersSeq?: number;
   /** The audit's card is read too (an old link to the Memories Insights tab), nothing asked. */
   startersAudit?: boolean;
 }
 
-// Auth off is known from the first paint; the token's claims are read when the panel's
-// behaviour loads, and the rest when it opens.
-const authOff = isAuthDisabled();
+/** Whether this deployment's chat is off (the server's boot snippet): the panel is its
+ *  starters, Loom's own reads, and nothing asks a model. A missing flag reads as on. */
+export function chatOff(): boolean {
+  return window.__LOOM_ASSISTANT === false;
+}
+
+// Chat off and auth off are known from the first paint (chat off wins); the token's claims
+// are read when the panel's behaviour loads, and the rest when it opens.
+const seed: AssistantReason | null = chatOff()
+  ? { kind: "not_configured" }
+  : isAuthDisabled()
+    ? { kind: "auth_off" }
+    : null;
 
 export const useDock = create<DockState>(() => ({
   open: false,
@@ -85,8 +102,8 @@ export const useDock = create<DockState>(() => ({
   working: false,
   unread: false,
   draft: "",
-  reason: authOff ? { kind: "auth_off" } : null,
-  reasonShort: authOff ? "needs auth on" : "",
+  reason: seed,
+  reasonShort: seed ? (seed.kind === "auth_off" ? "needs auth on" : "chat not set up") : "",
   focusField: false,
   item: null,
   pageOff: false,
@@ -96,6 +113,13 @@ export const useDock = create<DockState>(() => ({
 // An old link to the Memories page's Insights tab (`?section=insights`): the boot's address
 // leaves the key out, and the panel opens on the audit card once the shell has drawn.
 let insightsLink = pathnameView() === "memories" && urlParam("section") === "insights";
+
+/** The address is /assistant (or `?view=assistant`): a bookmarked address, no view. */
+export function assistantAddress(): boolean {
+  return /^\/assistant\/?$/.test(window.location.pathname) || urlParam("view") === "assistant";
+}
+// Read before the boot replaces it with the landing page's.
+let assistantLink = assistantAddress();
 
 type Runtime = typeof import("./assistantDockRuntime");
 let runtime: Runtime | null = null;
@@ -111,14 +135,14 @@ export function loadDockRuntime(): Promise<Runtime> {
   return loading;
 }
 
-/** The view is /assistant (`on`) or another page: the panel is the page there. */
-export function showExpanded(on: boolean): void {
-  if (on || useDock.getState().expanded) void loadDockRuntime().then((m) => m.showExpanded(on));
-}
-
-/** The launcher's click and Ctrl+/ (⌘/): open the panel, or close it. */
+/** The edge's click and Ctrl+/ (⌘/): open the panel, or close it. */
 export function toggleAssistantSoon(): void {
   void loadDockRuntime().then((m) => m.toggleAssistant());
+}
+
+/** The bottom nav's item and "Go to the assistant": open the panel, or focus it. */
+export function openAssistantSoon(): void {
+  void loadDockRuntime().then((m) => m.openAssistant());
 }
 
 /** Ctrl+/ (⌘/ on Apple keyboards): open or close the panel. A key pressed in another dialog
@@ -145,7 +169,7 @@ export function assistantPopstate(state: unknown): boolean {
 /** The shell has drawn. A page loaded on the sheet's entry (a reload) shows no sheet: the
  *  entry is the page's. The panel's behaviour loads now when the panel was left open (it
  *  reopens where it would push) or the browser holds conversations (another person's are
- *  deleted as this one signs in). */
+ *  deleted as this one signs in); an /assistant address opens it over the landing page. */
 export function bootDock(): void {
   if (sheetEntry()) patchEntry({ loomSheet: null });
   useDock.setState({ viewport: window.innerWidth, collapsed: useStore.getState().sidebarCollapsed });
@@ -158,5 +182,8 @@ export function bootDock(): void {
   if (insightsLink) {
     insightsLink = false;
     void loadDockRuntime().then((m) => m.openStarters(true));
+  } else if (assistantLink) {
+    assistantLink = false;
+    void loadDockRuntime().then((m) => m.openFromAssistantAddress(false));
   } else if (wanted) void loadDockRuntime().then((m) => m.restorePanel());
 }

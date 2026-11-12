@@ -11,7 +11,8 @@ LibreChat is the assistant: it hosts the agent (its model, instructions and tool
 runs it headless beside Loom, reachable only from Loom. Loom supplies the agent's tools,
 which read under a token of the asker's own subject, and a read-only SQL op that
 ClickHouse itself holds to that token's org and namespaces. People chat in the
-dashboard's assistant panel, opened from the header of any page; agents and scripts reach
+dashboard's assistant panel, opened from the Assistant button at the window's right edge,
+or the bottom navigation's Assistant item on narrow screens; agents and scripts reach
 the same agent over HTTP, MCP and both SDKs, through Loom's origin and as themselves.
 
 ## Surfaces
@@ -1123,7 +1124,9 @@ from Loom, and both run its v0.8.8 configuration,
   non-root on a read-only root filesystem; LibreChat writes its logs and uploads to
   `emptyDir` volumes (`scripts/gates/helm_assistant_isolation.py` checks the render).
 - **Settings:** `LOOM_ASSISTANT_LIBRECHAT_URL` names LibreChat's internal address; unset,
-  Loom sets up nothing. `LOOM_ASSISTANT_MODEL` replaces the definition's model.
+  Loom sets up nothing, and the dashboard, which learns it from its boot snippet
+  (`window.__LOOM_ASSISTANT`), shows the panel without its chat: the starters still read.
+  `LOOM_ASSISTANT_MODEL` replaces the definition's model.
 
 Each replica sets the service up in its background at boot. Over a row that has its key
 and agent, a boot asks LibreChat, with the stored key and no sign-in, whether the agent
@@ -1265,6 +1268,9 @@ with no label; sends a question asked with sources without " Cite your sources."
 history and shows no "With sources" tag; and offers no Retry, ignoring a turn's
 `retryable` and a card's `again` mark, so a starter's turn asked again shows its stored
 card there.
+
+An `/assistant` entry an older dashboard pushed opens the assistant over the landing page
+on Back ([rolling upgrades](rolling-upgrades.md), rule 46).
 
 ## Build order
 

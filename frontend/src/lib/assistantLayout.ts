@@ -9,13 +9,17 @@ export const PANEL_MIN = 360;
 export const PANEL_MAX = 720;
 export const PANEL_DEFAULT = 420;
 /** The width <main> keeps beside the panel in push mode. */
-export const PAGE_MIN = 640;
+export const PAGE_MIN = 592;
+/** The assistant edge's width from md (App.tsx): a 1 px border and its 47 px column. */
+export const EDGE = 48;
+/** From this window width the panel can expand into the window over the page. */
+export const EXPAND_MIN = 1024;
 /** Below this window width the panel is the phone sheet. */
 export const PHONE_MIN = 640;
 /** One splitter arrow step. */
 export const SPLIT_STEP = 16;
 
-/** `expanded`: the /assistant page, where the panel takes <main>'s place at any width. */
+/** `expanded`: the window over the page from EXPAND_MIN up, anchored at the right; modal. */
 export type DockMode = "push" | "overlay" | "sheet" | "expanded";
 
 /** Why the assistant cannot answer, as the panel and the launcher word it. */
@@ -35,7 +39,7 @@ export const SHORT_REASON: Record<AssistantReason["kind"], string> = {
   org_wide: "this token spans every org",
   narrowed: "this token is narrowed",
   token_expires_soon: "this token expires too soon",
-  not_configured: "not set up",
+  not_configured: "chat not set up",
   starting: "setting up",
   failing: "setup failed",
   model_calls_off: "model calls are off",
@@ -46,11 +50,11 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 /** The mode, used width and largest width the window gives the panel. Push while the page
  *  keeps PAGE_MIN beside at least PANEL_MIN of panel (the panel shrinks toward PANEL_MIN
  *  first), then overlay (leaving 64 px of the page in view), then the phone sheet. The
- *  sidebar is Sidebar.tsx's: hidden below md, 60 px collapsed, 244 px open. The stored
- *  width is a preference. */
+ *  sidebar is Sidebar.tsx's: hidden below md, 60 px collapsed, 244 px open; the assistant
+ *  edge takes EDGE from md. The stored width is a preference. */
 export function dockLayout(vw: number, collapsed: boolean, pref: number) {
   if (vw < PHONE_MIN) return { mode: "sheet" as DockMode, width: vw, max: vw };
-  const room = vw - (vw < 768 ? 0 : collapsed ? 60 : 244) - PAGE_MIN;
+  const room = vw - (vw < 768 ? 0 : (collapsed ? 60 : 244) + EDGE) - PAGE_MIN;
   const max = room >= PANEL_MIN ? Math.min(PANEL_MAX, room) : Math.max(PANEL_MIN, Math.min(PANEL_MAX, vw - 64));
   return { mode: (room >= PANEL_MIN ? "push" : "overlay") as DockMode, width: clamp(pref, PANEL_MIN, max), max };
 }
@@ -78,16 +82,16 @@ export function claimReason(token: string | null = storedToken()): AssistantReas
   return null;
 }
 
-export function layoutOf(s: Pick<DockState, "viewport" | "collapsed" | "prefWidth" | "expanded">) {
-  if (s.expanded) return { mode: "expanded" as DockMode, width: s.viewport, max: s.viewport };
+/** The panel's layout: the window's while it is open and expanded, else the docked one. */
+export function layoutOf(s: Pick<DockState, "viewport" | "collapsed" | "prefWidth" | "expanded" | "open">) {
+  if (s.open && s.expanded) return { mode: "expanded" as DockMode, width: s.viewport, max: s.viewport };
   return dockLayout(s.viewport, s.collapsed, s.prefWidth);
 }
 
 /** The one flag every modal behaviour follows: role="dialog", aria-modal, the trap, the
  *  Tab wrap and the page's inert. */
 export function isModal(s: DockState): boolean {
-  const mode = layoutOf(s).mode;
-  return s.open && !s.expired && mode !== "push" && mode !== "expanded";
+  return s.open && !s.expired && layoutOf(s).mode !== "push";
 }
 
 export function useDockMode(): DockMode {

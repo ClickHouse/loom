@@ -264,8 +264,6 @@ describe("deepLinkNamespace: an explicit path keeps its view and takes the names
     }
     expect(needsMemoryNamespace("code")).toBe(false);
     expect(needsMemoryNamespace("graph")).toBe(false);
-    // The assistant's page is its panel, which says itself when the namespace holds no memories.
-    expect(needsMemoryNamespace("assistant")).toBe(false);
   });
 
   it("the 7600 chain still answers first: a memory-only token opens Repositories on its memory namespace", () => {

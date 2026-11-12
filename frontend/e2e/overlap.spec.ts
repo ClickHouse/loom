@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { installApi } from "./fixtures";
+import { dockAssistant, installApi } from "./fixtures";
 
 // Nothing on screen sits over content it hides: a drawer's last section scrolls clear of
 // its actions, a menu opened in a drawer draws over it, and a bar that stays at the top
@@ -11,9 +11,17 @@ async function memories(page: Page) {
   await expect(page.locator("[data-memory-key]").first()).toBeVisible();
 }
 
-for (const width of [1400, 375]) {
-  test.describe(`${width} px`, () => {
+for (const [width, docked] of [
+  [1400, false],
+  [375, false],
+  // Beside the assistant docked at the push minimum: the page keeps 592 px.
+  [1280, true],
+] as const) {
+  test.describe(`${width} px${docked ? " with the assistant docked" : ""}`, () => {
     test.use({ viewport: { width, height: 800 } });
+    test.beforeEach(async ({ page }) => {
+      if (docked) await dockAssistant(page);
+    });
 
     test("the memory drawer's last section scrolls clear of its actions", async ({ page }) => {
       await memories(page);

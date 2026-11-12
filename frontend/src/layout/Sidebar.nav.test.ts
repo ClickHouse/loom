@@ -12,7 +12,7 @@ import {
   scopeHint,
   type NavItem,
 } from "./Sidebar";
-import { mobileMoreItems } from "./MobileNav";
+import { mobileMoreItems } from "./MobileMore";
 import { ALL_VIEWS } from "../lib/state";
 import { must } from "../test/must";
 

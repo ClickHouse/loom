@@ -16,7 +16,7 @@ import {
   type NamespaceTune,
 } from "../../../api";
 import { announceAssistant } from "../../../lib/assistantDockRuntime";
-import { useDock } from "../../../lib/assistantDock";
+import { chatOff, useDock } from "../../../lib/assistantDock";
 import { callReason } from "../../../lib/callReason";
 import { humanizeError } from "../../../lib/errorWords";
 import { useNamespaceRoleRead } from "../../../lib/namespaceRole";
@@ -198,7 +198,8 @@ export function startStarter(
   }: { alsoAsk: boolean; gate: string | null; namespace: string; unanswered?: string | null },
 ): void {
   const st = useChat.getState();
-  if (st.answering) return;
+  // With the chat off a stored conversation is read-only: nothing is appended to it.
+  if (st.answering || (chatOff() && st.id !== null)) return;
   const card: TurnCard = { op, args, ...(unanswered ? { unanswered } : {}) };
   const question = starterQuestion(op, args);
   // The turn as the card alone: no model is called. `why`: the assistant was asked and did
@@ -208,10 +209,14 @@ export function startStarter(
     const now = useChat.getState();
     const turnId = randomId();
     const own = why ? { ...card, unanswered: why } : card;
+    // With the chat off the cards are a list of reads, never a saved conversation; a read in
+    // another namespace than the list's starts a new list, so each card reads where it says.
+    const fresh = chatOff() && now.id === null && now.namespace !== null && now.namespace !== namespace;
+    const before = fresh ? [] : now.turns;
     useChat.setState({
-      id: now.id ?? randomId(),
-      namespace: now.namespace ?? namespace,
-      turns: [...now.turns, { id: turnId, question, answer: "", state: "card", card: own, at: Date.now() }],
+      id: now.id ?? (chatOff() ? null : randomId()),
+      namespace: fresh ? namespace : (now.namespace ?? namespace),
+      turns: [...before, { id: turnId, question, answer: "", state: "card", card: own, at: Date.now() }],
     });
     save();
     readCard(turnId, gate);

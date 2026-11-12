@@ -109,9 +109,13 @@ export function DocumentInspection({ result }: { result: KnowledgeInspection }) 
           <p className="text-text-muted">The documents could not be counted by format and source.</p>
         ) : (
           !empty && (
-            <div className="grid gap-3 md:grid-cols-2">
-              <CountTable label="Documents by format" head="Format" rows={docs.by_format} />
-              <CountTable label="Documents by source" head="Source scheme" rows={docs.by_source_scheme} />
+            // Side by side where the card is wide (the window), not by the screen's width:
+            // the docked panel is narrow on any screen.
+            <div className="@container">
+              <div className="grid gap-3 @md:grid-cols-2">
+                <CountTable label="Documents by format" head="Format" rows={docs.by_format} />
+                <CountTable label="Documents by source" head="Source scheme" rows={docs.by_source_scheme} />
+              </div>
             </div>
           )
         )}

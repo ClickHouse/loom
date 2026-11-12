@@ -126,13 +126,16 @@ loading, or the server decides it, the control says that instead.
 
 ### The assistant panel
 
-The **Assistant** button in the header, left of the account menu (its icon, and from
-1280 px its word beside it), opens the chat with the
-[assistant](../architecture/assistant.md#surfaces) on every page, and so do **Ctrl /** and
-**⌘ /** (listed in the keyboard shortcuts). It is never disabled; its icon and name say when
-an answer is coming in, when one ended while the panel was closed (until it opens again; a
-reload forgets the mark), and when the assistant cannot answer, in which case the panel
-says why. The chat asks about the header's namespace
+The **Assistant** button at the window's right edge (a column from 768 px, its word set
+vertically under its icon), or the bottom navigation's **Assistant** item on narrower
+screens, opens the chat with the [assistant](../architecture/assistant.md#surfaces) on every
+page, and so do **Ctrl /** and **⌘ /** (listed in the keyboard shortcuts). After **Skip to
+main content**, a second skip control, **Go to the assistant**, opens it with the focus in its
+field. The button is never disabled; its icon and name say when an answer is coming in, when
+one ended while the panel was closed (until it opens again; a reload forgets the mark), and
+when the assistant cannot answer, in which case the panel says why. On a deployment whose
+chat is not set up it keeps its plain icon: the panel then holds the starters, Loom's own
+reads. The chat asks about the header's namespace
 under the person's own access: the answer streams in as text with Markdown emphasis, lists,
 tables and code (no HTML, images or links), then its Sources, each citation as the server
 checked it, a memory, document or help citation found in Loom opening where the dashboard
@@ -195,11 +198,12 @@ its "How to apply" saying who applies it and where. A card restored from History
 "Read <time>", and applies nothing until it is read again. The assistant itself writes
 nothing.
 
-The Memories page's **Insights** button opens the panel on the starters, with nothing asked:
+The Memories page's **Insights** button opens the panel on the starters, with nothing asked
+(also where the chat is not set up: the starters read Loom without it):
 over a finished conversation it starts a new one; while an answer is coming in it opens on
 that conversation and says to choose New conversation once it ends. On a phone the button is
-left out, and the header's Assistant button opens the panel, which shows the starters on an
-empty conversation (New conversation starts one). An old link to `/memories?section=insights`
+left out, and the bottom navigation's Assistant item opens the panel, which shows the starters
+on an empty conversation (New conversation starts one). An old link to `/memories?section=insights`
 opens the panel on the audit's card, nothing asked.
 
 **Each question says which page it is asked from**, and shows it: a chip above the field,
@@ -225,25 +229,38 @@ after any switch of namespace, and the chip keeps the item. The button is there 
 the assistant's route admits on the namespace. It is unavailable, with the reason, while the
 assistant cannot answer, on a header namespace that holds no memories, on a document of a
 collection linked in the Library (the answer reads only the header's namespace), and in the
-drawer while an edit or a rename is open ("Save or cancel the edit first.").
+drawer while an edit or a rename is open ("Save or cancel the edit first."). Where the
+deployment's chat is not set up it is absent: it only ever asks a model.
 
 One panel serves every window width:
 
-- **Beside the page** while the page keeps 640 px: 360 to 720 px wide (420 by default, and
-  narrower before it covers the page), resized by its splitter's drag or arrow keys, and not
-  modal, so Tab moves between the page and the panel. A navigation leaves it open.
+- **Beside the page** while the page keeps 592 px (the edge's column at its right): 360 to
+  720 px wide (420 by default, and narrower before it covers the page), resized by its
+  splitter's drag or arrow keys (a wider grab strip under a finger), and not modal, so Tab
+  moves between the page and the panel. A navigation leaves it open.
 - **Over the page** below that: full height at the right, the page dimmed and inert, the
   focus kept inside until it closes. A navigation, Back and Forward close it.
 - **Full screen** under 640 px, with a history entry of its own: Back closes it.
-- **Expanded** at `/assistant`: the panel in the page's place at any width, at reading width,
-  with **Expand** on the panel beside or over the page and **Collapse** (or **Ctrl /**) back to
-  the page it was expanded from, or to Memories for a link opened from elsewhere, with the
-  panel open and the focus in its field. It is not in the left rail.
+- **Expanded** from 1024 px: **Expand** makes the open panel a window over the page, anchored
+  at the right and full height, leaving a 24 px strip of the dimmed page at the left; its
+  content keeps a reading width. The address, the history and the page under it do not
+  change. **Collapse**, Esc or a click on the strip returns it to the mode the width gives;
+  **Close** and **Ctrl /** close it, and the next open is docked. A navigation from it (a link
+  in a card, Back, Forward) leaves the window first: beside the page the panel stays open, over
+  it the panel closes. A window narrower than 1024 px collapses it.
 
 Esc closes it from inside (after any menu or popover open in it), returning the focus to the
-button; expanded at `/assistant`, where the panel is the page, Esc closes nothing. A change of
-width or of the sidebar moves the panel to another mode without losing the focus or the
-question being typed. It reopens on reload only where it sits beside the page.
+button (expanded, Esc collapses the window). A change of width or of the sidebar moves the
+panel to another mode without losing the focus or the question being typed. It reopens on
+reload only where it sits beside the page, never expanded. A bookmarked `/assistant` address
+lands on the account's landing page and opens the assistant over it (expanded from 1024 px).
+
+Where the deployment's chat is not set up (no assistant URL), the panel is a list of Loom's
+own reads: it says chat is not set up, shows no question field, no **Try again** and no
+**Also ask the assistant**, and keeps the starters under the last card, so one runs after
+another; those cards are not saved, and the toolbar's **Clear** empties the list. History
+shows only conversations saved before, opened read-only (**New conversation** starts a new
+list). An open puts the focus on the first starter.
 
 **Why it cannot answer** is said for the person reading it, with a link only for someone who
 can open the page it names: the assistant not set up, setting up or failing its setup

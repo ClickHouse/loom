@@ -116,8 +116,29 @@ function readQuery(key: string): string | null {
 }
 
 // Below Click UI's xl breakpoint the panel is a modal sheet over the list, not a column
-// beside it. The one place the breakpoint lives: styles.css keys on what this decides.
-const SHEET_QUERY = "(max-width: 1279px)";
+// beside it. The breakpoint lives here (the query and PANEL_ROOM): styles.css keys on what
+// this decides.
+const SHEET_MIN = 1280;
+const SHEET_QUERY = `(max-width: ${SHEET_MIN - 1}px)`;
+// <main>'s width at that breakpoint with the sidebar open (less the 244 px sidebar and the
+// assistant's 48 px edge): a page made narrower (the assistant docked beside it) leaves no
+// room for the column either. The 48 is lib/assistantLayout.ts's EDGE, written out so this
+// page's chunk does not load the assistant's layout module.
+const PANEL_ROOM = SHEET_MIN - 244 - 48;
+
+/** Whether <main> is narrower than PANEL_ROOM, kept current; false until measured, or where
+ *  it cannot be. A yes/no, so a resize re-renders the page only when the answer changes. */
+function useNarrowMain(): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const main = document.getElementById("main");
+    if (!main || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setNarrow(main.offsetWidth < PANEL_ROOM));
+    ro.observe(main);
+    return () => ro.disconnect();
+  }, []);
+  return narrow;
+}
 // Below md the inbox rail is a Select, the toolbar's filters sit on a row under it and the
 // page draws the list only. Wider than lib/useMedia's PHONE_QUERY.
 const RAIL_QUERY = "(max-width: 767px)";
@@ -232,7 +253,8 @@ export function Tasks() {
   const dialogDone = useRef(false);
   const [editing, setEditing] = useState<TaskRow | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const sheetLayout = useMedia(SHEET_QUERY);
+  const narrowMain = useNarrowMain();
+  const sheetLayout = useMedia(SHEET_QUERY) || narrowMain;
   const narrow = useMedia(RAIL_QUERY);
 
   // Only the latest task.counts may write the counts: a namespace switch while A's read is

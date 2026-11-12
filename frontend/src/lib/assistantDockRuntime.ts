@@ -1,13 +1,14 @@
 // The assistant panel's behaviour, loaded with the panel the first time it is needed (a
 // click on the launcher, the shortcut, a reload that restores it open, or a browser holding
-// stored conversations): opening and closing it, the phone sheet's history entry, what
-// navigations, Back and resizes do to it, the page's inert while it is modal, and the
-// deletion of another person's stored conversations on a sign-in. The state it acts on is
-// the shell's (lib/assistantDock.ts).
+// stored conversations): opening, closing and expanding it, the phone sheet's history
+// entry, what navigations, Back and resizes do to it, the page's inert while it is modal,
+// an /assistant address, and the deletion of another person's stored conversations on a
+// sign-in. The state it acts on is the shell's (lib/assistantDock.ts).
 import { isAuthDisabled } from "../api";
-import { useDock, type AskItem } from "./assistantDock";
+import { chatOff, useDock, type AskItem } from "./assistantDock";
 import { PANEL_KEY } from "./assistantStorage";
 import {
+  EXPAND_MIN,
   PANEL_MAX,
   PANEL_MIN,
   claimReason,
@@ -18,7 +19,9 @@ import {
   setDockReason,
 } from "./assistantLayout";
 import { patchEntry, rememberPlace } from "./place";
-import { navigationHref, sheetEntry, useStore } from "./state";
+import { landingTarget } from "./namespace";
+import { navigationHref, sheetEntry, useStore, type View } from "./state";
+import { reducedMotion } from "./useMedia";
 import { forgetOtherPeople } from "../views/assistant/storedIndex";
 
 function writePanel(open: boolean, width: number): void {
@@ -52,10 +55,11 @@ function focusLauncher(): void {
   document.querySelector<HTMLElement>(LAUNCHER_SELECTOR)?.focus();
 }
 
-/** Open the panel, the focus going to its question field. On the phone the sheet pushes a
- *  history entry of its own (stamped `loomSheet`), so Back closes it; the entry under it
- *  first remembers the place, with the launcher as the element Back focuses. */
-export function openAssistant(): void {
+/** Open the panel, the focus going to its question field (with the chat off, its first
+ *  starter). `expanded`: as the window over the page, from EXPAND_MIN px. On the phone the
+ *  sheet pushes a history entry of its own (stamped `loomSheet`), so Back closes it; the
+ *  entry under it first remembers the place, with the launcher as the element Back focuses. */
+export function openAssistant({ expanded = false }: { expanded?: boolean } = {}): void {
   const s = useDock.getState();
   if (s.open) {
     useDock.setState({ focusField: true });
@@ -71,7 +75,14 @@ export function openAssistant(): void {
       /* history unavailable: the sheet closes by its button */
     }
   }
-  useDock.setState({ open: true, mounted: true, unread: false, focusField: true });
+  useDock.setState({
+    open: true,
+    mounted: true,
+    unread: false,
+    focusField: true,
+    expanded: expanded && window.innerWidth >= EXPAND_MIN,
+    expandedFromPush: false,
+  });
   writePanel(true, s.prefWidth);
 }
 
@@ -90,7 +101,7 @@ export function closeAssistant(cause: "person" | "nav"): void {
     panel?.removeAttribute("aria-modal");
     panel?.removeAttribute("data-open");
   }
-  useDock.setState({ open: false, focusField: false });
+  useDock.setState({ open: false, expanded: false, expandedFromPush: false, focusField: false });
   writePanel(false, s.prefWidth);
   if (cause === "person") {
     if (sheetEntry()) {
@@ -110,11 +121,10 @@ export function askAbout(item: AskItem): void {
   openAssistant();
 }
 
-/** The launcher and Ctrl+/ (⌘/): open the panel, or close it (a close from outside the
- *  panel leaves the focus where it is); on /assistant, collapse it. */
+/** The edge and Ctrl+/ (⌘/): open the panel, or close it (a close from outside the panel
+ *  leaves the focus where it is). */
 export function toggleAssistant(): void {
-  if (useDock.getState().expanded) collapseAssistant();
-  else if (useDock.getState().open) closeAssistant("person");
+  if (useDock.getState().open) closeAssistant("person");
   else openAssistant();
 }
 
@@ -124,36 +134,51 @@ export function openStarters(audit: boolean): void {
   openAssistant();
 }
 
-/** The view is /assistant (`on`) or another page (lib/assistantDock.ts showExpanded). */
-export function showExpanded(on: boolean): void {
-  useDock.setState(on ? { expanded: true, mounted: true, focusField: true } : { expanded: false });
-}
-
-// Set while Collapse's own history.back() is on its way: its arrival restores nothing, the
-// panel focusing its field.
-let collapsing = false;
-
-/** Expand: the panel becomes the /assistant page (the conversation and the draft stay). */
+/** Expand: the open panel becomes the window over the page, from EXPAND_MIN px; the address,
+ *  the history and the page under it stay. */
 export function expandAssistant(): void {
-  useStore.getState().navigate("assistant");
+  const s = useDock.getState();
+  // An expired session keeps the panel beside the page, where the session card stays reachable.
+  if (!s.open || s.expanded || s.expired || window.innerWidth < EXPAND_MIN) return;
+  useDock.setState({ expanded: true, expandedFromPush: layoutOf(s).mode === "push" });
+  announceAssistant("The assistant fills the window");
 }
 
-/** Collapse: back to the page /assistant was opened from (Back, when the app made the entry),
- *  else Memories in its place, then the panel opens there as the launcher opens it, in the
- *  mode the width gives with its field focused (on the phone, the sheet with its own history
- *  entry, so Back closes only the sheet). */
+/** Collapse: the window goes back to the mode the width gives. */
 export function collapseAssistant(): void {
-  // Out of the expanded mode at once, so the open below goes by the width.
-  useDock.setState({ expanded: false, open: false, mounted: true });
-  const st: unknown = history.state;
-  if (st && typeof st === "object" && (st as Record<string, unknown>).loomFromApp === true) {
-    collapsing = true;
-    history.back();
-    return;
+  if (!useDock.getState().expanded) return;
+  useDock.setState({ expanded: false, expandedFromPush: false });
+  const push = layoutOf(useDock.getState()).mode === "push";
+  announceAssistant(push ? "The assistant is beside the page" : "The assistant is over the page");
+}
+
+/** A navigation, Back or a session expiry leaves the window first; the docked rule follows. */
+function leaveExpanded(): void {
+  if (useDock.getState().expanded) useDock.setState({ expanded: false, expandedFromPush: false });
+}
+
+/** An /assistant address, at boot (`back` false) or reached by Back or Forward: the address
+ *  becomes the landing page's and the assistant opens over it, as the window from
+ *  EXPAND_MIN px. It opens nothing on Setup, or where a link named a namespace the account
+ *  cannot read; on Back, nothing at phone widths either (the sheet's entry would drop the
+ *  Forward entries). */
+export function openFromAssistantAddress(back: boolean): void {
+  const st = useStore.getState();
+  // Back keeps the tab's namespace; a landing on Setup only replaces the address.
+  let stay = !back && st.view === "setup";
+  if (back) {
+    const ns = st.identity?.namespace ?? "";
+    const view = landingTarget(ns, [ns], st.myNamespaces ?? []).view;
+    stay ||= view === "setup";
+    const target: View = view === "setup" ? st.view : (view ?? "memories");
+    history.replaceState(history.state, "", navigationHref(target));
+    if (view !== "setup") st.arriveFromHistory(target, null);
   }
-  history.replaceState({ loomFromApp: true }, "", navigationHref("memories", {}));
-  useStore.getState().arriveFromHistory("memories", null);
-  openAssistant();
+  const s = useDock.getState();
+  if (stay || useStore.getState().deniedNamespace || (back && layoutOf(s).mode === "sheet")) return;
+  if (!s.open) return openAssistant({ expanded: true });
+  expandAssistant();
+  useDock.setState({ focusField: true });
 }
 
 // Whether the current entry is the sheet's, as the shell last saw it (Back has already
@@ -164,17 +189,13 @@ let currentSheet = typeof history !== "undefined" && sheetEntry();
 // panel's, not the person's Back.
 let leavingSheet = false;
 
-/** Back or Forward arrived at an entry with `state`. On the phone the sheet is open exactly
- *  when that entry is the sheet's; an overlay closes; a pushed panel stays. Answers whether
+/** Back or Forward arrived at an entry with `state`. The window leaves expanded first. On the
+ *  phone the sheet is open exactly when that entry is the sheet's; an overlay closes; a
+ *  pushed panel stays. Answers whether
  *  the entry left was the sheet's, whose arrival restores nothing: the panel placed the
  *  focus itself (the launcher, after the sheet closes). */
 export function assistantPopstate(state: unknown): { leftSheet: boolean } {
-  if (collapsing) {
-    // Collapse's Back has arrived on the page /assistant was opened from: the panel opens there.
-    collapsing = false;
-    openAssistant();
-    return { leftSheet: true };
-  }
+  leaveExpanded();
   const ownBack = leavingSheet;
   leavingSheet = false;
   const left = currentSheet;
@@ -205,8 +226,9 @@ export function announceAssistant(message: string): void {
 }
 
 /** The page elements a modal panel makes inert (marked `data-dock-inert` in App and its
- *  layout): the skip link, the sidebar, the reload bar, the header, <main> and the phone
- *  nav. The toasts, portals and live regions stay live. */
+ *  layout): the skip link, the "Go to the assistant" skip button, the sidebar, the reload
+ *  bar, the header, <main>, the assistant edge and the phone nav. The toasts, portals and
+ *  live regions stay live. */
 function applyInert(modal: boolean): void {
   if (typeof document === "undefined") return;
   for (const el of document.querySelectorAll<HTMLElement>("[data-dock-inert]")) {
@@ -224,13 +246,22 @@ export function installDock(): void {
     collapsed: useStore.getState().sidebarCollapsed,
     prefWidth: readPanel().width,
   });
-  // The token's own claims: an org-wide or narrowed token cannot ask.
-  const claimed = claimReason();
+  // The token's own claims: an org-wide or narrowed token cannot ask (with the chat off,
+  // its reason stays).
+  const claimed = chatOff() ? null : claimReason();
   if (claimed) setDockReason(claimed);
   const onResize = () => {
     const before = useDock.getState();
     const was = layoutOf(before).mode;
-    useDock.setState({ viewport: window.innerWidth });
+    // The window is offered from EXPAND_MIN only: narrower, it collapses for good, and a
+    // focus on its Expand/Collapse button (hidden now) goes to the question field.
+    const collapse = !!before.expanded && window.innerWidth < EXPAND_MIN;
+    const onToggle = collapse && !!document.activeElement?.closest("[data-expand-toggle]");
+    useDock.setState({
+      viewport: window.innerWidth,
+      ...(collapse ? { expanded: false, expandedFromPush: false } : {}),
+      ...(onToggle ? { focusField: true } : {}),
+    });
     const now = layoutOf(useDock.getState()).mode;
     // An open sheet that becomes a docked panel keeps its history entry, unstamped: Back from
     // it arrives at the entry under it (the same page), whose place App restores, and the
@@ -252,8 +283,12 @@ export function installDock(): void {
     if (s.sidebarCollapsed !== prev.sidebarCollapsed) useDock.setState({ collapsed: s.sidebarCollapsed });
     if (s.sessionExpired !== prev.sessionExpired) {
       useDock.setState({ expired: s.sessionExpired });
-      // The session card must be reachable: a modal panel closes (its state stays).
-      if (s.sessionExpired && layoutOf(useDock.getState()).mode !== "push") closeAssistant("nav");
+      // The session card must be reachable: the window collapses and a modal panel closes
+      // (its state stays).
+      if (s.sessionExpired) {
+        leaveExpanded();
+        if (layoutOf(useDock.getState()).mode !== "push") closeAssistant("nav");
+      }
     }
     // The item "Ask about this" set belongs to the page, org and namespace it was asked
     // from, and to the person who asked; a removed chip comes back on another page, which it
@@ -271,12 +306,19 @@ export function installDock(): void {
     if (s.navSeq !== prev.navSeq) {
       // A navigation from the sheet replaced the sheet's entry.
       currentSheet = sheetEntry();
+      leaveExpanded();
       if (layoutOf(useDock.getState()).mode !== "push") closeAssistant("nav");
     }
   });
   let modal = isModal(useDock.getState());
   applyInert(modal);
-  useDock.subscribe((s) => {
+  useDock.subscribe((s, prev) => {
+    // The slide-in plays when the panel appears from closed over the page; a mode change
+    // while it stays open (a resize, Expand, Collapse) and a close end it.
+    const mode = layoutOf(s).mode;
+    if (!prev.open && s.open) {
+      if (mode !== "push" && !reducedMotion()) useDock.setState({ entering: true });
+    } else if (s.entering && (!s.open || mode !== layoutOf(prev).mode)) useDock.setState({ entering: false });
     const now = isModal(s);
     if (now !== modal) {
       modal = now;

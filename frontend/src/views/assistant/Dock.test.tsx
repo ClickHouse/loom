@@ -1,6 +1,7 @@
 // The assistant panel's body: why it cannot answer, in words for who reads them, Try again,
 // History, and how the stored conversations show (expiry hides them, one answer runs in a
 // conversation across tabs, a namespace switch asks how to go on).
+import { startStarter } from "./cards/cardStore";
 import { act, cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -161,9 +162,17 @@ const refusal = (status: number, detail: object) => () => json({ detail }, statu
 
 describe("reasons, worded per reader", () => {
   it.each<[Who, string, boolean]>([
-    ["platform", "Set up the assistant: see Health", true],
-    ["nsAdmin", "An admin of this deployment sets up the assistant.", false],
-    ["viewer", "An admin of this deployment sets up the assistant.", false],
+    ["platform", "Set up chat: see Health", true],
+    [
+      "nsAdmin",
+      "Chat is not set up on this deployment; the starters read Loom without it. An admin of this deployment sets it up.",
+      false,
+    ],
+    [
+      "viewer",
+      "Chat is not set up on this deployment; the starters read Loom without it. An admin of this deployment sets it up.",
+      false,
+    ],
   ])("not configured, for a %s", async (who, text, link) => {
     check = null;
     signIn(who);
@@ -2307,5 +2316,125 @@ describe("the starters", () => {
     expect(useDock.getState().startersAudit).toBe(false);
     await waitFor(() => expect(useChat.getState().turns[0]?.state).toBe("card"));
     act(() => resetChat(null));
+  });
+});
+
+// A deployment with no assistant URL (`__LOOM_ASSISTANT` false): the panel is a list of
+// Loom's own reads. Nothing asks a model, and nothing new is saved.
+describe("with the chat off", () => {
+  const starter = (label: RegExp) => screen.findByRole("button", { name: label }, { timeout: 3000 });
+  beforeEach(() => {
+    window.__LOOM_ASSISTANT = false;
+    useDock.setState({ reason: { kind: "not_configured" }, reasonShort: "chat not set up" });
+  });
+  afterEach(() => {
+    window.__LOOM_ASSISTANT = undefined;
+  });
+
+  it("opens to the starters with the reason: no question field, no Try again, no Also ask, no readiness read", async () => {
+    mode.authOff = true;
+    signIn("viewer");
+    show();
+    expect(await unavailable()).toHaveAttribute("data-reason", "not_configured");
+    await starter(/What does this namespace hold/);
+    expect(screen.queryByLabelText("Question")).toBeNull();
+    expect(screen.queryByRole("form", { name: "Ask the assistant" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Also ask the assistant" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
+    expect(paths).not.toContain("/v1/health/ready");
+    expect(useDock.getState().reason).toEqual({ kind: "not_configured" });
+  });
+
+  it("runs one starter after another without leaving the panel, and saves nothing", async () => {
+    signIn("nsAdmin");
+    show();
+    const user = userEvent.setup();
+    await user.click(await starter(/How is this namespace being used/));
+    await user.click(await starter(/What could be improved here/));
+    await waitFor(() => expect(useChat.getState().turns).toHaveLength(2));
+    expect(screen.getByTestId("assistant-starters")).toBeInTheDocument();
+    expect(localStorage.getItem(INDEX_KEY)).toBeNull();
+    expect(paths).not.toContain("/v1/assistant/chat/completions");
+    // Over the unsaved list the toolbar's button clears it.
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+    expect(useChat.getState().turns).toHaveLength(0);
+  });
+
+  it("shows a conversation stored before read-only, and a new list from there saves nothing", async () => {
+    signIn("nsAdmin");
+    saveConversation({
+      id: "c1",
+      owner: alice,
+      namespace: "team",
+      title: "Invoices",
+      turns: [done(0)],
+      trimmed: false,
+      updated: Date.now(),
+    });
+    const index = localStorage.getItem(INDEX_KEY);
+    show();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Invoices" }));
+    await screen.findByText("Answer 0");
+    expect(screen.queryByTestId("assistant-starters")).toBeNull();
+    // Read-only: nothing asks it again.
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Ask again with sources/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    await user.click(await starter(/How is this namespace being used/));
+    await waitFor(() => expect(useChat.getState().turns).toHaveLength(1));
+    expect(localStorage.getItem(INDEX_KEY)).toBe(index);
+  });
+
+  it("deleting the last stored conversation leaves History for the starters", async () => {
+    signIn("nsAdmin");
+    saveConversation({
+      id: "c1",
+      owner: alice,
+      namespace: "team",
+      title: "Invoices",
+      turns: [done(0)],
+      trimmed: false,
+      updated: Date.now(),
+    });
+    show();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Delete Invoices" }));
+    await starter(/What does this namespace hold/);
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
+  });
+
+  it("a read in another namespace than the list's starts a new list there", async () => {
+    signIn("nsAdmin");
+    act(() => useChat.setState({ id: null, namespace: "team", turns: [] }));
+    startStarter("namespace.audit", {}, { alsoAsk: false, gate: null, namespace: "team" });
+    expect(useChat.getState()).toMatchObject({ namespace: "team" });
+    expect(useChat.getState().turns).toHaveLength(1);
+    startStarter("namespace.audit", {}, { alsoAsk: false, gate: null, namespace: "other" });
+    expect(useChat.getState()).toMatchObject({ namespace: "other", id: null });
+    expect(useChat.getState().turns).toHaveLength(1);
+  });
+
+  it("appends no card to a stored conversation", async () => {
+    signIn("nsAdmin");
+    act(() => useChat.setState({ id: "c1", namespace: "team", turns: [done(0)] }));
+    startStarter("namespace.audit", {}, { alsoAsk: false, gate: null, namespace: "team" });
+    expect(useChat.getState().turns).toHaveLength(1);
+  });
+
+  it("an open's focus waits for the starters and lands on the first", async () => {
+    signIn("viewer");
+    useDock.setState({ focusField: true });
+    render(
+      <div id="assistant-panel" tabIndex={-1}>
+        <DockBody />
+      </div>,
+    );
+    const first = await starter(/What does this namespace hold/);
+    await waitFor(() => expect(first).toHaveFocus());
+    expect(useDock.getState().focusField).toBe(false);
   });
 });

@@ -16,7 +16,9 @@ import { ListTime } from "../../../components/ui/ListTime";
 import { openGraphAt } from "../../../lib/graphLink";
 import { openMemoriesSearching } from "../../../lib/memoriesSearch";
 import { useStore, type View } from "../../../lib/state";
+import { chatOff } from "../../../lib/assistantDock";
 import { useChat, type Turn } from "../chatStore";
+import { PAGE_NAMES } from "../pageContext";
 import { DocumentInspection } from "../DocumentInspection";
 import { Inspection } from "../Inspection";
 import { CardLinked } from "./linked";
@@ -31,6 +33,9 @@ import { askNow, asks, useStarterPrefs } from "./prefs";
 import { AUDIT_WINDOWS, MENTOR_WINDOWS, DEFAULT_WINDOW, starterOf } from "./starters";
 import { TuneBody } from "./TuneBody";
 import type { CardArgs, CardOp, TurnCard } from "./types";
+
+// A card's sections sit one level under its level-3 heading.
+const SECTION_LEVEL = 4;
 
 /** A card whose read came back in a shape its body cannot draw says so in its place; the
  *  conversation and the page around it stay. */
@@ -135,18 +140,17 @@ function Body({
   card,
   gate,
   head,
-  sub,
 }: {
   turn: Turn;
   card: TurnCard;
   gate: (op: CardOp) => string | null;
   /** The card heading's id, which its sections' ids start with. */
   head: string;
-  /** Its sections' heading level. */
-  sub: 3 | 4;
 }) {
   const namespace = useChat((s) => s.namespace) ?? "";
   const answering = useChat((s) => s.answering);
+  // With the chat off a stored conversation opens read-only (cardStore's startStarter).
+  const readOnly = useChat((s) => chatOff() && s.id !== null);
   const asking = useStarterPrefs(asks);
   switch (card.op) {
     case "namespace.inventory": {
@@ -163,20 +167,26 @@ function Body({
       };
       // A pick is off as the subject starter is: while an answer comes in, and when its read
       // is refused and nothing would be asked (asking, the card shows the refusal).
-      const blocked = answering ? "An answer is still coming in." : asking ? null : gate("memory.inspect");
+      const blocked = answering
+        ? "An answer is still coming in."
+        : readOnly
+          ? "A conversation stored before opens read-only."
+          : asking
+            ? null
+            : gate("memory.inspect");
       // Only users and agents are picked; authors and members are listed, not inspected.
       const pickable = inv.populations.some((p) => INSPECTED_AS[p.population] && p.top.length > 0);
       return (
         <div className="space-y-3">
           <InventoryScopeNote inventory={inv} />
           <section aria-labelledby={`${head}-holds`}>
-            <SectionHeading id={`${head}-holds`} level={sub} label="What this namespace holds" />
+            <SectionHeading id={`${head}-holds`} level={SECTION_LEVEL} label="What this namespace holds" />
             <InventorySections inventory={inv} />
           </section>
           <section aria-labelledby={`${head}-people`}>
             <SectionHeading
               id={`${head}-people`}
-              level={sub}
+              level={SECTION_LEVEL}
               label="Who appears here"
               hint={pickable && !blocked ? "Pick a user or agent to see what it remembers." : undefined}
             />
@@ -203,10 +213,10 @@ function Body({
 /**
  * One card in the conversation: Loom's own read for a starter, with the person's token. It
  * says what it is ("Loom's own read · <time>", or "Read <time>" once restored from History),
- * reads again on request, and links to the page that owns it. Its heading sits one level
- * under the panel's (`level`). Landing, it never moves the focus.
+ * reads again on request, and links to the page that owns it. Its heading (level 3) sits one
+ * level under the panel's title. Landing, it never moves the focus.
  */
-export function Card({ turn, level }: { turn: Turn; level: 2 | 3 }) {
+export function Card({ turn }: { turn: Turn }) {
   const card = turn.card as TurnCard;
   const namespace = useChat((s) => s.namespace) ?? "";
   const header = useStore((s) => s.identity?.namespace ?? "");
@@ -223,8 +233,6 @@ export function Card({ turn, level }: { turn: Turn; level: 2 | 3 }) {
     if (card.again && blockedNow !== ROLE_LOADING) readCard(turn.id, blockedNow);
   }, [card.again, blockedNow, turn.id]);
   const thing = starter.title.toLowerCase();
-  // The body's sections sit one level under the card's heading.
-  const sub = level === 2 ? 3 : 4;
   // A subject's card is named with its subject too (the line Inspection draws), so two of
   // them in one conversation read apart.
   const named = card.op === "memory.inspect" && card.data !== undefined ? `${head} ${head}-subject` : head;
@@ -236,7 +244,7 @@ export function Card({ turn, level }: { turn: Turn; level: 2 | 3 }) {
       data-testid="assistant-card"
       data-card={card.op}
     >
-      <SectionHeading id={head} level={level} label={starter.title} />
+      <SectionHeading id={head} level={3} label={starter.title} />
       <Controls card={card} reread={reread} />
       {card.unanswered && (
         <p className="text-xs text-text-muted">{`The assistant can't answer: ${card.unanswered}. This is Loom's own read.`}</p>
@@ -251,7 +259,7 @@ export function Card({ turn, level }: { turn: Turn; level: 2 | 3 }) {
             disabled={!linked}
             type="secondary"
             htmlType="button"
-            onClick={() => openGraphAt(card.args.entity ?? "", { from: "Assistant" })}
+            onClick={() => openGraphAt(card.args.entity ?? "", { from: PAGE_NAMES[useStore.getState().view] })}
           >
             {card.args.entity ? `Open the graph at ${card.args.entity}` : "Open the graph"}
           </Button>
@@ -269,8 +277,8 @@ export function Card({ turn, level }: { turn: Turn; level: 2 | 3 }) {
       ) : card.data !== undefined ? (
         <CardBoundary key={card.readAt}>
           <CardLinked.Provider value={linked}>
-            <CardSection.Provider value={{ prefix: head, level: sub }}>
-              <Body turn={turn} card={card} gate={gate} head={head} sub={sub} />
+            <CardSection.Provider value={{ prefix: head, level: SECTION_LEVEL }}>
+              <Body turn={turn} card={card} gate={gate} head={head} />
             </CardSection.Provider>
           </CardLinked.Provider>
         </CardBoundary>

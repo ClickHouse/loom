@@ -3,8 +3,8 @@
 `GET /` and every page path (`/memories`, `/admin/review_queue`, ...) answer
 `index.html` with the boot snippet; `/assets/*` serves the built Vite bundle
 and `/favicon.svg` the tab icon. Only the first path segments of the app's
-views (`PAGE_SEGMENTS`) are pages, and `/me`, where a sign-in lands; any other
-path keeps the router's 404.
+views (`PAGE_SEGMENTS`) are pages, with `assistant`, and `/me`, where a sign-in
+lands; any other path keeps the router's 404.
 """
 
 from __future__ import annotations
@@ -27,7 +27,9 @@ _FRONTEND_DIST = FRONTEND_DIST
 MAX_ASSET_PATH_CHARS = 1024  # not a setting: longer than any bundle path
 
 # The first URL segment of every dashboard view: `viewToPath` over `ALL_VIEWS`
-# in frontend/src/lib/state.ts (a unit test keeps the two equal).
+# in frontend/src/lib/state.ts (a unit test keeps the two equal), and `assistant`:
+# a bookmarked address; the dashboard lands on the account's landing page and opens
+# the assistant over it.
 PAGE_SEGMENTS = frozenset(
     {
         "admin",
@@ -156,12 +158,15 @@ async def _page(request: Request) -> Response:
     # password sign-in and self-signup are both refused server-side.
     sso = settings.oauth_login_provider == "oidc"
     signup_open = settings.self_signup_served()
+    # Whether the assistant panel's chat is set up; its starters read Loom either way.
+    assistant_on = bool(settings.assistant_librechat_url)
     nonce = secrets.token_urlsafe(16)
     boot_snippet = (
         f'<script nonce="{nonce}">'
         f"window.__LOOM_PROXY_AUTH = {'true' if has_bearer else 'false'};"
         f"window.__LOOM_AUTH_DISABLED = {'true' if auth_disabled else 'false'};"
         f"window.__LOOM_SELF_SIGNUP = {'true' if signup_open else 'false'};"
+        f"window.__LOOM_ASSISTANT = {'true' if assistant_on else 'false'};"
         f"window.__LOOM_SSO = {'true' if sso else 'false'};"
         f"window.__LOOM_DEFAULT_NAMESPACE = {_js_string(default_ns)};"
         f"window.__LOOM_OWN_ORIGIN = {'true' if _from_own_origin(request) else 'false'};"

@@ -29,7 +29,6 @@ import { canWrite, needsRole, useNamespaceRole } from "../lib/namespaceRole";
 import { MenuTrigger } from "../components/ui/Menu";
 import { paletteShortcut } from "../lib/platform";
 import { forgetAssistantConversations } from "../lib/assistantStorage";
-import { AssistantLauncher } from "./AssistantLauncher";
 
 /**
  * Header — top chrome of every page.
@@ -182,9 +181,6 @@ export function Header() {
           onClick={() => openHelp(true)}
           className="max-md:pointer-coarse:hidden"
         />
-
-        {/* Left of the account menu, from the first paint: never disabled. */}
-        <AssistantLauncher />
 
         {whoami && (
           <Menu

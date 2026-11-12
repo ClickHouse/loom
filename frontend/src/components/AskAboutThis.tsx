@@ -1,6 +1,6 @@
 import { Button } from "@clickhouse/click-ui/Button";
 import { Unavailable } from "./ui/Unavailable";
-import { loadDockRuntime, useDock, type AskItem } from "../lib/assistantDock";
+import { chatOff, loadDockRuntime, useDock, type AskItem } from "../lib/assistantDock";
 import { callReason } from "../lib/callReason";
 import { isMemoryNamespace } from "../lib/namespace";
 import { useNamespaceRoleRead } from "../lib/namespaceRole";
@@ -34,7 +34,8 @@ export function exact(id: string): string {
  * to a caller the assistant's route does not admit on the header's namespace (the role it
  * needs), for the caller's own `reason` (an item read from another place than the header's
  * namespace, which is all the answer reads), on a header namespace that holds no memories,
- * and while the assistant cannot answer.
+ * and while the assistant cannot answer. Absent where the deployment's chat is off: it only
+ * ever asks a model.
  */
 export function AskAboutThis({
   what,
@@ -55,7 +56,7 @@ export function AskAboutThis({
   const mine = useStore((s) => s.myNamespaces);
   const roleRead = useNamespaceRoleRead(namespace);
   const unavailable = useDock((s) => s.reasonShort);
-  if (!namespace) return null;
+  if (!namespace || chatOff()) return null;
   const why =
     callReason("assistant.ask", roleRead, whoami, namespace) ||
     reason ||

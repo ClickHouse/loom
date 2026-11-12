@@ -1,24 +1,42 @@
-import { act, cleanup, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDock } from "../lib/assistantDock";
 import { PANEL_DEFAULT } from "../lib/assistantLayout";
+import { expandAssistant, installDock, openAssistant } from "../lib/assistantDockRuntime";
 import { useStore } from "../lib/state";
 import { AssistantPanel } from "./AssistantPanel";
 
-// /assistant is the assistant panel itself, expanded in <main>'s place: Expand on the
-// docked panel goes there, Collapse comes back (Back when the app made the entry, else
-// Memories in its place) with the panel open and its field focused.
+// The panel's own element: the window it expands to, its splitter, and its slide-in, which
+// plays only when it appears from closed over the page.
 
 vi.mock("../views/assistant/Dock", () => ({
-  DockBody: () => <textarea aria-label="Question" />,
+  DockBody: () => (
+    <div>
+      <textarea aria-label="Question" />
+      <span data-testid="child" />
+    </div>
+  ),
 }));
 
+beforeAll(() => {
+  window.innerWidth = 1440;
+  installDock();
+});
+
 beforeEach(() => {
+  window.innerWidth = 1440;
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: /min-width: (\d+)px/.test(query) && window.innerWidth >= Number(/(\d+)px/.exec(query)?.[1]),
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
   useDock.setState({
-    open: true,
+    open: false,
     mounted: true,
     expanded: false,
+    expandedFromPush: false,
+    entering: false,
     viewport: 1440,
     collapsed: false,
     prefWidth: PANEL_DEFAULT,
@@ -28,69 +46,81 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   useDock.setState({ expanded: false, open: false });
-  window.history.replaceState(null, "", "/");
+  window.innerWidth = 1024;
 });
 
-describe("the expanded assistant", () => {
-  it("Expand goes to /assistant from the docked panel", async () => {
-    const navigate = vi.fn();
-    useStore.setState({ navigate });
+const panel = () => document.querySelector("[data-assistant-panel]") as HTMLElement;
+
+describe("the slide-in", () => {
+  it("does not play for an open beside the page, nor for a resize to overlay or an Expand after it", async () => {
     render(<AssistantPanel />);
-    expect(screen.getByRole("separator", { name: "Resize the assistant panel" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Expand the assistant" }));
-    expect(navigate).toHaveBeenCalledWith("assistant");
+    act(() => openAssistant());
+    expect(panel()).not.toHaveAttribute("data-entering");
+    act(() => useDock.setState({ viewport: 900 }));
+    expect(panel()).toHaveAttribute("data-mode", "overlay");
+    expect(panel()).not.toHaveAttribute("data-entering");
+    act(() => useDock.setState({ viewport: 1440 }));
+    act(() => expandAssistant());
+    expect(panel()).toHaveAttribute("data-mode", "expanded");
+    expect(panel()).not.toHaveAttribute("data-entering");
   });
 
-  it("is the page: an h1, no splitter, shown whatever the panel's open state, and Esc closes nothing", async () => {
-    useDock.setState({ expanded: true, open: false });
+  it("plays for an open over the page, until the panel's own animation ends", () => {
+    useDock.setState({ viewport: 900 });
     render(<AssistantPanel />);
-    const panel = document.querySelector("[data-assistant-panel]") as HTMLElement;
-    expect(panel).toHaveAttribute("data-mode", "expanded");
-    expect(panel).not.toHaveAttribute("hidden");
-    expect(panel).toHaveAttribute("role", "region");
-    expect(screen.getByRole("heading", { level: 1, name: "Assistant" })).toBeInTheDocument();
-    expect(screen.queryByRole("separator")).toBeNull();
+    act(() => openAssistant());
+    expect(panel()).toHaveAttribute("data-entering");
+    // A child's animation is not the panel's.
+    fireEvent.animationEnd(screen.getByTestId("child"));
+    expect(panel()).toHaveAttribute("data-entering");
+    fireEvent.animationEnd(panel());
+    expect(panel()).not.toHaveAttribute("data-entering");
+  });
+
+  it("the window opened from closed plays it", () => {
+    render(<AssistantPanel />);
+    act(() => openAssistant({ expanded: true }));
+    expect(panel()).toHaveAttribute("data-mode", "expanded");
+    expect(panel()).toHaveAttribute("data-entering");
+  });
+});
+
+describe("the window", () => {
+  it("has a level-2 title, Expand and Collapse are one button, and from closed there is no spacer", async () => {
+    render(<AssistantPanel />);
+    act(() => openAssistant({ expanded: true }));
+    expect(screen.getByRole("heading", { level: 2, name: "Assistant" })).toHaveAttribute("id", "assistant-panel-title");
+    expect(document.querySelector("[data-assistant-spacer]")).toBeNull();
+    const button = screen.getByRole("button", { name: "Collapse the assistant" });
+    await userEvent.click(button);
+    expect(button).toHaveAccessibleName("Expand the assistant");
+    expect(button).toHaveFocus();
+    expect(useDock.getState().expanded).toBe(false);
+  });
+
+  it("is offered from 1024 px only", () => {
+    window.innerWidth = 900;
+    useDock.setState({ viewport: 900 });
+    render(<AssistantPanel />);
+    act(() => openAssistant({ expanded: true }));
+    expect(useDock.getState().expanded).toBe(false);
     expect(screen.queryByRole("button", { name: "Expand the assistant" })).toBeNull();
-    await userEvent.keyboard("{Escape}");
-    expect(useDock.getState().expanded).toBe(true);
   });
+});
 
-  it("Collapse from a deep link lands on Memories in its place, the panel open", async () => {
-    window.history.replaceState(null, "", "/assistant");
-    useStore.setState({ view: "assistant" });
-    useDock.setState({ expanded: true, open: false });
-    const before = window.history.length;
+describe("the splitter", () => {
+  it("measures the width from the panel's own right edge", () => {
     render(<AssistantPanel />);
-    await userEvent.click(screen.getByRole("button", { name: "Collapse the assistant" }));
-    await waitFor(() => expect(useStore.getState().view).toBe("memories"));
-    expect(window.location.pathname).toBe("/memories");
-    expect(window.history.length).toBe(before);
-    expect(useDock.getState()).toMatchObject({ open: true, focusField: true });
-  });
-
-  it("Collapse on a phone opens the sheet with its own history entry, so Back closes only the sheet", async () => {
-    window.history.replaceState(null, "", "/assistant");
-    useStore.setState({ view: "assistant" });
-    useDock.setState({ expanded: true, open: false, viewport: 375 });
-    const before = window.history.length;
-    render(<AssistantPanel />);
-    await userEvent.click(screen.getByRole("button", { name: "Collapse the assistant" }));
-    await waitFor(() => expect(useStore.getState().view).toBe("memories"));
-    expect(useDock.getState()).toMatchObject({ open: true, expanded: false, focusField: true });
-    // Memories replaced /assistant, and the sheet pushed its entry on top of it.
-    expect(window.history.length).toBe(before + 1);
-    expect(window.history.state).toMatchObject({ loomSheet: true });
-    expect(window.location.pathname).toBe("/memories");
-  });
-
-  it("Collapse after Expand goes Back", async () => {
-    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
-    window.history.replaceState({ loomFromApp: true }, "", "/assistant");
-    useDock.setState({ expanded: true });
-    render(<AssistantPanel />);
-    await userEvent.click(screen.getByRole("button", { name: "Collapse the assistant" }));
-    expect(back).toHaveBeenCalledTimes(1);
-    act(() => back.mockRestore());
+    act(() => openAssistant());
+    // jsdom lays nothing out: the panel's right edge is given, 48 px in from the window's
+    // (the assistant edge's column).
+    vi.spyOn(panel(), "getBoundingClientRect").mockReturnValue({ right: 1392 } as DOMRect);
+    const splitter = screen.getByRole("separator", { name: "Resize the assistant panel" });
+    fireEvent.pointerDown(splitter, { pointerId: 1, clientX: 972 });
+    fireEvent.pointerMove(splitter, { pointerId: 1, clientX: 900 });
+    fireEvent.pointerUp(splitter, { pointerId: 1 });
+    expect(useDock.getState().prefWidth).toBe(492);
   });
 });

@@ -8,17 +8,18 @@ import { toast } from "../../components/Toast";
 import { ListTime } from "../../components/ui/ListTime";
 import { SectionHeading } from "../../components/ui/SectionHeading";
 import { useStarterPrefs } from "./cards/prefs";
-import { useDock } from "../../lib/assistantDock";
+import { chatOff, useDock } from "../../lib/assistantDock";
 import { STARTERS_WAIT } from "./startersWait";
 import {
   SHORT_REASON,
   claimReason,
+  dockLayout,
+  isModal,
   setDockReason,
   useDockMode,
   type AssistantReason,
-  type DockMode,
 } from "../../lib/assistantLayout";
-import { announceAssistant, closeAssistant } from "../../lib/assistantDockRuntime";
+import { announceAssistant, closeAssistant, collapseAssistant } from "../../lib/assistantDockRuntime";
 import { CONVERSATION_PREFIX, EPOCH_KEY, INDEX_KEY, type Owner } from "../../lib/assistantStorage";
 import { canReadNamespace, isCollectionName, isMemoryNamespace } from "../../lib/namespace";
 import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../../lib/role";
@@ -43,6 +44,9 @@ import { tokenReadScope } from "./tokenScope";
 
 // The starters and their cards: a chunk of their own, loaded when the panel shows them.
 const Starters = lazy(() => import("./cards/Starters").then((m) => ({ default: m.Starters })));
+
+/** The reason while this deployment's chat is off (lib/assistantDock.ts chatOff). */
+const NOT_CONFIGURED: AssistantReason = { kind: "not_configured" };
 
 /** How often the panel reads readiness again while the assistant is setting up or failing. */
 export const READINESS_POLL_MS = 10_000;
@@ -99,6 +103,10 @@ export function DockBody() {
   const refused = useChat((s) => s.refused);
   const hint = useChat((s) => s.hint);
   const readiness = useChat((s) => s.readiness);
+  const chatId = useChat((s) => s.id);
+  const off = chatOff();
+  const modal = useDock(isModal);
+  const focusField = useDock((s) => s.focusField);
   const [showHistory, setShowHistory] = useState(false);
   // A closed panel reopens on the chat, whose field takes the focus.
   useEffect(() => {
@@ -192,7 +200,8 @@ export function DockBody() {
   // assistant setting up or failing and the panel is open.
   const [readTick, setReadTick] = useState(0);
   useEffect(() => {
-    if (!open || isAuthDisabled()) {
+    // With the chat off there is nothing to get ready.
+    if (!open || isAuthDisabled() || off) {
       setChecking(false);
       return;
     }
@@ -207,7 +216,7 @@ export function DockBody() {
       setChecking(false);
     });
     return () => ctl.abort();
-  }, [open, readTick]);
+  }, [open, readTick, off]);
   // The setup is in progress or failing by readiness or by the route's refusal: read again.
   const settingUp = (k?: string) => k === "starting" || k === "failing";
   const polling = open && (settingUp(readiness?.kind) || settingUp(hint?.kind));
@@ -217,9 +226,9 @@ export function DockBody() {
     return () => clearInterval(t);
   }, [polling]);
 
-  // The reason shown, first match: the token's claims, the route's refusal, readiness.
-  const claim = claimReason();
-  const reason = claim ?? hint ?? readiness;
+  // The reason shown, first match: the chat off, the token's claims, the route's refusal,
+  // readiness.
+  const reason = off ? NOT_CONFIGURED : (claimReason() ?? hint ?? readiness);
   useEffect(() => {
     setDockReason(reason);
   }, [reason]);
@@ -229,7 +238,7 @@ export function DockBody() {
     const r = await readReadiness();
     useChat.setState({ readiness: r, hint: null });
     setChecking(false);
-    const reasonNow = claimReason() ?? r;
+    const reasonNow = off ? NOT_CONFIGURED : (claimReason() ?? r);
     // Try again goes with the reason: the focus goes to the question field.
     if (!reasonNow) useDock.setState({ focusField: true });
     // A question the route refused is asked again, in the conversation's namespace, unless
@@ -291,6 +300,24 @@ export function DockBody() {
     useStarterPrefs.setState({ cannotAnswer: pickCannotAnswer });
   }, [pickCannotAnswer]);
 
+  // With the chat off the cards are a list of reads: the starters stay under the last one,
+  // except under a conversation reopened from History, which is read-only.
+  const startersShown =
+    ownerSettled && !expired && !(showHistory && owner) && (turns.length === 0 || (off && chatId === null));
+  // With the chat off an open's focus goes to the first starter (Starters takes it), or to
+  // the panel where none renders.
+  useEffect(() => {
+    if (!off || !focusField || !ownerSettled || startersShown) return;
+    document.getElementById("assistant-panel")?.focus();
+    useDock.setState({ focusField: false });
+  }, [off, focusField, ownerSettled, startersShown]);
+  const hasStored = off && !!owner && listConversations(owner, readable).length > 0;
+  // With the chat off History shows only while something is stored: deleting the last one
+  // leaves it for the starters.
+  useEffect(() => {
+    if (off && !hasStored) setShowHistory(false);
+  }, [off, hasStored]);
+
   if (expired)
     return (
       <p className="px-4 py-3 text-sm text-text-muted" role="status">
@@ -298,22 +325,20 @@ export function DockBody() {
       </p>
     );
 
-  // The starters show on an empty conversation, whatever the assistant can do.
-  const starters =
-    ownerSettled && turns.length === 0 ? (
-      <Suspense fallback={null}>
-        <Starters namespace={namespace} phone={mode === "sheet"} cannotAnswer={cannotAnswer} />
-      </Suspense>
-    ) : null;
+  const starters = startersShown ? (
+    <Suspense fallback={null}>
+      <Starters namespace={namespace} phone={mode === "sheet"} cannotAnswer={cannotAnswer} />
+    </Suspense>
+  ) : null;
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <Toolbar
-        mode={mode}
+        modal={modal}
         namespace={namespace}
         history={showHistory}
-        onHistory={() => setShowHistory((v) => !v)}
-        canStartNew={!answering && turns.length > 0}
+        onHistory={off && !hasStored ? null : () => setShowHistory((v) => !v)}
+        startNew={!answering && turns.length > 0 ? (off && chatId === null ? "Clear" : "New conversation") : null}
       />
       {showHistory && owner ? (
         <History
@@ -333,41 +358,39 @@ export function DockBody() {
       ) : (
         <>
           {/* It scrolls when the starters fill it; the padding keeps their focus rings whole. */}
-          <div className="px-4 pt-3 pb-2 space-y-2 min-h-0 overflow-y-auto">
-            {reason ? (
-              <ReasonBody reason={reason} onTryAgain={() => void tryAgain()} />
-            ) : checking ? (
-              <p className="text-sm text-text-muted" role="status">
-                Getting the assistant ready…
-              </p>
-            ) : !memory ? (
-              <p className="text-sm text-text-muted">
-                The assistant answers about a memory namespace. Pick one in the namespace menu.
-              </p>
-            ) : mismatch && convNamespace ? (
-              <Mismatch old={convNamespace} now={namespace} />
-            ) : turns.length === 0 ? (
-              <EmptyState />
-            ) : null}
-            {starters}
-            {storageOff && (
-              <p className="text-xs text-text-muted">
-                This browser refused to save conversations: this one lasts until the tab closes.
-              </p>
-            )}
-            {notice && <p className="text-sm text-text-muted">{notice}</p>}
-            {/* A turn asked again and put back, with nothing in the way: Try again asks it. */}
-            {refused?.replace && !blocked && !answering && (
-              <Button type="secondary" htmlType="button" onClick={() => void tryAgain()}>
-                Try again
-              </Button>
-            )}
+          <div className="px-4 pt-3 pb-2 min-h-0 overflow-y-auto">
+            <div className="assistant-column space-y-2">
+              {reason ? (
+                <ReasonBody reason={reason} onTryAgain={() => void tryAgain()} />
+              ) : checking ? (
+                <p className="text-sm text-text-muted" role="status">
+                  Getting the assistant ready…
+                </p>
+              ) : !memory ? (
+                <p className="text-sm text-text-muted">
+                  The assistant answers about a memory namespace. Pick one in the namespace menu.
+                </p>
+              ) : mismatch && convNamespace ? (
+                <Mismatch old={convNamespace} now={namespace} />
+              ) : turns.length === 0 ? (
+                <EmptyState />
+              ) : null}
+              {starters}
+              {storageOff && (
+                <p className="text-xs text-text-muted">
+                  This browser refused to save conversations: this one lasts until the tab closes.
+                </p>
+              )}
+              {notice && <p className="text-sm text-text-muted">{notice}</p>}
+              {/* A turn asked again and put back, with nothing in the way: Try again asks it. */}
+              {refused?.replace && !blocked && !answering && (
+                <Button type="secondary" htmlType="button" onClick={() => void tryAgain()}>
+                  Try again
+                </Button>
+              )}
+            </div>
           </div>
-          <AssistantChat
-            namespace={convNamespace ?? namespace}
-            blocked={blocked}
-            cardLevel={mode === "expanded" ? 2 : 3}
-          />
+          <AssistantChat namespace={convNamespace ?? namespace} blocked={blocked} />
         </>
       )}
     </div>
@@ -375,53 +398,61 @@ export function DockBody() {
 }
 
 function Toolbar({
-  mode,
+  modal,
   namespace,
   history,
   onHistory,
-  canStartNew,
+  startNew,
 }: {
-  mode: DockMode;
+  modal: boolean;
   namespace: string;
   history: boolean;
-  onHistory: () => void;
-  canStartNew: boolean;
+  /** Null where History has nothing to list (the chat off and nothing stored before). */
+  onHistory: (() => void) | null;
+  /** The button that starts over, by its words; null when there is nothing to start over. */
+  startNew: string | null;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border shrink-0">
-      {mode === "push" || mode === "expanded" ? (
-        <span className="text-xs text-text-muted truncate">ns {namespace}</span>
-      ) : (
-        // The header's picker is covered at these widths: this one closes the panel and
-        // opens it.
-        <Link
-          component="button"
-          type="button"
-          size="sm"
-          onClick={() => {
-            closeAssistant("nav");
-            useStore.getState().openNamespacePicker(true);
-          }}
-        >
-          {`ns ${namespace}`}
-        </Link>
-      )}
-      <div className="flex-1" />
-      <Button type="secondary" htmlType="button" aria-pressed={history} onClick={onHistory}>
-        History
-      </Button>
-      {!history && canStartNew && (
-        <Button
-          type="secondary"
-          htmlType="button"
-          onClick={() => {
-            newConversation();
-            useDock.setState({ focusField: true });
-          }}
-        >
-          New conversation
-        </Button>
-      )}
+    <div className="px-4 py-2 border-b border-border shrink-0">
+      <div className="assistant-column flex flex-wrap items-center gap-2">
+        {!modal ? (
+          <span className="text-xs text-text-muted truncate">ns {namespace}</span>
+        ) : (
+          // The header's picker is covered while the panel is modal: over the page the panel
+          // closes, beside it the window collapses, before the picker opens.
+          <Link
+            component="button"
+            type="button"
+            size="sm"
+            onClick={() => {
+              const s = useDock.getState();
+              if (dockLayout(s.viewport, s.collapsed, s.prefWidth).mode !== "push") closeAssistant("nav");
+              else collapseAssistant();
+              useStore.getState().openNamespacePicker(true);
+            }}
+          >
+            {`ns ${namespace}`}
+          </Link>
+        )}
+        <div className="flex-1" />
+        {onHistory && (
+          <Button type="secondary" htmlType="button" aria-pressed={history} onClick={onHistory}>
+            History
+          </Button>
+        )}
+        {!history && startNew && (
+          <Button
+            type="secondary"
+            htmlType="button"
+            onClick={() => {
+              newConversation();
+              useDock.setState({ focusField: true });
+            }}
+          >
+            {startNew}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -533,68 +564,70 @@ function History({
   // a write to the index in another tab.
   const entries = listConversations(owner, readable);
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3">
-      <SectionHeading label="History" level={3} id={headingId} focusable />
-      {entries.length === 0 ? (
-        <p className="text-sm text-text-muted">No conversations saved here yet.</p>
-      ) : (
-        <ul ref={list} className="space-y-1" aria-label="Saved conversations">
-          {entries.map((e, i) => (
-            <li key={e.id} data-conversation={e.id} className="flex items-center gap-2">
-              <Link component="button" type="button" size="sm" onClick={() => void onOpen(e)}>
-                {e.title || "Untitled"}
-              </Link>
-              <span className="text-xs text-text-muted truncate">
-                {e.namespace} · <ListTime time={new Date(e.updated).toISOString()} />
-              </span>
-              <div className="flex-1" />
-              <Button
-                type="secondary"
-                htmlType="button"
-                aria-label={`Delete ${e.title || "this conversation"}`}
-                onClick={() => {
-                  // The conversation shown goes first, an answer in it stopped: nothing
-                  // writes it after the delete.
-                  if (useChat.getState().id === e.id) resetChat(owner);
-                  deleteConversation(e.id);
-                  // The button goes with its row: the focus goes to the next row, or the heading.
-                  setFocusTo((entries[i + 1] ?? entries[i - 1])?.id ?? "heading");
+    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+      <div className="assistant-column space-y-3">
+        <SectionHeading label="History" level={3} id={headingId} focusable />
+        {entries.length === 0 ? (
+          <p className="text-sm text-text-muted">No conversations saved here yet.</p>
+        ) : (
+          <ul ref={list} className="space-y-1" aria-label="Saved conversations">
+            {entries.map((e, i) => (
+              <li key={e.id} data-conversation={e.id} className="flex items-center gap-2">
+                <Link component="button" type="button" size="sm" onClick={() => void onOpen(e)}>
+                  {e.title || "Untitled"}
+                </Link>
+                <span className="text-xs text-text-muted truncate">
+                  {e.namespace} · <ListTime time={new Date(e.updated).toISOString()} />
+                </span>
+                <div className="flex-1" />
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  aria-label={`Delete ${e.title || "this conversation"}`}
+                  onClick={() => {
+                    // The conversation shown goes first, an answer in it stopped: nothing
+                    // writes it after the delete.
+                    if (useChat.getState().id === e.id) resetChat(owner);
+                    deleteConversation(e.id);
+                    // The button goes with its row: the focus goes to the next row, or the heading.
+                    setFocusTo((entries[i + 1] ?? entries[i - 1])?.id ?? "heading");
+                    onDeleted();
+                  }}
+                >
+                  Delete
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-xs text-text-muted">{savedHere()}</p>
+        {entries.length > 0 && (
+          <div className="space-y-1">
+            <Button
+              type="danger"
+              htmlType="button"
+              onClick={() =>
+                void confirmAction({
+                  title: "Delete every saved conversation?",
+                  message: "They are deleted from this browser.",
+                  confirmLabel: "Delete all",
+                  danger: true,
+                }).then((ok) => {
+                  if (!ok) return;
+                  deleteAllConversations(owner);
+                  resetChat(owner);
+                  // The button goes with the list: the focus goes to the heading.
+                  setFocusTo("heading");
                   onDeleted();
-                }}
-              >
-                Delete
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="text-xs text-text-muted">{savedHere()}</p>
-      {entries.length > 0 && (
-        <div className="space-y-1">
-          <Button
-            type="danger"
-            htmlType="button"
-            onClick={() =>
-              void confirmAction({
-                title: "Delete every saved conversation?",
-                message: "They are deleted from this browser.",
-                confirmLabel: "Delete all",
-                danger: true,
-              }).then((ok) => {
-                if (!ok) return;
-                deleteAllConversations(owner);
-                resetChat(owner);
-                // The button goes with the list: the focus goes to the heading.
-                setFocusTo("heading");
-                onDeleted();
-              })
-            }
-          >
-            Delete all
-          </Button>
-          <p className="text-xs text-text-muted">Deleting a memory doesn't change answers already saved here.</p>
-        </div>
-      )}
+                })
+              }
+            >
+              Delete all
+            </Button>
+            <p className="text-xs text-text-muted">Deleting a memory doesn't change answers already saved here.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -645,9 +678,9 @@ function ReasonBody({ reason, onTryAgain }: { reason: AssistantReason; onTryAgai
       break;
     case "not_configured":
       text = platform ? (
-        <>Set up the assistant: {health("see Health")}</>
+        <>Set up chat: {health("see Health")}</>
       ) : (
-        "An admin of this deployment sets up the assistant."
+        "Chat is not set up on this deployment; the starters read Loom without it. An admin of this deployment sets it up."
       );
       break;
     case "failing":
@@ -681,9 +714,12 @@ function ReasonBody({ reason, onTryAgain }: { reason: AssistantReason; onTryAgai
   return (
     <div className="space-y-2" data-testid="assistant-unavailable" data-reason={reason.kind}>
       <p className="text-sm text-text">{text}</p>
-      <Button type="secondary" htmlType="button" onClick={onTryAgain}>
-        Try again
-      </Button>
+      {/* With the chat off there is nothing to try again. */}
+      {!chatOff() && (
+        <Button type="secondary" htmlType="button" onClick={onTryAgain}>
+          Try again
+        </Button>
+      )}
     </div>
   );
 }

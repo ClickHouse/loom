@@ -1,6 +1,7 @@
-// The assistant panel in the shell: the launcher, the three modes the window's width gives
-// it (push, overlay, phone sheet), what a modal panel does to the page (role, trap, inert),
-// the keys (Esc, Ctrl+/), and what navigations, Back and resizes do to it.
+// The assistant panel in the shell: the launchers (the edge from md, the bottom nav's item
+// below), the modes the window's width gives it (push, overlay, phone sheet) and the window
+// it expands to, what a modal panel does to the page (role, trap, inert), the keys (Esc,
+// Ctrl+/), what navigations, Back and resizes do to it, and an /assistant address.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "./test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -84,10 +85,26 @@ async function openByLauncher() {
   await until(() => document.activeElement?.id === "assistant-question");
 }
 
+// The media queries follow window.innerWidth, as a browser's do: a resize fires the
+// resize event, then the queries' changes.
+const mediaListeners = new Set<() => void>();
+function stubMedia() {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    get matches() {
+      const min = /min-width: (\d+)px/.exec(query);
+      const max = /max-width: (\d+)px/.exec(query);
+      return min ? window.innerWidth >= Number(min[1]) : max ? window.innerWidth <= Number(max[1]) : false;
+    },
+    addEventListener: (_: string, f: () => void) => mediaListeners.add(f),
+    removeEventListener: (_: string, f: () => void) => mediaListeners.delete(f),
+  }));
+}
+
 async function resize(width: number) {
   await act(async () => {
     setWidth(width);
     window.dispatchEvent(new Event("resize"));
+    for (const f of [...mediaListeners]) f();
   });
 }
 
@@ -122,6 +139,7 @@ beforeEach(() => {
     inspectedMemoryKey: null,
   });
   Element.prototype.scrollTo = vi.fn();
+  stubMedia();
   assistantCheck = { ok: true, required: false };
   role = "admin";
   paths = [];
@@ -154,60 +172,65 @@ afterEach(() => {
   setWidth(1024);
 });
 
-describe("the launcher", () => {
-  it("is in the header from the first paint, enabled, and opens the panel with the focus in the field", async () => {
-    await boot(1440);
-    const header = document.querySelector("header") as HTMLElement;
-    const button = within(header).getByRole("button", { name: "Assistant" });
-    expect(button).not.toBeDisabled();
-    expect(button).not.toHaveAttribute("aria-disabled");
-    expect(button).toHaveAttribute("aria-expanded", "false");
-    // Left of the account menu.
-    const account = within(header).getByRole("button", { name: /^Account:/ });
-    expect(button.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    await openByLauncher();
-    expect(button).toHaveAttribute("aria-expanded", "true");
-    expect(field()).toHaveFocus();
+describe("the launchers", () => {
+  it("is one element per width: the edge from md, the bottom nav's item below", async () => {
+    for (const width of [390, 700, 1280]) {
+      await boot(width);
+      expect(document.querySelectorAll('[data-focus-key="assistant-launcher"]')).toHaveLength(1);
+      expect(!!launcher().closest("nav")).toBe(width < 768);
+      cleanup();
+    }
   });
 
-  it("shows its word from xl, one element with the same names, its tooltip only the shortcut", async () => {
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: query === "(min-width: 1280px)" || query === "(min-width: 1024px)",
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
-    }));
-    await boot(1440);
-    expect(document.querySelectorAll('[data-focus-key="assistant-launcher"]')).toHaveLength(1);
-    expect(launcher()).toHaveTextContent("Assistant");
-    expect(launcher()).toHaveAccessibleName("Assistant");
-    act(() => useDock.setState({ working: true }));
-    expect(launcher()).toHaveAccessibleName("Assistant, answering");
-    act(() => useDock.setState({ working: false }));
-    await userEvent.setup().hover(launcher());
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ctrl \/$/);
-  });
-
-  it("keeps the focus when the window crosses 1280 px: one launcher, its tooltip changing", async () => {
-    let wide = false;
-    const listeners = new Set<() => void>();
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      get matches() {
-        return query === "(min-width: 1280px)" ? wide : query === "(min-width: 1024px)";
-      },
-      addEventListener: (_: string, f: () => void) => listeners.add(f),
-      removeEventListener: (_: string, f: () => void) => listeners.delete(f),
-    }));
+  it("the edge is at the window's right from the first paint, enabled, and opens the panel with the focus in the field", async () => {
     await boot(1440);
     const button = launcher();
-    act(() => button.focus());
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Assistant (Ctrl /)");
-    wide = true;
-    act(() => {
-      for (const f of listeners) f();
-    });
-    expect(launcher()).toBe(button);
-    expect(button).toHaveFocus();
-    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ctrl \/$/));
+    expect(button.closest(".assistant-edge")).not.toBeNull();
+    expect(document.querySelector("header")?.contains(button)).toBe(false);
+    expect(button).not.toBeDisabled();
+    expect(button).not.toHaveAttribute("aria-disabled");
+    expect(button).not.toHaveAttribute("aria-haspopup");
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(button).toHaveAccessibleName("Assistant");
+    await openByLauncher();
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(button).toHaveAttribute("aria-controls", "assistant-panel");
+    expect(field()).toHaveFocus();
+    // Beside the page it closes the panel too.
+    await userEvent.setup().click(button);
+    await until(() => !useDock.getState().open);
+  });
+
+  it("the edge's tooltip is the shortcut, or a reason and the shortcut", async () => {
+    await boot(1440);
+    await userEvent.setup().hover(launcher());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ctrl \/$/);
+    act(() => useDock.setState({ reason: { kind: "starting" }, reasonShort: "setting up" }));
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^setting up \(Ctrl \/\)$/));
+  });
+
+  it("the bottom nav's item is a button, not a tab, and opens the sheet", async () => {
+    await boot(390);
+    const nav = launcher().closest("nav") as HTMLElement;
+    const items = [...nav.querySelectorAll("a, button")].map((e) => e.textContent?.trim());
+    expect(items).toEqual(["Memories", "Library", "Assistant", "More"]);
+    const button = launcher();
+    expect(button.tagName).toBe("BUTTON");
+    expect(button).not.toHaveAttribute("aria-current");
+    expect(button).not.toHaveAttribute("aria-haspopup");
+    await openByLauncher();
+    expect(panel()).toHaveAttribute("data-mode", "sheet");
+  });
+
+  it("hands the focus over when the window crosses 768 px", async () => {
+    await boot(1280);
+    act(() => launcher().focus());
+    await resize(700);
+    expect(launcher().closest("nav")).not.toBeNull();
+    expect(launcher()).toHaveFocus();
+    await resize(1280);
+    expect(launcher().closest(".assistant-edge")).not.toBeNull();
+    expect(launcher()).toHaveFocus();
   });
 
   it("names its marks: answering, answer ready, unavailable", async () => {
@@ -220,10 +243,146 @@ describe("the launcher", () => {
     expect(launcher()).toHaveAccessibleName("Assistant, unavailable");
     // Never disabled: a click opens the panel to the reason.
     expect(launcher()).not.toHaveAttribute("aria-disabled");
+    // A chat not set up is no broken mark: the starters still read.
+    act(() => useDock.setState({ reason: { kind: "not_configured" }, unread: false }));
+    expect(launcher()).toHaveAccessibleName("Assistant");
+    expect(launcher()).toHaveAttribute("data-launcher-state", "normal");
+  });
+
+  it("the edge under an open overlay is inert, also when it mounts under it", async () => {
+    await boot(700);
+    await openByLauncher();
+    await resize(800);
+    expect(panel()).toHaveAttribute("aria-modal", "true");
+    expect(launcher().closest("[inert]")).not.toBeNull();
+  });
+
+  it('"Go to the assistant" opens the panel with the focus in the field, and stays a skip control', async () => {
+    await boot(1440);
+    const skip = screen.getByRole("button", { name: "Go to the assistant" });
+    expect(skip).toHaveAttribute("data-dock-inert");
+    await userEvent.setup().click(skip);
+    await until(() => document.activeElement?.id === "assistant-question");
+    // Pressed again with the panel open, it keeps it open.
+    act(() => skip.focus());
+    await userEvent.setup().click(skip);
+    await until(() => document.activeElement?.id === "assistant-question");
+    expect(useDock.getState().open).toBe(true);
   });
 });
 
-describe("push mode (the page keeps 640 px beside the panel)", () => {
+describe("the expanded window (from 1024 px)", () => {
+  const toggle = (name: string) => within(panel()).getByRole("button", { name });
+
+  it("Expand makes the open panel a modal window over the page, with no address or history change", async () => {
+    await boot(1440);
+    await openByLauncher();
+    const href = location.href;
+    const length = history.length;
+    const button = toggle("Expand the assistant");
+    await userEvent.setup().click(button);
+    expect(panel()).toHaveAttribute("data-mode", "expanded");
+    expect(panel()).toHaveAttribute("role", "dialog");
+    expect(panel()).toHaveAttribute("aria-labelledby", "assistant-panel-title");
+    expect(screen.getByRole("heading", { level: 2, name: "Assistant" })).toBeInTheDocument();
+    expect(document.querySelector("main")?.closest("[inert]")).not.toBeNull();
+    expect(launcher().closest("[inert]")).not.toBeNull();
+    expect(location.href).toBe(href);
+    expect(history.length).toBe(length);
+    // One button whose label swaps: the focus stays on it.
+    expect(button).toHaveAccessibleName("Collapse the assistant");
+    expect(button).toHaveFocus();
+    await waitFor(() =>
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("The assistant fills the window"),
+    );
+    // From push, a spacer keeps <main>'s width under the window.
+    expect(document.querySelector("[data-assistant-spacer]")).toHaveStyle({ width: "420px" });
+    await userEvent.setup().click(button);
+    expect(panel()).toHaveAttribute("data-mode", "push");
+    await waitFor(() =>
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("The assistant is beside the page"),
+    );
+  });
+
+  it("Esc and a click on the scrim collapse it; Ctrl+/ closes it, and the next open is docked", async () => {
+    await boot(1100);
+    await openByLauncher();
+    await userEvent.setup().click(toggle("Expand the assistant"));
+    await userEvent.setup().keyboard("{Escape}");
+    expect(panel()).toHaveAttribute("data-mode", "overlay");
+    await waitFor(() =>
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("The assistant is over the page"),
+    );
+    await userEvent.setup().click(toggle("Expand the assistant"));
+    await userEvent.setup().click(document.querySelector(".assistant-scrim") as HTMLElement);
+    expect(panel()).toHaveAttribute("data-mode", "overlay");
+    await userEvent.setup().click(toggle("Expand the assistant"));
+    fireEvent.keyDown(field(), { key: "/", ctrlKey: true });
+    await until(() => !useDock.getState().open);
+    expect(useDock.getState().expanded).toBe(false);
+    fireEvent.keyDown(document.body, { key: "/", ctrlKey: true });
+    await until(() => useDock.getState().open);
+    expect(panel()).toHaveAttribute("data-mode", "overlay");
+  });
+
+  it("is not offered below 1024 px, and a resize below it collapses it with the focus to the field", async () => {
+    await boot(1440);
+    await openByLauncher();
+    await userEvent.setup().click(toggle("Expand the assistant"));
+    await resize(900);
+    expect(useDock.getState().expanded).toBe(false);
+    expect(panel()).toHaveAttribute("data-mode", "overlay");
+    expect(within(panel()).queryByRole("button", { name: /Expand|Collapse/ })).toBeNull();
+    await until(() => document.activeElement?.id === "assistant-question");
+    await resize(1440);
+    expect(useDock.getState().expanded).toBe(false);
+  });
+
+  it("a navigation from it leaves the window, and beside the page the panel stays", async () => {
+    await boot(1440);
+    await openByLauncher();
+    await userEvent.setup().click(toggle("Expand the assistant"));
+    act(() => useStore.getState().setView("runs"));
+    expect(useDock.getState()).toMatchObject({ open: true, expanded: false });
+    expect(panel()).toHaveAttribute("data-mode", "push");
+  });
+
+  it("a session expiry leaves it: beside the page the panel stays, over the page it closes", async () => {
+    await boot(1440);
+    await openByLauncher();
+    await userEvent.setup().click(toggle("Expand the assistant"));
+    act(() => useStore.setState({ sessionExpired: true }));
+    expect(useDock.getState()).toMatchObject({ open: true, expanded: false });
+    expect(panel()).toHaveAttribute("data-mode", "push");
+    // Expand is not offered while the session has expired: the window would cover its card.
+    expect(within(panel()).queryByRole("button", { name: "Expand the assistant" })).toBeNull();
+    act(() => useStore.setState({ sessionExpired: false }));
+    await resize(1100);
+    await userEvent.setup().click(toggle("Expand the assistant"));
+    act(() => useStore.setState({ sessionExpired: true }));
+    expect(useDock.getState()).toMatchObject({ open: false, expanded: false });
+  });
+});
+
+// The boot's own cases are in lib/assistantDock.insights.test.ts (read as the module loads).
+describe("an /assistant address", () => {
+  it("an entry an earlier build pushed opens the window on Back, the address the landing page's", async () => {
+    await boot(1440);
+    window.history.pushState(null, "", "/assistant");
+    act(() => useStore.getState().setView("runs"));
+    await act(async () => {
+      history.back();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    await until(() => useDock.getState().open);
+    expect(location.pathname).toBe("/memories");
+    expect(useStore.getState().view).toBe("memories");
+    expect(useStore.getState().identity?.namespace).toBe(NS);
+    expect(useDock.getState().expanded).toBe(true);
+  });
+});
+
+describe("push mode (the page keeps 592 px beside the panel)", () => {
   it("is not modal: no dialog role, no trap, nothing inert, and Tab leaves the panel", async () => {
     await boot(1440);
     await openByLauncher();
@@ -261,7 +420,8 @@ describe("push mode (the page keeps 640 px beside the panel)", () => {
     expect(splitter).toHaveAttribute("aria-orientation", "vertical");
     expect(splitter).toHaveAttribute("aria-controls", "assistant-panel");
     expect(splitter).toHaveAttribute("aria-valuemin", "360");
-    // 1440 - 244 (sidebar) - 640 (page) = 556: wider would leave the page under 640 px.
+    // 1440 - 244 (sidebar) - 48 (the edge) - 592 (page) = 556: wider would leave the page
+    // under 592 px.
     expect(splitter).toHaveAttribute("aria-valuemax", "556");
     expect(splitter).toHaveAttribute("aria-valuenow", "420");
     splitter.focus();
@@ -394,7 +554,7 @@ describe("mode changes", () => {
     await resize(1440);
     expect(panel()).not.toHaveAttribute("aria-modal");
     expect(field()).toHaveFocus();
-    // 1100 - 244 - 640 leaves less than 360: overlay; with the sidebar collapsed (60), push.
+    // 1100 - 244 - 48 - 592 leaves less than 360: overlay; with the sidebar collapsed (60), push.
     await resize(1100);
     expect(panel()).toHaveAttribute("aria-modal", "true");
     act(() => useStore.getState().toggleSidebar());
