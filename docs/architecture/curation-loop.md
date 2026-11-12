@@ -138,11 +138,11 @@ that namespace, whatever `namespace_scope` fans out over), matches the query aga
 one's term and aliases, and places the matched rows at the top of the served list with
 `governed = true` on the hit, removing any other hit under the same key in the addressed
 namespace, so an edited private copy is not served beside the governed text. A term or
-alias matches where it appears in the query with no Latin letter, digit, `+` or `#` next
-to it, so a term inside text written without spaces (Chinese, Japanese) still matches. One
-written all in capitals, or with a capital after its first letter, matches only as
-written, so `IT` does not match "what is it" and `GitHub` stays exact; any other matches
-case-folded, so `Churn rate` matches "what is our churn rate".
+alias matches where it appears in the query with no Latin letter, digit, `_`, `+` or `#`
+next to it, so a term inside text written without spaces (Chinese, Japanese) still
+matches. One written all in capitals, or with a capital after its first letter, matches
+only as written, so `IT` does not match "what is it" and `GitHub` stays exact; any other
+matches case-folded, so `Churn rate` matches "what is our churn rate".
 
 Governed definitions are served through this leg under any read scope: an admin published
 them for every reader of the namespace, and a user-bounded reader who could not see one
@@ -377,9 +377,12 @@ which the admin restores from the row's history or promotes.
   came from, which holds only normalised queries enough askers asked and expires after 7
   days.
 - `loom.search_misses`: a namespace step, a user step deleting every miss whose asker or
-  `user_id` is the user, the named subject folded onto its one spelling first as the asker
-  was (a token subject spelled as the user's id goes too, which costs only a trace row),
-  and a census row; an end user's asker is stored as their id, the form the erasure names.
+  `user_id` is the user, matching every spelling the directory ties to the named subject
+  (`spellings` in `server/auth/aliases.py`, unverified ties included, as a revocation
+  does), since the tie may have changed since the miss was recorded; a directory that
+  cannot be read fails the step closed (a token subject spelled as the user's id goes too,
+  which costs only a trace row), and a census row; an end user's asker is stored as their
+  id, the form the erasure names.
 - `loom.knowledge_gaps` keeps counts, not askers, so no op or page names who asked: a
   namespace step, and a user step that reads the namespaces the user has misses in, before
   the miss step deletes them, and deletes those namespaces' builds (derived rows the next
