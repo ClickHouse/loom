@@ -198,30 +198,6 @@ checkout.
     WHERE s.created_at <= e.completed_at AND (s.active OR s.updated_at > e.completed_at)
     ```
 
-14. Moving to a build whose namespace erasure reaches `loom.shared`, a roll forward after a
-    rollback included: once the newer build serves alone, demote with `memory.demote` the
-    promoted rows an older build's namespace erasure left live
-    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 45). The rows promoted
-    before a completed namespace erasure of their namespace:
-
-    ```sql
-    SELECT s.org, s.namespace, s.memory_key, e.id
-    FROM (
-        SELECT org, namespace, memory_key, promoted_at
-        FROM loom.shared FINAL WHERE tombstoned_at IS NULL
-    ) AS s
-    INNER JOIN (
-        SELECT id, org, completed_at,
-               arrayJoin(if(scope_type = 'namespace', [scope_value],
-                            if(JSONType(scope_value) = 'Array',
-                               JSONExtract(scope_value, 'Array(String)'),
-                               JSONExtract(scope_value, 'namespaces', 'Array(String)')))) AS namespace
-        FROM loom.erasure_requests FINAL
-        WHERE scope_type IN ('namespace', 'namespace_list') AND status = 'completed'
-    ) AS e ON s.org = e.org AND s.namespace = e.namespace
-    WHERE s.promoted_at <= e.completed_at
-    ```
-
     For the first query, remove each listed source (`knowledge.source.remove`), or
     delete its namespace again with the newer build, which retires it. For the second,
     remove each listed source with `knowledge.source.remove` and
@@ -237,6 +213,51 @@ checkout.
     A namespace erasure an older build started and the newer build finished needs
     nothing here: its final census finds the documents and decisions its source wrote
     back and reopens their steps, so the saga completes only once they are gone.
+
+14. Moving to a build whose namespace erasure reaches `loom.shared`, a roll forward after a
+    rollback included: once the newer build serves alone, clear the promoted rows an older
+    build's namespace erasure left live
+    ([rolling upgrades](../architecture/rolling-upgrades.md), rule 45). The live promoted
+    rows of a deleted namespace, whenever it was erased:
+
+    ```sql
+    SELECT s.org, s.namespace, count() AS rows
+    FROM (SELECT org, namespace FROM loom.shared FINAL WHERE tombstoned_at IS NULL) AS s
+    INNER JOIN (SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active) AS n
+        ON s.org = n.org AND s.namespace = n.namespace
+    GROUP BY s.org, s.namespace
+    ```
+
+    and the live rows promoted before a completed namespace erasure of a namespace still
+    in use, which the ledger lists for its 90 days:
+
+    ```sql
+    SELECT s.org, s.namespace, s.memory_key, e.id, e.purge
+    FROM (
+        SELECT org, namespace, memory_key, promoted_at
+        FROM loom.shared FINAL WHERE tombstoned_at IS NULL
+    ) AS s
+    INNER JOIN (
+        SELECT id, org, completed_at, purge,
+               arrayJoin(if(scope_type = 'namespace', [scope_value],
+                            if(JSONType(scope_value) = 'Array',
+                               JSONExtract(scope_value, 'Array(String)'),
+                               JSONExtract(scope_value, 'namespaces', 'Array(String)')))) AS namespace
+        FROM loom.erasure_requests FINAL
+        WHERE scope_type IN ('namespace', 'namespace_list') AND status = 'completed'
+    ) AS e ON s.org = e.org AND s.namespace = e.namespace
+    WHERE s.promoted_at <= e.completed_at
+    ```
+
+    For the first query, request each namespace's erasure again with the newer build, with
+    `purge` when the namespace was deleted by `collection.delete` or the namespace sweep,
+    which purge: nobody writes to a deleted namespace, so it erases nothing new, and its
+    `shared.tombstone` step tombstones or deletes the rows. For the second, demote each
+    listed row with `memory.demote`; for a row whose erasure was a purge (`e.purge`), the
+    demotion keeps its text, so request that namespace's erasure again with `purge` instead,
+    only where nothing written since may go. A namespace erased in use more than 90 days
+    before the upgrade is in neither list; its promoted rows are found by namespace in
+    `loom.shared` alone.
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
@@ -254,9 +275,9 @@ its bot. To prevent that, delete the documents tagged `source-kind:assistant_tur
 `knowledge.delete` before rolling back; otherwise accept the wider serving.
 A namespace erasure the previous build runs once namespace guides exist leaves that
 namespace's guide; run the erasure again once the newer build serves
-([rolling upgrades](../architecture/rolling-upgrades.md), rule 24). One run once its
-namespace erasure reaches `loom.shared` leaves the namespace's promoted rows live; step 14
-of the upgrade procedure lists them (rule 45).
+([rolling upgrades](../architecture/rolling-upgrades.md), rule 24). A namespace erasure
+the previous build runs leaves the namespace's promoted rows live; step 14 of the upgrade
+procedure lists them once the newer build serves again (rule 45).
 After a rollback to a build without bot token maximums, every bot's tokens last an hour,
 and a bot that build saves keeps 3600 as its maximum; reapply a shorter or longer one
 once the newer build serves
