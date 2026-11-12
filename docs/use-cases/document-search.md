@@ -22,8 +22,10 @@ model writes the answer from the passages Loom returns.
 
 ## Measured
 
-Document parsing results, and the retrieval and reader results on public sets, are in the
-[results ledger](../benchmarks/results.md#document-parsing).
+Parse fidelity for PDF, DOCX and PPTX is measured on a committed corpus
+([document parsing](../benchmarks/results.md#document-parsing)). Retrieval quality over
+documents is measured only in part; [coverage and known gaps](../benchmarks/coverage.md)
+says what is still missing.
 
 ## Start
 

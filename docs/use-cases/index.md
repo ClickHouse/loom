@@ -11,7 +11,7 @@ does for that need, what was measured, and where to start.
 | Lower token and model cost for coding agents                      | [Coding-agent cost](coding-agent-cost.md)              |
 | Shared context between agents in a multi-agent workflow           | [Multi-agent](multi-agent.md)                          |
 | Memory, recall, audit and erasure for autonomous agents           | [Autonomous agents](autonomous-agents.md)              |
-| Agent runs, traces, tracker and PR history                        | [Runs and PR history](software-factory.md)             |
+| Agent runs, traces, tracker and PR history                        | [Runs and PR history](runs-and-pr-history.md)          |
 | Self-hosted agent memory on ClickHouse, with Docker or Kubernetes | [Self-hosted on ClickHouse](self-hosted-clickhouse.md) |
 
 [When Loom does not fit](../getting-started/overview.md#when-it-does-not-fit) lists the

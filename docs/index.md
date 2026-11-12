@@ -26,7 +26,7 @@ One page per need, each saying what Loom does for it, what was measured and wher
 [coding-agent token and model cost](use-cases/coding-agent-cost.md) ·
 [multi-agent shared context](use-cases/multi-agent.md) ·
 [autonomous agents: recall, audit, erasure](use-cases/autonomous-agents.md) ·
-[runs, traces and PR history](use-cases/software-factory.md) ·
+[runs, traces and PR history](use-cases/runs-and-pr-history.md) ·
 [self-hosted on ClickHouse](use-cases/self-hosted-clickhouse.md) ·
 [all use cases](use-cases/index.md).
 

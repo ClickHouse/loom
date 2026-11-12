@@ -8,10 +8,12 @@ the dashboard can find. This page shows how that works and where to start.
 
 - **One claim per key, in a namespace.** `memory.set` saves a fact; `memory.get` reads it
   back by key; `memory.search` and `loom_search` find it by meaning. A namespace is the
-  unit of sharing: every member reads every row in it. [Memory](../concepts/memory.md)
-- **Memory that can be corrected.** Each write makes a new version. A near-duplicate
-  merges, a contradiction is flagged for review, and a write against a pinned fact is
-  refused. [Conflicts and refusal](../features/memory/conflicts-and-refusal.md) ·
+  unit of sharing: by default, every member reads every row in it.
+  [Memory](../concepts/memory.md)
+- **Memory that can be corrected.** A change makes a new version with its history. A
+  restatement merges into the stored fact, a near-duplicate is stored as a duplicate, a
+  contradiction is flagged for review, and a write against a pinned fact is refused.
+  [Conflicts and refusal](../features/memory/conflicts-and-refusal.md) ·
   [History and provenance](../features/memory/history-and-provenance.md)
 - **Search that abstains.** When nothing is close enough, search says so with a reason
   code instead of returning a weak match. [Search and ask](../features/memory/search-and-ask.md)
@@ -25,7 +27,8 @@ the dashboard can find. This page shows how that works and where to start.
 
 On 100 paired LongMemEval-S questions with the same `gpt-5` reader, answers from Loom's
 retrieved memories scored 94% against 90% from the whole history, with 91% fewer reader
-prompt tokens; the accuracy difference is not statistically established.
+prompt tokens (excluding the one-time cost of building the memory); the accuracy
+difference is not statistically established.
 [With and without Loom](../benchmarks/results.md#with-and-without-loom)
 
 ## Start

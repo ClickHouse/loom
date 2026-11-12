@@ -1,9 +1,9 @@
 # A code index for coding agents
 
-Loom indexes your git repositories and answers coding agents' structure questions over MCP:
-where a symbol is defined, who calls it, what a change reaches, which tests cover it and
-which merged pull request touched a line. Every agent reads the same index, so a
-repository is parsed and embedded once per merge, not once per session.
+Loom gives coding agents a shared index of your git repositories, served over MCP, so an
+agent asks a structure question and gets the lines that answer it instead of reading whole
+files. [The code index overview](../features/code-index/overview.md) explains how it is
+built and kept fresh.
 
 ## What you get
 
@@ -13,7 +13,8 @@ repository is parsed and embedded once per merge, not once per session.
 - **Search by meaning and by exact string.** `code.search` finds where a mechanism lives;
   `code.grep` finds an exact message or identifier.
 - **History and pull requests.** Merged-PR history with review comments, a pre-PR
-  duplicate check and bisect candidates for a regression.
+  duplicate check and bisect candidates for a regression. Needs
+  `LOOM_CODE_PR_HISTORY_ENABLED=true`.
   [History, PRs and releases](../features/code-index/history-and-prs.md)
 - **Freshness you can see.** The index trails the branch by merged commits, and a stale
   answer says so. [Freshness](../features/code-index/freshness.md)
@@ -26,7 +27,8 @@ repository is parsed and embedded once per merge, not once per session.
 On the ClickHouse repository, Claude Code with Loom found the right file for 96.4% of 36
 conceptual questions (10 paired runs) against 91.4% without it, at 21% lower model cost.
 On 200 SWE-bench Verified issues, a changed file was among the first 10 results for 82%,
-against 57% for BM25. [With and without Loom](../benchmarks/results.md#with-and-without-loom) ·
+against 57% for BM25 over every indexed file and 79% for BM25 over `.py` files only.
+[With and without Loom](../benchmarks/results.md#with-and-without-loom) ·
 [SWE-bench Verified file localization](../benchmarks/results.md#swe-bench-verified-file-localization)
 
 ## Start

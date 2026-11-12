@@ -2,8 +2,9 @@
 
 Loom runs on your own infrastructure, with Docker or on Kubernetes with its Helm chart, and
 stores agent memory, documents, conversations and code indexes as tables in ClickHouse. A
-deployment can choose Postgres at first boot for live memory and knowledge state. Data
-stays in your stores, and what your agents know is queryable with SQL.
+deployment can choose Postgres at first boot for live memory and knowledge state. Data is
+stored only in your stores (hosted model providers you configure receive the text they
+process), and what your agents know is queryable with SQL.
 
 ## What you get
 

@@ -45,8 +45,8 @@ state. The dashboard brings memories, repositories, tasks and runs into one plac
   [Namespaces and sharing](./docs/features/namespaces-and-sharing.md)
 - **A code index of your repositories** that coding agents query for definitions,
   callers and change impact. [Code index](./docs/use-cases/code-intelligence.md)
-- **Lower token and model cost for coding agents**: 20% lower model cost in the
-  measured Claude Code runs below. [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
+- **Lower token and model cost for coding agents**: 6% to 21% lower model cost across
+  the measured Claude Code sets. [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
 - **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
   extractor service converts. [Document search](./docs/use-cases/document-search.md)
 - **Shared context for multi-agent workflows**: shared memory, task inboxes and
@@ -55,7 +55,7 @@ state. The dashboard brings memories, repositories, tasks and runs into one plac
   [Autonomous agents](./docs/use-cases/autonomous-agents.md)
 - **A record of agent work**, with searchable conversations (when recording is on),
   session briefs to resume from, runs with their goals, outcomes and model costs when
-  supplied, and PR and tracker history. [Runs and PR history](./docs/use-cases/software-factory.md)
+  supplied, and PR and tracker history. [Runs and PR history](./docs/use-cases/runs-and-pr-history.md)
 
 Every use case, and when another tool fits better: [use cases](./docs/use-cases/index.md).
 

@@ -13,14 +13,17 @@ Loom provides these as server operations, stored in ClickHouse.
   pattern no write may store. [Conflicts and refusal](../features/memory/conflicts-and-refusal.md)
 - **Audit.** Each operation that changes memory leaves an audit row with a SHA-256 of its
   content, and a worker seals hourly windows into a hash chain, so an edit or deletion is
-  detectable. [Audit log](../features/observability/audit.md)
+  detectable. Audit writes are fail-open: a failed insert loses the row.
+  [Audit log](../features/observability/audit.md#limits-and-failure-modes)
 - **Erasure you can check.** `erasure.request` removes a scope from every table that holds
   memory content and ends with a residue census and a receipt.
   [Retention and erasure](../features/memory/retention-and-erasure.md)
 - **Rollback.** `namespace.rollback` returns every memory in a namespace to its version
   at a point in time.
   [History and provenance](../features/memory/history-and-provenance.md)
-- **Headless operation.** A bot with no person to paste a token or notice a failure.
+- **Headless operation.** A bot gets its own identity (it signs itself up where self-signup
+  is open), checks its connection before its first run, and can be diagnosed when it goes
+  quiet.
   [Headless bots](../guides/headless-bots.md)
 
 Audit and erasure are engineering primitives, not a compliance certification.
