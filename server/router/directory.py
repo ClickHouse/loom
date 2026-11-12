@@ -360,7 +360,7 @@ async def _operator_change(
 
 @dataclass(frozen=True)
 class Registration:
-    """What a cell's preparation registers: the cell's host (as `normalise_host` writes
+    """What `loom cell prepare` registers: the cell's host (as `normalise_host` writes
     it), the deployment id its stores record, the SHA-256 of the credential it calls the
     router with, its document bucket and prefix, and the address its probe listener
     answers at (the router's own LOOM_ROUTER_UPSTREAM_PROBE_URL for the first cell)."""
@@ -373,6 +373,11 @@ class Registration:
     bucket_prefix: str
     probe_url: str
     is_first: bool
+    # What prepare counted in the cell's stores and processes (_held_refusal judges them).
+    tenancy_rows: int
+    state_rows: int
+    prefix_objects: int
+    processes_without_cell: int
     # Where the router forwards to the cell: the first cell's is the deployment the
     # router was put in front of (LOOM_ROUTER_UPSTREAM_URL), so registering it changes no
     # route; a later cell's is '' until attach writes it.
@@ -387,7 +392,7 @@ def _overlaps(prefix: str, other: str) -> bool:
 
 
 async def register(reg: Registration) -> tuple[Cell, bool]:
-    """A cell's preparation: the cell's row as `attaching` (mode `recording` on the first
+    """`loom cell prepare`: the cell's row as `attaching` (mode `recording` on the first
     cell, `enforced` on a later one), its host row and an audit row, in one transaction
     under the directory lock; and whether this call wrote them.
 
@@ -396,10 +401,11 @@ async def register(reg: Registration) -> tuple[Cell, bool]:
     hash is neither the row's current nor next (`_rerun_refusal`); it runs none of the
     checks below.
 
-    Refused: a second first cell, a later cell before the first, a first cell with no
-    upstream to copy, a credential hash any cell holds as current or next, a deployment
-    id or host another cell holds, and a bucket prefix that shares objects with another
-    cell's in a bucket of the same name."""
+    Refused: stores holding tenancy or state rows, a later cell whose bucket prefix holds
+    objects or whose processes run without its LOOM_CELL, a second first cell, a later
+    cell before the first, a first cell with no upstream to copy, a credential hash any
+    cell holds as current or next, a deployment id or host another cell holds, and a
+    bucket prefix that shares objects with another cell's in a bucket of the same name."""
     async with _reading(), _connection() as conn, conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock($1)", _DIRECTORY_LOCK)
         held = await conn.fetchrow(f"{_CELL_REGISTERED} WHERE cell = $1 FOR UPDATE", reg.cell)
@@ -474,8 +480,8 @@ def _rerun_refusal(held: Mapping[str, Any], reg: Registration) -> str:
                 "router replica's LOOM_ROUTER_UPSTREAM_PROBE_URL to it"
             )
         return (
-            f"cell {cell!r} is registered with probe address {held['probe_url']}: register "
-            "with that probe_url"
+            f"cell {cell!r} is registered with probe address {held['probe_url']}: run "
+            "`loom cell prepare` with that --probe-url"
         )
     if reg.is_first and reg.upstream_url and held["upstream_url"] != reg.upstream_url:
         return (
@@ -518,9 +524,35 @@ async def refusal_before_probe(reg: Registration) -> str:
     return ""
 
 
+def _held_refusal(reg: Registration) -> str:
+    """Why a new cell's stores and processes, as prepare counted them, cannot register
+    ('' when they can)."""
+    if reg.tenancy_rows:
+        return (
+            "the cell's Postgres holds tenancy rows while the directory has no row for it: "
+            "its stores carry another cell's orgs"
+        )
+    if reg.state_rows:
+        return (
+            "the cell's Postgres holds a `first`, mode or own row while the directory has no "
+            "row for it: its stores carry another cell's state"
+        )
+    if reg.prefix_objects and not reg.is_first:
+        return (
+            "a later cell's bucket prefix must hold no object but prepare's probe, and it "
+            "holds others: another deployment's documents"
+        )
+    if reg.processes_without_cell and not reg.is_first:
+        return (
+            "live processes of a later cell run without its LOOM_CELL: a later cell runs with "
+            "it from its first boot"
+        )
+    return ""
+
+
 async def _refuse_registration(conn: Any, reg: Registration) -> None:
     first = await conn.fetchval("SELECT cell FROM loom_router.cells WHERE is_first")
-    if refusal := _order_refusal(reg, first):
+    if refusal := _held_refusal(reg) or _order_refusal(reg, first):
         raise OperatorRefused(refusal)
     taken = await conn.fetchval(
         "SELECT cell FROM loom_router.cells "

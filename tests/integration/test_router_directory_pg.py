@@ -330,6 +330,10 @@ async def test_prepare_registers_a_cell_once_and_refuses_what_another_holds(own_
             "probe_url": f"http://{name}.internal:7790",
             "is_first": name == first,
             "upstream_url": "http://upstream.internal:7777" if name == first else "",
+            "tenancy_rows": 0,
+            "state_rows": 0,
+            "prefix_objects": 0,
+            "processes_without_cell": 0,
         }
         return directory.Registration(**{**fields, **over})
 
@@ -344,7 +348,11 @@ async def test_prepare_registers_a_cell_once_and_refuses_what_another_holds(own_
             await directory.register(reg(later))
         with pytest.raises(directory.OperatorRefused, match="LOOM_ROUTER_UPSTREAM_URL"):
             await directory.register(reg(first, upstream_url=""))
-        row, written = await directory.register(reg(first))
+        # Before attach the first cell serves from its prefix's documents and its processes
+        # run without LOOM_CELL: neither refuses it.
+        row, written = await directory.register(
+            reg(first, prefix_objects=2, processes_without_cell=3)
+        )
         assert written and (row.is_first, row.state, row.mode) == (True, "attaching", "recording")
         stored = await conn.fetchrow(
             "SELECT is_first, host, state, mode, mode_set_at IS NOT NULL AS mode_set, "
@@ -457,10 +465,35 @@ async def test_prepare_registers_a_cell_once_and_refuses_what_another_holds(own_
             with pytest.raises(directory.OperatorRefused) as refused:
                 await directory.register(reg(later, **over))
             assert await directory.refusal_before_probe(reg(later, **over)) == refused.value.reason
+        # Stores holding orgs or documents the directory placed nowhere are another cell's;
+        # a rerun counts them as its own.
+        sibling = f"cells/{first}x"
+        with pytest.raises(directory.OperatorRefused, match="tenancy rows"):
+            await directory.register(reg(later, bucket_prefix=sibling, tenancy_rows=1))
+        # Named before the probe too, as register names it.
+        held_rows = reg(later, bucket_prefix=sibling, state_rows=1)
+        assert "another cell's state" in await directory.refusal_before_probe(held_rows)
+        with pytest.raises(directory.OperatorRefused, match="`first`, mode or own row"):
+            await directory.register(reg(later, bucket_prefix=sibling, state_rows=1))
+        with pytest.raises(directory.OperatorRefused, match="must hold no object but"):
+            await directory.register(reg(later, bucket_prefix=sibling, prefix_objects=1))
+        with pytest.raises(directory.OperatorRefused, match="without its LOOM_CELL"):
+            await directory.register(reg(later, bucket_prefix=sibling, processes_without_cell=2))
+        _, wrote = await directory.register(
+            reg(
+                first,
+                upstream_url="",
+                tenancy_rows=4,
+                state_rows=3,
+                prefix_objects=2,
+                processes_without_cell=1,
+            )
+        )
+        assert wrote is False
         # A sibling prefix (not under the first's) and another bucket both register.
         row, written = await directory.register(reg(later, bucket_prefix=f"cells/{first}x"))
         assert written and (row.is_first, row.mode) == (False, "enforced")
-        with pytest.raises(directory.OperatorRefused, match="register with that probe_url"):
+        with pytest.raises(directory.OperatorRefused, match="with that --probe-url"):
             await directory.register(
                 reg(later, bucket_prefix=f"cells/{first}x", probe_url="http://moved:7790")
             )

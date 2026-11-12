@@ -5904,7 +5904,7 @@
           "default": "",
           "pattern": "^(?:[0-9a-f]{64})?$",
           "type": "string",
-          "description": "SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell limit`, `loom cell credential` and a cell's registration call its operator API with; \"\" = that API refuses."
+          "description": "SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell limit`, `loom cell credential` and `loom cell prepare` call its operator API with; \"\" = that API refuses."
         },
         "router_placements_per_minute": {
           "default": 60,

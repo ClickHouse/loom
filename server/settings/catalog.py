@@ -359,7 +359,7 @@ class AuthSettings(BaseModel):
     # first cell's registration is checked; "" = no first cell can be registered.
     router_upstream_probe_url: str = ""
     # SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell
-    # limit`, `loom cell credential` and a cell's registration call its operator API with;
+    # limit`, `loom cell credential` and `loom cell prepare` call its operator API with;
     # "" = that API refuses.
     router_operator_sha256: Annotated[str, Field(pattern=r"^(?:[0-9a-f]{64})?$")] = ""
     # The operator credential itself, for the CLI that calls the router's operator API:

@@ -417,8 +417,8 @@
   "options: -h, --help show this help message and exit"
  ],
  "loom cell": [
-  "usage: loom cell [-h] {credential,limit,which} ...",
-  "positional arguments: {credential,limit,which} credential Make a router credential, or rotate a cell's. limit Close, reopen or bound a cell to new orgs. which Print the lookup's cell and host for an org (the first cell if not placed).",
+  "usage: loom cell [-h] {credential,limit,which,prepare} ...",
+  "positional arguments: {credential,limit,which,prepare} credential Make a router credential, or rotate a cell's. limit Close, reopen or bound a cell to new orgs. which Print the lookup's cell and host for an org (the first cell if not placed). prepare Register this cell in the router's directory and write its rows.",
   "options: -h, --help show this help message and exit"
  ],
  "loom cell credential": [
@@ -433,6 +433,10 @@
  "loom cell which": [
   "usage: loom cell which [-h] --org ORG [--router ROUTER]",
   "options: -h, --help show this help message and exit --org ORG The org --router ROUTER The router's URL (default: LOOM_CELL_ROUTER_URL)"
+ ],
+ "loom cell prepare": [
+  "usage: loom cell prepare [-h] --cell CELL --host HOST --credential-sha256 SHA256 [--probe-url PROBE_URL] [--wait WAIT] [--router ROUTER]",
+  "options: -h, --help show this help message and exit --cell CELL This cell's name (LOOM_CELL) --host HOST The host the cell serves its orgs at --credential-sha256 SHA256 The sha256 of the cell's router credential (`loom cell credential new`) --probe-url PROBE_URL A later cell's probe listener address (not the first's) --wait WAIT Seconds to retry a busy or unreachable probe listener --router ROUTER The router's URL (default: LOOM_CELL_ROUTER_URL)"
  ],
  "loom tracker-probe": [
   "usage: loom tracker-probe [-h]",

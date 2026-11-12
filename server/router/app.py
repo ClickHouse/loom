@@ -12,7 +12,7 @@
 - `POST /cells/v1/operator/cells/<cell>/limit` and `.../credential`: the operator's
   changes to a cell's row (`loom cell limit`, `loom cell credential`), with the router's
   operator credential;
-- `POST /cells/v1/operator/cells/<cell>/register`: a cell's preparation registers it,
+- `POST /cells/v1/operator/cells/<cell>/register`: `loom cell prepare` registers a cell,
   once the probe listener (the first cell's at LOOM_ROUTER_UPSTREAM_PROBE_URL, a later
   cell's at its `probe_url`) answers its deployment id, prepare's nonces and the bucket
   and prefix it stores under;
@@ -542,7 +542,7 @@ class Router:
         return response
 
     async def register(self, request: Request) -> JSONResponse:
-        """A cell's preparation: register the cell once its probe address shows the stores
+        """`loom cell prepare`: register the cell once its probe address shows the stores
         prepare wrote its nonces to are the ones the cell serves from. The first cell
         (its host is the shared host) is probed at LOOM_ROUTER_UPSTREAM_PROBE_URL, never an
         address prepare names; a later cell at its own `probe_url`."""
@@ -580,6 +580,9 @@ class Router:
                 "state": row.state,
                 "mode": row.mode,
                 "registered": written,
+                # The fingerprints attach accepted, which a rerun writes into the cell.
+                "current_fp": row.current_fp,
+                "next_fp": row.next_fp,
             }
         )
 
@@ -724,11 +727,11 @@ def _registration(
     cell: str, body: Any
 ) -> tuple[directory.Registration, dict[str, str | None]] | JSONResponse:
     known = {"host", "deployment_id", "credential_sha256", "bucket", "bucket_prefix"}
-    if not isinstance(body, dict) or set(body) - known - {"probe_url", "nonces"}:
+    if not isinstance(body, dict) or set(body) - known - {"probe_url", "nonces", "held"}:
         return _refused(
             400,
-            "a registration is a JSON object of " + ", ".join(sorted(known)) + " and nonces, "
-            "with a later cell's probe_url",
+            "a registration is a JSON object of " + ", ".join(sorted(known)) + ", held and "
+            "nonces, with a later cell's probe_url",
         )
     host_text = _text(body, "host", needed=True)
     deployment_id = _text(body, "deployment_id", needed=True)
@@ -755,6 +758,14 @@ def _registration(
         return _refused(400, "credential_sha256 is 64 lowercase hex characters: the hash")
     if _is_operator_hash(sha):
         return _refused(400, _OPERATOR_HASH_REFUSAL)
+    held = body.get("held")
+    counts = ("tenancy_rows", "state_rows", "prefix_objects", "processes_without_cell")
+    if not (
+        isinstance(held, dict)
+        and set(held) == set(counts)
+        and all(type(held[k]) is int and 0 <= held[k] < 2**31 for k in counts)
+    ):
+        return _refused(400, "held counts the cell's " + ", ".join(counts))
     nonces = body.get("nonces")
     if not (
         isinstance(nonces, dict)
@@ -817,6 +828,10 @@ def _registration(
         probe_url=address,
         is_first=is_first,
         upstream_url=upstream,
+        tenancy_rows=held["tenancy_rows"],
+        state_rows=held["state_rows"],
+        prefix_objects=held["prefix_objects"],
+        processes_without_cell=held["processes_without_cell"],
     )
     return reg, dict(nonces)
 
