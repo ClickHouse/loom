@@ -385,7 +385,7 @@ async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[De
         return []  # a full recheck of a link long gone: the index decides, as before
     base = _searched_from(r.before, r.row, r.range)
     limit = settings.memory_code_links_mirror_naming_files
-    paths = await files.containing(head, unnumbered(bare_name(qn)), base, limit=limit)
+    paths = await files.containing(base, head, unnumbered(bare_name(qn)), limit=limit)
     if paths is None:
         return None
     local, found = local_name(qn, r.before.read_path), []
@@ -397,7 +397,9 @@ async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[De
                 if local_name(name, path) == local:
                     found += await files.defs(head, path, name)
         except code.ParseFailed:
-            continue  # no definition of it is read from a file that does not parse
+            # its names were read, its fingerprints were not: the index holds the file's
+            # definitions, so the mirror cannot tell, as on the index's path
+            return None
     return found
 
 

@@ -127,7 +127,7 @@ class RepoReads:
         )
 
     async def containing(
-        self, head: str, literal: str, base: str, *, limit: int
+        self, base: str, head: str, literal: str, *, limit: int
     ) -> list[str] | None:
         """The files `base..head` added or changed whose text at `head` holds the word
         `literal`, fewer than `limit`, those the ingest would not index left out; an empty

@@ -65,7 +65,7 @@ def _mirror_holds_every_commit(monkeypatch):
 def _mirror_names_nothing_else(monkeypatch):
     # the fakes' history lives in their index and file reads: a search of the mirror for
     # a lost name finds nothing more unless a test says so
-    async def containing(self, head, literal, base, *, limit):
+    async def containing(self, base, head, literal, *, limit):
         return []
 
     monkeypatch.setattr(code_link_pass.RepoReads, "containing", containing)
@@ -3900,7 +3900,7 @@ def _moved_module_world(
             [Definition("pkg/b.py", "pkg.b::fetch_rows", "fetch_rows")] if indexed else []
         )
 
-    async def containing(head, literal, base, *, limit):
+    async def containing(base, head, literal, *, limit):
         # as `RepoReads.containing`: the changed files naming it, none from `limit` on
         searched.append((head, literal, base))
         changed = {p for c, p in commits if c == head and commits[(c, p)] != commits.get((base, p))}
@@ -4039,7 +4039,7 @@ async def test_a_mirror_git_cannot_read_leaves_a_lost_name_unresolved(monkeypatc
     files = code_link_pass.RepoReads("o", "code-a")
     row, _ = _moved_module_world(monkeypatch, files, indexed=False)
 
-    async def containing(head, literal, base, *, limit):
+    async def containing(base, head, literal, *, limit):
         return None
 
     monkeypatch.setattr(files, "containing", containing)
@@ -4072,9 +4072,9 @@ async def test_the_mirror_is_not_searched_over_a_range_too_wide_or_unread(monkey
 
     monkeypatch.setattr(files, "touched", touched)
     monkeypatch.setattr(code_links.code, "grep_words", grep)
-    assert await files.containing("c1", "f", "c0", limit=5) == []  # the range is unread
+    assert await files.containing("c0", "c1", "f", limit=5) == []  # the range is unread
     monkeypatch.setattr(settings, "memory_code_links_mirror_changed_files", 1)
-    assert await files.containing("c1", "f", "b0", limit=5) == []  # too wide
+    assert await files.containing("b0", "c1", "f", limit=5) == []  # too wide
 
 
 @pytest.mark.asyncio
@@ -4105,7 +4105,7 @@ async def test_an_edited_move_the_index_settles_is_followed_when_the_mirror_cann
     files = code_link_pass.RepoReads("o", "code-a")
     row, _ = _moved_module_world(monkeypatch, files, indexed=True, edited=True)
 
-    async def containing(head, literal, base, *, limit):
+    async def containing(base, head, literal, *, limit):
         return None  # git could not be read
 
     monkeypatch.setattr(files, "containing", containing)
@@ -4137,7 +4137,7 @@ async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypat
     monkeypatch.setattr(code_links.code, "ingest_scope", ingest_scope)
     monkeypatch.setattr(code_links.code, "grep_words", grep)
     monkeypatch.setattr(code_links.code, "indexed_names", indexed_names)
-    assert await files.containing("c1", "fetch_rows", "c0", limit=5) == ["pkg/b.py"]
+    assert await files.containing("c0", "c1", "fetch_rows", limit=5) == ["pkg/b.py"]
     moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
     assert [(m.link.state, m.link.path) for m in moves] == [("changed", "pkg/b.py")]
 
@@ -4177,13 +4177,13 @@ async def test_the_mirror_search_reads_what_the_ingest_indexes(monkeypatch, tmp_
         monkeypatch.setattr(files, "touched", changed)
         return files
 
-    found = await reads().containing(head, "fetch_rows", "c0", limit=4)
+    found = await reads().containing("c0", head, "fetch_rows", limit=4)
     assert found == ["pkg/b.py", "pkg/mock.py"]
     # a path refused by name is left out before the page is counted, by content after
-    assert await reads().containing(head, "fetch_rows", "c0", limit=3) == []
+    assert await reads().containing("c0", head, "fetch_rows", limit=3) == []
     prefixed = replace(cfg, path_prefixes=("gen/",))
     monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: prefixed)
-    assert await reads().containing(head, "fetch_rows", "c0", limit=4) == []
+    assert await reads().containing("c0", head, "fetch_rows", limit=4) == []
 
 
 @pytest.mark.asyncio
@@ -4253,7 +4253,7 @@ async def test_a_missing_link_stays_missing_when_the_mirror_cannot_be_read(monke
     files = code_link_pass.RepoReads("o", "code-a")
     row, _ = _moved_module_world(monkeypatch, files, indexed=False)
 
-    async def containing(head, literal, base, *, limit):
+    async def containing(base, head, literal, *, limit):
         return None
 
     monkeypatch.setattr(files, "containing", containing)
@@ -4261,3 +4261,33 @@ async def test_a_missing_link_stays_missing_when_the_mirror_cannot_be_read(monke
     later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
     moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
     assert moves == []  # never unresolved: a missing link is not made unsure
+
+
+@pytest.mark.asyncio
+async def test_a_missing_link_checked_at_head_searches_nothing(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False)
+    monkeypatch.setattr(files, "containing", _REAL_CONTAINING.__get__(files))
+
+    async def grep(*a, **k):
+        raise AssertionError("not searched")
+
+    monkeypatch.setattr(code_links.code, "grep_words", grep)
+    lost = row | {"state": "missing", "changed_since": "c1", "checked_commit": "c1"}
+    later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
+    assert await code_link_recheck._recheck("o", "code-a", [lost], later, "c1", files) == []
+
+
+@pytest.mark.asyncio
+async def test_a_found_definition_that_cannot_be_fingerprinted_leaves_a_live_link_unsure(
+    monkeypatch,
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
+
+    async def no_fingerprints(commit, path, qualified_name):
+        raise code_links.code.ParseFailed(path, "fingerprint failed")
+
+    monkeypatch.setattr(files, "defs", no_fingerprints)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [m.link.state for m in moves] == ["unresolved"]
