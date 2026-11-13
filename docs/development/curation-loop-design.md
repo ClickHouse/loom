@@ -90,14 +90,16 @@ that is not the namespace-wide one, or no longer `active`). A definition that pa
 check but loses one of its names to another promotion that wins it under the rule below is
 `shadowed` for each name it loses, naming the winner of each; it is still served for the
 names it keeps. A definition beyond the term leg's read when a namespace holds more than
-the ceiling (the most recently promoted are read) is `capped`. Each entry carries its key,
-term, aliases and `promoted_from_candidate_id`. A changed text is promoted again. On N no
-automatic verdict retires or marks a definition's source (the exemptions below, and the
-negative-outcome quarantine of `memory.outcome`, which skips a definition's namespace-wide
-row as it skips a locked one; `memory.outcome_run` records harm events and quarantines
-nothing), so a source that is no longer `active` was rejected by a writer, or left that
-way by N-1 or before this design. The sensitivity sweep can still relabel a source, which
-lapses it as a relabel does. The admin brings it back by the way it lapsed:
+the ceiling (the most recently promoted are read) is `capped`, and no other verdict is
+computed for it. Each entry carries its key, term, aliases, `promoted_from_candidate_id`,
+the check's verdict with its lapse reason, a list of (name, winner) pairs for the names it
+lost, and a `capped` flag. A changed text is promoted again. On N no automatic verdict
+retires or marks a definition's source (the exemptions below, and the negative-outcome
+quarantine of `memory.outcome`, which skips a definition's namespace-wide row as it skips
+a locked one; `memory.outcome_run` records harm events and quarantines nothing), so a
+source that is no longer `active` was rejected by a writer, or left that way by N-1 or
+before this design. The sensitivity sweep can still relabel a source, which lapses it as a
+relabel does. The admin brings it back by the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
@@ -164,10 +166,13 @@ reader:
   definition's, governed or lapsed (every live shared row of type `definition`), on every
   promotion path, so a lapsed definition that returns to its approved state never shares a
   name with one promoted meanwhile. The check reads every definition row of the namespace
-  (an alias lives inside its definition's value, so no key finds it), which the ceiling
-  below keeps bounded, and refuses a promotion that adds a key when it finds the ceiling
-  reached; a revision of a key already governed replaces its row and is never refused by
-  the ceiling. Names are compared folded, as above.
+  (an alias lives inside its definition's value, so no key finds it). It first counts them
+  (`count()`, no values read): a promotion that adds a key is refused once the count
+  reaches the ceiling, and every definition promotion, a revision included, is refused
+  while the count is past it, so the read it then makes is never more than the ceiling's
+  rows; the admin demotes definitions until the namespace is back within it. Below the
+  ceiling a revision of a key already governed replaces its row and is never refused by
+  it. Names are compared folded, as above.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row, whose `target_key` differs from the
   source's key or lies outside `definition/`, so a revision always lands on the governed
@@ -186,7 +191,8 @@ each break.
   only an embedding-close shared row refuses it.
 - It refuses one whose value is labelled or graded `medium`. Today only a `high` label
   refuses.
-- It refuses one that adds a key past the namespace's `memory_term_leg_max_definitions`.
+- It refuses one that adds a key past the namespace's `memory_term_leg_max_definitions`,
+  and any definition promotion while the namespace is already past it.
 - It ignores a definition's `promoted_from_candidate_id`.
 - `learnings.review` refuses, with `VALIDATION_FAILED`, a `definition` candidate that is
   not a `knowledge_gap` or `query_history` draft. Today `memory_supporters` and
@@ -201,8 +207,9 @@ row, carry the hash field. The drawer passes the `content_sha256` of the row it 
 Should two shared rows match one name despite that refusal (two promotions racing, or one
 promoted through a build without the check), the term leg serves, among the rows the
 read-time check passes, the one with the latest `promoted_at`, a tie within its second
-settled by `promotion_event`: one fixed winner, not necessarily the later of the two. A
-rewrite of a shared row that is not a promotion, such as a scrub, does not count.
+settled by `promotion_event` (the same order picks the rows the term leg reads past the
+ceiling): one fixed winner, not necessarily the later of the two. A rewrite of a shared
+row that is not a promotion, such as a scrub, does not count.
 
 A caller may already write rows of type `definition`; they are governed only once an admin
 promotes them, but their write-time verdicts change with this design: `definition` joins
@@ -256,13 +263,14 @@ carry.
 under a `definition/` key, from that namespace only, whatever `namespace_scope` fans out
 over. It serves no definition whose source is labelled or graded `medium` or `high` (the
 read-time check above). A namespace holds at most `memory_term_leg_max_definitions`
-definitions: a promotion that adds a key past that ceiling is refused (a revision is not),
-`memory.definitions.list` shows the count against it, and an admin demotes a definition to
-make room, so the leg reads every one. `loom.shared` stores a value as one string, so the
-leg reads every definition's full `value`, `rests_on` included, to match its `term` and
-`aliases`; the ceiling is what bounds that read. It computes the served hash and reads the
-source for the matched rows only. A read that still finds more (a race, or rows promoted
-through an older build) reads the most recently promoted (by `promoted_at`) and reports
+definitions: a promotion that adds a key past that ceiling is refused (a revision is not,
+unless the namespace is already past it), `memory.definitions.list` shows the count
+against it, and an admin demotes a definition to make room, so the leg reads every one.
+`loom.shared` stores a value as one string, so the leg reads every definition's full
+`value`, `rests_on` included, to match its `term` and `aliases`; the ceiling is what
+bounds that read. It computes the served hash and reads the source for the matched rows
+only. A read that still finds more (a race, or rows promoted through an older build) reads
+the most recently promoted (by `promoted_at`, then `promotion_event`) and reports
 `term_leg` `capped`, which also keeps a `memory.search` from recording a miss. It runs
 concurrently with the other legs under its own time bound (`memory_term_leg_timeout_ms`),
 which never shortens theirs; a leg past its bound adds nothing. Its latency is measured
@@ -587,12 +595,12 @@ days; the threshold does not hide that.
 The parts land in the order the opening section gives: 1 knowledge gaps, 2 governed
 definitions, 3 `knowledge.gaps.draft` and query history.
 
-| Op                                                | Part | Role  | What it does                                                                                                                                                                                                                                                                                                                           |
-| ------------------------------------------------- | ---- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`                             | 1    | admin | The namespace's gaps, most askers first.                                                                                                                                                                                                                                                                                               |
-| `memory.definitions.list`                         | 2    | admin | The namespace's shared definitions, a page at a time (a limit and a cursor), each with its key, term, aliases, `promoted_from_candidate_id`, the read-time check's verdict (or `shadowed` per lost name, naming each winner, or `capped`) and the reason a lapsed one lapsed, and the count against `memory_term_leg_max_definitions`. |
-| `knowledge.gaps.draft`                            | 3    | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`).                                                                                                                                                                                                                  |
-| `knowledge.query_history.add`, `.list`, `.remove` | 3    | admin | Register, list and remove a query-history source on the namespace.                                                                                                                                                                                                                                                                     |
+| Op                                                | Part | Role  | What it does                                                                                                                                                                                                                                                                                                   |
+| ------------------------------------------------- | ---- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`                             | 1    | admin | The namespace's gaps, most askers first.                                                                                                                                                                                                                                                                       |
+| `memory.definitions.list`                         | 2    | admin | The namespace's shared definitions, a page at a time (a limit and a cursor), each with its key, term, aliases, `promoted_from_candidate_id`, the read-time check's verdict and lapse reason, its `shadowed` (name, winner) pairs and a `capped` flag, and the count against `memory_term_leg_max_definitions`. |
+| `knowledge.gaps.draft`                            | 3    | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`).                                                                                                                                                                                          |
+| `knowledge.query_history.add`, `.list`, `.remove` | 3    | admin | Register, list and remove a query-history source on the namespace.                                                                                                                                                                                                                                             |
 
 The `knowledge.gaps.` ops list what users asked and the `knowledge.query_history.` ops
 manage a source, not documents, so none honours a read-narrowed token: the check that
@@ -851,13 +859,14 @@ the op budgets before they ship it.
   full values, `rests_on` included, at most `memory_term_leg_max_definitions`), one read
   of the matched definitions' source rows, and a grading of each matched source's value,
   on every `memory.search`, every `context.pack` turn and every `memory.ask` sub-search.
-- A definition's promotion reads the namespace's definition rows, at most
-  `memory_term_leg_max_definitions`, to check its term and aliases.
-  `memory.definitions.list` reads every definition row of the namespace, so its count is
-  exact past the ceiling, to find names held by more than one and the rows beyond the term
-  leg's read, and returns a page of them, with a limit and a cursor; it reads and grades
-  the source row of each listed definition and of each definition that competes for one
-  of its names.
+- A definition's promotion counts the namespace's definition rows and then reads them,
+  at most `memory_term_leg_max_definitions` (past it the promotion is refused), to check
+  its term and aliases.
+- `memory.definitions.list` counts the rows (`count()`), reads the full values of at most
+  the ceiling's rows, the ones the term leg reads, to find names held by more than one,
+  and marks the rest `capped` from their key, `promoted_at` and `promotion_event` alone.
+  It returns a page, with a limit and a cursor, and reads and grades the source row of
+  each listed definition and of each definition that competes for one of its names.
 
 ## Rolling upgrades
 
