@@ -62,9 +62,7 @@ def test_a_projected_knowledge_row_drops_unrequested_fields() -> None:
         "tags": ["x"],
     }
     with pytest.raises(ValidationError):
-        read_projection.resolve(
-            knowledge._KnowledgeListEntry, ["nope"], always=frozenset({"source_uri"})
-        )
+        read_projection.resolve(knowledge._KnowledgeListEntry, ["nope"], always=_LIST_ALWAYS)
 
 
 def test_knowledge_list_takes_fields() -> None:

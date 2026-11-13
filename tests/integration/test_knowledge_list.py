@@ -180,6 +180,8 @@ async def test_list_reads_several_namespaces_as_one_newest_first(control_plane_u
                 limit=2, cursor=cursor, namespaces=namespaces_listed[1:] + [namespaces_listed[0]]
             )
             keys += [(r["ingested_at"], r["namespace"], r["source_uri"]) for r in page["rows"]]
+            # Each namespace holds the same sources: a count keyed by source alone shows here.
+            assert all(r["chunk_count"] == 1 for r in page["rows"])
             cursor = page["next_cursor"]
             if not cursor:
                 break
