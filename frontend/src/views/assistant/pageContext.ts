@@ -64,6 +64,9 @@ export function currentAsk(): Asked {
   return { context, item: context && item ? item : null };
 }
 
+/** The longest message one request may carry (server/assistant/api/models.py). */
+export const MAX_MESSAGE_CHARS = 20_000;
+
 /** The message a question is sent as: the context line first, then the question. */
 export function withContext(question: string, context: AskContext | null | undefined): string {
   return context ? `${context.line}\n\n${question}` : question;

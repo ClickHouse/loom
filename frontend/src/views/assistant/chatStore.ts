@@ -3,25 +3,31 @@
 // navigation never stops an answer. Saved to this browser at turn boundaries and when the
 // page hides (./conversations.ts).
 import { create } from "zustand";
+import { isAuthDisabled, isProxyMode, storedToken } from "../../api";
 import { type ChatMessage, type Support, streamAssistantChat } from "../../api/assistantChat";
 import { ApiError } from "../../lib/errors";
 import { humanizeError } from "../../lib/errorWords";
 import type { Owner } from "../../lib/assistantStorage";
 import { chatOff, useDock } from "../../lib/assistantDock";
-import { SHORT_REASON, type AssistantReason } from "../../lib/assistantLayout";
+import { SHORT_REASON, claimReason, setDockReason, type AssistantReason } from "../../lib/assistantLayout";
 import { announceAssistant } from "../../lib/assistantDockRuntime";
+import { isCollectionName } from "../../lib/namespace";
+import type { useStore } from "../../lib/state";
 import { NOT_CHECKED, supportLabel } from "./Sources";
-import { withContext, type AskContext, type Asked } from "./pageContext";
+import { MAX_MESSAGE_CHARS, withContext, type AskContext, type Asked } from "./pageContext";
 import type { TurnCard } from "./cards/types";
+import { tokenReadScope } from "./tokenScope";
 import {
   ConversationDeleted,
   StorageRefused,
+  adoptEpoch,
   deleteConversation,
   cutOffTurn,
   mergeTurns,
   randomId,
   readConversation,
   saveConversation,
+  sameOwner,
   type Conversation,
   type Turn,
 } from "./conversations";
@@ -76,9 +82,8 @@ export const sentQuestion = (question: string, withSources = false) =>
   withSources ? `${question}${CITE_SOURCES}` : question;
 
 // What one request may carry (server/assistant/api/models.py): the earlier messages, newest
-// kept, and each message's length.
+// kept (each message's length is pageContext.ts's MAX_MESSAGE_CHARS).
 const MAX_HISTORY = 50;
-export const MAX_MESSAGE_CHARS = 20_000;
 
 /** The messages a new question goes with: the turns shown, but a question refused before
  *  any answer (it was never answered, and the person asks again) and no empty answer; the
@@ -277,6 +282,64 @@ export function storedChanged(): void {
   if (!answeringThere && useChat.getState().notice === OTHER_TAB) useChat.setState({ notice: null });
 }
 
+/** The owner the conversations are keyed by: the person, the org, the token's read scope
+ *  and read user. Behind a proxy, whoami's subject (no token). With auth off, none: nothing
+ *  is stored. */
+export function ownerOf(whoami: ReturnType<typeof useStore.getState>["whoami"]): Owner | null {
+  if (isAuthDisabled() || !whoami?.subject) return null;
+  if (isProxyMode()) return { subject: whoami.subject, org: whoami.org ?? "", scope: "-", user: "-" };
+  const scope = tokenReadScope(storedToken());
+  return {
+    subject: whoami.subject,
+    org: whoami.org ?? "",
+    scope: scope?.readScope ?? "-",
+    user: scope?.readUserId ?? "-",
+  };
+}
+
+/** The last adoption was of no owner (a session whose whoami names no subject, so nothing is
+ *  stored): adopting none again is the same owner, not a change. */
+let lastAdoptedNone = false;
+
+/** The conversations are `owner`'s from here on: what was shown, when it was someone
+ *  else's (or the token's scope changed), is forgotten. The panel's body and the search's
+ *  answer card both call it before they show or ask anything, so neither resets the other;
+ *  only a change of owner resets. */
+export function adoptOwner(owner: Owner | null): void {
+  const s = useChat.getState();
+  if (s.owner && owner && sameOwner(s.owner, owner)) return;
+  if (!owner && !s.owner && lastAdoptedNone) return;
+  resetChat(owner);
+  adoptEpoch(isProxyMode() ? (owner?.subject ?? null) : null);
+  lastAdoptedNone = !owner;
+}
+
+/** What a new conversation in `now` says of the one about `old` it replaces: in History,
+ *  unless it was kept in a collection, which History does not list. Said by the panel's Ask
+ *  about this and by a search question about another namespace. */
+export function newConversationLine(now: string, old: string): string {
+  return isCollectionName(old)
+    ? `New conversation in ${now}.`
+    : `New conversation in ${now}; the one about ${old} is in History.`;
+}
+
+/** The words of the answer's latest step while it streams, or null before the first. */
+export function latestStep(t: Turn): string | null {
+  const steps = t.steps ?? [];
+  return steps.length > 0 ? steps[steps.length - 1].text : null;
+}
+
+/** Start a new conversation in `header` when the one shown is about another namespace and
+ *  nothing answers in it, answering the line that says so (newConversationLine); null when
+ *  the one shown stays. The panel's Ask about this and the search's question both go by it. */
+export function startIn(header: string): string | null {
+  const c = useChat.getState();
+  if (c.answering || c.turns.length === 0 || !c.namespace || c.namespace === header) return null;
+  const old = c.namespace;
+  newConversation();
+  return newConversationLine(header, old);
+}
+
 /** Start a new conversation (the one shown stays in History). */
 export function newConversation(): void {
   if (useChat.getState().answering) return;
@@ -311,6 +374,11 @@ export interface AskOptions {
   replace?: string;
   withSources?: boolean;
   fromField?: boolean;
+  /** Told the turn's id once it shows (the search's answer card follows that turn). */
+  shown?: (turnId: string) => void;
+  /** Asked from outside the panel (the search): a refusal gives the question back to the
+   *  panel's field without changing its chip. */
+  keepChip?: boolean;
 }
 
 /** Ask `question`, with what the panel's chip says about the page (`asked`): in the
@@ -343,8 +411,11 @@ export function ask(
   locks
     .request(lockName(id), { ifAvailable: true }, (lock) => {
       if (!lock) {
+        if (!otherTab(mine)) return;
         // A starter's card still reads: it is the person's own read, not the answer.
-        if (otherTab(mine)) withCard?.alone("another tab is answering in this conversation");
+        withCard?.alone("another tab is answering in this conversation");
+        // A question from the search waits in the panel's field, its chip as it is.
+        if (opts.keepChip) giveBack(question, asked, true);
         return;
       }
       granted = true;
@@ -434,6 +505,7 @@ async function answer(
     editing: null,
   });
   withCard?.shown(turnId);
+  opts.shown?.(turnId);
   // The next question starts again from the page alone, its chip on. A starter's question,
   // or one asked again from the transcript, never came from the field: what is typed there,
   // and its chip, stay.
@@ -467,7 +539,7 @@ async function answer(
     update(() => change);
     if (!settle(mine)) return;
     save({ held });
-    const unread = !useDock.getState().open && change.state === "done" && !saidDone;
+    const unread = !seen(turnId) && change.state === "done" && !saidDone;
     if (unread) {
       useDock.setState({ unread: true });
       announceAssistant("Assistant answer ready");
@@ -509,7 +581,7 @@ async function answer(
           textDone = true;
           update(() => ({ state: "done" }));
           useChat.setState({ checkingSources: turnId });
-          saidDone = useDock.getState().open;
+          saidDone = seen(turnId);
           if (saidDone) announceAssistant("The answer is complete.");
         },
       },
@@ -523,7 +595,10 @@ async function answer(
   if (previous && !streamed) return putBack(previous, question, asked, opts, failure, mine, held);
   if (failure === null) {
     // An answer came: whatever the route refused before no longer holds.
-    if (controller === mine) useChat.setState({ hint: null });
+    if (controller === mine && useChat.getState().hint) {
+      useChat.setState({ hint: null });
+      showReason();
+    }
     end({ state: "done" }, endSaid());
   } else {
     const e = failure;
@@ -538,10 +613,10 @@ async function answer(
     const reason = refusedBefore ? refusalReason(e) : null;
     // A starter's card works while the assistant cannot answer: it stays, as the card alone.
     if (refusedBefore && withCard) return cardAlone(turnId, reason, e, mine, held);
-    if (reason) return takeBack(id, turnId, question, asked, reason, mine, held);
+    if (reason) return takeBack(id, turnId, question, asked, reason, mine, held, !!opts.keepChip);
     // A refused question was never answered: it waits in the field to be asked again, with
     // the chip it was asked with.
-    if (refusedBefore && controller === mine) giveBack(question, asked);
+    if (refusedBefore && controller === mine) giveBack(question, asked, !!opts.keepChip);
     end(
       {
         state: refusedBefore ? "refused" : "failed",
@@ -551,6 +626,21 @@ async function answer(
       "",
     );
   }
+}
+
+/** Whether turn `turnId`'s answer is on screen: in the open panel, or in the search's answer
+ *  card, which shows that turn (not one it found answering when it asked). */
+const seen = (turnId: string) => {
+  const d = useDock.getState();
+  return d.open || d.answerShown === turnId;
+};
+
+/** The reason the launcher and the search's card go by, after the route's refusal changed
+ *  `hint`: in the panel's order (the token's claims, the refusal, readiness). The panel's body
+ *  sets the same while it is mounted; without it, nothing else would. */
+function showReason(): void {
+  const s = useChat.getState();
+  setDockReason(chatOff() ? { kind: "not_configured" } : (claimReason() ?? s.hint ?? s.readiness));
 }
 
 /** What is said when an answer ends. `label`: its label ("" for none); `allFound`: every
@@ -598,6 +688,7 @@ function putBack(
       ? { refused: { question, asked, replace: previous.id, ...(opts.withSources ? { withSources: true } : {}) } }
       : {}),
   }));
+  if (reason) showReason();
   // Stopped, a Retry needs nothing in the field; an edit's words go back to it.
   if ((!isAbort(e) || question !== previous.question) && !useDock.getState().draft) {
     giveBack(question, asked);
@@ -674,11 +765,13 @@ function takeBack(
   reason: AssistantReason,
   mine: AbortController,
   held: boolean,
+  keepChip: boolean,
 ): void {
   if (controller !== mine) return;
   const turns = useChat.getState().turns.filter((t) => t.id !== turnId);
   useChat.setState({ turns, hint: reason, refused: { question } });
-  giveBack(question, asked);
+  showReason();
+  giveBack(question, asked, keepChip);
   const owner = useChat.getState().owner;
   const stored = owner ? readConversation(id, owner, { answering: "kept" }) : null;
   // Nothing else in it, here or stored (a turn another tab answers without a lock counts).
@@ -712,6 +805,7 @@ function cardAlone(
     ),
     ...(reason ? { hint: reason } : {}),
   }));
+  if (reason) showReason();
   settle(mine);
   save({ held });
   announceAssistant(`The assistant can't answer: ${why}.`);
@@ -719,8 +813,14 @@ function cardAlone(
 
 /** A question that was never answered goes back to the field with the chip it was asked
  *  with (the item, or the chip removed), unless something else is typed there now. */
-function giveBack(question: string, asked: Asked): void {
+function giveBack(question: string, asked: Asked, keepChip = false): void {
   if (useDock.getState().draft) return;
+  // A question asked from elsewhere (the search) leaves the panel's chip as it is: an item
+  // "Ask about this" set there is still the next question's.
+  if (keepChip) {
+    useDock.setState({ draft: question });
+    return;
+  }
   useDock.setState({ draft: question, item: asked.item, pageOff: asked.context === null });
 }
 

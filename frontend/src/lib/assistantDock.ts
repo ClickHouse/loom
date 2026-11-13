@@ -3,12 +3,12 @@
 // and a reason the assistant cannot answer when one is known. What the panel does (open,
 // close, expand, the phone sheet's history entry, the inert) loads with it
 // (./assistantDockRuntime.ts); the chat and its stored conversations are its body's chunk
-// (views/assistant/Dock.tsx). It opens from the assistant edge at the window's right from
-// md, and from the bottom navigation below md (App.tsx, layout/MobileNav.tsx).
+// (views/assistant/Dock.tsx). It opens from the header's Ask AI button, beside the search
+// field at every width (layout/AssistantLauncher.tsx), and from the search's answer card.
 //
 // One panel element serves every mode, and only its position, the trap and the page's
 // inert change between them, so a resize keeps the focus and the draft:
-//   push     beside <main> while <main> keeps PAGE_MIN px; non-modal.
+//   push     beside <main> from PUSH_MIN px wide, <main> keeping at least PAGE_MIN; non-modal.
 //   overlay  over the page at the right, full height, a scrim and the page inert; modal.
 //   sheet    below PHONE_MIN px wide, full screen with a history entry of its own; modal.
 //   expanded a window over the page from EXPAND_MIN px, anchored at the right; modal. It
@@ -75,6 +75,9 @@ export interface DockState {
   startersSeq?: number;
   /** The audit's card is read too (an old link to the Memories Insights tab), nothing asked. */
   startersAudit?: boolean;
+  /** The turn the header search's answer card shows: that answer's end is seen there, so it
+   *  is said as complete and never marked unread (views/assistant/SearchAnswer.tsx). */
+  answerShown?: string;
 }
 
 /** Whether this deployment's chat is off (the server's boot snippet): the panel is its
@@ -135,20 +138,20 @@ export function loadDockRuntime(): Promise<Runtime> {
   return loading;
 }
 
-/** The edge's click and Ctrl+/ (⌘/): open the panel, or close it. */
+/** The Ask AI button and Ctrl+J (⌘J): open the panel, or close it. */
 export function toggleAssistantSoon(): void {
   void loadDockRuntime().then((m) => m.toggleAssistant());
 }
 
-/** The bottom nav's item and "Go to the assistant": open the panel, or focus it. */
+/** "Go to the assistant" and the search card's Continue: open the panel, or focus it. */
 export function openAssistantSoon(): void {
   void loadDockRuntime().then((m) => m.openAssistant());
 }
 
-/** Ctrl+/ (⌘/ on Apple keyboards): open or close the panel. A key pressed in another dialog
+/** Ctrl+J (⌘J on Apple keyboards): open or close the panel. A key pressed in another dialog
  *  (the inspector, a confirmation, the help) is left to it. */
 export function onAssistantShortcut(e: KeyboardEvent): void {
-  if (e.key !== "/" || !(e.ctrlKey || e.metaKey) || e.altKey) return;
+  if (e.key.toLowerCase() !== "j" || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
   const a = document.activeElement;
   const dialog = a instanceof Element ? a.closest('[role="dialog"], [role="alertdialog"]') : null;
   if (dialog && !dialog.matches("[data-assistant-panel]")) return;

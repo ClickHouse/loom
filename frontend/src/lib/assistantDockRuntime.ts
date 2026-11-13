@@ -1,9 +1,10 @@
 // The assistant panel's behaviour, loaded with the panel the first time it is needed (a
-// click on the launcher, the shortcut, a reload that restores it open, or a browser holding
-// stored conversations): opening, closing and expanding it, the phone sheet's history
-// entry, what navigations, Back and resizes do to it, the page's inert while it is modal,
-// an /assistant address, and the deletion of another person's stored conversations on a
-// sign-in. The state it acts on is the shell's (lib/assistantDock.ts).
+// click on the launcher, the shortcut, the search card's Continue, a reload that restores
+// it open, or a browser holding stored conversations): opening, closing and expanding it,
+// the phone sheet's history entry, what navigations, Back and resizes do to it, the page's
+// inert while it is modal, an /assistant address, and the deletion of another person's
+// stored conversations on a sign-in. The state it acts on is the shell's
+// (lib/assistantDock.ts).
 import { isAuthDisabled } from "../api";
 import { chatOff, useDock, type AskItem } from "./assistantDock";
 import { PANEL_KEY } from "./assistantStorage";
@@ -121,8 +122,8 @@ export function askAbout(item: AskItem): void {
   openAssistant();
 }
 
-/** The edge and Ctrl+/ (⌘/): open the panel, or close it (a close from outside the panel
- *  leaves the focus where it is). */
+/** The Ask AI button and Ctrl+J (⌘J): open the panel, or close it, Ctrl+J the expanded
+ *  window too (a close from outside the panel leaves the focus where it is). */
 export function toggleAssistant(): void {
   if (useDock.getState().open) closeAssistant("person");
   else openAssistant();
@@ -227,8 +228,8 @@ export function announceAssistant(message: string): void {
 
 /** The page elements a modal panel makes inert (marked `data-dock-inert` in App and its
  *  layout): the skip link, the "Go to the assistant" skip button, the sidebar, the reload
- *  bar, the header, <main>, the assistant edge and the phone nav. The toasts, portals and
- *  live regions stay live. */
+ *  bar, the header (the Ask AI button with it), <main> and the phone nav. The toasts,
+ *  portals and live regions stay live. */
 function applyInert(modal: boolean): void {
   if (typeof document === "undefined") return;
   for (const el of document.querySelectorAll<HTMLElement>("[data-dock-inert]")) {

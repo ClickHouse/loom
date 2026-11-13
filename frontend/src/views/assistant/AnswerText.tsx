@@ -150,11 +150,22 @@ export function renderBlocks(text: string, spans: (line: string) => ReactNode[])
   });
 }
 
+/** A citation marker as an answer writes it (`[memory:<key>@v<version>]`, `[doc:<uri> §
+ *  <section>]`, `[help:<page> § <section>]`, `[code:<path>:<line>]`): the one pattern the
+ *  answer's text, the search card's numbers and the Sources rows read. */
+export const CITATION = /\[(?:memory|doc|help|code):[^\]\n]+\]/;
+
+/** A marker as a preview writes it, its whitespace collapsed: how a citation's text and a
+ *  marker in the search card's preview are matched. */
+export const citationKey = (marker: string) => marker.replace(/\s+/g, " ");
+
 // A citation first, so the emphasis rules never reach into a key or a path
 // (`[code:server/__init__.py:3]`); then code spans, strong, then emphasis. An underscore
 // emphasises only between word boundaries, so snake_case stays as written.
-const INLINE =
-  /(\[(?:memory|doc|help|code):[^\]\n]+\])|(`+)([^`]|[^`][\s\S]*?[^`])\2(?!`)|\*\*(?=\S)([\s\S]*?\S)\*\*|(?<!\w)__(?=\S)([\s\S]*?\S)__(?!\w)|\*(?=[^\s*])([\s\S]*?[^\s*])\*|(?<!\w)_(?=[^\s_])([\s\S]*?[^\s_])_(?!\w)/g;
+const INLINE = new RegExp(
+  `(${CITATION.source})|${/(`+)([^`]|[^`][\s\S]*?[^`])\2(?!`)|\*\*(?=\S)([\s\S]*?\S)\*\*|(?<!\w)__(?=\S)([\s\S]*?\S)__(?!\w)|\*(?=[^\s*])([\s\S]*?[^\s*])\*|(?<!\w)_(?=[^\s_])([\s\S]*?[^\s_])_(?!\w)/.source}`,
+  "g",
+);
 
 // With a link renderer, also `[label](target)` and `![alt](target)`, last: where a code span
 // or emphasis starts first it wins, and a link inside emphasis is read in its content. A
@@ -170,9 +181,13 @@ const INLINE_LINKS = new RegExp(
 /** How a page draws one link: its label already drawn, whether it is an image, its target. */
 export type LinkRenderer = (label: ReactNode[], image: boolean, target: string) => ReactNode;
 
+/** How a page draws one citation marker (the search card draws its number). */
+export type CitationRenderer = (marker: string) => ReactNode;
+
 /** A line's inline Markdown as React nodes; anything else, HTML included, is text. An
- *  answer gets no links: only a caller that passes `link` (the Help page) draws them. */
-export function inline(text: string, link?: LinkRenderer): ReactNode[] {
+ *  answer gets no links: only a caller that passes `link` (the Help page) draws them. A
+ *  citation shows as written unless a caller passes `cite`. */
+export function inline(text: string, link?: LinkRenderer, cite?: CitationRenderer): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
   let k = 0;
@@ -197,9 +212,13 @@ export function inline(text: string, link?: LinkRenderer): ReactNode[] {
       );
     } else if (citation) {
       out.push(
-        <span key={k++} className="font-mono" data-citation="">
-          {citation}
-        </span>,
+        cite ? (
+          <Fragment key={k++}>{cite(citation)}</Fragment>
+        ) : (
+          <span key={k++} className="font-mono" data-citation="">
+            {citation}
+          </span>
+        ),
       );
     } else if (code !== undefined) {
       out.push(
@@ -208,9 +227,9 @@ export function inline(text: string, link?: LinkRenderer): ReactNode[] {
         </code>,
       );
     } else if (strong ?? strong2) {
-      out.push(<strong key={k++}>{inline(strong ?? strong2, link)}</strong>);
+      out.push(<strong key={k++}>{inline(strong ?? strong2, link, cite)}</strong>);
     } else if (em ?? em2) {
-      out.push(<em key={k++}>{inline(em ?? em2, link)}</em>);
+      out.push(<em key={k++}>{inline(em ?? em2, link, cite)}</em>);
     } else {
       out.push(whole);
     }

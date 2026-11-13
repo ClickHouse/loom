@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
 import { useStore } from "../../lib/state";
 import { AssistantChat } from "./Chat";
-import { conversation, MAX_MESSAGE_CHARS, resetChat, useChat } from "./chatStore";
-import { contextLength, pageContext } from "./pageContext";
+import { conversation, resetChat, useChat } from "./chatStore";
+import { MAX_MESSAGE_CHARS, contextLength, pageContext } from "./pageContext";
 import { useDock } from "../../lib/assistantDock";
 
 // The chat posts OpenAI's chat body to /v1/assistant/chat/completions and reads the
@@ -513,15 +513,19 @@ describe("AssistantChat", () => {
     // Two of its three sources were found (code is never checked): the label leads with that.
     expect(screen.getByTestId("assistant-support")).toHaveTextContent("Partly confirmed: 2 of 3 sources found in Loom");
     const rows = within(sources).getAllByRole("listitem");
-    expect(rows[0]).toHaveTextContent(/^Found in Loom · /);
-    expect(rows[2]).toHaveTextContent(/^Not confirmed · .*\(code citations are not checked\)$/);
+    // Each row is its source as the reader knows it, under one Sources label.
+    expect(rows[0]).toHaveTextContent(/^billing\/invoices$/);
+    expect(rows[2]).toHaveTextContent(/^server\/__init__\.py:12 · not confirmed \(code citations are not checked\)$/);
     expect(sources.parentElement).not.toHaveTextContent(/verified/i);
-    const memory = within(sources).getByRole("button", { name: "memory:billing/invoices@v3" });
+    const memory = within(sources).getByRole("button", { name: "billing/invoices" });
+    // The kind and the version are its tooltip.
+    await userEvent.setup().hover(memory);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Memory billing/invoices, version 3");
     await userEvent.setup().click(memory);
     expect(useStore.getState().inspectedMemoryKey).toBe("billing/invoices");
     // Read whichever writer filed it, not as the dashboard's own agent.
     expect(useStore.getState().inspectedAgent).toBe("*");
-    await userEvent.setup().click(within(sources).getByRole("button", { name: "doc:spec.pdf § Billing" }));
+    await userEvent.setup().click(within(sources).getByRole("button", { name: "spec.pdf § Billing" }));
     expect(useStore.getState().pendingDocSourceUri).toBe("spec.pdf");
   });
 
@@ -559,7 +563,7 @@ describe("AssistantChat", () => {
     // The answer's text draws no link; the Sources entry opens the page in the dashboard.
     expect(container.querySelector("a")).toBeNull();
     expect(within(sources).getByText(/no such page in this build/)).toBeInTheDocument();
-    await userEvent.setup().click(within(sources).getByRole("button", { name: text.slice(1, -1) }));
+    await userEvent.setup().click(within(sources).getByRole("button", { name: text.slice(6, -1) }));
     expect(useStore.getState().view).toBe("help");
     expect(window.location.search).toContain("page=guides%2Ftokens-and-grants.md");
     expect(window.location.hash).toBe("#revoke-and-rotate");

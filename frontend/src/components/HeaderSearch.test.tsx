@@ -59,7 +59,7 @@ describe("HeaderSearch", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "coffee");
-    await screen.findByRole("listbox", { name: "Search results" });
+    await screen.findByRole("group", { name: "Best matches" });
     const [first] = screen.getAllByRole("option");
     expect(first).not.toHaveTextContent(/^memory/);
     expect(first.querySelector('[class*="badge"]')).toBeNull();
@@ -163,10 +163,12 @@ describe("HeaderSearch", () => {
     const listbox = await screen.findByRole("listbox", { name: "Search results" });
     expect(input).toHaveAttribute("aria-expanded", "true");
     expect(input).toHaveAttribute("aria-controls", listbox.id);
-    expect(screen.getByRole("group", { name: "Best matches" })).toBeInTheDocument();
+    await screen.findByRole("group", { name: "Best matches" });
 
+    // The two matches, then the row that asks the assistant instead.
     const options = screen.getAllByRole("option");
-    expect(options).toHaveLength(2);
+    expect(options).toHaveLength(3);
+    expect(options[2]).toHaveAccessibleName("Ask AI: coffee");
     await waitFor(() => expect(input).toHaveAttribute("aria-activedescendant", options[0].id));
     expect(options[0]).toHaveAttribute("aria-selected", "true");
 

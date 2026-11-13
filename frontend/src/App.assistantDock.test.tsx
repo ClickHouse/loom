@@ -1,7 +1,7 @@
-// The assistant panel in the shell: the launchers (the edge from md, the bottom nav's item
-// below), the modes the window's width gives it (push, overlay, phone sheet) and the window
-// it expands to, what a modal panel does to the page (role, trap, inert), the keys (Esc,
-// Ctrl+/), what navigations, Back and resizes do to it, and an /assistant address.
+// The assistant panel in the shell: the header's Ask AI button, the modes the window's width
+// gives it (push, overlay, phone sheet) and the window it expands to, what a modal panel does
+// to the page (role, trap, inert), the keys (Esc, Ctrl+J), what navigations, Back and
+// resizes do to it, and an /assistant address.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "./test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -71,7 +71,7 @@ async function boot(width: number, path = "/memories") {
   setWidth(width);
   window.history.replaceState(null, "", `${path}?namespace=${NS}`);
   render(<App />);
-  await screen.findByRole("button", { name: "Assistant" }, { timeout: 5000 });
+  await screen.findByRole("button", { name: "Ask AI" }, { timeout: 5000 });
   await until(() => useStore.getState().myNamespaces !== null);
 }
 
@@ -172,87 +172,105 @@ afterEach(() => {
   setWidth(1024);
 });
 
-describe("the launchers", () => {
-  it("is one element per width: the edge from md, the bottom nav's item below", async () => {
+describe("the Ask AI button", () => {
+  it("is one element at every width, in the header right after the search field", async () => {
     for (const width of [390, 700, 1280]) {
       await boot(width);
       expect(document.querySelectorAll('[data-focus-key="assistant-launcher"]')).toHaveLength(1);
-      expect(!!launcher().closest("nav")).toBe(width < 768);
+      const header = document.querySelector("header") as HTMLElement;
+      expect(header.contains(launcher())).toBe(true);
+      // Next after the search in the tab order: no control between them.
+      const search = document.getElementById("header-search") as HTMLElement;
+      expect(search.compareDocumentPosition(launcher()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(search.nextElementSibling?.contains(launcher())).toBe(true);
+      expect(launcher().closest("nav")).toBeNull();
       cleanup();
     }
   });
 
-  it("the edge is at the window's right from the first paint, enabled, and opens the panel with the focus in the field", async () => {
+  it("is enabled from the first paint, opens the panel with the focus in the field, and closes it", async () => {
     await boot(1440);
     const button = launcher();
-    expect(button.closest(".assistant-edge")).not.toBeNull();
-    expect(document.querySelector("header")?.contains(button)).toBe(false);
     expect(button).not.toBeDisabled();
     expect(button).not.toHaveAttribute("aria-disabled");
     expect(button).not.toHaveAttribute("aria-haspopup");
     expect(button).toHaveAttribute("aria-expanded", "false");
-    expect(button).toHaveAccessibleName("Assistant");
+    expect(button).not.toHaveAttribute("aria-controls");
+    expect(button).toHaveAccessibleName("Ask AI");
+    expect(button).toHaveTextContent("Ask AI");
     await openByLauncher();
+    // Pressed while the panel is open.
     expect(button).toHaveAttribute("aria-expanded", "true");
     expect(button).toHaveAttribute("aria-controls", "assistant-panel");
     expect(field()).toHaveFocus();
-    // Beside the page it closes the panel too.
     await userEvent.setup().click(button);
     await until(() => !useDock.getState().open);
+    expect(button).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("the edge's tooltip is the shortcut, or a reason and the shortcut", async () => {
+  it("below 1280 px, where it is its icon, its tooltip names it", async () => {
+    await boot(1100);
+    await userEvent.setup().hover(launcher());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ask AI \(Ctrl J\)$/);
+    act(() => useDock.setState({ reason: { kind: "starting" }, reasonShort: "setting up" }));
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ask AI: setting up \(Ctrl J\)$/));
+    act(() => useDock.setState({ reason: null, reasonShort: "" }));
+  });
+
+  it("its tooltip is the shortcut, or a reason and the shortcut", async () => {
     await boot(1440);
     await userEvent.setup().hover(launcher());
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ctrl \/$/);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ctrl J$/);
     act(() => useDock.setState({ reason: { kind: "starting" }, reasonShort: "setting up" }));
-    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^setting up \(Ctrl \/\)$/));
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^setting up \(Ctrl J\)$/));
+    act(() => useDock.setState({ reason: { kind: "not_configured" }, reasonShort: "chat not set up" }));
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^chat not set up \(Ctrl J\)$/));
   });
 
-  it("the bottom nav's item is a button, not a tab, and opens the sheet", async () => {
+  it("is the icon alone below 1280 px, named Ask AI, and on a phone opens the sheet", async () => {
     await boot(390);
-    const nav = launcher().closest("nav") as HTMLElement;
-    const items = [...nav.querySelectorAll("a, button")].map((e) => e.textContent?.trim());
-    expect(items).toEqual(["Memories", "Library", "Assistant", "More"]);
     const button = launcher();
-    expect(button.tagName).toBe("BUTTON");
-    expect(button).not.toHaveAttribute("aria-current");
-    expect(button).not.toHaveAttribute("aria-haspopup");
+    expect(button).toHaveAccessibleName("Ask AI");
+    expect(button).not.toHaveTextContent("Ask AI");
+    expect(document.querySelector('nav[aria-label="Sections"]')?.textContent).not.toContain("Assistant");
     await openByLauncher();
     expect(panel()).toHaveAttribute("data-mode", "sheet");
   });
 
-  it("hands the focus over when the window crosses 768 px", async () => {
-    await boot(1280);
-    act(() => launcher().focus());
+  it("keeps the focus across 1280 px and 768 px: the same element", async () => {
+    await boot(1440);
+    const button = launcher();
+    act(() => button.focus());
+    await resize(1100);
+    expect(launcher()).toBe(button);
+    expect(button).toHaveFocus();
     await resize(700);
-    expect(launcher().closest("nav")).not.toBeNull();
-    expect(launcher()).toHaveFocus();
+    expect(launcher()).toBe(button);
+    expect(button).toHaveFocus();
     await resize(1280);
-    expect(launcher().closest(".assistant-edge")).not.toBeNull();
-    expect(launcher()).toHaveFocus();
+    expect(button).toHaveFocus();
   });
 
   it("names its marks: answering, answer ready, unavailable", async () => {
     await boot(1440);
     act(() => useDock.setState({ working: true }));
-    expect(launcher()).toHaveAccessibleName("Assistant, answering");
+    expect(launcher()).toHaveAccessibleName("Ask AI, answering");
     act(() => useDock.setState({ working: false, unread: true }));
-    expect(launcher()).toHaveAccessibleName("Assistant, answer ready");
+    expect(launcher()).toHaveAccessibleName("Ask AI, answer ready");
+    expect(document.querySelector(".assistant-launcher-dot")).not.toBeNull();
     act(() => useDock.setState({ reason: { kind: "starting" } }));
-    expect(launcher()).toHaveAccessibleName("Assistant, unavailable");
+    expect(launcher()).toHaveAccessibleName("Ask AI, unavailable");
     // Never disabled: a click opens the panel to the reason.
     expect(launcher()).not.toHaveAttribute("aria-disabled");
     // A chat not set up is no broken mark: the starters still read.
     act(() => useDock.setState({ reason: { kind: "not_configured" }, unread: false }));
-    expect(launcher()).toHaveAccessibleName("Assistant");
+    expect(launcher()).toHaveAccessibleName("Ask AI");
     expect(launcher()).toHaveAttribute("data-launcher-state", "normal");
   });
 
-  it("the edge under an open overlay is inert, also when it mounts under it", async () => {
-    await boot(700);
+  it("is inert under an open overlay, with the rest of the header", async () => {
+    await boot(1100);
     await openByLauncher();
-    await resize(800);
     expect(panel()).toHaveAttribute("aria-modal", "true");
     expect(launcher().closest("[inert]")).not.toBeNull();
   });
@@ -304,7 +322,7 @@ describe("the expanded window (from 1024 px)", () => {
     );
   });
 
-  it("Esc and a click on the scrim collapse it; Ctrl+/ closes it, and the next open is docked", async () => {
+  it("Esc and a click on the scrim collapse it; Ctrl+J closes it, and the next open is docked", async () => {
     await boot(1100);
     await openByLauncher();
     await userEvent.setup().click(toggle("Expand the assistant"));
@@ -317,10 +335,10 @@ describe("the expanded window (from 1024 px)", () => {
     await userEvent.setup().click(document.querySelector(".assistant-scrim") as HTMLElement);
     expect(panel()).toHaveAttribute("data-mode", "overlay");
     await userEvent.setup().click(toggle("Expand the assistant"));
-    fireEvent.keyDown(field(), { key: "/", ctrlKey: true });
+    fireEvent.keyDown(field(), { key: "j", ctrlKey: true });
     await until(() => !useDock.getState().open);
     expect(useDock.getState().expanded).toBe(false);
-    fireEvent.keyDown(document.body, { key: "/", ctrlKey: true });
+    fireEvent.keyDown(document.body, { key: "j", ctrlKey: true });
     await until(() => useDock.getState().open);
     expect(panel()).toHaveAttribute("data-mode", "overlay");
   });
@@ -382,7 +400,7 @@ describe("an /assistant address", () => {
   });
 });
 
-describe("push mode (the page keeps 592 px beside the panel)", () => {
+describe("push mode (from 1280 px, the page keeping 640 px beside the panel)", () => {
   it("is not modal: no dialog role, no trap, nothing inert, and Tab leaves the panel", async () => {
     await boot(1440);
     await openByLauncher();
@@ -420,8 +438,7 @@ describe("push mode (the page keeps 592 px beside the panel)", () => {
     expect(splitter).toHaveAttribute("aria-orientation", "vertical");
     expect(splitter).toHaveAttribute("aria-controls", "assistant-panel");
     expect(splitter).toHaveAttribute("aria-valuemin", "360");
-    // 1440 - 244 (sidebar) - 48 (the edge) - 592 (page) = 556: wider would leave the page
-    // under 592 px.
+    // 1440 - 244 (sidebar) - 640 (page) = 556: wider would leave the page under 640 px.
     expect(splitter).toHaveAttribute("aria-valuemax", "556");
     expect(splitter).toHaveAttribute("aria-valuenow", "420");
     splitter.focus();
@@ -505,12 +522,12 @@ describe("overlay mode (below the push threshold)", () => {
     expect(inertOnPage()).toBeNull();
   });
 
-  it("leaves Ctrl+/ to another dialog that holds the focus", async () => {
+  it("leaves Ctrl+J to another dialog that holds the focus", async () => {
     await boot(900);
     act(() => useStore.getState().openHelp(true));
     const dialog = await screen.findByRole("dialog");
     await until(() => dialog.contains(document.activeElement));
-    fireEvent.keyDown(document.activeElement as Element, { key: "/", ctrlKey: true });
+    fireEvent.keyDown(document.activeElement as Element, { key: "j", ctrlKey: true });
     await act(async () => new Promise((r) => setTimeout(r, 50)));
     expect(useDock.getState().open).toBe(false);
     expect(dialog.contains(document.activeElement)).toBe(true);
@@ -518,25 +535,41 @@ describe("overlay mode (below the push threshold)", () => {
 });
 
 describe("the shortcut", () => {
-  it("Ctrl+/ and ⌘/ open and close the panel; a close from outside leaves the focus where it was", async () => {
+  it("Ctrl+J and ⌘J open and close the panel; a close from outside leaves the focus where it was", async () => {
     await boot(1440);
-    fireEvent.keyDown(document.body, { key: "/", ctrlKey: true });
+    const opened = fireEvent.keyDown(document.body, { key: "j", ctrlKey: true });
+    // The browser's own Ctrl+J (its downloads) is not run.
+    expect(opened).toBe(false);
     await until(() => document.activeElement?.id === "assistant-question");
-    fireEvent.keyDown(field(), { key: "/", metaKey: true });
+    fireEvent.keyDown(field(), { key: "j", metaKey: true });
     await until(() => !useDock.getState().open);
     expect(launcher()).toHaveFocus();
-    fireEvent.keyDown(document.body, { key: "/", metaKey: true });
+    fireEvent.keyDown(document.body, { key: "J", metaKey: true });
     await until(() => useDock.getState().open);
     const other = screen.getByRole("button", { name: "Keyboard shortcuts" });
     other.focus();
-    fireEvent.keyDown(other, { key: "/", ctrlKey: true });
+    fireEvent.keyDown(other, { key: "j", ctrlKey: true });
     await until(() => !useDock.getState().open);
     expect(other).toHaveFocus();
   });
 
-  it("a bare / is not the panel's", async () => {
+  it("opens the panel to its starters with the chat off", async () => {
+    window.__LOOM_ASSISTANT = false;
+    try {
+      await boot(1440);
+      fireEvent.keyDown(document.body, { key: "j", ctrlKey: true });
+      await until(() => useDock.getState().open);
+      expect(within(panel()).queryByRole("textbox", { name: "Question" })).toBeNull();
+    } finally {
+      window.__LOOM_ASSISTANT = undefined;
+    }
+  });
+
+  it("a bare j, Ctrl+/ and Ctrl+Shift+J are not the panel's", async () => {
     await boot(1440);
-    fireEvent.keyDown(document.body, { key: "/" });
+    fireEvent.keyDown(document.body, { key: "j" });
+    fireEvent.keyDown(document.body, { key: "/", ctrlKey: true });
+    fireEvent.keyDown(document.body, { key: "J", ctrlKey: true, shiftKey: true });
     await act(async () => new Promise((r) => setTimeout(r, 50)));
     expect(useDock.getState().open).toBe(false);
   });
@@ -554,9 +587,15 @@ describe("mode changes", () => {
     await resize(1440);
     expect(panel()).not.toHaveAttribute("aria-modal");
     expect(field()).toHaveFocus();
-    // 1100 - 244 - 48 - 592 leaves less than 360: overlay; with the sidebar collapsed (60), push.
-    await resize(1100);
+    // Below 1280 px the panel is over the page with the sidebar open or collapsed.
+    await resize(1279);
     expect(panel()).toHaveAttribute("aria-modal", "true");
+    act(() => useStore.getState().toggleSidebar());
+    expect(panel()).toHaveAttribute("aria-modal", "true");
+    expect(field()).toHaveFocus();
+    // At 1280 px it is beside the page with the sidebar collapsed (60), and open (244).
+    await resize(1280);
+    expect(panel()).not.toHaveAttribute("aria-modal");
     act(() => useStore.getState().toggleSidebar());
     expect(panel()).not.toHaveAttribute("aria-modal");
     expect(inertOnPage()).toBeNull();
@@ -640,7 +679,7 @@ describe("the phone sheet", () => {
     setWidth(375);
     window.history.replaceState({ loomSheet: true }, "", `/memories?namespace=${NS}`);
     render(<App />);
-    await screen.findByRole("button", { name: "Assistant" }, { timeout: 5000 });
+    await screen.findByRole("button", { name: "Ask AI" }, { timeout: 5000 });
     expect((history.state as Record<string, unknown>).loomSheet).toBeNull();
     expect(useDock.getState().open).toBe(false);
   });

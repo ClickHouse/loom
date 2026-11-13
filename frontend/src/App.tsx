@@ -60,7 +60,6 @@ import {
   openAssistantSoon,
   useDock,
 } from "./lib/assistantDock";
-import { AssistantEdge } from "./layout/AssistantLauncher";
 
 import { reloadPage } from "./lib/navigation";
 import { endSession, lostReason, sessionEndedNote, whoamiWhenReady } from "./lib/session";
@@ -293,9 +292,9 @@ export default function App() {
     return () => window.removeEventListener("popstate", sync);
   }, [authed, arriveFromHistory]);
 
-  // The assistant panel: its modes follow the window and the sidebar, a navigation closes
-  // it at overlay and phone widths, and Ctrl+/ (⌘/) opens and closes it. Wired once the
-  // shell has drawn (the elements a modal panel makes inert exist from then on).
+  // The assistant panel: its mode follows the window, a navigation closes it at overlay and
+  // phone widths, and Ctrl+J (⌘J) opens and closes it. Wired once the shell has drawn (the
+  // elements a modal panel makes inert exist from then on).
   const shellDrawn = !!identity && !!whoami_;
   useEffect(() => {
     if (!shellDrawn) return;
@@ -735,10 +734,6 @@ export default function App() {
           <div className="contents" data-dock-inert="">
             <MobileNav />
           </div>
-        </div>
-        {/* The assistant edge, from md: its column at the window's right. */}
-        <div className="contents" data-dock-inert="">
-          <AssistantEdge />
         </div>
       </div>
       {/* Where a navigation went, said once (lib/place.ts `announce`). */}

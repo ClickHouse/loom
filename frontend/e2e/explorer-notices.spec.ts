@@ -35,7 +35,7 @@ function collectErrors(page: Page): string[] {
   return errors;
 }
 
-// Beside the assistant docked at the push minimum (1280 px, the page keeping 592 px) the
+// Beside the assistant docked at the push minimum (1280 px, the page keeping 640 px) the
 // Explorer's three panes still sit side by side, none under another or the panel.
 test("with the assistant docked, the Explorer's panes fit beside it", async ({ page }) => {
   await installApi(page);

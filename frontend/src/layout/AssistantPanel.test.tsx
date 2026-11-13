@@ -114,8 +114,7 @@ describe("the splitter", () => {
   it("measures the width from the panel's own right edge", () => {
     render(<AssistantPanel />);
     act(() => openAssistant());
-    // jsdom lays nothing out: the panel's right edge is given, 48 px in from the window's
-    // (the assistant edge's column).
+    // jsdom lays nothing out: the panel's right edge is given, away from the window's.
     vi.spyOn(panel(), "getBoundingClientRect").mockReturnValue({ right: 1392 } as DOMRect);
     const splitter = screen.getByRole("separator", { name: "Resize the assistant panel" });
     fireEvent.pointerDown(splitter, { pointerId: 1, clientX: 972 });

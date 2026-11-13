@@ -14,7 +14,7 @@ vi.mock("../../api", async (importOriginal) => {
 
 import { useStore } from "../../lib/state";
 import { loadDockRuntime, useDock, type AskItem } from "../../lib/assistantDock";
-import { askAbout } from "../../lib/assistantDockRuntime";
+import { askAbout, openAssistant } from "../../lib/assistantDockRuntime";
 import { PANEL_DEFAULT } from "../../lib/assistantLayout";
 import { INDEX_KEY } from "../../lib/assistantStorage";
 import { axeViolations } from "../../test/axe";
@@ -1998,6 +1998,30 @@ describe("the page a question is asked from", () => {
     expect(chipText()).toBe("Includes: Memories");
   });
 
+  it("Try again from an emptied field, refused again, brings back the chip it was asked with", async () => {
+    signIn("viewer");
+    show();
+    const busy = { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" };
+    chat.push(refusal(503, busy));
+    act(() => askAbout(item()));
+    await waitFor(() => expect(chipText()).toBe("Includes: Memories · key user/pref/lang"));
+    await askIt("Who wrote it?");
+    await unavailable();
+    // Given back with its chip; the field is then emptied and the chip removed.
+    await waitFor(() => expect(useDock.getState().draft).toBe("Who wrote it?"));
+    const user = userEvent.setup();
+    await user.clear(screen.getByLabelText("Question"));
+    let refuse!: () => void;
+    chat.push(() => new Promise<Response>((done) => (refuse = () => done(refusal(503, busy)()))) as never);
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(sent).toHaveLength(2));
+    act(() => useDock.setState({ pageOff: true, item: null }));
+    await act(async () => refuse());
+    await waitFor(() => expect(useDock.getState().draft).toBe("Who wrote it?"));
+    expect(useDock.getState().pageOff).toBe(false);
+    expect(useDock.getState().item?.chip).toBe("key user/pref/lang");
+  });
+
   it("the item goes with the chip it was added to", async () => {
     signIn("viewer");
     show();
@@ -2436,5 +2460,109 @@ describe("with the chat off", () => {
     const first = await starter(/What does this namespace hold/);
     await waitFor(() => expect(first).toHaveFocus());
     expect(useDock.getState().focusField).toBe(false);
+  });
+});
+
+// The header search asks in the conversation the panel shows: the panel's body, mounted
+// later (Continue), keeps that answer streaming, and a later search question joins the
+// panel's conversation.
+describe("a question asked from the search", () => {
+  /** A streamed answer the test feeds; it stays open until `done`. */
+  function held() {
+    let c!: ReadableStreamDefaultController<Uint8Array>;
+    const response = new Response(new ReadableStream<Uint8Array>({ start: (x) => void (c = x) }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+    return {
+      response,
+      text: (t: string) =>
+        c.enqueue(enc.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: t } }] })}\n\n`)),
+      done: () => {
+        c.enqueue(enc.encode("data: [DONE]\n\n"));
+        c.close();
+      },
+    };
+  }
+  const transcript = () => screen.getByRole("list", { name: "Conversation" });
+
+  /** Signed in, with a whoami that names no subject: there is no owner to store by. */
+  function noSubject() {
+    signIn("nsAdmin");
+    useStore.setState({
+      whoami: { authenticated: true, subject: "", org: "acme", namespaces: ["team"], roles: [] } as never,
+    });
+  }
+
+  it.each([
+    ["a session with no subject", true],
+    ["a signed-in person", false],
+  ])("for %s, the panel mounted after it shows the turn, still answering", async (_who, anonymous) => {
+    const { askFromSearch } = await import("./SearchAnswer");
+    if (anonymous) noSubject();
+    else signIn("nsAdmin");
+    useDock.setState({ open: false, mounted: false });
+    const stream = held();
+    chat.push(() => stream.response);
+    let turnId = "";
+    expect(askFromSearch("When do invoices go out?", (id) => void (turnId = id))).toBe(true);
+    await waitFor(() => expect(turnId).not.toBe(""));
+    act(() => stream.text("Every Friday."));
+    // Continue: the panel opens, and its body mounts for the first time.
+    useDock.setState({ open: true, mounted: true });
+    show();
+    await waitFor(() => expect(transcript()).toHaveTextContent("Every Friday."));
+    expect(transcript()).toHaveTextContent("When do invoices go out?");
+    expect(useChat.getState().answering).toBe(true);
+    expect(useChat.getState().turns.at(-1)?.id).toBe(turnId);
+    act(() => stream.text(" Reminders go on Wednesday."));
+    act(() => stream.done());
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+    expect(transcript()).toHaveTextContent("Every Friday. Reminders go on Wednesday.");
+    expect(useChat.getState().turns).toHaveLength(1);
+  });
+
+  it("Continue on an open panel showing History shows the chat, with the search's turn", async () => {
+    const { askFromSearch } = await import("./SearchAnswer");
+    signIn("nsAdmin");
+    show();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "History" }));
+    expect(await screen.findByRole("heading", { name: "History" })).toBeInTheDocument();
+    const stream = held();
+    chat.push(() => stream.response);
+    expect(askFromSearch("When do invoices go out?", () => undefined)).toBe(true);
+    act(() => stream.text("Every Friday."));
+    // Continue: the panel is open already.
+    act(() => openAssistant());
+    await waitFor(() => expect(transcript()).toHaveTextContent("When do invoices go out?"));
+    expect(transcript()).toHaveTextContent("Every Friday.");
+    expect(screen.queryByRole("heading", { name: "History" })).toBeNull();
+    act(() => stream.done());
+    await waitFor(() => expect(useChat.getState().answering).toBe(false));
+  });
+
+  it("for a session with no subject, joins the conversation the panel shows", async () => {
+    const { askFromSearch } = await import("./SearchAnswer");
+    noSubject();
+    show();
+    const first = held();
+    chat.push(() => first.response);
+    expect(askFromSearch("Who owns billing?", () => undefined)).toBe(true);
+    act(() => {
+      first.text("Ada.");
+      first.done();
+    });
+    await waitFor(() => expect(transcript()).toHaveTextContent("Ada."));
+    const second = held();
+    chat.push(() => second.response);
+    expect(askFromSearch("When do invoices go out?", () => undefined)).toBe(true);
+    act(() => {
+      second.text("Every Friday.");
+      second.done();
+    });
+    await waitFor(() => expect(transcript()).toHaveTextContent("Every Friday."));
+    expect(transcript()).toHaveTextContent("Who owns billing?");
+    expect(useChat.getState().turns).toHaveLength(2);
+    expect(sent.at(-1)).toHaveLength(2);
   });
 });

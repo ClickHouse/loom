@@ -84,4 +84,21 @@ describe("HelpDialog", () => {
     expect(list.className).not.toMatch(/max-h|overflow/);
     expect(list).not.toHaveAttribute("tabindex");
   });
+
+  it("lists the search's answer-card keys only where the chat is on", () => {
+    const { unmount } = render(<HelpDialog open onOpenChange={() => {}} />);
+    expect(screen.getByText("Show the Ask AI card for the search text")).toBeInTheDocument();
+    expect(screen.getByText("Continue in the assistant")).toBeInTheDocument();
+    expect(screen.getByText("Open the search result, or ask the question")).toBeInTheDocument();
+    unmount();
+    window.__LOOM_ASSISTANT = false;
+    try {
+      render(<HelpDialog open onOpenChange={() => {}} />);
+      expect(screen.queryByText("Show the Ask AI card for the search text")).toBeNull();
+      expect(screen.queryByText("Continue in the assistant")).toBeNull();
+      expect(screen.getByText("Open the search result")).toBeInTheDocument();
+    } finally {
+      window.__LOOM_ASSISTANT = undefined;
+    }
+  });
 });

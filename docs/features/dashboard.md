@@ -138,38 +138,42 @@ and a tracker's Edit mapping, Rotate and Retire. The repository's Access tab sho
 reader its access controls with their reasons. A restricted namespace's own gate (a token
 of its org that names it, and a direct grant) is checked by its settings, its budget cap,
 a repository's Access tab and Refresh now; its other controls follow the role, and the
-server refuses a token that gate does not admit. The header's New menu follows the role
-the dashboard knows, and the server decides the rest. On a repository's namespace, a
-member's memory writes (add, and edit or delete a row) stay available whatever its role,
-and the server checks that the row is the member's. Only what is for the org or the
-platform rather than a namespace is left out: the platform pages, Health's Workers,
-Operation mix and Projection failures tabs, Settings › Models & keys and the admin
-drawer's navigation.
+server refuses a token that gate does not admit. The header's New menu (below 768 px the
+**New** group at the top of the phone's **More** sheet, so the top bar stays one row)
+follows the role the dashboard knows, and the server decides the rest. On a repository's
+namespace, a member's memory writes (add, and edit or delete a row) stay available
+whatever its role, and the server checks that the row is the member's. Only what is for
+the org or the platform rather than a namespace is left out: the platform pages, Health's
+Workers, Operation mix and Projection failures tabs, Settings › Models & keys and the
+admin drawer's navigation.
 
 ### The assistant panel
 
-The **Assistant** button at the window's right edge (a column from 768 px, its word set
-vertically under its icon), or the bottom navigation's **Assistant** item on narrower
-screens, opens the chat with the [assistant](../architecture/assistant.md#surfaces) on every
-page, and so do **Ctrl /** and **⌘ /** (listed in the keyboard shortcuts). After **Skip to
-main content**, a second skip control, **Go to the assistant**, opens it with the focus in its
+The **Ask AI** button in the header, right after the search field (its icon alone below 1280
+px), opens the chat with the [assistant](../architecture/assistant.md#surfaces) on every
+page, and closes it again while it sits beside the page; **Ctrl J** and **⌘ J** open and
+close it in every mode, the expanded window included (listed in the keyboard shortcuts;
+another dialog holding the focus keeps them). Its tooltip gives the shortcut, and a reason
+before it when one is known; it looks pressed while the panel is open. After **Skip to main
+content**, a second skip control, **Go to the assistant**, opens it with the focus in its
 field. The button is never disabled; its icon and name say when an answer is coming in, when
-one ended while the panel was closed (until it opens again; a reload forgets the mark), and
-when the assistant cannot answer, in which case the panel says why. On a deployment whose
-chat is not set up it keeps its plain icon: the panel then holds the starters, Loom's own
-reads. The chat asks about the header's namespace
-under the person's own access: the answer streams in as text with Markdown emphasis, lists,
-tables and code (no HTML, images or links), then its Sources, each citation as the server
-checked it, a memory, document or help citation found in Loom opening where the dashboard
-shows it (a help citation on the Help page at its section) and any citation not found saying
-why, and a label for the answer's [support](../architecture/assistant.md#support), none on
-an answer that makes no claim, such as a greeting or an abstention. While it answers, its
-working line names the latest call it made ("Read the audit"), or "Answering…" before the
-first; a call that failed or was refused reads "Couldn't read …", muted. Under the finished
-answer **What it read (n)** lists every call (see
-[steps](../architecture/assistant.md#steps)). **Stop** ends an answer; closing the panel or
-leaving the page does not. Once the text is complete Stop goes, and the answer shows
-"Checking sources…" until its check ends; the next question waits for that check. An
+one ended unseen, with the panel closed and not shown in the search's card (until it opens
+again; a reload forgets the mark), and when the assistant cannot answer, in which case the
+panel says why. On a deployment whose chat is not set up it keeps its plain icon: the panel
+then holds the starters, Loom's own reads. The chat asks about the header's namespace under
+the person's own access: the answer streams in as text with Markdown emphasis, lists, tables
+and code (no HTML, images or links), then its **Sources**, one row per citation as the
+server checked it, named as the reader knows it (a memory by its key, with its kind and
+version in the row's tooltip), a memory, document or help citation found in Loom opening
+where the dashboard shows it (a help citation on the Help page at its section) and any
+citation not found reading "not confirmed" with why, and a label for the answer's
+[support](../architecture/assistant.md#support), none on an answer that makes no claim, such
+as a greeting or an abstention. While it answers, its working line names the latest call it
+made ("Read the audit"), or "Answering…" before the first; a call that failed or was refused
+reads "Couldn't read …", muted. Under the finished answer **What it read (n)** lists every
+call (see [steps](../architecture/assistant.md#steps)). **Stop** ends an answer; closing the
+panel or leaving the page does not. Once the text is complete Stop goes, and the answer
+shows "Checking sources…" until its check ends; the next question waits for that check. An
 answer whose check never came back (the connection was lost, or the page was left) reads
 "Check didn't finish". Each question goes with the conversation's newest 50 messages.
 
@@ -224,8 +228,8 @@ The Memories page's **Insights** button opens the panel on the starters, with no
 (also where the chat is not set up: the starters read Loom without it):
 over a finished conversation it starts a new one; while an answer is coming in it opens on
 that conversation and says to choose New conversation once it ends. On a phone the button is
-left out, and the bottom navigation's Assistant item opens the panel, which shows the starters
-on an empty conversation (New conversation starts one). An old link to `/memories?section=insights`
+left out, and the top bar's Ask AI opens the panel, which shows the starters on an empty
+conversation (New conversation starts one). An old link to `/memories?section=insights`
 opens the panel on the audit's card, nothing asked.
 
 **Each question says which page it is asked from**, and shows it: a chip above the field,
@@ -256,26 +260,26 @@ deployment's chat is not set up it is absent: it only ever asks a model.
 
 One panel serves every window width:
 
-- **Beside the page** while the page keeps 592 px (the edge's column at its right): 360 to
-  720 px wide (420 by default, and narrower before it covers the page), resized by its
-  splitter's drag or arrow keys (a wider grab strip under a finger), and not modal, so Tab
-  moves between the page and the panel. A navigation leaves it open.
-- **Over the page** below that: full height at the right, the page dimmed and inert, the
+- **Beside the page** from 1280 px, the page keeping at least 640 px: 360 to 720 px wide
+  (420 by default, and narrower before it covers the page), resized by its splitter's drag
+  or arrow keys (a wider grab strip under a finger), and not modal, so Tab moves between the
+  page and the panel. A navigation leaves it open.
+- **Over the page** below 1280 px: full height at the right, the page dimmed and inert, the
   focus kept inside until it closes. A navigation, Back and Forward close it.
 - **Full screen** under 640 px, with a history entry of its own: Back closes it.
-- **Expanded** from 1024 px: **Expand** makes the open panel a window over the page, anchored
-  at the right and full height, leaving a 24 px strip of the dimmed page at the left; its
-  content keeps a reading width. The address, the history and the page under it do not
-  change. **Collapse**, Esc or a click on the strip returns it to the mode the width gives;
-  **Close** and **Ctrl /** close it, and the next open is docked. A navigation from it (a link
-  in a card, Back, Forward) leaves the window first: beside the page the panel stays open, over
-  it the panel closes. A window narrower than 1024 px collapses it.
+- **Expanded** from 1024 px: **Expand** makes the open panel a window over the page,
+  anchored at the right and full height, leaving a 24 px strip of the dimmed page at the
+  left; its content keeps a reading width. The address, the history and the page under it do
+  not change. **Collapse**, Esc or a click on the strip returns it to the mode the width
+  gives; **Close** and **Ctrl J** close it, and the next open is docked. A navigation from
+  it (a link in a card, Back, Forward) leaves the window first: beside the page the panel
+  stays open, over it the panel closes. A window narrower than 1024 px collapses it.
 
-Esc closes it from inside (after any menu or popover open in it), returning the focus to the
-button (expanded, Esc collapses the window). A change of width or of the sidebar moves the
-panel to another mode without losing the focus or the question being typed. It reopens on
-reload only where it sits beside the page, never expanded. A bookmarked `/assistant` address
-lands on the account's landing page and opens the assistant over it (expanded from 1024 px).
+Esc closes it from inside (after any menu or popover open in it), returning the focus to
+Ask AI (expanded, Esc collapses the window). A change of width moves the panel to another
+mode without losing the focus or the question being typed. It reopens on reload only where
+it sits beside the page, never expanded. A bookmarked `/assistant` address lands on the
+account's landing page and opens the assistant over it (expanded from 1024 px).
 
 Where the deployment's chat is not set up (no assistant URL), the panel is a list of Loom's
 own reads: it says chat is not set up, shows no question field, no **Try again** and no
@@ -298,6 +302,33 @@ nothing, leaving the question in the field, which says why, or, with other text 
 why in the panel. **Health**
 shows the same check as its Assistant row, once readiness can be read: to platform admins
 always, and to anyone else who opens Health while the assistant sets up or fails.
+
+**The header search answers a question in place.** Text that reads as a question (three
+words or more, ending with "?" or opening with a question word such as what, how or is, or
+with explain, summarize, show me, tell me, list or compare), unless it holds a search filter
+(`tag:`, `namespace:`, `type:`), shows **Ask AI: <the question>** as the first row of the
+results, with Enter as its key; other text keeps its results first and an **Ask AI** row
+after them, which, like Tab in the field, moves the card to the top until the text is
+edited. Typing never asks: Enter on the card (or a click) asks the question through the
+assistant as the panel's **Ask** does, in the conversation shown when it is about the
+header's namespace and otherwise in a new one, with the page's line (none once the panel's
+page chip is removed) but without an item **Ask about this** set for the panel's field; what
+is typed in the panel's field stays. The results give way to the card, until the text
+changes. The card then shows the answer's first lines as they stream, each citation in them
+drawn as a number that, once checked, links to its row under the card, its working line, and
+once checked the label and sources the panel shows; its end is said once in the assistant's
+live region. **Continue in the assistant**, Enter once the answer has started, or
+**Ctrl+Enter** (**⌘Enter**) opens the panel on that conversation, the question and answer
+its last turn. A question the card could not ask (another answer coming in, or another tab
+holding the conversation) waits in the panel's empty field. Closing the search while it
+answers leaves it answering: Ask AI shows the answer coming in, then ready. Where the chat
+is not set up, a reason keeps the assistant from answering (the token's own claims included,
+and a refusal the route gave earlier; the setup starting or failing does not hide the card,
+which says a refusal it causes), the header's namespace holds no memories (a code, tracker
+or collection namespace), or the question with its page line is longer than one request
+carries, the search shows no card and Tab does nothing special. Where the card can be
+offered the empty field reads "Search or ask a question", and while it shows, a search that
+matches nothing says no "No matches" and gives no filter tips.
 
 **Conversations are kept in this browser**, never on the server: 30 days from their last use,
 the newest 25 turns of each, up to 256 KB a conversation and 2 MB in all, and listed under

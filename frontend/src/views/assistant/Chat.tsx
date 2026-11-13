@@ -9,12 +9,12 @@ import { useStore } from "../../lib/state";
 import { AnswerText } from "./AnswerText";
 import {
   CITE_SOURCES,
-  MAX_MESSAGE_CHARS,
   ask,
   cancelEdit,
   draftEdited,
   editLast,
   lastAskedOf,
+  latestStep,
   retry,
   sentQuestion,
   stop,
@@ -22,7 +22,14 @@ import {
   type Turn,
 } from "./chatStore";
 import { Sources } from "./Sources";
-import { contextLength, markPageHintSeen, pageContext, pageHintSeen, withContext } from "./pageContext";
+import {
+  MAX_MESSAGE_CHARS,
+  contextLength,
+  markPageHintSeen,
+  pageContext,
+  pageHintSeen,
+  withContext,
+} from "./pageContext";
 
 // A starter's card and its reads: a chunk of their own, loaded when a conversation shows one.
 const Card = lazy(() => import("./cards/Card").then((m) => ({ default: m.Card })));
@@ -31,12 +38,6 @@ const Card = lazy(() => import("./cards/Card").then((m) => ({ default: m.Card })
  *  stopped, or failed in a way the same question sent again may pass. */
 const retryOffered = (t: Turn) =>
   t.state === "done" || t.state === "stopped" || ((t.state === "failed" || t.state === "refused") && !!t.retryable);
-
-/** The words of the answer's latest step while it streams, or null before the first. */
-function latestStep(t: Turn): string | null {
-  const steps = t.steps ?? [];
-  return steps.length > 0 ? steps[steps.length - 1].text : null;
-}
 
 /** "What it read (n)": the answer's tool calls, collapsed under it once it ends. A call that
  *  failed or was refused is muted, not an error: the answer may still stand. */

@@ -86,7 +86,7 @@ export function AssistantPanel() {
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
     if (!dragging.current || !element.current) return;
-    // Measured from the panel's own right edge: the assistant edge sits right of it in push.
+    // Measured from the panel's own right edge, wherever the panel sits.
     const right = element.current.getBoundingClientRect().right;
     setPanelWidth(Math.min(max, Math.max(PANEL_MIN, right - e.clientX)));
   };

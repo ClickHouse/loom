@@ -11,9 +11,10 @@ LibreChat is the assistant: it hosts the agent (its model, instructions and tool
 runs it headless beside Loom, reachable only from Loom. Loom supplies the agent's tools,
 which read under a token of the asker's own subject, and a read-only SQL op that
 ClickHouse itself holds to that token's org and namespaces. People chat in the
-dashboard's assistant panel, opened from the Assistant button at the window's right edge,
-or the bottom navigation's Assistant item on narrow screens; agents and scripts reach
-the same agent over HTTP, MCP and both SDKs, through Loom's origin and as themselves.
+dashboard's assistant panel, opened from the header's Ask AI button beside the search
+field, or ask in the header search, which answers a question in place and goes on in the
+panel; agents and scripts reach the same agent over HTTP, MCP and both SDKs, through
+Loom's origin and as themselves.
 
 ## Surfaces
 
@@ -336,24 +337,28 @@ The rule reads no wording beyond the abstention sentence, and accepts these resi
   answer read it; the instructions ask for a document to be read again before it is
   cited on a later turn.
 
-**Rendering.** The answer is model output that stored text can steer, so the dashboard
-renders it as text with Markdown emphasis, lists, tables and code only: no HTML, no
-images and no links in the answer's text, where each citation shows as written. The
-dashboard's `img-src 'self' data: blob:` already stops a remote image that would carry
-rows away in its URL. Under a finished answer its Sources
-(`frontend/src/views/assistant/Sources.tsx`) list each citation as the server checked
-it: one found in Loom reads "Found in Loom", a memory opening in the memory drawer, a
-document in the Library and a help citation on the Help page at its section, by the
-citation's `ref`; any other reads "Not confirmed" with its reason. A label above them
-says the answer's support in words, leading with how many sources were found when some
-were not: "Checked against what Loom holds", "Partly confirmed: n of m sources found in
-Loom", "Couldn't confirm: 0 of m sources found in Loom", "Couldn't confirm: it names …"
-(an op or setting this Loom does not have), "Couldn't confirm: it gives no sources",
-"Sources not checked" or "Not checked: it cites nothing Loom holds"; an answer whose
-`loom.citations` never came (the connection was lost after its text, or the page was left)
-reads "Check didn't finish". Each label's "Why this label" note says why it reads as it
-does; an answer whose support is `none` has no label. A value the dashboard does not know
-reads as `unchecked`.
+**Rendering.** The answer is model output that stored text can steer, so the
+dashboard renders it as text with Markdown emphasis, lists, tables and code only: no
+HTML, no images and no links in the answer's text, where each citation shows as
+written. The dashboard's `img-src 'self' data: blob:` already stops a remote image
+that would carry rows away in its URL. The header search's card, a preview of the
+answer, draws each citation in its text as a number, which links to the citation's
+row under the card once the check ends. Under a finished answer its Sources
+(`frontend/src/views/assistant/Sources.tsx`) list each citation as the server
+checked it, under one Sources label, each named as the reader knows it (a memory by
+its key, its kind and version in the row's tooltip): one found in Loom opens, a
+memory in the memory drawer, a document in the Library and a help citation on the
+Help page at its section, by the citation's `ref`; any other reads "not confirmed"
+with its reason. A label above them says the answer's support in words, leading with
+how many sources were found when some were not: "Checked against what Loom holds",
+"Partly confirmed: n of m sources found in Loom", "Couldn't confirm: 0 of m sources
+found in Loom", "Couldn't confirm: it names …" (an op or setting this Loom does not
+have), "Couldn't confirm: it gives no sources", "Sources not checked" or "Not
+checked: it cites nothing Loom holds"; an answer whose `loom.citations` never came
+(the connection was lost after its text, or the page was left) reads "Check didn't
+finish". Each label's "Why this label" note says why it reads as it does; an answer
+whose support is `none` has no label. A value the dashboard does not know reads as
+`unchecked`.
 
 ### Steps
 

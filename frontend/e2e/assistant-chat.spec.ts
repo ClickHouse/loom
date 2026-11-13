@@ -64,7 +64,7 @@ function streamed(text: string): string {
 }
 
 /** A page with the panel open on an empty chat: readiness reports the assistant ready, and
- *  the launcher (or `Ctrl+/`) opens it. */
+ *  the Ask AI button (or `Ctrl+J`) opens it. */
 async function openChat(page: Page, by: "launcher" | "shortcut" = "launcher") {
   await installApi(page);
   await page.route("**/v1/health/ready", (r) =>
@@ -78,7 +78,7 @@ async function openChat(page: Page, by: "launcher" | "shortcut" = "launcher") {
   // it is pressed again, only while the panel is still closed.
   else
     await expect(async () => {
-      if ((await launcher(page).getAttribute("aria-expanded")) !== "true") await page.keyboard.press("Control+/");
+      if ((await launcher(page).getAttribute("aria-expanded")) !== "true") await page.keyboard.press("Control+j");
       await expect(launcher(page)).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
     }).toPass({ timeout: 30_000 });
   await expect(page.getByRole("textbox", { name: "Question" })).toBeFocused();
@@ -132,7 +132,7 @@ for (const width of [1400, 375]) {
       expect(await chat.locator("a, img").count()).toBe(0);
       const sources = chat.getByRole("list", { name: "Sources" });
       await expect(sources.getByRole("listitem")).toHaveCount(4);
-      await expect(sources.getByRole("button", { name: "memory:billing/invoices@v3" })).toBeVisible();
+      await expect(sources.getByRole("button", { name: "billing/invoices" })).toBeVisible();
       await expect(sources).toContainText("SQL query: SELECT account, count() FROM invoices");
       await expect(sources).toContainText("code citations are not checked");
 
@@ -234,7 +234,7 @@ test("an unavailable assistant is a plain state, not a crash", async ({ page }) 
   await expect(why).toContainText("Set up chat: see Health");
   await expect(page.getByRole("button", { name: "Ask", exact: true })).toHaveAttribute("aria-disabled", "true");
   // Chat not set up is no broken mark on the launcher: its starters still read.
-  await expect(launcher(page)).toHaveAccessibleName("Assistant");
+  await expect(launcher(page)).toHaveAccessibleName("Ask AI");
   await expect(launcher(page)).toHaveAttribute("data-launcher-state", "normal");
   // The rest of the page still works.
   await expect(page.locator("main h1").first()).toBeVisible();
@@ -245,33 +245,63 @@ for (const width of [360, 400]) {
   test.describe(`phone ${width}, coarse pointer`, () => {
     test.use({ viewport: { width, height: 800 }, hasTouch: true, isMobile: true });
 
-    test("the bottom nav holds four items with the launcher, each a 44 px target, nothing overflowing", async ({
+    test("the top bar is one row with Ask AI and no New, the bottom nav three tabs, each a 44 px target", async ({
       page,
     }) => {
       await installApi(page);
       await page.goto("/memories");
       await expect(page.locator("main h1").first()).toBeVisible();
-      await expect(launcher(page)).toBeVisible();
-      await expect(page.locator("header").locator('[data-focus-key="assistant-launcher"]')).toHaveCount(0);
+      await expect(page.locator("header").locator('[data-focus-key="assistant-launcher"]')).toBeVisible();
       const fit = await page.evaluate(() => {
-        const nav = document.querySelector('[data-focus-key="assistant-launcher"]')?.closest("nav") as HTMLElement;
+        const big = (el: Element) => {
+          const r = el.getBoundingClientRect();
+          return r.width >= 44 && r.height >= 44;
+        };
+        const header = document.querySelector("header") as HTMLElement;
+        // Every control the top bar shows (the search field's row stays hidden until asked).
+        const controls = [...header.querySelectorAll<HTMLElement>("button")].filter((b) => b.offsetParent !== null);
+        const tops = new Set(controls.map((b) => Math.round(b.getBoundingClientRect().top)));
+        // The phone's bottom nav (the sidebar's nav is hidden at this width).
+        const nav = [...document.querySelectorAll<HTMLElement>('nav[aria-label="Sections"]')].find(
+          (n) => n.offsetParent !== null,
+        ) as HTMLElement;
         return {
           overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-          items: Array.from(nav.children).map((c) => {
-            const r = c.getBoundingClientRect();
-            return { text: c.textContent?.trim(), big: r.width >= 44 && r.height >= 44 };
-          }),
+          rows: tops.size,
+          ask: controls.some((b) => b.dataset.focusKey === "assistant-launcher"),
+          newShown: controls.some((b) => b.getAttribute("aria-label") === "New"),
+          small: controls.filter((b) => !big(b)).map((b) => b.getAttribute("aria-label")),
+          items: Array.from(nav.children).map((c) => ({ text: c.textContent?.trim(), big: big(c) })),
         };
       });
       expect(fit).toEqual({
         overflow: 0,
-        items: ["Memories", "Library", "Assistant", "More"].map((text) => ({ text, big: true })),
+        rows: 1,
+        ask: true,
+        newShown: false,
+        small: [],
+        items: ["Memories", "Library", "More"].map((text) => ({ text, big: true })),
       });
+    });
+
+    test("the More sheet offers New, which opens Add memory", async ({ page }) => {
+      await installApi(page);
+      await page.goto("/memories");
+      await expect(page.locator("main h1").first()).toBeVisible();
+      await page.getByRole("button", { name: "More" }).tap();
+      const sheet = page.getByRole("dialog", { name: "More" });
+      const memory = sheet.getByRole("button", { name: "New memory" });
+      await expect(memory).toBeVisible();
+      // Past the sheet's entrance, which scales it.
+      await expect.poll(async () => (await memory.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+      await memory.tap();
+      await expect(sheet).toBeHidden();
+      await expect(page.getByRole("dialog")).toBeVisible();
     });
   });
 }
 
-test("at 390 px the nav item opens the sheet, and Back returns the focus to it", async ({ page }) => {
+test("at 390 px the top bar's Ask AI opens the sheet, and Back returns the focus to it", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 800 });
   await installApi(page);
   await page.goto("/memories");
@@ -282,7 +312,7 @@ test("at 390 px the nav item opens the sheet, and Back returns the focus to it",
   await page.goBack();
   await expect(panel(page)).toBeHidden();
   await expect(launcher(page)).toBeFocused();
-  await expect(launcher(page).locator("xpath=ancestor::nav")).toHaveCount(1);
+  await expect(launcher(page).locator("xpath=ancestor::header")).toHaveCount(1);
 });
 
 // "Ask about this" in the memory drawer: the drawer closes, the panel opens in the mode the

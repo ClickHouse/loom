@@ -6,8 +6,11 @@ import { Popover } from "@clickhouse/click-ui/Popover";
 import type { Citation, Support } from "../../api/assistantChat";
 import { IconButton } from "../../components/IconButton";
 import { PopoverTrigger } from "../../components/ui/Menu";
+import { TipTarget } from "../../components/ui/TipTarget";
+import { Tip } from "../../components/ui/Tooltip";
 import { Unavailable } from "../../components/ui/Unavailable";
 import { useStore } from "../../lib/state";
+import { CITATION, citationKey } from "./AnswerText";
 
 interface Label {
   text: string;
@@ -104,6 +107,8 @@ export function Sources({
   askAgain,
   blocked = null,
   checkLost = false,
+  numbers,
+  idPrefix,
 }: {
   citations: Citation[];
   /** Absent: none came (a server that sends none, or a check that never came back). */
@@ -116,11 +121,16 @@ export function Sources({
   askAgain?: () => void;
   /** Why nothing can be asked now: "Ask again with sources" shows, unavailable. */
   blocked?: string | null;
+  /** The number a citation's marker shows in a preview that numbers them (the search's
+   *  card): its row leads with it, at the id `${idPrefix}-${n}`. */
+  numbers?: ReadonlyMap<string, number>;
+  idPrefix?: string;
 }) {
   const inspect = useStore((s) => s.inspect);
   const openDocument = useStore((s) => s.openDocument);
   const openDocsPage = useStore((s) => s.openDocsPage);
   const labelId = useId();
+  const listId = useId();
   const label = support ? supportLabel(support, citations, unknownNames) : checkLost ? NOT_CHECKED : null;
   // Where a citation found in Loom opens: a memory in the drawer (any writer's: the wildcard
   // reads it whichever agent, user or session it is filed under), a document in its
@@ -132,6 +142,16 @@ export function Sources({
     if (c.kind === "help") return () => openDocsPage(c.ref, c.anchor);
     return undefined;
   };
+  // The rows: in the order their numbers run where a preview numbers them, each named as
+  // the reader knows it; two memory rows that would read the same show their versions.
+  const named = citations.map((c) => ({ c, ...sourceName(c) }));
+  const count = new Map<string, number>();
+  for (const r of named) count.set(r.name, (count.get(r.name) ?? 0) + 1);
+  const numberOf = (c: Citation) => numbers?.get(citationKey(c.text));
+  const rank = (c: Citation) => numberOf(c) ?? Number.POSITIVE_INFINITY;
+  const rows = named
+    .map((r) => (r.versioned && (count.get(r.name) ?? 0) > 1 ? { ...r, name: r.versioned } : r))
+    .sort((a, b) => rank(a.c) - rank(b.c));
   if (!label && citations.length === 0) return null;
   return (
     <div className="mt-2 space-y-1" data-testid="assistant-sources">
@@ -162,30 +182,56 @@ export function Sources({
         </div>
       )}
       {citations.length > 0 && (
-        <ul className="space-y-1 text-xs" aria-label="Sources">
-          {citations.map((c) => {
-            const open = opener(c);
-            return (
-              <li key={c.text} className="break-words">
-                <span className="text-text-muted">{c.verified ? "Found in Loom" : "Not confirmed"} · </span>
-                {open ? (
-                  <Link component="button" type="button" size="sm" onClick={open}>
-                    {citationText(c)}
-                  </Link>
-                ) : (
-                  <span className={c.verified ? "text-text" : "text-text-muted"}>{citationText(c)}</span>
-                )}
-                {!c.verified && c.reason && <span className="text-text-muted"> ({c.reason})</span>}
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          {/* One label over the rows: a row is its source as the reader knows it. */}
+          <p id={listId} className="section-label">
+            Sources
+          </p>
+          <ul className="space-y-1 text-xs" aria-labelledby={listId}>
+            {rows.map(({ c, name, detail }) => {
+              const open = opener(c);
+              const n = numberOf(c);
+              return (
+                <li key={c.text} id={n && idPrefix ? `${idPrefix}-${n}` : undefined} className="source-row break-words">
+                  {n !== undefined && <span className="text-text-muted">{`${n}. `}</span>}
+                  {open ? (
+                    <Tip content={detail} disabled={!detail}>
+                      <Link component="button" type="button" size="sm" onClick={open}>
+                        {name}
+                      </Link>
+                    </Tip>
+                  ) : (
+                    // A tooltip only where it adds something (a kind, a version), and with it
+                    // the tab stop that reaches it.
+                    <TipTarget tip={detail} disabled={!detail}>
+                      <span className={c.verified ? "text-text" : "text-text-muted"}>{name}</span>
+                    </TipTarget>
+                  )}
+                  {!c.verified && (
+                    <span className="text-text-muted">{` · not confirmed${c.reason ? ` (${c.reason})` : ""}`}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </>
       )}
     </div>
   );
 }
 
-function citationText(c: Citation): string {
+const KINDS: Record<string, string> = {
+  memory: "Memory",
+  doc: "Document",
+  help: "Help page",
+  code: "Code",
+};
+
+/** A citation as the reader knows it: a memory's key, a document's address and section, a
+ *  help page, a code path, a SQL query by its first line. `detail` (its tooltip) adds the
+ *  kind and a memory's version, null where it would add nothing; `versioned`, a memory's
+ *  key with its version, tells two rows of one memory apart. */
+export function sourceName(c: Citation): { name: string; detail: string | null; versioned?: string } {
   if (c.kind === "sql") {
     // The statement's first line tells one query of the answer from another.
     const first =
@@ -193,7 +239,15 @@ function citationText(c: Citation): string {
         .replace(/^```sql\s*/i, "")
         .trim()
         .split("\n")[0] ?? "";
-    return `SQL query: ${first.length > 80 ? `${first.slice(0, 79)}…` : first}`;
+    const name = `SQL query: ${first.length > 80 ? `${first.slice(0, 79)}…` : first}`;
+    return { name, detail: null };
   }
-  return c.text.replace(/^\[|\]$/g, "");
+  if (!new RegExp(`^${CITATION.source}$`).test(c.text)) return { name: c.text, detail: null };
+  const body = c.text.slice(1, -1);
+  const kind = body.slice(0, body.indexOf(":"));
+  const unkinded = body.slice(kind.length + 1);
+  const version = kind === "memory" ? /@v(\d+)$/.exec(unkinded)?.[1] : undefined;
+  const name = version ? unkinded.slice(0, -(version.length + 2)) : unkinded;
+  const detail = version ? `${KINDS[kind]} ${name}, version ${version}` : `${KINDS[kind]} ${name}`;
+  return version ? { name, detail, versioned: `${name}, version ${version}` } : { name, detail };
 }

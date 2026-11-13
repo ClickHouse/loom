@@ -11,7 +11,7 @@ export function paletteShortcut(): string {
   return isApplePlatform() ? "⌘K" : "Ctrl K";
 }
 
-/** The assistant panel's shortcut as the keyboard prints it: `⌘ /` on Apple, `Ctrl /` elsewhere. */
+/** The assistant panel's shortcut as the keyboard prints it: `⌘ J` on Apple, `Ctrl J` elsewhere. */
 export function assistantShortcut(): string {
-  return isApplePlatform() ? "⌘ /" : "Ctrl /";
+  return isApplePlatform() ? "⌘ J" : "Ctrl J";
 }

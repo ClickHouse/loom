@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
-import { isAuthDisabled, isProxyMode, storedToken } from "../../api";
+import { isAuthDisabled, isProxyMode } from "../../api";
 import { getOrgModelCalls } from "../../api/guardrails";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { toast } from "../../components/Toast";
@@ -27,20 +27,22 @@ import { useStore } from "../../lib/state";
 import { AssistantChat } from "./Chat";
 import {
   CITE_SOURCES,
-  MAX_MESSAGE_CHARS,
   useChat,
   newConversation,
   openConversation,
   resetChat,
   saveOnHide,
   ask,
+  adoptOwner,
+  newConversationLine,
+  startIn,
+  ownerOf,
   sentQuestion,
   storedChanged,
 } from "./chatStore";
-import { adoptEpoch, deleteAllConversations, deleteConversation, listConversations, sameOwner } from "./conversations";
-import { contextLength, currentAsk, withContext } from "./pageContext";
+import { adoptEpoch, deleteAllConversations, deleteConversation, listConversations } from "./conversations";
+import { MAX_MESSAGE_CHARS, contextLength, currentAsk, withContext } from "./pageContext";
 import { readReadiness } from "./readiness";
-import { tokenReadScope } from "./tokenScope";
 
 // The starters and their cards: a chunk of their own, loaded when the panel shows them.
 const Starters = lazy(() => import("./cards/Starters").then((m) => ({ default: m.Starters })));
@@ -50,21 +52,6 @@ const NOT_CONFIGURED: AssistantReason = { kind: "not_configured" };
 
 /** How often the panel reads readiness again while the assistant is setting up or failing. */
 export const READINESS_POLL_MS = 10_000;
-
-/** The owner the conversations are keyed by: the person, the org, the token's read scope
- *  and read user. Behind a proxy, whoami's subject (no token). With auth off, none: nothing
- *  is stored. */
-function ownerOf(whoami: ReturnType<typeof useStore.getState>["whoami"]): Owner | null {
-  if (isAuthDisabled() || !whoami?.subject) return null;
-  if (isProxyMode()) return { subject: whoami.subject, org: whoami.org ?? "", scope: "-", user: "-" };
-  const scope = tokenReadScope(storedToken());
-  return {
-    subject: whoami.subject,
-    org: whoami.org ?? "",
-    scope: scope?.readScope ?? "-",
-    user: scope?.readUserId ?? "-",
-  };
-}
 
 type ModelCallsState = "loading" | "admin" | "locked" | "just_on" | "unknown";
 
@@ -108,6 +95,11 @@ export function DockBody() {
   const modal = useDock(isModal);
   const focusField = useDock((s) => s.focusField);
   const [showHistory, setShowHistory] = useState(false);
+  // An open the person starts asks for the question field (openAssistant's focusField), on
+  // an open panel too (the search's Continue): History gives way to the chat, which shows it.
+  useEffect(() => {
+    if (focusField) setShowHistory(false);
+  }, [focusField]);
   // A closed panel reopens on the chat, whose field takes the focus.
   useEffect(() => {
     if (!open) setShowHistory(false);
@@ -123,12 +115,8 @@ export function DockBody() {
     if (askSeq === handledAsk.current) return;
     handledAsk.current = askSeq;
     setShowHistory(false);
-    const c = useChat.getState();
-    const header = useStore.getState().identity?.namespace ?? "";
-    if (c.answering || c.turns.length === 0 || !c.namespace || c.namespace === header) return;
-    const old = c.namespace;
-    newConversation();
-    const line = newConversationLine(header, old);
+    const line = startIn(useStore.getState().identity?.namespace ?? "");
+    if (!line) return;
     useChat.setState({ notice: line });
     announceAssistant(line);
   }, [askSeq]);
@@ -158,10 +146,7 @@ export function DockBody() {
   const [ownerSettled, setOwnerSettled] = useState(false);
   useEffect(() => {
     setOwnerSettled(true);
-    const s = useChat.getState();
-    if (s.owner && owner && sameOwner(s.owner, owner)) return;
-    resetChat(owner);
-    adoptEpoch(isProxyMode() ? (owner?.subject ?? null) : null);
+    adoptOwner(owner);
   }, [ownerKey, owner]);
 
   // Another tab: a bumped epoch (a sign-out, Delete all) clears this view; a write to the
@@ -471,14 +456,6 @@ function savedHere(): string {
   return isProxyMode()
     ? "Saved in this browser only, for 30 days."
     : "Saved in this browser only, for 30 days. Signing out deletes them.";
-}
-
-/** What a new conversation in `now` says of the one about `old` it replaces: in History,
- *  unless it was kept in a collection, which History does not list (`readable`). */
-function newConversationLine(now: string, old: string): string {
-  return isCollectionName(old)
-    ? `New conversation in ${now}.`
-    : `New conversation in ${now}; the one about ${old} is in History.`;
 }
 
 function Mismatch({ old, now }: { old: string; now: string }) {

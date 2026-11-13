@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { useNewDialogs } from "../lib/newDialogs";
 import { Header } from "./Header";
 
 // The header says what the role lets you do. A viewer on a claim-only namespace gets a
@@ -38,10 +39,22 @@ const jwtOnly: MyNamespaceEntry[] = [
   },
 ];
 
+/** The window's width the media queries read: 900 px (from md, below lg) unless a test sets it. */
+let viewport = 900;
 beforeEach(() => {
   resetNamespaceRoleCache();
   listMine.mockReset();
   useStore.setState({ identity, view: "memories", myNamespaces: null });
+  useNewDialogs.setState({ memory: false, document: false });
+  viewport = 900;
+  vi.stubGlobal("matchMedia", (query: string) => {
+    const min = /min-width: (\d+)px/.exec(query);
+    return {
+      matches: min ? viewport >= Number(min[1]) : false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    };
+  });
 });
 
 describe("Header", () => {
@@ -148,11 +161,26 @@ describe("Header", () => {
     expect(screen.getByLabelText("Search Loom")).toHaveFocus();
   });
 
-  it("holds no assistant launcher: the edge and the bottom nav carry it", () => {
+  it("leaves New out below md: the phone's More sheet has it", async () => {
+    viewport = 390;
+    listMine.mockResolvedValue(jwtOnly);
+    useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+    render(<Header />);
+    await waitFor(() => expect(listMine).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "New" })).toBeNull();
+    // The sheet opens the dialog the header mounts.
+    act(() => useNewDialogs.setState({ memory: true }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("holds the Ask AI button right after the search field, before the actions", () => {
     listMine.mockResolvedValue(jwtOnly);
     render(<Header />);
-    expect(document.querySelector('[data-focus-key="assistant-launcher"]')).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Assistant/ })).toBeNull();
+    const ask = screen.getByRole("button", { name: "Ask AI" });
+    expect(ask).toHaveAttribute("data-focus-key", "assistant-launcher");
+    const search = screen.getByLabelText("Search Loom");
+    const controls = [...document.querySelectorAll("header input, header button")];
+    expect(controls.indexOf(ask)).toBe(controls.indexOf(search) + 1);
   });
 });
 
