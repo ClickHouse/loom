@@ -104,8 +104,8 @@ def spend_marks(hits: list[Any]) -> list[Any]:
 
 
 def moved_for_stale_code(hit: Any) -> bool:
-    """A row a search moved for stale code (`rank_down`; 0 places counts): no current row
-    for a later move to pass, nor one a later step may lift."""
+    """A row a search moved for stale code (`rank_down`), one recorded at 0 places
+    included: no current row for a later move to pass, nor one a later step may lift."""
     return "code_changed_places" in hit.score_components
 
 
