@@ -333,24 +333,27 @@ def test_listing_links_into_the_repository_resolve() -> None:
     """The registry listing, the plugin manifests, the SDK packages, the citation and the
     chart publish absolute links into this repository and the documentation site, which the
     doc-link check does not follow; a renamed file breaks them."""
-    text = "".join(
+    text = "\n".join(
         (ROOT / f).read_text()
         for f in (
             "server.json",
             ".claude-plugin/plugin.json",
             "integrations/claude-code-plugin/.claude-plugin/plugin.json",
             "integrations/codex-plugin/.codex-plugin/plugin.json",
+            "pyproject.toml",
             "sdk/python/pyproject.toml",
             "sdk/typescript/package.json",
             "CITATION.cff",
             "deploy/helm/loom/Chart.yaml",
+            ".github/ISSUE_TEMPLATE/config.yml",
+            ".github/ISSUE_TEMPLATE/10_question.yaml",
         )
     )
     links = re.findall(
-        r"https://(?:github\.com/ClickHouse/loom/blob/main|raw\.githubusercontent\.com/ClickHouse/loom/main)/([^\"#]+)",
+        r"https://(?:github\.com/ClickHouse/loom/blob/main|raw\.githubusercontent\.com/ClickHouse/loom/main)/([^\"#\s)]+)",
         text,
     )
-    site_links = re.findall(re.escape(SITE) + r"[^\"\s]*", text)
+    site_links = re.findall(re.escape(SITE) + r"[^\"\s)]*", text)
     assert links and site_links
     for path in links:
         assert (ROOT / path).is_file(), path
