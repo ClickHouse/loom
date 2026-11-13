@@ -320,7 +320,7 @@ export function Policies() {
             <EmptyState
               icon="secure"
               title="No rules"
-              description="Add a rule to forbid or require an action based on the caller's recent history. Rules only take effect once the server mode leaves off."
+              description="Add a rule to forbid or require an action based on the caller's recent history. Rules take effect once an operator sets the policy mode to shadow or enforce."
             />
           )}
           {rules !== null && !error && rules.length > 0 && (
@@ -606,7 +606,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
     <Card title="Dry run">
       <div className="text-xs text-text-muted mb-3">
         Evaluate the stored rules against a hypothetical call, using the same evaluator and trace the gate reads.
-        Nothing is blocked; Would block says what enforce mode would do.
+        Nothing is blocked; “Would block” says what enforce mode would do.
       </div>
       <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_2fr] gap-3 items-start">
         <TextField
@@ -647,7 +647,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
               Would block <Bool v={result.would_enforce} />
             </span>
             <span>·</span>
-            <span>mode {result.mode}</span>
+            <span>Mode {result.mode}</span>
             <span>·</span>
             <span>
               Counts as a write <Bool v={result.write_shaped} />
