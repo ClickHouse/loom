@@ -249,7 +249,7 @@ async def _shape_final_hits(
     # the answer and stays as it is, its marks spent so no merge moves its rows; a pass
     # another search merges leaves the move to it.
     if ctx.chronological_intent:
-        code_change.rank_down(final_hits, 0)
+        code_change.spend_marks(final_hits)
     elif not getattr(input, "_merged_into_parent", False):
         final_hits = move_stale(final_hits, input)
     _unit_bodies = await _expand_unit_bodies(

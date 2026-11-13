@@ -137,6 +137,7 @@ async def memory_with_repo_decisions(
     decisions, merged into the one section. Raises only what the base search
     raises."""
     from server.memory.app.search import handle_memory_search
+    from server.memory.app.search.output import move_stale
     from server.memory.app.search.request import apply_explain_default
     from server.memory.app.search.telemetry import credit_merged_hits
 
@@ -158,8 +159,6 @@ async def memory_with_repo_decisions(
     home = base._settled_input or mem_input
     # the decisions whose code changed move down among the merged rows, as the base's
     # did; the two searches' scores do not compare, so each keeps its own
-    from server.memory.app.search.output import move_stale
-
     hits = move_stale(hits, home, rescore=False)
     # Credited and elided as the base search credits and elides its own: for the hits
     # it hands on, before the section's floors and answer-first rules, in its window

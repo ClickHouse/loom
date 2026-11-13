@@ -86,6 +86,14 @@ def _placed(hit: Any) -> bool:
     return any(k in hit.score_components for k in _PLACED)
 
 
+def spend_marks(hits: list[Any]) -> list[Any]:
+    """The hits marked `_code_ranked_down`, their marks cleared: no later merge moves them."""
+    marked = [h for h in hits if getattr(h, "_code_ranked_down", False)]
+    for hit in marked:
+        hit._code_ranked_down = False
+    return marked
+
+
 def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any]:
     """`hits` with each one marked `_code_ranked_down` moved below the next `places` rows
     that are neither marked nor placed by an identifier match or a tier, never past the
@@ -95,9 +103,7 @@ def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any
     moved below (negative, as a reranker's `rerank_delta`). With `rescore` False a moved
     hit keeps its score: for a list placed by something other than score. The marks are
     spent, so a search that merges more rows in moves only those."""
-    marked = [h for h in hits if getattr(h, "_code_ranked_down", False)]
-    for hit in marked:
-        hit._code_ranked_down = False
+    marked = spend_marks(hits)
     moving = {id(h) for h in marked if not _placed(h)} if places > 0 else set()
     out = list(hits)
     # bottom-up: a stale row moves past the same rows whether or not one above it moves

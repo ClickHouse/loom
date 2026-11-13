@@ -23,8 +23,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.memory.domain import code_change
-
 
 def _is_home_fact(h: Any, home_ns: str) -> bool:
     return (
@@ -35,7 +33,11 @@ def _is_home_fact(h: Any, home_ns: str) -> bool:
 
 
 def leading_home_fact(
-    mem_hits: list[dict[str, Any]], home_ns: str, *, lead_margin: float = 0.03
+    mem_hits: list[dict[str, Any]],
+    home_ns: str,
+    *,
+    lead_margin: float = 0.03,
+    moved: frozenset[int] = frozenset(),
 ) -> dict[str, Any] | None:
     """The memory hit that leads the pool when it is a fact from `home_ns`.
 
@@ -54,8 +56,9 @@ def leading_home_fact(
         return None
     floor = float(first.get("similarity") or 0.0) - lead_margin
     for h in mem_hits[1:]:
-        # a fact whose linked code changed is served where the search put it, never lifted
-        if h.get("code_state") in code_change.DEMOTED:
+        # a fact the search moved down for its stale code (`moved`: the ids of those
+        # dicts) is served where the search put it, never lifted
+        if id(h) in moved:
             continue
         if _is_home_fact(h, home_ns) and float(h.get("similarity") or 0.0) >= floor:
             return h
@@ -187,6 +190,7 @@ def answer_first(
     explain: bool = False,
     margin: float = 0.03,
     home_margin: float = HOME_MARGIN,
+    moved: frozenset[int] = frozenset(),
 ) -> dict[str, Any]:
     """`payload` with the sections a leading home fact makes redundant
     withheld (see the module docstring). Foreign rows stay within `margin`
@@ -207,7 +211,7 @@ def answer_first(
         return payload
     _below += cap_chunks_behind_fact(payload, home_ns)
     hits = [h for h in (mem.get("results") or []) if isinstance(h, dict)]
-    lead = leading_home_fact(hits, home_ns)
+    lead = leading_home_fact(hits, home_ns, moved=moved)
     if lead is None:
         if _below:
             payload["withheld"] = {"memory": _below, "reason": "below_precision_floor"}
