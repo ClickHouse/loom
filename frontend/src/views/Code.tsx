@@ -1370,10 +1370,18 @@ export function AddRepositoryDialog({
                     </div>
                     <span className="text-xs text-text-muted whitespace-nowrap tabular">
                       showing {shownBranches.length} of {fmtInt(remote.total)}
-                      {remote.truncated && q && !shownBranches.some((b) => b.name.toLowerCase().includes(q))
-                        ? " — press Enter to search the remote's full list"
-                        : ""}
                     </span>
+                    {/* Not in the page: the remote's full list holds the rest. */}
+                    {remote.truncated && q && !shownBranches.some((b) => b.name.toLowerCase().includes(q)) && (
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        loading={looking}
+                        onClick={() => void lookup(search.trim())}
+                      >
+                        Search the remote
+                      </Button>
+                    )}
                   </div>
                 )}
                 <ul className="flex flex-wrap gap-2 list-none p-1 m-0 max-h-56 overflow-y-auto" aria-label="Branches">
@@ -1437,7 +1445,7 @@ export function AddRepositoryDialog({
               <div className="w-48">
                 <TextField id="add-branch" label="Branch" value={branch} onChange={(v) => setBranch(v)} />
                 <div className="text-xs text-text-muted mt-1">
-                  Or press Find branches to choose from what the remote shows.
+                  Or use Find branches to choose from what the remote shows.
                 </div>
               </div>
             )}

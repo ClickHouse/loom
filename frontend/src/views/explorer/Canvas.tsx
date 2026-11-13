@@ -641,7 +641,7 @@ export function Canvas({
               </div>
               <h2>Pick an entity to walk from</h2>
               <p className="mt-2 max-w-md text-sm text-text-muted leading-relaxed">
-                Nothing is walked until you ask. Type an entity and press Walk, type{" "}
+                Nothing is walked until you ask. Type an entity and choose Walk, type{" "}
                 <span className="font-mono">a → b</span> for a path, or start from one the memories mention most.
               </p>
               {starters === null ? (

@@ -563,20 +563,18 @@ export function Tasks() {
 
   // Esc closes the panel; the list's own keys are the grid's. Ignored while typing or while
   // a dialog or a menu is open.
-  const stateRef = useRef({ openRow, closeTask });
-  stateRef.current = { openRow, closeTask };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inEditable(e.target)) return;
       if (document.querySelector('[role="dialog"], [role="menu"]')) return;
-      if (e.key === "Escape" && stateRef.current.openRow) {
+      if (e.key === "Escape" && openRowRef.current) {
         e.preventDefault();
-        stateRef.current.closeTask();
+        closeTask();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [closeTask]);
 
   const menuFor = useCallback(
     (r: TaskListRow): RowMenuItem[] => {

@@ -196,7 +196,7 @@ export function Bar({
                 )}
                 {suggestions.length > 0 && pathQuery && (
                   <p className="px-2.5 py-1 text-xs text-text-muted border-t border-border">
-                    ↵ finds the path from <span className="font-mono">{pathQuery.a}</span> to the highlighted entity
+                    Choose an entity to find the path from <span className="font-mono">{pathQuery.a}</span> to it
                   </p>
                 )}
               </div>
@@ -257,8 +257,8 @@ export function Bar({
           />
         )}
         <span id="explorer-patterns-hint" className="sr-only">
-          Open issues by component and severity from the tracker, and the issue and PR graph behind a cell. Press again
-          to return to the entity graph.
+          Open issues by component and severity from the tracker, and the issue and PR graph behind a cell. Choose
+          Patterns again to return to the entity graph.
         </span>
       </PageHeader>
       {trail.length > 0 && (

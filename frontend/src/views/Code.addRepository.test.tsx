@@ -165,7 +165,7 @@ describe("Add repository — fetching versus reading are two questions", () => {
     await waitFor(() => expect(onAdded).toHaveBeenCalled());
   });
 
-  it("a long branch list is bounded: the search box shows, Enter asks GitHub with the query", async () => {
+  it("a long branch list is bounded: the search box shows, Search the remote asks GitHub with the query", async () => {
     const big = { ...REMOTE, total: 15898, matched: 15898, truncated: true };
     vi.mocked(remoteBranches)
       .mockResolvedValueOnce(big)
@@ -186,9 +186,9 @@ describe("Add repository — fetching versus reading are two questions", () => {
     const search = await screen.findByLabelText("Search branches");
     expect(screen.getByText(/showing 4 of 15,898/)).toBeTruthy();
     fireEvent.change(search, { target: { value: "22.3" } });
-    // not in the page: the hint says to search GitHub's full list, Enter does it
-    expect(screen.getByText(/press Enter to search/)).toBeTruthy();
-    fireEvent.keyDown(search, { key: "Enter" });
+    // not in the page: Search the remote asks the remote's full list
+    expect(screen.queryByText(/press Enter/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Search the remote" }));
     await waitFor(() => expect(remoteBranches).toHaveBeenCalledTimes(2));
     expect(vi.mocked(remoteBranches).mock.calls[1]).toEqual(["dev", "acme/app", "", "22.3"]);
     await waitFor(() => expect(screen.getByRole("button", { name: /^22\.3/ })).toBeTruthy());

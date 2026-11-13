@@ -86,6 +86,25 @@ describe("Outline", () => {
     expect(within(other).getByRole("button", { name: /^Select the edge:/ })).toHaveAttribute("tabindex", "-1");
   });
 
+  // Enter and Space on a selected row's action button run that button, not the row's select.
+  it("runs a selected row's action button on Enter and on Space", async () => {
+    const calls: string[] = [];
+    const user = userEvent.setup();
+    mount([node("mergetree")], {
+      selection: { kind: "node", entity: "mergetree" },
+      onWalk: (entity) => calls.push(`walk ${entity}`),
+      onSelect: () => calls.push("select"),
+    });
+    const walk = within(screen.getByRole("treeitem", { name: /^mergetree ·/ })).getByRole("button", {
+      name: "Walk from here",
+    });
+    walk.focus();
+    await user.keyboard("{Enter}");
+    expect(calls).toEqual(["walk mergetree"]);
+    await user.keyboard(" ");
+    expect(calls).toEqual(["walk mergetree", "walk mergetree"]);
+  });
+
   // The dashboard has no keyboard shortcuts: the row's actions are its buttons.
   it("takes no w, p, e, r or x on a row", async () => {
     const calls: string[] = [];
