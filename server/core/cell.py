@@ -78,7 +78,7 @@ MODES = ("recording", "enforced")
 TROUBLESHOOTING = "docs/operations/troubleshooting.md#a-process-with-loom_cell-unset-is-gated"
 
 
-def state(first: tuple[bool, str] | None, mode: str, has_tenancy: bool, has_own: bool) -> str:
+def state(*, first: tuple[bool, str] | None, mode: str, has_own: bool, has_tenancy: bool) -> str:
     """The deployment's cell state from its four state rows: `open` (none), `recording`
     (a first cell's full set, still recording), `enforced` (any other full set, a later
     cell whose mode row reads `recording` included) or `partial` (any other mix, which
@@ -214,7 +214,12 @@ class _View:
 
     def state(self) -> str:
         """The cell state these rows make; a view never read is `open`."""
-        return state(self.first, self.mode, self.has_tenancy, self.current is not None)
+        return state(
+            first=self.first,
+            mode=self.mode,
+            has_own=self.current is not None,
+            has_tenancy=self.has_tenancy,
+        )
 
 
 _view = _View()

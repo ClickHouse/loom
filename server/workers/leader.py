@@ -116,7 +116,8 @@ class SupervisorLease:
         self._lock: KeeperLock | None = None
         # A step still running in its thread when shutdown releases.
         self._mutex = threading.Lock()
-        # Decided by the first step (`decide_supervisor`), from the cell gate.
+        # Decided by the first step (`decide_supervisor`): the lease in `auto`, the cell
+        # gate in `on`.
         self.held = False
         self.reason = _mode_reason(mode) if mode != "auto" else "not acquired yet"
         self.error = ""

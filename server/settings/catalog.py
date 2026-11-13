@@ -5022,7 +5022,8 @@ class RuntimeSettings(BaseModel):
     # Which processes run the WorkerSupervisor: auto = the one process of the
     # deployment holding the `workers_supervisor` lease in ClickHouse
     # (server/workers/leader.py), and none outside the deployment (no
-    # LOOM_DEPLOYMENT); on = always; off = never (a pure web replica).
+    # LOOM_DEPLOYMENT); on = always (under the Postgres authority, only while the cell
+    # gate lets the process serve); off = never (a pure web replica).
     background_workers: Literal["auto", "on", "off"] = "auto"
     # auto mode: seconds a lease holder that stops renewing keeps the workers
     # before another process takes them over (failover time). At least 24: below

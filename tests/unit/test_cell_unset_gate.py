@@ -59,7 +59,8 @@ def _rows(monkeypatch: pytest.MonkeyPatch, state: str, **over) -> None:
 
 @pytest.mark.parametrize("rows,expected", STATES)
 def test_the_state_rule(rows: tuple, expected: str) -> None:
-    assert cell.state(*rows) == expected
+    first, mode, has_tenancy, has_own = rows
+    assert cell.state(first=first, mode=mode, has_own=has_own, has_tenancy=has_tenancy) == expected
 
 
 @pytest.mark.parametrize("rows,expected", STATES)
@@ -491,3 +492,15 @@ def test_an_unread_state_answers_503_while_postgres_migrations_are_pending(
     app.assert_not_awaited()
     body = send.await_args_list[1].args[0]["body"]
     assert b"cell state is not read yet: relation does not exist; see " in body
+
+
+def test_a_cell_process_with_postgres_migrations_pending_boots_gated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    monkeypatch.setattr(cell, "refresh", AsyncMock(return_value=False))
+    monkeypatch.setattr(cell, "start_refresh_loop", lambda: "loop")
+    monkeypatch.setattr(boot, "SKIPPED_PG_MIGRATIONS", ("pg:008_cells.sql",))
+    assert asyncio.run(boot.start_cell_gate()) == ["loop"]
+    assert "not read yet" in cell.gate_reason()
+    assert not cell.readiness_check().ok

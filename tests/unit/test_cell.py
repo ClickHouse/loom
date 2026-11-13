@@ -519,9 +519,12 @@ def test_a_failed_read_keeps_the_last_rows_only_up_to_the_stale_bound(
     assert not cell.readiness_check().ok
 
 
+@pytest.mark.parametrize("in_a_cell", [True, False])
 def test_the_workers_child_reads_the_cell_rows_before_its_workers_start(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, in_a_cell: bool
 ) -> None:
+    """With LOOM_CELL set the child reads its cell's rows first; with it unset (under
+    the Postgres authority too) it reads none: the parent's lease stops it."""
 
     order: list[str] = []
 
@@ -552,6 +555,8 @@ def test_the_workers_child_reads_the_cell_rows_before_its_workers_start(
         await asyncio.sleep(3600)
 
     _cell_settings(monkeypatch)
+    if not in_a_cell:
+        monkeypatch.setattr(settings, "cell", "")
     # `_serve` sets the process's lease: restored after, so later passes see none.
     monkeypatch.setattr(leader, "_CURRENT", leader.current())
     monkeypatch.setattr(worker_main.child, "read_deadlines", lambda *_a: None)
@@ -567,7 +572,7 @@ def test_the_workers_child_reads_the_cell_rows_before_its_workers_start(
     monkeypatch.setattr(ch_mod, "get_client", lambda: _Client())
     with pytest.raises(_Done):
         asyncio.run(worker_main._serve(0, 0))
-    assert order == ["services", "cell", "start_all"]
+    assert order == (["services", "cell", "start_all"] if in_a_cell else ["services", "start_all"])
 
 
 def test_the_stale_bound_leaves_room_for_three_cell_reads() -> None:
