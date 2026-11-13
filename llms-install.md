@@ -18,8 +18,8 @@ curl -sS http://localhost:7777/v1/health
 
 - A JSON reply with a `schema_version` field is a Loom server. If its `status` is `ok`, go
   to step 3. Otherwise stop and show the reply to the user.
-- If nothing answers but `~/.loom` exists, stop and ask the user: that directory holds an
-  install that is stopped or runs on another port (`LOOM_PORT` in `~/.loom/.env`), and
+- If nothing answers but `~/.loom/compose.yaml` exists, stop and ask the user: an install
+  is there that is stopped or runs on another port (`LOOM_PORT` in `~/.loom/.env`), and
   running the installer again would start or upgrade it.
 
 ## 2. Install
@@ -45,8 +45,8 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
   `/v1/health` answers. The first run takes a few minutes.
 - When it finishes, it prints `Dashboard: http://<host>:<port>/`. Use that port in the
   steps below.
-- If it says port `7777` is in use, run the command again with `LOOM_PORT=7778` in front
-  of `sh`.
+- If it says port `7777` is in use, run the command again with the `LOOM_PORT=…` its
+  message names in front of `sh`.
 - The install lives in `~/.loom`; `LOOM_INSTALL_DIR` chooses another directory.
 
 ## 3. Add the MCP server
@@ -54,9 +54,15 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 Add a `loom` entry under `mcpServers` and keep every other entry in the file. If a `loom`
 entry is there already, ask the user before changing it.
 
-The stock install is single-user: it has no sign-in and needs no token. If the server has
-sign-in on (the installer says so, or a call in step 4 is refused as unauthenticated), ask
-the user for a token from **Settings → Tokens** in the dashboard. Add it as a `headers`
+The stock install is single-user: it has no sign-in and needs no token. To check, list the
+tools without one:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:7777/mcp?toolset=coding' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+`200` means no token is needed. `401` means sign-in is on: ask the user for a token from
+**Settings → Tokens** in the dashboard. Add it as a `headers`
 entry, `"Authorization": "Bearer <token>"`, beside `url` in the entry below, or with
 `--header "Authorization: Bearer <token>"` on the `cline mcp add` command.
 
@@ -99,10 +105,12 @@ other clients.
 ## 4. Check it
 
 1. Reload the MCP servers. The tool list includes `loom_memory_set` and `loom_search`.
-2. Call `loom_memory_set` with `memory_key` `setup/check` and a short `value`, then
-   `loom_memory_get` with the same key: it returns the value.
+2. Pick a key no memory uses: `setup/check/` followed by a few random digits, which
+   `loom_memory_get` reports as not found. Call `loom_memory_set` with that `memory_key`
+   and a short `value`, then `loom_memory_get` with the same key: it returns the value.
 3. Call `loom_memory_delete` with that key.
-4. Tell the user that the dashboard is at `http://localhost:7777/`.
+4. Tell the user where the dashboard is: the `Dashboard:` address the installer printed,
+   `http://localhost:7777/` by default.
 
 ## Optional: index a repository
 
