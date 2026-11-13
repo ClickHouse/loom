@@ -13,12 +13,12 @@ not been run end to end on a live cluster, so check them against your Substrate 
 
 ## How the pieces fit
 
-| Piece         | Where it runs                           | What it does                                                                 |
-| ------------- | --------------------------------------- | ---------------------------------------------------------------------------- |
-| Loom          | `helm install loom` in namespace `loom` | the memory server; its Service is `loom.loom.svc.cluster.local:7777`         |
-| Agent         | a Substrate actor in an atespace        | calls Loom's MCP endpoint, `/mcp`, with a placeholder `Authorization` header |
-| Egress policy | the actor's policy (`kubectl ate`)      | allows the actor to reach Loom, and nothing else unless you add rules        |
-| Loom token    | a Kubernetes Secret                     | one per agent; the egress gateway puts it in the `Authorization` header      |
+| Piece         | Where it runs                                                          | What it does                                                                 |
+| ------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Loom          | `helm install loom` in namespace `loom`                                | the memory server; its Service is `loom.loom.svc.cluster.local:7777`         |
+| Agent         | a Substrate actor in an atespace                                       | calls Loom's MCP endpoint, `/mcp`, with a placeholder `Authorization` header |
+| Egress policy | Substrate's control plane, enforced by `atenet-egress` (`kubectl ate`) | allows the actor to reach Loom, and nothing else unless you add rules        |
+| Loom token    | a Kubernetes Secret                                                    | one per agent; the egress gateway puts it in the `Authorization` header      |
 
 Every request leaves the actor through Substrate's egress gateway (`atenet-egress` in
 `ate-system`), which denies all egress an actor's policy does not allow. Loom therefore sees
@@ -51,8 +51,9 @@ networkPolicy:
 ## 2. A token per agent
 
 Give each agent its own token, with a service-account subject named for the atespace and
-the actor, so each row it writes records that subject as its writer (`actor`), and its
-namespaces and roles decide what it reads ([tokens and grants](../../guides/tokens-and-grants.md)).
+the actor. Each row it writes records that subject as its writer (`actor`), and the token's
+namespaces and roles decide what it reads and writes
+([tokens and grants](../../guides/tokens-and-grants.md)).
 Mint it in a Loom pod, which holds the signing key, and store it in a Secret in a namespace
 that holds only that atespace's tokens:
 
@@ -112,10 +113,10 @@ The key names follow the client ([MCP clients](./mcp-clients.md) has the entry f
 Keep the token out of the template: Substrate stores templates and snapshots, and its
 container environment takes literal values only.
 
-Then create the atespace, the actor template that carries the agent's image (Substrate's
-[API guide](https://ate.dev/docs/reference/api-guide/) describes its fields; here its
-`metadata` names it `research-agent` in atespace `research`), and the actor from that
-template; its egress policy comes next:
+Then create the atespace, the actor template that carries the agent's image, and the actor
+from that template. Substrate's [API guide](https://ate.dev/docs/reference/api-guide/)
+describes the template's fields; here its `metadata` names it `research-agent` in atespace
+`research`. The egress policy comes next:
 
 ```bash
 kubectl ate create atespace research
