@@ -171,10 +171,11 @@ curl -sX POST "$LOOM/v1/memory.set" \
   `memory.history` that names a `user_id` or `session_id` names its agent too. An op
   whose agent is optional and left out acts across every agent: a search reads every
   agent's rows, and `memory.update` finds the key in the whole namespace. A key that
-  misspells one of these (`namepsace`) is taken as naming it, so the call is refused
-  rather than filled. Every other op names its own namespace and agent; on a
-  single-user server with no token, a blank or `"-"` namespace on one that requires a
-  namespace (code and tracker ops aside) is refused as missing. A call with a token
+  misspells one of these (`namepsace`) is taken as naming it, so that field is not
+  filled and, where the op requires it, the call is refused. Every other op names
+  its own namespace and agent; on a single-user server with no token, a blank or
+  `"-"` namespace on one that requires a namespace (code and tracker ops aside) is
+  refused as missing. A call with a token
   (one the Python SDK finds by itself included:
   [Credentials](python-sdk.md#credentials)) gets nothing filled, and neither does any
   call in another identity mode.
@@ -209,9 +210,10 @@ MCP `tools/call` runs the same sequence, but for the single-user fill, which is 
 - An empty, blank or `"-"` `org` or `namespace` is treated as absent: a code
   or tracker op takes its plane's org (and a code op the code namespace,
   except the `code.repo.*` writes, which must name their repository), any other
-  op the token's own org, and a namespace with no org to pair it with is
-  `400 IDENTITY_INCOMPLETE`. A padded `org` or `namespace` is stripped. Over
-  MCP, a connection's `X-Loom-Code-Scope` names the repository for any `code.*`
+  op the token's own org (on a single-user server with no token, the install's
+  org and, on the ops listed under Identity above, its namespace), and a
+  namespace with no org to pair it with is `400 IDENTITY_INCOMPLETE`. A padded
+  `org` or `namespace` is stripped. Over MCP, a connection's `X-Loom-Code-Scope` names the repository for any `code.*`
   call that names none, the `code.repo.*` writes included.
 - An idempotent replay is looked up only after authorization and policy admit
   the call, so a stored answer never reaches another principal.

@@ -227,19 +227,17 @@ async def with_single_user_identity(
         for name, value in fill.items()
         if value and name in fields and name not in meant and _absent(args.get(name))
     }
+    # A blank value the call sent is a missing one, named by validation, never the
+    # empty namespace or agent: on a field a near-miss key kept from the fill, and
+    # on a required namespace this op does not fill.
+    drop = {name for name in fill if name in meant}
     namespace = fields.get("namespace")
-    if (
-        "namespace" not in update
-        and namespace is not None
-        and namespace.is_required()
-        and isinstance(args.get("namespace"), str)
-        and _absent(args["namespace"])
-    ):
-        # A blank namespace on any other op is a missing one, named by validation,
-        # never the empty namespace.
-        rest = {k: v for k, v in args.items() if k != "namespace"}
-        return {**rest, **update}
-    return {**args, **update} if update else args
+    if "namespace" not in update and namespace is not None and namespace.is_required():
+        drop.add("namespace")
+    drop = {name for name in drop if isinstance(args.get(name), str) and _absent(args[name])}
+    if not update and not drop:
+        return args
+    return {**{k: v for k, v in args.items() if k not in drop}, **update}
 
 
 def _absent(value: Any) -> bool:

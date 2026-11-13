@@ -304,6 +304,13 @@ def test_a_blank_namespace_beside_a_misspelled_one_is_refused(seen: Seen) -> Non
     assert seen == []
 
 
+def test_a_blank_agent_beside_a_misspelled_one_is_refused(seen: Seen) -> None:
+    """`agnet` named the agent: the blank one is not run as every agent."""
+    body = {"agent": "", "agnet": "bot", "memory_key": "k"}
+    assert "agent" in _missing(_post("memory.get", body))
+    assert seen == []
+
+
 def test_a_padded_namespace_is_kept_and_stripped(seen: Seen) -> None:
     """A name with spaces round it names a namespace: it is not filled."""
     _post("memory.get", {"namespace": " team ", "memory_key": "k"})

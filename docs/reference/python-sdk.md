@@ -105,11 +105,12 @@ answers `VALIDATION_FAILED` naming it rather than reading `""` as a namespace, a
 where it is optional runs without it. The SDK sends any credential it finds
 ([Credentials](#credentials)): `api_key=`, `LOOM_API_KEY`, a bot's `LOOM_CLIENT_ID`, a
 `loom login` session for that server, or `~/.loom/token`; a call with one gets no
-namespace filled in. `auto_run`, `run_scope()`, `session()`, `mentor_brief=True` and
-`mentor()` need the namespace named (their `run.begin`, `context.pack`,
-`conversation.append` and `mentor.brief` are not on the list; an ambient run that cannot
-begin is skipped), and so do `knowledge.upload` and `knowledge.download`, which the SDK
-refuses without both. An `agent` not given is `sdk-python:<script>`.
+namespace filled in. An op not on [that list](http-api.md#request) needs the namespace
+named, and so does any SDK feature that calls one: `auto_run`, `run_scope()`, `session()`
+and `mentor()`, the context and working-memory tools in `bot.tools()`, and the LangGraph
+store's reads, among others (an ambient run that cannot begin is skipped). The SDK refuses
+`knowledge.upload` and `knowledge.download` without both org and namespace.
+An `agent` not given is `sdk-python:<script>`.
 
 An `agent` of `""`, `"-"` or `"*"` is replaced with `sdk-python:<script>` and a
 warning: an anonymous agent is indistinguishable from every other anonymous
