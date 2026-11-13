@@ -206,7 +206,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.files`](operations/code.md#codefiles) | Which indexed files have this NAME — an rg-style glob (`tests/queries/0_stateless/05138_*`, `/*Parquet*.cpp`), a basename stem (`05138_with_fill` matches the stem exactly or as its leading prefix… | viewer | read | no |  |
 | [`code.first_build`](operations/code.md#codefirst_build) | Which CI build first carried this commit? | viewer | read | no |  |
 | [`code.grep`](operations/code.md#codegrep) | Exact-match lookup over the indexed corpus. | viewer | read | yes |  |
-| [`code.history`](operations/code.md#codehistory) | The merged PRs that most recently touched a symbol or path: number, title, author, labels, and what reviewers said about that file — up to `reviews_per_pr` (default 3, 0 = none) human review… | viewer | read | yes |  |
+| [`code.history`](operations/code.md#codehistory) | The merged PRs that most recently touched a symbol or path: number, title, author, labels, and what reviewers said about that file — up to `reviews_per_pr` (default 3, 0 = none) human review comments… | viewer | read | yes |  |
 | [`code.impact`](operations/code.md#codeimpact) | Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius. | viewer | read | yes |  |
 | [`code.index_errors`](operations/code.md#codeindex_errors) | List the files the code index failed to parse or ingest, with the error and the commit. | viewer | read | yes |  |
 | [`code.index_status`](operations/code.md#codeindex_status) | Health of the code index: indexed head commit, compiler-tier commit, row counts, watermarks, and the weekly tables' state (symbol_stats_rows/at, unit_risk_rows/at; 0 = not written yet). | viewer | read | yes |  |
@@ -234,7 +234,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.symbol_history`](operations/code.md#codesymbol_history) | The regression history of one function: the merged PRs that touched it (with linked issues, reverts, inline review comments inside its span), and — through the tracker namespace bound to this code… | viewer | read | no |  |
 | [`code.test_gate`](operations/code.md#codetest_gate) | The pre-PR question in one call: for THIS change, which tests must run, and which touched code no test reaches. | viewer | read | no |  |
 | [`code.test_home`](operations/code.md#codetest_home) | Where does a new test case belong? | viewer | read | no |  |
-| [`code.tests_for`](operations/code.md#codetests_for) | Which stateless tests carry EVERY named facet: the tests that `SET` a setting, call a function, create an `ENGINE`, read a `system.*` table, use a `FORMAT`, carry a `-- Tags:` tag, or expect an… | viewer | read | no |  |
+| [`code.tests_for`](operations/code.md#codetests_for) | Which stateless tests carry EVERY named facet: the tests that `SET` a setting, call a function, create an `ENGINE`, read a `system.*` table, use a `FORMAT`, carry a `-- Tags:` tag, or expect an error… | viewer | read | no |  |
 | [`code.trace`](operations/code.md#codetrace) | Paste a stack trace / backtrace; get each frame resolved to its definition in one call — the incident-workflow entry point. | viewer | read | yes |  |
 | [`code.verify`](operations/code.md#codeverify) | Verify one closed-form claim against the index and return a three-valued verdict. | viewer | read | yes |  |
 | [`code.verify_citations`](operations/code.md#codeverify_citations) | Every citation a draft carries, resolved against the index before the draft is posted somewhere public and irreversible. | viewer | read | no |  |
@@ -246,7 +246,7 @@ Fields for every `collection` op: [operations/collection.md](operations/collecti
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
 | [`collection.create`](operations/collection.md#collectioncreate) | Create a collection: a namespace read and written only through grants. | viewer | idempotent | no | yes |
-| [`collection.delete`](operations/collection.md#collectiondelete) | Delete a collection with what it holds: a purging erasure of the namespace (documents, chunks, originals, memory leave the disk), then it leaves the directory and the tree, and its name is never… | admin | idempotent | no | yes |
+| [`collection.delete`](operations/collection.md#collectiondelete) | Delete a collection with what it holds: a purging erasure of the namespace (documents, chunks, originals, memory leave the disk), then it leaves the directory and the tree, and its name is never used… | admin | idempotent | no | yes |
 | [`collection.list`](operations/collection.md#collectionlist) | List the collections the caller can read, by name. | viewer | read | no |  |
 | [`collection.move`](operations/collection.md#collectionmove) | Put a collection under another one, or detach it. | admin | idempotent | no | yes |
 
@@ -386,7 +386,7 @@ Fields for every `inbox` op: [operations/inbox.md](operations/inbox.md).
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`inbox.list`](operations/inbox.md#inboxlist) | Inboxes the caller may see: those owned by ``namespace`` (the authorized namespace) plus, with ``mine_everywhere``, every inbox in the org the caller may post to: one whose owner namespace the… | viewer | read | no |  |
+| [`inbox.list`](operations/inbox.md#inboxlist) | Inboxes the caller may see: those owned by ``namespace`` (the authorized namespace) plus, with ``mine_everywhere``, every inbox in the org the caller may post to: one whose owner namespace the caller… | viewer | read | no |  |
 | [`inbox.policy_list`](operations/inbox.md#inboxpolicy_list) | List an inbox's trust policies. | viewer | read | no |  |
 | [`inbox.policy_set`](operations/inbox.md#inboxpolicy_set) | Set the trust mode an inbox owner chose for a poster and task kind (Loom stores it, never changes it). | admin | idempotent | no | yes |
 | [`inbox.principals`](operations/inbox.md#inboxprincipals) | The identities loom already knows in the org — the poster picker's source. | admin | idempotent | no |  |
@@ -499,7 +499,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.move`](operations/memory.md#memorymove) | Rename `from_key` to `to_key`, leaving the old key answering. | writer | write | yes | yes |
 | [`memory.outcome`](operations/memory.md#memoryoutcome) | External outcome signal for a memory row. | writer | write | no | yes |
 | [`memory.outcome_run`](operations/memory.md#memoryoutcome_run) | Apply one outcome to many recalled memories in a single call — the bulk form of memory.outcome, so callers skip a per-key loop. | writer | write | yes | yes |
-| [`memory.outline`](operations/memory.md#memoryoutline) | A namespace's table of contents, read from structure alone: row counts by type, the dated sessions with their digest's first line, the hub entities by degree, the communities when a pass has… | viewer | read | no |  |
+| [`memory.outline`](operations/memory.md#memoryoutline) | A namespace's table of contents, read from structure alone: row counts by type, the dated sessions with their digest's first line, the hub entities by degree, the communities when a pass has computed… | viewer | read | no |  |
 | [`memory.owner_report`](operations/memory.md#memoryowner_report) | The owner's view of their memory: what they own, who read it, how it was used. | viewer | read | no |  |
 | [`memory.pin`](operations/memory.md#memorypin) | WHAT: Save a standing fact and protect it. | writer | idempotent | yes |  |
 | [`memory.promote`](operations/memory.md#memorypromote) | Promote a single source memory to the namespace's shared layer. | admin | write | no | yes |
@@ -739,10 +739,10 @@ Fields for every `tracker` op: [operations/tracker.md](operations/tracker.md).
 | [`tracker.contract`](operations/tracker.md#trackercontract) | The record contract as the register page shows it before anyone connects: every table loom reads, required or optional, each column's family, the type a view writes, whether a default is safe, what… | viewer | read | no |  |
 | [`tracker.duplicate_check`](operations/tracker.md#trackerduplicate_check) | Does this draft already exist? | viewer | read | no |  |
 | [`tracker.flaky`](operations/tracker.md#trackerflaky) | Is this test a known flaky? | viewer | read | no |  |
-| [`tracker.item`](operations/tracker.md#trackeritem) | The tracker record of up to ten issue / PR numbers: component, severity, bisect verdict and branches still affected, test presence, CI result, reviewers, backport lineage, and the fixes / backports… | viewer | read | no |  |
+| [`tracker.item`](operations/tracker.md#trackeritem) | The tracker record of up to ten issue / PR numbers: component, severity, bisect verdict and branches still affected, test presence, CI result, reviewers, backport lineage, and the fixes / backports /… | viewer | read | no |  |
 | [`tracker.links`](operations/tracker.md#trackerlinks) | Which PR probably fixed this issue — or which issue this PR probably fixed — when nobody wrote the link down. | viewer | read | no |  |
 | [`tracker.release`](operations/tracker.md#trackerrelease) | Release readiness for one version (`26.3`): the blocker rows with their status and the latest health snapshot. | viewer | read | no |  |
-| [`tracker.similar`](operations/tracker.md#trackersimilar) | The reports that already say it: duplicate and related issues / PRs for a pasted report (`text`), an existing item (`issue_number` — its own title, body, component, versions and error code become… | viewer | read | no |  |
+| [`tracker.similar`](operations/tracker.md#trackersimilar) | The reports that already say it: duplicate and related issues / PRs for a pasted report (`text`), an existing item (`issue_number` — its own title, body, component, versions and error code become the… | viewer | read | no |  |
 | [`tracker.source.add`](operations/tracker.md#trackersourceadd) | Register a tracker source: a ClickHouse endpoint and database holding the record contract (docs/features/tracker/record-contract.md), a read-only credential, and the tracker namespaces that read it. | viewer | write | no | yes |
 | [`tracker.source.check`](operations/tracker.md#trackersourcecheck) | Run the record-contract check on a configured tracker source now: the same read the boot gate runs, its verdict cached. | viewer | read | no |  |
 | [`tracker.source.inspect`](operations/tracker.md#trackersourceinspect) | Connect with a read-only credential and say what the database holds — every table the user can read, its columns and types — plus a first mapping of it onto loom's logical model. | viewer | read | no |  |

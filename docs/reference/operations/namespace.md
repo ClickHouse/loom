@@ -378,7 +378,7 @@ Create a shared memory workspace within an org; caller becomes admin.
 | `tag_registry` | `list[NamespaceTypeConfig]` | *(computed)* | Per-tag TTL + dedup_threshold registry, matched on tags at memory.set time. |
 | `default_conflict_policy` | `Literal['auto_reinforce', 'manual_review', 'newest_wins', 'append_only'] \| None` | `None` | fresh: auto_reinforce |
 | `proposal_policy` | `ProposalPolicy \| None` | `None` | How proposals (facts written with memory.set proposed=true) are decided. |
-| `code_change_policy` | `Literal['retire_removed', 'flag', 'revise'] \| None` | `None` | How reads treat this namespace's code-linked memories when their code changes: `retire_removed` (the default: search leaves out a memory whose code is all gone, and serves it again when the code returns), `flag` (only the links are… |
+| `code_change_policy` | `Literal['retire_removed', 'flag', 'revise'] \| None` | `None` | How reads treat this namespace's code-linked memories when their code changes: `retire_removed` (the default: search leaves out a memory whose code is all gone, and serves it again when the code returns), `flag` (only the links are marked)… |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

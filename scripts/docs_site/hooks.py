@@ -7,7 +7,8 @@ the file on GitHub instead of a missing page; links in code blocks and code span
 as written, and reference-style links are not rewritten (the docs use inline links). The
 sidebar follows llms.txt's section order, with Overview and Quickstart first in Getting
 started, and a generated page gets no edit button (its source is the generator, not the
-page)."""
+page).
+"""
 
 from __future__ import annotations
 
