@@ -286,7 +286,7 @@ async def test_list_with_chunk_counts_default_excludes_superseded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_with_chunk_counts_counts_the_page_s_sources_only() -> None:
+async def test_list_with_chunk_counts_counts_only_the_page_sources() -> None:
     """The chunk counts read only the page's (namespace, source_uri) pairs, not every
     chunk of the namespaces listed."""
     ch = StubCH()

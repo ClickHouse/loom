@@ -2612,6 +2612,7 @@
           "include_superseded",
           "limit",
           "cursor",
+          "namespaces",
           "extra"
         ],
         "outline": [

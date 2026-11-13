@@ -175,6 +175,7 @@ async def test_list_reads_several_namespaces_as_one_newest_first(control_plane_u
         cursor = None
         # Two a page, through the SDK: the cursor walks across the namespaces.
         while True:
+            # In another order, and naming its own namespace again: neither changes the list.
             page = await a.knowledge.list(
                 limit=2, cursor=cursor, namespaces=namespaces_listed[1:] + [namespaces_listed[0]]
             )
