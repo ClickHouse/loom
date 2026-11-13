@@ -469,6 +469,8 @@ def test_reliance_rules_fire_on_chunk_credit_missing_keys_and_read_misses(
     assert by["relied_on_chunk_ids"].ops == ("run.complete", "memory.get")
     assert "80 of 1000" in by["relied_on_missing_keys"].text
     assert "1100 of 4000" in by["reads_miss"].text
+    for h in p.hints:
+        _assert_rendered_cleanly(h.text)
     # the facts come from the run table and the ledger's outcome columns
     assert any(
         "FROM loom.agent_runs FINAL" in q and "arrayJoin(memories_used)" in q for q in _last_ch.sqls

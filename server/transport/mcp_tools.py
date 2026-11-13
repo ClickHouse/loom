@@ -1,10 +1,11 @@
-"""MCP transport — tool descriptors, the `loom_search` rendering and the
-per-call ledger rows.
+"""MCP transport — tool descriptors, the `loom_search` rendering, naming ops
+for a listing and the per-call ledger rows.
 
 Builds the `tools/list` descriptors (registry-derived + synthetic), renders
 the `search.query` op's result as the `loom_search` tool answers it (a text
-summary plus the lean sections), and writes a call's ledger row
-(`_emit_mcp_event`). Never imports ``mcp_call`` or ``server.transport.mcp``.
+summary plus the lean sections), names ops in other text as a listing does
+(`name_ops_for_toolset`, `mentor_namer`, `hint_naming`), and writes a call's
+ledger row (`_emit_mcp_event`). Never imports ``mcp_call`` or ``server.transport.mcp``.
 """
 
 from __future__ import annotations
@@ -415,8 +416,9 @@ def mentor_namer(toolset: str | None) -> Callable[[str], str]:
 
 @contextmanager
 def hint_naming(toolset: str | None) -> Iterator[Callable[[str], str]]:
-    """For one tool call: mentor text the handler renders names ops for ``toolset``'s
-    listing; yields the namer, for the call's own hint."""
+    """Sets `mentor.hint_namer` for one tool call, so the mentor text the handler
+    renders names ops as ``toolset``'s listing does; yields the namer for the
+    call's own hint."""
     from server.insights.app.mentor import hint_namer
 
     namer = mentor_namer(toolset)

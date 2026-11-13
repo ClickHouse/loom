@@ -489,8 +489,8 @@ def _rules_reliance(c: _Ctx) -> None:
             "relied_on_chunk_ids",
             "warning",
             f"{chunk_ids} of {credited} keys named in run.complete's memories_used this week are "
-            "chunk ids (chunk:<session>:<n>): every chunk hit carries parent_memory_key; read "
-            "and credit that key (memory.get).",
+            "chunk ids (chunk:<session>:<n>): every chunk hit carries parent_memory_key: "
+            "credit that key, read with memory.get.",
             ("run.complete", "memory.get"),
             credited=credited,
             chunk_ids=chunk_ids,
