@@ -1,0 +1,24 @@
+{
+  "name": "clickhouse-loom",
+  "version": "1.2.0",
+  "description": "Shared long-term memory, document search and a code index for Gemini CLI from a self-hosted ClickHouse Loom server, over MCP.",
+  "mcpServers": {
+    "loom": {
+      "httpUrl": "${LOOM_MCP_URL}",
+      "headers": { "Authorization": "${LOOM_AUTHORIZATION}" }
+    }
+  },
+  "settings": [
+    {
+      "name": "Loom MCP URL",
+      "description": "Your Loom server's MCP endpoint: http://localhost:7777/mcp?toolset=coding for a single-user server on this machine",
+      "envVar": "LOOM_MCP_URL"
+    },
+    {
+      "name": "Loom authorization",
+      "description": "Bearer <token> for a team server (a token from Settings, Tokens); leave empty for a single-user server",
+      "envVar": "LOOM_AUTHORIZATION",
+      "sensitive": true
+    }
+  ]
+}

@@ -67,6 +67,7 @@ FOLLOWERS = [
     Pin("frontend/package-lock.json", _TOP_JSON),
     Pin("frontend/package-lock.json", _LOCK_ROOT),
     Pin(".claude-plugin/plugin.json", _TOP_JSON),
+    Pin("gemini-extension.json", _TOP_JSON),
     Pin("skills/loom-code/SKILL.md", r'^  version: "(?P<v>[^"]+)"$'),
     Pin("skills/loom/SKILL.md", r'^  version: "(?P<v>[^"]+)"$'),
     Pin("deploy/helm/loom/Chart.yaml", r'^appVersion: "(?P<v>[^"]+)"$'),
