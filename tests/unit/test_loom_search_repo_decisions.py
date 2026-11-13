@@ -957,36 +957,17 @@ async def test_a_decision_whose_code_changed_moves_down_after_the_merge_and_says
 @pytest.mark.parametrize(
     ("similarity", "order"),
     [
-        (0.85, ["decision:x", "b", "c", "d", "stale"]),  # its own 0.9 holds no slot
-        (0.5, ["b", "c", "d", "stale", "decision:x"]),  # as a home row at 0.5 would go
+        (0.85, ["decision:x", "b", "c", "d", "stale"]),  # not after its own 0.9
+        (0.5, ["b", "c", "d", "decision:x", "stale"]),  # among the current rows
     ],
 )
-def test_a_base_row_moved_for_stale_code_holds_the_slot_of_the_row_above_it(
-    similarity, order
-) -> None:
+def test_a_base_row_moved_for_stale_code_holds_no_slot_for_a_decision(similarity, order) -> None:
     stale = _hit("stale", 0.9, "me")
     stale.score_components = {"code_changed_places": -3.0}
     base = [_hit("b", 0.8, "me"), _hit("c", 0.7, "me"), _hit("d", 0.6, "me"), stale]
     fresh = _hit("decision:x", similarity, TRUNK, mtype="decision")
     hits, added = repo_decisions.merge_memory_hits(base, [fresh], "me")
     assert [h.memory_key for h in hits] == order
-
-
-@pytest.mark.parametrize(
-    ("above", "passed"),
-    [((), 0.0), (("a", "b"), -2.0)],
-    ids=["nothing-to-pass", "stopped-at-the-end"],
-)
-def test_a_stale_base_row_that_stopped_short_of_its_places_holds_no_slot(
-    monkeypatch, above, passed
-) -> None:
-    monkeypatch.setattr(repo_decisions.settings, "memory_search_code_changed_places", 3)
-    stale = _hit("stale", 0.95, "me")
-    stale.score_components = {"code_changed_places": passed}
-    base = [*(_hit(k, 0.9 - 0.1 * i, "me") for i, k in enumerate(above)), stale]
-    fresh = _hit("decision:x", 0.7, TRUNK, mtype="decision")
-    hits, _ = repo_decisions.merge_memory_hits(base, [fresh], "me")
-    assert [h.memory_key for h in hits] == [*above, "decision:x", "stale"]
 
 
 @pytest.mark.asyncio

@@ -405,7 +405,9 @@ is `changed`, `unresolved` or `missing`: it moves below the next
 or already moved, is not counted), never out of the results nor below a row served only
 as filler (under the similarity floor, or flagged below the abstain threshold), after the
 confidence and abstain checks have read them in relevance order;
-`score_components.code_changed_places` says how far. These are never moved down:
+`score_components.code_changed_places` says how far among its own search's rows
+(`loom_search` places its merged repository decisions among the current rows by
+similarity). These are never moved down:
 
 - a memory a person holds;
 - a memory whose only such links are into code the caller may not read, or are links
