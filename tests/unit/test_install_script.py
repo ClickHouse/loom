@@ -1945,6 +1945,7 @@ def test_local_models_ollama_sets_every_model_job_on_it(install) -> None:
     # The stub curl answers nothing, so the model is not there yet.
     assert "ollama pull qwen2.5:3b" in out.stdout
     assert "OLLAMA_CONTEXT_LENGTH=32768" in out.stdout
+    assert "entity tagging too" in out.stdout
     assert "Models & keys wins over .env" not in out.stdout
     # A rerun over that .env is told a dashboard configuration still wins.
     again = run(LOOM_LOCAL_MODELS="ollama")
@@ -1952,7 +1953,9 @@ def test_local_models_ollama_sets_every_model_job_on_it(install) -> None:
     assert "Models & keys wins over .env" in again.stdout
 
 
-def test_the_local_preset_loads_with_the_verifier_and_resolver_off(monkeypatch) -> None:
+def test_the_local_preset_loads_with_the_verifier_resolver_and_entity_tagging_off(
+    monkeypatch,
+) -> None:
     from server.settings import Settings
 
     for key, value in LOCAL_PRESET.items():
@@ -1961,6 +1964,7 @@ def test_the_local_preset_loads_with_the_verifier_and_resolver_off(monkeypatch) 
     assert loaded.llm_provider == "local"
     assert loaded.memory_extract_verify_models == ""
     assert loaded.memory_conflict_resolver_enabled is False
+    assert loaded.entity_extract_enabled is False
     assert loaded.assistant_answer_ceiling_usd == 0
     # A call with every retry fits in the extraction queue's pass (its lease follows the
     # pass: test_extraction_queue).

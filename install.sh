@@ -450,7 +450,7 @@ main() {
       set_env "$key" ""
     done
     printf 'Loom will run its model jobs on Ollama (%s)\n' "$local_model"
-    printf 'The capture verifier, the conflict resolver and entity tagging are off: they judge with hosted models in mind\n'
+    printf 'The capture verifier and the conflict resolver are off (their thresholds were set on hosted models), and entity tagging too (its pass would run out of time on a local model)\n'
     [ -z "${had_env:-}" ] \
       || printf 'A configuration saved in Models & keys wins over .env: choose Use environment configuration there after the restart\n'
     curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/tags 2>/dev/null \
