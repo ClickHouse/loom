@@ -8,7 +8,7 @@ for (const [width, docked] of [
   [1280, false],
   [1400, false],
   [1440, false],
-  // The assistant docked at the push minimum too: the page keeps 592 px.
+  // The assistant docked at the push minimum too: the page keeps 640 px.
   [1280, true],
 ] as const) {
   test(`at ${width} px${docked ? " with the assistant docked, the detail a sheet over the list," : ", the detail beside the list,"} a task row keeps its title and no two parts overlap`, async ({

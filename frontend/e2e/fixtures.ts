@@ -1753,7 +1753,7 @@ function taskCountsFixture(namespace: string): Record<string, unknown>[] {
 }
 
 /** The assistant panel left open at its widest: at 1280 px with the sidebar open it docks
- *  beside the page at the push minimum (the page keeps 592 px), restored on load. */
+ *  beside the page at the push minimum (the page keeps 640 px), restored on load. */
 export async function dockAssistant(page: Page): Promise<void> {
   await page.addInitScript(() =>
     localStorage.setItem("loom_assistant_panel", JSON.stringify({ open: true, width: 720 })),

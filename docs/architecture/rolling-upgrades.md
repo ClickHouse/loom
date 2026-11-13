@@ -643,7 +643,7 @@ schema. These rules keep that safe. The operator procedure is in
     segment for bookmarks, which N answers the same way at boot (except that on a phone
     the sheet opens over the landing page), so this answer stays as long as the segment
     is served. The mixed-version gate does not check this rule;
-    `frontend/e2e/assistant-edge.spec.ts` ("an entry an earlier build pushed opens the
+    `frontend/e2e/assistant-launch.spec.ts` ("an entry an earlier build pushed opens the
     assistant on Back after a reload") does.
 
 ## What checks them

@@ -1,13 +1,11 @@
 import { Suspense, lazy, useEffect, useRef, type KeyboardEvent, type PointerEvent } from "react";
 import { FocusScope } from "@radix-ui/react-focus-scope";
-import { IconButton } from "../components/IconButton";
 import { SkeletonCard } from "../components/Skeleton";
 import { LoadingSkeleton } from "../components/ui";
-import { SectionHeading } from "../components/ui/SectionHeading";
 import { useDock } from "../lib/assistantDock";
-import { EXPAND_MIN, PANEL_MIN, SPLIT_STEP, dockLayout, isModal, layoutOf } from "../lib/assistantLayout";
-import { closeAssistant, collapseAssistant, expandAssistant, setPanelWidth } from "../lib/assistantDockRuntime";
-import { useMedia } from "../lib/useMedia";
+import { PANEL_MIN, SPLIT_STEP, dockLayout, isModal, layoutOf } from "../lib/assistantLayout";
+import { closeAssistant, collapseAssistant, setPanelWidth } from "../lib/assistantDockRuntime";
+import { AssistantHeader } from "./AssistantHeader";
 
 // The chat, its stored conversations and the readiness read: a chunk of their own, loaded
 // the first time the panel opens.
@@ -38,8 +36,6 @@ export function AssistantPanel() {
     const docked = dockLayout(s.viewport, s.collapsed, s.prefWidth);
     return s.expandedFromPush && docked.mode === "push" ? docked.width : 0;
   });
-  const wide = useMedia(`(min-width: ${EXPAND_MIN}px)`);
-  const expired = useDock((s) => s.expired);
   const dragging = useRef(false);
   const element = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -86,7 +82,7 @@ export function AssistantPanel() {
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
     if (!dragging.current || !element.current) return;
-    // Measured from the panel's own right edge: the assistant edge sits right of it in push.
+    // Measured from the panel's own right edge, wherever the panel sits.
     const right = element.current.getBoundingClientRect().right;
     setPanelWidth(Math.min(max, Math.max(PANEL_MIN, right - e.clientX)));
   };
@@ -117,8 +113,8 @@ export function AssistantPanel() {
           data-entering={entering ? "" : undefined}
           hidden={!open}
           {...(modal
-            ? { role: "dialog", "aria-modal": "true", "aria-labelledby": "assistant-panel-title" }
-            : { role: "region", "aria-labelledby": "assistant-panel-title" })}
+            ? { role: "dialog", "aria-modal": "true", "aria-label": "Ask AI" }
+            : { role: "region", "aria-label": "Ask AI" })}
           tabIndex={-1}
           className="assistant-panel"
           style={mode === "sheet" || expanded ? undefined : { width }}
@@ -130,7 +126,7 @@ export function AssistantPanel() {
               role="separator"
               tabIndex={0}
               aria-orientation="vertical"
-              aria-label="Resize the assistant panel"
+              aria-label="Resize Ask AI"
               aria-controls="assistant-panel"
               aria-valuemin={PANEL_MIN}
               aria-valuemax={max}
@@ -143,32 +139,10 @@ export function AssistantPanel() {
               onPointerCancel={onPointerUp}
             />
           )}
-          {/* SectionHeading keeps 6 px under itself: the bottom padding makes up the rest. */}
-          <div className="px-4 pt-2 pb-0.5 border-b border-border shrink-0">
-            <SectionHeading
-              label="Assistant"
-              level={2}
-              id="assistant-panel-title"
-              actions={
-                <>
-                  {/* One button whose label swaps, so the focus stays on it. */}
-                  {wide && !expired && (
-                    <span className="contents" data-expand-toggle="">
-                      <IconButton
-                        icon={expanded ? "popin" : "popout"}
-                        label={expanded ? "Collapse the assistant" : "Expand the assistant"}
-                        onClick={expanded ? collapseAssistant : expandAssistant}
-                      />
-                    </span>
-                  )}
-                  <IconButton icon="cross" label="Close the assistant" onClick={() => closeAssistant("person")} />
-                </>
-              }
-            />
-          </div>
+          <AssistantHeader expanded={expanded} />
           <Suspense
             fallback={
-              <LoadingSkeleton label="Loading the assistant" className="p-4">
+              <LoadingSkeleton label="Loading Ask AI" className="p-4">
                 <SkeletonCard />
               </LoadingSkeleton>
             }
