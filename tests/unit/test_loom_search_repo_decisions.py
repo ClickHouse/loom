@@ -972,6 +972,14 @@ def test_a_base_row_moved_for_stale_code_holds_the_slot_of_the_row_above_it(
     assert [h.memory_key for h in hits] == order
 
 
+def test_a_stale_base_row_with_nothing_above_it_holds_no_slot() -> None:
+    stale = _hit("stale", 0.9, "me")
+    stale.score_components = {"code_changed_places": 0.0}  # nothing below it to pass
+    fresh = _hit("decision:x", 0.85, TRUNK, mtype="decision")
+    hits, _ = repo_decisions.merge_memory_hits([stale], [fresh], "me")
+    assert [h.memory_key for h in hits] == ["decision:x", "stale"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "moved", [None, -1.0, 0.0], ids=["current", "moved-for-stale-code", "nothing-to-pass"]
