@@ -545,8 +545,8 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   tunnel whose client sent EOF before any byte moved (a connection it gave up on) is
   closed at once. Once the proxy's side of a tunnel has ended (the server closed or
   reset it, or the proxy closed it), the relay ends its connection after at least a
-  second without a byte from the client. A client that never reads what it was sent keeps its relay
-  connection, and so its relay slot, for up to the idle timeout.
+  second without a byte from the client. A client that never reads what it was sent
+  keeps its relay connection, and so its relay slot, for up to the idle timeout.
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are

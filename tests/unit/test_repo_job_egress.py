@@ -405,7 +405,6 @@ async def test_a_client_that_never_reads_frees_its_slot_at_the_idle_timeout(
         head, second = await _connect_answer(sock)
         second.close()
         assert head.startswith(b"HTTP/1.1 200")  # the idle timeout freed the slot
-        done.set()
         await asyncio.wait_for(proxy.close(), timeout=5)  # the stuck client is dropped
     finally:
         writer.close()
