@@ -2566,6 +2566,10 @@ settings:
   # Seconds between deferred-extraction queue passes. [restart]
   # extraction_queue_interval_seconds: 15
 
+  # Seconds a deferred-extraction pass may run before the supervisor abandons it; a
+  # model slower than this per batch needs it raised (and the lease above it). [restart]
+  # extraction_queue_max_pass_seconds: 60.0
+
   # Most queued batches one pass claims. [live]
   # extraction_queue_max_batches_per_pass: 8
 

@@ -385,7 +385,7 @@
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 15,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 60.0,
    "name": "extraction_queue",
    "owned_tables": [],
    "pass_callable": {
@@ -1074,7 +1074,7 @@
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 15,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 60.0,
    "name": "extraction_queue",
    "owned_tables": [],
    "pass_callable": {
@@ -1663,7 +1663,7 @@
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 15,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 60.0,
    "name": "extraction_queue",
    "owned_tables": [],
    "pass_callable": {

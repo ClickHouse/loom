@@ -218,6 +218,10 @@ LOOM_ASSISTANT_ANSWER_CEILING_USD=0
 LOOM_MEMORY_EXTRACT_VERIFY_MODELS=
 LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=false
 LOOM_LLM_REQUEST_TIMEOUT_S=900
+LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS=1
+LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS=3600
+LOOM_EXTRACTION_QUEUE_LEASE_SECONDS=3900
+LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS=3600
 LOOM_SESSION_BRIEF_LLM_MODEL=
 LOOM_CODE_BISECT_LLM_RERANK_MODEL=
 LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
@@ -240,7 +244,12 @@ window that holds Loom's prompts: extraction sends about 15,000 tokens, and Olla
 longer prompt to its window without an error, so run it with
 `OLLAMA_CONTEXT_LENGTH=32768` (the window `qwen2.5` takes). A CPU can take minutes to
 read a prompt that long, so the preset waits `LOOM_LLM_REQUEST_TIMEOUT_S=900` seconds for
-a reply rather than the hosted default of 300. For llama.cpp, point
+a reply rather than the hosted default of 300. The workers that extract in the background
+give a pass a deadline, and a pass that outlives it is abandoned and its batch tried
+again, so the preset lets a deferred-extraction pass run an hour on one batch
+(`LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS`, default 60, with the batch's lease above it)
+and an observe-extraction pass an hour (`LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS`, default
+900). For llama.cpp, point
 `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root (`http://host.docker.internal:8080/v1`) and
 set `LOOM_LLM_MODEL` to the name it serves. A server run from a checkout reaches the
 model at `localhost`, the setting's default (`http://localhost:11434/v1`). A per-job model

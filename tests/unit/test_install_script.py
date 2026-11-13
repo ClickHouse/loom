@@ -1924,6 +1924,10 @@ LOCAL_PRESET = {
     "LOOM_ASSISTANT_ANSWER_CEILING_USD": "0",
     "LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED": "false",
     "LOOM_LLM_REQUEST_TIMEOUT_S": "900",
+    "LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS": "1",
+    "LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS": "3600",
+    "LOOM_EXTRACTION_QUEUE_LEASE_SECONDS": "3900",
+    "LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS": "3600",
     "LOOM_MEMORY_EXTRACT_VERIFY_MODELS": "",
     "LOOM_SESSION_BRIEF_LLM_MODEL": "",
     "LOOM_CODE_BISECT_LLM_RERANK_MODEL": "",
@@ -1957,6 +1961,11 @@ def test_the_local_preset_loads_with_the_verifier_and_resolver_off(monkeypatch) 
     assert loaded.memory_extract_verify_models == ""
     assert loaded.memory_conflict_resolver_enabled is False
     assert loaded.assistant_answer_ceiling_usd == 0
+    # A deferred extraction's call fits in its worker's pass, and the pass in its lease.
+    call = loaded.llm_request_timeout_s
+    assert loaded.extraction_queue_max_pass_seconds > call
+    assert loaded.extraction_queue_lease_seconds > loaded.extraction_queue_max_pass_seconds
+    assert loaded.observe_extract_max_pass_seconds > call
 
 
 def test_without_a_terminal_ollama_is_not_offered(install, installer_env) -> None:

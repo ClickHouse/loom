@@ -431,8 +431,13 @@ main() {
     # hosted model's judgment: both off rather than on the small model.
     set_env LOOM_MEMORY_EXTRACT_VERIFY_MODELS ""
     set_env LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED false
-    # A CPU reads a long prompt for minutes; the hosted default would cut it short.
+    # A CPU reads a long prompt for minutes; the hosted default would cut it short, and
+    # the extraction workers' passes and lease must outlast such a call.
     set_env LOOM_LLM_REQUEST_TIMEOUT_S 900
+    set_env LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS 1
+    set_env LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS 3600
+    set_env LOOM_EXTRACTION_QUEUE_LEASE_SECONDS 3900
+    set_env LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS 3600
     # Jobs whose default names a hosted model take LOOM_LLM_MODEL.
     for key in LOOM_SESSION_BRIEF_LLM_MODEL LOOM_CODE_BISECT_LLM_RERANK_MODEL \
       LOOM_TRACKER_DUPCHECK_RERANK_MODEL LOOM_RETRIEVAL_JUDGE_MODEL; do

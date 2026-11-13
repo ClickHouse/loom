@@ -2104,6 +2104,9 @@ class ExtractionSettings(BaseModel):
     extraction_defer_agents: Annotated[str, LIVE] = ""
     # Seconds between deferred-extraction queue passes.
     extraction_queue_interval_seconds: int = 15
+    # Seconds a deferred-extraction pass may run before the supervisor abandons it; a
+    # model slower than this per batch needs it raised (and the lease above it).
+    extraction_queue_max_pass_seconds: float = Field(default=60.0, gt=0)
     # Most queued batches one pass claims.
     extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Seconds a claimed batch stays leased to one worker before another may claim it; at

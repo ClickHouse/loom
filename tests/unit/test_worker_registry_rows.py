@@ -115,6 +115,7 @@ def test_the_memory_expiry_sweep_row() -> None:
 
 
 _DEADLINE_SETTINGS = {
+    "extraction_queue": "extraction_queue_max_pass_seconds",
     "memory_code_links": "memory_code_links_max_pass_seconds",
     "observe_extract": "observe_extract_max_pass_seconds",
     "tracker_embed": "tracker_embed_max_pass_seconds",
