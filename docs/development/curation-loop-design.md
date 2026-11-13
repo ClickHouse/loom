@@ -93,13 +93,15 @@ names it keeps. A definition beyond the term leg's read when a namespace holds m
 the ceiling (the most recently promoted are read) is `capped`, and no other verdict is
 computed for it. Each entry carries its key, term, aliases, `promoted_from_candidate_id`,
 the check's verdict with its lapse reason, a list of (name, winner) pairs for the names it
-lost, and a `capped` flag. A changed text is promoted again. On N no automatic verdict
-retires or marks a definition's source (the exemptions below, and the negative-outcome
-quarantine of `memory.outcome`, which skips a definition's namespace-wide row as it skips
-a locked one; `memory.outcome_run` records harm events and quarantines nothing), so a
-source that is no longer `active` was rejected by a writer, or left that way by N-1 or
-before this design. The sensitivity sweep can still relabel a source, which lapses it as a
-relabel does. The admin brings it back by the way it lapsed:
+lost, and a `capped` flag; a `capped` entry carries only its key, `promoted_at` and
+`promoted_from_candidate_id`, with no term, aliases or verdict, and its source is not
+read. A changed text is promoted again. On N no automatic verdict retires or marks a
+definition's source (the exemptions below, and the negative-outcome quarantine of
+`memory.outcome`, which skips a definition's namespace-wide row as it skips a locked one;
+`memory.outcome_run` records harm events and quarantines nothing), so a source that is no
+longer `active` was rejected by a writer, or left that way by N-1 or before this design.
+The sensitivity sweep can still relabel a source, which lapses it as a relabel does. The
+admin brings it back by the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
@@ -169,10 +171,12 @@ reader:
   (an alias lives inside its definition's value, so no key finds it). It first counts them
   (`count()`, no values read): a promotion that adds a key is refused once the count
   reaches the ceiling, and every definition promotion, a revision included, is refused
-  while the count is past it, so the read it then makes is never more than the ceiling's
-  rows; the admin demotes definitions until the namespace is back within it. Below the
+  while the count is past it; the admin demotes definitions until the namespace is back
+  within it. The read that follows is limited to the ceiling's rows plus one and refuses
+  the promotion when it finds more (a promotion committed after the count). Within the
   ceiling a revision of a key already governed replaces its row and is never refused by
-  it. Names are compared folded, as above.
+  it. This is the name check; the review path runs the same one. Names are compared
+  folded, as above.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row, whose `target_key` differs from the
   source's key or lies outside `definition/`, so a revision always lands on the governed
@@ -674,19 +678,20 @@ every viewer.
 ## Promotion
 
 `learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate first
-checks the term and aliases against every other live shared row of type `definition` (the
-set `memory.promote` refuses on) and the draft for a credential-shaped value
-(`value_reads_high`), and the rollout gate, so a promotion these refuse writes nothing.
-Then it writes the definition through `memory.set` for the whole namespace (today's seeder
-path writes under the approver's `user_id`; the implementing pull request writes the
-namespace-wide row), with no expiry: the write clears any `expires_at` the head carried
-and takes no type retention, so a definition stays until an admin demotes it. A value that
-grades `medium` is refused before the write, as the promotion would refuse it. The write
-declares `source_class = derived`, the downgrade a caller may declare (an LLM drafted it;
-the admin's promotion is the approval, not its authorship), so the blacklist and the
-pinned-key check run as for any write. Then the review promotes that row into the shared
-layer through `memory.promote`, with the reviewer's server-stamped actor as `promoted_by`
-and the candidate's id ([learnings review
+runs `memory.promote`'s name check (the count, the ceiling's two refusals, then the term
+and aliases against every other live shared row of type `definition`, from which it also
+takes a revision's key), checks the draft for a credential-shaped value
+(`value_reads_high`), and checks the rollout gate, so a promotion these refuse writes
+nothing. Then it writes the definition through `memory.set` for the whole namespace
+(today's seeder path writes under the approver's `user_id`; the implementing pull request
+writes the namespace-wide row), with no expiry: the write clears any `expires_at` the head
+carried and takes no type retention, so a definition stays until an admin demotes it. A
+value that grades `medium` is refused before the write, as the promotion would refuse it.
+The write declares `source_class = derived`, the downgrade a caller may declare (an LLM
+drafted it; the admin's promotion is the approval, not its authorship), so the blacklist
+and the pinned-key check run as for any write. Then the review promotes that row into the
+shared layer through `memory.promote`, with the reviewer's server-stamped actor as
+`promoted_by` and the candidate's id ([learnings review
 queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). The admin
 promoting a definition is the person standing behind it. A draft for a term already
 governed revises that definition: the review writes under the key of the live shared
@@ -859,14 +864,16 @@ the op budgets before they ship it.
   full values, `rests_on` included, at most `memory_term_leg_max_definitions`), one read
   of the matched definitions' source rows, and a grading of each matched source's value,
   on every `memory.search`, every `context.pack` turn and every `memory.ask` sub-search.
-- A definition's promotion counts the namespace's definition rows and then reads them,
-  at most `memory_term_leg_max_definitions` (past it the promotion is refused), to check
-  its term and aliases.
+- A definition's promotion, through `memory.promote` or `learnings.review`, counts the
+  namespace's definition rows and then reads them, at most
+  `memory_term_leg_max_definitions` plus one (past it the promotion is refused), to check
+  its term and aliases; the review path makes that read once, before its write.
 - `memory.definitions.list` counts the rows (`count()`), reads the full values of at most
   the ceiling's rows, the ones the term leg reads, to find names held by more than one,
-  and marks the rest `capped` from their key, `promoted_at` and `promotion_event` alone.
-  It returns a page, with a limit and a cursor, and reads and grades the source row of
-  each listed definition and of each definition that competes for one of its names.
+  and marks the rest `capped` from their key, `promoted_at`, `promotion_event` and
+  `promoted_from_candidate_id` alone. It returns a page, with a limit and a cursor, and
+  reads and grades the source row of each listed definition that is not `capped` and of
+  each definition that competes for one of its names.
 
 ## Rolling upgrades
 
