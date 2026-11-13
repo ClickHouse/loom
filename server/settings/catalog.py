@@ -3381,7 +3381,7 @@ class MemorySearchSettings(BaseModel):
     # says so in `degraded`. builtin:openai is an LLM call and waits llm_request_timeout_s.
     memory_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
     # Places a search hit moves down within the served results when its linked code
-    # changed, was not found again or is partly gone (0 moves nothing).
+    # changed, was not found again or is gone (0 moves nothing).
     memory_search_code_changed_positions: Annotated[int, LIVE] = Field(default=3, ge=0)
     # Key-embedding axis on the fact leg: "on" scores least(value_dist,
     # key_dist) and reads both vector columns (measured 399 vs 203 MB/query on

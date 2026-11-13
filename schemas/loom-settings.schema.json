@@ -4499,7 +4499,7 @@
           "default": 3,
           "minimum": 0,
           "type": "integer",
-          "description": "Places a search hit moves down within the served results when its linked code changed, was not found again or is partly gone (0 moves nothing)."
+          "description": "Places a search hit moves down within the served results when its linked code changed, was not found again or is gone (0 moves nothing)."
         },
         "memory_search_default_mode": {
           "default": "semantic",

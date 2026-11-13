@@ -217,15 +217,14 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
 async def _shape_final_hits(
     ctx: SearchContext, final_hits: list[_MemorySearchHit]
 ) -> tuple[list[_MemorySearchHit], tuple[int, int, int], list[str]]:
-    """Phase 22: shape the served hits — decorate, prepend recent/anchor rows, move
-    down those whose code changed, body floor, unit and source bodies, relative-date
+    """Phase 22: shape the served hits — prepend recent/anchor rows, move down those
+    whose code changed, decorate, body floor, unit and source bodies, relative-date
     wording, foreign namespace marks, grounded excerpts, optional fields. Returns the
     hits, the unit-body counts and the namespaces searched."""
     input = ctx.input
     namespaces = ctx.namespaces
     actual_work = ctx.actual_work
     _clock = ctx.clock
-    _decorate_hits(final_hits, input=input)
     recent, stale_recent = await _prepend_recent(final_hits, input, ctx.stale_versions)
     anchored, stale_anchor = await _prepend_anchor(recent, input, ctx.stale_versions)
     ctx.stale_dropped += stale_recent + stale_anchor
@@ -235,6 +234,8 @@ async def _shape_final_hits(
     if not (ctx.chronological_intent or getattr(input, "_merged_into_parent", False)):
         places = settings.memory_search_code_changed_positions
         anchored = code_change.rank_down(anchored, places)
+    # the similarity hits, by the scores they are served with
+    _decorate_hits(final_hits, input=input)
     final_hits = _apply_min_body_chars(anchored, input)
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)

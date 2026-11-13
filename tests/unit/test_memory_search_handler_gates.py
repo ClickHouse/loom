@@ -973,6 +973,8 @@ async def test_a_memory_whose_code_changed_is_served_lower_after_the_verdict(
     out = await _run(search_env, top_k=5)
     assert [h.memory_key for h in out.results] == ["b", "c", "d", "stale", "e"]
     assert out.results[3].score_components["code_changed_places"] == -3.0
+    # its explanation names the score it is served with
+    assert f"rank_score={out.results[3].rank_score:.2f}" in out.results[3].explanation
     # the verdict read the results in relevance order
     assert (out.abstain, out.retrieval_confidence) == (plain.abstain, plain.retrieval_confidence)
     # a retry pass leaves the move to the search it joins

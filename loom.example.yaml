@@ -3985,7 +3985,7 @@ settings:
   # memory_search_rerank_timeout_s: 8.0
 
   # Places a search hit moves down within the served results when its linked code
-  # changed, was not found again or is partly gone (0 moves nothing). [live]
+  # changed, was not found again or is gone (0 moves nothing). [live]
   # memory_search_code_changed_positions: 3
 
   # Key-embedding axis on the fact leg: "on" scores least(value_dist, key_dist) and
