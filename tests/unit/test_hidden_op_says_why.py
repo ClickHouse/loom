@@ -84,15 +84,21 @@ def test_a_readonly_refusal_says_read_only_only_for_a_write_alternative(name: st
 
 @pytest.mark.parametrize("name", sorted(mcp_op._INSTEAD))
 def test_a_readonly_refusal_sends_the_model_only_where_it_can_go(name: str) -> None:
-    """On readonly, every op a refusal names is listed there or routed by loom_op."""
+    """On readonly, every op a refusal names is listed there or routed by loom_op
+    (scanned on its own, not with the renderer's pattern)."""
+    import re
+
+    from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport.mcp_tools import listed_tool_names
 
     instead = mcp_op.hidden_refusal(name, "readonly")["instead"]
     listed = listed_tool_names("readonly")
-    for m in mcp_op._NAMED_OP.finditer(instead):
-        op = mcp_op._lookup(m.group(1))
-        if op is not None:
-            assert op.mcp_tool_name in listed or mcp_op.reachable(op, "readonly"), (name, op.name)
+    dotted = re.findall(r"\b[a-z_]+(?:\.[a-z_]+){1,2}\b", instead)
+    tools = re.findall(r"\bloom_[a-z_]+\b", instead)
+    ops = [OPERATIONS_BY_NAME[n] for n in dotted if n in OPERATIONS_BY_NAME]
+    ops += [mcp_op.TOOLS_BY_NAME[t] for t in tools if t in mcp_op.TOOLS_BY_NAME]
+    for op in ops:
+        assert op.mcp_tool_name in listed or mcp_op.reachable(op, "readonly"), (name, op.name)
 
 
 def test_a_readonly_refusal_keeps_its_reason() -> None:

@@ -15,8 +15,7 @@ from server.transport._common import ledger_identity
 from server.transport.lean_results import mcp_op_result
 from server.transport.mcp_config import TOOL_EXEC_FAILED, _err, _ok
 from server.transport.mcp_identity import default_namespace_note
-from server.transport.mcp_op import name_ops_for_listing, routes_writes
-from server.transport.mcp_tools import _emit_mcp_event, listed_tool_names
+from server.transport.mcp_tools import _emit_mcp_event, mentor_text_for_toolset
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope
@@ -308,14 +307,7 @@ def _mentor_hint(
         set_hint_context(hint[0] if hint else "")
         if hint is None:
             return None
-        from server.insights.app.mentor_rules import without_listing_note
-
-        text = name_ops_for_listing(
-            without_listing_note(hint[1]),
-            listed_tool_names(toolset),
-            writes=routes_writes(toolset),
-        )
-        return hint[0], text
+        return hint[0], mentor_text_for_toolset(hint[1], toolset)
     except Exception:  # noqa: BLE001 — advice never fails a tool call
         return None
 

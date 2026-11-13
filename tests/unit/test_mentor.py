@@ -277,7 +277,7 @@ def test_an_object_store_agent_is_told_to_recall_by_meaning_and_move_the_lease(
     assert loop is not None and "sre/lease" in loop.text and "working_memory" in loop.text
     # The sentence names the READ key with its read count and says nothing
     # about writes (the hottest written key is another row).
-    assert "(sre/lease) was read 116×" in loop.text and "written" not in loop.text
+    assert "'sre/lease', was read 116×" in loop.text and "written" not in loop.text
     key_only = p.hint("recall_by_key_only")
     assert key_only is not None and key_only.evidence == {"gets": 6606, "searches": 52}
     # memory.search is listed as loom_search; the note names the op that is not
@@ -1518,6 +1518,24 @@ def test_a_call_hint_is_clipped_with_its_note_whole(facts: dict[str, Any]) -> No
     assert mentor_rules.without_listing_note(clipped).count("(call ") == 0
 
 
+def test_following_the_reading_hint_through_search_query_clears_it() -> None:
+    """The reading rules advise search.query, so a search.query call counts as a recall."""
+    keyed = {"memory.get": 60}
+    rules = mentor_rules.evaluate_rules
+    before = {h.code for h in rules(keyed, 3, {}, agent="a", max_hints=32)}
+    after = {h.code for h in rules({**keyed, "search.query": 20}, 3, {}, agent="a", max_hints=32)}
+    assert "recall_by_key_only" in before and "recall_by_key_only" not in after
+
+
+@pytest.mark.parametrize("key", ["tracker.flaky", "user's memory.get", "a\nmemory.apply"])
+def test_an_echoed_key_comes_through_rendering_as_written(key: str) -> None:
+    from server.transport import mcp_tools
+
+    text = mentor_rules._quoted(key) + " was set 5 times"
+    rendered = mcp_tools.mentor_text_for_toolset(text, "core")
+    assert rendered == text and "\n" not in text
+
+
 def test_a_call_hint_on_mcp_names_ops_for_its_listing() -> None:
     from server.transport import mcp_outcome
 
@@ -1704,8 +1722,8 @@ def test_coordination_sentence_gives_each_key_its_own_count(
     assert p is not None
     loop = p.hint("coordination_loop")
     assert loop is not None
-    assert "one key (a/lease) was written 12×" in loop.text
-    assert "one key (b/pointer) was read 40×" in loop.text
+    assert "one key, 'a/lease', was written 12×" in loop.text
+    assert "one key, 'b/pointer', was read 40×" in loop.text
     assert loop.evidence["key"] == "a/lease" and loop.evidence["hot_get_key_chars"] == 20
     m.reset_cache()
     _wire(
@@ -1722,7 +1740,7 @@ def test_coordination_sentence_gives_each_key_its_own_count(
     p = _profile()
     assert p is not None
     loop = p.hint("coordination_loop")
-    assert loop is not None and "one key (a/lease) was written 12× and read 40×" in loop.text
+    assert loop is not None and "one key, 'a/lease', was written 12× and read 40×" in loop.text
 
 
 def _tiers(*specs: tuple[str, str, str]) -> list[SimpleNamespace]:
@@ -1828,7 +1846,7 @@ def test_records_hint_states_the_prefix_share_and_skips_aggregate_when_used(
     assert p is not None
     hint = p.hint("records_for_identities")
     assert hint is not None
-    assert "801 writes keyed by a number, 60 of them finding_phase_d_pr<id>" in hint.text
+    assert "801 writes keyed by a number, 60 of them under 'finding_phase_d_pr'" in hint.text
     assert "memory.aggregate" not in hint.text
     m.reset_cache()
     _wire(

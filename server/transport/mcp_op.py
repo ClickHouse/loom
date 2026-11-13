@@ -277,19 +277,16 @@ def hidden_refusal(name: str, toolset: str | None) -> dict[str, Any] | None:
     """The refusal for an op that exists but is kept off MCP: that it is not on
     MCP, and what to do instead, naming ops as the ``toolset`` listing does.
     None when `name` is not a hidden op."""
-    from server.transport.mcp_tools import listed_tool_names
+    from server.transport.mcp_tools import name_ops_for_toolset
 
     op = OPERATIONS_BY_NAME.get(name)
     if op is None or name not in _MCP_HIDDEN_OPS:
         return None
-    writes = routes_writes(toolset)
-    if name in _WRITE_ALTERNATIVE and not writes:
+    if name in _WRITE_ALTERNATIVE and not routes_writes(toolset):
         instead = _READ_ONLY_CONNECTION
     else:
         default = _NEEDS_THE_USER if "dashboard" in op.reach else _NEEDS_AN_OPERATOR
-        instead = name_ops_for_listing(
-            _INSTEAD.get(name, default), listed_tool_names(toolset), writes=writes
-        )
+        instead = name_ops_for_toolset(_INSTEAD.get(name, default), toolset)
     return {
         "error": f"{name} exists but is not callable on this MCP connection",
         "code": "OP_NOT_ON_MCP",

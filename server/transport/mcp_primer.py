@@ -36,13 +36,13 @@ from server.transport.mcp_identity import (
     _caller_defaults,
     no_default_namespace_line,
 )
-from server.transport.mcp_op import name_ops_for_listing, routes_writes
 from server.transport.mcp_op import reachable as loom_op_reachable
 from server.transport.mcp_tools import (
     _emit_mcp_event,
     assistant_connection,
     listed_ops,
-    listed_tool_names,
+    mentor_text_for_toolset,
+    name_ops_for_toolset,
 )
 
 log = logging.getLogger("server.transport.mcp")
@@ -215,7 +215,7 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
     """Each op the primer points at, by op name, or None when the connection
     reaches it neither as a listed tool nor through `loom_op` (a write on a
     connection whose `loom_op` routes reads only), so the primer never asks for a
-    call the client cannot make. `_for_listing` then names them as the listing does."""
+    call the client cannot make. `name_ops_for_toolset` then names them as the listing does."""
     listed = {op.name for op in listed_ops(toolset)}
     out: dict[str, str | None] = {}
     for name in (
@@ -232,14 +232,9 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
 
 
 # Holds the caller's default workspace while the rules are rendered: it is the
-# caller's data, not prose that names ops.
+# caller's data, not prose that names ops. Rendering the text whole keeps "first
+# mention only" across rule 5; a NUL never occurs in the prose.
 _DEFAULTS = "\x00defaults\x00"
-
-
-def _for_listing(text: str, toolset: str | None) -> str:
-    """``text`` naming each op as the ``toolset`` listing does, the first mention of
-    an unlisted one marked "(via loom_op)", as the tool descriptions do."""
-    return name_ops_for_listing(text, listed_tool_names(toolset), writes=routes_writes(toolset))
 
 
 def _write_rules(tool: dict[str, str | None]) -> str:
@@ -378,7 +373,7 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
         "where each kind of state goes and how to read what comes back "
         '(`part: "reference"` lists every plane).'
     )
-    return _for_listing(text, toolset).replace(_DEFAULTS, _defaults_clause(defaults))
+    return name_ops_for_toolset(text, toolset).replace(_DEFAULTS, _defaults_clause(defaults))
 
 
 def _assistant_primer(defaults: dict[str, Any] | None) -> str:
@@ -536,7 +531,7 @@ def _coding_instructions(toolset: str | None) -> str:
         if save
         else "This connection is read-only: memory writes are not available."
     )
-    return _for_listing(
+    return name_ops_for_toolset(
         "**Loom: memory and code for this session.**"
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
         + memory,
@@ -561,13 +556,7 @@ async def _mentor_line(
         agent = str(defaults.get("agent") or "-")
         line = _mentor.top_hint_line(org, namespace, agent)
         if line:
-            from server.insights.app.mentor_rules import without_listing_note
-
-            line = name_ops_for_listing(
-                without_listing_note(line),
-                listed_tool_names(toolset),
-                writes=routes_writes(toolset),
-            )
+            line = mentor_text_for_toolset(line, toolset)
         else:
             # Nothing cached: start the read now so the next handshake of
             # this agent carries the line. Never awaited here.

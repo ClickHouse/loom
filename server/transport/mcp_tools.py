@@ -390,6 +390,19 @@ def listed_tool_names(toolset: str | None) -> set[str]:
     return _tool_names(listed_ops(resolved), resolved)
 
 
+def name_ops_for_toolset(text: str, toolset: str | None) -> str:
+    """``text`` naming each op as a `tools/list` on ``toolset`` does."""
+    return name_ops_for_listing(text, listed_tool_names(toolset), writes=routes_writes(toolset))
+
+
+def mentor_text_for_toolset(text: str, toolset: str | None) -> str:
+    """A stored mentor hint as ``toolset``'s listing names ops: its core-listing note
+    goes, since the listing marks an op it leaves out itself."""
+    from server.insights.app.mentor_rules import without_listing_note
+
+    return name_ops_for_toolset(without_listing_note(text), toolset)
+
+
 def _tool_names(ops: list[Operation], resolved: str) -> set[str]:
     """``ops``' tool names plus the synthetic ones, on a resolved toolset."""
     names = {op.mcp_tool_name for op in ops}

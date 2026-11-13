@@ -64,6 +64,9 @@ READ_MISS_SHARE = 0.20
 
 GETS = ("memory.get", "memory.bulk_get")
 SEARCHES = ("memory.search", "memory.ask")
+# Every recall by meaning, the unified search (loom_search's op) included: what the
+# reading rules count, since they advise search.query.
+RECALLS = (*SEARCHES, "search.query")
 SETS = (
     "memory.set",
     "memory.bulk_set",
@@ -252,14 +255,7 @@ def _prefix_count(usage: dict[str, int], prefix: str) -> int:
 # Ops an MCP agent reaches through a listed synthetic tool or a core alias:
 # no listing note for these.
 _LISTED_VIA_ALIAS = frozenset(
-    {
-        "loom_search",
-        "loom_activate",
-        "search.query",
-        "memory.search",
-        "knowledge.search",
-        "conversation.search",
-    }
+    {"search.query", "memory.search", "knowledge.search", "conversation.search"}
 )
 
 
@@ -276,8 +272,8 @@ def without_listing_note(text: str) -> str:
 
 def _unlisted(ops: tuple[str, ...]) -> str:
     """A trailing note for the first recommended op that is not on the core
-    listing, so the agent knows not to look for it in its tool list (the
-    reference lint's "via loom_op" marker)."""
+    listing, for a reader of the stored text (HTTP, the SDK, the dashboard). Over
+    MCP the note is stripped and the hint is named for the caller's own listing."""
     try:
         from server.operations.toolsets import _MCP_HIDDEN_OPS, op_toolsets
     except Exception:  # noqa: BLE001 — no MCP config in this process: no note
@@ -319,6 +315,12 @@ def _byname(op: str) -> str:
     return op
 
 
+def _quoted(value: object) -> str:
+    """A caller's value as a hint echoes it: in single quotes with none inside and no
+    newline, so the MCP renderer leaves it as written."""
+    return "'" + str(value).replace("'", "\u2019").replace("\n", " ") + "'"
+
+
 def clip(text: str, limit: int = HINT_CHARS) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
@@ -351,6 +353,10 @@ class _Ctx:
     @property
     def searches(self) -> int:
         return _count(self.usage, SEARCHES)
+
+    @property
+    def recalls(self) -> int:
+        return _count(self.usage, RECALLS)
 
     @property
     def sets(self) -> int:
@@ -400,7 +406,7 @@ def _rules_identity(c: _Ctx) -> None:
 
 def _rules_reading(c: _Ctx) -> None:
     """How the agent reads: by key, never, without a pack."""
-    gets, searches, sets, packs = c.gets, c.searches, c.sets, c.packs
+    gets, searches, sets, packs = c.gets, c.recalls, c.sets, c.packs
     if gets >= KEY_ONLY_MIN_GETS and gets >= KEY_ONLY_RATIO * max(searches, 1):
         c.add(
             "recall_by_key_only",
@@ -438,7 +444,8 @@ def _rules_reading(c: _Ctx) -> None:
             ("context.pack",),
             sessions=sw,
         )
-    abst = c.fact("abstains")
+    # abstains are counted over the memory searches, whose rows carry out_abstain
+    abst, searches = c.fact("abstains"), c.searches
     if searches >= ABSTAIN_MIN_SEARCHES and abst >= ABSTAIN_SHARE * searches:
         c.add(
             "search_abstains",
@@ -500,7 +507,7 @@ def _rules_planes(c: _Ctx) -> None:
     if (
         repos
         and _prefix_count(c.usage, "code") == 0
-        and (c.searches >= CODE_UNUSED_MIN_SEARCHES or c.sets >= CODE_UNUSED_MIN_SETS)
+        and (c.recalls >= CODE_UNUSED_MIN_SEARCHES or c.sets >= CODE_UNUSED_MIN_SETS)
     ):
         shown = list(c.facts.get("repo_names") or [])
         names = ", ".join(shown) + (f", +{repos - len(shown)}" if repos > len(shown) else "")
@@ -606,7 +613,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "records_for_identities",
             "info",
             f"{idk} writes keyed by a number, {c.fact('top_prefix_sets')} of them "
-            f"{c.facts.get('top_prefix') or 'prefix'}<id>: facts with identity — "
+            f"under {_quoted(c.facts.get('top_prefix') or 'prefix')}: facts with identity — "
             f"{_byname('memory_schema.register')} once, then memory.record.write{counts}.",
             ("memory_schema.register", "memory.record.write", "memory.aggregate"),
             id_keyed_sets=idk,
@@ -645,12 +652,15 @@ def _coordination_sentence(c: _Ctx, hot_set: bool, hot_get: bool) -> tuple[str, 
     set_key = str(c.facts.get("hot_set_key") or "")
     get_key = str(c.facts.get("hot_get_key") or "")
     if hot_set and hot_get and set_key == get_key:
-        return f"one key ({set_key}) was written {ms}× and read {mg}× in a single session", set_key
+        return (
+            f"one key, {_quoted(set_key)}, was written {ms}× and read {mg}× in a single session",
+            set_key,
+        )
     parts: list[str] = []
     if hot_set:
-        parts.append(f"one key ({set_key}) was written {ms}×")
+        parts.append(f"one key, {_quoted(set_key)}, was written {ms}×")
     if hot_get:
-        parts.append(f"one key ({get_key}) was read {mg}×")
+        parts.append(f"one key, {_quoted(get_key)}, was read {mg}×")
     return " and ".join(parts) + " in a single session", set_key if hot_set else get_key
 
 
@@ -835,7 +845,7 @@ def _rule_set_churn(
         return None
     return (
         "set_churn",
-        f"{key} was set {n} times this session: a value that changes every turn is "
+        f"{_quoted(key)} was set {n} times this session: a value that changes every turn is "
         "working_memory.set, not a memory version each time.",
     )
 
@@ -905,7 +915,7 @@ def _rule_get_miss(
     if op != "memory.get" or not _get_missed(res):
         return None
     key = str(args.get("memory_key") or "")
-    where = repr(key) if key else "that key"
+    where = _quoted(key) if key else "that key"
     return (
         "get_miss",
         f"no row at {where}: search.query recalls by meaning, memory.list with a "
@@ -924,7 +934,7 @@ def _rule_search_identifier(
         return None
     return (
         "search_identifier_query",
-        f"'{q[:60]}' is an identifier, not a question: code.symbol gives its definition, "
+        f"{_quoted(q[:60])} is an identifier, not a question: code.symbol gives its definition, "
         "code.callers who calls it, code.grep the exact literal, code.search the concept — "
         "memory holds what was said about it, the index holds what it is.",
     )
@@ -957,8 +967,8 @@ def _rule_set_duplicate(
         return None
     return (
         "set_duplicate",
-        f"this write duplicates {res['duplicate_of']!r}: revise that key instead (same key = new "
-        "version), or memory.link supersedes if this one replaces it.",
+        f"this write duplicates {_quoted(res['duplicate_of'])}: revise that key instead "
+        "(same key = new version), or memory.link supersedes if this one replaces it.",
     )
 
 
@@ -1052,6 +1062,7 @@ __all__ = [
     "Hint",
     "MentorProfile",
     "clip",
+    "clip_keeping_note",
     "evaluate_rules",
     "hint_plane",
     "issue_references",
@@ -1060,4 +1071,5 @@ __all__ = [
     "looks_like_stack_trace",
     "plane_mentored",
     "plane_of",
+    "without_listing_note",
 ]
