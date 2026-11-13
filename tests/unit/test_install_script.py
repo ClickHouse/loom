@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -1413,7 +1415,6 @@ def _desktop(installer_env: dict[str, str]) -> tuple[dict[str, str], Path]:
 
 def _opened(log: Path) -> list[str]:
     """What xdg-open got; it runs in the background, so give it a moment."""
-    import time
 
     deadline = time.monotonic() + 5
     while not log.exists() and time.monotonic() < deadline:
@@ -1553,7 +1554,6 @@ def test_a_loom_mcp_server_vscode_has_is_left_as_it_is(
     run, _ = install
     _start_stubs(installer_env)
     code = _agent_cli(installer_env, "code")
-    import platform
 
     user_dir = "Library/Application Support" if platform.system() == "Darwin" else ".config"
     mcp = Path(installer_env["HOME"]) / user_dir / "Code/User/mcp.json"
@@ -1767,7 +1767,6 @@ def test_an_empty_loom_connect_item_is_refused(install, value: str) -> None:
 def test_xdg_config_home_holds_the_vscode_mcp_json(
     install, installer_env: dict[str, str], tmp_path: Path
 ) -> None:
-    import platform
 
     if platform.system() == "Darwin":
         pytest.skip("macOS keeps VS Code's user data under ~/Library")
