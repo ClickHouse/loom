@@ -572,7 +572,7 @@ class _MemorySearchHit(BaseModel):
     # the pool's score for the rank the row now holds, its own in
     # score_components.rank_score_pre_rerank; a kept order changes no score. A
     # row moved down for stale code (score_components.code_changed_places) scores
-    # between its new neighbours.
+    # between its new neighbours; a decision loom_search merges in keeps its own.
     # For the per-component decomposition read score_components (explain=true).
     rank_score: float = 0.0
     # ISO datetime the fact is ABOUT (distinct from valid_at = when it became

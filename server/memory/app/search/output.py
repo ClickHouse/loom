@@ -244,13 +244,15 @@ async def _shape_final_hits(
     ctx.stale_dropped += stale_recent + stale_anchor
     final_hits = _apply_min_body_chars(anchored, input)
     # After the verdict, which read relevance, and the tiers and body floor, which cut
-    # rows: a memory whose code changed is served lower, never left out. A date order is
-    # the answer and stays as it is, its marks spent so no merge moves its rows; a pass
-    # another search merges leaves the move to it.
-    if ctx.chronological_intent:
-        code_change.spend_marks(final_hits)
-    elif not getattr(input, "_merged_into_parent", False):
-        final_hits = move_stale(final_hits, input)
+    # rows: a memory whose code changed is served lower, never left out. A pass another
+    # search merges leaves the move, marks and all, to that search, whatever it reads the
+    # query as. A date order is the answer and stays as it is, its marks spent so no
+    # merge moves its rows.
+    if not getattr(input, "_merged_into_parent", False):
+        if ctx.chronological_intent:
+            code_change.spend_marks(final_hits)
+        else:
+            final_hits = move_stale(final_hits, input)
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)
     )

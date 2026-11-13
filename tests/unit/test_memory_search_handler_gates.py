@@ -1037,6 +1037,15 @@ async def test_a_moved_memory_is_never_cut_by_a_tier_and_a_date_order_stays(
     assert [h.memory_key for h in out.results][:3] == ["r1", "r2", "stale"]
     # its mark is spent, so a search that merges these rows moves nothing either
     assert not out.results[2]._code_ranked_down
+    # a pass another search merges keeps its marks, however it reads the query: the
+    # search that merges it decides
+    from server.memory.app.search import handle_memory_search
+
+    child = _input(top_k=5)
+    child._merged_into_parent = True
+    search_env.hits = hits()
+    joined = await handle_memory_search(child)
+    assert "stale" in [h.memory_key for h in joined.results if h._code_ranked_down]
 
 
 async def test_a_move_counts_only_the_rows_the_body_floor_serves(
