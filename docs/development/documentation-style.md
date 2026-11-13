@@ -33,7 +33,7 @@ nothing is close enough. This page explains each leg, how the rank is computed, 
 which settings move it.
 ```
 
-`llms.txt` lists the first sentence of that paragraph for the page. Then, where they apply: the user-visible behaviour, the interfaces (operations, CLI, settings), how it works, limits and failure modes, and "Related" links. Architecture pages add **Source entry points** (paths and symbols) and **Invariants**.
+`llms.txt` lists the first sentence of that paragraph for the page, and the documentation site uses it as the page's search description. Then, where they apply: the user-visible behaviour, the interfaces (operations, CLI, settings), how it works, limits and failure modes, and "Related" links. Architecture pages add **Source entry points** (paths and symbols) and **Invariants**.
 
 ## Prerequisites
 
@@ -104,4 +104,6 @@ The SDK op tables (`sdk/python/loom/ops.py`, `sdk/typescript/src/generated/ops.t
 make format                                   # Prettier formats the Markdown, ruff its Python blocks
 uv run pytest tests/unit/test_doc_links.py tests/unit/test_public_copy.py -q
 python scripts/codegen/docs_reference.py --check
+pip install --require-hashes --no-deps --only-binary=:all: -r scripts/docs_site/requirements.txt  # once, in a virtualenv
+mkdocs build --strict                         # the docs site build CI runs
 ```

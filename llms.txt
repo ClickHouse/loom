@@ -91,7 +91,7 @@ Start with docs/index.md (the map). To install Loom, a coding agent reads docs/g
 - [Reference](docs/reference/index.md): Reference pages say what exists and what each option means.
 - [CLI reference](docs/reference/cli.md): `loom` is the one command-line entry point for running, maintaining and connecting to a Loom deployment.
 - [Configuration reference](docs/reference/configuration.md): Every setting is declared in one file, `server/settings/catalog.py`, and is an environment variable `LOOM_<FIELD>` read at startup into `server.settings.settings`.
-- [Environment variables reference](docs/reference/environment.md): Almost everything Loom is configured with is a settings field: the environment variable `LOOM_<FIELD>` of a field on `server.settings.Settings`, listed with its default and meaning in the generated [configuration…
+- [Environment variables reference](docs/reference/environment.md): Almost everything Loom is configured with is a settings field: the environment variable `LOOM_<FIELD>` of a field on `server.settings.Settings`, listed with its default and meaning in the generated configuration reference.
 - [Errors reference](docs/reference/errors.md): Every refusal Loom makes carries a stable, upper-case `code`.
 - [Extractor contract](docs/reference/extractor-contract.md): An extractor is an HTTP service the Loom server sends an original file to and gets its extraction artifact back from.
 - [HTTP API reference](docs/reference/http-api.md): Every Loom operation is one HTTP endpoint, `POST /v1/<operation>`, generated from the operation registry in `server/operations/` (`server/transport/http.py`, `build_router`).
