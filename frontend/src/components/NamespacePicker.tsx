@@ -39,11 +39,15 @@ export function NamespacePicker() {
   return <NamespacePickerMenu />;
 }
 
+// The word is shown from xl: narrower, the header search and the picker share the row and
+// the word would leave the name no width, so only a screen reader says it.
+const NS_LABEL = "sr-only xl:not-sr-only text-text-muted";
+
 /** The one namespace, not a control. A cut name is focusable, whole in a tooltip. */
 function StaticNamespace({ name }: { name: string }) {
   return (
     <div className="inline-flex items-center gap-1.5 max-w-full min-w-0 h-8 px-3 text-sm text-text">
-      <span className="text-text-muted">ns</span>
+      <span className={NS_LABEL}>Namespace</span>
       <TextClamp text={name} reach="tooltip" className="font-medium" />
     </div>
   );
@@ -181,8 +185,8 @@ const NamespaceTrigger = forwardRef<
         {isCode ? (
           <Icon name="code" size="sm" aria-hidden="true" />
         ) : (
-          <span className="text-text-muted" aria-hidden="true">
-            ns
+          <span className={NS_LABEL} aria-hidden="true">
+            Namespace
           </span>
         )}
         <span ref={setNameEl} className="font-medium truncate">

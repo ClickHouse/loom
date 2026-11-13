@@ -292,7 +292,7 @@ export function Browse() {
   return (
     <PageContainer>
       <PageHeader
-        title="Spaces"
+        title="Public namespaces"
         actions={
           <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreateOpen(true)}>
             Create namespace

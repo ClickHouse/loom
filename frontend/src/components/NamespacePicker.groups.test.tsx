@@ -271,12 +271,19 @@ describe("NamespacePicker groups", () => {
     expect(within(dialog).getByRole("button", { name: /Support agent/ })).toBeInTheDocument();
   });
 
-  it("keeps the footer's Spaces link for someone whose joined namespaces all sit in a family", async () => {
+  it("names the picker's trigger Namespace: a word from xl, said to a screen reader below it", () => {
+    seed("team");
+    render(<NamespacePicker />);
+    const trigger = screen.getByRole("button", { name: /^Namespace: team/ });
+    expect(within(trigger).getByText("Namespace")).toHaveClass("sr-only", "xl:not-sr-only");
+  });
+
+  it("keeps the footer's Public namespaces link for someone whose joined namespaces all sit in a family", async () => {
     seed("team", [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")]);
     render(<NamespacePicker />);
     const dialog = await openPicker();
-    expect(within(dialog).getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "Find public namespaces to join in Spaces" })).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Browse public namespaces" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Find public namespaces to join" })).toBeNull();
   });
 
   it("groups the names once per list, not again for each keystroke of a search", async () => {
@@ -391,7 +398,11 @@ describe("NamespacePicker groups", () => {
     seed("team");
     render(<NamespacePicker />);
     const dialog = await openPicker();
-    expect(within(dialog).getByText(/^A namespace is a project's or an agent's memory\./)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "A namespace is one shared store: memories and documents, a code index, or tracker records.",
+      ),
+    ).toHaveClass("text-xs", "text-text-muted");
     fireEvent.click(group(dialog, /^Repositories/));
     expect(within(dialog).getByText("Code that Loom indexes, read-only.")).toBeInTheDocument();
   });

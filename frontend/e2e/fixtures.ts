@@ -226,7 +226,7 @@ export interface RecordedCalls {
   list: Record<string, unknown>[];
   /** Every `knowledge.list` body — the Library page asks for the fields its rows read. */
   knowledge: Record<string, unknown>[];
-  /** Every `audit.list` body — the Activity page asks for the four fields its rows read. */
+  /** Every `audit.list` body — the Audit log page asks for the four fields its rows read. */
   audit: Record<string, unknown>[];
   other: string[];
 }

@@ -191,9 +191,9 @@ function summarize(event_type: string, subject: Record<string, unknown>): string
   }
 }
 
-/** The Activity page shows the last seven days. */
+/** The Audit log page shows the last seven days. */
 const AUDIT_WINDOW_MS = 7 * 24 * 3600_000;
-// The four fields an Activity row reads; row_hash and request_id alone are ~15 kB of a
+// The four fields an Audit log row reads; row_hash and request_id alone are ~15 kB of a
 // 106 kB page nothing renders.
 const ACTIVITY_FIELDS = ["ts", "event_type", "actor", "subject"];
 
@@ -370,7 +370,7 @@ export function Audit() {
   return (
     <PageContainer>
       <div className="mb-6">
-        <PageHeader title="Activity" tab={ACTIVITY_TABS[tab]}>
+        <PageHeader title="Audit log" tab={ACTIVITY_TABS[tab]}>
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </PageHeader>
         <div className="text-sm text-text-muted max-w-[72ch]">
@@ -379,7 +379,7 @@ export function Audit() {
             <IconButton
               icon="info-in-circle"
               size="xs"
-              label="About activity"
+              label="About the audit log"
               tooltip="Each row is content-hashed, and hourly checkpoints chain each closed window's row count and digest to the previous one, so edits and deletions are detectable."
             />
           </span>
@@ -387,7 +387,7 @@ export function Audit() {
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as ActivityTab)}>
-        <Tabs.TriggersList className="mb-5" aria-label="Activity">
+        <Tabs.TriggersList className="mb-5" aria-label="Audit log">
           <TabTrigger value="events" icon="history">
             {ACTIVITY_TABS.events}
           </TabTrigger>

@@ -340,8 +340,8 @@ test("an idle Memories tab issues only its watermark poll and runs no long task"
   expect(idleLong, `no long task over 50 ms while idle (saw ${idleLong.map(Math.round).join(", ")})`).toEqual([]);
 });
 
-// The Activity page asks for the four fields its rows read.
-test("the Activity list asks for the fields its rows read", async ({ page }) => {
+// The Audit log page asks for the four fields its rows read.
+test("the Audit log list asks for the fields its rows read", async ({ page }) => {
   const calls = await installApi(page);
   await page.goto("/admin/activity", { waitUntil: "domcontentloaded" });
   await expect.poll(() => calls.audit.length).toBeGreaterThanOrEqual(1);
@@ -461,7 +461,7 @@ test("Conversations: typing, searching and clearing stay under the INP budget at
   await cdp.detach();
 });
 
-test("Activity: typing and clearing the filter stay under the INP budget at 4x with 100 events", async ({ page }) => {
+test("Audit log: typing and clearing the filter stay under the INP budget at 4x with 100 events", async ({ page }) => {
   await installApi(page, { auditRows: 100 });
   const cdp = await watchInteractions(page);
   await page.goto("/admin/activity", { waitUntil: "domcontentloaded" });
@@ -473,7 +473,9 @@ test("Activity: typing and clearing the filter stay under the INP budget at 4x w
   await cdp.detach();
 });
 
-test("Spaces: typing and clearing the search stay under the INP budget at 4x with 200 namespaces", async ({ page }) => {
+test("Public namespaces: typing and clearing the search stay under the INP budget at 4x with 200 namespaces", async ({
+  page,
+}) => {
   await installApi(page, { browseRows: 200 });
   const cdp = await watchInteractions(page);
   await page.goto("/spaces", { waitUntil: "domcontentloaded" });

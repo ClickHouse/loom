@@ -41,7 +41,7 @@ def _ways_in(subject: str, namespace: str) -> str:
             "save a token for your user (`loom mint-token --save`)"
         )
     return (
-        f"request access to {namespace!r} from the dashboard's Spaces page, "
+        f"request access to {namespace!r} from the dashboard's Public namespaces page, "
         "or ask its admin for a grant"
     )
 

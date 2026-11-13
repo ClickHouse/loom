@@ -951,7 +951,7 @@ export function Documents() {
     const action = picking
       ? undefined
       : !picked.namespace
-        ? { label: "Browse and join spaces", onClick: () => go.setView("browse") }
+        ? { label: "Browse public namespaces", onClick: () => go.setView("browse") }
         : kind === "qa" || kind === "tracker"
           ? { label: "Open in Patterns", onClick: () => go.navigate("graph", { query: { mode: "patterns" } }) }
           : kind === "code"

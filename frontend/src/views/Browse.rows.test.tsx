@@ -115,11 +115,11 @@ const row = (name: string) => {
   return el.closest<HTMLElement>(".list-row") as HTMLElement;
 };
 
-describe("Spaces: the rows", () => {
+describe("Public namespaces: the rows", () => {
   it("Create namespace is the page header's primary, and the page passes axe", async () => {
     const { container } = render(<Browse />);
     await screen.findAllByText("alpha");
-    const header = screen.getByRole("heading", { level: 1, name: "Spaces" }).parentElement as HTMLElement;
+    const header = screen.getByRole("heading", { level: 1, name: "Public namespaces" }).parentElement as HTMLElement;
     expect(within(header).getByRole("button", { name: "Create namespace" })).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Create namespace" })).toHaveLength(1);
     expect(await axeViolations(container)).toEqual([]);
@@ -217,7 +217,7 @@ describe("Spaces: the rows", () => {
     const menu = await screen.findByRole("menu", { name: "Actions for team" });
     await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
     await user.click(await screen.findByRole("button", { name: "Write the guide" }));
-    // A first guide from Spaces starts on the same outline, which does not save unchanged.
+    // A first guide from Public namespaces starts on the same outline, which does not save unchanged.
     const editor = await screen.findByLabelText("Guide (Markdown)");
     expect((editor as HTMLTextAreaElement).value).toContain("## What this namespace holds");
     expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");
@@ -328,7 +328,7 @@ describe("Spaces: the rows", () => {
   });
 });
 
-describe("Spaces: requesting a private namespace by name", () => {
+describe("Public namespaces: requesting a private namespace by name", () => {
   it("empties the search once the typed name is joined", async () => {
     render(<Browse />);
     await screen.findByText("Support team runbooks");

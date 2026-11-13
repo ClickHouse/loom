@@ -190,7 +190,7 @@ async with Agent(org="acme", namespace="support", agent="auditor") as admin:
         )
 ```
 
-The admin drawer's **Activity** view reads the same op. It hides server events
+The admin drawer's **Audit log** view reads the same op. It hides server events
 (`budget.violated`, `ratelimit.exceeded`, `worker.failed`) behind a toggle and shows the
 erasure roll-up beside the list.
 

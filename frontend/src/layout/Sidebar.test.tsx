@@ -1,4 +1,4 @@
-import { act, render, screen } from "../test/rtl";
+import { act, render, screen, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 
 /** The badge reads leave after paint + idle (two animation frames, then a timer in
@@ -10,8 +10,9 @@ async function painted(): Promise<void> {
 }
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { useStore } from "../lib/state";
+import { useStore, viewHref } from "../lib/state";
 import { Sidebar } from "./Sidebar";
+import { MobileNav } from "./MobileNav";
 import { invalidateShared } from "../lib/sharedReads";
 
 // The Admin drawer — and the conflicts.list / cost.budget_status / agents.connected polls
@@ -207,6 +208,47 @@ describe("Sidebar admin drawer", () => {
     render(<Sidebar />);
     expect(screen.getByRole("button", { name: /Admin/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Admin/ })).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("the admin list on every width", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    invalidateShared();
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  it("names the audit feed Audit log, apart from the rail's Activity group", () => {
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    expect(screen.getByRole("link", { name: "Audit log" })).toHaveAttribute("href", viewHref("admin:activity"));
+    expect(screen.queryByRole("link", { name: "Activity" })).toBeNull();
+  });
+
+  it("is the same on the phone's More sheet: the drawer's entries in its order, Review queue and its count included", async () => {
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["PLATFORM_ADMIN"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    const drawer = screen.getByRole("button", { name: /Admin/ }).parentElement as HTMLElement;
+    const hrefs = (el: HTMLElement) =>
+      within(el)
+        .getAllByRole("link")
+        .map((a) => a.getAttribute("href"));
+    const sidebar = hrefs(drawer);
+    expect(sidebar[0]).toBe(viewHref("admin:review_queue"));
+    expect(sidebar).toContain(viewHref("admin:settings"));
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    const sheet = await screen.findByRole("dialog", { name: "More" });
+    const admin = within(sheet).getByRole("navigation", { name: "Admin" });
+    expect(hrefs(admin)).toEqual(sidebar);
+    expect(within(admin).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
   });
 });
 

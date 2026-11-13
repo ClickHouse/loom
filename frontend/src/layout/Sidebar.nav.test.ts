@@ -19,8 +19,8 @@ import { must } from "../test/must";
 // Flow (route id "sharing") is an operator's view of the whole namespace — it lives in
 // the admin drawer, not the end-user rail. The rail is three labelled groups (Memory,
 // Activity, Sources) under Profile, Settings at the foot; Recall is a tab of Memories,
-// Spaces lives in the namespace picker; the drawer reads as Review / Observe / Access and
-// gains Guardrails.
+// Public namespaces is reached from the namespace picker; the drawer reads as Review /
+// Observe / Access and gains Guardrails.
 
 const admin = { authenticated: true, subject: "op@example.com", org: "dev", roles: ["PLATFORM_ADMIN"] };
 const writer = { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] };
@@ -67,7 +67,7 @@ describe("the rail reads as groups", () => {
     expect(SETTINGS_ITEM).toMatchObject({ id: "setup", label: "Settings" });
   });
 
-  it("Recall, Spaces, Graph and Flow are not rail destinations but stay resolvable views", () => {
+  it("Recall, Public namespaces, Graph and Flow are not rail destinations but stay resolvable views", () => {
     const rail = MAIN.map((m) => m.id);
     for (const v of ["recall", "browse", "graph", "sharing"] as const) {
       expect(rail, v).not.toContain(v);

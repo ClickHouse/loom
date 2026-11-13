@@ -34,6 +34,14 @@ describe("NamespacePicker with auth disabled", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent("a-long-namespace");
   });
 
+  it("says Namespace before the name: shown from xl, read by a screen reader below it", () => {
+    layOut(80);
+    render(<NamespacePicker />);
+    const word = screen.getByText("Namespace");
+    expect(word).toHaveClass("sr-only", "xl:not-sr-only");
+    expect(word).not.toHaveAttribute("aria-hidden");
+  });
+
   it("leaves a name that fits as plain text", () => {
     layOut(80);
     render(<NamespacePicker />);

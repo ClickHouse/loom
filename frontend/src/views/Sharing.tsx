@@ -175,7 +175,7 @@ export function Sharing() {
         <EmptyState
           icon="share-network"
           title="No activity yet"
-          description="Once your agents start writing memories — or you join a public namespace from Spaces (namespace picker → Browse and join) — the cross-tool flow will appear here."
+          description="Once your agents start writing memories — or you join a public namespace (namespace picker → Browse public namespaces) — the cross-tool flow will appear here."
         />
       </PageContainer>
     );

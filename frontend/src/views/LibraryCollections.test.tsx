@@ -842,7 +842,7 @@ describe("the Library on a collection", () => {
     // No files of its own (a token that is not a person's): the top level, where both lists show.
     expect(new URLSearchParams(window.location.search).get("collection")).toBeNull();
     expect(screen.getByText("Collections are shared document libraries. Pick a collection above.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Browse and join spaces" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Browse public namespaces" })).toBeNull();
     expect(
       within(screen.getByRole("region", { name: /^Collections/ })).getByRole("link", { name: "Zeta" }),
     ).toBeInTheDocument();
@@ -886,10 +886,10 @@ describe("the Library on a collection", () => {
     useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
     render(<Documents />);
     await settle();
-    // Not known yet: no "Pick a collection", no "reaches no namespace", no Spaces to take back.
+    // Not known yet: no "Pick a collection", no "reaches no namespace", no Public namespaces to take back.
     expect(screen.queryByText("Pick a collection", { selector: "h2, h3, p, div" })).not.toBeInTheDocument();
     expect(screen.queryByText(/reaches no namespace/)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Browse and join spaces" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Browse public namespaces" })).not.toBeInTheDocument();
   });
 
   it("when the list fails, says no collection is missing", async () => {
@@ -901,7 +901,7 @@ describe("the Library on a collection", () => {
     expect(screen.getByText("Pick a collection", { selector: "h2, h3, p, div" })).toBeInTheDocument();
     // Not known to hold one: the page says what is missing, and offers to join a namespace.
     expect(screen.getByText("Your token reaches no namespace yet. Pick a collection above.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Browse public namespaces" })).toBeInTheDocument();
   });
 
   it("on a tracker namespace of either kind, points at Patterns", async () => {
@@ -919,7 +919,7 @@ describe("the Library on a collection", () => {
     useStore.setState({ myNamespaces: null });
   });
 
-  it("with no namespace and no collection, says so and points at Spaces", async () => {
+  it("with no namespace and no collection, says so and points at Public namespaces", async () => {
     api.listCollections.mockResolvedValue({ collections: [], next_cursor: null });
     useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
     render(<Documents />);
@@ -927,7 +927,7 @@ describe("the Library on a collection", () => {
     expect(api.listKnowledge).not.toHaveBeenCalled();
     expect(screen.getByText("No collection yet", { selector: "h2, h3, p, div" })).toBeInTheDocument();
     expect(screen.getByText(/Create a collection\./)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Browse public namespaces" })).toBeInTheDocument();
     // New collection opens the picker's own create dialog in place.
     const state = screen.getByRole("heading", { name: "No collection yet" }).parentElement as HTMLElement;
     await userEvent.click(within(state).getByRole("button", { name: "New collection" }));
