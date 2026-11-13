@@ -534,7 +534,8 @@ class KnowledgeListInput(BaseModel):
     org: str
     namespace: str
     # Also list the documents of these namespaces (or `@me`), each read-checked (403 for the
-    # first refused); empty = `namespace` alone.
+    # first refused), with a `next_cursor` that holds only for the same namespaces; empty =
+    # `namespace` alone.
     namespaces: NamedNamespaces = Field(default_factory=list)
     # Documents carrying any one of these tags, in any case.
     tags: list[str] = Field(default_factory=list)

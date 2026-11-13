@@ -6,6 +6,7 @@ import base64
 from datetime import datetime
 from typing import Any
 
+import pydantic
 import pytest
 
 from server.auth import authz
@@ -20,6 +21,12 @@ AT = datetime(2026, 5, 17, 12, 0, 0)
 
 def _row(namespace: str, uri: str) -> Any:
     return {"ingested_at": AT, "namespace": namespace, "source_uri": uri}
+
+
+def test_a_list_names_at_most_a_hundred_namespaces() -> None:
+    KnowledgeListInput(org="acme", namespace="ns", namespaces=[f"n{i}" for i in range(100)])
+    with pytest.raises(pydantic.ValidationError):
+        KnowledgeListInput(org="acme", namespace="ns", namespaces=[f"n{i}" for i in range(101)])
 
 
 def test_a_one_namespace_cursor_keeps_its_wire_format() -> None:

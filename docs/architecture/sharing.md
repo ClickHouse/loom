@@ -160,8 +160,8 @@ group to keep in step with the org's users. No token is ever `everyone`.
 
 **An agent's files** go in a collection of its own (say `col-agent-<id>`) granted to
 `agent:<id>`: whoever the service signs in with that agent reads them. An agent's search
-names its collections explicitly (`knowledge.search` with `namespaces`), each checked as a
-read of its own, so it never reaches another agent's files; a chat's attachments go in
+and listing name its collections explicitly (`knowledge.search` and `knowledge.list` with
+`namespaces`), each checked as a read of its own, so it never reaches another agent's files; a chat's attachments go in
 the user's `@me` with the conversation as their `session_id`.
 
 **Groups** come from one place: SCIM `/scim/v2/Groups`, written with a token of the org's
