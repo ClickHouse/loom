@@ -13,9 +13,14 @@ or a package download gets the same answer:
   second DNS answer cannot point the tunnel inward.
 
 Anything that is not CONNECT (plain http) is refused. One job holds at most
-`MAX_TUNNELS` connections at a time; one more waits up to `code_egress_slot_wait_s` for a
-free slot and is then refused (503), and a tunnel with no bytes either way for
-`code_egress_idle_timeout_s` is closed.
+`MAX_TUNNELS` tunnels; one more waits up to `code_egress_slot_wait_s` and is refused with
+a 503 (the first refusal and the job's count are logged). The relay inside the sandbox
+bridges at most as many connections, so the rest wait in its listen backlog.
+
+A tunnel with no byte either way for `code_egress_idle_timeout_s` is closed. Once its
+client has sent EOF, it is closed after `code_egress_half_close_timeout_s` without a
+byte, or after the idle timeout while bytes still wait for the client. A tunnel whose
+client sent EOF before any byte moved is closed at once.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from server.core.hosts import vet_host
 from server.settings import settings
@@ -54,11 +60,19 @@ async def vet_connect(
     return 200, "", address, port
 
 
+@dataclass
+class _Traffic:
+    """Whether either direction of one tunnel has moved a byte, and when one last did."""
+
+    last: float
+    moved: bool = False
+
+
 async def _splice(
-    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, last_active: list[float]
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, traffic: _Traffic
 ) -> None:
     """Copy `reader` to `writer` until EOF, or until neither direction of the
-    tunnel has moved a byte for `code_egress_idle_timeout_s` (`last_active[0]` is shared by
+    tunnel has moved a byte for `code_egress_idle_timeout_s` (`traffic` is shared by
     both directions, so a long download with a silent client stays open)."""
     try:
         while True:
@@ -67,18 +81,38 @@ async def _splice(
                     reader.read(65536), timeout=settings.code_egress_idle_timeout_s
                 )
             except TimeoutError:
-                if time.monotonic() - last_active[0] >= settings.code_egress_idle_timeout_s:
+                if time.monotonic() - traffic.last >= settings.code_egress_idle_timeout_s:
                     return
                 continue
             if not data:
                 break
-            last_active[0] = time.monotonic()
+            traffic.last = time.monotonic()
+            traffic.moved = True
             writer.write(data)
             await writer.drain()
         if writer.can_write_eof():
             writer.write_eof()
-    except (ConnectionError, OSError):
-        pass
+    except OSError:  # a reset: closing this writer ends the other direction too
+        writer.close()
+
+
+async def _wait_out_half_close(
+    server_side: asyncio.Task[None], traffic: _Traffic, to_client: asyncio.StreamWriter
+) -> bool:
+    """Wait until the server side ends, or is quiet for `code_egress_half_close_timeout_s`
+    (`code_egress_idle_timeout_s` while bytes still wait for the client; the server
+    side ends on its own at the idle timeout). Returns whether the client stalled: it
+    stopped reading, and bytes it never read are left."""
+    while not server_side.done():
+        idle = settings.code_egress_idle_timeout_s
+        half_close = settings.code_egress_half_close_timeout_s
+        buffered = to_client.transport.get_write_buffer_size()
+        limit = idle if buffered else half_close
+        quiet = time.monotonic() - traffic.last
+        if quiet >= limit:
+            return bool(buffered)
+        await asyncio.wait({server_side}, timeout=min(limit - quiet, half_close))
+    return False
 
 
 class EgressProxy:
@@ -89,6 +123,7 @@ class EgressProxy:
         self.server: asyncio.Server | None = None
         self._tunnels: set[asyncio.Task[None]] = set()
         self._slots = asyncio.Semaphore(MAX_TUNNELS)
+        self._refused = 0
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
@@ -100,6 +135,9 @@ class EgressProxy:
                     self._slots.acquire(), timeout=settings.code_egress_slot_wait_s
                 )
             except TimeoutError:
+                self._refused += 1
+                if self._refused == 1:
+                    logger.warning("egress refused a tunnel: all %d are open", MAX_TUNNELS)
                 writer.write(b"HTTP/1.1 503 Refused\r\n\r\ntoo many open tunnels\n")
                 return
             try:
@@ -124,6 +162,8 @@ class EgressProxy:
             writer.write(f"HTTP/1.1 {status} Refused\r\n\r\n{reason}\n".encode())
             await writer.drain()
             return
+        if reader.at_eof():  # the client gave up while the name was vetted
+            return
         try:
             up_reader, up_writer = await asyncio.wait_for(
                 asyncio.open_connection(address, port),
@@ -134,15 +174,22 @@ class EgressProxy:
             await writer.drain()
             return
         writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
-        last_active = [time.monotonic()]
+        traffic = _Traffic(last=time.monotonic())
+        server_side = asyncio.create_task(_splice(up_reader, writer, traffic))
         try:
-            await asyncio.gather(
-                _splice(reader, up_writer, last_active), _splice(up_reader, writer, last_active)
-            )
+            await _splice(reader, up_writer, traffic)
+            if not traffic.moved:  # the client gave up before any byte moved
+                return
+            if await _wait_out_half_close(server_side, traffic, writer):
+                writer.transport.abort()  # closing would wait for a client that never reads
         finally:
             up_writer.close()
+            server_side.cancel()
+            await asyncio.gather(server_side, return_exceptions=True)
 
     async def close(self) -> None:
+        if self._refused > 1:
+            logger.warning("egress refused %d tunnels at the cap of %d", self._refused, MAX_TUNNELS)
         tunnels = list(self._tunnels)
         if self.server is not None:
             self.server.close()

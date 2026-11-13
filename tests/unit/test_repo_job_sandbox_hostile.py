@@ -168,6 +168,53 @@ async def test_the_proxy_refuses_private_targets_and_redirects_to_them(
     assert lines and all("HTTP/1.1 40" in ln for ln in lines), out
 
 
+async def test_a_burst_of_connections_leaves_the_relay_running(monkeypatch) -> None:
+    """A client that opens far more connections than the job may have tasks (pnpm's
+    metadata check): the relay bridges 32 at a time, the rest wait in its listen
+    backlog, and it still serves the next."""
+    monkeypatch.setattr(sandbox.settings, "code_sandbox_max_pids", 128)
+
+    async def answer(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read(1)
+        writer.write(b"ok")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(answer, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    real_open = asyncio.open_connection
+
+    async def vet(host: str) -> tuple[str, str]:
+        return "", "127.0.0.1"  # stands in for a public address
+
+    async def open_connection(host: str, _port: int, **kw):
+        return await real_open(host, port, **kw)
+
+    monkeypatch.setattr(egress, "vet_host", vet)
+    monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
+    try:
+        done = await _python(
+            f"""
+            import socket
+            burst = [socket.create_connection(("127.0.0.1", {sandbox.RELAY_PORT}))
+                     for _ in range(300)]
+            for s in burst:
+                s.close()
+            s = socket.create_connection(("127.0.0.1", {sandbox.RELAY_PORT}), timeout=20)
+            s.sendall(b"CONNECT public.example:443 HTTP/1.1\\r\\n\\r\\n")
+            head = s.recv(4096)
+            s.sendall(b"x")
+            print(head[:12], s.recv(2))
+            """,
+            network=True,
+            timeout_s=60,
+        )
+    finally:
+        server.close()
+    assert done.returncode == 0, done.stdout
+    assert b"b'HTTP/1.1 200' b'ok'" in done.stdout, done.stdout
+
+
 async def test_submodule_urls_to_private_hosts_and_local_transports_fail(
     tmp_path: Path, caplog, monkeypatch
 ) -> None:

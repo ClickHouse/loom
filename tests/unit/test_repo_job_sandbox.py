@@ -185,6 +185,27 @@ def test_network_jobs_reach_the_relay_only(monkeypatch) -> None:
     assert "connect %h %p" in env["GIT_SSH_COMMAND"]
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="the sandbox is Linux-only")
+async def test_the_relay_is_given_the_live_idle_timeout(monkeypatch, tmp_path) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(sandbox, "_available", True)
+    monkeypatch.setattr(settings, "code_egress_idle_timeout_s", 42.0)
+    seen: list[str] = []
+
+    async def capture(*argv, **_kw):
+        seen.extend(argv)
+        raise OSError("not started")
+
+    monkeypatch.setattr(sandbox.asyncio, "create_subprocess_exec", capture)
+    with pytest.raises(OSError, match="not started"):
+        await sandbox.run_sandboxed(
+            ["true"], env={"PATH": "/usr/bin:/bin"}, timeout_s=5, cwd=tmp_path, network=True
+        )
+    serve = seen.index("serve")
+    assert seen[serve + 2 : serve + 5] == [f"{sandbox._EGRESS_INSIDE}/proxy.sock", "42.0", "--"]
+
+
 async def test_without_the_sandbox_a_job_runs_as_a_plain_child(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(sandbox, "_available", False)
     done = await sandbox.run_job(
