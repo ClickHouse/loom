@@ -1431,6 +1431,17 @@ def test_a_new_install_on_a_desktop_opens_the_dashboard_once(installer_env: dict
     assert _opened(log) == []
 
 
+def test_the_first_run_that_starts_loom_opens_the_dashboard(installer_env: dict[str, str]) -> None:
+    """A run that wrote .env but stopped before Loom was up (a taken port, say)
+    leaves the next one a new install."""
+    _start_stubs(installer_env)
+    env, log = _desktop(installer_env)
+    _on_terminal({**env, "LOOM_SKIP_START": "1"}, [], None)
+    assert _opened(log) == []
+    _on_terminal(env, [], None)
+    assert _opened(log) == ["http://127.0.0.1:7777/"]
+
+
 @pytest.mark.parametrize(
     "extra", [{"LOOM_NO_OPEN": "1"}, {"SSH_CONNECTION": "10.0.0.1 2 10.0.0.2 22"}]
 )

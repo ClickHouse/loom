@@ -347,7 +347,6 @@ main() {
       -e "s/__LOOM_DOCUMENT_EXTRACTOR_TOKEN__/$extractor_token/" \
       "$bundle/env.example" >"$INSTALL_DIR/.env"
     printf 'Created %s/.env\n' "$INSTALL_DIR"
-    new_env=1
     # A new install gets the memory check once it is up (below); an upgrade does not.
     : >"$INSTALL_DIR/.memory-check-pending"
   else
@@ -521,6 +520,10 @@ main() {
     grep -q '"found"[[:space:]]*:[[:space:]]*true' "$tmp_dir/api.out"
   }
   pending="$INSTALL_DIR/.memory-check-pending"
+  # A new install, up for the first time: also a rerun after a run that stopped
+  # before this point (a taken port, a failed pull).
+  first_up=
+  [ ! -f "$pending" ] || first_up=1
   memory="\"org\":\"$org\",\"namespace\":\"$namespace\",\"agent\":\"-\",\"memory_key\":\"loom/installer-check\""
   skip_agents=
   case $org$namespace in
@@ -740,7 +743,7 @@ main() {
 
   # The dashboard, for a new install on a desktop: a terminal, no SSH session and
   # a way to open a browser there.
-  if [ -n "${new_env:-}" ] && [ "${LOOM_NO_OPEN:-0}" != 1 ] && [ -t 1 ] && [ -z "${SSH_CONNECTION:-}" ]; then
+  if [ -n "$first_up" ] && [ "${LOOM_NO_OPEN:-0}" != 1 ] && [ -t 1 ] && [ -z "${SSH_CONNECTION:-}" ]; then
     if [ "$(uname -s)" = Darwin ] && command -v open >/dev/null 2>&1; then
       open "$dashboard" >/dev/null 2>&1 || true
     elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null 2>&1; then
