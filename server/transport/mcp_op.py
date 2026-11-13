@@ -98,12 +98,16 @@ def _routed(op: Operation, writes: bool) -> bool:
 TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 # A dotted op name as prose spells it (`memory.set`, `knowledge.source.add`).
 OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
-# An op named in prose: its tool name or its dotted op name, and a closing
-# backtick or a possessive 's, which the "(via loom_op)" marker goes after. A name in quotes, after
-# a `/` or before a `#` is a value, a path or a citation tag
-# ('memory.delete', /v1/memory.set, [knowledge.query#1]), not a reference; a
-# possessive (memory.set's) still is.
-_NAMED_OP = re.compile(rf"(?<!['\"/])\b(loom_[a-z_]+|{OP_MENTION})\b(`?(?:'s)?)(?!#|\"|'(?![a-z]))")
+# An op named in prose. The marker "(via loom_op)" goes after the trail.
+_NAMED_OP = re.compile(
+    rf"""
+    (?<!['"/])                      # not a quoted value or a /v1/ path
+    \b(loom_[a-z_]+|{OP_MENTION})\b  # a tool name or a dotted op name
+    (`?(?:'s)?)                     # trail: a closing backtick, a possessive
+    (?!\#|"|'(?![a-z]))             # not a citation tag or a closing quote
+    """,
+    re.VERBOSE,
+)
 
 
 def _lookup(name: str) -> Operation | None:
@@ -111,7 +115,7 @@ def _lookup(name: str) -> Operation | None:
     return TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
 
 
-def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool) -> str:
+def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool = True) -> str:
     """``text`` as a client of this listing reads it. A client calls a listed op
     by its tool name, so every op the listing carries is named by its tool. An
     op it does not carry keeps its dotted name, the one `loom_op` takes, and its
@@ -332,8 +336,7 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     by_name = {op.name: op for op in _ops()}
     op = by_name.get(name) or by_name.get(name.replace("_", ".", 1))
     writes = routes_writes(toolset)
-    hidden = hidden_refusal(name, toolset)
-    if op is None and hidden is not None:
+    if op is None and (hidden := hidden_refusal(name, toolset)) is not None:
         emit_token_refusal(name, auth, error_code="OP_NOT_ON_MCP")
         return req, _result(req.get("id"), hidden, error=True)
     if op is None or not _routed(op, writes):

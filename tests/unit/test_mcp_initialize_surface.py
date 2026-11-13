@@ -410,22 +410,24 @@ def test_the_primer_sends_documents_through_loom_op() -> None:
     everything = mcp_primer._loom_rules("all", None)
     for listing in (coding, core):
         assert "`loom_knowledge_add`" not in listing
-        assert "`loom_op` (op `knowledge.add`)" in listing
-    assert "`loom_knowledge_add`" in everything and "(op `knowledge.add`)" not in everything
+        assert "`knowledge.add` (via loom_op)" in listing
+    assert (
+        "`loom_knowledge_add`" in everything and "`knowledge.add` (via loom_op)" not in everything
+    )
     # The ops the coding listing carries keep their own tool.
     assert "`loom_memory_set`" in coding and "`loom_context_pack`" in coding
 
 
 def test_the_primer_names_the_scratchpad_route_each_listing_has() -> None:
     for toolset in ("core", "tasks", "tracker"):
-        assert "`loom_op` (op `working_memory.set`)" in mcp_primer._loom_rules(toolset, None)
+        assert "`working_memory.set` (via loom_op)" in mcp_primer._loom_rules(toolset, None)
     for toolset in ("coding", "atomic", "all"):
         rules = mcp_primer._loom_rules(toolset, None)
         assert "leases and pointers go to `loom_working_memory_set`" in rules, toolset
 
 
 def test_the_guide_is_named_at_initialize_except_on_the_compact_coding_form() -> None:
-    guide = "`loom_op` (op `mentor.guide`)"
+    guide = "`mentor.guide` (via loom_op)"
     for toolset in ("core", "readonly", None):
         assert guide in asyncio.run(mcp._initialize_instructions(None, toolset)), toolset
     # A coding agent re-reads its instructions every turn and its plugin carries the

@@ -392,7 +392,7 @@ def test_mcp_always_load_tools_names_the_flagged_ops(monkeypatch) -> None:
 
 def test_the_primer_names_collection_list_by_the_tool_that_reaches_it() -> None:
     refs = mcp_primer._tool_refs("core")
-    assert refs["collection.list"] == "`loom_op` (op `collection.list`)"
+    assert refs["collection.list"] == "`collection.list` (via loom_op)"
     rules = mcp_primer._write_rules(refs)
     assert "shared collection (`col-…`)" in rules
 

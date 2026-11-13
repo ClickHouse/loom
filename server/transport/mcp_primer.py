@@ -207,8 +207,8 @@ async def _get_prompt(
 
 def _tool_refs(toolset: str | None) -> dict[str, str | None]:
     """How the primer names each op it points at, on this connection's
-    toolset: its own tool when the listing carries it, else `loom_op` with the
-    op name — the tool every listing carries — and None when neither reaches
+    toolset: its own tool when the listing carries it, else its op name marked
+    "(via loom_op)", as the tool descriptions mark it, and None when neither reaches
     it (a write on a connection whose `loom_op` routes reads only), so the
     primer never asks for a call the client cannot make."""
     listed = {op.name: op.mcp_tool_name for op in listed_ops(toolset)}
@@ -224,7 +224,7 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
         if name in listed:
             out[name] = f"`{listed[name]}`"
         elif loom_op_reachable(OPERATIONS_BY_NAME[name], toolset):
-            out[name] = f"`loom_op` (op `{name}`)"
+            out[name] = f"`{name}` (via loom_op)"
         else:
             out[name] = None
     return out
