@@ -4,6 +4,7 @@ paths:
   - "README.md"
   - "i18n/**"
   - "CONTRIBUTING.md"
+  - "llms-install.md"
 ---
 
 # Documentation
