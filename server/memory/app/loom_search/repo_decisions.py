@@ -117,7 +117,7 @@ def merge_memory_hits(
             (
                 i + 1
                 for i, b in enumerate(base)
-                if b.similarity >= h.similarity and not code_change.ranked_down(b)
+                if b.similarity >= h.similarity and not code_change.moved_for_stale_code(b)
             ),
             default=0,
         )
