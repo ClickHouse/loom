@@ -565,12 +565,14 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     }
   });
 
-  it("points a granted repository the page does not list to Repositories", async () => {
+  it("points a granted repository the page does not list to Repositories, and counts it", async () => {
     const before = [...mine];
     mine.push({ ...mine[1], namespace: "code-private", kind: "code" });
     try {
       render(<Browse />);
       await screen.findByText("Support team runbooks");
+      // Browse lists no repository here: the hint's count comes from the granted one.
+      expect(screen.getByText(/1 repository available/)).toBeInTheDocument();
       await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "code-private");
       expect(await screen.findByText(/is a repository/)).toHaveTextContent(
         "code-private is a repository you read: open it in Repositories.",

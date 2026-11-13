@@ -77,7 +77,8 @@ const JOIN_ROLES: Array<{
 /**
  * Namespaces in your org: the public namespaces to join (`namespace.browse`,
  * `namespace.join`), the ones the caller manages, and, for a search that names
- * an unlisted namespace, a request card or a pointer to where it is joined.
+ * an unlisted namespace, a request card or a pointer to the page that holds it
+ * (Repositories or the Library).
  */
 export function Browse() {
   const identity = useIdentity();
