@@ -13,6 +13,7 @@ Start with docs/index.md (the map). To install Loom, a coding agent reads docs/g
 - [Configure models and API keys](docs/getting-started/models-and-keys.md): Your coding agent, Loom's internal LLM and Loom's embedding model are separate choices.
 - [Overview](docs/getting-started/overview.md): Loom is a server that stores memory, documents, conversations, an entity graph and a code index for AI agents, as rows in ClickHouse, with Postgres as an option for live memory and knowledge state.
 - [Quickstart](docs/getting-started/quickstart.md): This page boots Loom on a laptop and saves a first memory over HTTP, Python and MCP.
+- [What's included](docs/getting-started/whats-included.md): Every capability on this page is in the Loom repository, under the Apache-2.0 license, and runs on your own infrastructure.
 
 ## Use cases
 
