@@ -311,9 +311,11 @@ SITE = "https://clickhouse.github.io/loom/"
 
 
 def _site_page(url: str) -> Path:
-    """The docs/ source of a documentation-site URL: `<site>/a/b/` is `docs/a/b.md`."""
+    """The docs/ source of a documentation-site URL: `<site>/a/b/` is `docs/a/b.md`, or
+    `docs/a/b/index.md` for a section's index page."""
     path = url.removeprefix(SITE).partition("#")[0].strip("/")
-    return ROOT / "docs" / (f"{path}.md" if path else "index.md")
+    page = ROOT / "docs" / f"{path}.md"
+    return page if path and page.is_file() else ROOT / "docs" / path / "index.md"
 
 
 def test_both_plugins_link_the_data_handling_section() -> None:
@@ -328,23 +330,28 @@ def test_both_plugins_link_the_data_handling_section() -> None:
 
 
 def test_listing_links_into_the_repository_resolve() -> None:
-    """The registry listing and both plugin manifests publish absolute links into this
-    repository and the documentation site, which the doc-link check does not follow; a
-    renamed file breaks them."""
+    """The registry listing, the plugin manifests, the SDK packages, the citation and the
+    chart publish absolute links into this repository and the documentation site, which the
+    doc-link check does not follow; a renamed file breaks them."""
     text = "".join(
         (ROOT / f).read_text()
         for f in (
             "server.json",
+            ".claude-plugin/plugin.json",
             "integrations/claude-code-plugin/.claude-plugin/plugin.json",
             "integrations/codex-plugin/.codex-plugin/plugin.json",
+            "sdk/python/pyproject.toml",
+            "sdk/typescript/package.json",
+            "CITATION.cff",
+            "deploy/helm/loom/Chart.yaml",
         )
     )
     links = re.findall(
         r"https://(?:github\.com/ClickHouse/loom/blob/main|raw\.githubusercontent\.com/ClickHouse/loom/main)/([^\"#]+)",
         text,
     )
-    site_links = re.findall(re.escape(SITE) + r"[^\"]*", text)
-    assert links or site_links
+    site_links = re.findall(re.escape(SITE) + r"[^\"\s]*", text)
+    assert links and site_links
     for path in links:
         assert (ROOT / path).is_file(), path
     for url in site_links:
