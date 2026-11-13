@@ -226,8 +226,9 @@ Pull the model first (`ollama pull qwen2.5:3b`, about 2 GB). For llama.cpp, poin
 set `LOOM_LLM_MODEL` to the name it serves. A server run from a checkout reaches the
 model at `localhost`, the setting's default (`http://localhost:11434/v1`). A per-job model
 whose name starts with `gpt`, `o1`, `o3`, `o4`, `chatgpt` or `claude` goes to that hosted
-provider whatever `LOOM_LLM_PROVIDER` says, so a local model named that way (`gpt-oss`)
-serves only as `LOOM_LLM_MODEL`.
+provider whatever `LOOM_LLM_PROVIDER` says; a local model named that way (`gpt-oss`) runs
+locally as `LOOM_LLM_MODEL`, and in a per-job setting only when that setting names the
+same model.
 
 - **Reaching the host.** The containers reach the machine as `host.docker.internal`. Docker
   Desktop forwards that to services on loopback; with Docker Engine on Linux, Ollama must

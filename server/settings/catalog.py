@@ -4861,13 +4861,14 @@ class ProviderSettings(ModelSettings):
         # Both hosted API roots count, a provider unused included: a model named per
         # request may be either provider's. The local root is called only while it is
         # the provider, since no model name reaches it otherwise.
-        local = [("local_llm_base_url", "LOOM_LOCAL_LLM_BASE_URL")]
-        for field, what in (
+        roots = [
             ("openai_base_url", "LOOM_OPENAI_BASE_URL"),
             ("anthropic_base_url", "LOOM_ANTHROPIC_BASE_URL"),
-            *(local if self.llm_provider == "local" else []),
             ("embedding_base_url", "LOOM_EMBEDDING_BASE_URL"),
-        ):
+        ]
+        if self.llm_provider == "local":
+            roots.append(("local_llm_base_url", "LOOM_LOCAL_LLM_BASE_URL"))
+        for field, what in roots:
             host = self.off_gateway(v[field]) if v[field] else ""
             if host:
                 if field in saved:

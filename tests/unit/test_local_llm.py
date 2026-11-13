@@ -139,3 +139,14 @@ def test_a_local_assistant_needs_its_model() -> None:
         ValueError, match="LOOM_ASSISTANT_PROVIDER=local needs LOOM_ASSISTANT_MODEL"
     ):
         Settings(_env_file=None, assistant_provider="local")  # type: ignore[call-arg]
+
+
+def test_the_deployments_model_named_again_runs_on_its_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    # A local server's model whose name looks hosted, passed back by a stage.
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    monkeypatch.setattr(settings, "llm_model", "gpt-oss:20b")
+    assert llm_client.get_llm_client_for_model("gpt-oss:20b").provider == "local"

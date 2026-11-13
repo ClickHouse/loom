@@ -233,10 +233,12 @@ def get_llm_client_for_model(model: str | None) -> LLMClient:
     even when the global provider is OpenAI); key-fallback semantics match
     `get_llm_client()`.
     """
-    if not model:
-        return get_llm_client()
-
     from server.settings import settings
+
+    # The deployment's own model runs on its resolved provider, not one inferred from the
+    # name: a local server may serve a model whose name looks hosted (`gpt-oss`).
+    if not model or model == settings.llm_model:
+        return get_llm_client()
 
     fallback = settings.llm_fallback_model.strip()
     wkey = (model, fallback)

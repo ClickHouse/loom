@@ -18,6 +18,7 @@ class LocalLLMClient(OpenAILLMClient):
     _cap_name = "max_tokens"
 
     def __init__(self, model: str) -> None:
+        # A placeholder past the parent's key check; `_headers` sends no bearer.
         super().__init__(model, api_key="local")
 
     def _root(self) -> str:
