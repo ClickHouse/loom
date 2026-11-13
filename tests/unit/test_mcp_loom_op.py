@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import server.transport.mcp as mcp
 import server.transport.mcp_call as mcp_call
 from server.auth.jwt import mint_token
+from server.operations.registry import ALL_OPERATIONS
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.settings import settings
 from server.transport import mcp_op
@@ -132,6 +133,15 @@ def test_a_readonly_connection_routes_reads_only() -> None:
         _call("tracker.flaky", {"test_name": "t"}), toolset="readonly", auth=None
     )
     assert early is None and rewritten["params"]["name"] == "loom_tracker_flaky"
+
+
+def test_a_readonly_refusal_suggests_only_reads() -> None:
+    by_name = {op.name: op for op in ALL_OPERATIONS}
+    for name in ("task.create", "task.creat"):
+        _, early = mcp_op.route(_call(name, {}), toolset="readonly", auth=None)
+        assert early is not None
+        near = early["result"]["structuredContent"]["did_you_mean"]
+        assert near and all(by_name[n].read_only for n in near), near
 
 
 def test_the_namespace_check_sees_the_inner_arguments(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2081,8 +2081,16 @@ def _profile_hint(code: str, usage: dict[str, int], sessions: int, facts: dict[s
     return hint.text
 
 
-def _call_rule_hint(rule: Callable[..., Any], op: str, args: dict[str, Any], **kw: Any) -> str:
-    out = rule(op, args, kw.get("res", {}), kw.get("facts", {}), kw.get("st", {}))
+def _call_rule_hint(
+    rule: Callable[..., Any],
+    op: str,
+    args: dict[str, Any],
+    *,
+    res: dict[str, Any] | None = None,
+    facts: dict[str, Any] | None = None,
+    st: dict[str, Any] | None = None,
+) -> str:
+    out = rule(op, args, res or {}, facts or {}, st or {})
     assert out is not None, rule.__name__
     return mentor_rules.clip_keeping_note(out[1])
 
@@ -2133,16 +2141,12 @@ _ECHOES: dict[str, Callable[[str], str]] = {
         facts={"repos": 1},
     ),
 }
-_LONG = "Storage" + "k" * 63
-
-
-# A typical value per rule: a tracker source is a short configured name
-_TYPICAL = {"tracker_unused": "qa"}
+_LONG = "k" * 70
 
 
 @pytest.mark.parametrize("rule", sorted(_ECHOES))
 def test_a_hint_with_a_typical_echoed_value_keeps_all_its_advice(rule: str) -> None:
-    text = _ECHOES[rule](_TYPICAL.get(rule, "StorageShared"))
+    text = _ECHOES[rule]("StorageShared")
     assert not mentor_rules.without_listing_note(text).endswith("…"), text
 
 
@@ -2168,3 +2172,23 @@ def test_a_rendered_hint_grows_only_by_one_name_change_per_op(toolset: str) -> N
     names = re.findall(rf"\b{mcp_op.OP_MENTION}\b", mentor_rules.without_listing_note(text))
     rendered = mcp_tools.mentor_text_for_toolset(text, toolset)
     assert len(rendered) <= mentor_rules.HINT_CHARS + len(names) * len(" (via loom_op)")
+
+
+def test_every_rule_that_echoes_a_caller_value_is_in_the_echo_table() -> None:
+    """A new echoing rule needs an _ECHOES entry; agent_unnamed echoes only '-', '' or '*'."""
+    echoing = {
+        name
+        for name, f in vars(mentor_rules).items()
+        if inspect.isfunction(f)
+        and f.__module__ == mentor_rules.__name__
+        and name not in ("_quoted", "_quoted_list")
+        and re.search(r"\b_quoted(_list)?\(", inspect.getsource(f))
+    }
+    assert echoing == {
+        "_rules_planes",  # code_index_unused, tracker_unused
+        "_coordination_sentence",  # coordination_loop
+        "_rules_shapes",  # records_for_identities
+        "_rules_identity",  # agent_unnamed
+        "_rule_set_churn",
+        "_rule_search_identifier",
+    }

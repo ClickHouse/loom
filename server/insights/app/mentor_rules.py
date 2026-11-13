@@ -548,7 +548,8 @@ def _rules_planes(c: _Ctx) -> None:
             "tracker_unused",
             "warning",
             f"{c.fact('tracker_tagged_sets')} test/flaky/ci writes, 0 tracker.* calls: "
-            f"tracker sources ({_quoted_list(list(tracker_sources))}) answer "
+            f"tracker sources ({_quoted_list(list(tracker_sources)[:1], len(tracker_sources))}) "
+            "answer "
             "tracker.similar, tracker.duplicate_check, tracker.flaky, tracker.test_signal.",
             ("tracker.similar", "tracker.duplicate_check", "tracker.flaky", "tracker.test_signal"),
             tracker_tagged_sets=c.fact("tracker_tagged_sets"),
