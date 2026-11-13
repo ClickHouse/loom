@@ -2106,17 +2106,18 @@ class ExtractionSettings(BaseModel):
     extraction_queue_interval_seconds: int = 15
     # Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass`
     # replays) may run before the supervisor abandons it; 0 = four intervals, at least 60 s
-    # and at most 900. Keep `extraction_queue_lease_seconds` above it.
+    # and at most 900. The batch lease is kept at least a minute longer.
     extraction_queue_max_pass_seconds: float = Field(default=0.0, ge=0)
     # Most queued batches one pass claims.
     extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Seconds a claimed batch stays leased to one worker before another may claim it; at
-    # least a minute. Set it above the longest pass (`extraction_queue_max_pass_seconds`),
-    # or an overlapping worker may claim a batch still waiting in the pass.
+    # least a minute. A lease shorter than the pass deadline plus a minute is raised to
+    # that, so an overlapping worker never claims a batch still waiting in the pass.
     extraction_queue_lease_seconds: Annotated[int, LIVE] = Field(default=600, ge=60)
     # Attempts before a failing batch stops returning to `pending` and is marked failed;
     # each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or
-    # gateway that cannot be reached, or a held call, spends none.
+    # gateway that cannot be reached, or a held call, spends none; on a `local` provider a
+    # read timeout and a cancelled replay (pass deadline, shutdown) spend one.
     extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Namespaces replayed concurrently per pass; batches inside one namespace
     # stay serial in session-date order. At least 1: none would hang the pass.
@@ -2125,18 +2126,6 @@ class ExtractionSettings(BaseModel):
     # Most namespaces of one org that may hold their own extraction policy;
     # `extraction_policy.set` with scope `namespace` refuses one more.
     extraction_policy_max_namespaces: Annotated[int, LIVE] = Field(default=1000, ge=1)
-
-    @model_validator(mode="after")
-    def _check_queue_lease(self) -> ExtractionSettings:
-        """A lease at or under a set pass deadline lets a second worker claim a batch
-        the first is still replaying."""
-        deadline = self.extraction_queue_max_pass_seconds
-        if deadline > 0 and self.extraction_queue_lease_seconds <= deadline:
-            raise ValueError(
-                "LOOM_EXTRACTION_QUEUE_LEASE_SECONDS must be more than "
-                "LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS"
-            )
-        return self
 
 
 # ===== Knowledge ==============================================================

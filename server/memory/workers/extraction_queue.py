@@ -9,7 +9,10 @@ A failure goes back to `pending` with `attempts+1`, claimed again after a
 backoff (15 s, 1, 5, then 30 minutes), until `max_attempts`, then `failed`
 with `last_error` for `memory.extraction_status` to show. A model provider or
 gateway that cannot be reached (no connection, a timeout, 502/503/504) spends
-no attempt: the row waits the same backoff. A held call (the org switched off,
+no attempt: the row waits the same backoff. On a `local` model server a read
+timeout, and a replay cancelled mid-way (the pass deadline, a shutdown), spend
+one: the machine is too slow for that row, and a long capture would otherwise
+be claimed again forever. A held call (the org switched off,
 the enqueuer's identity refused, asked to wait or unread) marks the row `held`
 until the hold ends, no attempt spent.
 
@@ -115,15 +118,19 @@ _UNREACHABLE = (
 )
 
 
+def _local_provider() -> bool:
+    from server.settings import settings
+
+    return settings.llm_provider == "local"
+
+
 def unreachable(e: BaseException) -> bool:
     """Whether a replay's failure is the model provider or gateway not answering
     (`_UNREACHABLE`, or a 502, 503 or 504): the row is not at fault, so it spends
     no attempt. A request it cannot make at all (a bad scheme) is not this, and
     neither is a model server on the operator's machine that ran out its read
     timeout: it answered too slowly for this row, which a retry does not change."""
-    from server.settings import settings
-
-    if settings.llm_provider == "local" and isinstance(e, httpx.ReadTimeout):
+    if _local_provider() and isinstance(e, httpx.ReadTimeout):
         return False
     if isinstance(e, _UNREACHABLE):
         return True
@@ -132,10 +139,16 @@ def unreachable(e: BaseException) -> bool:
 
 def _config_from_settings() -> ExtractionQueueConfig:
     from server.settings import settings
+    from server.workers.registry import default_max_pass_seconds
 
+    deadline = settings.extraction_queue_max_pass_seconds or default_max_pass_seconds(
+        settings.extraction_queue_interval_seconds
+    )
     return ExtractionQueueConfig(
         max_batches_per_pass=settings.extraction_queue_max_batches_per_pass,
-        lease_seconds=settings.extraction_queue_lease_seconds,
+        # Longer than a pass, whatever an override set: a shorter lease lets another
+        # worker claim a batch this pass has not reached yet.
+        lease_seconds=max(settings.extraction_queue_lease_seconds, int(deadline) + 60),
         max_attempts=settings.extraction_queue_max_attempts,
         namespace_concurrency=settings.extraction_queue_namespace_concurrency,
     )
@@ -159,12 +172,13 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
         try:
             written = await q.replay_row(row)
         except asyncio.CancelledError:
-            # The pass ran out its deadline mid-replay: the row spends an attempt, so
-            # a replay longer than any pass ends `failed` instead of being claimed
-            # again each time its lease runs out.
-            await asyncio.shield(
-                q.mark_error(row, error="pass deadline", max_attempts=cfg.max_attempts, ch=ch)
-            )
+            # A replay cancelled mid-way (the pass deadline, a shutdown) on a local model
+            # server spends an attempt, so a capture too long for the machine ends
+            # `failed` instead of being claimed again each time its lease runs out.
+            if _local_provider():
+                await asyncio.shield(
+                    q.mark_error(row, error="cancelled", max_attempts=cfg.max_attempts, ch=ch)
+                )
             raise
         except held as e:
             # Held until the org is back on, the switch or identity is read, or the

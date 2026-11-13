@@ -251,12 +251,13 @@ a reply rather than the hosted default of 300, and tries it once
 The workers that extract in the background give a pass a deadline, so the preset lets a
 deferred-extraction pass, which replays the captures the coding plugins send, run an hour
 on one batch (`LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS`, by default four of its intervals,
-at least 60 s and at most 900; the batch's lease must be longer) and an
+at least 60 s and at most 900; a batch's lease is kept a minute longer) and an
 observe-extraction pass an hour (`LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS`, default 900).
-A capture cut at that deadline, or whose call ran out its timeout, spends one of its
-`LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2` attempts, so a session too long for the machine
-ends `failed` (`memory.extraction_status` says why) instead of holding the queue: a long
-session can need several calls in a row, each up to the timeout.
+On a `local` provider a capture cut short (at that deadline, or by the server restarting)
+or whose call ran out its timeout spends one of its `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2`
+attempts, so a session too long for the machine ends `failed` (`memory.extraction_status`
+says why) instead of holding the queue: a long session can need several calls in a row,
+each up to the timeout. Restarting Loom during a long capture uses one of its two tries.
 For llama.cpp, point
 `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root (`http://host.docker.internal:8080/v1`) and
 set `LOOM_LLM_MODEL` to the name it serves. A server run from a checkout reaches the

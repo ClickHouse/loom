@@ -2568,20 +2568,22 @@ settings:
 
   # Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass`
   # replays) may run before the supervisor abandons it; 0 = four intervals, at least 60
-  # s and at most 900. Keep `extraction_queue_lease_seconds` above it. [restart]
+  # s and at most 900. The batch lease is kept at least a minute longer. [restart]
   # extraction_queue_max_pass_seconds: 0.0
 
   # Most queued batches one pass claims. [live]
   # extraction_queue_max_batches_per_pass: 8
 
   # Seconds a claimed batch stays leased to one worker before another may claim it; at
-  # least a minute. Set it above the longest pass (`extraction_queue_max_pass_seconds`),
-  # or an overlapping worker may claim a batch still waiting in the pass. [live]
+  # least a minute. A lease shorter than the pass deadline plus a minute is raised to
+  # that, so an overlapping worker never claims a batch still waiting in the pass.
+  # [live]
   # extraction_queue_lease_seconds: 600
 
   # Attempts before a failing batch stops returning to `pending` and is marked failed;
   # each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or
-  # gateway that cannot be reached, or a held call, spends none. [live]
+  # gateway that cannot be reached, or a held call, spends none; on a `local` provider a
+  # read timeout and a cancelled replay (pass deadline, shutdown) spend one. [live]
   # extraction_queue_max_attempts: 8
 
   # Namespaces replayed concurrently per pass; batches inside one namespace stay serial

@@ -831,21 +831,37 @@ async def test_a_local_model_that_times_out_spends_an_attempt(
 
 
 @pytest.mark.asyncio
-async def test_a_replay_cut_at_the_pass_deadline_spends_an_attempt(
+async def test_a_cancelled_replay_on_a_local_model_spends_an_attempt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
     ch = _replaying(monkeypatch, asyncio.CancelledError())
     with pytest.raises(asyncio.CancelledError):
         await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
     written = ch.inserts[-1][1][0]
     assert (written["status"], written["attempts"]) == (q.STATUS_PENDING, 3)
-    assert written["last_error"] == "pass deadline"
+    assert written["last_error"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_replay_on_a_hosted_model_spends_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _replaying(monkeypatch, asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
+    assert all(row["status"] == q.STATUS_RUNNING for ins in ch.inserts for row in ins[1])
 
 
 @pytest.mark.asyncio
 async def test_a_pass_the_supervisor_times_out_records_the_attempt_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
     ch = _replaying(monkeypatch, RuntimeError("unused"))
 
     async def _slow(inp: Any, **_kw: Any) -> Any:
@@ -857,7 +873,7 @@ async def test_a_pass_the_supervisor_times_out_records_the_attempt_first(
     with pytest.raises(TimeoutError):
         async with asyncio.timeout(0.05):
             await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
-    assert ch.inserts[-1][1][0]["last_error"] == "pass deadline"
+    assert ch.inserts[-1][1][0]["last_error"] == "cancelled"
 
 
 _STATEMENT = "Code: 241. DB::Exception: Memory limit exceeded. INSERT INTO loom.memory VALUES"
@@ -1200,15 +1216,16 @@ async def test_the_enqueuer_rides_its_own_column_and_a_hold_fills_an_old_rows() 
     assert ch.inserts[-1][1][0]["enqueued_by"] == "process:sa:t:agent-a"
 
 
-def test_a_lease_no_longer_than_a_set_pass_deadline_is_refused() -> None:
-    from pydantic import ValidationError
+def test_the_lease_is_raised_above_the_pass_deadline_whatever_it_is_set_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
 
-    from server.settings import Settings
-
-    with pytest.raises(ValidationError, match="LEASE_SECONDS must be more than"):
-        Settings(  # type: ignore[call-arg]
-            _env_file=None,
-            extraction_queue_max_pass_seconds=600,
-            extraction_queue_lease_seconds=600,
-        )
-    Settings(_env_file=None, extraction_queue_lease_seconds=60)  # type: ignore[call-arg]
+    monkeypatch.setattr(settings, "extraction_queue_max_pass_seconds", 3600.0)
+    monkeypatch.setattr(settings, "extraction_queue_lease_seconds", 600)
+    assert worker._config_from_settings().lease_seconds == 3660
+    # Unset, the deadline is four intervals: 240 s at a 60 s interval.
+    monkeypatch.setattr(settings, "extraction_queue_max_pass_seconds", 0.0)
+    monkeypatch.setattr(settings, "extraction_queue_interval_seconds", 60)
+    monkeypatch.setattr(settings, "extraction_queue_lease_seconds", 120)
+    assert worker._config_from_settings().lease_seconds == 300
