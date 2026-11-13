@@ -622,6 +622,24 @@ def test_pack_section_renders_three_hints_within_the_cap_and_nothing_when_quiet(
     assert len(body) <= m.PACK_CHARS and body.count("·") <= 1
 
 
+def test_the_pack_section_names_ops_for_the_mcp_listing_hint_by_hint() -> None:
+    from server.transport import mcp_tools
+
+    note = " (call working_memory.set via loom_op)"
+    p = _fake_profile(
+        _h("a", text="search.query recalls by meaning; keep it with working_memory.set." + note),
+        _h("b", text="working_memory.set holds it."),
+    )
+    assert "search.query" in m.render_pack_section(p)  # HTTP: as stored
+    token = m.hint_namer.set(lambda text: mcp_tools.mentor_text_for_toolset(text, "core"))
+    try:
+        body = m.render_pack_section(p)
+    finally:
+        m.hint_namer.reset(token)
+    assert "loom_search recalls" in body and "search.query" not in body
+    assert "(call " not in body and "working_memory.set (via loom_op)" in body
+
+
 def test_top_hint_line_reads_only_the_cache() -> None:
     assert m.top_hint_line("o", "ns", "a") == ""
     m._cache_put(("o", "ns", "a"), 10**12, _fake_profile(_h("code_index_unused")))

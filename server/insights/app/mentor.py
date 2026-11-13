@@ -34,6 +34,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from typing import Any
 
 from server.core.background import create_deferred_task
@@ -411,6 +412,16 @@ def warm_profile(org: str, namespace: str, agent: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Names each op in a hint as the caller's MCP listing does; the MCP transport sets
+# it around a tool call, and over HTTP a hint reads as stored.
+hint_namer: ContextVar[Callable[[str], str] | None] = ContextVar("loom_hint_namer", default=None)
+
+
+def named_for_caller(text: str) -> str:
+    namer = hint_namer.get()
+    return namer(text) if namer else text
+
+
 def render_pack_section(
     profile: MentorProfile | None, *, cap: int = PACK_CHARS, max_hints: int = PACK_MAX_HINTS
 ) -> str:
@@ -418,7 +429,7 @@ def render_pack_section(
     capped; "" when nothing fires. The tail names the op and the skill."""
     if profile is None or not profile.hints:
         return ""
-    items = [f"{h.code}: {h.text}" for h in profile.hints[:max_hints]]
+    items = [f"{h.code}: {named_for_caller(h.text)}" for h in profile.hints[:max_hints]]
     # Each hint already names its op; pointing at the skill makes agents open
     # the skill file even in sessions whose results carry no hint.
     tail = "mentor.brief has the evidence"
@@ -531,6 +542,8 @@ __all__ = [
     "call_hint",
     "cached_profile",
     "mentor_profile",
+    "hint_namer",
+    "named_for_caller",
     "render_pack_section",
     "reset_cache",
     "session_key_for",

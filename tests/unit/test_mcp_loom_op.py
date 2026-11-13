@@ -102,6 +102,32 @@ def test_loom_op_runs_the_target_through_the_listed_tool_path(
     assert seen and seen[0].test_name == "02346_text_index" and seen[0].namespace == "n"
 
 
+def test_a_handler_over_mcp_names_mentor_ops_for_the_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.insights.app import mentor
+
+    tool = "loom_tracker_flaky"
+    op = mcp_call.TOOLS_BY_NAME[tool]
+
+    async def _handler(inp: Any) -> Any:
+        return op.output_model(
+            test_name=mentor.named_for_caller("search.query"), verdict="no_flaky_signal"
+        )
+
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, tool, dataclasses.replace(op, handler=_handler))
+
+    async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return {"org": "o", "namespace": "n", "agent": "claude-code"}
+
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
+    r = _client(monkeypatch, authed=False).post(
+        "/mcp", json=_call("tracker.flaky", {"test_name": "02346_text_index"})
+    )
+    assert r.json()["result"]["structuredContent"]["test_name"] == "loom_search"
+    assert mentor.named_for_caller("search.query") == "search.query"  # reset after the call
+
+
 def test_a_hidden_op_is_refused_as_a_direct_call_is(monkeypatch: pytest.MonkeyPatch) -> None:
     hidden = sorted(_MCP_HIDDEN_OPS)[0]
     body = _client(monkeypatch, authed=False).post("/mcp", json=_call(hidden)).json()["result"]

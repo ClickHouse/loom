@@ -59,7 +59,11 @@ from server.transport.mcp_outcome import (
 )
 from server.transport.mcp_primer import _render_primer_and_emit
 from server.transport.mcp_refusals import refusal_result
-from server.transport.mcp_tools import _emit_mcp_event, assistant_connection
+from server.transport.mcp_tools import (
+    _emit_mcp_event,
+    assistant_connection,
+    mentor_text_for_toolset,
+)
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope
@@ -313,7 +317,10 @@ async def _call_tool(
         # caches and refuse.
         genai.set_identity(operation=op.name, capture_level="off")
 
+    from server.insights.app.mentor import hint_namer
+
     start = time.perf_counter()
+    namer = hint_namer.set(lambda text: mentor_text_for_toolset(text, toolset))
     try:
         with gates.tenant_slot(auth, target), llm_free.serving(op):
             result = await op.handler(input_obj)
@@ -332,6 +339,8 @@ async def _call_tool(
             rl_org=rl_org,
             elapsed_ms=int((time.perf_counter() - start) * 1000),
         )
+    finally:
+        hint_namer.reset(namer)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
     mentor_hint = _emit_success(
         op, arguments, elapsed_ms, request_id, result, mcp_session_id, toolset

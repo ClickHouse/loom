@@ -294,7 +294,7 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
         MentorHint(
             code=h.code,
             severity=h.severity,
-            text=h.text,
+            text=svc.named_for_caller(h.text),
             ops=list(h.ops),
             evidence=dict(h.evidence),
             plane=mentor_rules.hint_plane(h.ops),
