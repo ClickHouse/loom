@@ -2105,7 +2105,7 @@ class ExtractionSettings(BaseModel):
     # Seconds between deferred-extraction queue passes.
     extraction_queue_interval_seconds: int = 15
     # Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass`
-    # replays) may run before the supervisor abandons it; 0 = four intervals, kept 60-900 s.
+    # replays) may run before the supervisor abandons it; 0 = four intervals, 60 to 900 s.
     extraction_queue_max_pass_seconds: float = Field(default=0.0, ge=0)
     # Most queued batches one pass claims.
     extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=0)
