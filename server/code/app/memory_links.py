@@ -10,7 +10,6 @@ import asyncio
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any
 
 from server.code.app.index import gitrepo, mirrors
 from server.code.app.index.bootstrap import holds
@@ -20,7 +19,12 @@ from server.code.domain.declaration import edit_pattern
 from server.code.domain.definitions import definitions
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.domain.index.remote import repo_tag
-from server.code.domain.index.repos import configured_repos, docs_namespaces, repo_for_namespace
+from server.code.domain.index.repos import (
+    RepoConfig,
+    configured_repos,
+    docs_namespaces,
+    repo_for_namespace,
+)
 from server.code.store.index import CodeRepo
 from server.settings import settings
 
@@ -134,12 +138,14 @@ async def touched_paths(org: str, namespace: str, base: str, head: str) -> set[s
 async def containing(
     org: str, namespace: str, commit: str, literal: str, paths: list[str], *, limit: int
 ) -> list[str] | None:
-    """Those of `paths` whose text at `commit` holds the word `literal`, read from the
-    mirror, the paths the ingest refuses left out; an empty list when `limit` or more
-    hold it (no telling which is the definition); None when git cannot tell."""
+    """Those of `paths` the entry indexes whose text at `commit` holds the word
+    `literal`, read from the mirror, the paths the ingest refuses left out; an empty list
+    when `limit` or more hold it (no telling which is the definition); None when git
+    cannot tell."""
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:
         return None
+    paths = [p for p in paths if p.startswith(cfg.path_prefixes)]  # what the ingest reads
     if not commit or not paths:
         return []
     try:
@@ -159,7 +165,7 @@ _DENYLISTS: OrderedDict[tuple[str, str], Denylist] = OrderedDict()
 _DENYLISTS_KEPT = 8
 
 
-async def _denylist_at(cfg: Any, commit: str) -> Denylist:
+async def _denylist_at(cfg: RepoConfig, commit: str) -> Denylist:
     key = (cfg.git_dir, commit)
     if key not in _DENYLISTS:
         _DENYLISTS[key] = await load_denylist(cfg, commit, gitrepo.show_file)

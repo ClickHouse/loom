@@ -3905,9 +3905,19 @@ def _moved_module_world(
         hits = sorted(p for p in changed if literal in commits[(head, p)])
         return [] if len(hits) >= limit else hits
 
+    async def is_ancestor(ancestor, descendant):
+        return ancestor <= descendant  # one line of history: c0, c1, c2
+
+    async def range_of(base, head):
+        paths = {p for c, p in commits if c in (base, head)}
+        changed = {p for p in paths if commits.get((base, p)) != commits.get((head, p))}
+        return code_link_pass.Range(base, {p: p if (head, p) in commits else "" for p in changed})
+
     _reads(monkeypatch, files, at)
     _history(monkeypatch, files, commits)
     monkeypatch.setattr(files, "containing", containing)
+    monkeypatch.setattr(files, "is_ancestor", is_ancestor)
+    monkeypatch.setattr(files, "range", range_of)
     monkeypatch.setattr(code_links.code, "candidates", candidates)
     (d,) = [x for x in _file("pkg/a.py", _ROWS).defs if x.name == "fetch_rows"]
     row = _full(
@@ -3971,12 +3981,35 @@ async def test_a_link_lost_while_the_index_lagged_comes_back_when_rechecked(
     monkeypatch, indexed
 ) -> None:
     files = code_link_pass.RepoReads("o", "code-a")
-    row, _ = _moved_module_world(monkeypatch, files, indexed=indexed)
+    row, searched = _moved_module_world(monkeypatch, files, indexed=indexed)
     # as an older build wrote it: missing since c1, still holding c0, the commit it was
-    # last read at
+    # last read at; `_lost` brings it back over the next range, which touches no b.py
+    lost = row | {"state": "missing", "changed_since": "c1"}
+    later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
+    moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("moved", "pkg/b.py")]
+    assert searched == [("c2", "fetch_rows", "c0")]
+
+
+@pytest.mark.asyncio
+async def test_a_missing_link_is_never_handed_to_an_edited_copy_the_mirror_finds(
+    monkeypatch,
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
+    lost = row | {"state": "missing", "changed_since": "c1"}
+    later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
+    moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
+    assert [m.link.state for m in moves] in ([], ["missing"])
+
+
+@pytest.mark.asyncio
+async def test_a_full_recheck_of_a_missing_link_leaves_it_to_the_index(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False)
     lost = row | {"state": "missing", "changed_since": "c1"}
     moves = await code_link_recheck._recheck("o", "code-a", [lost], None, "c1", files)
-    assert [(m.link.state, m.link.path) for m in moves] == [("moved", "pkg/b.py")]
+    assert searched == [] and [m.link.state for m in moves] in ([], ["missing"])
 
 
 @pytest.mark.asyncio
@@ -4102,6 +4135,7 @@ async def test_the_mirror_search_leaves_out_refused_files_and_counts_before_it_d
         {
             ".loomignore": "gen/\n",
             "pkg/b.py": "def fetch_rows():\n    return 1\n",
+            "tools/rows.py": "def fetch_rows():\n    return 3\n",  # outside the entry's prefixes
             "gen/rows.py": "def fetch_rows():\n    return 2\n",  # the ingest refuses it
         }
     )
@@ -4113,10 +4147,11 @@ async def test_the_mirror_search_leaves_out_refused_files_and_counts_before_it_d
         include_contrib=False,
         include_contrib_paths=[],
         exclude_generated=False,
+        path_prefixes=("pkg/", "gen/"),
     )
     monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: cfg)
     monkeypatch.setattr(memory_links, "_DENYLISTS", type(memory_links._DENYLISTS)())
-    paths = ["gen/rows.py", "pkg/b.py"]
+    paths = ["gen/rows.py", "pkg/b.py", "tools/rows.py"]
     found = await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=3)
     assert found == ["pkg/b.py"]
     # two files name it at a limit of two: a full page, counted before the refusal, adds none

@@ -386,6 +386,8 @@ async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[De
     parser fails on, of which the index holds no definition either. None when git could
     not be read: then a live link is unsure."""
     qn = r.before.qualified_name
+    if r.before.state == "missing" and r.range is None:
+        return []  # a full recheck of a link long gone: the index decides, as before
     base = _searched_from(r.before, r.row, r.range)
     paths = await files.containing(head, bare_name(qn), base, limit=_MAX_NAMING)
     if paths is None:

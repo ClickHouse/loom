@@ -130,10 +130,11 @@ class RepoReads:
     async def containing(
         self, head: str, literal: str, base: str, *, limit: int
     ) -> list[str] | None:
-        """Up to `limit` of the files `base..head` added or changed whose text at `head`
-        holds the word `literal`, those the ingest refuses left out; an empty list when
-        the range cannot be read (a force-push), more than `_MAX_SEARCHED_FILES` changed
-        or `limit` or more hold it; None when the mirror cannot be searched."""
+        """The files `base..head` added or changed whose text at `head` holds the word
+        `literal`, fewer than `limit`, those the ingest does not index left out; an empty
+        list when the range's diff cannot be read (a force-push, a diff git fails on),
+        more than `_MAX_SEARCHED_FILES` changed or `limit` or more hold it; None when the
+        mirror cannot be searched."""
 
         async def read() -> list[str] | None:
             touched = await self.touched(base, head) if base else None
