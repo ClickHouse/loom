@@ -256,15 +256,13 @@ settings:
   # default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). [restart]
   # llm_model: ""
 
-  # The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom
-  # writes into the agent definition at boot. "" = the definition's own
-  # (integrations/librechat/agent.yaml), not llm_model. [restart]
+  # The assistant agent's model, which Loom writes into the agent definition at boot. ""
+  # = the definition's own (integrations/librechat/agent.yaml), not llm_model. [restart]
   # assistant_model: ""
 
-  # The LibreChat endpoint the assistant agent runs on. "" = the definition's own
-  # (anthropic); "local" = the model server the operator runs, which LibreChat reaches
-  # at LIBRECHAT_LOCAL_LLM_BASE_URL (deploy/librechat/assistant.librechat.yaml); set
-  # assistant_model to one of its models. [restart]
+  # The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local"
+  # = LibreChat's local endpoint (a model server the operator runs; needs
+  # assistant_model). [restart]
   # assistant_provider: ""
 
   # Model to answer with when a client's provider is still unavailable after its retries
@@ -401,9 +399,8 @@ settings:
   # gateways take. [restart]
   # anthropic_base_url: "https://api.anthropic.com"
 
-  # The chat-completions root of a model server the operator runs, for
-  # LOOM_LLM_PROVIDER=local: Ollama's is <host>:11434/v1, llama.cpp's server
-  # <host>:8080/v1. Called with no key. [restart]
+  # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
+  # <host>:11434/v1, llama.cpp's server <host>:8080/v1). [restart]
   # local_llm_base_url: "http://localhost:11434/v1"
 
   # Model calls with no provider key: exchange an identity token (RFC 8693) at this

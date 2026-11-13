@@ -281,3 +281,17 @@ def test_a_local_model_server_and_the_local_embedder_count_as_set_up(client, mon
     assert body["llm_provider"] == "local"
     assert not any(body["configured_keys"].values())
     assert not body["requires_setup"]
+
+
+def test_a_hosted_llm_with_its_key_and_the_local_embedder_counts_as_set_up(client, monkeypatch):
+    # The released stack embeds with `local`; adding a hosted LLM finishes its setup.
+    monkeypatch.setattr(
+        routes,
+        "configurations",
+        AsyncMock(return_value=[{"state": "environment", "version": 126}]),
+    )
+    monkeypatch.setattr(routes, "environment_provider_key", lambda n: "k" if n == "openai" else "")
+    env = {**routes.environment_settings(), "llm_provider": "openai", "llm_model": "gpt-6-luna"}
+    monkeypatch.setattr(routes, "environment_settings", lambda: env)
+    monkeypatch.setattr(routes, "environment_embedding", lambda: ("local", "local"))
+    assert not client.get("/v1/admin/models").json()["requires_setup"]

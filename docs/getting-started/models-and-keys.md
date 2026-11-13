@@ -200,12 +200,12 @@ every published benchmark. Tune individual jobs later using
 
 `LOOM_LLM_PROVIDER=local` runs Loom's LLM jobs on a chat-completions server you run:
 [Ollama](https://ollama.com), llama.cpp's `llama-server`, or any server that speaks the
-OpenAI chat-completions format. Loom sends it no key, and its calls cost nothing in the
-cost ledger. With the released stack's `local` embedder, nothing leaves the machine.
+OpenAI chat-completions format. Loom sends it no key. With the released stack's `local`
+embedder, nothing leaves the machine.
 
-The installer offers this when Ollama answers on `localhost:11434` and `.env` still runs
-the fake LLM; `LOOM_LOCAL_MODELS=ollama` in front of `sh loom-install.sh` sets it without
-asking, `LOOM_LOCAL_MODELS=off` never offers it. It writes:
+A new install offers this when Ollama answers on `localhost:11434`;
+`LOOM_LOCAL_MODELS=ollama` in front of `sh loom-install.sh` sets it without asking, on a
+new install or an existing one, and `LOOM_LOCAL_MODELS=off` never offers it. It writes:
 
 ```dotenv
 LOOM_LLM_PROVIDER=local
@@ -214,6 +214,7 @@ LOOM_LOCAL_LLM_BASE_URL=http://host.docker.internal:11434/v1
 LOOM_ASSISTANT_PROVIDER=local
 LOOM_ASSISTANT_MODEL=qwen2.5:3b
 LOOM_MEMORY_EXTRACT_VERIFY_MODELS=qwen2.5:3b
+LOOM_CONFLICT_RESOLVER_MODEL=qwen2.5:3b
 LOOM_SESSION_BRIEF_LLM_MODEL=
 LOOM_CODE_BISECT_LLM_RERANK_MODEL=
 LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
@@ -223,26 +224,32 @@ LOOM_RETRIEVAL_JUDGE_MODEL=
 Pull the model first (`ollama pull qwen2.5:3b`, about 2 GB). For llama.cpp, point
 `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root (`http://host.docker.internal:8080/v1`) and
 set `LOOM_LLM_MODEL` to the name it serves. A server run from a checkout reaches the
-model at `localhost`, the setting's default (`http://localhost:11434/v1`).
+model at `localhost`, the setting's default (`http://localhost:11434/v1`). A per-job model
+whose name starts with `gpt`, `o1`, `o3`, `o4`, `chatgpt` or `claude` goes to that hosted
+provider whatever `LOOM_LLM_PROVIDER` says, so a local model named that way (`gpt-oss`)
+serves only as `LOOM_LLM_MODEL`.
 
 - **Reaching the host.** The containers reach the machine as `host.docker.internal`. Docker
   Desktop forwards that to services on loopback; with Docker Engine on Linux, Ollama must
   listen beyond loopback (`OLLAMA_HOST=0.0.0.0`, with port 11434 closed to the network).
+  Under the Helm chart with `networkPolicy.enabled`, add the server's port to
+  `networkPolicy.extraEgress`.
 - **The assistant.** `LOOM_ASSISTANT_PROVIDER=local` moves the assistant's agent to
   LibreChat's `local` endpoint, which calls `LIBRECHAT_LOCAL_LLM_BASE_URL` (default
-  `http://host.docker.internal:11434/v1`). Its answers are charged nothing against the
-  namespace's daily cap. The assistant calls Loom's tools, so the model must support tool
-  calls (`qwen2.5` and `llama3.2` do in Ollama). Under the Helm chart, add
-  `LOCAL_LLM_BASE_URL` to the assistant's Secret and let the LibreChat pod reach the
-  server's port.
+  `http://host.docker.internal:11434/v1`), and needs `LOOM_ASSISTANT_MODEL`. The assistant
+  answers by calling Loom's tools, so pick a model the server runs with tool calls (Ollama
+  marks them). A local model has no price, so each answer counts
+  `LOOM_ASSISTANT_ANSWER_CEILING_USD` against the namespace's daily model cost cap, as any
+  unpriced model does. Under the Helm chart, add `LOCAL_LLM_BASE_URL` to the assistant's
+  Secret and let the LibreChat pod reach the server's port.
 - **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
   published benchmark covers a local one, so treat a small model as a way to try Loom
   with no key or to keep everything on the machine, not as an equal. Expect fewer and
-  coarser extracted facts, less reliable conflict judgments and shorter `memory.ask`
-  answers, and an assistant that picks tools less reliably. On CPU a call takes seconds
-  for a short reply and longer for an extraction, so a busy capture queue backs up; a
-  GPU, or a larger model on a machine with the memory for it, narrows both gaps. For a
-  team server, a hosted model answers better.
+  coarser extracted facts, less reliable conflict judgments, shorter `memory.ask` answers
+  and an assistant that picks tools less reliably. A small model on a CPU is slow on long
+  prompts such as extraction, so a busy capture queue backs up; a GPU, or a larger model
+  on a machine with the memory for it, narrows both gaps. For a team server, a hosted
+  model answers better.
 
 ### Through an inference gateway
 

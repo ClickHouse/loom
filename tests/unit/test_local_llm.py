@@ -130,3 +130,12 @@ def test_a_required_gateway_ignores_the_local_root_of_another_provider(
     monkeypatch.setattr(settings, "openai_base_url", "https://gateway.example/v1")
     monkeypatch.setattr(settings, "anthropic_base_url", "https://gateway.example")
     assert "LOOM_LOCAL_LLM_BASE_URL" not in settings.gateway_refusal()
+
+
+def test_a_local_assistant_needs_its_model() -> None:
+    from server.settings import Settings
+
+    with pytest.raises(
+        ValueError, match="LOOM_ASSISTANT_PROVIDER=local needs LOOM_ASSISTANT_MODEL"
+    ):
+        Settings(_env_file=None, assistant_provider="local")  # type: ignore[call-arg]

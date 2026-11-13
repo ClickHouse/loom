@@ -3802,14 +3802,11 @@ class ModelSettings(BaseModel):
     # setting (the other *_model settings) is left "". Empty takes the resolved
     # provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
     llm_model: str = ""
-    # The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom
-    # writes into the agent definition at boot. "" = the definition's own
-    # (integrations/librechat/agent.yaml), not llm_model.
+    # The assistant agent's model, which Loom writes into the agent definition at boot.
+    # "" = the definition's own (integrations/librechat/agent.yaml), not llm_model.
     assistant_model: str = ""
-    # The LibreChat endpoint the assistant agent runs on. "" = the definition's own
-    # (anthropic); "local" = the model server the operator runs, which LibreChat reaches at
-    # LIBRECHAT_LOCAL_LLM_BASE_URL (deploy/librechat/assistant.librechat.yaml); set
-    # assistant_model to one of its models.
+    # The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local"
+    # = LibreChat's local endpoint (a model server the operator runs; needs assistant_model).
     assistant_provider: Literal["", "anthropic", "local"] = ""
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
@@ -3885,6 +3882,15 @@ class ModelSettings(BaseModel):
     # different model from the ones answering: a same-model judge measures
     # agreement, not quality.
     retrieval_judge_model: str = "gpt-6.1-sol"
+
+    @model_validator(mode="after")
+    def _check_assistant_provider(self) -> ModelSettings:
+        """A local endpoint runs no model the definition names, so it needs its own."""
+        if self.assistant_provider == "local" and not self.assistant_model:
+            raise ValueError(
+                "LOOM_ASSISTANT_PROVIDER=local needs LOOM_ASSISTANT_MODEL, a model it serves"
+            )
+        return self
 
 
 # ===== Namespace ==============================================================
@@ -4437,9 +4443,8 @@ class ProviderSettings(ModelSettings):
     # a gateway in front of Anthropic. Off the default, the key also goes as a
     # bearer, the scheme gateways take.
     anthropic_base_url: str = "https://api.anthropic.com"
-    # The chat-completions root of a model server the operator runs, for
-    # LOOM_LLM_PROVIDER=local: Ollama's is <host>:11434/v1, llama.cpp's server
-    # <host>:8080/v1. Called with no key.
+    # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
+    # <host>:11434/v1, llama.cpp's server <host>:8080/v1).
     local_llm_base_url: str = "http://localhost:11434/v1"
     # Model calls with no provider key: exchange an identity token (RFC 8693)
     # at this token endpoint of the gateway, and send the answer as the bearer

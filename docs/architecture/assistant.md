@@ -426,10 +426,14 @@ ends empty first puts the turn back as it was, as does a reload before then.
 `integrations/librechat/agent.yaml` holds the agent's name, instructions, model and a
 version number (`server/assistant/domain/definition.py`); the tools are the assistant
 toolset's, listed by Loom. Loom seeds it at boot under the service user, which owns
-it, so nothing is shared. It writes the definition when its version is newer than the
+it, so nothing is shared. `LOOM_ASSISTANT_MODEL` and `LOOM_ASSISTANT_PROVIDER` replace
+the file's model and provider when set; `local` is LibreChat's endpoint for a model server
+the operator runs (`deploy/librechat/assistant.librechat.yaml`). The stored row records the
+definition's model as `<provider>/<model>` when the provider is not the file's, and as the
+bare model otherwise. It writes the definition when its version is newer than the
 stored one, or the same with another model, so during a rolling upgrade a build N-1
-never overwrites N's definition and a changed `LOOM_ASSISTANT_MODEL` takes effect at the
-next boot. While N rolls out, and after a rollback, N's definition stays, and a tool
+never overwrites N's definition, and a changed `LOOM_ASSISTANT_MODEL` or
+`LOOM_ASSISTANT_PROVIDER` takes effect at the next boot. While N rolls out, and after a rollback, N's definition stays, and a tool
 call it names that an N-1 pod does not serve answers `UNKNOWN_OP` there until every pod
 runs N.
 
@@ -1203,8 +1207,9 @@ goes to its caller only and is stored nowhere, as any read in flight.
 
 The model is the agent definition's: `LOOM_ASSISTANT_MODEL` when set (Loom writes
 it into the definition when it seeds), `claude-haiku-4-5` otherwise. The model runs in
-LibreChat on its own key, so Loom's provider layer does not call it, but Loom holds its
-spend to the same budget as its own model calls:
+LibreChat, on its own Anthropic key or on the operator's model server
+(`LOOM_ASSISTANT_PROVIDER=local`), so Loom's provider layer does not call it, but Loom
+holds its spend to the same budget as its own model calls:
 
 - Before calling LibreChat, the bridge checks the namespace's daily model cost cap
   (`server/observability/budget.py`, `daily_cost_cap_usd`, default

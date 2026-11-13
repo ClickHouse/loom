@@ -406,12 +406,13 @@ main() {
     [ -z "$(given "$key")" ] || set_env "$key" "$(given "$key")"
   done
   # A model server on this machine (Ollama) for extraction and the assistant, no key:
-  # offered while .env still runs the fake LLM and Ollama answers here.
+  # offered on a new install when Ollama answers here. An install already set up keeps
+  # its models (the dashboard's Models & keys does not show in .env).
   local_model=qwen2.5:3b
   use_local=
   if [ "${LOOM_LOCAL_MODELS:-}" = ollama ]; then
     use_local=1
-  elif [ -z "${LOOM_LOCAL_MODELS:-}" ] && [ "$(get_env LOOM_LLM_PROVIDER)" = fake ] \
+  elif [ -z "${LOOM_LOCAL_MODELS:-}" ] && [ -z "${had_env:-}" ] \
     && [ -t 0 ] && [ -t 1 ] \
     && curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/version >/dev/null 2>&1; then
     printf 'Ollama answers on this machine. Use it for extraction and the assistant (%s, no API key)? [Y/n] ' "$local_model"
@@ -427,6 +428,7 @@ main() {
     set_env LOOM_ASSISTANT_MODEL "$local_model"
     # The jobs that name a hosted model by default take the local one too.
     set_env LOOM_MEMORY_EXTRACT_VERIFY_MODELS "$local_model"
+    set_env LOOM_CONFLICT_RESOLVER_MODEL "$local_model"
     for key in LOOM_SESSION_BRIEF_LLM_MODEL LOOM_CODE_BISECT_LLM_RERANK_MODEL \
       LOOM_TRACKER_DUPCHECK_RERANK_MODEL LOOM_RETRIEVAL_JUDGE_MODEL; do
       set_env "$key" ""
