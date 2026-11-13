@@ -1,4 +1,4 @@
 # The documentation site builder; pinned with hashes in requirements.txt.
-mkdocs-material==9.6.23
+mkdocs-material==9.7.7
 # Lets list content nest at 2 spaces, as Prettier writes the docs.
 mdx-truly-sane-lists==1.3
