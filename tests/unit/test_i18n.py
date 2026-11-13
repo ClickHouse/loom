@@ -124,6 +124,10 @@ def test_a_heading_or_link_text_handed_back_in_english_is_a_difference() -> None
     assert t.differences(source, done) == []
 
 
+def test_a_language_name_heading_may_stay_as_it_is() -> None:
+    assert t.differences("## Go\n\nText.\n", "## Go\n\nTexto.\n") == []
+
+
 def test_a_link_to_an_english_only_page_may_keep_its_title() -> None:
     url = f"{t.REPO_URL}/blob/main/docs/operations/deployment.md"
     source = f"See [Deployment → Providers]({url}).\n"
@@ -269,6 +273,11 @@ def _translations() -> list[tuple[str, t.Language]]:
         for lang in t.LANGUAGES
         if (ROOT / t.target_path(lang.code, s)).is_file()
     ]
+
+
+def test_every_use_case_page_is_translated() -> None:
+    pages = {p.relative_to(ROOT).as_posix() for p in (ROOT / "docs/use-cases").glob("*.md")}
+    assert pages <= set(t.SOURCES)
 
 
 def test_no_translation_is_orphaned() -> None:

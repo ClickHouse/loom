@@ -56,6 +56,7 @@ SOURCES = (
     "docs/use-cases/agent-memory.md",
     "docs/use-cases/autonomous-agents.md",
     "docs/use-cases/code-intelligence.md",
+    "docs/use-cases/code-intelligence-by-language.md",
     "docs/use-cases/coding-agent-cost.md",
     "docs/use-cases/document-search.md",
     "docs/use-cases/multi-agent.md",
@@ -148,7 +149,8 @@ KEPT_WORDS = frozenset(
     """loom clickhouse postgres claude code codex cursor docker compose mcp sdk sdks python
     typescript node langgraph strands kubernetes helm github codespaces http https api cli
     okf rag llm json yaml sql oidc scim tls otel clickstack langfuse gemini vs windsurf zed
-    cline pypi npm apache ci url id token namespace""".split()
+    cline pypi npm apache ci url id token namespace go rust java javascript c cmake terraform
+    hcl jsonnet protobuf vue svelte astro angular tla shell bash dockerfile makefile""".split()
 )
 URL = re.compile(r"https?://[^\s<>()\"'`*\]]+")
 # A code span may wrap across lines; Markdown renders the break as a space.
