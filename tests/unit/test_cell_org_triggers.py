@@ -70,7 +70,7 @@ def test_the_pool_and_a_dedicated_session_send_the_marker_only_with_loom_cell(
     for server_settings in sent:
         assert (server_settings.get("loom.tenancy_checked") == "on") == bool(name)
         if not name:
-            # A deployment that is not a cell sends exactly the parameters it sent before.
+            # A deployment that is not a cell sends no marker.
             assert "loom.tenancy_checked" not in server_settings
 
 
