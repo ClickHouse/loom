@@ -433,12 +433,12 @@ main() {
     set_env LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED false
     # A CPU reads a long prompt for minutes; the hosted default would cut it short. A
     # server that timed out once answers no faster on a retry, so a call is tried once,
-    # and the extraction workers' passes and the queue's lease outlast several calls.
+    # and the extraction workers' passes (the queue's lease follows its pass) outlast
+    # several calls.
     set_env LOOM_LLM_REQUEST_TIMEOUT_S 900
     set_env LOOM_LLM_RETRY_ATTEMPTS 1
     set_env LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS 1
     set_env LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS 3600
-    set_env LOOM_EXTRACTION_QUEUE_LEASE_SECONDS 3900
     # A replay too long for this machine fails on its second try rather than hold the
     # queue for its default eight.
     set_env LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS 2

@@ -9,12 +9,13 @@ A failure goes back to `pending` with `attempts+1`, claimed again after a
 backoff (15 s, 1, 5, then 30 minutes), until `max_attempts`, then `failed`
 with `last_error` for `memory.extraction_status` to show. A model provider or
 gateway that cannot be reached (no connection, a timeout, 502/503/504) spends
-no attempt: the row waits the same backoff. On a `local` model server a read
-timeout, and a replay cancelled mid-way (the pass deadline, a shutdown), spend
-one: the machine is too slow for that row, and a long capture would otherwise
-be claimed again forever. A held call (the org switched off,
-the enqueuer's identity refused, asked to wait or unread) marks the row `held`
-until the hold ends, no attempt spent.
+no attempt: the row waits the same backoff. On a deployment whose
+`LOOM_LLM_PROVIDER` is `local`, a read timeout from that model server, and a
+replay cancelled mid-way (the pass deadline, a shutdown), spend one: the
+machine is too slow for that row, and a long capture would otherwise be
+claimed again forever. A held call (the org switched off, the enqueuer's
+identity refused, asked to wait or unread) marks the row `held` until the
+hold ends, no attempt spent.
 
 On by default: `defer` is opt-in per call, so an enabled worker with an
 empty queue costs one indexed SELECT per interval and no LLM call. Turning
@@ -124,13 +125,28 @@ def _local_provider() -> bool:
     return settings.llm_provider == "local"
 
 
+def _local_server_timeout(e: BaseException) -> bool:
+    """A read timeout from the `local` model server itself, not from a hosted model a
+    per-job setting names."""
+    from server.settings import settings
+
+    if not (_local_provider() and isinstance(e, httpx.ReadTimeout)):
+        return False
+    try:
+        url = e.request.url
+    except RuntimeError:  # raised without its request: not known to be the local server
+        return False
+    root = httpx.URL(settings.local_llm_base_url)
+    return (url.host, url.port) == (root.host, root.port)
+
+
 def unreachable(e: BaseException) -> bool:
     """Whether a replay's failure is the model provider or gateway not answering
     (`_UNREACHABLE`, or a 502, 503 or 504): the row is not at fault, so it spends
     no attempt. A request it cannot make at all (a bad scheme) is not this, and
     neither is a model server on the operator's machine that ran out its read
     timeout: it answered too slowly for this row, which a retry does not change."""
-    if _local_provider() and isinstance(e, httpx.ReadTimeout):
+    if _local_server_timeout(e):
         return False
     if isinstance(e, _UNREACHABLE):
         return True
@@ -139,11 +155,9 @@ def unreachable(e: BaseException) -> bool:
 
 def _config_from_settings() -> ExtractionQueueConfig:
     from server.settings import settings
-    from server.workers.registry import default_max_pass_seconds
+    from server.workers.registry import pass_deadline_seconds
 
-    deadline = settings.extraction_queue_max_pass_seconds or default_max_pass_seconds(
-        settings.extraction_queue_interval_seconds
-    )
+    deadline = pass_deadline_seconds("extraction_queue")
     return ExtractionQueueConfig(
         max_batches_per_pass=settings.extraction_queue_max_batches_per_pass,
         # Longer than a pass, whatever an override set: a shorter lease lets another

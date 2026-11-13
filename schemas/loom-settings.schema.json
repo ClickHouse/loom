@@ -2730,7 +2730,7 @@
           "default": 8,
           "minimum": 0,
           "type": "integer",
-          "description": "Attempts before a failing batch stops returning to `pending` and is marked failed; each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or gateway that cannot be reached, or a held call, spends none; on a `local` provider a read timeout and a cancelled replay (pass deadline, shutdown) spend one."
+          "description": "Attempts before a failing batch stops returning to `pending` and is marked failed; each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or gateway that cannot be reached, or a held call, spends none; on a `local` provider a read timeout from that model server and a cancelled replay (pass deadline, shutdown) spend one."
         },
         "extraction_queue_max_batches_per_pass": {
           "default": 8,

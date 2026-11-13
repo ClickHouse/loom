@@ -1927,7 +1927,6 @@ LOCAL_PRESET = {
     "LOOM_LLM_RETRY_ATTEMPTS": "1",
     "LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS": "1",
     "LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS": "3600",
-    "LOOM_EXTRACTION_QUEUE_LEASE_SECONDS": "3900",
     "LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS": "2",
     "LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS": "3600",
     "LOOM_MEMORY_EXTRACT_VERIFY_MODELS": "",
@@ -1963,12 +1962,11 @@ def test_the_local_preset_loads_with_the_verifier_and_resolver_off(monkeypatch) 
     assert loaded.memory_extract_verify_models == ""
     assert loaded.memory_conflict_resolver_enabled is False
     assert loaded.assistant_answer_ceiling_usd == 0
-    # A call with every retry fits in each extraction worker's pass, and the pass in the
-    # queue's lease.
+    # A call with every retry fits in each extraction worker's pass (the queue's lease
+    # follows its pass: test_extraction_queue).
     tries = loaded.llm_retry_attempts
     call = loaded.llm_request_timeout_s * tries + loaded.llm_retry_max_wait_s * (tries - 1)
     assert loaded.extraction_queue_max_pass_seconds > call
-    assert loaded.extraction_queue_lease_seconds > loaded.extraction_queue_max_pass_seconds
     assert loaded.observe_extract_max_pass_seconds > call
 
 
