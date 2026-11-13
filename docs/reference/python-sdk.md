@@ -239,7 +239,7 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   `Memory` block that extracts flushed messages with `memory.set_from_messages`
   and reads them back with `memory.search`; install the `[llamaindex]` extra.
   `retrieve` needs a `SyncAgent`, and so does the block when `Memory` is used
-  through `get` / `put`; `aflush(memory)` hands what is left in the window to the
+  through `get` / `put` or with `flush`; `aflush(memory)` hands what is left in the window to the
   `Memory`'s blocks and archives it.
 - `loom.integrations.langgraph.LoomStore(agent, tags=...)` is a LangGraph
   `BaseStore`: `put` is `memory.set`, `search(query=...)` ranks with

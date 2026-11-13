@@ -530,6 +530,30 @@ class _Failing(_Recorder):
         raise RuntimeError("provider down")
 
 
+class _Slow(_Recorder):
+    """Records only after yielding to the loop a few times."""
+
+    async def _aput(self, messages: list[ChatMessage]) -> None:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.seen.extend(str(m.content) for m in messages)
+
+
+def test_a_failed_flush_raises_only_after_every_block_finished() -> None:
+    slow = _Slow(name="slow", seen=[])
+
+    async def run() -> None:
+        mem = Memory.from_defaults(
+            session_id="s-2", memory_blocks=[_Failing(name="failing", seen=[]), slow]
+        )
+        await mem.aput(ChatMessage(role="user", content="I always take an aisle seat"))
+        with pytest.raises(RuntimeError):
+            await aflush(mem)
+        assert slow.seen == ["I always take an aisle seat"]  # finished before the raise
+
+    asyncio.run(run())
+
+
 def test_a_failed_flush_archives_nothing_and_the_next_one_hands_the_window_over_again() -> None:
     memory = _FakeMemory()
     loom_block = LoomMemoryBlock(agent=SimpleNamespace(memory=memory))

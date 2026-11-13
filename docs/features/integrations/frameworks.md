@@ -141,7 +141,7 @@ messages over again. The block's two calls:
 | `name`, `priority`      | `LoomMemories`, 0 | LlamaIndex's block name and truncation priority (0: never truncated)                                |
 
 Give the block a `SyncAgent` when `Memory` is used through its sync methods (`get`,
-`put`), which may run a call on another event loop than the one an `Agent` was opened on;
+`put`) or `flush` is called, which may run a call on another event loop than the one an `Agent` was opened on;
 an `Agent` serves `aget` and `aput` on its own loop. `Memory` keeps its short-term
 messages in its own chat store (in process by default); only what the block receives
 reaches Loom.
