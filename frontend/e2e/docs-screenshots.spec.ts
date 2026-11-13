@@ -384,6 +384,10 @@ const CODE_REPOS = [
   codeRepo(CODE_NS_RELEASE, "release-2026.09", "9c02e7b1a4f86d25", 1261, 17990, 20),
 ];
 
+// The Health tab's reads (coverage, index status, index errors, recent commits) appear in
+// no shot; the callers clip passes the tab on its way to Explore, and these keep it a
+// healthy repository's if it renders there.
+
 /** `code.coverage` for the main branch: Python and TypeScript, fully embedded; only Python
  *  has a compiler tier (scip-python). */
 function coverage() {
@@ -812,9 +816,10 @@ const CODE_UNITS: Record<string, Record<string, unknown>> = {
 };
 
 /** A definition as `code.symbol` answers it: a symbol unit, with the compiler tier and the
- *  signature, and none of the ranking annotations (churn, amp, tested) a search result has. */
+ *  signature, none of the ranking annotations (churn, amp, tested) a search result has, and
+ *  no description, since the server takes that from a doc comment these bodies lack. */
 function symbolUnit(symbol: string) {
-  const { churn: _churn, amp: _amp, tested: _tested, ...unit } = CODE_UNITS[symbol];
+  const { churn: _churn, amp: _amp, tested: _tested, description: _description, ...unit } = CODE_UNITS[symbol];
   return { unit_id: `s-${symbol}`, symbol, tier: "scip", elided: false, score: 0, ...unit, kind: "symbol" };
 }
 
