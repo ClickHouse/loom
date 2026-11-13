@@ -365,12 +365,16 @@ async def grep_paths(
     *,
     limit: int = 50,
     timeout_s: float = 20.0,
+    literal_paths: bool = False,
 ) -> list[str]:
     """Paths at `rev` whose content contains `literal` (fixed string, case sensitive),
-    under `pathspecs` — `git grep -l -F`. Exit 1 with nothing on stderr is git's "no
+    under `pathspecs` (file paths taken as written with `literal_paths`, else pathspecs
+    with their magic) — `git grep -l -F`. Exit 1 with nothing on stderr is git's "no
     match", not an error."""
     proc = await asyncio.create_subprocess_exec(
         "git",
+        *UNQUOTED_PATHS,
+        *(["--literal-pathspecs"] if literal_paths else []),
         "--git-dir",
         git_dir,
         "grep",

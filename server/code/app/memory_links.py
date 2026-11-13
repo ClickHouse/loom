@@ -134,10 +134,14 @@ async def containing(
     """Up to `limit` of `paths` whose text at `commit` holds `literal`, read from the
     mirror; None when git cannot tell."""
     cfg = repo_for_namespace(org, namespace)
-    if cfg is None or not commit or not paths:
-        return None if cfg is None else []
+    if cfg is None:
+        return None
+    if not commit or not paths:
+        return []
     try:
-        return await gitrepo.grep_paths(cfg.git_dir, commit, literal, tuple(paths), limit=limit)
+        return await gitrepo.grep_paths(
+            cfg.git_dir, commit, literal, tuple(paths), limit=limit, literal_paths=True
+        )
     except gitrepo.GitError:
         return None
 

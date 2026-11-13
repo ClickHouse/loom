@@ -148,8 +148,9 @@ _LOST_SEARCHED_DAYS = 30
 
 # files of namesakes a lost link is weighed against: past it, the answer is unsure
 _MAX_ELSEWHERE = 32
-# files a range may touch for the mirror to be searched for a lost name; past it, unsure
-_MAX_SEARCHED = 5000
+# files naming a lost name (callers as well as the definition) a mirror search reads;
+# past it, unsure
+_MAX_NAMING = 200
 
 
 # versions of its file a lost link's code is looked for in: past it, likewise
@@ -331,7 +332,9 @@ async def _recheck(
                 lost[before.qualified_name] = before.read_path
         found.append(_Read(a, own, before, now, defs, renamed, gone))
     elsewhere = await _elsewhere(org, cns, lost)
-    unsure = await _unindexed(files, found, elsewhere, head)
+    unindexed, unsure = await _unindexed(files, found, set(elsewhere), head)
+    for qn, defs in unindexed.items():
+        elsewhere[qn] += defs
     moves: list[Move] = []
     for r in found:
         renamed, far = r.renamed, []
@@ -370,46 +373,38 @@ async def _recheck(
 
 
 async def _unindexed(
-    files: link_pass.RepoReads,
-    reads: list[_Read],
-    elsewhere: dict[str, list[Definition]],
-    head: str,
-) -> set[str]:
-    """Add to `elsewhere` the namesakes of each lost name the code index places nowhere,
-    read from the mirror among the files its range touched: the link's own file is read
-    there, and a commit past the ingest's per-commit cap moves the head before the rest of
-    its files are indexed. Returns the names the mirror could not be searched for."""
+    files: link_pass.RepoReads, reads: list[_Read], placed: set[str], head: str
+) -> tuple[dict[str, list[Definition]], set[str]]:
+    """The namesakes of each lost name the code index places nowhere (not in `placed`),
+    read from the mirror among the files changed since the link was last in place: its
+    own file is read there, and a commit past the ingest's per-commit cap moves the head
+    before the rest of its files are indexed. Also the names the mirror could not answer
+    for: a range too wide, too many files naming it, or a read that failed."""
+    found: dict[str, list[Definition]] = defaultdict(list)
     unsure: set[str] = set()
     for r in reads:
         qn = r.before.qualified_name
-        if not r.lost or elsewhere.get(qn):
+        if not r.lost or qn in placed:
             continue
-        base = r.range.base if r.range is not None else str(r.row["checked_commit"])
-        touched = await files.touched(base, head) if base else None
-        if not touched:
-            continue
+        # a link lost before is searched from its own check, as `_new_namesakes` does
+        own = None if r.before.state in _LOST_STATES else r.range
+        base = own.base if own is not None else str(r.row["checked_commit"])
         local = local_name(qn, r.before.read_path)
         try:
-            paths = (
-                await files.containing(
-                    head, bare_name(qn), sorted(touched), limit=_MAX_ELSEWHERE + 1
-                )
-                if len(touched) <= _MAX_SEARCHED
-                else None
-            )
-            if paths is None:
+            paths = await files.containing(head, bare_name(qn), base, limit=_MAX_NAMING)
+            if paths is None or len(paths) >= _MAX_NAMING:
                 unsure.add(qn)
                 continue
             for path in paths:
                 f = await files.at(head, path)
-                elsewhere[qn] += [
+                found[qn] += [
                     d
                     for d in (f.defs if f else [])
                     if local_name(d.qualified_name, d.path) == local
                 ]
         except code.ParseFailed:
             unsure.add(qn)
-    return unsure
+    return found, unsure
 
 
 async def _namesakes(
@@ -440,13 +435,8 @@ async def _new_namesakes(
     live = changed is not None and before.state not in _LOST_STATES
     start = changed.base if changed is not None and live else a["checked_commit"]
     local = local_name(before.qualified_name, before.read_path)
-    anchor, until = await _last_in_place(files, before, start, head, local), head
-    if anchor is None and not live and a["anchored_commit"] and a["changed_since"]:
-        # lost before this check from a file gone since: where it went is what appeared by
-        # the commit it was lost at, never a namesake added later
-        until = a["changed_since"]
-        anchor = await _last_in_place(files, before, a["anchored_commit"], until, local)
-    touched = await files.touched(anchor, until) if anchor else None
+    anchor = await _last_in_place(files, before, start, head, local)
+    touched = await files.touched(anchor, head) if anchor else None
     if anchor is None or touched is None:
         return None
     paths = {c.path for c in candidates if c.path in touched}

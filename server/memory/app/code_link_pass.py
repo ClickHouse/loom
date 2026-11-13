@@ -58,6 +58,8 @@ class Range:
 
 # parsed files a pass keeps: a full recheck reads every linked file of a repository
 _FILES_CACHED = 512
+# files a range may change for the mirror to be searched over them
+_MAX_SEARCHED_FILES = 5000
 
 
 class Recent[K, V](OrderedDict[K, V]):
@@ -126,13 +128,23 @@ class RepoReads:
         )
 
     async def containing(
-        self, commit: str, literal: str, paths: list[str], *, limit: int
+        self, head: str, literal: str, base: str, *, limit: int
     ) -> list[str] | None:
-        """Up to `limit` of `paths` whose text at `commit` holds `literal`."""
-        return await self._once(
-            ("containing", commit, literal, limit, *paths),
-            lambda: code.containing(self.org, self.cns, commit, literal, paths, limit=limit),
-        )
+        """Up to `limit` of the files `base..head` added or changed whose text at `head`
+        holds `literal`; None when git cannot tell or more than `_MAX_SEARCHED_FILES`
+        changed."""
+
+        async def read() -> list[str] | None:
+            touched = await self.touched(base, head) if base else None
+            if touched is None or len(touched) > _MAX_SEARCHED_FILES:
+                return None
+            if not touched:
+                return []
+            return await code.containing(
+                self.org, self.cns, head, literal, sorted(touched), limit=limit
+            )
+
+        return await self._once(("containing", head, literal, base, limit), read)
 
     async def names(self, commit: str, path: str) -> set[str] | None:
         """The qualified names `path` defines at `commit`, read without fingerprints."""

@@ -371,10 +371,10 @@ another class or namespace never inherits a link, and a `missing` link comes bac
 when its own name does. A name gone from its file is looked for in the other files the
 commits since its last check touched, read from the mirror as its own file is, so a
 commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) never
-makes a moved definition read as gone. A link already `missing` whose file is gone comes
-back when a definition of its name appeared elsewhere by the commit it went missing at.
-A file the parser fails on keeps its links as they were until it
-parses. When the fingerprint rules change, every link is re-hashed from the commits its
+makes a moved definition read as gone; when that search cannot answer (a range of more
+than 5,000 files, more than 200 files naming it, a read that fails), the link is
+`unresolved`. A file the parser fails on keeps its links as they were until it parses.
+When the fingerprint rules change, every link is re-hashed from the commits its
 hashes were taken at. When its old text is gone from git, a link that matched it takes the
 text the next check finds and a changed one stays `changed`; one whose old text no longer
 parses keeps its last state, and the worker reports it.
