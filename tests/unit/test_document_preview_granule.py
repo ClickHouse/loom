@@ -34,12 +34,10 @@ async def test_the_listing_reads_the_stored_preview_and_never_the_content() -> N
     await documents_repo.list_with_chunk_counts(
         "o", ["n"], tag_filter=TagFilter(("a",), "folded_any"), ch=ch
     )
-    (sql,) = ch.sqls
-    assert "d.content_preview" in sql and "AS content_preview" in sql
-    assert "substring(d.content" not in sql
-    # the FINAL subquery's column list names the preview, not the content
-    inner = sql[sql.index("FROM (") : sql.index(") AS d")]
-    columns = inner[inner.index("SELECT") : inner.index("FROM loom.documents")]
+    (sql,) = ch.sqls  # an empty page reads no chunk counts
+    assert "substring(content" not in sql
+    # the page's column list names the preview, not the content
+    columns = sql[sql.index("SELECT") : sql.index("FROM loom.documents")]
     names = {c.strip() for c in re.split(r"[,\s]+", columns.replace("SELECT", "")) if c.strip()}
     assert "content_preview" in names and "content" not in names
 

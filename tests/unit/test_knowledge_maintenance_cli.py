@@ -34,7 +34,13 @@ def test_rechunk_reupserts_every_live_document_from_stored_content(
     seen_cursors: list[Any] = []
 
     async def _list(
-        org: str, ns: str, *, include_superseded: bool, cursor: Any, limit: int, **kw: Any
+        org: str,
+        namespaces: list[str],
+        *,
+        include_superseded: bool,
+        cursor: Any,
+        limit: int,
+        **kw: Any,
     ) -> list[Any]:
         seen_cursors.append(cursor)
         return pages.pop(0) if pages else []
@@ -143,7 +149,7 @@ def test_rechunk_counts_a_committed_write_awaiting_publication(
 
     pages = [[{"source_uri": "kb://a", "ingested_at": datetime(2026, 1, 2, tzinfo=UTC)}]]
 
-    async def _list(org: str, ns: str, **kw: Any) -> list[Any]:
+    async def _list(org: str, namespaces: list[str], **kw: Any) -> list[Any]:
         return pages.pop(0) if pages else []
 
     async def _get_one(org: str, ns: str, uri: str, **kw: Any) -> Any:

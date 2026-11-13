@@ -361,57 +361,49 @@ async def list_with_chunk_counts(
         params["cur_ts"] = cur_ts.strftime("%Y-%m-%d %H:%M:%S")
         params["cur_ns"] = cur_ns
         params["cur_uri"] = cur_uri
-    # The preview is the stored `content_preview`, never a
-    # substring of `content`: ClickHouse reads a column to take a substring
-    # of it, so one page would read every document's text (12 MB for 37 kB).
-    # Filter + FINAL + order + limit the documents in an isolated subquery,
-    # THEN LEFT JOIN the per-doc chunk counts. CH 26.5's analyzer mishandles a
-    # WHERE on a FINAL table that is also a JOIN side (it tries to evaluate the
-    # whole AND predicate as a column against an empty FINAL block →
-    # NOT_FOUND_COLUMN_IN_BLOCK). Pre-filtering in a derived table sidesteps
-    # that and is cheaper — only the limited rows reach the join.
-    rows = await ch.query_all(
+    # The preview is the stored `content_preview`, never a substring of `content`:
+    # ClickHouse reads a column to take a substring of it, so one page would read every
+    # document's text (12 MB for 37 kB).
+    page = await ch.query_all(
         f"""
-        SELECT d.namespace         AS namespace,
-               d.source_uri        AS source_uri,
-               d.title             AS title,
-               d.description       AS description,
-               d.tags              AS tags,
-               d.ingested_at       AS ingested_at,
-               d.superseded_at     AS superseded_at,
-               d.blob_path         AS blob_path,
-               d.blob_size         AS blob_size,
-               toString(d.blob_content_type) AS blob_content_type,
-               d.original_filename AS original_filename,
-               d.content_preview   AS content_preview,
-               ifNull(c.chunk_count, 0) AS chunk_count
-        FROM (
-            SELECT org, namespace, source_uri, title, description, tags,
-                   ingested_at, superseded_at, blob_path, blob_size,
-                   blob_content_type, original_filename, content_preview
-            FROM loom.documents FINAL
-            WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
-                  {extra_where}
-            ORDER BY ingested_at DESC, namespace DESC, source_uri DESC
-            LIMIT {{lim:UInt32}}
-        ) AS d
-        LEFT JOIN (
-            -- Scoped to the page's namespaces: the join key alone does not
-            -- push into this side, which would count every tenant's chunks.
-            SELECT org, namespace, source_uri, count() AS chunk_count
-            FROM loom.chunks
-            WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
-              AND {LIVE_CHUNK_SQL}
-            GROUP BY org, namespace, source_uri
-        ) AS c
-          ON d.org = c.org AND d.namespace = c.namespace
-         AND d.source_uri = c.source_uri
-        ORDER BY d.ingested_at DESC, d.namespace DESC, d.source_uri DESC
+        SELECT namespace, source_uri, title, description, tags, ingested_at,
+               superseded_at, blob_path, blob_size,
+               toString(blob_content_type) AS blob_content_type,
+               original_filename, content_preview
+        FROM loom.documents FINAL
+        WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
+              {extra_where}
+        ORDER BY ingested_at DESC, namespace DESC, source_uri DESC
         LIMIT {{lim:UInt32}}
         """,
         params=params,
     )
-    return cast(list[DocumentListRow], rows)
+    counts = await _live_chunk_counts(org, [(r["namespace"], r["source_uri"]) for r in page], ch)
+    return cast(
+        list[DocumentListRow],
+        [{**r, "chunk_count": counts.get((r["namespace"], r["source_uri"]), 0)} for r in page],
+    )
+
+
+async def _live_chunk_counts(
+    org: str, keys: list[tuple[str, str]], ch: _CHClient
+) -> dict[tuple[str, str], int]:
+    """The live chunk count of each (namespace, source_uri) of a page: only these
+    sources' chunks are read, whatever else their namespaces hold."""
+    if not keys:
+        return {}
+    rows = await ch.query_all(
+        f"""
+        SELECT namespace, source_uri, count() AS n
+        FROM loom.chunks
+        WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
+          AND (namespace, source_uri) IN {{keys:Array(Tuple(String, String))}}
+          AND {LIVE_CHUNK_SQL}
+        GROUP BY namespace, source_uri
+        """,
+        params={"org": org, "nss": sorted({ns for ns, _ in keys}), "keys": keys},
+    )
+    return {(r["namespace"], r["source_uri"]): int(r["n"]) for r in rows}
 
 
 # Every column a writer carries, in schema.sql order (`content_preview` is

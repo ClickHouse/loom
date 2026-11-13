@@ -202,7 +202,7 @@ async def test_a_cursor_for_other_namespaces_is_refused(control_plane_url: str) 
         page = await a.transport.post(
             "/v1/knowledge.list", {"org": ORG, "namespace": a_ns, "namespaces": [b_ns], "limit": 1}
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as refused:
             await a.transport.post(
                 "/v1/knowledge.list",
                 {
@@ -212,3 +212,4 @@ async def test_a_cursor_for_other_namespaces_is_refused(control_plane_url: str) 
                     "cursor": page["next_cursor"],
                 },
             )
+    assert refused.value.status == 422

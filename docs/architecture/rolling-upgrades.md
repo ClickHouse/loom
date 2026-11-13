@@ -155,9 +155,9 @@ schema. These rules keep that safe. The operator procedure is in
     behind another memory, and the `relations` of `memory.set`, `memory.update` and
     `memory.update_by_id` are dropped there, so that write graphs none of the facts it
     names. `memory.get_by_id`'s `omit_high_value` does not hold there either: N-1 answers
-    a `high` row with its value and hash, and audits that read as a sensitive one. `knowledge.list`'s
-    `namespaces` lists `namespace` alone there, and N-1 refuses the several-place
-    cursor N wrote, so a client paging such a list starts again. N's
+    a `high` row with its value and hash, and audits that read as a sensitive one. A `knowledge.list`
+    naming `namespaces` lists `namespace` alone there, and each build refuses the
+    cursor the other wrote for such a list, so a client paging it starts again. N's
     conflict resolver does not read the `memory.unsupersede` record of an Undo
     made on an N-1 replica, or before the upgrade: it carries neither the restored hash
     nor the restore version. The restored row then reads as a statement made at the Undo,

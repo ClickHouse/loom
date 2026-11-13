@@ -1074,8 +1074,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # ---- Knowledge: bulk + dedup ----
     "knowledge.list": (
-        "Enumerate stored documents (source_uri + title). Use for "
-        "inventory questions; for semantic recall use loom_search."
+        "Enumerate stored documents (source_uri + title), of the namespace or of several "
+        "(`namespaces`) as one list, each row naming its namespace. Use for inventory "
+        "questions; for semantic recall use loom_search."
     ),
     "knowledge.get": (
         "WHAT: Fetch one whole document by `source_uri` (the latest version; "
@@ -2349,8 +2350,9 @@ ASSISTANT_TOOL_DESCRIPTIONS: dict[str, str] = {
         "documents. Memories are searched with memory.search."
     ),
     "knowledge.list": (
-        "Enumerate the namespace's documents (source_uri and title), for an inventory. "
-        "For content search them with knowledge.search."
+        "Enumerate the namespace's documents (source_uri and title), or several "
+        "namespaces' (`namespaces`) as one list, for an inventory. For content search "
+        "them with knowledge.search."
     ),
     "knowledge.get": (
         "Fetch one document by `source_uri` (latest version; `include_superseded=true` "

@@ -21,7 +21,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeSearchOutput,
     _SearchHit,
 )
-from server.knowledge.app.places import named_namespaces
+from server.knowledge.app.readable import named_namespaces
 from server.knowledge.domain.chunking import embedding_text
 from server.memory.app.log_once import LogOnce
 from server.settings import settings
