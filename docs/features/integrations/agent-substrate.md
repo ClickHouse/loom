@@ -51,8 +51,8 @@ networkPolicy:
 ## 2. A token per agent
 
 Give each agent its own token, with a service-account subject named for the atespace and
-the actor, so each row it writes records that subject as its writer (`actor`) and its grants
-decide what it can read ([tokens and grants](../../guides/tokens-and-grants.md)).
+the actor, so each row it writes records that subject as its writer (`actor`), and its
+namespaces and roles decide what it reads ([tokens and grants](../../guides/tokens-and-grants.md)).
 Mint it in a Loom pod, which holds the signing key, and store it in a Secret in a namespace
 that holds only that atespace's tokens:
 
@@ -112,10 +112,15 @@ The key names follow the client ([MCP clients](./mcp-clients.md) has the entry f
 Keep the token out of the template: Substrate stores templates and snapshots, and its
 container environment takes literal values only.
 
-Then create the actor from that template; its egress policy comes next:
+Then create the atespace, the actor template that carries the agent's image (Substrate's
+[API guide](https://ate.dev/docs/reference/api-guide/) describes its fields; here its
+`metadata` names it `research-agent` in atespace `research`), and the actor from that
+template; its egress policy comes next:
 
 ```bash
-kubectl ate create actor research-agent --template=<template> -a research
+kubectl ate create atespace research
+kubectl ate create actor-template -f template.yaml
+kubectl ate create actor research-agent --template=research-agent -a research
 ```
 
 ## 4. Allow the actor to reach Loom, with its token
