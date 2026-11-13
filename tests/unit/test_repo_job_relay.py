@@ -12,7 +12,7 @@ import time
 import types
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -321,13 +321,13 @@ def test_the_relay_bridges_as_many_connections_as_the_proxy_holds_tunnels() -> N
 def test_serve_takes_the_proxys_idle_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     served = []
 
-    def serve(*args: object) -> int:
+    def serve(*args: object) -> NoReturn:
         served.append(args)
-        return 0
+        raise SystemExit(0)  # the real one execs ARGV
 
     monkeypatch.setattr(egress_relay, "serve", serve)
-    args = ["serve", "3128", "/run/loom-egress/proxy.sock", "300.0", "--", "true"]
-    assert egress_relay.main(args) == 0
+    with pytest.raises(SystemExit):
+        egress_relay.main(["serve", "3128", "/run/loom-egress/proxy.sock", "300.0", "--", "true"])
     assert served == [(3128, "/run/loom-egress/proxy.sock", 300.0, ["true"])]
 
 

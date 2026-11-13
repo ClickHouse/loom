@@ -178,7 +178,7 @@ def _copy_stdin(dst: socket.socket) -> None:
 
 def main(args: list[str]) -> int:
     if len(args) >= 6 and args[0] == "serve" and args[4] == "--":
-        return serve(int(args[1]), args[2], float(args[3]), args[5:])
+        serve(int(args[1]), args[2], float(args[3]), args[5:])
     if len(args) == 4 and args[0] == "connect":
         return connect(args[1], args[2], args[3])
     sys.stderr.write(

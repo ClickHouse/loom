@@ -540,10 +540,10 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
 
   A tunnel with no byte either way for `LOOM_CODE_EGRESS_IDLE_TIMEOUT_S` (5 minutes by
   default) is closed. Once its client has sent EOF, it is closed after
-  `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` (10 s by default) without a byte either way;
-  while bytes still wait for a slow client, the idle timeout applies instead. A tunnel
-  whose client sent EOF before any byte moved (a connection it gave up on) is closed at
-  once. Once the proxy's side of a tunnel has ended (the server closed or reset it, or
+  `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` (10 s by default) without a byte from the
+  server; while bytes still wait for a slow client, the idle timeout applies instead. A
+  tunnel whose client sent EOF before any byte moved (a connection it gave up on) is
+  closed at once. Once the proxy's side of a tunnel has ended (the server closed or reset it, or
   the proxy closed it), the relay ends its connection after at least a second without a
   byte from the client. A client that never reads what it was sent keeps its relay
   connection, and so its relay slot, for up to the idle timeout.
