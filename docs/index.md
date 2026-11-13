@@ -175,6 +175,7 @@ For contributors: [repository guide](development/repository-guide.md) ·
 [migrations](development/migrations.md) ·
 [release process](development/release-process.md) ·
 [documentation style](development/documentation-style.md) ·
+[curation loop design](development/curation-loop-design.md) ·
 [extending Loom](development/extending-loom.md) ·
 [add an operation](development/adding-an-operation.md) ·
 [add a worker](development/adding-a-worker.md) ·
