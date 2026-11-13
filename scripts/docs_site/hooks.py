@@ -41,11 +41,18 @@ _TOKEN = re.compile(
 )
 
 
+_DESCRIPTION_MAX = 160
+
+
 def on_page_markdown(markdown, page, config, files):
     _title, summary = page_summary(Path(page.file.abs_src_path))
     description = page.meta.get("description") or summary.replace("`", "")
     if description.endswith(":"):
         description = description[:-1] + "."  # an opening sentence that leads into a list
+    if len(description) > _DESCRIPTION_MAX:
+        # Search engines cut a description near this length; end on a whole word instead.
+        cut = description[: _DESCRIPTION_MAX - 1].rsplit(" ", 1)[0]
+        description = cut.rstrip(",;:—- ") + "…"
     if description:
         # The theme writes the description into its <meta> attribute unescaped.
         page.meta["description"] = html.escape(description)
