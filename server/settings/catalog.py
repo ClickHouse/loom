@@ -68,7 +68,7 @@ class AssistantSettings(BaseModel):
     # can overshoot it.
     assistant_concurrent_answers: int = Field(default=2, ge=1, le=50)
     # USD charged for an answer cut before LibreChat reported its usage (a
-    # disconnect, a timeout) or on a model with no price, so no answer is free.
+    # disconnect, a timeout) or on a model with no price; 0 charges nothing.
     assistant_answer_ceiling_usd: float = Field(default=0.10, ge=0, le=10)
 
 

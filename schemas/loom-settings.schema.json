@@ -51,7 +51,7 @@
           "maximum": 10,
           "minimum": 0,
           "type": "number",
-          "description": "USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price, so no answer is free."
+          "description": "USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price; 0 charges nothing."
         },
         "assistant_answer_ttl_s": {
           "default": 600,

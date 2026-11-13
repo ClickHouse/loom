@@ -204,7 +204,7 @@ every published benchmark. Tune individual jobs later using
 OpenAI chat-completions format. Loom sends it no key. With the released stack's `local`
 embedder, nothing leaves the machine.
 
-A new install offers this when Ollama answers on `localhost:11434`;
+A new install run from a terminal offers this when Ollama answers on `localhost:11434`;
 `LOOM_LOCAL_MODELS=ollama` in front of `sh loom-install.sh` sets it without asking, on a
 new install or an existing one, and `LOOM_LOCAL_MODELS=off` never offers it. It writes:
 
@@ -215,9 +215,9 @@ LOOM_LOCAL_LLM_BASE_URL=http://host.docker.internal:11434/v1
 LOOM_ASSISTANT_PROVIDER=local
 LOOM_ASSISTANT_MODEL=qwen2.5:3b
 LOOM_ASSISTANT_ANSWER_CEILING_USD=0
+LOOM_MEMORY_EXTRACT_VERIFY_MODELS=
 LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=false
 LOOM_LLM_REQUEST_TIMEOUT_S=900
-LOOM_MEMORY_EXTRACT_VERIFY_MODELS=
 LOOM_SESSION_BRIEF_LLM_MODEL=
 LOOM_CODE_BISECT_LLM_RERANK_MODEL=
 LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
@@ -230,8 +230,8 @@ verifier model calls not durable, and the background
 [conflict resolver](../features/memory/conflicts-and-refusal.md#the-conflict-resolver),
 which retires an older row it judges replaced. A small model's misjudgment there would
 lose facts. Writes still flag conflicts for the Review queue; set
-`LOOM_CONFLICT_RESOLVER_MODEL` to a hosted model and
-`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=true` to judge them. On an existing install, a
+`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=true` with the key for
+`LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`, OpenAI) to judge them. On an existing install, a
 configuration saved in Models & keys wins over `.env`: after the restart, choose **Use
 environment configuration** there for the preset to apply.
 

@@ -1947,6 +1947,18 @@ def test_local_models_ollama_sets_every_model_job_on_it(install) -> None:
     assert "Models & keys wins over .env" in again.stdout
 
 
+def test_the_local_preset_loads_with_the_verifier_and_resolver_off(monkeypatch) -> None:
+    from server.settings import Settings
+
+    for key, value in LOCAL_PRESET.items():
+        monkeypatch.setenv(key, value)
+    loaded = Settings()
+    assert loaded.llm_provider == "local"
+    assert loaded.memory_extract_verify_models == ""
+    assert loaded.memory_conflict_resolver_enabled is False
+    assert loaded.assistant_answer_ceiling_usd == 0
+
+
 def test_without_a_terminal_ollama_is_not_offered(install, installer_env) -> None:
     run, target = install
     # Ollama answers, so only the missing terminal keeps the offer off.

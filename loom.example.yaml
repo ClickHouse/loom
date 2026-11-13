@@ -936,7 +936,7 @@ settings:
   # assistant_concurrent_answers: 2
 
   # USD charged for an answer cut before LibreChat reported its usage (a disconnect, a
-  # timeout) or on a model with no price, so no answer is free. [restart]
+  # timeout) or on a model with no price; 0 charges nothing. [restart]
   # assistant_answer_ceiling_usd: 0.1
 
   # ===== The code plane: ingest, indexes, search, ask, review =====
