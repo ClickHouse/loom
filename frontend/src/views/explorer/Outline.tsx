@@ -151,6 +151,8 @@ export function Outline({
         break;
       case "Enter":
       case " ":
+        // A button in the row (its actions, the edge) activates itself.
+        if (e.target !== e.currentTarget) return;
         e.preventDefault();
         onSelect(selectedEntity === n.entity ? null : { kind: "node", entity: n.entity });
         break;

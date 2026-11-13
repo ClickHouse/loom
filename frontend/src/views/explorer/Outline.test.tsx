@@ -64,6 +64,28 @@ describe("Outline", () => {
     expect(tree).toHaveAccessibleDescription("1 node · 0 edges");
   });
 
+  // With no `r` key, the selected row's edge button is the keyboard's way to the edge: it
+  // is one of that row's tab stops, and Enter on it selects the edge. Another row's is not
+  // a tab stop, so the tree stays one.
+  it("tabs from the selected row to its edge button, whose Enter selects the edge", async () => {
+    const picked: unknown[] = [];
+    const user = userEvent.setup();
+    mount([node("mergetree"), node("parts")], {
+      selection: { kind: "node", entity: "mergetree" },
+      onSelect: (s) => picked.push(s),
+    });
+    const row = screen.getByRole("treeitem", { name: /^mergetree ·/ });
+    const edge = within(row).getByRole("button", { name: "Select the edge: co-mentioned 20× with loom" });
+    row.focus();
+    for (let i = 0; i < 6 && document.activeElement !== edge && row.contains(document.activeElement); i++)
+      await user.tab();
+    expect(edge).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(picked).toEqual([{ kind: "edge", parent: "loom", child: "mergetree" }]);
+    const other = screen.getByRole("treeitem", { name: /^parts ·/ });
+    expect(within(other).getByRole("button", { name: /^Select the edge:/ })).toHaveAttribute("tabindex", "-1");
+  });
+
   // The dashboard has no keyboard shortcuts: the row's actions are its buttons.
   it("takes no w, p, e, r or x on a row", async () => {
     const calls: string[] = [];

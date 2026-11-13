@@ -561,27 +561,17 @@ export function Tasks() {
     setProgressNotes((m) => (m.get(taskId) === note ? m : new Map(m).set(taskId, note)));
   }, []);
 
-  // Page keys: Enter opens the selected task when nothing has the focus, Esc closes the
-  // panel. Ignored while typing or while a dialog or a menu is open; the list's own keys are
-  // the grid's (tasks/TaskList.tsx).
-  const stateRef = useRef({ selectedId, openRow, openTask, closeTask, rows });
-  stateRef.current = { selectedId, openRow, openTask, closeTask, rows };
+  // Esc closes the panel; the list's own keys are the grid's. Ignored while typing or while
+  // a dialog or a menu is open.
+  const stateRef = useRef({ openRow, closeTask });
+  stateRef.current = { openRow, closeTask };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inEditable(e.target)) return;
       if (document.querySelector('[role="dialog"], [role="menu"]')) return;
-      const { selectedId: sel, openRow: open, openTask: openT, closeTask: closeT } = stateRef.current;
-      if (e.key === "Enter" && e.target === document.body) {
-        const row = shownTaskIds().includes(sel ?? "")
-          ? stateRef.current.rows?.find((r) => r.task_id === sel)
-          : undefined;
-        if (row) {
-          e.preventDefault();
-          openT(row);
-        }
-      } else if (e.key === "Escape" && open) {
+      if (e.key === "Escape" && stateRef.current.openRow) {
         e.preventDefault();
-        closeT();
+        stateRef.current.closeTask();
       }
     };
     window.addEventListener("keydown", onKey);

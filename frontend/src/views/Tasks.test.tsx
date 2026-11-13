@@ -722,8 +722,9 @@ describe("Tasks page", () => {
   });
 
   // The dashboard has no keyboard shortcuts: the one-letter keys neither move the
-  // selection nor act on a task; Esc still closes the panel.
-  it("j, k and the action letters do nothing; Esc closes the panel", async () => {
+  // selection nor act on a task, and Enter with nothing focused opens nothing; Esc still
+  // closes the panel.
+  it("j, k, the action letters and Enter on the page do nothing; Esc closes the panel", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
     render(<Tasks />);
@@ -732,8 +733,10 @@ describe("Tasks page", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("complementary", { name: "Task detail" })).not.toBeInTheDocument();
     (document.activeElement as HTMLElement | null)?.blur();
-    for (const key of ["j", "j", "k", "a", "s", "c", "x", "d"]) await user.keyboard(key);
+    expect(document.activeElement).toBe(document.body);
+    for (const key of ["j", "j", "k", "a", "s", "c", "x", "d", "{Enter}"]) await user.keyboard(key);
     await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("complementary", { name: "Task detail" })).not.toBeInTheDocument();
     expect(screen.getByRole("row", { name: "Task urgent" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("row", { name: "Task low-late" })).toHaveAttribute("aria-selected", "false");
     expect(acceptTask).not.toHaveBeenCalled();
