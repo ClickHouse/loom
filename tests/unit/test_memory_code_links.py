@@ -4003,3 +4003,12 @@ def test_a_move_stops_at_a_row_flagged_below_the_threshold() -> None:
         h.below_threshold = True
     out = code_change.rank_down(hits, 3)
     assert [h.memory_key for h in out] == ["b", "s", "f1", "f2"]
+
+
+def test_a_row_moved_by_an_earlier_pass_is_not_a_place_a_later_move_counts() -> None:
+    # a merge moves a stale decision among base rows, one of which the base search moved
+    hits = _ranked("a", "d", "b", "c", "s", "e", down=("d",))
+    hits[4].score_components = {"code_changed_places": -3.0}
+    out = code_change.rank_down(hits, 3, rescore=False)
+    assert [h.memory_key for h in out] == ["a", "b", "c", "s", "e", "d"]
+    assert out[5].score_components["code_changed_places"] == -3.0

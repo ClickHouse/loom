@@ -103,6 +103,11 @@ def spend_marks(hits: list[Any]) -> list[Any]:
     return marked
 
 
+def _moved(hit: Any) -> bool:
+    """A row an earlier pass already moved for stale code: no current row to pass."""
+    return "code_changed_places" in hit.score_components
+
+
 def _below_the_floor(hit: Any) -> bool:
     """A row the search serves only as filler: under the similarity floor, or flagged
     below the abstain threshold."""
@@ -111,7 +116,8 @@ def _below_the_floor(hit: Any) -> bool:
 
 def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any]:
     """`hits` with each one marked `_code_ranked_down` moved below the next `places` rows
-    that are neither marked nor placed by an identifier match or a tier, never past the
+    that are neither marked, already moved, nor placed by an identifier match or a tier,
+    never past the
     last nor below a row served only as filler (`_below_the_floor`). A placed row is
     never counted as a place and never moved down (one the move passes rises a slot).
 
@@ -132,7 +138,7 @@ def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any
         for i in range(at + 1, len(out)):
             if passed == places or _below_the_floor(out[i]):
                 break
-            if id(out[i]) not in moving and not _placed(out[i]):
+            if id(out[i]) not in moving and not _placed(out[i]) and not _moved(out[i]):
                 passed, to = passed + 1, i
         if not passed:
             hit.score_components = {**hit.score_components, "code_changed_places": 0.0}
