@@ -444,16 +444,19 @@ export function Browse() {
           {rows !== null && elsewhere && (
             <p className={`text-sm text-text-muted ${filtered.length > 0 ? "mt-3" : ""}`}>
               <span className="font-mono">{typedName}</span>{" "}
+              {/* One the caller already reads is opened there, not requested. */}
               {elsewhere === "repository" ? (
                 <>
-                  is a repository: request it from{" "}
+                  {myRole[typedName] ? "is a repository you read: open it in" : "is a repository: request it from"}{" "}
                   <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
                     Repositories
                   </Link>
                 </>
               ) : (
                 <>
-                  is a collection: ask its admin for a grant; the collections you can read are in the{" "}
+                  {myRole[typedName]
+                    ? "is a collection you read: open it in the"
+                    : "is a collection: ask its admin for a grant; the collections you can read are in the"}{" "}
                   <Link component="button" type="button" size="sm" onClick={() => setView("knowledge")}>
                     Library
                   </Link>

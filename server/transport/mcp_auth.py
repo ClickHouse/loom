@@ -58,7 +58,7 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
 # refusals only (a code or tracker index's refusal points to Repositories).
 DASHBOARD_REQUEST = (
     "(namespace picker → Find public namespaces to join; for a private namespace, "
-    "search its exact name on Namespaces in your org)"
+    "search its exact name on the Namespaces in your org page)"
 )
 # The next step for a namespace the token may not read. A namespace that does not exist
 # is refused alike, so the step is the same for both and confirms neither.

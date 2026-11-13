@@ -70,8 +70,8 @@ export interface NavItem {
 // Memories (MemoryTabs), Namespaces in your org (browse/join) is reached from the namespace
 // picker, Graph is a drill-down from an entity, Flow is in the admin drawer.
 //
-// RAIL_GROUPS, SETTINGS_ITEM and adminItems are exported for the phone's "More" sheet, which
-// is generated from them, so a section added here appears there under the same label.
+// RAIL_GROUPS, SETTINGS_ITEM, adminItems and NavBadge are exported for the phone's "More"
+// sheet, which is generated from them, so a section added here appears there under the same label.
 // MAIN is the flat rail the tests read.
 interface NavGroup {
   label: string | null;

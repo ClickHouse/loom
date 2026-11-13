@@ -448,6 +448,33 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     }
   });
 
+  it("opens a repository or a collection the caller already reads instead of requesting it", async () => {
+    const before = [...mine];
+    browse.push({ ...browse[1], namespace: "code-loom", kind: "code", guide_summary: "" });
+    mine.push(
+      { ...mine[1], namespace: "code-loom", kind: "code" },
+      { ...mine[1], namespace: "col-research", kind: "collection" },
+    );
+    try {
+      render(<Browse />);
+      await screen.findByText("Support team runbooks");
+      const box = screen.getByRole("textbox", { name: "Search namespaces" });
+      await userEvent.type(box, "code-loom");
+      expect(await screen.findByText(/is a repository you read/)).toHaveTextContent(
+        "code-loom is a repository you read: open it in Repositories.",
+      );
+      await userEvent.clear(box);
+      await userEvent.type(box, "col-research");
+      expect(await screen.findByText(/is a collection you read/)).toHaveTextContent(
+        "col-research is a collection you read: open it in the Library.",
+      );
+      expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+    } finally {
+      browse.pop();
+      mine.splice(0, mine.length, ...before);
+    }
+  });
+
   it("points a repository's exact name to Repositories instead of a request", async () => {
     browse.push({ ...browse[1], namespace: "code-loom", kind: "code", guide_summary: "" });
     try {

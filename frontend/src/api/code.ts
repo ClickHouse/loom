@@ -146,7 +146,7 @@ export async function remoteBranches(
 
 /** A maintainer retires a repository index they added; `confirm` must equal the
  *  namespace. The rows leave through an erasure saga — `erasure_id` follows it under
- *  Audit → Erasures; the mirror goes when no other branch uses it. Operator-configured
+ *  Audit log → Erasures; the mirror goes when no other branch uses it. Operator-configured
  *  entries are refused. */
 export interface CodeRepoRemoveResult {
   org: string;
