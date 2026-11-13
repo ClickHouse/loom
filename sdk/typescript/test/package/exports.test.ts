@@ -129,6 +129,16 @@ describe("dist", () => {
     expect(names(esm)).toContain("LoomMemoryStore");
   });
 
+  it("the langchain subpath loads in both formats and leaves @langchain/core to the app", async () => {
+    const esm = (await import(join(dist, "integrations/langchain.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/langchain.cjs")) as object;
+    expect(names(esm)).toEqual(names(cjs));
+    expect(names(esm)).toEqual(["LoomKnowledgeRetriever", "LoomMemoryRetriever"]);
+    expect(readFileSync(join(dist, "integrations/langchain.mjs"), "utf8")).toMatch(
+      /from "@langchain\/core\/retrievers"/,
+    );
+  }, 30_000); // loading @langchain/core in both module formats takes seconds
+
   it("no bundle imports a Node built-in", () => {
     const files = readdirSync(dist, { recursive: true }) as string[];
     for (const f of files.filter((n) => /\.(mjs|cjs)$/.test(n))) {

@@ -242,11 +242,12 @@ ignore_missing_imports = true
 module = ["boto3", "boto3.*", "botocore", "botocore.*"]
 ignore_missing_imports = true
 
-# The SDK's framework adapters: langgraph and strands are optional, so each adapter
-# subclasses the real base class when it imports and a structural twin otherwise.
-# Without the framework the base is Any, which strict mode refuses to subclass.
+# The SDK's framework adapters: no framework is installed here. LangChain is an SDK
+# extra, which `make test-sdk-adapters` installs to type-check its adapter; LangGraph
+# and Strands are typed through structural twins. Without the framework the base is
+# Any, which strict mode refuses to subclass.
 [[tool.mypy.overrides]]
-module = ["langgraph", "langgraph.*", "strands", "strands.*"]
+module = ["langchain_core", "langchain_core.*", "langgraph", "langgraph.*", "strands", "strands.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

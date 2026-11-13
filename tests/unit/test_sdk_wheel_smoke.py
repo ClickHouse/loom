@@ -48,3 +48,34 @@ def test_source_tree_import_is_refused(capsys) -> None:
 
 def test_exercise_passes_against_the_sdk() -> None:
     asyncio.run(smoke.exercise())
+
+
+def _fail_import(
+    monkeypatch: pytest.MonkeyPatch, error: ImportError, module: str = "loom.integrations.langchain"
+) -> None:
+    real = smoke.importlib.import_module
+
+    def fake(name: str) -> object:
+        if name == module:
+            raise error
+        return real(name)
+
+    monkeypatch.setattr(smoke.importlib, "import_module", fake)
+
+
+def test_an_adapter_whose_error_names_its_extra_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fail_import(monkeypatch, ImportError("needs it: pip install 'clickhouse-loom[langchain]'"))
+    smoke.import_submodules()
+
+
+def test_any_other_import_error_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fail_import(monkeypatch, ImportError("No module named 'httpx'"))
+    with pytest.raises(smoke.SmokeFailure, match="httpx"):
+        smoke.import_submodules()
+
+
+def test_a_base_module_failing_with_an_extras_hint_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    hint = ImportError("needs it: pip install 'clickhouse-loom[langchain]'")
+    _fail_import(monkeypatch, hint, module="loom.tools")
+    with pytest.raises(smoke.SmokeFailure, match="loom.tools"):
+        smoke.import_submodules()

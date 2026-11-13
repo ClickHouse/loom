@@ -1,22 +1,82 @@
 # Agent frameworks and orchestrators
 
-The SDKs ship adapters that present Loom through a framework's own memory interface.
-They import the framework lazily; installing it is up to you. Identity comes from the
-Loom `Agent` the adapter wraps, and isolation is Loom's namespace authorization.
-Every adapter calls your Loom server through the SDK: the data is stored in your Loom
-deployment (ClickHouse, and Postgres for live memory under the
+The SDKs ship adapters that present Loom through a framework's own memory or retrieval
+interface. The LangChain retrievers need the framework: install the SDK's extra for it
+(`pip install 'clickhouse-loom[langchain]'`), or, in TypeScript, `@langchain/core`, an
+optional peer dependency. The LangGraph and Strands adapters import without their
+framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is Loom's
+namespace authorization. Every adapter calls your Loom server through the SDK: the data is
+stored in your Loom deployment (ClickHouse, and Postgres for live memory under the
 [Postgres memory authority](../../architecture/storage-authority.md)), and no adapter adds
 or needs another database, vector store or cache.
 
-| Framework      | Adapter           | SDK                                                 | Framework interface             |
-| -------------- | ----------------- | --------------------------------------------------- | ------------------------------- |
-| LangGraph      | `LoomStore`       | Python, `loom.integrations.langgraph`               | `BaseStore`                     |
-| Strands Agents | `LoomMemoryStore` | Python, `loom.integrations.strands`                 | the `MemoryStore` protocol      |
-| Strands Agents | `LoomMemoryStore` | TypeScript, `@clickhouse/loom/integrations/strands` | the same protocol, structurally |
+| Framework      | Adapter                                         | SDK                                                   | Framework interface                    |
+| -------------- | ----------------------------------------------- | ----------------------------------------------------- | -------------------------------------- |
+| LangChain      | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | Python, `loom.integrations.langchain`                 | `BaseRetriever`                        |
+| LangChain.js   | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | TypeScript, `@clickhouse/loom/integrations/langchain` | `BaseRetriever` from `@langchain/core` |
+| LangGraph      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                 | `BaseStore`                            |
+| Strands Agents | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                   | the `MemoryStore` protocol             |
+| Strands Agents | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`   | the same protocol, structurally        |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
 [MCP clients](./mcp-clients.md).
+
+## LangChain
+
+`LoomKnowledgeRetriever` searches the namespace's documents (`knowledge.search`) and
+`LoomMemoryRetriever` its memories (`memory.search`). Both are LangChain `BaseRetriever`s,
+so they work with `invoke`, in a chain, and as an agent tool through
+`create_retriever_tool`. Install with `pip install 'clickhouse-loom[langchain]'`
+(`langchain-core` 1.x).
+
+```python
+from loom import Agent, SyncAgent
+from loom.integrations.langchain import LoomKnowledgeRetriever, LoomMemoryRetriever
+
+with SyncAgent(org="acme", namespace="support") as agent:
+    docs = LoomKnowledgeRetriever(agent=agent, k=3).invoke("refund policy for annual plans")
+
+async with Agent(org="acme", namespace="support") as agent:
+    memories = await LoomMemoryRetriever(agent=agent, user_id="alice").ainvoke("seat preference")
+```
+
+`invoke` needs a `SyncAgent`; `ainvoke` takes an `Agent` or a `SyncAgent`.
+
+| Retriever                | `page_content`  | `id`                                                                                | `metadata`                                                                                        |
+| ------------------------ | --------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `LoomKnowledgeRetriever` | the chunk       | `<namespace>/<source_uri>#<chunk_idx>`                                              | `source_uri`, `chunk_idx`, `similarity`, `section`, `namespace`, `tags`                           |
+| `LoomMemoryRetriever`    | the memory text | none: a key is unique per agent, user and session, and a search reads every agent's | `namespace`, `memory_key`, `memory_type`, `similarity`, `source`, `valid_at` when the row has one |
+
+| Field                                         | Retriever | Default                                   | Effect                                                                               |
+| --------------------------------------------- | --------- | ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `k`                                           | both      | 4                                         | documents per query                                                                  |
+| `search_tags`                                 | both      | none                                      | only rows carrying at least one of these Loom tags (`tags` is LangChain's own field) |
+| `uri_prefix`                                  | knowledge | none                                      | only documents whose `source_uri` starts with one of these                           |
+| `namespace_scope`                             | knowledge | `this`                                    | `all_mine` adds the caller's other namespaces, up to the server's fan-out cap        |
+| `search_kwargs`                               | knowledge | none                                      | further `knowledge.search` fields, such as `search_mode` or `rerank`                 |
+| `memory_type`                                 | memory    | every searchable type except `reflection` | only memories of this type                                                           |
+| `user_id`, `session_id`, `run_id`, `agent_id` | memory    | none                                      | only that user's, session's, run's or agent's memories                               |
+| `honour_abstain`                              | memory    | `True`                                    | return no documents when Loom abstains                                               |
+
+A LangChain agent built with `create_agent` runs on LangGraph: pass `LoomStore` (below)
+as its `store` for long-term memory.
+
+The TypeScript retrievers extend `BaseRetriever` from `@langchain/core` (an optional peer
+dependency, 1.x) and take the same options in camelCase, with the memory retriever's
+user, session, run and agent in one `scope`:
+
+```ts
+import {
+  LoomKnowledgeRetriever,
+  LoomMemoryRetriever,
+} from "@clickhouse/loom/integrations/langchain";
+
+const docs = await new LoomKnowledgeRetriever(agent, { k: 3 }).invoke("refund policy");
+const memories = await new LoomMemoryRetriever(agent, { scope: { userId: "alice" } }).invoke(
+  "seat preference",
+);
+```
 
 ## LangGraph
 
