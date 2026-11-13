@@ -374,7 +374,7 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     render(<Browse />);
     await screen.findByText("Support team runbooks");
     await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "my_ns");
-    expect(await screen.findByText(/No namespaces match/)).toHaveTextContent("No namespaces match my_ns");
+    expect(await screen.findByText(/No public namespaces match/)).toHaveTextContent("No public namespaces match my_ns");
     expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
   });
 
@@ -385,6 +385,35 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     expect(await within(screen.getByTestId("browse-list")).findByText("alpha")).toBeInTheDocument();
     expect(screen.queryByText("No public namespace named", { exact: false })).toBeNull();
     expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+  });
+
+  it("shows an admin's private namespace under the ones they manage, and no request for it", async () => {
+    const description = browse[0].description;
+    browse[0].description = "Runbooks";
+    try {
+      render(<Browse />);
+      await screen.findByText("Runbooks");
+      await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "team");
+      expect(await screen.findByText(/No public namespaces match/)).toHaveTextContent(
+        "No public namespaces match team",
+      );
+      expect(screen.getByText("The platform team")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+    } finally {
+      browse[0].description = description;
+    }
+  });
+
+  it("points a collection's name to the Library instead of a request", async () => {
+    render(<Browse />);
+    await screen.findByText("Support team runbooks");
+    await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "col-research");
+    const line = await screen.findByText(/is a collection: it is shared in the/);
+    expect(line).toHaveTextContent("col-research is a collection: it is shared in the Library.");
+    expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+    expect(screen.queryByText(/No public namespaces match/)).toBeNull();
+    await userEvent.click(within(line).getByRole("button", { name: "Library" }));
+    expect(useStore.getState().view).toBe("knowledge");
   });
 
   it("points a repository's exact name to Repositories instead of a request", async () => {

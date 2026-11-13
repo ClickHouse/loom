@@ -233,14 +233,19 @@ export function Browse() {
   const managedShown = managedMemory.filter((r) => matchesSpace(r, listQuery.toLowerCase()));
   // A search that is a namespace name no listed row carries may name a private namespace
   // to request, even when other rows match it (a public `support-team` for `support`).
-  // Names are lowercase, so the search is compared lowercased. A name the caller already
+  // Names are lowercase, so the search is compared lowercased. A name on which the caller
   // holds a role below admin keeps the card: its alert offers the higher role. A
-  // repository's name is requested from Repositories.
+  // repository is requested from Repositories, and a collection is shared in the Library,
+  // never joined: their names get a line pointing there instead.
   const typedName = listQuery.toLowerCase();
-  const typedRepo = repoNames.includes(typedName);
+  const elsewhere = repoNames.includes(typedName)
+    ? { is: "a repository: request it from", page: "Repositories", view: "code" as const }
+    : isCollectionName(typedName)
+      ? { is: "a collection: it is shared in the", page: "Library", view: "knowledge" as const }
+      : null;
   const offersRequest =
     NAMESPACE_NAME.test(typedName) &&
-    !typedRepo &&
+    !elsewhere &&
     myRole[typedName] !== "admin" &&
     !filtered.some((r) => r.namespace === typedName);
   const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
@@ -408,8 +413,8 @@ export function Browse() {
             />
           )}
 
-          {rows !== null && filtered.length === 0 && listQuery && !offersRequest && !typedRepo && (
-            <ListState kind="filtered" things="namespaces" filter={listQuery} onClear={() => setQuery("")} />
+          {rows !== null && filtered.length === 0 && listQuery && !offersRequest && !elsewhere && (
+            <ListState kind="filtered" things="public namespaces" filter={listQuery} onClear={() => setQuery("")} />
           )}
 
           {rows !== null && filtered.length > 0 && (
@@ -433,11 +438,11 @@ export function Browse() {
             </div>
           )}
 
-          {rows !== null && typedRepo && (
+          {rows !== null && elsewhere && (
             <p className={`text-sm text-text-muted ${filtered.length > 0 ? "mt-3" : ""}`}>
-              <span className="font-mono">{typedName}</span> is a repository: request it from{" "}
-              <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
-                Repositories
+              <span className="font-mono">{typedName}</span> is {elsewhere.is}{" "}
+              <Link component="button" type="button" size="sm" onClick={() => setView(elsewhere.view)}>
+                {elsewhere.page}
               </Link>
               .
             </p>
