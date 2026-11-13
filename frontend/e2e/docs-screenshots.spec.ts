@@ -7,7 +7,8 @@
 //   LOOM_DOCS_SCREENSHOTS=1 E2E_PORT=4271 npx playwright test e2e/docs-screenshots.spec.ts
 //
 // The clock is fixed, so relative times ("2h ago") read the same on every run. The 1440 px
-// shots and the clips go to docs/assets/screenshots/, encoded as WebP by Chromium itself.
+// shots go to docs/assets/screenshots/ as WebP, encoded by Chromium; the clips go there as
+// WebM, recorded by Playwright.
 
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import * as fs from "node:fs";
@@ -801,6 +802,13 @@ const CODE_UNITS: Record<string, Record<string, unknown>> = {
   },
 };
 
+/** A definition as `code.symbol` answers it: a symbol unit, which carries none of the
+ *  ranking annotations (churn, amp, tested) a search result does. */
+function symbolUnit(symbol: string) {
+  const { churn: _churn, amp: _amp, tested: _tested, ...unit } = CODE_UNITS[symbol] ?? {};
+  return { unit_id: `s-${symbol}`, symbol, tier: "scip", elided: false, ...unit, kind: "symbol" };
+}
+
 function codeUnit(symbol: string, score = 0) {
   return {
     unit_id: `u-${symbol}`,
@@ -1084,7 +1092,7 @@ async function installDemoApi(page: Page): Promise<void> {
       case "/v1/code.symbol": {
         const name = String(body.name ?? "");
         return json({
-          definitions: CODE_UNITS[name] ? [codeUnit(name)] : [],
+          definitions: CODE_UNITS[name] ? [symbolUnit(name)] : [],
           ambiguous: false,
           candidates: [],
           tokens_returned: 380,
