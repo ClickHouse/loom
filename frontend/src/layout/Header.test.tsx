@@ -163,8 +163,19 @@ describe("Header", () => {
     expect(screen.getByLabelText("Search Loom")).toHaveAttribute("placeholder", "Search or ask a question");
     unmount();
     auth.off = true;
-    render(<Header />);
+    const again = render(<Header />);
     expect(screen.getByLabelText("Search Loom")).toHaveAttribute("placeholder", "Search profile, memories, library…");
+    again.unmount();
+    // An org-wide token keeps the assistant from answering, so the search will not offer it.
+    auth.off = false;
+    const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+    localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ org: "*", sub: "ada" })}.sig`);
+    try {
+      render(<Header />);
+      expect(screen.getByLabelText("Search Loom")).toHaveAttribute("placeholder", "Search profile, memories, library…");
+    } finally {
+      localStorage.removeItem("loom_token_v1");
+    }
   });
 
   it("has a Search button that reveals the palette input", async () => {

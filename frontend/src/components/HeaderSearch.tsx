@@ -19,7 +19,7 @@ import {
   type ProfileEntry,
   type SearchHit,
 } from "../api";
-import { isCollectionName, isMemoryNamespace } from "../lib/namespace";
+import { isCollectionName } from "../lib/namespace";
 import { sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
@@ -27,10 +27,9 @@ import { displayAgent, sentenceCase } from "../lib/format";
 import { Kbd, Loading, TagList } from "./ui";
 import { toast, toastError } from "./Toast";
 import { paletteShortcut } from "../lib/platform";
-import { chatOff, openAssistantSoon, useDock } from "../lib/assistantDock";
-import { claimReason } from "../lib/assistantClaims";
+import { openAssistantSoon, useDock } from "../lib/assistantDock";
 import { readsAsQuestion } from "../lib/readsAsQuestion";
-import { ASK_PLACEHOLDER, SEARCH_PLACEHOLDER, blocksCard } from "../lib/searchAsk";
+import { ASK_PLACEHOLDER, SEARCH_PLACEHOLDER, offersAsk } from "../lib/searchAsk";
 import { MAX_MESSAGE_CHARS, pageContext, withContext } from "../views/assistant/pageContext";
 
 // The answer card and the chat store it asks through: a chunk of their own, loaded once the
@@ -382,13 +381,7 @@ export function HeaderSearch({
   const fits = withContext(parsed.raw, pageContext(view, null, pageOff)).length <= MAX_MESSAGE_CHARS;
   // A setup that is starting or failing keeps the card: a refusal it causes is said on the
   // card.
-  const askable =
-    fits &&
-    !chatOff() &&
-    !blocksCard(dockReason) &&
-    !claimReason() &&
-    !!identity &&
-    isMemoryNamespace(identity.namespace, mine);
+  const askable = fits && !!identity && offersAsk(dockReason, identity.namespace, mine);
   useEffect(() => {
     // Other text is another question: the card goes back to asking it (the answer before
     // goes on in the conversation).
