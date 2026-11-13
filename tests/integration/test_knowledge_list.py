@@ -171,20 +171,13 @@ async def test_list_reads_several_namespaces_as_one_newest_first(control_plane_u
     async with Agent(
         org=ORG, namespace=namespaces_listed[0], agent="w", base_url=control_plane_url
     ) as a:
-        body = {
-            "org": ORG,
-            "namespace": namespaces_listed[0],
-            "namespaces": namespaces_listed[1:] + [namespaces_listed[0]],
-        }
-        seen: list[tuple[str, str]] = []
         keys: list[tuple[str, str, str]] = []
         cursor = None
-        # Two a page: the cursor walks across namespaces with nothing repeated or skipped.
+        # Two a page, through the SDK: the cursor walks across the namespaces.
         while True:
-            page = await a.transport.post(
-                "/v1/knowledge.list", {**body, "limit": 2, **({"cursor": cursor} if cursor else {})}
+            page = await a.knowledge.list(
+                limit=2, cursor=cursor, namespaces=namespaces_listed[1:] + [namespaces_listed[0]]
             )
-            seen += [(r["namespace"], r["source_uri"]) for r in page["rows"]]
             keys += [(r["ingested_at"], r["namespace"], r["source_uri"]) for r in page["rows"]]
             cursor = page["next_cursor"]
             if not cursor:
@@ -194,7 +187,9 @@ async def test_list_reads_several_namespaces_as_one_newest_first(control_plane_u
         )
     # Newest first, by the keyset the cursor walks, with nothing repeated or skipped.
     assert keys == sorted(keys, reverse=True)
-    assert sorted(seen) == sorted((ns, f"doc://{i}") for ns in namespaces_listed for i in range(2))
+    assert sorted((ns, uri) for _, ns, uri in keys) == sorted(
+        (ns, f"doc://{i}") for ns in namespaces_listed for i in range(2)
+    )
     assert {r["namespace"] for r in one["rows"]} == {namespaces_listed[1]}
 
 

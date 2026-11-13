@@ -57,9 +57,8 @@ async def handle_knowledge_list(
     """Paginated listing of one namespace's documents, or several namespaces' as one.
 
     Reads a page of `loom.documents FINAL`, then the live chunk counts of that page's
-    sources. Keyset
-    pagination on (ingested_at DESC, namespace DESC, source_uri DESC) so the
-    cursor is stable across inserts."""
+    sources. Keyset pagination on (ingested_at, namespace, source_uri) DESC keeps the
+    cursor stable across inserts."""
     from server.core.ch import own_write_reads
     from server.knowledge.store import documents as documents_repo
 
@@ -112,7 +111,7 @@ def _list_cursor(last: DocumentListRow, org: str, namespaces: list[str]) -> str:
     if len(namespaces) == 1:
         return encode_cursor(last["ingested_at"], last["source_uri"])
     return encode_bound_cursor(
-        _scope(org, namespaces),
+        _cursor_scope(org, namespaces),
         last["ingested_at"],
         json.dumps([last["namespace"], last["source_uri"]]),
     )
@@ -123,12 +122,12 @@ def _list_position(cursor: str, org: str, namespaces: list[str]) -> tuple[dateti
     if len(namespaces) == 1:
         at, uri = decode_cursor(cursor)
         return at, namespaces[0], uri
-    at, extra = decode_bound_cursor(cursor, _scope(org, namespaces))
+    at, extra = decode_bound_cursor(cursor, _cursor_scope(org, namespaces))
     namespace, uri = json.loads(extra)
     return at, namespace, uri
 
 
-def _scope(org: str, namespaces: list[str]) -> list[str]:
+def _cursor_scope(org: str, namespaces: list[str]) -> list[str]:
     return ["knowledge.list", org, *sorted(namespaces)]
 
 

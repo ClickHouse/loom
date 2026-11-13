@@ -74,3 +74,35 @@ async def test_knowledge_list_refuses_a_namespace_the_caller_cannot_read(
         await document_reads.handle_knowledge_list(
             KnowledgeListInput(org="acme", namespace="a", namespaces=["col-secret"])
         )
+
+
+async def test_each_row_names_its_namespace_whatever_fields_are_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.api.models_knowledge import KnowledgeListInput
+    from server.knowledge.store import documents as documents_repo
+
+    async def page(org: str, namespaces: list[str], **_: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "namespace": "b",
+                "source_uri": "doc://a",
+                "title": "A",
+                "tags": [],
+                "ingested_at": AT,
+                "chunk_count": 1,
+                "superseded_at": None,
+            }
+        ]
+
+    async def named(org: str, namespace: str, names: list[str]) -> list[str]:
+        return [namespace, *names]
+
+    monkeypatch.setattr(documents_repo, "list_with_chunk_counts", page)
+    monkeypatch.setattr(document_reads, "named_namespaces", named)
+    out = await document_reads.handle_knowledge_list(
+        KnowledgeListInput(org="acme", namespace="a", namespaces=["b"], fields=["title"])
+    )
+    assert out.model_dump(mode="json")["rows"] == [
+        {"namespace": "b", "source_uri": "doc://a", "title": "A"}
+    ]
