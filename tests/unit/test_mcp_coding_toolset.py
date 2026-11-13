@@ -196,22 +196,17 @@ def test_coding_descriptions_derive_from_the_core_texts():
     assert "native memory" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
     assert "native memory" in TOOL_DESCRIPTIONS["memory.set"]
     assert "Other writes" in CODING_TOOL_DESCRIPTIONS["memory.set"]
-    # the removal pick line on memory.delete, on both tiers, naming every path
-    for toolset, code in (("core", False), ("coding", False)):
-        delete = {t["name"]: t for t in _listing(toolset, code)}["loom_memory_delete"][
-            "description"
-        ]
-        line = next(ln for ln in delete.splitlines() if ln.startswith("WHICH REMOVAL"))
-        for path in (
-            "this tool",
-            "memory.apply",
-            "blacklist.add",
-            "memory.clear",
-            "erasure.request",
-        ):
-            assert path in line.replace("loom_memory_apply", "memory.apply").replace(
-                "loom_blacklist_add", "blacklist.add"
-            ), (toolset, path, line)
+    # the removal pick line on memory.delete: listed paths by tool, the rest marked
+    expected = {
+        "core": ("loom_memory_apply with", "loom_blacklist_add;"),
+        "coding": ("memory.apply (via loom_op) with", "blacklist.add (via loom_op);"),
+    }
+    for toolset, (apply_ref, refuse_ref) in expected.items():
+        delete = {t["name"]: t for t in _listing(toolset, False)}["loom_memory_delete"]
+        line = next(ln for ln in delete["description"].splitlines() if ln.startswith("WHICH"))
+        assert line.startswith("WHICH REMOVAL: one key is this tool;"), line
+        assert apply_ref in line and refuse_ref in line, (toolset, line)
+        assert "memory.clear (via loom_op)" in line and "erasure.request (via loom_op)" in line
     for must in (
         "Call this proactively",
         "Don't search before saving",

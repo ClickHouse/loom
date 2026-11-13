@@ -93,7 +93,7 @@ PLANES: tuple[tuple[str, str, str, bool], ...] = (
     (
         "memory",
         "claims",
-        "one plain-text claim per readable key; recall by meaning with memory.search",
+        "one plain-text claim per readable key; recall by meaning with loom_search",
         True,
     ),
     (
@@ -386,9 +386,9 @@ def _rules_reading(c: _Ctx) -> None:
         c.add(
             "recall_by_key_only",
             "warning",
-            f"{gets} exact-key reads to {searches} searches this week: memory.search / loom_search "
-            "recall by meaning; a key read in a loop belongs in working_memory.",
-            ("memory.search", "working_memory.set"),
+            f"{gets} exact-key reads to {searches} searches this week: loom_search recalls by "
+            "meaning; a key read in a loop belongs in working_memory.set.",
+            ("loom_search", "working_memory.set"),
             gets=gets,
             searches=searches,
         )
@@ -403,8 +403,8 @@ def _rules_reading(c: _Ctx) -> None:
             "warning",
             f"{sets} writes and {reads} reads over {c.sessions} sessions: "
             "nothing written here is read back. Open a session with context.pack; "
-            "recall with memory.search before deciding.",
-            ("context.pack", "memory.search"),
+            "recall with loom_search before deciding.",
+            ("context.pack", "loom_search"),
             sets=sets,
             reads=reads,
             sessions=c.sessions,
@@ -441,10 +441,10 @@ def _rules_reliance(c: _Ctx) -> None:
         c.add(
             "relied_on_chunk_ids",
             "warning",
-            f"{chunk_ids} of {credited} keys named in run.complete(memories_used) this week are "
+            f"{chunk_ids} of {credited} keys named in run.complete's memories_used this week are "
             "chunk ids (chunk:<session>:<n>): credit them by the fact — every chunk hit carries "
-            "parent_memory_key, and memory.bulk_get answers a chunk id with its parent.",
-            ("run.complete", "memory.bulk_get"),
+            "parent_memory_key, the key memory.get reads.",
+            ("run.complete", "memory.get"),
             credited=credited,
             chunk_ids=chunk_ids,
         )
@@ -453,7 +453,7 @@ def _rules_reliance(c: _Ctx) -> None:
         c.add(
             "relied_on_missing_keys",
             "warning",
-            f"{unresolvable} of {credited} keys named in run.complete(memories_used) this week "
+            f"{unresolvable} of {credited} keys named in run.complete's memories_used this week "
             "answer no live memory row: the credit lands nowhere. Name the memory_key the "
             "search returned (or its parent_memory_key), and re-read it with memory.get "
             "before relying on it.",
@@ -468,8 +468,8 @@ def _rules_reliance(c: _Ctx) -> None:
             "warning",
             f"{missed} of {asked} keys asked of memory.get / bulk_get this week were not there: "
             "a key from a search result that misses is a chunk or a moved key — follow "
-            "canonical_key, or recall by meaning with memory.search.",
-            ("memory.get", "memory.search"),
+            "canonical_key, or recall by meaning with loom_search.",
+            ("memory.get", "loom_search"),
             asked=asked,
             missed=missed,
         )
@@ -542,7 +542,7 @@ def _rules_planes(c: _Ctx) -> None:
             "runs_unused",
             "info",
             f"{c.sessions} sessions and no run ledger: {_byname('run.begin')} before the work "
-            "and run.complete(memories_used) after grade the memories by the outcomes they "
+            "and run.complete with memories_used after grade the memories by the outcomes they "
             "produced.",
             ("run.begin", "run.complete"),
             sessions=c.sessions,
@@ -888,7 +888,7 @@ def _rule_get_miss(
     key = str(args.get("memory_key") or "")
     return (
         "get_miss",
-        f"no row at {key or 'that key'}: memory.search recalls by meaning, memory.list prefix= "
+        f"no row at {key or 'that key'}: loom_search recalls by meaning, memory.list prefix= "
         "lists the siblings, and a moved key answers with canonical_key (follow=true).",
     )
 

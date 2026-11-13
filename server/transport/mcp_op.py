@@ -40,10 +40,6 @@ _HELP = {"", "help", "ops", "list", "catalog", "?"}
 _CATALOG_LIMIT = 15
 
 
-def _ops() -> list[Operation]:
-    return [op for op in ALL_OPERATIONS if op.name not in _MCP_HIDDEN_OPS]
-
-
 def _purpose(op: Any) -> str:
     from server.transport.mcp_descriptions import TOOL_DESCRIPTIONS
 
@@ -333,7 +329,8 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     name = str(args.get("op") or "").strip()
     if name.lower() in _HELP:
         return req, _result(req.get("id"), catalog(str(args.get("query") or ""), toolset=toolset))
-    by_name = {op.name: op for op in _ops()}
+    # a hidden op is not here, so its name gets hidden_refusal
+    by_name = {op.name: op for op in ALL_OPERATIONS if op.name not in _MCP_HIDDEN_OPS}
     op = by_name.get(name) or by_name.get(name.replace("_", ".", 1))
     writes = routes_writes(toolset)
     if op is None and (hidden := hidden_refusal(name, toolset)) is not None:

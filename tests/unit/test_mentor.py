@@ -11,6 +11,7 @@ Everything here runs against a fake store: no ClickHouse.
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -444,7 +445,7 @@ def test_reliance_rules_fire_on_chunk_credit_missing_keys_and_read_misses(
     assert by["relied_on_chunk_ids"].severity == "warning"
     assert "450 of 1000" in by["relied_on_chunk_ids"].text
     assert "parent_memory_key" in by["relied_on_chunk_ids"].text
-    assert by["relied_on_chunk_ids"].ops == ("run.complete", "memory.bulk_get")
+    assert by["relied_on_chunk_ids"].ops == ("run.complete", "memory.get")
     assert "80 of 1000" in by["relied_on_missing_keys"].text
     assert "1100 of 4000" in by["reads_miss"].text
     # the facts come from the run table and the ledger's outcome columns
@@ -627,7 +628,7 @@ def test_the_dashboard_and_the_assistant_get_no_call_hint() -> None:
 def test_get_miss_fires_once_per_session() -> None:
     hint = _call("memory.get", {"memory_key": "deploy_window"}, {"found": False})
     assert hint is not None and hint[0] == "get_miss" and "deploy_window" in hint[1]
-    assert "memory.search" in hint[1]
+    assert "loom_search" in hint[1]
     assert _call("memory.get", {"memory_key": "other"}, {"found": False}) is None
     assert _call("memory.get", {"memory_key": "other"}, {"found": False}, session="s2") is not None
     # A found row says nothing.
@@ -835,7 +836,7 @@ def test_http_helper_rides_the_hint_as_headers() -> None:
         resp,
     )
     assert resp.headers["X-Loom-Hint-Code"] == "get_miss"
-    assert "memory.search" in resp.headers["X-Loom-Hint"]
+    assert "loom_search" in resp.headers["X-Loom-Hint"]
     assert ledger.current_hint_code() == "get_miss"
     ledger.set_hint_context("")
 
@@ -1498,6 +1499,26 @@ def test_handshake_warms_the_profile_when_nothing_is_cached(
     m._cache_put(("o", "ns", "a"), 10**12, _fake_profile(_h("code_index_unused")))
     line = asyncio.run(mcp_primer._mentor_line(None))
     assert "code_index_unused" in line and len(warmed) == 1
+
+
+def test_no_hint_text_writes_an_op_as_a_call_or_names_a_hidden_op() -> None:
+    """The handshake renders hint texts as it renders tool descriptions. A hidden
+    op named in prose is one the user acts on, and its note says so (conflicts)."""
+    import ast
+    from pathlib import Path
+
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.operations.toolsets import _MCP_HIDDEN_OPS
+    from server.transport.mcp_op import OP_MENTION
+
+    tree = ast.parse(Path(mentor_rules.__file__).read_text())
+    prose = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and " " in str(n.value)]
+    for text in prose:
+        for name, paren in re.findall(rf"\b({OP_MENTION})(\(?)", str(text)):
+            if name not in OPERATIONS_BY_NAME:
+                continue
+            assert not paren, f"{name}( in {text!r}"
+            assert name not in _MCP_HIDDEN_OPS or name.startswith("conflicts."), text
 
 
 def test_the_handshake_mentor_line_names_ops_for_its_listing(
