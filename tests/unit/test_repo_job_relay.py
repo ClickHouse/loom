@@ -19,6 +19,11 @@ import pytest
 from server.code.app.index import egress, egress_relay
 
 
+@pytest.fixture(autouse=True)
+def _short_linger(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(egress_relay, "_LINGER_S", 0.2)
+
+
 class _Upstream:
     """A unix server standing in for the egress proxy: it holds every connection
     open and counts them."""
