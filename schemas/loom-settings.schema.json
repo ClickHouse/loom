@@ -2742,7 +2742,7 @@
           "default": 0.0,
           "minimum": 0,
           "type": "number",
-          "description": "Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass` replays) may run before the supervisor abandons it; 0 = four intervals, at least 60 s and at most 900. The batch lease is kept at least a minute longer."
+          "description": "Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass` replays) may run before the supervisor abandons it; 0 = four intervals, 60 s to 900."
         },
         "extraction_queue_namespace_concurrency": {
           "default": 4,
