@@ -254,6 +254,8 @@ module = [
   "llama_index.*",
   "agents",
   "agents.*",
+  "crewai",
+  "crewai.*",
   "langgraph",
   "langgraph.*",
   "strands",

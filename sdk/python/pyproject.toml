@@ -60,6 +60,8 @@ langchain = ["langchain-core>=1.0,<2"]
 llamaindex = ["llama-index-core>=0.14,<0.15"]
 # The OpenAI Agents SDK is pre-1.0: each minor version may change its tool API.
 openai-agents = ["openai-agents>=0.24,<0.25"]
+# CrewAI moves its memory API between minor versions.
+crewai = ["crewai>=1.15,<1.16"]
 
 [project.urls]
 Homepage = "https://clickhouse.github.io/loom/"
@@ -68,8 +70,8 @@ Repository = "https://github.com/ClickHouse/loom"
 Issues = "https://github.com/ClickHouse/loom/issues"
 
 [tool.pytest.ini_options]
-# The framework adapters' tests: `make test-sdk-adapters` runs them in a venv with
-# the SDK and its adapter extras, apart from the server's environment.
+# The framework adapters' tests: `make test-sdk-adapters` runs each in a venv with
+# the SDK and that adapter's extra, apart from the server's environment.
 testpaths = ["tests"]
 
 [build-system]

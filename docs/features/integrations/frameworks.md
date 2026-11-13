@@ -17,6 +17,7 @@ or needs another database, vector store or cache.
 | LlamaIndex                     | `LoomRetriever`, `LoomMemoryBlock`              | Python, `loom.integrations.llamaindex`                    | `BaseRetriever`, `BaseMemoryBlock`     |
 | OpenAI Agents SDK              | `loom_tools`                                    | Python, `loom.integrations.openai_agents`                 | `FunctionTool`                         |
 | OpenAI Agents SDK (TypeScript) | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`         |
+| CrewAI                         | `LoomCrewMemory`                                | Python, `loom.integrations.crewai`                        | `crewai.memory.Memory`                 |
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                            |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol             |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally        |
@@ -201,6 +202,54 @@ const assistant = new OpenAIAgent({
 const result = await run(assistant, "Book my usual seat to Lisbon");
 ```
 
+## CrewAI
+
+`LoomCrewMemory` is a `crewai.memory.Memory`, so a crew takes it as `memory=` and its
+agents share the namespace's memory. Set it on the `Crew`, not on an `Agent`: when CrewAI
+copies a crew (`kickoff_for_each`, `train`, `test`) it rebuilds each agent's memory as its
+own `Memory`, with a local store, and keeps only the crew's. Install with
+`pip install 'clickhouse-loom[crewai]'` (`crewai` 1.15, Python 3.11 to 3.13).
+
+```python
+from crewai import Crew
+from loom import SyncAgent
+from loom.integrations.crewai import LoomCrewMemory
+
+with SyncAgent(org="acme", namespace="research") as agent:
+    crew = Crew(agents=[...], tasks=[...], memory=LoomCrewMemory(agent=agent))
+    crew.kickoff()
+```
+
+| A crew run asks memory to                               | Loom                                                                                                                 |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| recall what bears on a task (`recall`)                  | `memory.search` of the namespace the crew writes to; nothing when Loom abstains, `score` is the similarity           |
+| extract facts from a task's output (`extract_memories`) | the output, unchanged: Loom extracts on write                                                                        |
+| save them (`remember_many`)                             | `memory.set_from_messages`, deferred by default; Loom resolves duplicates and conflicts                              |
+| save one fact, from the memory tools (`remember`)       | one `memory.set` under `crewai/<first 20 hex of sha256(text)>`; a save of several items goes through `remember_many` |
+
+CrewAI's own `Memory` analyses every save with an LLM, embeds it with its embedder and
+keeps it in a local store; `LoomCrewMemory` needs none of them, since Loom embeds and
+extracts on the server. `tags` and the `categories` of a save become Loom tags; a recall
+keeps memories carrying any of `tags` and any of its `categories`; when both are given,
+the categories narrow the best `5 × limit` matches (at least 50, at most 500), and only
+fact hits carrying one of them are kept. The scope tree, slices, record listing, `update`
+and private records (`private=True`) are not offered and raise, and so do `reset` and
+`forget`: Loom deletes a memory when its key is named (`memory.delete`) or through
+[erasure](../memory/retention-and-erasure.md). `scope`, `root_scope`, `metadata`,
+`importance` and `source` are not kept or used, and a `read_only` memory saves nothing.
+Crews call their memory synchronously, so the adapter takes a `SyncAgent`. Do not
+checkpoint a crew that holds this memory: CrewAI saves the memory as its own `Memory` and
+restores that, with a local store.
+
+| Field            | Default  | Effect                                                                                          |
+| ---------------- | -------- | ----------------------------------------------------------------------------------------------- |
+| `agent`          | required | the `SyncAgent` the memory calls                                                                |
+| `user_id`        | none     | the end user the memories belong to; unset, recalls read every user's memories in the namespace |
+| `tags`           | none     | stamped on every save; recalls keep memories carrying any of them                               |
+| `honour_abstain` | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                               |
+| `defer`          | `True`   | queue the extraction on the server instead of waiting                                           |
+| `key_prefix`     | `crewai` | key prefix of `remember`'s saves                                                                |
+
 ## LangGraph
 
 `LoomStore` (`sdk/python/loom/integrations/langgraph.py`) is a LangGraph `BaseStore`, so
@@ -317,6 +366,9 @@ client can speak for several agents.
 ## Failure modes
 
 - **Abstain is not an error.** An empty search means nothing cleared Loom's floor.
+- **CrewAI carries on without memory when a memory call fails.** A crew logs a failed
+  recall or save and runs the task anyway, so an unreachable Loom shows in the crew's logs,
+  not as an error.
 - **A refused tool call is a message, not an exception.** The OpenAI Agents SDK tools
   return Loom's error to the model as the call's result.
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as

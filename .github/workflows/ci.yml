@@ -1037,9 +1037,10 @@ jobs:
     name: python sdk adapters (py ${{ matrix.python }}${{ matrix.lowest && ', lowest deps' || '' }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # The framework adapters' tests and types, with each framework the SDK's extras
-    # name, outside the server's environment: their dependencies are not in uv.lock.
-    # The lowest-deps leg installs every direct requirement (the SDK's own, each
+    # The framework adapters' tests and types, each with the framework its SDK extra
+    # names, in a venv of its own: their dependencies are not in uv.lock, and two
+    # frameworks may pin one package incompatibly.
+    # The lowest-deps leg installs every direct requirement (the SDK's own, the
     # extra's, pytest) at its lower bound.
     strategy:
       fail-fast: false
