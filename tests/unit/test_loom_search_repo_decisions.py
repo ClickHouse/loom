@@ -942,15 +942,16 @@ async def test_a_decision_whose_code_changed_moves_down_after_the_merge_and_says
 ) -> None:
     stale = _hit("decision:evict", 0.7, mtype="decision", rank=0.9)
     stale._code_ranked_down = True  # its code changed: the search's code annotation marked it
-    stale.explanation = "fact hit from namespace code-kj; similarity=0.70; rank_score=0.90"
+    stale_explanation = "fact hit from namespace code-kj; similarity=0.70; rank_score=0.90"
+    stale.explanation = stale_explanation
     planes = {**PLANES, TRUNK: [stale]}
     out = await _leg(monkeypatch, TRUNK, [], planes=planes)
     assert [h.memory_key for h in out.results] == ["note-a", "note-b", "decision:evict"]
     moved = out.results[2]
     assert moved.score_components["code_changed_places"] == -2.0
-    # the two searches' scores do not compare: it keeps its own
+    # the two searches' scores do not compare: it keeps its own, and its explanation
     assert moved.rank_score == 0.9
-    assert "rank_score=0.90" in moved.explanation
+    assert moved.explanation == stale_explanation
 
 
 def test_a_base_row_moved_for_stale_code_holds_no_slot_for_a_decision() -> None:

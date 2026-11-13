@@ -396,7 +396,8 @@ confidence and abstain checks have read them in relevance order;
 - a row placed by an identifier match or by an `anchor_first` or `recent_first` tier,
   which a move does not count as a place either;
 - every row of a query whose answer is a date order;
-- the rows of a later page (`page=<handle>`), served in their parked order.
+- the rows of a later page (`page=<handle>`), served in their parked order;
+- a chunk, record or summary hit, which carries no `code_state`.
 
 `memory.ask` re-sorts the search's rows by similarity and recency while
 `memory_ask_recency_weight` is above 0 (0.2 by default), and its identifier

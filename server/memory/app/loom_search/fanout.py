@@ -274,7 +274,7 @@ async def search_sections(
     # The input the memory search ran (the block renders with its sanitized query,
     # as memory.search does); None for a parked page, which searched nothing.
     settled: MemorySearchInput | None = None
-    moved: frozenset[int] = frozenset()  # the memory dicts the search moved for stale code
+    moved: frozenset[int] = frozenset()  # id() of the memory dicts the search moved
     if isinstance(mem_result, Exception):
         payload["memory"] = {"error": _leg_error("memory", mem_result), "results": []}
     else:

@@ -487,7 +487,7 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
         return {}
 
 
-def _code_change(hit: Any) -> tuple[str, str]:
+def _code_state_and_commit(hit: Any) -> tuple[str, str]:
     """The hit's code state and the commit of its worst link (`worst_commit`: '' for a
     state no note names)."""
     state = str(getattr(hit, "code_state", "") or "")
@@ -534,7 +534,7 @@ async def _pack_decisions_from_hits(
         made = str(rec.get("made_at") or "")[:10]
         author = _hit_author(actors, input, h)
         line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
-        line += (f" {made}" if made else "") + code_change.note(*_code_change(h))
+        line += (f" {made}" if made else "") + code_change.note(*_code_state_and_commit(h))
         line += f" {scenario}"
         if outcome:
             line += f" → {rec['stage']}: {outcome}"
@@ -645,7 +645,7 @@ async def _pack_memories(st: _PackState) -> None:
                     conflict=getattr(h, "status", "") == "conflicted",
                     author=_hit_author(actors, input, h),
                     derived_from=tuple(getattr(h, "derived_from", None) or ()),
-                    code=code_change.label(*_code_change(h)),
+                    code=code_change.label(*_code_state_and_commit(h)),
                 )
             )
         packed = pack_evidence(
