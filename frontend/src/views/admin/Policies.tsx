@@ -442,7 +442,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
       .map((a) => a.trim())
       .filter(Boolean);
     if (!id) {
-      setErr("policy_id is required");
+      setErr("Policy ID is required");
       return;
     }
     if (acts.length === 0) {
@@ -481,7 +481,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
         if (!v) close();
       }}
       title="Add rule"
-      description="Saving under an existing policy_id replaces that rule. Rules apply to every writer in this namespace."
+      description="Saving under an existing Policy ID replaces that rule. Rules apply to every writer in this namespace."
       className="w-full max-w-[640px]"
     >
       <form

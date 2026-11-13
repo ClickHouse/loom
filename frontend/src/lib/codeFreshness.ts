@@ -4,11 +4,13 @@ export type Fresh = { tone: FreshTone; label: string; detail: string };
 
 /** The words for an answer's index lag (Explore's badge): stale wins, so a stale index whose
  *  mirror has not fetched (lag 0) never reads "Up to date". */
+/** "1 commit", "1,200 commits": one wording for every lag count. */
+export const commits = (n: number) => `${fmtInt(n)} commit${n === 1 ? "" : "s"}`;
+
 export function lagLabel(lag: number, stale: boolean): string {
-  const commits = `${fmtInt(lag)} commit${lag === 1 ? "" : "s"}`;
-  if (stale) return lag > 0 ? `Stale · behind ${commits}` : "Stale";
+  if (stale) return lag > 0 ? `Stale · behind ${commits(lag)}` : "Stale";
   if (lag < 0) return "Freshness unknown";
-  return lag === 0 ? "Up to date" : `Behind ${commits}`;
+  return lag === 0 ? "Up to date" : `Behind ${commits(lag)}`;
 }
 
 /**
@@ -45,7 +47,7 @@ export function freshness(
   if (r.fast_tier_lag > 0) {
     return {
       tone: r.fast_tier_lag > 20 ? "bad" : "warn",
-      label: `Behind ${fmtInt(r.fast_tier_lag)} commit${r.fast_tier_lag === 1 ? "" : "s"}`,
+      label: `Behind ${commits(r.fast_tier_lag)}`,
       detail: `${fmtInt(r.fast_tier_lag)} merged commit${r.fast_tier_lag === 1 ? "" : "s"} not yet indexed`,
     };
   }
@@ -54,7 +56,7 @@ export function freshness(
     return {
       tone: "warn",
       label: "Calls catching up",
-      detail: `Search matches the last commit Loom fetched; exact cross-file calls are ${fmtInt(r.scip_lag)} commit${r.scip_lag === 1 ? "" : "s"} behind it`,
+      detail: `Search matches the last commit Loom fetched; exact cross-file calls are ${commits(r.scip_lag)} behind it`,
     };
   }
   if (r.fast_tier_lag === 0) {

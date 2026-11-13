@@ -31,7 +31,7 @@ import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import type { CodeRepoSummary } from "../api";
 import { absoluteTime, fmtInt, listTime, parseChTime } from "../lib/format";
 import { stageLabel } from "../lib/codeStage";
-import { freshness, type FreshTone } from "../lib/codeFreshness";
+import { commits, freshness, type FreshTone } from "../lib/codeFreshness";
 import { failingTiers, failureSummary, kindWord, tierName, unavailableTiers } from "../lib/tierHealth";
 import {
   bindableRecords,
@@ -98,7 +98,7 @@ const DAY_MS = 24 * 3600_000;
 const short = (sha: string) => sha.slice(0, 12);
 
 /** "N commits behind", or that the count can't be told (the server answers -1). */
-const lagWords = (n: number) => (n < 0 ? "an unknown number of commits" : `${fmtInt(n)} commit${n === 1 ? "" : "s"}`);
+const lagWords = (n: number) => (n < 0 ? "an unknown number of commits" : commits(n));
 
 function heads(b: CodeRepoSummary): string {
   const fetched = b.clone_head && b.clone_head !== b.git_head ? `, fetched ${short(b.clone_head)}` : "";
@@ -145,7 +145,7 @@ export function branchHealth(b: CodeRepoSummary): Health {
     };
   if (b.fast_tier_lag > 0)
     return {
-      text: `Behind ${fmtInt(b.fast_tier_lag)} commit${b.fast_tier_lag === 1 ? "" : "s"}`,
+      text: `Behind ${lagWords(b.fast_tier_lag)}`,
       state: "warning",
       rank: 5,
       detail: `${freshness(b).detail}. ${heads(b)}`,

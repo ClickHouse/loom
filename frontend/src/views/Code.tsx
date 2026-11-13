@@ -1796,9 +1796,10 @@ const TIER_ICONS: Record<TierIcon, IconName> = {
 
 function lagText(lag: number, watermark: string): { text: string; tone: Fresh["tone"] } {
   if (!watermark) return { text: "unset", tone: "muted" };
-  if (lag < 0) return { text: "lag unknown", tone: "muted" };
-  if (lag === 0) return { text: "at tip", tone: "ok" };
-  return { text: `${lag} behind`, tone: lag > 20 ? "bad" : "warn" };
+  const text = lagLabel(lag, false);
+  if (lag < 0) return { text, tone: "muted" };
+  if (lag === 0) return { text, tone: "ok" };
+  return { text, tone: lag > 20 ? "bad" : "warn" };
 }
 
 // PR history's watermark is a merge time, not a commit, so no commit lag
