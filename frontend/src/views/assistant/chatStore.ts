@@ -319,9 +319,7 @@ export function adoptOwner(owner: Owner | null): void {
  *  unless it was kept in a collection, which History does not list. Said by the panel's Ask
  *  about this and by a search question about another namespace. */
 export function newConversationLine(now: string, old: string): string {
-  return isCollectionName(old)
-    ? `New conversation in ${now}.`
-    : `New conversation in ${now}; the one about ${old} is in History.`;
+  return isCollectionName(old) ? `New chat in ${now}.` : `New chat in ${now}; the one about ${old} is in History.`;
 }
 
 /** The words of the answer's latest step while it streams, or null before the first. */

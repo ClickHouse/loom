@@ -764,7 +764,7 @@ describe("Try again", () => {
   }
   const chats = () => paths.filter((p) => p === "/v1/assistant/chat/completions").length;
 
-  it("asks a stopped edit in no other conversation: New conversation and a History open drop it", async () => {
+  it("asks a stopped edit in no other conversation: New chat and a History open drop it", async () => {
     signIn("viewer");
     show();
     const user = await stoppedEdit();
@@ -1205,7 +1205,7 @@ describe("the conversation", () => {
     expect(screen.queryByText("Ada.")).not.toBeInTheDocument();
     await waitFor(() =>
       expect(document.getElementById("loom-assistant-status")).toHaveTextContent(
-        "New conversation in ops; the one about team is in History.",
+        "New chat in ops; the one about team is in History.",
       ),
     );
   });
@@ -1232,7 +1232,7 @@ describe("the conversation", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Start a new one in team" }));
     // History lists it no more, so the announcement does not send anyone there.
     await waitFor(() =>
-      expect(document.getElementById("loom-assistant-status")).toHaveTextContent(/^New conversation in team\.$/),
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent(/^New chat in team\.$/),
     );
   });
 
@@ -1294,7 +1294,7 @@ describe("the conversation", () => {
     await screen.findByText("Ada.");
     act(() => useChat.setState({ answering: true }));
     act(() => useDock.setState((d) => ({ startersSeq: (d.startersSeq ?? 0) + 1, startersAudit: true })));
-    expect(await screen.findByText("Starters show once this answer ends: choose New conversation.")).toBeVisible();
+    expect(await screen.findByText("Starters show once this answer ends: choose New chat.")).toBeVisible();
     expect(useDock.getState().startersAudit).toBe(false);
     act(() => useChat.setState({ answering: false }));
   });
@@ -2184,7 +2184,7 @@ describe("the page a question is asked from", () => {
     expect(screen.getByText("This conversation is about team.")).toBeInTheDocument();
     act(() => useDock.setState({ draft: "and the refunds?" }));
     act(() => askAbout(item({ namespace: "ops" })));
-    const line = "New conversation in ops; the one about team is in History.";
+    const line = "New chat in ops; the one about team is in History.";
     expect(await screen.findByText(line)).toBeInTheDocument();
     expect(screen.queryByText("Ada.")).not.toBeInTheDocument();
     expect(screen.queryByText("This conversation is about team.")).not.toBeInTheDocument();
@@ -2200,7 +2200,7 @@ describe("the page a question is asked from", () => {
     show();
     act(() => useChat.setState({ namespace: "col-research", turns: [done(0)] }));
     act(() => askAbout(item({ namespace: "team" })));
-    const line = "New conversation in team.";
+    const line = "New chat in team.";
     expect(await screen.findByText(line)).toBeInTheDocument();
     expect(screen.queryByText(/col-research/)).toBeNull();
     await waitFor(() => expect(document.getElementById("loom-assistant-status")).toHaveTextContent(line));
@@ -2404,7 +2404,7 @@ describe("Ask about this, the edge cases", () => {
     act(() => askAbout(item({ namespace: "ops" })));
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.getByText("This conversation is about team.")).toBeInTheDocument();
-    expect(screen.queryByText(/^New conversation in ops/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^New chat in ops/)).not.toBeInTheDocument();
     expect(useDock.getState().item).toMatchObject({ namespace: "ops", chip: "key user/pref/lang" });
     expect(useChat.getState().namespace).toBe("team");
     act(() => resetChat(null));

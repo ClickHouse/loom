@@ -55,9 +55,8 @@ export default function MoreSheet({ onClose }: { onClose: () => void }) {
   // The sidebar stays mounted below md and reads the badges; the sheet shows its latest answer.
   const badges = useStore((s) => s.adminBadges);
   const groups = mobileMoreItems(whoami, myNamespaces, namespace, badges);
-  const identity = useStore((s) => s.identity);
   const libraryElsewhere = useStore((s) => s.libraryElsewhere);
-  const role = useNamespaceRole(identity?.namespace);
+  const role = useNamespaceRole(namespace || undefined);
   // The same rules as the header's New: a read-only role sees both unavailable with the
   // reason, and Document goes while the Library shows a collection (its own Add document
   // adds there).
@@ -68,7 +67,7 @@ export default function MoreSheet({ onClose }: { onClose: () => void }) {
   };
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title="More" className="w-full max-w-[520px]">
-      {identity && (
+      {namespace && (
         <section aria-labelledby="more-new" className="mb-4">
           <div id="more-new" className="section-label mb-1.5 px-1">
             New

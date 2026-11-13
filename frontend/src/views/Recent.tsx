@@ -719,7 +719,7 @@ function MemoryList() {
           <>
             {/* Not on a phone, where the title row keeps the first memory inside the first
                 screen: there the top bar's Ask AI opens the panel, which shows the starters
-                on an empty conversation (New conversation starts one). */}
+                on an empty conversation (New chat starts one). */}
             {!phone && <InsightsButton />}
             <NamespaceGuideButton identity={identity} compact={phone} />
             {/* The empty state's own Add is the one primary while it shows. */}

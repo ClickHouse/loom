@@ -95,7 +95,7 @@ for (const width of [768, 1024, 1280, 1920]) {
   });
 }
 
-test("open, the button looks pressed and closes it; Ctrl+J opens nothing", async ({ page }) => {
+test("open, the button looks pressed and closes it; no key opens it", async ({ page }) => {
   await onMemories(page, 1440);
   const closed = await launcher(page).evaluate((el) => getComputedStyle(el).backgroundColor);
   await launcher(page).click();
@@ -107,8 +107,10 @@ test("open, the button looks pressed and closes it; Ctrl+J opens nothing", async
   await expect(panel(page)).toBeHidden();
   // No key opens it, and its tooltip names none.
   await page.locator("main h1").first().click();
-  await page.keyboard.press("Control+j");
-  await page.waitForTimeout(300);
+  for (const key of ["Control+/", "Meta+/", "Control+j", "Meta+j"]) {
+    await page.keyboard.press(key);
+    await page.waitForTimeout(150);
+  }
   await expect(panel(page)).toBeHidden();
   await launcher(page).hover();
   await expect(page.getByRole("tooltip")).toHaveText("Ask AI about this namespace");

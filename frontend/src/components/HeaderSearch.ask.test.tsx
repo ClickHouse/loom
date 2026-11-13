@@ -279,7 +279,7 @@ describe("the search's answer card", () => {
     expect(useChat.getState().id).not.toBe("old");
     expect(useChat.getState().namespace).toBe("team");
     // Said as the panel's Ask about this says it.
-    const line = "New conversation in team; the one about other is in History.";
+    const line = "New chat in team; the one about other is in History.";
     expect(useChat.getState().notice).toBe(line);
     await waitFor(() => expect(status()).toHaveTextContent(line));
   });
