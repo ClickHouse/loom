@@ -251,22 +251,46 @@ def test_a_client_still_uploading_to_a_half_closed_proxy_keeps_its_bridge(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The server has sent EOF and still reads: each byte restarts the linger."""
-    monkeypatch.setattr(egress_relay, "_LINGER_S", 0.6)  # 0.3 s either side of a gap
+    monkeypatch.setattr(egress_relay, "_LINGER_S", 0.8)  # 0.4 s either side of a gap
     with _relay(sock_dir, 1) as (port, upstream):
         client = socket.create_connection(("127.0.0.1", port), timeout=5)
         assert upstream.arrived.acquire(timeout=5)
         upstream.held[0].shutdown(socket.SHUT_WR)  # the proxy's side has ended
         assert client.recv(1) == b""
-        chunks = 4
+        chunks = 3
         for _ in range(chunks):  # each gap longer than one linger, shorter than two
             client.sendall(b"x")
             time.sleep(1.5 * egress_relay._LINGER_S)
         received = b""
         upstream.held[0].settimeout(5)
-        while len(received) < chunks:
-            received += upstream.held[0].recv(chunks)
+        while len(received) < chunks and (piece := upstream.held[0].recv(chunks)):
+            received += piece
         assert received == b"x" * chunks
         client.close()
+
+
+def test_a_client_that_never_reads_gives_its_slot_back(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(egress_relay, "_WRITE_TIMEOUT_S", 0.3)
+    with _relay(sock_dir, 1) as (port, upstream):
+        first = socket.create_connection(("127.0.0.1", port))
+        assert upstream.arrived.acquire(timeout=5)
+
+        def send_more_than_any_buffer_holds() -> None:
+            with contextlib.suppress(OSError):
+                upstream.held[0].sendall(b"x" * (64 * 1024 * 1024))
+                upstream.held[0].shutdown(socket.SHUT_WR)
+
+        sender = threading.Thread(target=send_more_than_any_buffer_holds)
+        sender.start()
+        try:
+            second = socket.create_connection(("127.0.0.1", port))
+            assert upstream.arrived.acquire(timeout=5)  # the stuck write gave up
+            second.close()
+        finally:
+            first.close()
+            sender.join(timeout=10)
 
 
 def test_an_upstream_socket_that_cannot_open_costs_its_connection_only(

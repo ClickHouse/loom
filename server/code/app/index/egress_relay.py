@@ -27,6 +27,9 @@ MAX_BRIDGES = 32
 _LINGER_S = 1.0
 # not a setting: a pause before trying again at a kernel limit
 _RETRY_PAUSE_S = 0.1
+# The longest a write to a client may wait for it to read.
+# not a setting: the proxy's idle timeout default, as the proxy drops such a client too
+_WRITE_TIMEOUT_S = 300.0
 
 
 def _to_client(src: socket.socket, dst: socket.socket, to_client_done: threading.Event) -> None:
@@ -80,6 +83,7 @@ def _start(target: Callable[..., None], *args: object) -> threading.Thread:
 
 def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
     try:
+        conn.settimeout(_WRITE_TIMEOUT_S)  # a client that never reads ends its bridge
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
             upstream.connect(path)
             to_client_done = threading.Event()
