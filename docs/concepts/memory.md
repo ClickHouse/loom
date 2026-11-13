@@ -372,19 +372,18 @@ when its own name does. A name gone from its file is looked for in the files cha
 since its last check as the mirror holds them, beside the index, so a definition moved by
 a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
 followed when the link is rechecked. When `memory_code_links_mirror_naming_files` or more
-of those files name it, or more than `memory_code_links_mirror_changed_files` changed, or
-the diff cannot be read, or the paths are more than git takes in one command or searches
-in its time, the mirror adds nothing and the index decides. When git cannot run the
-search, or a definition it finds cannot be fingerprinted, a live link the index's
-namesakes do not settle is `unresolved`. Files the
+of those files name it, or more than `memory_code_links_mirror_changed_files` changed
+under the entry's prefixes, or the diff cannot be read, or the paths are more than git
+takes in one command or searches in its time, the mirror adds nothing and the index
+decides. When git cannot run the search, or a definition it finds cannot be
+fingerprinted, a live link the index's namesakes do not settle is `unresolved`. Files the
 ingest would not index (outside the entry's `path_prefixes`, refused by its denylist,
-over the byte cap, binary) add no definition; a generated file, which the ingest
-declares without searching its text, does. A file the parser fails on keeps its links as
-they were until it parses.
-When the fingerprint rules change, every link is re-hashed from the commits its hashes
-were taken at. When its old text is gone from git, a link that matched it takes the
-text the next check finds and a changed one stays `changed`; one whose old text no longer
-parses keeps its last state, and the worker reports it.
+over the byte cap, binary) add no definition; a generated file, which the ingest declares
+without searching its text, does. A file the parser fails on keeps its links as they were
+until it parses. When the fingerprint rules change, every link is re-hashed from the
+commits its hashes were taken at. When its old text is gone from git, a link that matched
+it takes the text the next check finds and a changed one stays `changed`; one whose old
+text no longer parses keeps its last state, and the worker reports it.
 
 Loom never writes the memory. The namespace's `code_change_policy`
 (`namespace.register`) decides what reads make of a change:

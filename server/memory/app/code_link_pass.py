@@ -141,7 +141,7 @@ class RepoReads:
 
         async def read() -> list[str] | None:
             if not base:
-                return []  # no range (a full recheck): the index decides
+                return []  # a link never checked at a commit: nothing to search from
             touched = await self.touched(base, head)
             if touched is None:
                 log.info(
