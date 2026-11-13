@@ -38,8 +38,8 @@ const HEADING_ID = "library-top-level";
 const SHARED_HEADING_ID = "library-collections-shared";
 
 /** Places listed at first, and how many more each "Show more" adds. */
-const FIRST_SHOWN = 6;
-const MORE_SHOWN = 50;
+export const FIRST_SHOWN = 6;
+export const MORE_SHOWN = 50;
 
 /** An ancestor missing from the list: its address, all `collection.list` says of it. */
 export interface HiddenPart {
@@ -125,17 +125,6 @@ export interface Home {
   open: () => void;
 }
 
-/** A place link's click: a plain one opens the place here; a modified one (a new tab or
- *  window) is the browser's. */
-function openHere(e: MouseEvent<HTMLAnchorElement>, open: () => void): void {
-  if (isModifiedClick(e)) return;
-  e.preventDefault();
-  open();
-}
-
-/** A place's address: the collection, or the header's namespace for null. */
-const placeHref = (collection: string | null) => navigationHref("knowledge", collection ? { collection } : {});
-
 /** A link to a place in the Library: a plain click opens it here, a modified one (a new
  *  tab or window) is the browser's. It takes a ref and other props, so a tooltip can wrap it.
  *  `plain`: a bare anchor its class draws (a tree row, a chip), not Click UI's Link. */
@@ -149,12 +138,14 @@ const PlaceLink = forwardRef<
   const props = {
     ...rest,
     ref,
-    href: placeHref(collection),
+    href: navigationHref("knowledge", collection ? { collection } : {}),
     onClick: (e: MouseEvent<HTMLAnchorElement>) => {
       // A wrapping tooltip trigger's handler runs first (it closes the tip): it does nothing
       // once the click's default is prevented.
       onClick?.(e);
-      openHere(e, onOpen);
+      if (isModifiedClick(e)) return;
+      e.preventDefault();
+      onOpen();
     },
   };
   return plain ? <a {...props}>{children}</a> : <Link {...props}>{children}</Link>;
@@ -183,18 +174,13 @@ export function PlaceTitleLink({
 } & Omit<ComponentPropsWithoutRef<"a">, "href" | "children" | "onClick" | "title">) {
   const [el, setEl] = useState<HTMLSpanElement | null>(null);
   const cut = useClamped(el, title);
-  const inner = (
-    <>
-      {icon && <Icon name={icon} size="sm" aria-hidden />}
-      <span ref={setEl} className={titleClassName}>
-        {title}
-      </span>
-    </>
-  );
   return (
     <Tip content={title} disabled={!cut}>
       <PlaceLink {...rest} collection={collection} onOpen={onOpen} plain={plain}>
-        {inner}
+        {icon && <Icon name={icon} size="sm" aria-hidden />}
+        <span ref={setEl} className={titleClassName}>
+          {title}
+        </span>
       </PlaceLink>
     </Tip>
   );
@@ -414,7 +400,7 @@ export function TopLevelPlaces({
 
 /** The links of a list of places, by the collection each row names (`data-collection`), for
  *  useLastPageFocus. */
-function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLElement]> {
+export function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLElement]> {
   return [...(list?.querySelectorAll<HTMLLIElement>(":scope > li[data-collection]") ?? [])].flatMap((li) => {
     const link = li.querySelector<HTMLElement>("a");
     return link ? [[li.dataset.collection ?? "", link] as [string, HTMLElement]] : [];
@@ -523,8 +509,6 @@ export function CollectionChips({
   onPick: (collection: string) => void;
 }) {
   const inside = useMemo(() => (rows && collection ? childrenOf(rows, collection) : []), [rows, collection]);
-  // The first FIRST_SHOWN, as the list below the documents starts; Show more adds
-  // MORE_SHOWN at a time.
   const [count, setCount] = useState(FIRST_SHOWN);
   const list = useRef<HTMLUListElement | null>(null);
   const left = inside.length - count;

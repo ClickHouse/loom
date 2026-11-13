@@ -97,6 +97,10 @@ export interface ReadableCollections {
   expected: string;
 }
 
+/** Reads of the list while it leaves out a collection waited for, and the wait between them. */
+export const REFRESH_TRIES = 3;
+export const REFRESH_WAIT_MS = 1000;
+
 /** The collections the caller can read in `org` (`collection.list`), every page. `reload`
  *  clears `rows` until its answer; a write elsewhere keeps them. `shown`: the collection the
  *  page shows, which only a reload's answer may find gone. */
@@ -123,8 +127,9 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
   // Any write to a collection, from a dialog since closed too: read again in the background.
   useEffect(
     () =>
-      onCollectionsChanged((made) =>
-        setAsked((r) => ({ ...r, refreshes: r.refreshes + 1, expect: { org, name: made } })),
+      // A collection made in another org is not waited for here.
+      onCollectionsChanged((made, madeIn) =>
+        setAsked((r) => ({ ...r, refreshes: r.refreshes + 1, expect: { org: madeIn || org, name: made } })),
       ),
     [org],
   );
@@ -150,8 +155,8 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
           }
           const rows = [...byName.values()];
           const caughtUp = [expected, hold].every((name) => !name || byName.has(name));
-          if (caughtUp || attempt >= 2) return { rows, truncated: !!cursor };
-          await new Promise((r) => setTimeout(r, 1000));
+          if (caughtUp || attempt >= REFRESH_TRIES - 1) return { rows, truncated: !!cursor };
+          await new Promise((r) => setTimeout(r, REFRESH_WAIT_MS));
           if (signal.aborted) throw signal.reason;
         }
       })()

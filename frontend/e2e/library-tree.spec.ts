@@ -124,7 +124,7 @@ test.describe("1440 px under a reload bar", () => {
     await page.route("**/v1/health", (route) => route.fulfill({ json: { status: "ok", build_commit: build } }));
     await page.goto("/library");
     const tree = page.getByRole("navigation", { name: "Library places" });
-    await expect(tree.getByRole("link", { name: "Collection 39" })).toBeAttached();
+    await expect(tree.getByRole("link", { name: "Collection 0", exact: true })).toBeAttached();
     await page.clock.runFor(10_000);
     build = "bbbbbbbbb2";
     await page.clock.runFor(6 * 60_000);

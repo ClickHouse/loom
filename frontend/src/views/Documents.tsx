@@ -176,11 +176,12 @@ export function Documents() {
   // A person's pick is a new history entry, so Back steps through the places they picked;
   // the page's own corrections (leaving a collection it cannot show) replace the entry.
   // `arriveFocus`: the control that takes the focus on arrival, in place of the h1.
-  const goTo = (c: string | null, arriveFocus?: string) => {
-    if (c === collection) return; // the place already shown: nothing moves
+  // Stable, so the tree beside the page does not draw again for each render of the page.
+  const goTo = useCallback((c: string | null, arriveFocus?: string) => {
+    if (c === linkedCollection()) return; // the place already shown: nothing moves
     useStore.getState().clearPendingDoc();
     useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus });
-  };
+  }, []);
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
   const collections = useReadableCollections(picked.org, collection ?? "");
@@ -193,11 +194,20 @@ export function Documents() {
   }, []);
   // A collection just made: the read starts before the move so the old list never says it is
   // missing. Nothing moves once this page closed or its org changed.
-  const openCreated = (name: string, org: string, arriveFocus?: string) => {
-    if (!mounted.current || org !== useStore.getState().identity?.org) return;
-    flushSync(() => collections.reload(name));
-    goTo(name, arriveFocus);
-  };
+  const reloadCollections = collections.reload;
+  const openCreated = useCallback(
+    (name: string, org: string, arriveFocus?: string) => {
+      if (!mounted.current || org !== useStore.getState().identity?.org) return;
+      flushSync(() => reloadCollections(name));
+      goTo(name, arriveFocus);
+    },
+    [reloadCollections, goTo],
+  );
+  // The person goes on in the tree: New collection keeps the focus.
+  const openCreatedInTree = useCallback(
+    (name: string, org: string) => openCreated(name, org, NEW_COLLECTION_FOCUS),
+    [openCreated],
+  );
   const shown = collections.rows?.find((c) => c.namespace === collection) ?? null;
   // Read once for every list of places on the page, over the last answer (kept while it is
   // read again): titles two collections share show their address too.
@@ -420,7 +430,6 @@ export function Documents() {
     [403, 404].includes(loadError.status);
   // Once per collection: replicas can disagree for a moment (one has the revoke, another
   // not yet), so when the list still names it after a re-read the page leaves it.
-  const reloadCollections = collections.reload;
   const reReadFor = useRef("");
   useEffect(() => {
     if (!refusedShown || !shown) return;
@@ -966,8 +975,7 @@ export function Documents() {
       shelf={ownShelf ? picked.namespace : null}
       current={shown?.namespace ?? (resolving ? collection : null)}
       onPick={goTo}
-      // The person goes on in the tree: New collection keeps the focus.
-      onCreated={(name, org) => openCreated(name, org, NEW_COLLECTION_FOCUS)}
+      onCreated={openCreatedInTree}
     />
   );
 

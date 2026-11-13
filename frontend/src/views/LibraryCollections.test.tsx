@@ -15,6 +15,8 @@ import { NEW_COLLECTION_FOCUS, placeTree } from "./LibraryTree";
 import { axeViolations } from "../test/axe";
 import { Documents } from "./Documents";
 import {
+  REFRESH_TRIES,
+  REFRESH_WAIT_MS,
   LibraryCollections,
   collectionLabel,
   treeOrder,
@@ -320,7 +322,7 @@ describe("useReadableCollections", () => {
       .mockResolvedValue({ collections: [entry("col-a"), entry("col-new")], next_cursor: null });
     await act(async () => probe?.reload("col-new"));
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 1200));
+      await new Promise((r) => setTimeout(r, REFRESH_WAIT_MS + 200));
     });
     await settle();
     expect(screen.getByTestId("names")).toHaveTextContent("col-a,col-new");
@@ -707,7 +709,7 @@ describe("the Library on a collection", () => {
     try {
       await user.click(done);
       // Past the retry's wait.
-      await act(() => vi.advanceTimersByTimeAsync(1100));
+      await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
       const chips = await screen.findByRole("navigation", { name: "Collections in col-q3" });
       expect(await within(chips).findByRole("link", { name: "Q4" })).toBeInTheDocument();
     } finally {
@@ -1171,7 +1173,7 @@ describe("the Library on a collection", () => {
       try {
         act(() => invalidateSharedCollections());
         // Past the retry's wait.
-        await act(() => vi.advanceTimersByTimeAsync(1100));
+        await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
         await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThanOrEqual(3));
         await act(() => vi.advanceTimersByTimeAsync(100));
       } finally {
@@ -1196,12 +1198,12 @@ describe("the Library on a collection", () => {
       try {
         act(() => invalidateSharedCollections());
         // Past both retries' waits.
-        await act(() => vi.advanceTimersByTimeAsync(2100));
+        await act(() => vi.advanceTimersByTimeAsync((REFRESH_TRIES - 1) * REFRESH_WAIT_MS + 100));
         await act(() => vi.advanceTimersByTimeAsync(100));
       } finally {
         vi.useRealTimers();
       }
-      expect(api.listCollections.mock.calls.length).toBe(reads + 3);
+      expect(api.listCollections.mock.calls.length).toBe(reads + REFRESH_TRIES);
       expect(toast).toHaveBeenCalledWith(
         expect.stringMatching(/col-q3 is not among the collections you can read now/),
         "info",
@@ -1291,6 +1293,7 @@ describe("the Library on a collection", () => {
       await settle();
       expect(tree).not.toHaveAttribute("aria-busy");
     });
+
     it("keeps the tree's rows, marked busy, while a write elsewhere reads the list again", async () => {
       resizable();
       api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
@@ -1309,6 +1312,7 @@ describe("the Library on a collection", () => {
       await settle();
       expect(tree).not.toHaveAttribute("aria-busy");
     });
+
     it("says it could not refresh the collections when a write's read again fails, keeping the list", async () => {
       resizable();
       api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });

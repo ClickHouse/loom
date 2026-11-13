@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionEntry } from "../api";
 import { axeViolations } from "../test/axe";
-import { act, cleanup, fireEvent, render, type RenderOptions, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, type RenderOptions, screen, waitFor, within } from "../test/rtl";
 import { repeatedTitles } from "../lib/collections";
 import { LibraryTree, placeTree } from "./LibraryTree";
 
@@ -108,11 +108,30 @@ describe("LibraryTree", () => {
     expect(places()).toContain("Engineering");
   });
 
+  it("lists the first six top-level collections, Show more adding fifty, and the one shown wherever it sits", async () => {
+    const many = Array.from({ length: 60 }, (_, i) =>
+      entry(`col-k${String(i).padStart(2, "0")}`, { title: `Kid ${String(i).padStart(2, "0")}` }),
+    );
+    tree({ rows: many, shelf: null, current: "col-k40" });
+    const mine = screen.getByRole("list", { name: "Collections" });
+    expect(
+      within(mine)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["Kid 00", "Kid 01", "Kid 02", "Kid 03", "Kid 04", "Kid 05", "Kid 40"]);
+    await userEvent.click(screen.getByRole("button", { name: "Show 50 more" }));
+    expect(within(mine).getAllByRole("link")).toHaveLength(56);
+    await userEvent.click(screen.getByRole("button", { name: "Show 4 more" }));
+    expect(within(mine).getAllByRole("link")).toHaveLength(60);
+  });
+
   it("names a show or hide button in a tooltip on focus", async () => {
     tree();
     const toggle = screen.getByRole("button", { name: "Collections in Engineering" });
     act(() => toggle.focus());
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Collections in Engineering");
+    // Read once, as its name: not again as its description.
+    expect(toggle).not.toHaveAccessibleDescription();
   });
 
   it("shows the parents of the collection shown, and what is inside it", () => {

@@ -1,6 +1,6 @@
 /** The Library's places as a tree beside the documents (disclosure buttons, plain Tab stops,
  *  no keys of their own), with New collection at its foot. */
-import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, memo, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -9,11 +9,15 @@ import { toastError } from "../components/Toast";
 import { fieldError } from "../components/ui/fieldError";
 import { Loading } from "../components/ui/Loading";
 import { Tip } from "../components/ui/Tooltip";
+import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { announceCreated } from "../flows/CreateCollectionDialog";
 import { canHold, collectionOrder, collectionTitle, distinctTitle, MAX_TITLE, titleTooLong } from "../lib/collections";
 import {
   collectionPath,
   cycleStart,
+  FIRST_SHOWN,
+  MORE_SHOWN,
+  placeLinks,
   isSharedWithMe,
   PlaceTitleLink,
   sharedWithMe,
@@ -57,9 +61,6 @@ function without(set: Set<string>, key: string): Set<string> {
   next.delete(key);
   return next;
 }
-
-/** Before the first answer the tree has no collections. */
-const NONE: CollectionEntry[] = [];
 
 /** The tree's shape: the roots of each section and each collection's children, in order. A
  *  shared collection inside one the caller reads is listed under it, not twice. Collections
@@ -116,7 +117,8 @@ function ancestors(byName: Map<string, CollectionEntry>, name: string): string[]
     .flatMap((p) => ("namespace" in p ? [p.namespace] : []));
 }
 
-export function LibraryTree({
+/** Memoised: the page beside it draws again on every keystroke in its search. */
+export const LibraryTree = memo(function LibraryTree({
   org,
   rows,
   repeated,
@@ -155,7 +157,6 @@ export function LibraryTree({
    *  the tree is gone (a resize, or a move to another org). */
   onCreated: (collection: string, org: string) => void;
 }) {
-  const list = rows ?? NONE;
   // What the person opened, remembered for the next visit.
   const [open, setOpen] = useState<Set<string>>(() => loadExpanded(org));
   // What a move opened to show the place reached: for this visit only.
@@ -191,7 +192,7 @@ export function LibraryTree({
       setOpen((prev) => withAll(prev, [key]));
     }
   };
-  const tree = useMemo(() => placeTree(list), [list]);
+  const tree = useMemo(() => placeTree(rows ?? []), [rows]);
 
   // The form's target, fixed when New collection is pressed; null while closed.
   const [making, setMaking] = useState<CollectionEntry | "top" | null>(null);
@@ -213,7 +214,7 @@ export function LibraryTree({
     const kids = tree.children.get(c.namespace) ?? [];
     const expanded = kids.length > 0 && isOpen(c.namespace);
     return (
-      <li key={c.namespace}>
+      <li key={c.namespace} data-collection={c.namespace}>
         <PlaceRow
           collection={c.namespace}
           label={distinctTitle(c, repeated)}
@@ -229,15 +230,12 @@ export function LibraryTree({
     );
   };
 
-  const section = (id: string, label: string, roots: CollectionEntry[]) =>
-    roots.length > 0 && (
-      <>
-        <p id={id} className="section-label library-tree-label">
-          {label}
-        </p>
-        <ul aria-labelledby={id}>{roots.map((c) => branch(c, 0))}</ul>
-      </>
-    );
+  // The top of the place shown (its highest readable parent), drawn however far down its
+  // section it sits.
+  const shownEntry = current ? byName.get(current) : undefined;
+  const shownTop = shownEntry
+    ? ((collectionPath(shownEntry, byName).find((p) => "namespace" in p) as CollectionEntry | undefined) ?? null)
+    : null;
 
   return (
     <nav
@@ -277,8 +275,14 @@ export function LibraryTree({
       {/* Below the namespace's row while the list is read; a failed read says so beside the
           page, with a button to read it again. */}
       {rows === null && !failed && <Loading label="Loading collections" layout="inline" className="px-2" />}
-      {section("library-tree-mine", "Collections", tree.mine)}
-      {section("library-tree-shared", "Shared with you", tree.shared)}
+      <PlaceSection id="library-tree-mine" label="Collections" roots={tree.mine} shownTop={shownTop} branch={branch} />
+      <PlaceSection
+        id="library-tree-shared"
+        label="Shared with you"
+        roots={tree.shared}
+        shownTop={shownTop}
+        branch={branch}
+      />
       <div className="library-tree-foot">
         {making ? (
           <NewCollectionForm
@@ -306,6 +310,59 @@ export function LibraryTree({
       </div>
     </nav>
   );
+});
+
+/** A section's top-level places: the first FIRST_SHOWN, Show more adding MORE_SHOWN at a time,
+ *  and the top of the place shown wherever it sits. */
+function PlaceSection({
+  id,
+  label,
+  roots,
+  shownTop,
+  branch,
+}: {
+  id: string;
+  label: string;
+  roots: CollectionEntry[];
+  shownTop: CollectionEntry | null;
+  branch: (c: CollectionEntry, depth: number) => ReactNode;
+}) {
+  const [count, setCount] = useState(FIRST_SHOWN);
+  const list = useRef<HTMLUListElement | null>(null);
+  const left = roots.length - count;
+  // The last Show more removes its button: the focus goes to the first place it added.
+  const markShown = useLastPageFocus({
+    loading: false,
+    more: left > 0,
+    rows: () => placeLinks(list.current),
+    fallback: () => null,
+  });
+  if (roots.length === 0) return null;
+  const head = roots.slice(0, count);
+  const extra = shownTop && !head.includes(shownTop) && roots.includes(shownTop) ? shownTop : null;
+  return (
+    <>
+      <p id={id} className="section-label library-tree-label">
+        {label}
+      </p>
+      <ul ref={list} aria-labelledby={id}>
+        {head.map((c) => branch(c, 0))}
+        {extra && branch(extra, 0)}
+      </ul>
+      {left > 0 && (
+        <Button
+          type="empty"
+          htmlType="button"
+          onClick={() => {
+            markShown(head.map((c) => c.namespace));
+            setCount(count + MORE_SHOWN);
+          }}
+        >
+          {`Show ${Math.min(left, MORE_SHOWN)} more`}
+        </Button>
+      )}
+    </>
+  );
 }
 
 /** One place's row: a show/hide button when it holds collections (`onToggle`), then its
@@ -329,15 +386,18 @@ function PlaceRow({
   onToggle?: () => void;
   onPick: (collection: string | null) => void;
 }) {
+  const toggleName = `Collections in ${label}`;
   return (
     <div className="library-tree-row" data-selected={here || undefined} style={{ "--depth": depth } as CSSProperties}>
       {onToggle ? (
-        <Tip content={`Collections in ${label}`}>
+        <Tip content={toggleName}>
           <button
             type="button"
             className="library-tree-twist"
             aria-expanded={!!expanded}
-            aria-label={`Collections in ${label}`}
+            aria-label={toggleName}
+            // The tip only repeats the name: not read again as its description.
+            aria-describedby={undefined}
             onClick={onToggle}
           >
             <Icon name={expanded ? "chevron-down" : "chevron-right"} size="xs" aria-hidden />
