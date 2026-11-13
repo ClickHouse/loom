@@ -313,18 +313,24 @@ def _byname(op: str) -> str:
     return op
 
 
-# Room an echoed value takes in a hint: short enough that the clip never cuts its
-# closing quote, and that the advice after it survives.
+# Room the values a hint echoes take, together: short enough that the clip never
+# cuts a closing quote, and that the advice after them survives.
 ECHO_CHARS = 60
 
 
-def _quoted(value: object) -> str:
+def _quoted(value: object, limit: int = ECHO_CHARS) -> str:
     """A caller's value as a hint echoes it: in single quotes with none inside and no
-    newline, cut to ECHO_CHARS, so the MCP renderer leaves it as written."""
+    newline, cut to ``limit``, so the MCP renderer leaves it as written."""
     text = str(value).replace("'", "\u2019").replace("\n", " ")
-    if len(text) > ECHO_CHARS:
-        text = text[: ECHO_CHARS - 1] + "…"
+    if len(text) > limit:
+        text = text[: limit - 1] + "…"
     return f"'{text}'"
+
+
+def _quoted_list(values: list[Any]) -> str:
+    """Several echoed values sharing one ECHO_CHARS budget."""
+    each = max(8, ECHO_CHARS // max(1, len(values)))
+    return ", ".join(_quoted(v, each) for v in values)
 
 
 def clip(text: str, limit: int = HINT_CHARS) -> str:
@@ -517,9 +523,7 @@ def _rules_planes(c: _Ctx) -> None:
         and (c.searches >= CODE_UNUSED_MIN_SEARCHES or c.sets >= CODE_UNUSED_MIN_SETS)
     ):
         shown = list(c.facts.get("repo_names") or [])
-        names = ", ".join(_quoted(n) for n in shown) + (
-            f", +{repos - len(shown)}" if repos > len(shown) else ""
-        )
+        names = _quoted_list(shown) + (f", +{repos - len(shown)}" if repos > len(shown) else "")
         c.add(
             "code_index_unused",
             "warning",
@@ -539,7 +543,7 @@ def _rules_planes(c: _Ctx) -> None:
             "tracker_unused",
             "warning",
             f"{c.fact('tracker_tagged_sets')} writes tagged test/flaky/ci and 0 tracker.* "
-            f"calls: the tracker source ({', '.join(_quoted(t) for t in tracker_sources)}) answers "
+            f"calls: the tracker source ({_quoted_list(list(tracker_sources))}) answers "
             f"{_byname('tracker.similar')}, "
             "tracker.duplicate_check, tracker.flaky, tracker.test_signal.",
             ("tracker.similar", "tracker.duplicate_check", "tracker.flaky", "tracker.test_signal"),
@@ -943,7 +947,7 @@ def _rule_search_identifier(
         return None
     return (
         "search_identifier_query",
-        f"{_quoted(q[:60])} is an identifier, not a question: code.symbol gives its definition, "
+        f"{_quoted(q)} is an identifier, not a question: code.symbol gives its definition, "
         "code.callers who calls it, code.grep the exact literal, code.search the concept — "
         "memory holds what was said about it, the index holds what it is.",
     )

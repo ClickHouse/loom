@@ -101,6 +101,19 @@ def test_a_readonly_refusal_sends_the_model_only_where_it_can_go(name: str) -> N
         assert op.mcp_tool_name in listed or mcp_op.reachable(op, "readonly"), (name, op.name)
 
 
+@pytest.mark.parametrize("toolset", ["core", "coding", "tracker", "readonly"])
+def test_a_rendered_refusal_marks_each_op_once_outside_parentheses(toolset: str) -> None:
+    import re
+
+    for name in sorted(mcp_op._INSTEAD):
+        text = mcp_op.hidden_refusal(name, toolset)["instead"]
+        for marker in re.finditer(re.escape("(via loom_op)"), text):
+            before = re.sub(r"`[^`]*`", "", text[: marker.start()])
+            assert before.count("(") == before.count(")"), (toolset, name, text)
+        marked = re.findall(r"([a-z_]+(?:\.[a-z_]+)+)`? \(via loom_op\)", text)
+        assert len(marked) == len(set(marked)), (toolset, name, marked)
+
+
 def test_a_readonly_refusal_keeps_its_reason() -> None:
     instead = {
         name: mcp_op.hidden_refusal(name, "readonly")["instead"]

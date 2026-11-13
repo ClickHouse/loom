@@ -99,16 +99,16 @@ _NAMED_OP = re.compile(
     rf"""
     (?<!['"/])                      # not a quoted value or a /v1/ path
     \b(loom_[a-z_]+|{OP_MENTION})\b  # a tool name or a dotted op name
-    (`?(?:'s)?)                     # trail: a closing backtick, a possessive
+    (`(?:'s?)?|(?:'s)?)             # trail: a closing backtick, a possessive
     (?!\#|"|'(?![a-z]))             # not a citation tag or a closing quote
     """,
     re.VERBOSE,
 )
 
 
-# A span in single quotes whose quotes touch no letter and that does not open with a
-# possessive ('s): not a possessive or a contraction.
-_QUOTED = re.compile(r"((?<![A-Za-z])'(?!s\b)[^'\n]*'(?![A-Za-z]))")
+# A span in single quotes whose quotes touch no letter, and whose opening quote does
+# not follow a code span (`op`'s): not a possessive or a contraction.
+_QUOTED = re.compile(r"((?<![A-Za-z`])'[^'\n]*'(?![A-Za-z]))")
 
 
 def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool = False) -> str:

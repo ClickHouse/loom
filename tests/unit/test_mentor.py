@@ -217,6 +217,20 @@ def _profile(**kw: Any) -> mentor_rules.MentorProfile | None:
     return asyncio.run(m.mentor_profile("o", "ns", kw.pop("agent", "a"), **kw))
 
 
+def _assert_rendered_cleanly(text: str) -> None:
+    """A hint as MCP renders it: each unlisted op marked once, no marker inside a
+    parenthesis."""
+    from server.transport import mcp_tools
+
+    for toolset in ("core", "coding", "tracker"):
+        rendered = mcp_tools.mentor_text_for_toolset(text, toolset)
+        for marker in re.finditer(re.escape("(via loom_op)"), rendered):
+            before = re.sub(r"`[^`]*`", "", rendered[: marker.start()])
+            assert before.count("(") == before.count(")"), (toolset, rendered)
+        marked = re.findall(r"([a-z_]+(?:\.[a-z_]+)+)`?(?:'s?)? \(via loom_op\)", rendered)
+        assert len(marked) == len(set(marked)), (toolset, marked)
+
+
 def _codes(p: mentor_rules.MentorProfile | None) -> set[str]:
     return {h.code for h in (p.hints if p else ())}
 
@@ -382,6 +396,7 @@ def test_every_other_rule_fires_on_its_fact_and_the_profile_keeps_eight(
     for h in full:
         assert len(h.text) <= mentor_rules.HINT_CHARS
         assert h.ops
+        _assert_rendered_cleanly(h.text)
     # loom_search is listed under another name; the note names the op that is not
     abstains = next(h for h in full if h.code == "search_abstains")
     assert abstains.text.endswith(" (call namespace.audit via loom_op)")
@@ -1518,6 +1533,14 @@ def test_a_call_hint_is_clipped_with_its_note_whole(facts: dict[str, Any]) -> No
     assert mentor_rules.without_listing_note(clipped).count("(call ") == 0
 
 
+def test_several_echoed_names_keep_their_quotes_and_the_advice() -> None:
+    names = ["r" * 70 + str(i) for i in range(3)]
+    echo = mentor_rules._quoted_list(names)
+    assert echo.count("'") == 6 and len(echo) <= mentor_rules.ECHO_CHARS + 12
+    text = mentor_rules.clip_keeping_note(f"3 indexed repos ({echo}) and 0 code.* calls: advice.")
+    assert text.endswith("advice.")
+
+
 def test_following_the_reading_hint_through_search_query_clears_it() -> None:
     """The reading rules advise search.query, so a search.query call counts as a recall."""
     keyed = {"memory.get": 60}
@@ -1533,6 +1556,7 @@ def test_following_the_reading_hint_through_search_query_clears_it() -> None:
         "tracker.flaky",
         "user's memory.get",
         "a\nmemory.apply",
+        "s tracker.flaky now",
         "k" * 190 + " memory.apply" + "x" * 100,
     ],
 )
