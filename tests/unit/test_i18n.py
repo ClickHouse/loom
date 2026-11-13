@@ -5,7 +5,6 @@ the translations after it lands."""
 
 from __future__ import annotations
 
-import posixpath
 import re
 from collections import Counter
 
@@ -105,14 +104,28 @@ def test_code_blocks_keep_their_order() -> None:
 
 def test_an_autolink_or_bare_url_must_not_change() -> None:
     source = "Open <http://localhost:7777/docs> or **http://localhost:7777/**.\n"
-    for changed in ("<http://localhost:7777/doc>", "**http://127.0.0.1:7777/**"):
-        old = (
-            "<http://localhost:7777/docs>"
-            if changed.startswith("<")
-            else "**http://localhost:7777/**"
-        )
-        problems = t.differences(source, source.replace(old, changed))
-        assert any(p.startswith("URLs") for p in problems), changed
+    for old, new in (
+        ("<http://localhost:7777/docs>", "<http://localhost:7777/doc>"),
+        ("**http://localhost:7777/**", "**http://127.0.0.1:7777/**"),
+    ):
+        problems = t.differences(source, source.replace(old, new))
+        assert any(p.startswith("URLs") for p in problems), new
+
+
+def test_a_heading_or_link_text_handed_back_in_english_is_a_difference() -> None:
+    source = "## Get a token\n\nSee [agent memory](agent-memory.md) and [Docker](../d.md).\n"
+    kept = "## Get a token\n\nVoir [agent memory](agent-memory.md) et [Docker](../d.md).\n"
+    assert t.differences(source, kept) == [
+        "untranslated headings or link texts: ['Get a token', 'agent memory']"
+    ]
+    done = "## Obtenir un jeton\n\nVoir [mémoire](agent-memory.md) et [Docker](../d.md).\n"
+    assert t.differences(source, done) == []
+
+
+def test_a_link_to_an_english_only_page_may_keep_its_title() -> None:
+    url = f"{t.REPO_URL}/blob/main/docs/operations/deployment.md"
+    source = f"See [Deployment → Providers]({url}).\n"
+    assert t.differences(source, f"Voir [Deployment → Providers]({url}).\n") == []
 
 
 def test_a_translation_may_write_a_spelled_number_as_digits() -> None:
@@ -124,6 +137,25 @@ def test_the_cost_cap_stops_the_run() -> None:
     spend.add({"input_tokens": 1000, "output_tokens": 100})
     with pytest.raises(SystemExit, match="LOOM_I18N_MAX_USD"):
         spend.add({"input_tokens": 0, "output_tokens": 1000})
+
+
+def test_a_missing_source_stops_check_and_update(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(t, "SOURCES", (*t.SOURCES, "docs/no-such-page.md"))
+    for command in (t.check, t.update):
+        with pytest.raises(SystemExit, match="no-such-page.md"):
+            command()
+
+
+def test_check_takes_no_update_flags() -> None:
+    with pytest.raises(SystemExit):
+        t.main(["check", "--all"])
+
+
+def test_another_model_or_banner_makes_every_page_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+    ja = t.LANGUAGES[1]
+    assert t.stale((ja,), model="claude-opus-5-5") == [(s, ja) for s in t.SOURCES]
+    edited = t.Language(ja.code, ja.name, ja.english, ja.banner + "!", ja.style)
+    assert len(t.stale((edited,))) == len(t.SOURCES)
 
 
 def test_an_unpriced_model_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -195,27 +227,7 @@ def test_every_translation_exists_with_its_stamp_and_banner() -> None:
         assert "Machine-translated from the [English page]" in text.split("\n\n", 1)[0]
 
 
-def test_every_relative_link_in_a_translation_resolves() -> None:
-    for source, lang in _translations():
-        path = t.target_path(lang.code, source)
-        for match in t.LINK.finditer((ROOT / path).read_text()):
-            link = match.group(2).split("#", 1)[0]
-            if not link or re.match(r"[a-z]+:", link):
-                continue
-            target = posixpath.normpath(posixpath.join(posixpath.dirname(path), link))
-            assert (ROOT / target).is_file(), f"{path} links to {link}"
-
-
-def test_every_anchor_in_a_translation_resolves() -> None:
-    for source, lang in _translations():
-        path = t.target_path(lang.code, source)
-        text = (ROOT / path).read_text()
-        for match in t.LINK.finditer(text):
-            link, _, anchor = match.group(2).partition("#")
-            if not anchor or re.match(r"[a-z]+:", link):
-                continue
-            target = (
-                posixpath.normpath(posixpath.join(posixpath.dirname(path), link)) if link else path
-            )
-            ids = re.findall(r'<a id="([^"]+)"></a>', (ROOT / target).read_text())
-            assert anchor in ids, f"{path} links to {match.group(2)}"
+def test_the_committed_translations_pass_check() -> None:
+    """Fresh or not, every committed page keeps its links, anchors and translated labels."""
+    assert t.link_problems() == []
+    assert t.untranslated_pages() == []

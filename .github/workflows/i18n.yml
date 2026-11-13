@@ -20,6 +20,10 @@ on:
         description: Translate every page, stale or not
         type: boolean
         default: false
+      languages:
+        description: Language codes to translate, separated by spaces (empty for all)
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -62,7 +66,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           LOOM_I18N_MAX_USD: "5"
           ALL: ${{ inputs.all && '--all' || '' }}
-        run: python -m scripts.i18n.translate update $ALL 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          LANGUAGES: ${{ inputs.languages }}
+        run: |
+          args=($ALL)
+          for code in $LANGUAGES; do args+=(--lang "$code"); done
+          python -m scripts.i18n.translate update "${args[@]}" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          # Stale pages left outside the chosen languages still fail this; links and
+          # anchors that point at nothing fail it before anything is pushed.
+          python -m scripts.i18n.translate check
       - name: Open or update the pull request
         if: steps.check.outputs.stale == 'true'
         env:

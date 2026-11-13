@@ -13,7 +13,8 @@ else to the English file on GitHub. Every heading gets an explicit `<a id>` with
 English anchor, so `#anchor` links keep working on the translated page. The first line of
 each translation stamps the git blob of the English page it was made from; `check`
 compares that stamp with the file.
-A change to the prompt, a banner or the model changes no stamp: regenerate with `--all`.
+A change to the model or a banner makes every page stale; a change to the prompt does not:
+regenerate with `--all`.
 
 The run estimates its cost before the first call and stops when the estimate, or the
 spend reported by the API, passes LOOM_I18N_MAX_USD (default 5); the spend can pass the cap
@@ -29,11 +30,13 @@ import posixpath
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,16 +74,18 @@ LANGUAGES = (
         "简体中文",
         "Simplified Chinese",
         "本页由机器从[英文原文]({url})翻译，内容以英文原文为准。",
-        "Use full-width Chinese punctuation (，。：；（）) in prose. Fixed terms: "
-        "dashboard 控制台, token 令牌, namespace 命名空间, memory 记忆; keep agent as agent.",
+        "Use full-width Chinese punctuation (，。：；（）) in prose, and join the lines of a "
+        "paragraph into one line. Fixed terms: dashboard 控制台, an access token 令牌 (model "
+        "tokens stay token), namespace 命名空间, memory 记忆; keep agent as agent.",
     ),
     Language(
         "ja",
         "日本語",
         "Japanese",
         "このページは[英語の原文]({url})の機械翻訳です。内容は英語の原文が優先されます。",
-        "Use Japanese punctuation (、。：（）) in prose. Fixed terms: dashboard ダッシュボード, "
-        "token トークン, namespace 名前空間, memory メモリ, agent エージェント.",
+        "Use Japanese punctuation (、。：（）) in prose, and join the lines of a paragraph "
+        "into one line. Fixed terms: dashboard ダッシュボード, token トークン, namespace "
+        "名前空間, memory メモリ, agent エージェント.",
     ),
     Language(
         "ko",
@@ -129,7 +134,17 @@ LANGUAGE_LINE = re.compile(r"<!-- languages -->.*?<!-- /languages -->", re.DOTAL
 STAMP = re.compile(r"\A<!-- i18n: source=(\S+) blob=([0-9a-f]{40}) model=(\S+) -->\n")
 FENCE = re.compile(r"^(`{3,}|~{3,})")
 # A Markdown link or image target, an HTML href or src, or a reference definition.
-LINK = re.compile(r"(\]\(|(?:href|src)=\"|^\[[^\]\n]+\]:[ \t]+)([^)\"\s]+)", re.MULTILINE)
+LINK = re.compile(r"(\]\(|(?:href|src)=\"|^\[(?!\^)[^\]\n]+\]:[ \t]+)([^)\"\s]+)", re.MULTILINE)
+# A link's text and target; a link to an English-only page may keep that page's title.
+LINK_TEXT = re.compile(r"(?<!!)\[([^\[\]\n]+)\]\(([^)\s]+)")
+# Words a heading or link text may keep in every language: names, and the two terms
+# some glossaries keep as they are.
+KEPT_WORDS = frozenset(
+    """loom clickhouse postgres claude code codex cursor docker compose mcp sdk sdks python
+    typescript node langgraph strands kubernetes helm github codespaces http https api cli
+    okf rag llm json yaml sql oidc scim tls otel clickstack langfuse gemini vs windsurf zed
+    cline pypi npm apache ci url id token namespace""".split()
+)
 URL = re.compile(r"https?://[^\s<>()\"'`*\]]+")
 # A code span may wrap across lines; Markdown renders the break as a space.
 CODE_SPAN = re.compile(r"(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.DOTALL)
@@ -319,10 +334,28 @@ def invariants(text: str) -> dict[str, Counter[str]]:
     }
 
 
+def labels(text: str) -> Counter[str]:
+    """The headings, and the texts of links within the translated pages, that hold a word
+    to translate."""
+    prose = "\n".join(line for line, in_code in outside_fences(text) if not in_code)
+    found = [m.group(2) for m in map(HEADING.match, prose.split("\n")) if m]
+    found += [label for label, target in LINK_TEXT.findall(prose) if not URL.match(target)]
+    out: Counter[str] = Counter()
+    for label in found:
+        words = re.findall(r"[A-Za-z][A-Za-z'-]*", CODE_SPAN.sub(" ", label))
+        if any(w.lower() not in KEPT_WORDS for w in words):
+            out[label] += 1
+    return out
+
+
 def differences(source: str, translation: str) -> list[str]:
     """How `translation` breaks the invariants of `source`; empty when it keeps them.
-    A translation may add a number (a spelled-out one written as digits), never drop one."""
+    A translation may add a number (a spelled-out one written as digits), never drop one,
+    and may not hand back a heading or link text in English."""
     found = []
+    untranslated = labels(source) & labels(translation)
+    if untranslated:
+        found.append(f"untranslated headings or link texts: {sorted(untranslated)[:8]}")
     if code_blocks(source) != code_blocks(translation):
         found.append("code blocks: copy every fenced code block unchanged, in the same order")
     want, got = invariants(source), invariants(translation)
@@ -338,23 +371,38 @@ def differences(source: str, translation: str) -> list[str]:
 # ---- stamps ---------------------------------------------------------------------------
 
 
+def require_sources() -> None:
+    missing = [s for s in SOURCES if not (ROOT / s).is_file()]
+    if missing:
+        raise SystemExit(f"in SOURCES but missing: {', '.join(missing)}; update SOURCES")
+
+
 def blob(source: str) -> str:
-    if not (ROOT / source).is_file():
-        raise SystemExit(f"{source} is in SOURCES but does not exist; update SOURCES")
     return subprocess.run(
         ["git", "hash-object", source], cwd=ROOT, check=True, capture_output=True, text=True
     ).stdout.strip()
 
 
-def stale(languages: tuple[Language, ...] = LANGUAGES) -> list[tuple[str, Language]]:
-    """Every (source, language) whose translation is missing or stamped with another blob."""
+def header(source: str, lang: Language, model: str, blob_sha: str) -> str:
+    """A translation's first lines: the stamp and the two banner lines."""
+    url = f"{REPO_URL}/blob/main/{source}"
+    english = f"Machine-translated from the [English page]({url}), which is authoritative."
+    stamp = f"<!-- i18n: source={source} blob={blob_sha} model={model} -->\n"
+    return f"{stamp}> {lang.banner.format(url=url)}\n> {english}\n\n"
+
+
+def stale(
+    languages: tuple[Language, ...] = LANGUAGES, model: str = DEFAULT_MODEL
+) -> list[tuple[str, Language]]:
+    """Every (source, language) whose translation is missing, or whose stamp or banner
+    differs: another English blob, another model, another banner."""
     out = []
     for source in SOURCES:
         current = blob(source)
         for lang in languages:
             path = ROOT / target_path(lang.code, source)
-            stamp = STAMP.match(path.read_text()) if path.is_file() else None
-            if not stamp or stamp.group(1) != source or stamp.group(2) != current:
+            text = path.read_text() if path.is_file() else ""
+            if not text.startswith(header(source, lang, model, current)):
                 out.append((source, lang))
     return out
 
@@ -366,6 +414,41 @@ def orphans() -> list[str]:
     return sorted(found - expected)
 
 
+def link_problems() -> list[str]:
+    """Relative links and `#anchors` in i18n/ that point at nothing."""
+    problems = []
+    for file in sorted((ROOT / OUT_DIR).rglob("*.md")):
+        path = file.relative_to(ROOT).as_posix()
+        for match in LINK.finditer(file.read_text()):
+            link, _, anchor = match.group(2).partition("#")
+            if re.match(r"[a-z]+:", link):
+                continue
+            target = (
+                posixpath.normpath(posixpath.join(posixpath.dirname(path), link)) if link else path
+            )
+            if not (ROOT / target).is_file():
+                problems.append(f"{path} links to {match.group(2)}, which does not exist")
+            elif anchor and f'<a id="{anchor}"></a>' not in (ROOT / target).read_text():
+                problems.append(f"{path} links to {match.group(2)}, which has no such anchor")
+    return problems
+
+
+def untranslated_pages() -> list[str]:
+    """Translations that kept a heading, or a link text within the set, in English."""
+    problems = []
+    for source in SOURCES:
+        for lang in LANGUAGES:
+            path = ROOT / target_path(lang.code, source)
+            if not path.is_file():
+                continue
+            english = "\n".join(english_sections(prepare(source, lang)[0]))
+            kept = labels(english) & labels(path.read_text())
+            if kept:
+                rel = path.relative_to(ROOT).as_posix()
+                problems.append(f"{rel} keeps in English: {sorted(kept)[:4]}")
+    return problems
+
+
 def readme_language_line_differs() -> bool:
     text = (ROOT / "README.md").read_text()
     match = LANGUAGE_LINE.search(text)
@@ -373,6 +456,9 @@ def readme_language_line_differs() -> bool:
 
 
 # ---- the API --------------------------------------------------------------------------
+
+
+_SPEND_LOCK = threading.Lock()
 
 
 @dataclass
@@ -388,9 +474,11 @@ class Spend:
         return (self.input_tokens * price_in + self.output_tokens * price_out) / 1e6
 
     def add(self, usage: dict[str, int]) -> None:
-        self.input_tokens += usage.get("input_tokens", 0)
-        self.output_tokens += usage.get("output_tokens", 0)
-        if self.usd > self.cap_usd:
+        with _SPEND_LOCK:
+            self.input_tokens += usage.get("input_tokens", 0)
+            self.output_tokens += usage.get("output_tokens", 0)
+            over = self.usd > self.cap_usd
+        if over:
             raise SystemExit(
                 f"spent ${self.usd:.2f}, over LOOM_I18N_MAX_USD=${self.cap_usd:.2f}; stopping"
             )
@@ -499,15 +587,11 @@ def prepare(source: str, lang: Language) -> tuple[str, str]:
 
 
 def render(source: str, lang: Language, body: str, line: str, model: str) -> str:
-    url = f"{REPO_URL}/blob/main/{source}"
     if line:
         if "<!-- languages -->" not in body:
             raise SystemExit(f"{lang.code}: the translation of {source} dropped the language line")
         body = body.replace("<!-- languages -->", line, 1)
-    stamp = f"<!-- i18n: source={source} blob={blob(source)} model={model} -->\n"
-    english = f"Machine-translated from the [English page]({url}), which is authoritative."
-    banner = f"> {lang.banner.format(url=url)}\n> {english}\n\n"
-    return stamp + banner + body
+    return header(source, lang, model, blob(source)) + body
 
 
 def english_sections(text: str) -> list[str]:
@@ -535,11 +619,16 @@ def write_readme_language_line() -> None:
 
 
 def check() -> int:
+    require_sources()
+    model = os.environ.get("LOOM_I18N_MODEL", DEFAULT_MODEL)
     problems = [
-        f"{target_path(lang.code, source)} is missing or older than {source}"
-        for source, lang in stale()
+        f"{target_path(lang.code, source)} is missing, or older than {source}, the model or "
+        "the banner"
+        for source, lang in stale(model=model)
     ]
     problems += [f"{path} is translated from no page in SOURCES" for path in orphans()]
+    problems += link_problems()
+    problems += untranslated_pages()
     if readme_language_line_differs():
         problems.append("README.md's language line differs from the generated one")
     for problem in problems:
@@ -547,7 +636,12 @@ def check() -> int:
     return 1 if problems else 0
 
 
+# Pages translated at once; each page's sections still go one after another.
+WORKERS = 6
+
+
 def update(every: bool = False, codes: list[str] | None = None) -> int:
+    require_sources()
     model = os.environ.get("LOOM_I18N_MODEL", DEFAULT_MODEL)
     if model not in PRICES:
         raise SystemExit(
@@ -557,7 +651,7 @@ def update(every: bool = False, codes: list[str] | None = None) -> int:
     languages = tuple(lg for lg in LANGUAGES if not codes or lg.code in codes)
     if readme_language_line_differs():
         write_readme_language_line()
-    work = [(s, lg) for s in SOURCES for lg in languages] if every else stale(languages)
+    work = [(s, lg) for s in SOURCES for lg in languages] if every else stale(languages, model)
     estimate = estimate_usd(model, sum(request_chars(s, lg) for s, lg in work))
     print(f"{len(work)} page(s) to translate with {model}, estimated at about ${estimate:.2f}")
     if estimate > spend.cap_usd:
@@ -566,8 +660,14 @@ def update(every: bool = False, codes: list[str] | None = None) -> int:
         )
     if work:
         key = os.environ.get("ANTHROPIC_API_KEY") or sys.exit("ANTHROPIC_API_KEY is not set")
-        for source, lang in work:
-            translate_page(source, lang, key, spend)
+        with ThreadPoolExecutor(WORKERS) as pool:
+            futures = [pool.submit(translate_page, s, lg, key, spend) for s, lg in work]
+            try:
+                for future in futures:
+                    future.result()
+            except BaseException:
+                pool.shutdown(cancel_futures=True)
+                raise
     print(
         f"done: {spend.input_tokens} input, {spend.output_tokens} output tokens, ${spend.usd:.2f}"
     )
@@ -580,7 +680,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--all", action="store_true", help="translate every page, stale or not")
     parser.add_argument("--lang", action="append", choices=[lg.code for lg in LANGUAGES])
     args = parser.parse_args(argv)
-    return check() if args.command == "check" else update(args.all, args.lang)
+    if args.command == "check":
+        if args.all or args.lang:
+            parser.error("--all and --lang go with update")
+        return check()
+    return update(args.all, args.lang)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
 
 # Memoria compartida y a largo plazo para agentes de IA
 
-Loom es un servidor MCP y una API HTTP autoalojados que dan a los agentes de IA una memoria a largo plazo que comparten: un dato que un agente guarda en una sesión puede encontrarlo la siguiente sesión, otro agente o una persona desde el dashboard. Esta página muestra cómo funciona y por dónde empezar.
+Loom es un servidor MCP y una API HTTP autoalojados que dan a los agentes de IA una memoria a largo plazo que comparten: un dato que un agente guarda en una sesión puede ser encontrado por la sesión siguiente, por otro agente o por una persona en el dashboard. Esta página muestra cómo funciona y por dónde empezar.
 
 <a id="what-you-get"></a>
 
@@ -28,22 +28,22 @@ Loom es un servidor MCP y una API HTTP autoalojados que dan a los agentes de IA 
 - **Memoria entre agentes de programación.** Los plugins de Claude Code y Codex cargan el contexto
   relevante al inicio de la sesión y capturan la sesión mientras se ejecuta; Cursor y otros clientes
   MCP se conectan al mismo servidor. [Conectar un agente de programación](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/connect-a-coding-agent.md)
-- **Memoria por usuario para tu propio agente.** Los SDK de Python y TypeScript escriben y leen la
-  memoria por usuario final. [Tu primer agente](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/first-agent.md)
+- **Memoria por usuario para tu propio agente.** Los SDK de Python y TypeScript escriben y leen
+  la memoria por usuario final. [Tu primer agente](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/first-agent.md)
 
 <a id="measured"></a>
 
-## Medición
+## Medido
 
-En 100 preguntas pareadas de LongMemEval-S con el mismo lector `gpt-5`, las respuestas generadas a partir de las memorias recuperadas por Loom obtuvieron un 94 %, frente a un 90 % con el historial completo, con un 91 % menos de tokens en el prompt del lector (sin contar el costo único de construir la memoria); la diferencia de precisión no está establecida estadísticamente.
+En 100 preguntas emparejadas de LongMemEval-S con el mismo lector `gpt-5`, las respuestas basadas en las memorias recuperadas por Loom obtuvieron un 94% frente a un 90% con el historial completo, con un 91% menos de tokens en el prompt del lector (sin contar el costo único de construir la memoria); la diferencia de precisión no está establecida estadísticamente.
 [Con y sin Loom](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#with-and-without-loom)
 
 <a id="start"></a>
 
 ## Inicio
 
-[Quickstart](../getting-started/quickstart.md) levanta el stack local y guarda una primera
-memoria mediante HTTP, Python y MCP. [Cuándo Loom no es la mejor opción](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#when-it-does-not-fit)
-describe los casos en los que una biblioteca de memoria en proceso resulta más adecuada.
+[Guía de inicio rápido](../getting-started/quickstart.md) levanta el stack local y guarda una primera
+memoria por HTTP, Python y MCP. [Cuándo Loom no encaja](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#when-it-does-not-fit)
+cubre los casos que una biblioteca de memoria en proceso resuelve mejor.
 
 Algunas ops de esta página están marcadas como experimentales en la [página de estado](https://github.com/ClickHouse/loom/blob/main/docs/reference/status.md).
