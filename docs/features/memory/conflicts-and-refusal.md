@@ -10,7 +10,7 @@ later write whose value matches it is refused. This page owns the write verdicts
 namespace conflict policies; the model behind them is in [memory
 concepts](../../concepts/memory.md).
 
-![The review queue: a conflicting fact with Keep, Drop and Allow both](../../images/dashboard-review-queue.png)
+![The review queue: a conflicting fact with Keep, Drop and Allow both](../../assets/screenshots/review-queue.webp)
 
 ## How a write is judged
 

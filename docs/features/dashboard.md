@@ -149,6 +149,8 @@ admin drawer's navigation.
 
 ### Ask AI
 
+![The Ask AI panel answering a refunds question, its numbered citations checked against what Loom holds](../assets/screenshots/assistant-answer.webp)
+
 The **Ask AI** button in the header, right after the search field (its icon alone below 1280
 px), opens the chat with the [assistant](../architecture/assistant.md#surfaces) on every
 page, and closes it again while it sits beside the page; no key opens it, and the search is
