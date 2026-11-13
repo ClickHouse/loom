@@ -28,6 +28,16 @@
         "default": "./dist/integrations/langchain.cjs"
       }
     },
+    "./integrations/openai-agents": {
+      "import": {
+        "types": "./dist/integrations/openai-agents.d.mts",
+        "default": "./dist/integrations/openai-agents.mjs"
+      },
+      "require": {
+        "types": "./dist/integrations/openai-agents.d.cts",
+        "default": "./dist/integrations/openai-agents.cjs"
+      }
+    },
     "./integrations/strands": {
       "import": {
         "types": "./dist/integrations/strands.d.mts",
@@ -92,7 +102,8 @@
   },
   "peerDependencies": {
     "@aws-sdk/client-secrets-manager": "^3.0.0",
-    "@langchain/core": ">=1.0.0 <2.0.0"
+    "@langchain/core": ">=1.0.0 <2.0.0",
+    "@openai/agents": ">=0.22.0 <0.23.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-secrets-manager": {
@@ -100,17 +111,22 @@
     },
     "@langchain/core": {
       "optional": true
+    },
+    "@openai/agents": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.14",
     "@langchain/core": "1.4.0",
+    "@openai/agents": "0.22.0",
     "@types/node": "^22.0.0",
     "publint": "^0.3.24",
     "tsdown": "^0.23.0",
     "typedoc": "^0.28.20",
     "typescript": "^5.6.0",
-    "vitest": "^4.1.12"
+    "vitest": "^4.1.12",
+    "zod": "4.6.7"
   }
 }

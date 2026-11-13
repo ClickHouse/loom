@@ -242,6 +242,9 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   block when `Memory` is used through `get` / `put` or with `flush`;
   `aflush(memory)` hands what is left in the window to the `Memory`'s blocks
   and archives it.
+- `loom.integrations.openai_agents.loom_tools(agent, user_id=...)` returns
+  `AgentTools` as OpenAI Agents SDK `FunctionTool`s; install the
+  `[openai-agents]` extra.
 - `loom.integrations.langgraph.LoomStore(agent, tags=...)` is a LangGraph
   `BaseStore`: `put` is `memory.set`, `search(query=...)` ranks with
   `memory.search` and reads values with `memory.bulk_get`, and namespace tuples

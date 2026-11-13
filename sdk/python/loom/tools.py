@@ -255,8 +255,8 @@ class AgentTools:
             }
         if name == "loom_recall":
             body = {"query": _str(a, "query")}
-            if a.get("top_k") is not None:
-                body["top_k"] = int(a["top_k"])
+            if a.get("top_k") not in (None, ""):  # unset: the server's default
+                body["top_k"] = _int(a, "top_k")
             r = await call("memory.search", body)
             return {
                 "memories": [
@@ -285,8 +285,8 @@ class AgentTools:
         if name == "loom_fetch":
             body = {"blob_key": _str(a, "blob_key")}
             for k in ("pattern", "offset", "limit"):
-                if a.get(k) is not None:
-                    body[k] = a[k] if k == "pattern" else int(a[k])
+                if a.get(k) not in (None, ""):
+                    body[k] = a[k] if k == "pattern" else _int(a, k)
             r = await call("context.fetch", body)
             if not r.get("found"):
                 return f"no parked text under blob_key={body['blob_key']} (expired or never stored)"
@@ -311,6 +311,22 @@ def _parse_args(args: str | Mapping[str, Any] | None) -> dict[str, Any]:
             raise LoomError("tool arguments are not valid JSON") from e
         return dict(parsed) if isinstance(parsed, Mapping) else {}
     return dict(args)
+
+
+def _int(a: Mapping[str, Any], key: str) -> int:
+    # A whole number, quoted or not, 5.0 included; a bool is not a number here.
+    v = a[key]
+    n = v
+    if isinstance(v, str) and v.strip():  # models sometimes quote a number
+        try:
+            n = float(v)
+        except ValueError:
+            pass
+    if isinstance(n, float) and n.is_integer():
+        n = int(n)
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise LoomError(f"tool argument {key} must be an integer, got {json.dumps(v, default=str)}")
+    return n
 
 
 def _str(a: Mapping[str, Any], key: str) -> str:
