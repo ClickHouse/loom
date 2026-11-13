@@ -316,7 +316,8 @@ ECHO_CHARS = 60
 
 def _quoted(value: object, limit: int = ECHO_CHARS) -> str:
     """A caller's value as a hint echoes it: in single quotes with none inside and no
-    newline, cut to ``limit``, so the MCP renderer leaves it as written."""
+    newline, cut to ``limit`` with an ASCII "..." the X-Loom-Hint header keeps, so the
+    MCP renderer leaves it as written."""
     text = str(value).replace("'", '"').replace("\n", " ")
     if len(text) > limit:
         text = text[: limit - 3] + "..."
