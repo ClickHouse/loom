@@ -385,8 +385,14 @@ def _running(pid: int) -> bool:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    stat_file = Path(f"/proc/{pid}/stat")
-    return not (stat_file.exists() and stat_file.read_text().rsplit(")", 1)[1].split()[0] == "Z")
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        # Reaped between the two reads, or no /proc (macOS), where kill said alive.
+        return not Path("/proc").exists()
+    except OSError:  # exiting
+        return False
+    return state != "Z"
 
 
 def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
