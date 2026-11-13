@@ -637,8 +637,9 @@ main() {
   kept=
   guide=
   # Without a terminal and without LOOM_CONNECT no client can be connected, so
-  # none is looked at either.
-  if [ -z "${LOOM_CONNECT:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; then
+  # none is looked at either, and the guide is linked instead (not after a server
+  # that refused the check, which said why).
+  if [ -z "$skip_agents" ] && [ -z "${LOOM_CONNECT:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; then
     skip_agents=1 guide=1
   fi
   if [ -z "$skip_agents" ] && [ "${LOOM_CONNECT:-}" != none ]; then

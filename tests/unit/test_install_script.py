@@ -1397,6 +1397,18 @@ def test_a_server_error_connects_no_agent(install, installer_env: dict[str, str]
     assert claude.read_text() == ""
 
 
+@pytest.mark.parametrize("status", [401, 500])
+def test_a_server_that_refused_the_check_gets_no_connect_guide(
+    install, installer_env: dict[str, str], status: int
+) -> None:
+    """Without a terminal or LOOM_CONNECT: the refusal said why, so no guide follows."""
+    run, _ = install
+    _start_stubs(installer_env, memory_status=status)
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="")
+    assert result.returncode == 0, result.stderr
+    assert "Connect an agent:" not in result.stdout
+
+
 def _desktop(installer_env: dict[str, str]) -> tuple[dict[str, str], Path]:
     """A Linux desktop for a started install: DISPLAY set, a `uname` that says Linux
     and an `xdg-open` that logs the URL it gets. Returns (env, xdg-open log)."""

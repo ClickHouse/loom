@@ -123,9 +123,9 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
 
 Run it from your home directory, or another
 [directory only you can write to](./docs/getting-started/quickstart.md#fast-path-released-image-no-clone).
-The installer starts Loom and ClickHouse, applies migrations, on a new install checks that
-a memory saves and reads back, and prints the dashboard URL: **http://localhost:7777/**.
-On a terminal it then offers to connect the coding agents it finds (Claude Code, Codex,
+The installer starts Loom and ClickHouse, applies migrations and prints the dashboard URL:
+**http://localhost:7777/**; on a new install it then checks that a memory saves and reads
+back. On a terminal it then offers to connect the coding agents it finds (Claude Code, Codex,
 VS Code) and, on a new install, opens the dashboard. The image includes the server,
 workers, dashboard and Python, TypeScript and Go compiler indexers; TypeScript
 dependencies are prepared automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
