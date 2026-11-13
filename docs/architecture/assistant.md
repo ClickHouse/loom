@@ -1115,9 +1115,11 @@ from Loom, and both run its v0.8.8 configuration,
   service and the internal `assistant-db` network with MongoDB alone, so the `loom`
   container, which builds repository code, cannot reach the database. LibreChat alone is
   also on `assistant-egress`, a network of its own with a route out, for its model
-  provider. Its secrets and model key come from `.env` beside `compose.yaml`
-  (`LIBRECHAT_CREDS_KEY`, `LIBRECHAT_CREDS_IV`, `LIBRECHAT_JWT_SECRET`,
-  `LIBRECHAT_JWT_REFRESH_SECRET`, `LIBRECHAT_ANTHROPIC_API_KEY`, each named apart from
+  provider (with `LOOM_ASSISTANT_PROVIDER=local`, a model server on the Docker host,
+  reached as `host.docker.internal`). Its secrets and model key come from `.env` beside
+  `compose.yaml` (`LIBRECHAT_CREDS_KEY`, `LIBRECHAT_CREDS_IV`, `LIBRECHAT_JWT_SECRET`,
+  `LIBRECHAT_JWT_REFRESH_SECRET`, `LIBRECHAT_ANTHROPIC_API_KEY`,
+  `LIBRECHAT_LOCAL_LLM_BASE_URL`, each named apart from
   anything Loom reads, since the `loom` service loads the same `.env`), and its
   configuration from
   `deploy/librechat/assistant.librechat.yaml`, which the release's stack bundle ships.

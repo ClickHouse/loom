@@ -78,6 +78,11 @@ Once Loom answers, the installer:
    is named.
 4. **Opens the dashboard** on a desktop, for a new install; `LOOM_NO_OPEN=1` skips that.
 
+Before it starts Loom, a new install on a terminal with Ollama answering on
+`localhost:11434` is also asked whether to run extraction and the assistant on it, with no
+API key; `LOOM_LOCAL_MODELS=ollama` answers yes and `off` no
+([a model server on your machine](models-and-keys.md#a-model-server-on-your-machine-no-api-key)).
+
 Run from WSL, these steps act inside WSL: connect an agent that runs on Windows from
 Windows with the [connect guide](connect-a-coding-agent.md), and open the dashboard address
 the installer prints in a Windows browser.
