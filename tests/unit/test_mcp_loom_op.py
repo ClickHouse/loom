@@ -8,8 +8,10 @@ path a listed tool runs."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import server.transport.mcp as mcp
 import server.transport.mcp_call as mcp_call
 from server.auth.jwt import mint_token
-from server.operations.registry import ALL_OPERATIONS
+from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.settings import settings
 from server.transport import mcp_op
@@ -56,8 +58,6 @@ def _client(monkeypatch: pytest.MonkeyPatch, *, authed: bool) -> TestClient:
 
 @pytest.mark.parametrize("toolset", ["core", "coding", "tracker", "tasks", "atomic", "readonly"])
 def test_every_roster_lists_loom_op(toolset: str) -> None:
-    import asyncio
-
     names = {t["name"] for t in asyncio.run(_tools_descriptor(toolset=toolset))}
     assert "loom_op" in names, toolset
 
@@ -224,11 +224,6 @@ def test_loom_op_text_is_built_for_its_listing(
     """The listed text is the one built for this listing: every op it names,
     the example call's included, is one the listing does not show and loom_op
     routes on it."""
-    import asyncio
-    import re
-
-    from server.operations.registry import OPERATIONS_BY_NAME
-
     monkeypatch.setattr(settings, "mcp_code_tools", True)
     tools = asyncio.run(_tools_descriptor(toolset=toolset))
     names = {d["name"] for d in tools}
