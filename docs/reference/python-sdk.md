@@ -76,14 +76,14 @@ only with a real LLM provider configured.
 ## Construction
 
 ```python
-Agent(org, namespace, agent, *, base_url=None, api_key=None, timeout_s=60.0,
+Agent(org="", namespace="", agent=None, *, base_url=None, api_key=None, timeout_s=60.0,
       pacing=True, coalesce_sets=True, ratelimit_max_wait_s=None, auto_run=None,
       retry=None, consumer="", mentor_brief=None, profile=None)
 ```
 
 | Argument                    | Meaning                                                                                                                                                                                                                                                                                                                                   |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `org`, `namespace`, `agent` | The identity stamped on every call. `user_id`, `session_id` and `run_id` are per call (the wire's `"-"` when omitted).                                                                                                                                                                                                                    |
+| `org`, `namespace`, `agent` | The identity stamped on every call; see [Identity defaults](#identity-defaults) for what may be left empty. `user_id`, `session_id` and `run_id` are per call (the wire's `"-"` when omitted).                                                                                                                                            |
 | `timeout_s`                 | Per-request timeout.                                                                                                                                                                                                                                                                                                                      |
 | `profile`                   | The `loom login` session to use, on the server it signed in to; not combined with `api_key` or another `base_url` ([Credentials](#credentials)).                                                                                                                                                                                          |
 | `consumer`                  | The product this process speaks for; stamped on every body that does not name its own and stored on the ledgers. `""` stamps nothing.                                                                                                                                                                                                     |
@@ -92,6 +92,26 @@ Agent(org, namespace, agent, *, base_url=None, api_key=None, timeout_s=60.0,
 | `coalesce_sets`             | From the third `memory.set` inside one 200 ms window, gather sets with the same identity into one `memory.bulk_set`. A coalesced result carries `coalesced: true` and no `memory_id` / `content_sha256`; a set with `if_match_sha256` or an expiry policy is never coalesced. `memory.flush_sets()` sends a batch now; `close()` flushes. |
 | `auto_run`                  | Bind an ambient run to the Agent's lifetime (or `LOOM_AUTO_RUN=1`): writes carry its `run_id`, reads are labelled with `X-Loom-Run-Id`. Off by default, because a write under a run is scoped to it: a restatement of another scope's row is stored as a duplicate, not merged.                                                           |
 | `mentor_brief`              | Fetch `mentor.brief` in the background on the first call (or `LOOM_MENTOR_BRIEF=on`); `await bot.mentor()` does it explicitly.                                                                                                                                                                                                            |
+
+### Identity defaults
+
+`org` may be left empty: a `code.*` or `tracker.*` op then runs in its plane's org, and
+any other op in the token's org, or, on a single-user server with no token, the install's.
+The server fills an empty `namespace` in only for a single-user server and a call with no
+token, on the everyday memory and search ops ([which ops](http-api.md#request)); a
+`code.*` or `tracker.*` op whose namespace is optional takes its plane's. An empty
+`namespace` is left out of the body: any other server, or any other op, that requires one
+answers `VALIDATION_FAILED` naming it rather than reading `""` as a namespace, and an op
+where it is optional runs without it. The SDK sends any credential it finds
+([Credentials](#credentials)): `api_key=`, `LOOM_API_KEY`, a bot's `LOOM_CLIENT_ID`, a
+`loom login` session for that server, or `~/.loom/token`; a call with one gets no
+namespace filled in. An op not on [that list](http-api.md#request) that requires a
+namespace needs it named, and so does any SDK feature that calls one: `auto_run`,
+`run_scope()`, `session()` and `mentor()`, the context and working-memory tools in
+`bot.tools()`, and the LangGraph store's `search()` (its `memory.bulk_get`), among others
+(an ambient run that cannot begin is skipped). The SDK refuses `knowledge.upload` and
+`knowledge.download` without both org and namespace. An `agent` not given is
+`sdk-python:<script>`.
 
 An `agent` of `""`, `"-"` or `"*"` is replaced with `sdk-python:<script>` and a
 warning: an anonymous agent is indistinguishable from every other anonymous

@@ -26,13 +26,13 @@ Every row carries five identity columns:
 (org, namespace, agent, user_id, session_id)
 ```
 
-| Part         | Meaning                                                                                      | Default    |
-| ------------ | -------------------------------------------------------------------------------------------- | ---------- |
-| `org`        | The tenant. Nothing crosses an org boundary except through a wildcard operator token.        | (required) |
-| `namespace`  | The unit of isolation and sharing inside an org. Every read is scoped to `(org, namespace)`. | (required) |
-| `agent`      | Who wrote the row (`support-bot`, `claude-code`). Authorship, not a read boundary.           | (required) |
-| `user_id`    | The end user the row is about.                                                               | `-`        |
-| `session_id` | One conversation or run of a conversation.                                                   | `-`        |
+| Part         | Meaning                                                                                      | Default                                                                                               |
+| ------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `org`        | The tenant. Nothing crosses an org boundary except through a wildcard operator token.        | (required; single-user mode fills it, below)                                                          |
+| `namespace`  | The unit of isolation and sharing inside an org. Every read is scoped to `(org, namespace)`. | (required; single-user mode fills it, below)                                                          |
+| `agent`      | Who wrote the row (`support-bot`, `claude-code`). Authorship, not a read boundary.           | (required; single-user HTTP fills it on some ops, [HTTP reference](../reference/http-api.md#request)) |
+| `user_id`    | The end user the row is about.                                                               | `-`                                                                                                   |
+| `session_id` | One conversation or run of a conversation.                                                   | `-`                                                                                                   |
 
 Many operations also take `run_id` (default `-`) to scope a write or read to one task
 execution. The token fixes the org and the namespaces a caller may reach; the rest of the
@@ -343,8 +343,11 @@ How a caller gets a token at all is the deployment's identity mode
 
 - **`single-user`**: no authentication; a call that names no namespace resolves to one
   (`LOOM_DEFAULT_NAMESPACE`, default `local`, in the org `LOOM_SELF_SIGNUP_ORG`, default
-  `dev`), and an `all_mine` search also reads the namespaces the user registered. For a
-  laptop only.
+  `dev`) on MCP for every op but `code.*`. Over HTTP, a call with no token gets the org on
+  every op but `code.*` and `tracker.*`, and the namespace on the everyday memory and
+  search ops; which ops, and the agent each gets, are in the
+  [HTTP reference](../reference/http-api.md#request). An `all_mine` search also reads the
+  namespaces the user registered. For a laptop only.
 - **`trust-network`**: self-signup with email and password; the first principal to
   claim a namespace name owns it. An agent can sign itself up (`loom init --agent`) and a
   person claims it later with the code it printed, which works once and is replaced by the

@@ -11,6 +11,10 @@ here, once:
   the request's, else the op's plane default (code.* / tracker.*), else the
   verified token's own org. A namespace is never authorized without an org:
   that is a refusal (IDENTITY_INCOMPLETE), not a flat-role pass.
+- `with_single_user_identity`: on a single-user server, a call with no token
+  gets the install's org, and on the everyday memory and search ops
+  (SINGLE_USER_FILLED_OPS) its namespace and the op's agent, where it left
+  them out; the HTTP body every later phase reads.
 - `with_resolved_org` / `with_target`: before validation a blank or "-"
   org is set to the org the call acts in and a padded org or namespace is
   stripped; after authorization an absent code namespace is set to the
@@ -151,8 +155,9 @@ def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None
     reads the org (an inbox's webhook secret names it), then see the tenant the
     gate authorizes, never the literal "-" every token reaches or a padded name
     an erasure of the org would miss. A copy: validation, and its own refusal
-    row, read it; every later refusal's ledger row reads the raw arguments as
-    sent. A missing, null or non-string value is left for validation."""
+    row, read it; every later refusal's ledger row reads the arguments as
+    admitted (over HTTP, after the single-user fill and the `@me` mapping). A
+    missing, null or non-string value is left for validation."""
     update: dict[str, str] = {}
     if isinstance(args.get("org"), str):
         org = resolve_org(op, args["org"], auth)
@@ -163,6 +168,81 @@ def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None
         if namespace and namespace != args["namespace"]:
             update["namespace"] = namespace
     return {**args, **update} if update else args
+
+
+# Ops whose namespace a no-token single-user call may leave out, mapped to the agent
+# filled when it names none ("": none, so the op reads every agent). Each value is
+# checked against the op: "http" where it is the writer, or a key read or delete
+# that falls back to any agent; "*" where MCP also reads across agents.
+SINGLE_USER_FILLED_OPS: Final[dict[str, str]] = {
+    "memory.set": "http",
+    "memory.bulk_set": "http",
+    "memory.get": "http",
+    "memory.delete": "http",
+    "memory.list": "*",
+    "memory.history": "*",
+    "memory.search": "",
+    "memory.search_trace": "",
+    "memory.ask": "",
+    "memory.update": "",
+    "search.query": "",
+    "knowledge.search": "",
+}
+
+
+async def with_single_user_identity(
+    op: Operation, args: dict[str, Any], auth: AuthInfo | None
+) -> dict[str, Any]:
+    """The body every later phase of an HTTP call reads, with the install's identity
+    where the call left it out: only for a call with no token on a single-user server.
+    The org (`caller_org`) on every op but code and tracker ones; the namespace
+    (`default_namespace`, as MCP asks it) and the agent on a SINGLE_USER_FILLED_OPS
+    op. A field is filled when missing, null, or a string the gates read as absent."""
+    from server.identity.app.caller_home import caller_org, default_namespace
+    from server.settings import settings
+    from server.transport.arg_check import did_you_mean, unknown_args
+
+    if auth is not None or settings.effective_identity_provider() != "single-user":
+        return args
+    # Plane ops keep the plane's identity even when no plane org is configured:
+    # their org and namespace name the index, never the install's memory.
+    if op.name.startswith(("code.", "tracker.")):
+        return args
+    org = caller_org(None) or ""
+    fill = {"org": org}
+    if op.name in SINGLE_USER_FILLED_OPS:
+        fill["namespace"] = await default_namespace(None, org)
+        names_scope = present(args.get("user_id")) or present(args.get("session_id"))
+        # A history's "*" also reads every user and session (a list keeps its user
+        # and session filters): a history that names one names its agent.
+        if op.name != "memory.history" or not names_scope:
+            fill["agent"] = SINGLE_USER_FILLED_OPS[op.name]
+    fields = op.input_model.model_fields
+    # A key that misspells a field this would fill (`namepsace`) means the call
+    # named one: it is not filled, so validation names it instead of the call
+    # running in the install's namespace.
+    meant = set(did_you_mean(op.input_model, unknown_args(op.input_model, args)).values())
+    update = {
+        name: value
+        for name, value in fill.items()
+        if value and name in fields and name not in meant and _absent(args.get(name))
+    }
+    # A blank value the call sent is a missing one, named by validation, never the
+    # empty namespace or agent: on a field a near-miss key kept from the fill, and
+    # on a required namespace this op does not fill.
+    drop = {name for name in fill if name in meant}
+    namespace = fields.get("namespace")
+    if "namespace" not in update and namespace is not None and namespace.is_required():
+        drop.add("namespace")
+    drop = {name for name in drop if isinstance(args.get(name), str) and _absent(args[name])}
+    if not update and not drop:
+        return args
+    return {**{k: v for k, v in args.items() if k not in drop}, **update}
+
+
+def _absent(value: Any) -> bool:
+    """Missing, null, or a string the gates read as no identity."""
+    return value is None or (isinstance(value, str) and present(value) is None)
 
 
 def with_target(input_obj: Any, target: Target) -> Any:

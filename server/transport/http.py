@@ -2,7 +2,9 @@
 
 Each request flow:
     1. Extract + verify bearer JWT if present (required when auth_required=True)
-    2. Parse + validate body (Pydantic via op.input_model)
+    2. Parse body; on a single-user server, for a call with no token, fill the
+       install's identity (`gates.with_single_user_identity`); validate it
+       (Pydantic via op.input_model)
     3. Authz: role + namespace ACL check (if auth present + payload has identity)
     4. Run handler
     5. Emit one row to loom.agent_events (success or failure)
@@ -206,9 +208,10 @@ def _stamp_timing(response: Response, elapsed_ms: int) -> None:
 
 @dataclass(slots=True)
 class _HttpCall:
-    """What one request's phases hand each other: its id, the parsed body,
-    the verified token (None when anonymous) and the tenant triple read from
-    the body (authorization fills in the code/tracker plane's defaults)."""
+    """What one request's phases hand each other: its id, the body as admitted
+    (parsed, plus the single-user fill and the `@me` mapping), the verified
+    token (None when anonymous) and the tenant triple read from the body
+    (authorization fills in the code/tracker plane's defaults)."""
 
     request_id: str
     raw_body: dict[str, Any] = field(default_factory=dict)
@@ -763,7 +766,8 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
 
         set_current_auth(auth)
         bind_claimed_class(auth)
-        call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
+        body = await _read_body(op, request, request_id, auth)
+        call.raw_body = raw_body = await gates.with_single_user_identity(op, body, auth)
 
         payload = _validate_payload(
             op, request_id, gates.with_resolved_org(op, raw_body, auth), auth

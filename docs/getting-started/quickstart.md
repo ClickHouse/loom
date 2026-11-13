@@ -331,7 +331,10 @@ operator access and [TLS](../operations/deployment.md#proxy-and-tls).
 ## 3. Get a token
 
 In single-user mode a token is optional. Minting one anyway keeps your scripts working
-when auth is turned on.
+when auth is turned on, as long as they name their `org` (or send it blank), `namespace`
+and `agent`: a call that sends a credential, as the SDK does when it finds any ([Python
+SDK → Credentials](../reference/python-sdk.md#credentials)), gets none of them filled in,
+and a blank `org` is the token's own.
 
 - **Dashboard:** **Settings → Tokens → New token**. By default the token reads every
   namespace and repository you belong to (a restricted repository only when you add it),
@@ -367,25 +370,25 @@ Claims, roles and grants are in [Tokens and grants](../guides/tokens-and-grants.
 
 ## 4. First memory over HTTP
 
-Every operation is a `POST /v1/<op>` with a JSON body that names the identity
-`(org, namespace, agent)`. A fresh install with the stock `.env`, from the installer
-or a checkout, is single-user: org `dev`, namespace `local`, and no token, so the calls
-below work as written. If a call without a token answers 401 `AUTH_INVALID`, auth is on:
-add `-H "Authorization: Bearer $LOOM_API_KEY"` and use your account's org and namespace;
-a header with an empty token is refused.
+Every operation is a `POST /v1/<op>` with a JSON body. A fresh install with the stock
+`.env`, from the installer or a checkout, is single-user: no token, and an everyday memory
+or search call (`memory.set`, `memory.get`, `memory.search` and a few more) that names no
+`org` or `namespace` runs in the install's own, org `dev` and namespace `local`, the ones
+MCP and the dashboard use; a `memory.set` that names no `agent` is recorded as agent
+`http`, and a search reads every agent. So the calls below need only their own fields
+([which ops](../reference/http-api.md#request)). If a call without a token answers 401
+`AUTH_INVALID`, auth is on: add `-H "Authorization: Bearer $LOOM_API_KEY"` and name your
+account's `org`, `namespace` and `agent`; a header with an empty token is refused.
 
 ```bash
 curl -sX POST http://localhost:7777/v1/memory.set -H 'Content-Type: application/json' \
-  -d '{"org":"dev","namespace":"local","agent":"quickstart",
-       "memory_key":"deploy_window","value":"Tue and Thu only; never Friday."}'
+  -d '{"memory_key":"deploy_window","value":"Tue and Thu only; never Friday."}'
 
 curl -sX POST http://localhost:7777/v1/memory.get -H 'Content-Type: application/json' \
-  -d '{"org":"dev","namespace":"local","agent":"quickstart","memory_key":"deploy_window"}' \
-  | jq '{found, value}'
+  -d '{"memory_key":"deploy_window"}' | jq '{found, value}'
 
 curl -sX POST http://localhost:7777/v1/memory.search -H 'Content-Type: application/json' \
-  -d '{"org":"dev","namespace":"local","query":"when can we deploy?"}' \
-  | jq '.results[0].content_excerpt'
+  -d '{"query":"when can we deploy?"}' | jq '.results[0].content_excerpt'
 ```
 
 The `memory.set` response carries `memory_id`, `content_sha256` and `status`.
@@ -406,6 +409,10 @@ pip install clickhouse-loom    # or, from a clone: pip install ./sdk/python
 A release not yet on PyPI installs from its assets
 ([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)).
 
+The example names `org` and `namespace`, so it works with or without the token from step
+3, which the SDK sends when it finds one. On a single-user server, a call with no token
+may leave them out: `Agent(agent="quickstart", base_url=...)` runs in `dev`/`local` too.
+
 ```python
 import asyncio
 
@@ -418,11 +425,11 @@ async def main():
         namespace="local",
         agent="quickstart",  # names the writer in the audit log
         base_url="http://localhost:7777",
-    ) as a:  # reads LOOM_API_KEY; none needed in single-user mode
-        await a.memory.set("deploy_window", "Tue and Thu only; never Friday.")
-        row = await a.memory.get("deploy_window")  # None when the key is unset
+    ) as a:  # sends a credential it finds; none needed in single-user mode
+        await a.memory.set("standup_time", "Daily standup is at 9:30.")
+        row = await a.memory.get("standup_time")  # None when the key is unset
         print(row["value"] if row else "unset")
-        for hit in await a.memory.search("when can we deploy?"):
+        for hit in await a.memory.search("when is standup?"):
             print(hit.content_excerpt)
 
 

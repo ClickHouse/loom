@@ -347,7 +347,10 @@ def render_group(group: str, ops: list[Operation]) -> str:
         "edit the models, not this page. -->\n",
         "Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity "
         "fields (`org`, `namespace`, `agent`, `user_id`, `session_id`) are filled from the "
-        "token and the MCP session when a transport can; see "
+        "token and the MCP session when a transport can; for an HTTP call with no "
+        "token on a single-user server, the install's org on every op but `code.*` and "
+        "`tracker.*` (which keep their plane's), and on [some ops](../http-api.md#request) "
+        "its namespace and agent; see "
         "[identities and namespaces](../../concepts/identities-and-namespaces.md). The "
         "[operations index](../operations.md) explains role, kind and the MCP `all` "
         "listing. Unknown input fields are served and named in `ignored_args`.\n",

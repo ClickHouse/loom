@@ -155,7 +155,29 @@ curl -sX POST "$LOOM/v1/memory.set" \
 - **Identity.** `org`, `namespace` and `agent` travel in the body; `user_id`
   and `session_id` default to `"-"`. The token decides which of them the caller
   may address. `code.*` and `tracker.*` ops default `org` and `namespace` to the
-  deployment's code or tracker plane when the body omits them.
+  deployment's code or tracker plane when the body omits them, and a token call's
+  blank or `"-"` org is the token's own. On a single-user server, a call with no token
+  that names no `org`, or a blank or `"-"` one, runs in the install's org
+  (`LOOM_SELF_SIGNUP_ORG`), the one MCP and the dashboard use; a code or tracker op
+  keeps its plane org. A call with no token to `memory.set`, `memory.bulk_set`,
+  `memory.get`, `memory.delete`, `memory.list`, `memory.history`, `memory.search`,
+  `memory.search_trace`, `memory.ask`, `memory.update`, `search.query` or
+  `knowledge.search` may also leave out `namespace` and `agent`: it runs in the
+  install's namespace (`LOOM_DEFAULT_NAMESPACE`). `memory.set` and `memory.bulk_set`
+  write as agent `http`; `memory.get` and `memory.delete` try the key under agent
+  `http`, then under any agent of the same user; `memory.list` reads every agent's
+  rows of the call's user and session (`-` when it names none) and `memory.history`
+  every agent's, user's and session's versions of the key, as on MCP; a
+  `memory.history` that names a `user_id` or `session_id` names its agent too. An op
+  whose agent is optional and left out acts across every agent: a search reads every
+  agent's rows, and `memory.update` finds the key in the whole namespace. A key that
+  misspells one of these (`namepsace`) is taken as naming it, so that field is not
+  filled and, where the op requires it, the call is refused. Every other op names
+  its own namespace and agent; on a single-user server with no token, a blank or
+  `"-"` namespace on one that requires a namespace (code and tracker ops aside) is
+  refused as missing. A call with a token (one the Python SDK finds by itself
+  included: [Credentials](python-sdk.md#credentials)) gets nothing filled, and
+  neither does any call in another identity mode.
 - **`consumer`.** Any body may carry `consumer`, a short tag for the product or
   module calling; it is stored on the request and audit ledgers. A token minted
   with a consumer overrides it. See
@@ -173,12 +195,13 @@ A request passes these gates in order, and the first that refuses answers:
 
 ```mermaid
 flowchart LR
-  A["token"] --> B["JSON parse"] --> C["misspelled write field"] --> D["input validation"]
+  A["token"] --> B["JSON parse"] --> C["misspelled write field"] --> C2["single-user fill"] --> D["input validation"]
   D --> E["role + namespace authz"] --> F["history policy"] --> G["rate limit"]
   G --> H["idempotency replay"] --> I["handler"]
 ```
 
-MCP `tools/call` runs the same sequence. Consequences worth knowing:
+MCP `tools/call` runs the same sequence, but for the single-user fill, which is HTTP's
+(MCP fills a call's identity from its own defaults). Consequences worth knowing:
 
 - A deployment that requires a token answers an anonymous request 401 whatever
   its body holds, and the anonymous check runs before the rate limiter, so an
@@ -186,10 +209,12 @@ MCP `tools/call` runs the same sequence. Consequences worth knowing:
 - An empty, blank or `"-"` `org` or `namespace` is treated as absent: a code
   or tracker op takes its plane's org (and a code op the code namespace,
   except the `code.repo.*` writes, which must name their repository), any other
-  op the token's own org, and a namespace with no org to pair it with is
-  `400 IDENTITY_INCOMPLETE`. A padded `org` or `namespace` is stripped. Over
-  MCP, a connection's `X-Loom-Code-Scope` names the repository for any `code.*`
-  call that names none, the `code.repo.*` writes included.
+  op the token's own org (on a single-user server with no token, the install's
+  org and, on the ops listed under Identity above, its namespace), and a
+  namespace with no org to pair it with is `400 IDENTITY_INCOMPLETE`. A padded
+  `org` or `namespace` is stripped. Over MCP, a connection's `X-Loom-Code-Scope`
+  names the repository for any `code.*` call that names none, the `code.repo.*`
+  writes included.
 - An idempotent replay is looked up only after authorization and policy admit
   the call, so a stored answer never reaches another principal.
 - A rate limiter or traffic classifier that fails lets the request through and
