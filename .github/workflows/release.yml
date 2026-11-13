@@ -512,7 +512,9 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ matrix.image }}
-          # The extractor's own title and description; the defaults are the repository's.
+          # Labels added to metadata-action's defaults (the repository's title, description,
+          # source and url): the extractor's own title and description, and both images'
+          # documentation link.
           labels: ${{ matrix.labels }}
           # docker-tag adds `:latest` when this is the highest final version;
           # metadata-action would add it to any final version.
