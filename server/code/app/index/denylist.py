@@ -160,6 +160,17 @@ def _pattern_hits(path: str, pattern: str) -> bool:
     return "/" not in pattern and fnmatch.fnmatchcase(posixpath.basename(path), pattern)
 
 
+# a refusal that still lets a file's definitions into the index: the generated rule
+# declares a file (its types and functions) without searching its text
+GENERATED_REFUSAL = "excluded: generated"
+
+
+def indexes_symbols(reason: str) -> bool:
+    """Whether a file refused for `reason` ('' = not refused) has its definitions in the
+    index (`ingest._declared_not_searched`)."""
+    return not reason or reason.startswith(GENERATED_REFUSAL)
+
+
 @dataclass(frozen=True)
 class Denylist:
     builtin: bool = False

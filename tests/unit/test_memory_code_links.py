@@ -32,7 +32,7 @@ from server.settings import settings
 # the policy's own texts and judge, which the `world` fixture stubs
 _TEXTS, _JUDGE = code_link_policy._texts, code_link_policy._judge
 # the mirror search, which an autouse fixture stubs
-_REAL_CONTAINING = code_links.code.containing
+_REAL_CONTAINING = code_link_pass.RepoReads.containing
 
 
 @pytest.fixture(autouse=True)
@@ -64,10 +64,10 @@ def _mirror_holds_every_commit(monkeypatch):
 def _mirror_names_nothing_else(monkeypatch):
     # the fakes' history lives in their index and file reads: a search of the mirror for
     # a lost name finds nothing more unless a test says so
-    async def containing(org, cns, commit, literal, paths, *, limit):
+    async def containing(self, head, literal, base, *, limit):
         return []
 
-    monkeypatch.setattr(code_links.code, "containing", containing)
+    monkeypatch.setattr(code_link_pass.RepoReads, "containing", containing)
 
 
 def _full(link: dict[str, Any]) -> dict[str, Any]:
@@ -4057,6 +4057,7 @@ async def test_a_name_too_many_changed_files_hold_leaves_the_index_verdict(monke
 
 @pytest.mark.asyncio
 async def test_the_mirror_is_not_searched_over_a_range_too_wide_or_unread(monkeypatch) -> None:
+    monkeypatch.setattr(code_link_pass.RepoReads, "containing", _REAL_CONTAINING)
     files = code_link_pass.RepoReads("o", "code-a")
     seen: list[set[str] | None] = [None, {"a.py", "b.py"}]
 
@@ -4067,7 +4068,7 @@ async def test_the_mirror_is_not_searched_over_a_range_too_wide_or_unread(monkey
         raise AssertionError("not searched")
 
     monkeypatch.setattr(files, "touched", touched)
-    monkeypatch.setattr(code_links.code, "containing", grep)
+    monkeypatch.setattr(code_links.code, "grep_words", grep)
     assert await files.containing("c1", "f", "c0", limit=5) == []  # the range is unread
     monkeypatch.setattr(settings, "memory_code_links_mirror_changed_files", 1)
     assert await files.containing("c1", "f", "b0", limit=5) == []  # too wide
@@ -4131,9 +4132,7 @@ async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_the_mirror_search_leaves_out_what_the_ingest_does_not_index(
-    monkeypatch, tmp_path
-) -> None:
+async def test_the_mirror_search_reads_what_the_ingest_indexes(monkeypatch, tmp_path) -> None:
     from dataclasses import replace
 
     from server.code.app import memory_links
@@ -4145,7 +4144,9 @@ async def test_the_mirror_search_leaves_out_what_the_ingest_does_not_index(
             ".loomignore": "gen/\n",
             "pkg/b.py": "def fetch_rows():\n    return 1\n",
             "gen/rows.py": "def fetch_rows():\n    return 2\n",  # the ignore file refuses it
-            "pkg/mock.py": "# @generated\ndef fetch_rows():\n    return 3\n",  # generated
+            # generated: declared, not searched, so its definitions are indexed
+            "pkg/mock.py": "# @generated\ndef fetch_rows():\n    return 3\n",
+            "pkg/blob.bin": "fetch_rows\0\0",  # binary: refused
         }
     )
     # an entry added from the page: no prefixes (the whole tree), generated files refused
@@ -4153,15 +4154,25 @@ async def test_the_mirror_search_leaves_out_what_the_ingest_does_not_index(
     cfg = replace(base, git_dir=str(tmp_path / ".git"), exclude_generated=True)
     assert cfg.path_prefixes == ()
     monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: cfg)
-    monkeypatch.setattr(memory_links, "_DENYLISTS", type(memory_links._DENYLISTS)())
-    paths = ["gen/rows.py", "pkg/b.py", "pkg/mock.py"]
-    found = await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=3)
-    assert found == ["pkg/b.py"]
+    monkeypatch.setattr(code_link_pass.RepoReads, "containing", _REAL_CONTAINING)
+    touched = {"gen/rows.py", "pkg/b.py", "pkg/mock.py", "pkg/blob.bin"}
+
+    def reads() -> Any:
+        files = code_link_pass.RepoReads("o", "code-a")
+
+        async def changed(base, head):
+            return touched
+
+        monkeypatch.setattr(files, "touched", changed)
+        return files
+
+    found = await reads().containing(head, "fetch_rows", "c0", limit=4)
+    assert found == ["pkg/b.py", "pkg/mock.py"]
     # a path refused by name is left out before the page is counted, by content after
-    assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=2) == []
+    assert await reads().containing(head, "fetch_rows", "c0", limit=3) == []
     prefixed = replace(cfg, path_prefixes=("gen/",))
     monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: prefixed)
-    assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=3) == []
+    assert await reads().containing(head, "fetch_rows", "c0", limit=4) == []
 
 
 @pytest.mark.asyncio
@@ -4183,3 +4194,16 @@ async def test_the_mirror_is_searched_for_a_name_without_its_ordinal(monkeypatch
     second = row | {"qualified_name": row["qualified_name"] + "#2"}  # the file's second one
     await code_link_recheck._recheck("o", "code-a", [second], _MOVED, "c1", files)
     assert searched == [("c1", "fetch_rows", "c0")]
+
+
+@pytest.mark.asyncio
+async def test_paths_too_many_for_git_leave_the_index_verdict(monkeypatch) -> None:
+    from server.code.app import memory_links
+    from server.code.app.index import gitrepo
+
+    async def too_long(*a, **k):
+        raise gitrepo.ArgumentsTooLong("many paths")
+
+    monkeypatch.setattr(gitrepo, "grep_paths", too_long)
+    scope = SimpleNamespace(cfg=SimpleNamespace(git_dir="/nowhere"))
+    assert await memory_links.grep_words(scope, "c1", "f", ["a.py"], limit=5) == []

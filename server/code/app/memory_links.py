@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import OrderedDict
 from dataclasses import dataclass
 
 from server.code.app.index import gitrepo, mirrors
 from server.code.app.index.bootstrap import holds
-from server.code.app.index.denylist import Denylist, load_denylist
+from server.code.app.index.denylist import Denylist, indexes_symbols, load_denylist
 from server.code.domain.anchor import Definition
 from server.code.domain.declaration import edit_pattern
 from server.code.domain.definitions import definitions
@@ -136,69 +135,65 @@ async def touched_paths(org: str, namespace: str, base: str, head: str) -> set[s
     return {e.path for e in entries if e.status != "D"}
 
 
-async def containing(
-    org: str, namespace: str, commit: str, literal: str, paths: list[str], *, limit: int
-) -> list[str] | None:
-    """Those of `paths` the ingest would index whose text at `commit` holds the word
-    `literal`, read from the mirror; an empty list when `limit` or more hold it (no telling
-    which is the definition); None when git cannot tell."""
+@dataclass(frozen=True)
+class IngestScope:
+    """What the ingest of an entry reads at one commit: its prefixes and its denylist."""
+
+    cfg: RepoConfig
+    denylist: Denylist
+
+    def takes(self, path: str) -> bool:
+        """`path` is read by the ingest, its definitions indexed, by its name."""
+        prefixes = tuple(self.cfg.path_prefixes) or WHOLE_TREE
+        return path.startswith(prefixes) and indexes_symbols(self.denylist.reason(path))
+
+
+async def ingest_scope(org: str, namespace: str, commit: str) -> IngestScope | None:
+    """The entry's ingest scope at `commit`; None when no repository indexes `namespace`
+    or git cannot read its ignore files."""
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:
         return None
-    if not commit or not paths:
-        return []
     try:
-        denied = await _denylist_at(cfg, commit)
-        # what the ingest reads (`ingest_pass._scope_of`): under the prefixes, not refused
-        prefixes = tuple(cfg.path_prefixes) or WHOLE_TREE
-        paths = [p for p in paths if p.startswith(prefixes) and not denied.reason(p)]
-        if not paths:
-            return []
-        found = await gitrepo.grep_paths(
-            cfg.git_dir, commit, literal, tuple(paths), limit=limit, literal_paths=True, word=True
-        )
-        if len(found) >= limit:
-            return []  # a cut list is never taken as whole
-        return [p for p in found if await _indexed(cfg, denied, commit, p)]
+        return IngestScope(cfg, await load_denylist(cfg, commit, gitrepo.show_file))
     except gitrepo.GitError:
         return None
 
 
-async def _indexed(cfg: RepoConfig, denied: Denylist, commit: str, path: str) -> bool:
-    """The ingest would index `path` at `commit` by its content: not over the byte cap,
-    not binary, not generated when the entry refuses generated files. Kept per commit
-    and path, as a commit's file never changes."""
-    key = (cfg, commit, path)
-    if key not in _VERDICTS:
-        try:
-            data = await gitrepo.file_at(
-                cfg.git_dir, commit, path, max_bytes=settings.code_ingest_max_file_bytes
-            )
-            _VERDICTS[key] = data is not None and not denied.refusal(path, data)
-        except gitrepo.BlobTooLarge:
-            _VERDICTS[key] = False
-        while len(_VERDICTS) > _VERDICTS_KEPT:
-            _VERDICTS.popitem(last=False)
-    return _VERDICTS[key]
+async def grep_words(
+    scope: IngestScope, commit: str, literal: str, paths: list[str], *, limit: int
+) -> list[str] | None:
+    """Up to `limit` of `paths` whose text at `commit` holds the word `literal`, read
+    from the mirror; an empty list for paths too many to pass to git; None when git
+    cannot tell."""
+    if not commit or not paths:
+        return []
+    try:
+        return await gitrepo.grep_paths(
+            scope.cfg.git_dir,
+            commit,
+            literal,
+            tuple(paths),
+            limit=limit,
+            literal_paths=True,
+            word=True,
+        )
+    except gitrepo.ArgumentsTooLong:
+        return []
+    except gitrepo.GitError:
+        return None
 
 
-# the last files' content verdicts (`_indexed`)
-_VERDICTS: OrderedDict[tuple[RepoConfig, str, str], bool] = OrderedDict()
-_VERDICTS_KEPT = 4096
-
-
-# the last commits' denylists per entry (its ignore and attributes files read at the commit)
-_DENYLISTS: OrderedDict[tuple[RepoConfig, str], Denylist] = OrderedDict()
-_DENYLISTS_KEPT = 8
-
-
-async def _denylist_at(cfg: RepoConfig, commit: str) -> Denylist:
-    key = (cfg, commit)
-    if key not in _DENYLISTS:
-        _DENYLISTS[key] = await load_denylist(cfg, commit, gitrepo.show_file)
-        while len(_DENYLISTS) > _DENYLISTS_KEPT:
-            _DENYLISTS.popitem(last=False)
-    return _DENYLISTS[key]
+async def symbols_indexed(scope: IngestScope, commit: str, path: str) -> bool:
+    """The ingest indexes `path`'s definitions at `commit` by its content: not over the
+    byte cap, and not refused but for the generated rule, which still declares them."""
+    try:
+        data = await gitrepo.file_at(
+            scope.cfg.git_dir, commit, path, max_bytes=settings.code_ingest_max_file_bytes
+        )
+    except gitrepo.BlobTooLarge:
+        return False
+    return data is not None and indexes_symbols(scope.denylist.refusal(path, data))
 
 
 async def renamed_from(

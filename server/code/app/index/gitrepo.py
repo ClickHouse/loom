@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import errno
 import fnmatch
 import logging
 import os
@@ -30,6 +31,10 @@ _SHA40 = re.compile(r"[0-9a-f]{40}")
 
 class GitError(RuntimeError):
     pass
+
+
+class ArgumentsTooLong(GitError):
+    """A git command whose arguments are past the system's limit (E2BIG)."""
 
 
 # Git C-quotes a path holding non-ASCII bytes ("src/caf\303\251.py") unless told
@@ -394,7 +399,9 @@ async def grep_paths(
             env=auth_env(),
         )
     except OSError as e:  # an argument list past the system's limit, or no git to run
-        raise GitError(f"git grep {literal[:40]} did not start: {e}") from None
+        if e.errno == errno.E2BIG:
+            raise ArgumentsTooLong(f"git grep {literal[:40]}: {len(pathspecs)} paths") from None
+        raise GitError(f"git grep {literal[:40]} did not start") from None
     try:
         out, err = await communicate_or_kill(proc, timeout_s=timeout_s)
     except TimeoutError:

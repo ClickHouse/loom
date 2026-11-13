@@ -139,11 +139,25 @@ class RepoReads:
             touched = await self.touched(base, head) if base else None
             if not touched or len(touched) > settings.memory_code_links_mirror_changed_files:
                 return []
-            return await code.containing(
-                self.org, self.cns, head, literal, sorted(touched), limit=limit
+            scope = await self._once(
+                ("scope", head), lambda: code.ingest_scope(self.org, self.cns, head)
             )
+            if scope is None:
+                return None
+            paths = sorted(p for p in touched if scope.takes(p))
+            found = await code.grep_words(scope, head, literal, paths, limit=limit)
+            if found is None:
+                return None
+            if len(found) >= limit:
+                return []  # a cut list is never taken as whole
+            return [p for p in found if await self._symbols_indexed(scope, head, p)]
 
         return await self._once(("containing", head, literal, base), read)
+
+    async def _symbols_indexed(self, scope: code.IngestScope, head: str, path: str) -> bool:
+        return await self._once(
+            ("indexed", head, path), lambda: code.symbols_indexed(scope, head, path)
+        )
 
     async def names(self, commit: str, path: str) -> set[str] | None:
         """The qualified names `path` defines at `commit`, read without fingerprints."""
