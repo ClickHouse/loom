@@ -140,7 +140,9 @@ class RepoReads:
         recheck, as any other file read does."""
 
         async def read() -> list[str] | None:
-            touched = await self.touched(base, head) if base else None
+            if not base:
+                return []  # no range (a full recheck): the index decides
+            touched = await self.touched(base, head)
             if touched is None:
                 log.info(
                     "memory links: %s not searched for in the mirror: %s..%s of %s cannot be read",
@@ -159,24 +161,24 @@ class RepoReads:
                 return None
             key = ("indexed paths", base, head)
             if key not in self._read:
-                # the prefix test first: the bound is on what git would be given
-                prefixes = tuple(scope.cfg.path_prefixes) or ("",)
-                under = [p for p in touched if p.startswith(prefixes)]
-                if len(under) > settings.memory_code_links_mirror_changed_files:
-                    log.info(
-                        "memory links: %s not searched for in the mirror: %d files changed "
-                        "in %s..%s of %s, past memory_code_links_mirror_changed_files",
-                        literal,
-                        len(under),
-                        base[:12],
-                        head[:12],
-                        self.cns,
-                    )
-                    self._read[key] = None
-                else:
-                    self._read[key] = sorted(p for p in under if scope.takes(p))
+                # by prefix first: the denylist is matched only on a range within the bound
+                under = [p for p in touched if scope.under(p)]
+                bound = settings.memory_code_links_mirror_changed_files
+                # the count alone when too wide, so each name searched over it is logged
+                self._read[key] = (
+                    len(under) if len(under) > bound else sorted(filter(scope.takes, under))
+                )
             paths = self._read[key]
-            if paths is None:
+            if isinstance(paths, int):
+                log.info(
+                    "memory links: %s not searched for in the mirror: %d files changed "
+                    "in %s..%s of %s, past memory_code_links_mirror_changed_files",
+                    literal,
+                    paths,
+                    base[:12],
+                    head[:12],
+                    self.cns,
+                )
                 return []
             found = await code.grep_words(scope, head, literal, paths, limit=limit)
             if found is None:

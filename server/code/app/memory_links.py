@@ -12,7 +12,13 @@ from dataclasses import dataclass
 
 from server.code.app.index import gitrepo, mirrors
 from server.code.app.index.bootstrap import holds
-from server.code.app.index.denylist import Denylist, indexes_symbols, load_denylist, takes_path
+from server.code.app.index.denylist import (
+    Denylist,
+    indexes_symbols,
+    load_denylist,
+    takes_path,
+    under_prefixes,
+)
 from server.code.domain.anchor import Definition
 from server.code.domain.declaration import edit_pattern
 from server.code.domain.definitions import definitions
@@ -140,6 +146,10 @@ class IngestScope:
 
     cfg: RepoConfig
     denylist: Denylist
+
+    def under(self, path: str) -> bool:
+        """`path` is under the entry's prefixes, before its denylist is matched."""
+        return under_prefixes(self.cfg.path_prefixes, path)
 
     def takes(self, path: str) -> bool:
         """`path` is read by the ingest, its definitions indexed, by its name."""

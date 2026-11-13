@@ -4071,7 +4071,7 @@ async def test_the_mirror_is_not_searched_over_a_range_too_wide_or_unread(monkey
         raise AssertionError("not searched")
 
     async def ingest_scope(org, cns, commit):
-        return SimpleNamespace(cfg=SimpleNamespace(path_prefixes=()), takes=lambda path: True)
+        return SimpleNamespace(under=lambda path: True, takes=lambda path: True)
 
     monkeypatch.setattr(files, "touched", touched)
     monkeypatch.setattr(code_links.code, "grep_words", grep)
@@ -4079,6 +4079,30 @@ async def test_the_mirror_is_not_searched_over_a_range_too_wide_or_unread(monkey
     assert await files.containing("c0", "c1", "f", limit=5) == []  # the range is unread
     monkeypatch.setattr(settings, "memory_code_links_mirror_changed_files", 1)
     assert await files.containing("b0", "c1", "f", limit=5) == []  # too wide
+
+
+@pytest.mark.asyncio
+async def test_the_changed_files_bound_counts_only_paths_under_the_prefixes(monkeypatch) -> None:
+    monkeypatch.setattr(code_link_pass.RepoReads, "containing", _REAL_CONTAINING)
+    files = code_link_pass.RepoReads("o", "code-a")
+    searched: list[list[str]] = []
+
+    async def touched(base, head):
+        return {"src/a.py", "docs/x.py", "tools/y.py", "tools/z.py"}
+
+    async def ingest_scope(org, cns, commit):
+        return SimpleNamespace(under=lambda p: p.startswith("src/"), takes=lambda p: True)
+
+    async def grep(scope, commit, literal, paths, *, limit):
+        searched.append(paths)
+        return []
+
+    monkeypatch.setattr(files, "touched", touched)
+    monkeypatch.setattr(code_links.code, "ingest_scope", ingest_scope)
+    monkeypatch.setattr(code_links.code, "grep_words", grep)
+    monkeypatch.setattr(settings, "memory_code_links_mirror_changed_files", 1)
+    assert await files.containing("b0", "c1", "f", limit=5) == []
+    assert searched == [["src/a.py"]]  # four changed, one under the prefix: within the bound
 
 
 @pytest.mark.asyncio
@@ -4124,7 +4148,7 @@ async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypat
     files = code_link_pass.RepoReads("o", "code-a")
     row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
     monkeypatch.setattr(files, "containing", _REAL_CONTAINING.__get__(files))
-    scope = SimpleNamespace(cfg=SimpleNamespace(path_prefixes=()), takes=lambda path: True)
+    scope = SimpleNamespace(under=lambda path: True, takes=lambda path: True)
     names = files.names
 
     async def ingest_scope(org, cns, commit):

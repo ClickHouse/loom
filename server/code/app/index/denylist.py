@@ -171,13 +171,18 @@ def indexes_symbols(reason: str) -> bool:
     return not reason or reason.startswith(GENERATED_REFUSAL)
 
 
+def under_prefixes(path_prefixes: tuple[str, ...], path: str) -> bool:
+    """`path` is under an entry's prefixes (none = the whole tree)."""
+    return path.startswith(tuple(path_prefixes) or ("",))
+
+
 def takes_path(
     path_prefixes: tuple[str, ...], denylist: Denylist, path: str, *, declared: bool
 ) -> bool:
     """An entry's scope by a path's name: under its prefixes (none = the whole tree) and
     not refused by its denylist, or, with `declared`, refused only as a generated file,
     whose definitions the ingest still declares."""
-    if not path.startswith(tuple(path_prefixes) or ("",)):
+    if not under_prefixes(path_prefixes, path):
         return False
     why = denylist.reason(path)
     return indexes_symbols(why) if declared else not why
