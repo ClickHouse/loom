@@ -9,15 +9,16 @@ A short page is sent to the Messages API in one call, a longer one a `## ` secti
 time (`WHOLE_PAGE_CHARS`). A translation is kept only when its fenced code blocks (in
 order), inline code spans, link targets, URLs, heading anchors and numbers match the
 English; otherwise the call is retried once with the differences named, then the page is
-not written (below). Relative links in the prose are rewritten before translation: a page
-of the set links to its translation, anything else to the English file on GitHub. Every
-heading gets an explicit `<a id>` with its English anchor, so `#anchor` links keep working
-on the translated page. The first line of each translation stamps the git blob of the
-English page it was made from; `check` compares that stamp with the file. A change to the
-model or a banner makes every page stale; a change to the prompt does not: regenerate with
-`--all`. The READMEs carry a generated language line that `update` rewrites without
-translating; adding a language changes the English README's line, so its blob, and every
-README is translated again.
+not written (below). The assembled page is held to the same label rule before it is
+written. Relative links in the prose are rewritten before translation: a page of the set
+links to its translation, anything else to the English file on GitHub. Every heading gets
+an explicit `<a id>` with its English anchor, so `#anchor` links keep working on the
+translated page. The first line of each translation stamps the git blob of the English page
+it was made from; `check` compares that stamp with the file. A change to the model or a
+banner makes every page stale; a change to the prompt does not: regenerate with `--all`.
+The READMEs carry a generated language line that `update` rewrites without translating;
+adding a language changes the English README's line, so its blob, and every README is
+translated again.
 
 The run estimates its cost before the first call and stops when the estimate, or the
 spend reported by the API, passes LOOM_I18N_MAX_USD (default 5). Every call checks the cap
@@ -525,7 +526,8 @@ def language_lines_differ() -> list[str]:
 
 
 class TranslationDiffers(Exception):
-    """A page's translation still breaks the invariants after its retry."""
+    """A page's translation breaks the invariants: a section after its retry, or the
+    assembled page (a label borrowed from another section)."""
 
 
 @dataclass
