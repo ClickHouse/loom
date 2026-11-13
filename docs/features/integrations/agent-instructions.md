@@ -1,11 +1,12 @@
 # Agent instructions
 
-A short block in an agent's instruction file tells it when to recall memory, when to save
-a fact and when to ask the code index instead of grepping or reading files. This page
-gives that block once and the file each client reads it from; paste it, fill in the
-code namespace, and commit it with the repository.
+A short block in an agent's instruction file tells it to load Loom's context at the start
+of each task and before each edit, when to save a fact and when to ask the code index
+instead of grepping or reading files. This page gives that block once and the file each
+client reads it from; paste it, fill in the code namespace, and commit it with the
+repository.
 
-The Claude Code and Codex plugins already teach this through their skills
+The Claude Code and Codex plugins already do this through their hooks and skills
 ([Claude Code](claude-code.md#skills), [Codex](codex.md#skills)); the block is for every
 other client, and for Claude Code or Codex connected without the plugin. It names the
 tools the `coding` toolset lists, so connect the client on `?toolset=coding`:
@@ -18,14 +19,23 @@ tools the `coding` toolset lists, so connect the client on `?toolset=coding`:
 ## Loom: memory and code index
 
 Loom is connected as an MCP server; its tools are named `loom_*`. A tool you do not see
-listed runs through `loom_op` with its dotted name (`memory.history`).
+listed runs through `loom_op` with the op's dotted name: drop `loom_` and write the dots
+(`loom_code_symbol` is `code.symbol`, `loom_working_memory_set` is `working_memory.set`).
+
+Every task (no hook loads Loom for you, so these two calls are not optional)
+
+- At the start of each task, before planning: `loom_context_pack` with the task as
+  `query`. It returns the decisions, constraints and memories that bear on it.
+- Before editing a file: `loom_op` with `memory.for_file` and
+  `{"path": "<repo-relative path>", "extra_namespaces": ["<code-namespace>"]}`. Follow
+  every constraint and decision it returns.
 
 Memory
 
-- Before a non-trivial task, call `loom_search` once with the task's topic, files or
-  error. Use what it returns, and treat `abstain` as "nothing relevant". A hit whose
-  `code_state` is `changed`, `unresolved` or `missing` is about code that changed or went away since it was written:
-  check the code before relying on it.
+- To recall something mid-task, call `loom_search` with the topic, file or error. Treat
+  `abstain` as "nothing relevant". A hit whose `code_state` is `changed`, `unresolved`
+  or `missing` is about code that changed or went away since it was written: check the
+  code before relying on it.
 - When the user states a decision, preference, constraint or correction, save it with
   `loom_memory_set` right away: one plain-text fact per call under a readable key
   (`<scope>/<kind>/<id>`), dates as calendar dates. Never save a guess, your reasoning or
@@ -80,9 +90,14 @@ a section of it.
 
 ## Why these rules
 
+Agents without hooks rarely call a memory tool on their own, even when it is listed, so
+the block makes loading context part of every task, as the plugins' hooks do.
+
 Each line is the short form of what the plugins teach:
 
-- recall once and save stated facts as they come: the
+- load context at the start of a task and before an edit: the plugins' session-start and
+  file-context hooks, which call `context.pack` and `memory.for_file`;
+- recall and save stated facts as they come: the
   [`loom-memory`](../../../integrations/claude-code-plugin/skills/loom-memory/SKILL.md)
   skill;
 - the code index before grep, and grep where the index cannot answer: the
