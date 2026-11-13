@@ -162,9 +162,10 @@ schema. These rules keep that safe. The operator procedure is in
     does not hold there either: N-1 answers a `high` row with its value and hash, and
     audits that read as a sensitive one. N's conflict resolver does not read the
     `memory.unsupersede` record of an Undo made on an N-1 replica, or before the upgrade:
-    it carries neither the restored hash nor the restore version. The restored row then reads as a statement made at the Undo,
-    newer than the memory it was retired behind, so a confident update verdict can retire
-    that memory although the person kept both. Pinning it prevents that.
+    it carries neither the restored hash nor the restore version. The restored row then
+    reads as a statement made at the Undo, newer than the memory it was retired behind,
+    so a confident update verdict can retire that memory although the person kept both.
+    Pinning it prevents that.
 13. **A name N spells differently is a different node.** N keeps combining marks and
     NFKC-normalises an entity's name (`दिल्ली`, `İstanbul` as `istanbul`); N-1 split them
     into fragments (`द ल ल`, `i stanbul`). ASCII names spell the same in both, and so do
