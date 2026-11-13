@@ -157,7 +157,7 @@ PLANES: tuple[tuple[str, str, str, bool], ...] = (
     (
         "conflicts",
         "conflicts",
-        "two facts that disagree: conflicts.list shows them, conflicts.resolve settles one",
+        "two facts that disagree: the user settles them in the dashboard's Review queue",
         True,
     ),
     (

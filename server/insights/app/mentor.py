@@ -427,18 +427,17 @@ def render_pack_section(
     profile: MentorProfile | None, *, cap: int = PACK_CHARS, max_hints: int = PACK_MAX_HINTS
 ) -> str:
     """The `mentor` block of context.pack: up to `max_hints` hints, hard
-    capped; "" when nothing fires. The tail names the op and the skill."""
+    capped; "" when nothing fires. The tail names mentor.brief."""
     if profile is None or not profile.hints:
         return ""
-    # Over MCP the section is rendered whole, so an op is marked once; each hint's
-    # note sits mid-section, so it goes first.
+    # Over MCP the section is rendered whole, so each op is marked once; a hint's
+    # core-listing note is dropped, since the namer marks the op.
     namer = hint_namer.get()
     items = [
         f"{h.code}: {without_listing_note(h.text) if namer else h.text}"
         for h in profile.hints[:max_hints]
     ]
-    # Each hint already names its op; pointing at the skill makes agents open
-    # the skill file even in sessions whose results carry no hint.
+    # Each hint already names its op; the tail points at the evidence behind them.
     tail = "mentor.brief has the evidence"
     while True:
         body = "Loom mentor — " + " · ".join([*items, tail])

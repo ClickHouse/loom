@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from server.core import llm_free
@@ -15,7 +16,7 @@ from server.transport._common import ledger_identity
 from server.transport.lean_results import mcp_op_result
 from server.transport.mcp_config import TOOL_EXEC_FAILED, _err, _ok
 from server.transport.mcp_identity import default_namespace_note
-from server.transport.mcp_tools import _emit_mcp_event, mentor_text_for_toolset
+from server.transport.mcp_tools import _emit_mcp_event
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope
@@ -262,11 +263,11 @@ def _emit_success(
     request_id: str,
     result: Any,
     mcp_session_id: str,
-    toolset: str | None,
+    namer: Callable[[str], str],
 ) -> tuple[str, str] | None:
     """The success row of a tool call, with the mentor's hint computed first
     so the row carries `out_hint_code`. Returns the hint for the result."""
-    hint = _mentor_hint(op.name, arguments, result, mcp_session_id, toolset)
+    hint = _mentor_hint(op.name, arguments, result, mcp_session_id, namer)
     _emit_mcp_event(
         op.name,
         arguments,
@@ -284,10 +285,10 @@ def _mentor_hint(
     arguments: dict[str, Any],
     result: Any,
     mcp_session_id: str,
-    toolset: str | None,
+    namer: Callable[[str], str],
 ) -> tuple[str, str] | None:
-    """The mentor's one hint for this call, naming ops as the ``toolset`` listing
-    does, or None; the code is published on the request context for the ledger
+    """The mentor's one hint for this call, its ops named by ``namer`` for the
+    caller's listing, or None; the code is published on the request context for the ledger
     row. Never raises and never reads the store."""
     try:
         from server.insights.app import mentor as _mentor
@@ -308,7 +309,7 @@ def _mentor_hint(
         if hint is None:
             return None
         # the ledger names a hint only once it is rendered
-        text = mentor_text_for_toolset(hint[1], toolset)
+        text = namer(hint[1])
         set_hint_context(hint[0])
         return hint[0], text
     except Exception:  # noqa: BLE001 — advice never fails a tool call

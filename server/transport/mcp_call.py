@@ -320,7 +320,8 @@ async def _call_tool(
     from server.insights.app.mentor import hint_namer
 
     start = time.perf_counter()
-    namer = hint_namer.set(mentor_namer(toolset))
+    namer = mentor_namer(toolset)
+    namer_token = hint_namer.set(namer)
     try:
         with gates.tenant_slot(auth, target), llm_free.serving(op):
             result = await op.handler(input_obj)
@@ -340,10 +341,10 @@ async def _call_tool(
             elapsed_ms=int((time.perf_counter() - start) * 1000),
         )
     finally:
-        hint_namer.reset(namer)
+        hint_namer.reset(namer_token)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
     mentor_hint = _emit_success(
-        op, arguments, elapsed_ms, request_id, result, mcp_session_id, toolset
+        op, arguments, elapsed_ms, request_id, result, mcp_session_id, namer
     )
 
     _record_success_telemetry(call, result, elapsed_ms)

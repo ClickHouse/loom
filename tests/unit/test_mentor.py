@@ -622,7 +622,7 @@ def test_pack_section_renders_three_hints_within_the_cap_and_nothing_when_quiet(
     assert len(body) <= m.PACK_CHARS and body.count("·") <= 1
 
 
-def test_the_pack_section_names_ops_for_the_mcp_listing_hint_by_hint() -> None:
+def test_the_pack_section_names_ops_for_the_mcp_listing_rendered_whole() -> None:
     from server.transport import mcp_tools
 
     note = " (call working_memory.set via loom_op)"
@@ -631,7 +631,7 @@ def test_the_pack_section_names_ops_for_the_mcp_listing_hint_by_hint() -> None:
         _h("b", text="working_memory.set holds it."),
     )
     assert "search.query" in m.render_pack_section(p)  # HTTP: as stored
-    token = m.hint_namer.set(lambda text: mcp_tools.mentor_text_for_toolset(text, "core"))
+    token = m.hint_namer.set(mcp_tools.mentor_namer("core"))
     try:
         body = m.render_pack_section(p)
     finally:
@@ -840,14 +840,14 @@ def test_emit_agent_event_carries_the_current_hint_code(monkeypatch: pytest.Monk
 
 
 def test_mcp_helper_attaches_the_hint_and_publishes_the_code() -> None:
-    from server.transport import mcp_outcome
+    from server.transport import mcp_outcome, mcp_tools
 
     hint = mcp_outcome._mentor_hint(
         "memory.get",
         {"org": "o", "namespace": "ns", "agent": "a", "memory_key": "k"},
         {"found": False},
         "mcp-session-1",
-        None,
+        mcp_tools.mentor_namer(None),
     )
     assert hint is not None and hint[0] == "get_miss"
     assert ledger.current_hint_code() == "get_miss"
@@ -858,7 +858,7 @@ def test_mcp_helper_attaches_the_hint_and_publishes_the_code() -> None:
             {"org": "o", "namespace": "ns", "memory_key": "k2"},
             {"found": False},
             "mcp-session-1",
-            None,
+            mcp_tools.mentor_namer(None),
         )
         is None
     )
@@ -1695,11 +1695,15 @@ def test_an_echoed_key_comes_through_rendering_as_written(key: str) -> None:
 
 
 def test_a_call_hint_on_mcp_names_ops_for_its_listing() -> None:
-    from server.transport import mcp_outcome
+    from server.transport import mcp_outcome, mcp_tools
 
     args = {"org": "o", "namespace": "ns", "agent": "a", "memory_key": "k"}
-    core = mcp_outcome._mentor_hint("memory.get", args, {"found": False}, "s-core", "core")
-    coding = mcp_outcome._mentor_hint("memory.get", args, {"found": False}, "s-coding", "coding")
+    core = mcp_outcome._mentor_hint(
+        "memory.get", args, {"found": False}, "s-core", mcp_tools.mentor_namer("core")
+    )
+    coding = mcp_outcome._mentor_hint(
+        "memory.get", args, {"found": False}, "s-coding", mcp_tools.mentor_namer("coding")
+    )
     assert core is not None and coding is not None
     assert "loom_search recalls by meaning" in core[1] and "memory.list (via loom_op)" in core[1]
     assert "loom_search recalls by meaning" in coding[1] and "(call " not in coding[1]
@@ -1720,6 +1724,9 @@ def test_no_hint_text_writes_an_op_as_a_call_or_names_a_hidden_op() -> None:
                 continue
             assert not paren, f"{name}( in {text!r}"
             assert name not in _MCP_HIDDEN_OPS or name.startswith("conflicts."), text
+    # a plane's `when` carries no note, so it names no hidden op at all
+    for _, _, when, _ in mentor_rules.PLANES:
+        assert not any(op in when for op in _MCP_HIDDEN_OPS), when
 
 
 def test_the_handshake_mentor_line_names_ops_for_its_listing(
