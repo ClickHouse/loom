@@ -26,8 +26,10 @@ flowchart LR
 
 A definition is a memory row with `memory_type = 'definition'` under a `definition/` key.
 The key does not encode the term: the review path picks it (below), a direct caller
-chooses it, and it stays the same through every revision. Names, not keys, keep two
-definitions apart.
+chooses it, and it stays the same through every revision. At promotion, names decide
+whether two definitions clash: the name check below keeps two shared definitions from
+holding one name. At write time, rows stay told apart by key, as for any key-identified
+type.
 
 A name is compared in its folded form: format characters (Unicode category Cf, such as a
 pasted byte-order mark) dropped, then `canonical_document_text` (`server/core/hashing.py`:
@@ -175,7 +177,7 @@ each break.
 - `memory.promote` refuses a `definition` promotion without the approved hash. Today no
   hash is asked for.
 - It refuses one from a row that is not namespace-wide, or whose target key is not the
-  source's key.
+  source's key or lies outside `definition/`. Today any key is promoted.
 - It refuses one whose term or alias another live shared definition already holds. Today
   only an embedding-close shared row refuses it.
 - It refuses one whose value is labelled or graded `medium`. Today only a `high` label
@@ -200,33 +202,34 @@ rewrite of a shared row that is not a promotion, such as a scrub, does not count
 
 A caller may already write rows of type `definition`; they are governed only once an admin
 promotes them, but their write-time verdicts change with this design: `definition` joins
-`KEY_IDENTIFIED_TYPES`, as `decision` is, so two definitions under different keys are two
-definitions however alike they read. Unlike a decision, a definition is never judged
-against a close definition under another key: the write-time check neither marks nor
-supersedes it (no merge, duplicate, refinement or pinned-peer refusal, and no supersession
-by the value-update pass of `memory.bulk_set`, and no fold of a `memory.bulk_set` entry
-into a byte-identical row under another key, which [conflicts and
+`KEY_IDENTIFIED_TYPES`, as `decision` is, which only switches off the write-time verdicts
+across keys: two rows under different keys stay two rows however alike they read, and only
+the promotion's name check compares their names. Unlike a decision, a definition is never
+judged against a close definition under another key: the write-time check neither marks
+nor supersedes it (no merge, duplicate, refinement or pinned-peer refusal, and no
+supersession by the value-update pass of `memory.bulk_set`, and no fold of a
+`memory.bulk_set` entry into a byte-identical row under another key, which [conflicts and
 refusal](../features/memory/conflicts-and-refusal.md) applies to every other type), and
 the conflict resolver ([conflicts and
 refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither flags
 nor retires it, and `memory.consolidate` leaves rows of type `definition` out of its
 clusters (today it clusters one identity's live, unpinned, unlocked rows of one type that
 are not `high`, which reaches a namespace-wide row when called under agent and user `'-'`,
-by similarity and tombstones the merged keys), since a definition is identified by its
-names, which only the promotion's name check compares, and `MRR` is not a revision of
-`ARR`. Under `newest_wins`, the named-fact path, which closes an older single-valued fact
-and retires the rows behind it across keys and types (`newest_wins_contradiction`), never
-retires a definition's namespace-wide row either. And a write of a `definition/` key by
-another identity (a user's own copy) does not retire the namespace-wide row of that key,
-as same-key supersession does today for every unpinned row the writer reads: only a write
-of the namespace-wide row itself revises it, so no writer ends an admin's definition by
-writing a private copy, which the term leg then keeps out of the served list. This is an
-exception to the `newest_wins` rule that a write for a key retires every older live row
-with that key, whoever wrote it ([conflicts and
-refusal](../features/memory/conflicts-and-refusal.md)), for a definition's namespace-wide
-row only; the pinned-peer exemption above is the one `decision` already has as a
-key-identified type. The implementing pull request updates the policy table of that page,
-the memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check and
+by similarity and tombstones the merged keys), since a row under another key is not a
+revision, and `MRR` is not a revision of `ARR`. Under `newest_wins`, the named-fact path,
+which closes an older single-valued fact and retires the rows behind it across keys and
+types (`newest_wins_contradiction`), never retires a definition's namespace-wide row
+either. And a write of a `definition/` key by another identity (a user's own copy) does
+not retire the namespace-wide row of that key, as same-key supersession does today for
+every unpinned row the writer reads: only a write of the namespace-wide row itself revises
+it, so no writer ends an admin's definition by writing a private copy, which the term leg
+then keeps out of the served list. This is an exception to the `newest_wins` rule that a
+write for a key retires every older live row with that key, whoever wrote it ([conflicts
+and refusal](../features/memory/conflicts-and-refusal.md)), for a definition's
+namespace-wide row only; the pinned-peer exemption above is the one `decision` already has
+as a key-identified type. The implementing pull request updates the comment on
+`KEY_IDENTIFIED_TYPES` (`server/memory/domain/memory_types.py`), the policy table of that
+page, the memory-plane rule (`.claude/rules/memory-plane.md`), the write-time check and
 consolidation in [memory architecture](../architecture/memory-architecture.md) and
 [conflicts and refusal](../features/memory/conflicts-and-refusal.md). N-1 still gives the
 old verdicts during a rollout. Conflict surfacing compares a row only with rows of its own
@@ -267,9 +270,11 @@ matches a query that puts two spaces between the words; only case follows the pe
 rule below. A term or alias matches where it appears in the query with no character next
 to it that continues its edge:
 
-- whatever the script, a combining mark (category M) after the term continues its edge,
-  so `कम` does not match inside "कमी" nor `ก` inside "กิ"; a mark before the term follows
-  the rule of the script it belongs to, below;
+- whatever the script, a combining mark (category M) after the term continues its edge, so
+  `कम` does not match inside "कमी" nor `ก` inside "กิ"; a mark before the term follows the
+  rule, below, of the script of the base character it follows (Unicode's rule for a mark
+  of the Inherited script, whatever its own script), and a mark with no base before it
+  continues nothing;
 - next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
   those;
 - next to a letter of another script written with spaces (Cyrillic, Greek, Devanagari):
@@ -277,8 +282,8 @@ to it that continues its edge:
   match inside "कीमत";
 - before Hangul, a Hangul syllable, so `매출` does not match inside "판매출고"; after it,
   nothing, since Korean particles attach to the word before them;
-- next to a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar), a
-  mark of one, or punctuation: nothing, so `ยอดขาย` matches in "ดูยอดขาย".
+- next to a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar), a mark
+  of one, or punctuation: nothing, so `ยอดขาย` matches in "ดูยอดขาย".
 
 So `рост` does not match inside "простой" and `café` not inside "cafés", while `MRR`
 matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". Case is decided per word of
@@ -675,21 +680,21 @@ its shared row. When more than one live shared definition holds the name, the re
 refused and names them, so the admin demotes all but one. A draft for a new term is
 written under the key its queue row carries (`memory_key`): `definition/` and a random id
 drawn when the draft claims its candidate id, so every retry of one review uses one key,
-and a draft queued again after a rollback gets a new one. `learnings.list` shows that key,
-and the review's answer names the key it wrote, which for a revision is the governed one.
-A definition promotes to memory only; a `destination` of `knowledge` or `both` is refused
-for these candidates. A draft rejected before any promotion attempt leaves nothing behind
-but its queue row. Between the write and the promotion the row is an ordinary
-namespace-wide row, which the ordinary legs read for those moments. A `memory.set`
-answering `PUBLICATION_PENDING` has committed the write (the authority serves it), so the
-review carries on with the promotion. A promotion refused after the write (a racing edit
-or a racing term) undoes the review's own write, with `if_match_sha256` against the
-version it wrote, so a row a writer changed since is left to that writer, and leaves the
-candidate pending. For a revision it writes the previous head's text back, so the old
-definition is governed again with no new promotion; for a new term it tombstones the row
-with `memory.delete` and `if_match_sha256` against the version it wrote, a precondition
-the implementing pull request adds to `memory.delete` as `memory.set` has it, so a
-writer's edit made since is never deleted.
+and a draft queued again after a rollback gets a new one. `learnings.list` shows that key;
+for a revision the review writes under the governed key instead, which the listed key does
+not name, and `memory.definitions.list` shows where it landed. A definition promotes to
+memory only; a `destination` of `knowledge` or `both` is refused for these candidates. A
+draft rejected before any promotion attempt leaves nothing behind but its queue row.
+Between the write and the promotion the row is an ordinary namespace-wide row, which the
+ordinary legs read for those moments. A `memory.set` answering `PUBLICATION_PENDING` has
+committed the write (the authority serves it), so the review carries on with the
+promotion. A promotion refused after the write (a racing edit or a racing term) undoes the
+review's own write, with `if_match_sha256` against the version it wrote, so a row a writer
+changed since is left to that writer, and leaves the candidate pending. For a revision it
+writes the previous head's text back, so the old definition is governed again with no new
+promotion; for a new term it tombstones the row with `memory.delete` and `if_match_sha256`
+against the version it wrote, a precondition the implementing pull request adds to
+`memory.delete` as `memory.set` has it, so a writer's edit made since is never deleted.
 
 Every attempt, the first and each retry, decides from the head it reads, checking these in
 order, the first that matches deciding:
