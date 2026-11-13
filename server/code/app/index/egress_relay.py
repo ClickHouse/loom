@@ -22,9 +22,8 @@ from collections.abc import Callable
 
 # not a setting: the proxy's MAX_TUNNELS (a unit test pins them equal); no job holds more
 MAX_BRIDGES = 32
-# How long a client may stay silent once the proxy's side of its tunnel has ended
-# (the server closed it, or the proxy did).
-# not a setting: a pause between a client's writes, far below any timeout to tune
+# How long a client may stay silent once the proxy's side has ended.
+# not a setting: a pause between writes, far below any timeout to tune
 _LINGER_S = 1.0
 
 

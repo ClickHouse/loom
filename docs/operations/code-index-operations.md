@@ -543,8 +543,8 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` (10 s by default) without a byte either way;
   while bytes still wait for a slow client, the idle timeout applies instead. A tunnel
   whose client sent EOF before any byte moved (a connection it gave up on) is closed at
-  once. Once the proxy's side of a tunnel has ended (the server closed it, or the proxy
-  did), the relay ends its connection after at least a second without a byte from the
+  once. Once the proxy's side of a tunnel has ended (the server closed or reset it, or
+  the proxy closed it), the relay ends its connection after at least a second without a byte from the
   client. A client that never reads what it was sent keeps its relay connection, and so
   its relay slot.
 

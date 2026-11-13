@@ -62,10 +62,10 @@ async def vet_connect(
 
 @dataclass
 class _Traffic:
-    """What both directions of one tunnel have moved, and when they last did."""
+    """Whether either direction of one tunnel has moved a byte, and when one last did."""
 
     last: float
-    moved: int = 0
+    moved: bool = False
 
 
 async def _splice(
@@ -87,13 +87,13 @@ async def _splice(
             if not data:
                 break
             traffic.last = time.monotonic()
-            traffic.moved += len(data)
+            traffic.moved = True
             writer.write(data)
             await writer.drain()
         if writer.can_write_eof():
             writer.write_eof()
-    except (ConnectionError, OSError):
-        pass
+    except (ConnectionError, OSError):  # a reset: the other side is done with as well
+        writer.close()
 
 
 async def _until_server_quiet(
@@ -172,8 +172,7 @@ class EgressProxy:
         server_side = asyncio.create_task(_splice(up_reader, writer, traffic))
         try:
             await _splice(reader, up_writer, traffic)
-            client_gave_up = not traffic.moved  # its EOF came before any byte either way
-            if not client_gave_up:
+            if traffic.moved:  # an EOF before any byte either way: the client gave up
                 await _until_server_quiet(server_side, traffic, writer)
         finally:
             up_writer.close()

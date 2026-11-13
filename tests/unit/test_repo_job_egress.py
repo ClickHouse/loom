@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import socket
+import struct
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -456,6 +458,29 @@ async def test_a_client_that_gives_up_before_a_byte_frees_its_slot_at_once(
     finally:
         done.set()
         await proxy.close()
+        server.close()
+        await asyncio.wait_for(server.wait_closed(), timeout=5)
+
+
+async def test_a_server_that_resets_ends_the_tunnel(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A load balancer may drop an idle keep-alive with a reset; the client, silent in
+    its pool, must not hold the slot until the idle timeout."""
+
+    async def resets(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readexactly(7)
+        sock = writer.get_extra_info("socket")
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        writer.close()
+
+    proxy, server, reader, writer = await _tunnel_to(resets, sock_dir, monkeypatch)
+    try:
+        writer.write(b"request")
+        assert await asyncio.wait_for(reader.read(), timeout=5) == b""
+        writer.close()
+    finally:
+        await asyncio.wait_for(proxy.close(), timeout=5)
         server.close()
         await asyncio.wait_for(server.wait_closed(), timeout=5)
 
