@@ -306,7 +306,6 @@ def _on_terminal(
     import pty
     import select
     import signal
-    import time
 
     pid, fd = pty.fork()
     if pid == 0:
@@ -1436,7 +1435,7 @@ def _opened(log: Path, wait: float = 1) -> list[str]:
     """What xdg-open got. It runs in the background, so a call that expects it to
     have run waits up to `wait` seconds for it."""
     deadline = time.monotonic() + wait
-    while not log.exists() and time.monotonic() < deadline:
+    while not (log.exists() and log.read_text()) and time.monotonic() < deadline:
         time.sleep(0.05)
     return log.read_text().splitlines() if log.exists() else []
 
