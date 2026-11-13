@@ -64,19 +64,20 @@ kubectl -n loom-tokens-research create secret generic research-agent --from-lite
 ```
 
 Substrate's Kubernetes credential provider reads a Secret only from namespaces the
-atespace is granted. An administrator grants it in the provider's namespace policy and
-restarts the provider, which reads the policy at startup:
+atespace is granted. An administrator grants the atespace the token namespace in the
+provider's namespace policy and restarts the provider, which reads the policy at startup:
 
 ```bash
 kubectl -n ate-system edit configmap k8s-credential-provider-namespace-policy
 ```
 
 ```yaml
-namespace-policy.yaml: |
-  policies:
-  - atespace: research
-    allowedNamespaces:
-    - loom-tokens-research
+data:
+  namespace-policy.yaml: |
+    policies:
+    - atespace: research
+      allowedNamespaces:
+      - loom-tokens-research
 ```
 
 ```bash
@@ -89,46 +90,7 @@ atespace to its own agents' tokens.
 
 The token expires after `--ttl-days`: mint a new one before then and update the Secret.
 
-## 3. Allow the actor to reach Loom, with its token
-
-An actor has one egress policy. This one allows HTTP to Loom's Service and replaces the
-`Authorization` header the agent sends with `Bearer <token>` from the Secret:
-
-```bash
-kubectl ate create egress-policy research-agent -a research -f - <<'EOF'
-rules:
-- http:
-    hostnames: ["loom.loom.svc.cluster.local"]
-    ports:
-      numbers: [7777]
-    effects:
-      replaceHeaders:
-      - header: Authorization
-        prefix: "Bearer "
-        credentialUri: ate-secret://k8s.io/default/loom-tokens-research/research-agent/token
-EOF
-```
-
-- The rule matches the request's host, so the agent must use the same name:
-  `http://loom.loom.svc.cluster.local:7777/mcp`.
-- The gateway replaces a header that is there. A request without an `Authorization`
-  header goes out unchanged and Loom refuses it.
-- A missing Secret, or an atespace without the grant, makes the gateway refuse the request.
-- The chart serves HTTP inside the cluster, so on this rule the token crosses from the
-  gateway to Loom unencrypted. To encrypt that hop, point the agent at a TLS endpoint in
-  front of Loom whose certificate is publicly trusted, such as the chart's Ingress host,
-  and allow that host with an `https` rule. The gateway then intercepts the agent's TLS, so
-  the actor mounts
-  Substrate's [egress trust bundle](https://ate.dev/docs/guides/egress-trust-bundle/), and
-  Loom sees connections from the ingress controller rather than from `atenet-egress`.
-
-Rules for whatever else the agent needs, such as its model provider, go in the same
-policy. `kubectl ate update egress-policy` replaces every rule and refuses a policy whose
-metadata is not the current one, so read the policy with
-`kubectl ate get egress-policy research-agent -a research -o yaml`, add the rules beside the
-Loom rule, and send that file back with `kubectl ate update egress-policy ... -f`.
-
-## 4. Point the agent's MCP client at Loom
+## 3. Point the agent's MCP client at Loom
 
 Substrate's documentation describes no MCP configuration for actors: configure the agent's
 MCP client in its image or as literal environment values in the actor template. The server
@@ -149,6 +111,58 @@ entry is Loom's endpoint with a placeholder header, which the gateway replaces:
 The key names follow the client ([MCP clients](./mcp-clients.md) has the entry for each).
 Keep the token out of the template: Substrate stores templates and snapshots, and its
 container environment takes literal values only.
+
+Then create the actor from that template; its egress policy comes next:
+
+```bash
+kubectl ate create actor research-agent --template=<template> -a research
+```
+
+## 4. Allow the actor to reach Loom, with its token
+
+An actor has one egress policy. This one, for the actor created above, allows HTTP to
+Loom's Service and replaces the `Authorization` header the agent sends with
+`Bearer <token>` from the Secret:
+
+```bash
+kubectl ate create egress-policy research-agent -a research -f - <<'EOF'
+rules:
+- http:
+    hostnames: ["loom.loom.svc.cluster.local"]
+    ports:
+      numbers: [7777]
+    effects:
+      replaceHeaders:
+      - header: Authorization
+        prefix: "Bearer "
+        credentialUri: ate-secret://k8s.io/default/loom-tokens-research/research-agent/token
+EOF
+```
+
+- The rule matches the request's host, so it names the host of the MCP entry's URL:
+  `loom.loom.svc.cluster.local`.
+- The gateway replaces a header that is there. A request without an `Authorization`
+  header goes out unchanged and Loom refuses it.
+- A missing Secret, or an atespace without the grant, makes the gateway refuse the request.
+- The chart serves HTTP inside the cluster, so on this rule the token crosses from the
+  gateway to Loom unencrypted. To encrypt that hop, point the agent at a TLS endpoint in
+  front of Loom whose certificate is publicly trusted, such as the chart's Ingress host,
+  and allow that host with an `https` rule. The gateway then intercepts the agent's TLS, so
+  the actor mounts Substrate's
+  [egress trust bundle](https://ate.dev/docs/guides/egress-trust-bundle/), and Loom sees
+  connections from the ingress controller rather than from `atenet-egress`.
+
+Rules for whatever else the agent needs, such as its model provider, go in the same
+policy. `kubectl ate update egress-policy` replaces every rule and refuses a policy whose
+metadata is not the current one, so read the policy with
+`kubectl ate get egress-policy research-agent -a research -o yaml`, add the rules beside the
+Loom rule, and send that file back with `kubectl ate update egress-policy ... -f`.
+
+With the policy in place, start the actor:
+
+```bash
+kubectl ate resume actor research-agent -a research
+```
 
 ## Several agents
 
