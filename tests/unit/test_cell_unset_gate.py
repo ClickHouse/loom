@@ -181,12 +181,15 @@ def test_pending_postgres_migrations_boot_unready_rather_than_refuse(
 def test_the_server_reads_the_state_once_and_runs_one_refresh_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cell, "refresh", AsyncMock(return_value=True))
+    read = AsyncMock(return_value=True)
+    monkeypatch.setattr(cell, "refresh", read)
     monkeypatch.setattr(cell, "start_refresh_loop", lambda: "loop")
     assert asyncio.run(boot.start_cell_gate()) == ["loop"]
+    read.assert_awaited_once()
     # Under the ClickHouse authority with LOOM_CELL unset nothing is read.
     monkeypatch.setattr(settings, "storage_authority", "clickhouse")
     assert asyncio.run(boot.start_cell_gate()) == []
+    read.assert_awaited_once()
 
 
 def test_token_state_starts_no_cell_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
