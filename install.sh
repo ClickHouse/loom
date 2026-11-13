@@ -653,8 +653,8 @@ main() {
       elif grep -Eq '(^|[[:space:]])loom@loom$' "$tmp_dir/claude.plugins"; then
         printf 'Claude Code: the Loom plugin is installed already; `claude mcp list` shows the server it uses, and `claude plugin install loom@loom --config server_url=%s` points it here\n' "$server_url"
         kept=1
-      elif grep -q '"loom"[[:space:]]*:' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" 2>/dev/null; then
-        printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s), and is left as it is; to use the plugin instead: claude mcp remove loom, then claude plugin install loom@loom --config server_url=%s\n' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" "$server_url"
+      elif grep -q '"loom"[[:space:]]*:' "${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json" 2>/dev/null; then
+        printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s), and is left as it is; to use the plugin instead: claude mcp remove loom, then claude plugin install loom@loom --config server_url=%s\n' "${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json" "$server_url"
         kept=1
       elif ! node_ok; then
         # Its hooks and MCP header helper run the `node` on PATH, with no search.
@@ -668,12 +668,12 @@ main() {
           printf 'Claude Code: connected to %s (the plugin'"'"'s other settings are optional)\n' "$server_url"
           agents="$agents, Claude Code"
         else
-          printf 'Claude Code: could not install the plugin (above); the README has the two commands\n'
+          printf 'Claude Code: could not install the plugin (above); to try again: claude plugin marketplace add ClickHouse/loom && claude plugin install loom@loom --config server_url=%s\n' "$server_url"
         fi
       fi
     fi
     if considered codex && command -v codex >/dev/null 2>&1; then
-      codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
+      codex_config="${CODEX_HOME:-${HOME:-}/.codex}/config.toml"
       if bounded 60 codex plugin list >"$tmp_dir/codex.plugins"; then
         # Its STATUS column: "installed, enabled", "installed, disabled" or, with
         # only the marketplace added, "not installed".
@@ -699,15 +699,15 @@ main() {
           agents="$agents, Codex"
           node_ok || printf 'Codex: the plugin runs on Node.js 18 or later, which is not on PATH here; without one its launcher finds, use the MCP server alone instead: codex plugin remove loom@loom && codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
         else
-          printf 'Codex: could not add the plugin (above); the README has the two commands\n'
+          printf 'Codex: could not add the plugin (above); to try again: codex plugin marketplace add ClickHouse/loom && codex plugin add loom@loom\n'
         fi
       fi
     fi
     # VS Code's own CLI adds an MCP server by name; a `loom` entry the user has (for
     # a team server, say) is left as it is. Inside a remote session or WSL, `code`
     # is another machine's, so it is not offered there.
-    vscode_mcp="${XDG_CONFIG_HOME:-$HOME/.config}/Code/User/mcp.json"
-    [ "$(uname -s)" != Darwin ] || vscode_mcp="$HOME/Library/Application Support/Code/User/mcp.json"
+    vscode_mcp="${XDG_CONFIG_HOME:-${HOME:-}/.config}/Code/User/mcp.json"
+    [ "$(uname -s)" != Darwin ] || vscode_mcp="${HOME:-}/Library/Application Support/Code/User/mcp.json"
     if ! considered vscode; then
       :
     elif command -v code >/dev/null 2>&1 && [ -n "${REMOTE_CONTAINERS:-}${CODESPACES:-}${SSH_CONNECTION:-}${WSL_DISTRO_NAME:-}" ]; then

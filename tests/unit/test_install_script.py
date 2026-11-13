@@ -291,11 +291,16 @@ def test_switching_an_install_to_an_outside_clickhouse(install) -> None:
 
 
 def _on_terminal(
-    env: dict[str, str], args: list[str], prompt: bytes, answer: bytes, *, every: bool = False
+    env: dict[str, str],
+    args: list[str],
+    prompt: bytes | None,
+    answer: bytes = b"",
+    *,
+    every: bool = False,
 ) -> bytes:
     """Run the installer on a pseudo-terminal, type `answer` at the first `prompt`
-    (at each one, with `every`) and wait for it to finish, within a deadline; the
-    run must exit 0. Returns what the terminal showed."""
+    (at each one, with `every`; none without a prompt) and wait for it to finish,
+    within a deadline; the run must exit 0. Returns what the terminal showed."""
     import pty
     import select
     import signal
@@ -313,7 +318,7 @@ def _on_terminal(
                     seen += os.read(fd, 1024)
                 except OSError:  # the child closed the terminal
                     pass
-            if seen.count(prompt) > answered and (every or not answered):
+            if prompt and seen.count(prompt) > answered and (every or not answered):
                 os.write(fd, answer)
                 answered += 1
             done, code = os.waitpid(pid, os.WNOHANG)
@@ -324,7 +329,7 @@ def _on_terminal(
             os.kill(pid, signal.SIGKILL)
             os.waitpid(pid, 0)
         os.close(fd)
-    assert answered, seen
+    assert answered or prompt is None, seen
     assert status is not None and os.waitstatus_to_exitcode(status) == 0, seen
     return seen
 
@@ -1395,6 +1400,53 @@ def test_a_server_error_connects_no_agent(install, installer_env: dict[str, str]
     assert claude.read_text() == ""
 
 
+def _desktop(installer_env: dict[str, str]) -> tuple[dict[str, str], Path]:
+    """A Linux desktop for a started install: DISPLAY set, a `uname` that says Linux
+    and an `xdg-open` that logs the URL it gets. Returns (env, xdg-open log)."""
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    log = bin_dir / "xdg-open.log"
+    for name, body in (("uname", "echo Linux"), ("xdg-open", f'echo "$*" >> "{log}"')):
+        stub = bin_dir / name
+        stub.write_text(f"#!/bin/sh\n{body}\n")
+        stub.chmod(0o755)
+    env = {k: v for k, v in installer_env.items() if k not in ("LOOM_NO_OPEN", "SSH_CONNECTION")}
+    return {**env, "LOOM_SKIP_START": "0", "DISPLAY": ":0"}, log
+
+
+def _opened(log: Path) -> list[str]:
+    """What xdg-open got; it runs in the background, so give it a moment."""
+    import time
+
+    deadline = time.monotonic() + 5
+    while not log.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return log.read_text().splitlines() if log.exists() else []
+
+
+def test_a_new_install_on_a_desktop_opens_the_dashboard_once(
+    install, installer_env: dict[str, str]
+) -> None:
+    _start_stubs(installer_env)
+    env, log = _desktop(installer_env)
+    _on_terminal(env, [], None)
+    assert _opened(log) == ["http://127.0.0.1:7777/"]
+    log.unlink()
+    _on_terminal(env, [], None)  # a rerun keeps its .env
+    assert _opened(log) == []
+
+
+@pytest.mark.parametrize(
+    "extra", [{"LOOM_NO_OPEN": "1"}, {"SSH_CONNECTION": "10.0.0.1 2 10.0.0.2 22"}]
+)
+def test_the_dashboard_is_not_opened_when_asked_not_to_or_over_ssh(
+    install, installer_env: dict[str, str], extra: dict[str, str]
+) -> None:
+    _start_stubs(installer_env)
+    env, log = _desktop(installer_env)
+    _on_terminal({**env, **extra}, [], None)
+    assert _opened(log) == []
+
+
 def _answer_connect_prompts(env: dict[str, str], answer: bytes) -> bytes:
     """Run a started install on a pseudo-terminal and answer every "[Y/n]" prompt."""
     return _on_terminal(env, [], b"[Y/n]", answer, every=True)
@@ -1524,7 +1576,9 @@ def test_vscode_under_wsl_is_not_offered(install, installer_env: dict[str, str])
     run, _ = install
     _start_stubs(installer_env)
     code = _agent_cli(installer_env, "code")
-    assert run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", WSL_DISTRO_NAME="Ubuntu").returncode == 0
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", WSL_DISTRO_NAME="Ubuntu")
+    assert result.returncode == 0, result.stderr
+    assert "VS Code: not offered in a remote session or WSL" in result.stdout
     assert code.read_text() == ""
 
 
