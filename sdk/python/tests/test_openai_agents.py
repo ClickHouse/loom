@@ -35,7 +35,7 @@ def _invoke(tool: FunctionTool, arguments: dict[str, Any]) -> Any:
     return asyncio.run(tool.on_invoke_tool(ctx, raw))
 
 
-def test_every_verb_is_a_function_tool_with_the_sdks_schema() -> None:
+def test_every_verb_is_a_function_tool_with_looms_schema() -> None:
     tools = loom_tools(_FakeAgent({}))  # type: ignore[arg-type]
     assert all(isinstance(t, FunctionTool) for t in tools)
     assert [t.name for t in tools] == [s["name"] for s in LOOM_TOOL_SPECS]

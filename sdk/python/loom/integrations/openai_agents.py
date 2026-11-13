@@ -76,7 +76,7 @@ def _function_tool(tools: AgentTools, spec: dict[str, Any]) -> FunctionTool:
         try:
             return await tools.execute(name, arguments)
         except LoomError as e:
-            # The SDK fails the whole run on an exception; the model can fix its call instead.
+            # openai-agents fails the whole run on an exception; the model can fix its call instead.
             return f"{name} failed: {e}"
 
     return FunctionTool(

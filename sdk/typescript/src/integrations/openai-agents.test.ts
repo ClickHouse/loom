@@ -13,7 +13,7 @@ function harness(reply: unknown, status = 200) {
 }
 
 describe("loomTools (OpenAI Agents SDK adapter)", () => {
-  it("returns every verb as a non-strict function tool with the SDK's schema", () => {
+  it("returns every verb as a non-strict function tool with Loom's schema", () => {
     const tools = loomTools(harness({}).agent);
     expect(tools.map((t) => t.name)).toEqual(LOOM_TOOL_SPECS.map((s) => s.name));
     for (const [i, t] of tools.entries()) {

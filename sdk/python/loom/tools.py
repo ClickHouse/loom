@@ -314,15 +314,19 @@ def _parse_args(args: str | Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def _int(a: Mapping[str, Any], key: str) -> int:
+    # The TypeScript check: a whole number, quoted or not, 5.0 included.
     v = a[key]
-    if isinstance(v, str):  # models sometimes quote a number
+    n = v
+    if isinstance(v, str) and v.strip():  # models sometimes quote a number
         try:
-            v = int(v.strip())
+            n = float(v)
         except ValueError:
             pass
-    if isinstance(v, bool) or not isinstance(v, int):
-        raise LoomError(f"tool argument {key} must be an integer, got {json.dumps(v)}")
-    return v
+    if isinstance(n, float) and n.is_integer():
+        n = int(n)
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise LoomError(f"tool argument {key} must be an integer, got {json.dumps(v, default=str)}")
+    return n
 
 
 def _str(a: Mapping[str, Any], key: str) -> str:

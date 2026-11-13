@@ -316,7 +316,7 @@ async def test_tools_execute_runs_each_verb_under_the_scope() -> None:
 
 
 async def test_tools_reject_unknown_bad_json_and_missing_args_and_truncate() -> None:
-    a, _ = _agent(
+    a, calls = _agent(
         {
             "context.fetch": lambda b: (
                 {"found": False, "blob_key": b["blob_key"]}
@@ -339,6 +339,9 @@ async def test_tools_reject_unknown_bad_json_and_missing_args_and_truncate() -> 
         await tools.execute("loom_recall", {"query": "seat", "top_k": "five"})
     with pytest.raises(LoomError, match="offset must be an integer, got 1.5"):
         await tools.execute("loom_fetch", {"blob_key": "b", "offset": 1.5})
+    await tools.execute("loom_recall", {"query": "seat", "top_k": 5.0})
+    await tools.execute("loom_recall", {"query": "seat", "top_k": "5.0"})
+    assert [b["top_k"] for op, b in calls if op == "memory.search"] == [5, 5]
     assert "no parked text under blob_key=nope" in await tools.execute(
         "loom_fetch", {"blob_key": "nope"}
     )
