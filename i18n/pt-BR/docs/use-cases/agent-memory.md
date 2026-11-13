@@ -17,37 +17,37 @@ Loom é um servidor MCP e uma API HTTP self-hosted que dá aos agentes de IA uma
   unidade de compartilhamento: por padrão, todo membro lê todas as linhas dele.
   [Memória](https://github.com/ClickHouse/loom/blob/main/docs/concepts/memory.md)
 - **Memória que pode ser corrigida.** Uma alteração cria uma nova versão com seu histórico. O
-  mesmo fato, após a canonicalização, é mesclado na linha armazenada; o mesmo fato com outras
+  mesmo fato, depois da canonicalização, é mesclado na linha armazenada; o mesmo fato com outras
   palavras é armazenado como duplicata; uma contradição é sinalizada para revisão; e uma escrita
   contra um fato fixado (pinned) é recusada.
   [Conflitos e recusa](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/conflicts-and-refusal.md) ·
   [Histórico e proveniência](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/history-and-provenance.md)
-- **Busca que se abstém.** Quando nada atinge o limite mínimo de similaridade, `memory.search`
-  responde `abstain=true` com um código de motivo e marca cada resultado fraco como `below_threshold`;
-  `loom_search` os descarta. [Busca e pergunta](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/search-and-ask.md)
-- **Memória de longo prazo para o seu agente de código, compartilhada entre agentes.** Os plugins do Claude Code e do
-  Codex carregam o contexto relevante no início da sessão e capturam a sessão enquanto ela
-  é executada. Cursor, GitHub Copilot, Gemini CLI, Cline, Kilo Code, OpenCode, goose, Zed e outros
+- **Busca que se abstém.** Quando nada ultrapassa o limiar mínimo de similaridade, `memory.search`
+  responde `abstain=true` com um código de motivo e rotula cada resultado fraco como `below_threshold`;
+  `loom_search` os descarta. [Busca e perguntas](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/search-and-ask.md)
+- **Memória de longo prazo para o seu agente de código, compartilhada entre agentes.** Os plugins do Claude Code e
+  do Codex carregam o contexto relevante no início da sessão e capturam a sessão enquanto ela
+  acontece. Cursor, GitHub Copilot, Gemini CLI, Cline, Kilo Code, OpenCode, goose, Zed e outros
   clientes MCP se conectam ao mesmo servidor, e um agente em um namespace encontra os fatos
-  que outros agentes salvaram ali.
+  que outros agentes salvaram nele.
   [Conectar um agente de código](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/connect-a-coding-agent.md) ·
   [Clientes MCP](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/mcp-clients.md)
-- **Memória por usuário para o seu próprio agente.** Os SDKs de Python e TypeScript gravam e leem
+- **Memória por usuário para o seu próprio agente.** Os SDKs de Python e TypeScript escrevem e leem
   a memória por usuário final. [Seu primeiro agente](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/first-agent.md)
 
 <a id="measured"></a>
 
-## Medições
+## Resultados medidos
 
-Em 100 perguntas pareadas do LongMemEval-S, com o mesmo leitor `gpt-5`, as respostas baseadas nas memórias recuperadas pelo Loom tiveram 94% de acerto, contra 90% com o histórico completo, e usaram 91% menos tokens no prompt do leitor (excluindo o custo único de construir a memória); a diferença de acurácia não é estatisticamente estabelecida.
-[Com e sem Loom](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#with-and-without-loom)
+Em 100 perguntas pareadas do LongMemEval-S com o mesmo leitor `gpt-5`, as respostas baseadas nas memórias recuperadas pelo Loom tiveram 94% de acerto, contra 90% com o histórico completo, com 91% menos tokens no prompt do leitor (excluindo o custo único de construir a memória); a diferença de acurácia não é estatisticamente estabelecida.
+[Com e sem o Loom](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#with-and-without-loom)
 
 <a id="start"></a>
 
 ## Primeiros passos
 
-O [Guia rápido](../getting-started/quickstart.md) sobe a stack local e salva uma primeira
-memória via HTTP, Python e MCP. [Quando o Loom não é a melhor opção](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#when-it-does-not-fit)
+O [Início rápido](../getting-started/quickstart.md) sobe a stack local e salva uma primeira
+memória via HTTP, Python e MCP. [Quando o Loom não se encaixa](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#when-it-does-not-fit)
 cobre os casos em que uma biblioteca de memória em processo atende melhor.
 
 Algumas ops desta página estão marcadas como experimentais na [página de status](https://github.com/ClickHouse/loom/blob/main/docs/reference/status.md).
