@@ -1,4 +1,10 @@
 {% extends "base.html" %}
+{% block htmltitle %}
+  {# Search engines cut titles near 70 characters, so a long page title drops the site-name suffix. #}
+  {% set head = page.meta.title if page and page.meta and page.meta.title else (page.title | striptags if page and page.title and not page.is_homepage else "") %}
+  {% set full = head ~ " - " ~ config.site_name if head else config.site_name %}
+  <title>{{ full if full | length <= 70 else head }}</title>
+{% endblock %}
 {% block extrahead %}
   {% set desc = page.meta.description if page and page.meta and page.meta.description else config.site_description %}
   <meta property="og:type" content="website">
