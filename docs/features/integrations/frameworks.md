@@ -3,6 +3,9 @@
 The SDKs ship adapters that present Loom through a framework's own memory interface.
 They import the framework lazily; installing it is up to you. Identity comes from the
 Loom `Agent` the adapter wraps, and isolation is Loom's namespace authorization.
+Every adapter is a client of your Loom server over its SDK: the data stays in your Loom
+deployment (ClickHouse, and Postgres for live memory where the deployment chooses it), and
+no adapter adds or needs another database, vector store or cache.
 
 | Framework      | Adapter           | SDK                                                 | Framework interface             |
 | -------------- | ----------------- | --------------------------------------------------- | ------------------------------- |
