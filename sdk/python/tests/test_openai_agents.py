@@ -14,6 +14,7 @@ import pytest
 from agents import FunctionTool
 from agents.tool_context import ToolContext
 from loom import Agent
+from loom.errors import LoomError
 from loom.integrations.openai_agents import loom_tools
 from loom.tools import LOOM_TOOL_SPECS
 
@@ -103,3 +104,30 @@ def test_a_real_agent_posts_memory_search_in_the_bound_scope() -> None:
     ((path, body),) = posts
     assert path == "/v1/memory.search"
     assert (body["query"], body["top_k"], body["user_id"]) == ("seat", 2, "alice")
+
+
+def test_a_refused_call_returns_the_error_to_the_model() -> None:
+    (recall,) = loom_tools(_FakeAgent({}), only=["loom_recall"])  # type: ignore[arg-type]
+    out = _invoke(recall, {"query": ""})
+    assert out.startswith("loom_recall failed: ")
+    assert "query" in out
+
+
+def test_a_server_error_returns_the_error_to_the_model() -> None:
+    class _Down(_FakeAgent):
+        async def call(self, op: str, body: dict[str, Any], **scope: Any) -> dict[str, Any]:
+            raise LoomError("memory store unavailable")
+
+    (remember,) = loom_tools(_Down({}), only=["loom_remember"])  # type: ignore[arg-type]
+    out = _invoke(remember, {"memory_key": "seat", "value": "aisle"})
+    assert out == "loom_remember failed: memory store unavailable"
+
+
+def test_max_result_chars_caps_what_the_model_reads() -> None:
+    agent = _FakeAgent(
+        {"results": [{"memory_key": "k", "content_excerpt": "x" * 500, "similarity": 0.9}]}
+    )
+    (recall,) = loom_tools(agent, only=["loom_recall"], max_result_chars=100)  # type: ignore[arg-type]
+    out = _invoke(recall, {"query": "seat"})
+    assert out.endswith("…[truncated]")
+    assert len(out) == 100 + len("…[truncated]")

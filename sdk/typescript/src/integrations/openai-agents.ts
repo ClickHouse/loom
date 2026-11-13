@@ -10,12 +10,13 @@
  *     const result = await run(assistant, "Book my usual seat to Lisbon");
  *
  * The tools are `AgentTools` (the same names, schemas and results as
- * `agent.tools()`), bound to one scope. `@openai/agents` is an optional peer
- * dependency.
+ * `agent.tools()`), bound to one scope. A call Loom refuses returns its error
+ * message to the model. `@openai/agents` is an optional peer dependency.
  */
 
 import { type FunctionTool, tool } from "@openai/agents";
 import type { Agent, Scope } from "../agent.js";
+import { LoomError } from "../errors.js";
 import { AgentTools, type AgentToolsOptions } from "../tools.js";
 
 /** The JSON-schema parameters a non-strict `tool()` takes (the type is not exported). */
@@ -29,11 +30,19 @@ export function loomTools(agent: Agent, scope: Scope = {}, opts: AgentToolsOptio
       tool({
         name: spec.name,
         description: spec.description,
-        // The same JSON schema; the SDK types its arrays readonly, the framework mutable.
+        // The same JSON schema: Loom's is readonly, tool() takes mutable arrays.
         parameters: spec.parameters as unknown as JsonParameters,
         // Strict mode requires every property; the optional ones (top_k, memory_type) are not.
         strict: false,
-        execute: (input) => tools.execute(spec.name, input),
+        execute: async (input) => {
+          try {
+            return await tools.execute(spec.name, input);
+          } catch (e) {
+            // The model can fix its call from Loom's message; tool()'s default hides it.
+            if (e instanceof LoomError) return `${spec.name} failed: ${e.message}`;
+            throw e;
+          }
+        },
       }) as FunctionTool,
   );
 }

@@ -1,11 +1,10 @@
 # Agent frameworks and orchestrators
 
 The SDKs ship adapters that present Loom through a framework's own memory or retrieval
-interface. The LangChain, LlamaIndex and OpenAI Agents adapters need their framework:
-install the SDK's extra for it (`pip install 'clickhouse-loom[langchain]'`, `[llamaindex]`,
-`[openai-agents]`), or, in TypeScript, the framework package (`@langchain/core`,
-`@openai/agents`), an optional peer dependency. The LangGraph and Strands adapters import
-without their framework. Identity comes from the Loom `Agent` the adapter wraps, and
+interface. An adapter needs its framework: in Python, the SDK extra its section names
+(`pip install 'clickhouse-loom[langchain]'` and so on); in TypeScript, the framework
+package, an optional peer dependency. The LangGraph and Strands adapters import without
+their framework. Identity comes from the Loom `Agent` the adapter wraps, and
 isolation is Loom's namespace authorization. Every adapter calls your Loom server through
 the SDK: the data is stored in your Loom deployment (ClickHouse, and Postgres for live
 memory under the [Postgres memory authority](../../architecture/storage-authority.md)), and
@@ -171,12 +170,16 @@ async with Agent(org="acme", namespace="support") as loom_agent:
     result = await Runner.run(assistant, "Book my usual seat to Lisbon")
 ```
 
-The tools are the SDK's `AgentTools` ([sessions and tools](../../reference/python-sdk.md#sessions-and-tools)):
-`loom_remember` (`memory.set`), `loom_recall` (`memory.search`), `loom_ask` (`memory.ask`),
-`loom_offload` and `loom_fetch` (`context.offload`, `context.fetch`) and `loom_note`
+The tools are Loom's `AgentTools`
+([sessions and tools](../../reference/python-sdk.md#sessions-and-tools)): `loom_remember`
+(`memory.set`), `loom_recall` (`memory.search`), `loom_ask` (`memory.ask`), `loom_offload`
+and `loom_fetch` (`context.offload`, `context.fetch`) and `loom_note`
 (`working_memory.append`), with the same schemas and results in both SDKs. `user_id`,
-`session_id` and `run_id` bind every call to one scope; `only=[...]` keeps a subset. The
-schemas have optional parameters, so the tools are not strict.
+`session_id` and `run_id` bind every call to one scope; `only=[...]` keeps a subset and
+`max_result_chars` (8,000 by default) caps what a call returns. The schemas have optional
+parameters, so the tools are not strict. A call Loom refuses (a missing argument, a
+rejected value, a server error) returns `<tool> failed: <message>` to the model, which can
+correct the call; the run goes on.
 
 Conversation history stays in the session store the run is given: the SDK's `Session`
 protocol removes and clears items, and Loom's conversations are append-only. To keep what
@@ -314,6 +317,8 @@ client can speak for several agents.
 ## Failure modes
 
 - **Abstain is not an error.** An empty search means nothing cleared Loom's floor.
+- **A refused tool call is a message, not an exception.** The OpenAI Agents SDK tools
+  return Loom's error to the model as the call's result.
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as
   `conflicted` or `duplicate` returns normally; read the namespace's conflicts in the
   dashboard or with `conflicts.list` ([conflicts and refusal](../memory/conflicts-and-refusal.md)).

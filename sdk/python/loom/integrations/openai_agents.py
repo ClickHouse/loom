@@ -36,6 +36,7 @@ except ImportError as e:  # the framework is an optional extra
         "pip install 'clickhouse-loom[openai-agents]'"
     ) from e
 
+from loom.errors import LoomError
 from loom.tools import AgentTools
 
 if TYPE_CHECKING:
@@ -49,12 +50,22 @@ def loom_tools(
     session_id: str | None = None,
     run_id: str | None = None,
     only: Iterable[str] | None = None,
+    max_result_chars: int = 8_000,
 ) -> list[FunctionTool]:
     """Loom's agent verbs as ``FunctionTool``s, bound to one scope.
 
-    ``only`` keeps a subset by name, e.g. ``["loom_remember", "loom_recall"]``.
+    ``only`` keeps a subset by name, e.g. ``["loom_remember", "loom_recall"]``;
+    ``max_result_chars`` caps the string each call returns to the model. A call
+    Loom refuses returns its error message to the model instead of failing the run.
     """
-    tools = AgentTools(agent, user_id=user_id, session_id=session_id, run_id=run_id, only=only)
+    tools = AgentTools(
+        agent,
+        user_id=user_id,
+        session_id=session_id,
+        run_id=run_id,
+        only=only,
+        max_result_chars=max_result_chars,
+    )
     return [_function_tool(tools, spec) for spec in tools.definitions()]
 
 
@@ -62,7 +73,11 @@ def _function_tool(tools: AgentTools, spec: dict[str, Any]) -> FunctionTool:
     name = spec["name"]
 
     async def invoke(_ctx: Any, arguments: str) -> str:
-        return await tools.execute(name, arguments)
+        try:
+            return await tools.execute(name, arguments)
+        except LoomError as e:
+            # The SDK fails the whole run on an exception; the model can fix its call instead.
+            return f"{name} failed: {e}"
 
     return FunctionTool(
         name=name,
