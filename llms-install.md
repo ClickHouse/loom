@@ -12,7 +12,9 @@ extractor and ClickHouse) and serves MCP over streamable HTTP. A coding agent co
 
 ## 1. Check for a running Loom
 
-On Windows, run every command in this file in a WSL 2 terminal where `docker` works.
+On Windows, run the `curl`, `docker` and installer commands in a WSL 2 terminal where
+`docker` works. The Cline entry in step 3 goes where Cline runs, on Windows too:
+`localhost:7777` reaches the WSL stack from there.
 
 ```bash
 curl -sS http://localhost:7777/v1/health
@@ -64,9 +66,10 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:7777/mcp?tool
 ```
 
 `200` means no token is needed. `401` means sign-in is on: ask the user for a token from
-**Settings → Tokens** in the dashboard. A `401` on a later tool call means the same. Add it as a `headers`
-entry, `"Authorization": "Bearer <token>"`, beside `url` in the entry below, or with
-`--header "Authorization: Bearer <token>"` on the `cline mcp add` command.
+**Settings → Tokens** in the dashboard. Add it as a `headers` entry,
+`"Authorization": "Bearer <token>"`, beside `url` in the entry below, or with
+`--header "Authorization: Bearer <token>"` on the `cline mcp add` command. A `401` on a
+later tool call, in step 4, means the same: ask for a token and add it.
 
 The Cline extension: the file opens from **MCP Servers → Configure MCP Servers** in Cline
 (on Linux,
@@ -112,7 +115,7 @@ other clients.
    and a short `value`, then `loom_memory_get` with the same key: it returns the value.
 3. Call `loom_memory_delete` with that key.
 4. Tell the user where the dashboard is: the `Dashboard:` address the installer printed,
-   `http://localhost:7777/` by default.
+   or `http://localhost:7777/` when Loom was already running.
 
 ## Optional: index a repository
 
