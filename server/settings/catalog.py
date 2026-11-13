@@ -2126,6 +2126,18 @@ class ExtractionSettings(BaseModel):
     # `extraction_policy.set` with scope `namespace` refuses one more.
     extraction_policy_max_namespaces: Annotated[int, LIVE] = Field(default=1000, ge=1)
 
+    @model_validator(mode="after")
+    def _check_queue_lease(self) -> ExtractionSettings:
+        """A lease at or under a set pass deadline lets a second worker claim a batch
+        the first is still replaying."""
+        deadline = self.extraction_queue_max_pass_seconds
+        if deadline > 0 and self.extraction_queue_lease_seconds <= deadline:
+            raise ValueError(
+                "LOOM_EXTRACTION_QUEUE_LEASE_SECONDS must be more than "
+                "LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS"
+            )
+        return self
+
 
 # ===== Knowledge ==============================================================
 

@@ -222,6 +222,7 @@ LOOM_LLM_RETRY_ATTEMPTS=1
 LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS=1
 LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS=3600
 LOOM_EXTRACTION_QUEUE_LEASE_SECONDS=3900
+LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2
 LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS=3600
 LOOM_SESSION_BRIEF_LLM_MODEL=
 LOOM_CODE_BISECT_LLM_RERANK_MODEL=
@@ -247,11 +248,15 @@ longer prompt to its window without an error, so run it with
 read a prompt that long, so the preset waits `LOOM_LLM_REQUEST_TIMEOUT_S=900` seconds for
 a reply rather than the hosted default of 300, and tries it once
 (`LOOM_LLM_RETRY_ATTEMPTS=1`): a server that timed out answers no faster a second time.
-The workers that extract in the background give a pass a deadline, and a pass that
-outlives it is abandoned and its batch tried again, so the preset lets a
-deferred-extraction pass run an hour on one batch (`LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS`,
-by default four of its intervals, at least 60 s; with the batch's lease above it) and an
+The workers that extract in the background give a pass a deadline, so the preset lets a
+deferred-extraction pass, which replays the captures the coding plugins send, run an hour
+on one batch (`LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS`, by default four of its intervals,
+at least 60 s and at most 900; the batch's lease must be longer) and an
 observe-extraction pass an hour (`LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS`, default 900).
+A capture cut at that deadline, or whose call ran out its timeout, spends one of its
+`LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2` attempts, so a session too long for the machine
+ends `failed` (`memory.extraction_status` says why) instead of holding the queue: a long
+session can need several calls in a row, each up to the timeout.
 For llama.cpp, point
 `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root (`http://host.docker.internal:8080/v1`) and
 set `LOOM_LLM_MODEL` to the name it serves. A server run from a checkout reaches the

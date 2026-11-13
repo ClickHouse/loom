@@ -15,6 +15,7 @@ CH-free: the CH client is a stub.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -815,6 +816,50 @@ async def test_an_unreachable_provider_spends_no_attempt(
     assert timedelta(seconds=299) < written["lease_until"] - before <= timedelta(seconds=301)
 
 
+@pytest.mark.asyncio
+async def test_a_local_model_that_times_out_spends_an_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    ch = _replaying(monkeypatch, httpx.ReadTimeout("no reply within the timeout"))
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
+    written = ch.inserts[-1][1][0]
+    assert res.unreachable == 0 and res.failures == ["q1: failed"]
+    assert (written["status"], written["attempts"]) == (q.STATUS_FAILED, 3)
+
+
+@pytest.mark.asyncio
+async def test_a_replay_cut_at_the_pass_deadline_spends_an_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _replaying(monkeypatch, asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
+    written = ch.inserts[-1][1][0]
+    assert (written["status"], written["attempts"]) == (q.STATUS_PENDING, 3)
+    assert written["last_error"] == "pass deadline"
+
+
+@pytest.mark.asyncio
+async def test_a_pass_the_supervisor_times_out_records_the_attempt_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ch = _replaying(monkeypatch, RuntimeError("unused"))
+
+    async def _slow(inp: Any, **_kw: Any) -> Any:
+        await asyncio.sleep(60)
+
+    from server.memory.app.extract import handler as extract_handler_mod
+
+    monkeypatch.setattr(extract_handler_mod, "handle_memory_set_from_messages", _slow)
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.05):
+            await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
+    assert ch.inserts[-1][1][0]["last_error"] == "pass deadline"
+
+
 _STATEMENT = "Code: 241. DB::Exception: Memory limit exceeded. INSERT INTO loom.memory VALUES"
 
 
@@ -1153,3 +1198,17 @@ async def test_the_enqueuer_rides_its_own_column_and_a_hold_fills_an_old_rows() 
     old = {**_queued("old", "process:sa:t:agent-a", 0), "enqueued_by": ""}  # before the column
     await q.mark_held(old, reason="refused", seconds=60, ch=ch)
     assert ch.inserts[-1][1][0]["enqueued_by"] == "process:sa:t:agent-a"
+
+
+def test_a_lease_no_longer_than_a_set_pass_deadline_is_refused() -> None:
+    from pydantic import ValidationError
+
+    from server.settings import Settings
+
+    with pytest.raises(ValidationError, match="LEASE_SECONDS must be more than"):
+        Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            extraction_queue_max_pass_seconds=600,
+            extraction_queue_lease_seconds=600,
+        )
+    Settings(_env_file=None, extraction_queue_lease_seconds=60)  # type: ignore[call-arg]

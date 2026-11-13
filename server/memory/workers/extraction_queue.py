@@ -118,7 +118,13 @@ _UNREACHABLE = (
 def unreachable(e: BaseException) -> bool:
     """Whether a replay's failure is the model provider or gateway not answering
     (`_UNREACHABLE`, or a 502, 503 or 504): the row is not at fault, so it spends
-    no attempt. A request it cannot make at all (a bad scheme) is not this."""
+    no attempt. A request it cannot make at all (a bad scheme) is not this, and
+    neither is a model server on the operator's machine that ran out its read
+    timeout: it answered too slowly for this row, which a retry does not change."""
+    from server.settings import settings
+
+    if settings.llm_provider == "local" and isinstance(e, httpx.ReadTimeout):
+        return False
     if isinstance(e, _UNREACHABLE):
         return True
     return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (502, 503, 504)
@@ -152,6 +158,14 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
     async def _replay_one(row: dict[str, Any]) -> None:
         try:
             written = await q.replay_row(row)
+        except asyncio.CancelledError:
+            # The pass ran out its deadline mid-replay: the row spends an attempt, so
+            # a replay longer than any pass ends `failed` instead of being claimed
+            # again each time its lease runs out.
+            await asyncio.shield(
+                q.mark_error(row, error="pass deadline", max_attempts=cfg.max_attempts, ch=ch)
+            )
+            raise
         except held as e:
             # Held until the org is back on, the switch or identity is read, or the
             # gateway's hold is over; the other rows, and other identities', go on.

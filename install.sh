@@ -439,6 +439,9 @@ main() {
     set_env LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS 1
     set_env LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS 3600
     set_env LOOM_EXTRACTION_QUEUE_LEASE_SECONDS 3900
+    # A replay too long for this machine fails on its second try rather than hold the
+    # queue for its default eight.
+    set_env LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS 2
     set_env LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS 3600
     # Jobs whose default names a hosted model take LOOM_LLM_MODEL.
     for key in LOOM_SESSION_BRIEF_LLM_MODEL LOOM_CODE_BISECT_LLM_RERANK_MODEL \
