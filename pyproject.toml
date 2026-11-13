@@ -242,9 +242,9 @@ ignore_missing_imports = true
 module = ["boto3", "boto3.*", "botocore", "botocore.*"]
 ignore_missing_imports = true
 
-# The SDK's framework adapters: no framework is installed here. LangChain and
-# LlamaIndex are SDK extras, which `make test-sdk-adapters` installs to type-check
-# their adapters; LangGraph and Strands are typed through structural twins. Without the
+# The SDK's framework adapters: no framework is installed here. LangChain, LlamaIndex
+# and the OpenAI Agents SDK are SDK extras, which `make test-sdk-adapters` installs to
+# type-check their adapters; LangGraph and Strands are typed through structural twins. Without the
 # framework the base is Any, which strict mode refuses to subclass.
 [[tool.mypy.overrides]]
 module = [
@@ -252,6 +252,8 @@ module = [
   "langchain_core.*",
   "llama_index",
   "llama_index.*",
+  "agents",
+  "agents.*",
   "langgraph",
   "langgraph.*",
   "strands",

@@ -1,24 +1,26 @@
 # Agent frameworks and orchestrators
 
 The SDKs ship adapters that present Loom through a framework's own memory or retrieval
-interface. The LangChain and LlamaIndex adapters need their framework: install the SDK's
-extra for it (`pip install 'clickhouse-loom[langchain]'`, `[llamaindex]`), or, in
-TypeScript, `@langchain/core`, an optional peer dependency. The LangGraph and Strands
-adapters import without their framework. Identity comes from the Loom `Agent` the adapter
-wraps, and isolation is Loom's namespace authorization. Every adapter calls your Loom
-server through the SDK: the data is stored in your Loom deployment (ClickHouse, and
-Postgres for live memory under the [Postgres memory
-authority](../../architecture/storage-authority.md)), and no adapter adds or needs another
-database, vector store or cache.
+interface. The LangChain, LlamaIndex and OpenAI Agents adapters need their framework:
+install the SDK's extra for it (`pip install 'clickhouse-loom[langchain]'`, `[llamaindex]`,
+`[openai-agents]`), or, in TypeScript, the framework package (`@langchain/core`,
+`@openai/agents`), an optional peer dependency. The LangGraph and Strands adapters import
+without their framework. Identity comes from the Loom `Agent` the adapter wraps, and
+isolation is Loom's namespace authorization. Every adapter calls your Loom server through
+the SDK: the data is stored in your Loom deployment (ClickHouse, and Postgres for live
+memory under the [Postgres memory authority](../../architecture/storage-authority.md)), and
+no adapter adds or needs another database, vector store or cache.
 
-| Framework      | Adapter                                         | SDK                                                   | Framework interface                    |
-| -------------- | ----------------------------------------------- | ----------------------------------------------------- | -------------------------------------- |
-| LangChain      | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | Python, `loom.integrations.langchain`                 | `BaseRetriever`                        |
-| LangChain.js   | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | TypeScript, `@clickhouse/loom/integrations/langchain` | `BaseRetriever` from `@langchain/core` |
-| LlamaIndex     | `LoomRetriever`, `LoomMemoryBlock`              | Python, `loom.integrations.llamaindex`                | `BaseRetriever`, `BaseMemoryBlock`     |
-| LangGraph      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                 | `BaseStore`                            |
-| Strands Agents | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                   | the `MemoryStore` protocol             |
-| Strands Agents | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`   | the same protocol, structurally        |
+| Framework                      | Adapter                                         | SDK                                                       | Framework interface                    |
+| ------------------------------ | ----------------------------------------------- | --------------------------------------------------------- | -------------------------------------- |
+| LangChain                      | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | Python, `loom.integrations.langchain`                     | `BaseRetriever`                        |
+| LangChain.js                   | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | TypeScript, `@clickhouse/loom/integrations/langchain`     | `BaseRetriever` from `@langchain/core` |
+| LlamaIndex                     | `LoomRetriever`, `LoomMemoryBlock`              | Python, `loom.integrations.llamaindex`                    | `BaseRetriever`, `BaseMemoryBlock`     |
+| OpenAI Agents SDK              | `loom_tools`                                    | Python, `loom.integrations.openai_agents`                 | `FunctionTool`                         |
+| OpenAI Agents SDK (TypeScript) | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`         |
+| LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                            |
+| Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol             |
+| Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally        |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
@@ -148,6 +150,53 @@ or `flush` is called, which may run a call on another event loop than the one an
 was opened on; an `Agent` serves `aget` and `aput` on its own loop. `Memory` keeps its
 short-term messages in its own chat store (in process by default); only what the block
 receives reaches Loom.
+
+## OpenAI Agents SDK
+
+`loom_tools` returns Loom's agent verbs as the SDK's `FunctionTool`s, so the model keeps
+and reads long-term memory in Loom during a run. Install with
+`pip install 'clickhouse-loom[openai-agents]'` (`openai-agents` 0.24).
+
+```python
+from agents import Agent as OpenAIAgent, Runner
+from loom import Agent
+from loom.integrations.openai_agents import loom_tools
+
+async with Agent(org="acme", namespace="support") as loom_agent:
+    assistant = OpenAIAgent(
+        name="assistant",
+        instructions="Recall what you know about the user before answering.",
+        tools=loom_tools(loom_agent, user_id="alice"),
+    )
+    result = await Runner.run(assistant, "Book my usual seat to Lisbon")
+```
+
+The tools are the SDK's `AgentTools` ([sessions and tools](../../reference/python-sdk.md#sessions-and-tools)):
+`loom_remember` (`memory.set`), `loom_recall` (`memory.search`), `loom_ask` (`memory.ask`),
+`loom_offload` and `loom_fetch` (`context.offload`, `context.fetch`) and `loom_note`
+(`working_memory.append`), with the same schemas and results in both SDKs. `user_id`,
+`session_id` and `run_id` bind every call to one scope; `only=[...]` keeps a subset. The
+schemas have optional parameters, so the tools are not strict.
+
+Conversation history stays in the session store the run is given: the SDK's `Session`
+protocol removes and clears items, and Loom's conversations are append-only. To keep what
+a conversation established, give the model `loom_remember`, or send the turns to
+`memory.set_from_messages`.
+
+In TypeScript, `loomTools(agent, scope)` from `@clickhouse/loom/integrations/openai-agents`
+returns the same tools built with `tool()` from `@openai/agents`, an optional peer
+dependency:
+
+```ts
+import { Agent as OpenAIAgent, run } from "@openai/agents";
+import { loomTools } from "@clickhouse/loom/integrations/openai-agents";
+
+const assistant = new OpenAIAgent({
+  name: "assistant",
+  tools: loomTools(agent, { userId: "alice" }),
+});
+const result = await run(assistant, "Book my usual seat to Lisbon");
+```
 
 ## LangGraph
 
