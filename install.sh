@@ -670,16 +670,11 @@ main() {
     fi
     if considered codex && command -v codex >/dev/null 2>&1; then
       codex_config="${CODEX_HOME:-${HOME:-}/.codex}/config.toml"
-      if bounded 60 codex plugin list >"$tmp_dir/codex.plugins"; then
-        # Its STATUS column: "installed, enabled", "installed, disabled" or, with
-        # only the marketplace added, "not installed".
-        codex_loom=$(awk '$1 == "loom@loom" { print $2; exit }' "$tmp_dir/codex.plugins")
-      else
-        codex_loom=unknown
-      fi
-      if [ "$codex_loom" = unknown ]; then
+      # The STATUS column of `codex plugin list`: "installed, enabled", "installed,
+      # disabled" or, with only the marketplace added, "not installed".
+      if ! bounded 60 codex plugin list >"$tmp_dir/codex.plugins"; then
         printf 'Codex: could not list its plugins (above), so it is left as it is\n'
-      elif [ "$codex_loom" = installed, ]; then
+      elif [ "$(awk '$1 == "loom@loom" { print $2; exit }' "$tmp_dir/codex.plugins")" = installed, ]; then
         printf 'Codex: the Loom plugin is installed already; `codex plugin list` shows whether it is enabled\n'
         kept=1
       elif grep -q '^\[mcp_servers\.loom\]' "$codex_config" 2>/dev/null; then
