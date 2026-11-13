@@ -1,12 +1,14 @@
 /**
- * Where a collection sits, on the Library: the path to it from the top, on one line before the
- * select (the parent a link, the ones above it folded; on a phone, one button back to the
- * parent), and the collections inside the one shown, or on "My files" and on a namespace the
- * caller's own top-level ones and those shared with them. The tree is the server's
- * (`collection.list` gives each collection's parent); in the path, a parent the caller cannot
- * read is a dots button, never a link, and gives its address when tapped.
+ * Where a collection sits, on the Library: the path to it from the top on one line above the
+ * documents (the parent a link, the ones above it folded; on a phone, one button back to the
+ * parent), the collections inside the one shown as folder chips on that line, and on "My
+ * files" and on a namespace the caller's own top-level collections and those shared with
+ * them, listed below the documents. The tree is the server's (`collection.list` gives each
+ * collection's parent); in the path, a parent the caller cannot read is a dots button, never
+ * a link, and gives its address when tapped.
  */
 import {
+  type ComponentProps,
   type ComponentPropsWithoutRef,
   forwardRef,
   type MouseEvent,
@@ -22,28 +24,22 @@ import { Popover } from "@clickhouse/click-ui/Popover";
 import type { CollectionEntry } from "../api";
 import { IconButton } from "../components/IconButton";
 import { PopoverTrigger } from "../components/ui/Menu";
+import { CHIP_OUTLINE_CLASS } from "../components/ui/Chip";
 import { SectionHeading } from "../components/ui/SectionHeading";
 import { TextClamp, useClamped } from "../components/ui/TextClamp";
 import { Tip } from "../components/ui/Tooltip";
-import {
-  COLLECTIONS_LISTED,
-  collectionOrder,
-  collectionTitle,
-  distinctTitle,
-  roleLabel,
-  repeatedTitles,
-} from "../lib/collections";
+import { COLLECTIONS_LISTED, collectionOrder, collectionTitle, distinctTitle, roleLabel } from "../lib/collections";
 import { fmtInt } from "../lib/format";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { isModifiedClick } from "../lib/graphLink";
 import { navigationHref } from "../lib/state";
 
-const HEADING_ID = "library-collections-inside";
+const HEADING_ID = "library-top-level";
 const SHARED_HEADING_ID = "library-collections-shared";
 
-/** Collections inside listed at first, and how many more each "Show more" adds. */
-const FIRST_INSIDE = 6;
-const MORE_INSIDE = 50;
+/** Places listed at first, and how many more each "Show more" adds. */
+const FIRST_SHOWN = 6;
+const MORE_SHOWN = 50;
 
 /** An ancestor missing from the list: its address, all `collection.list` says of it. */
 export interface HiddenPart {
@@ -71,23 +67,32 @@ export function collectionPath(
   return path;
 }
 
+/** Where a walk no root reaches (a cycle) starts for `c`: the top of its path, where the
+ *  cycle repeats, so a child of a cycle stays under its parent. */
+export function cycleStart(c: CollectionEntry, byName: Map<string, CollectionEntry>): CollectionEntry {
+  const top = collectionPath(c, byName)[0];
+  return "namespace" in top ? top : c;
+}
+
 /** A collection someone shared with the caller: one they read or write but do not
  *  administer. `collection.list` names no owner, so the role is the signal: one shared as
  *  admin is the caller's to manage, and sits with their own. The role is the token's, so a
  *  token capped below admin lists the person's own collections here too. */
-function isSharedWithMe(c: CollectionEntry): boolean {
+export function isSharedWithMe(c: CollectionEntry): boolean {
   return !c.personal && c.role !== "admin";
 }
 
-/** The collections listed under the place shown: the children of a collection, or at the top
- *  level the caller's own top-level ones (and those whose parent the caller cannot read). */
-export function collectionsInside(rows: CollectionEntry[], current: CollectionEntry | null): CollectionEntry[] {
+/** The caller's own top-level collections (and their own whose parent they cannot read). */
+export function topLevelCollections(rows: CollectionEntry[]): CollectionEntry[] {
   const names = new Set(rows.map((c) => c.namespace));
-  const under =
-    current && !current.personal
-      ? rows.filter((c) => c.parent === current.namespace)
-      : rows.filter((c) => !c.personal && !isSharedWithMe(c) && (!c.parent || !names.has(c.parent)));
-  return under.sort(collectionOrder);
+  return rows
+    .filter((c) => !c.personal && !isSharedWithMe(c) && (!c.parent || !names.has(c.parent)))
+    .sort(collectionOrder);
+}
+
+/** The collections directly inside `c`. */
+export function childrenOf(rows: CollectionEntry[], c: CollectionEntry): CollectionEntry[] {
+  return rows.filter((r) => r.parent === c.namespace).sort(collectionOrder);
 }
 
 /** "Shared with you", at the top level: each collection shared with the caller whose parent
@@ -120,48 +125,83 @@ export interface Home {
   open: () => void;
 }
 
+/** A place link's click: a plain one opens the place here; a modified one (a new tab or
+ *  window) is the browser's. */
+function openHere(e: MouseEvent<HTMLAnchorElement>, open: () => void): void {
+  if (isModifiedClick(e)) return;
+  e.preventDefault();
+  open();
+}
+
+/** A place's address: the collection, or the header's namespace for null. */
+const placeHref = (collection: string | null) => navigationHref("knowledge", collection ? { collection } : {});
+
 /** A link to a place in the Library: a plain click opens it here, a modified one (a new
- *  tab or window) is the browser's. It takes a ref and other props, so a tooltip can wrap it. */
+ *  tab or window) is the browser's. It takes a ref and other props, so a tooltip can wrap it.
+ *  `plain`: a bare anchor its class draws (a tree row, a chip), not Click UI's Link. */
 const PlaceLink = forwardRef<
   HTMLAnchorElement,
-  { collection: string | null; onOpen: () => void; children: ReactNode } & Omit<
+  { collection: string | null; onOpen: () => void; plain?: boolean; children: ReactNode } & Omit<
     ComponentPropsWithoutRef<"a">,
     "href" | "children"
   >
->(function PlaceLink({ collection, onOpen, children, onClick, ...rest }, ref) {
-  return (
-    <Link
-      {...rest}
-      ref={ref}
-      href={navigationHref("knowledge", collection ? { collection } : {})}
-      onClick={(e: MouseEvent<HTMLAnchorElement>) => {
-        // A wrapping tooltip trigger's handler runs too (it closes the tip), as Radix expects.
-        onClick?.(e);
-        if (isModifiedClick(e)) return;
-        e.preventDefault();
-        onOpen();
-      }}
-    >
-      {children}
-    </Link>
-  );
+>(function PlaceLink({ collection, onOpen, plain = false, children, onClick, ...rest }, ref) {
+  const props = {
+    ...rest,
+    ref,
+    href: placeHref(collection),
+    onClick: (e: MouseEvent<HTMLAnchorElement>) => {
+      // A wrapping tooltip trigger's handler runs first (it closes the tip): it does nothing
+      // once the click's default is prevented.
+      onClick?.(e);
+      openHere(e, onOpen);
+    },
+  };
+  return plain ? <a {...props}>{children}</a> : <Link {...props}>{children}</Link>;
 });
 
-/** A path title cut to one line: when cut, its whole text is a tooltip on the link (a
- *  keyboard focus opens it too); the whole text is the link's name either way. */
-function CutLink({ collection, onOpen, text }: { collection: string | null; onOpen: () => void; text: string }) {
+/** A place's link by its title (in the tree, the chips and the path), the title cut to its
+ *  box: when cut, the whole title is a tooltip on the link (a keyboard focus opens it too);
+ *  the whole title is the link's name either way. */
+export function PlaceTitleLink({
+  collection,
+  title,
+  icon,
+  titleClassName = "min-w-0 flex-1 truncate",
+  plain = false,
+  onOpen,
+  ...rest
+}: {
+  collection: string | null;
+  title: string;
+  icon?: ComponentProps<typeof Icon>["name"];
+  /** The title's box, where it is cut. */
+  titleClassName?: string;
+  /** An anchor its class draws (a tree row, a chip); else Click UI's Link (the path). */
+  plain?: boolean;
+  onOpen: () => void;
+} & Omit<ComponentPropsWithoutRef<"a">, "href" | "children" | "onClick" | "title">) {
   const [el, setEl] = useState<HTMLSpanElement | null>(null);
-  const cut = useClamped(el, text);
+  const cut = useClamped(el, title);
+  const inner = (
+    <>
+      {icon && <Icon name={icon} size="sm" aria-hidden />}
+      <span ref={setEl} className={titleClassName}>
+        {title}
+      </span>
+    </>
+  );
   return (
-    <Tip content={text} disabled={!cut}>
-      <PlaceLink collection={collection} onOpen={onOpen}>
-        <span ref={setEl} className="inline-block max-w-48 truncate align-bottom">
-          {text}
-        </span>
+    <Tip content={title} disabled={!cut}>
+      <PlaceLink {...rest} collection={collection} onOpen={onOpen} plain={plain}>
+        {inner}
       </PlaceLink>
     </Tip>
   );
 }
+
+/** A path part's title: one line, cut at 12rem. */
+const PATH_TITLE = "inline-block max-w-48 truncate align-bottom";
 
 /** A parent missing from the list, in words: past the list's end, or one the caller cannot read. */
 function hiddenWhat(truncated: boolean): string {
@@ -196,18 +236,18 @@ function HiddenParent({ part, truncated, lead = "" }: { part: HiddenPart; trunca
  *  at the start of the select's row, so the documents still start on the first screen. */
 export function CollectionBack({
   current,
-  rows,
+  byName,
   truncated = false,
   home,
   onPick,
 }: {
   current: CollectionEntry;
-  rows: CollectionEntry[];
+  /** Every collection the caller can read, by name. */
+  byName: Map<string, CollectionEntry>;
   truncated?: boolean;
   home?: Home;
   onPick: (collection: string) => void;
 }) {
-  const byName = useMemo(() => new Map(rows.map((c) => [c.namespace, c])), [rows]);
   const path = collectionPath(current, byName);
   const up = path.length > 1 ? path[path.length - 2] : null;
   // A parent the person cannot open: back to the place that lists this one, if any.
@@ -226,27 +266,33 @@ export function CollectionBack({
 
 export function CollectionPath({
   current,
-  rows,
+  byName,
+  repeated,
   truncated = false,
   home,
   onPick,
+  named = false,
 }: {
   current: CollectionEntry;
-  rows: CollectionEntry[];
+  /** Every collection the caller can read, by name. */
+  byName: Map<string, CollectionEntry>;
+  /** Titles two collections share (`repeatedTitles`): those show their address too. */
+  repeated: Set<string>;
   /** The list stopped early: a parent missing from it may be one the person reads. */
   truncated?: boolean;
   /** The place above the top that lists the top-level collections: its label and how to
    *  open it ("My files", or the header's namespace); none when there is no such place. */
   home?: Home;
   onPick: (collection: string) => void;
+  /** The path ends with the current one's title (no select after it names it). */
+  named?: boolean;
 }) {
-  const byName = useMemo(() => new Map(rows.map((c) => [c.namespace, c])), [rows]);
-  const repeated = useMemo(() => repeatedTitles(rows), [rows]);
   const path = collectionPath(current, byName);
-  // The ancestors only: the select this path leads into names the current one.
+  // The ancestors only: the select after the path names the current one, or, beside the tree,
+  // the path's last part does.
   const above = path.slice(0, -1);
-  if (above.length === 0 && !home) return null;
-  // One line beside the select: the parent kept, the ones above it folded into a popover.
+  if (above.length === 0 && !home && !named) return null;
+  // One line: the parent kept, the ones above it folded into a popover.
   const folded = above.slice(0, -1);
   const parent = above.at(-1);
   const sep = <Icon name="chevron-right" size="xs" aria-hidden="true" className="text-text-muted" />;
@@ -255,7 +301,12 @@ export function CollectionPath({
       <ol className="flex items-center gap-1">
         {home && (
           <li className="flex min-w-0 items-center gap-1">
-            <CutLink collection={home.collection} onOpen={home.open} text={home.label} />
+            <PlaceTitleLink
+              collection={home.collection}
+              title={home.label}
+              titleClassName={PATH_TITLE}
+              onOpen={home.open}
+            />
           </li>
         )}
         {folded.length > 0 && (
@@ -289,52 +340,63 @@ export function CollectionPath({
             {"hidden" in parent ? (
               <HiddenParent part={parent} truncated={truncated} />
             ) : (
-              <CutLink
+              <PlaceTitleLink
                 collection={parent.namespace}
                 onOpen={() => onPick(parent.namespace)}
-                text={distinctTitle(parent, repeated)}
+                title={distinctTitle(parent, repeated)}
+                titleClassName={PATH_TITLE}
               />
             )}
           </li>
         )}
-        <li aria-hidden="true">{sep}</li>
+        {named ? (
+          <li className="flex min-w-0 items-center gap-1">
+            {(home || above.length > 0) && sep}
+            <span aria-current="page" className="block min-w-0 max-w-48">
+              <TextClamp text={distinctTitle(current, repeated)} reach="tooltip" />
+            </span>
+          </li>
+        ) : (
+          <li aria-hidden="true">{sep}</li>
+        )}
       </ol>
     </nav>
   );
 }
 
-export function CollectionsInside({
+/** Below the documents on My files and on a namespace: the caller's own top-level
+ *  collections, then those shared with them, each saying where it sits. */
+export function TopLevelPlaces({
   rows,
+  repeated,
+  byName,
   truncated = false,
-  current,
   onPick,
   className = "",
 }: {
   rows: CollectionEntry[];
+  /** Titles two collections share (`repeatedTitles`): those show their address too. */
+  repeated: Set<string>;
+  /** Every collection the caller can read, by name. */
+  byName: Map<string, CollectionEntry>;
   /** The list stopped early: a parent missing from it may be one the caller can open. */
   truncated?: boolean;
-  current: CollectionEntry | null;
   onPick: (collection: string) => void;
   className?: string;
 }) {
-  const inside = useMemo(() => collectionsInside(rows, current), [rows, current]);
-  const top = !current || current.personal;
-  const shared = useMemo(() => (top ? sharedWithMe(rows) : []), [rows, top]);
-  // Over every collection listed, as the select and the path count them.
-  const repeated = useMemo(() => repeatedTitles(rows), [rows]);
-  const byName = useMemo(() => new Map(rows.map((c) => [c.namespace, c])), [rows]);
-  if (inside.length === 0 && shared.length === 0) return null;
+  const own = useMemo(() => topLevelCollections(rows), [rows]);
+  const shared = useMemo(() => sharedWithMe(rows), [rows]);
+  if (own.length === 0 && shared.length === 0) return null;
   return (
     <div className={`space-y-6 ${className}`}>
-      {/* At the top, each says where it sits: one may be inside a collection not listed. */}
+      {/* Each says where it sits: one may be inside a collection not listed. */}
       <PlaceList
         id={HEADING_ID}
         label="Collections"
-        items={inside}
+        items={own}
         repeated={repeated}
         byName={byName}
         onPick={onPick}
-        withPath={top}
         truncated={truncated}
       />
       <PlaceList
@@ -344,14 +406,22 @@ export function CollectionsInside({
         repeated={repeated}
         byName={byName}
         onPick={onPick}
-        withPath
         truncated={truncated}
       />
     </div>
   );
 }
 
-/** One list of places to open, revealed a step at a time; `withPath` says where each sits. */
+/** The links of a list of places, by the collection each row names (`data-collection`), for
+ *  useLastPageFocus. */
+function placeLinks(list: HTMLUListElement | null): Array<[string, HTMLElement]> {
+  return [...(list?.querySelectorAll<HTMLLIElement>(":scope > li[data-collection]") ?? [])].flatMap((li) => {
+    const link = li.querySelector<HTMLElement>("a");
+    return link ? [[li.dataset.collection ?? "", link] as [string, HTMLElement]] : [];
+  });
+}
+
+/** One list of places to open, revealed a step at a time, each saying where it sits. */
 function PlaceList({
   id,
   label,
@@ -359,7 +429,6 @@ function PlaceList({
   repeated,
   byName,
   onPick,
-  withPath,
   truncated,
 }: {
   id: string;
@@ -369,21 +438,16 @@ function PlaceList({
   repeated: Set<string>;
   byName: Map<string, CollectionEntry>;
   onPick: (collection: string) => void;
-  withPath: boolean;
   truncated: boolean;
 }) {
-  const [count, setCount] = useState(FIRST_INSIDE);
+  const [count, setCount] = useState(FIRST_SHOWN);
   const list = useRef<HTMLUListElement | null>(null);
   const left = items.length - count;
   // The last Show more removes its button: the focus goes to the first collection it added.
   const markShown = useLastPageFocus({
     loading: false,
     more: left > 0,
-    rows: () =>
-      [...(list.current?.querySelectorAll<HTMLLIElement>(":scope > li") ?? [])].flatMap((li) => {
-        const link = li.querySelector<HTMLElement>("a");
-        return link ? [[li.dataset.collection ?? "", link] as [string, HTMLElement]] : [];
-      }),
+    rows: () => placeLinks(list.current),
     fallback: () => document.getElementById(id),
   });
   if (items.length === 0) return null;
@@ -394,7 +458,7 @@ function PlaceList({
       <SectionHeading id={id} level={2} label={label} count={items.length} focusable />
       <ul ref={list} className="space-y-1">
         {items.slice(0, count).map((c) => {
-          const path = withPath ? pathText(c, byName, repeated, truncated) : "";
+          const path = pathText(c, byName, repeated, truncated);
           return (
             <li key={c.namespace} data-collection={c.namespace}>
               <div className="flex flex-wrap items-baseline gap-x-2">
@@ -416,20 +480,20 @@ function PlaceList({
             htmlType="button"
             onClick={() => {
               markShown(items.slice(0, count).map((c) => c.namespace));
-              setCount(count + MORE_INSIDE);
+              setCount(count + MORE_SHOWN);
             }}
           >
-            {`Show ${Math.min(left, MORE_INSIDE)} more`}
+            {`Show ${Math.min(left, MORE_SHOWN)} more`}
           </Button>
         )}
-        {count > FIRST_INSIDE && (
+        {count > FIRST_SHOWN && (
           <Button
             type="empty"
             htmlType="button"
             onClick={() => {
               // Its button goes with the list it shortens; the heading stays.
               document.getElementById(id)?.focus();
-              setCount(FIRST_INSIDE);
+              setCount(FIRST_SHOWN);
             }}
           >
             Show fewer
@@ -437,5 +501,73 @@ function PlaceList({
         )}
       </div>
     </section>
+  );
+}
+
+/** The collections inside the one shown, as folder chips on the path's line, so the list
+ *  drills down too: one line that scrolls sideways, so the documents start where they did.
+ *  Each is a link: a plain click opens it here. Nothing for a place with no collections
+ *  inside, nor for the top level (the tree, or the list below the documents, holds those). */
+export function CollectionChips({
+  rows,
+  repeated,
+  collection,
+  onPick,
+}: {
+  /** Every collection the caller can read, or null while the list is read. */
+  rows: CollectionEntry[] | null;
+  /** Titles two collections share (`repeatedTitles`): those show their address too. */
+  repeated: Set<string>;
+  /** The collection shown; null on My files or a namespace, whose list is below the documents. */
+  collection: CollectionEntry | null;
+  onPick: (collection: string) => void;
+}) {
+  const inside = useMemo(() => (rows && collection ? childrenOf(rows, collection) : []), [rows, collection]);
+  // The first FIRST_SHOWN, as the list below the documents starts; Show more adds
+  // MORE_SHOWN at a time.
+  const [count, setCount] = useState(FIRST_SHOWN);
+  const list = useRef<HTMLUListElement | null>(null);
+  const left = inside.length - count;
+  // The last Show more removes its button: the focus goes to the first chip it added.
+  const markShown = useLastPageFocus({
+    loading: false,
+    more: left > 0,
+    rows: () => placeLinks(list.current),
+    // The last press adds at least one chip, so there is always one to focus.
+    fallback: () => null,
+  });
+  if (!collection || inside.length === 0) return null;
+  const chips = inside.slice(0, count);
+  return (
+    <nav aria-label={`Collections in ${distinctTitle(collection, repeated)}`} className="library-chips">
+      <ul ref={list}>
+        {chips.map((c) => (
+          <li key={c.namespace} data-collection={c.namespace}>
+            <PlaceTitleLink
+              collection={c.namespace}
+              title={distinctTitle(c, repeated)}
+              icon="folder-closed"
+              plain
+              className={`${CHIP_OUTLINE_CLASS} library-chip`}
+              onOpen={() => onPick(c.namespace)}
+            />
+          </li>
+        ))}
+        {left > 0 && (
+          <li>
+            <Button
+              type="empty"
+              htmlType="button"
+              onClick={() => {
+                markShown(chips.map((c) => c.namespace));
+                setCount(count + MORE_SHOWN);
+              }}
+            >
+              {`Show ${Math.min(left, MORE_SHOWN)} more`}
+            </Button>
+          </li>
+        )}
+      </ul>
+    </nav>
   );
 }

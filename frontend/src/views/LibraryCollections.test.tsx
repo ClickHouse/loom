@@ -4,10 +4,13 @@ import { useState, type ComponentProps } from "react";
 import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
-import { PHONE_QUERY } from "../lib/useMedia";
+import { PHONE_QUERY, TREE_QUERY } from "../lib/useMedia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionEntry } from "../api";
 import { useStore } from "../lib/state";
+import { invalidateSharedCollections } from "../lib/collectionPlaces";
+import { arriveAt } from "../lib/place";
+import { NEW_COLLECTION_FOCUS, placeTree } from "./LibraryTree";
 import { axeViolations } from "../test/axe";
 import { Documents } from "./Documents";
 import {
@@ -61,11 +64,22 @@ const ROWS = [
 const read = (rows: CollectionEntry[] | null, over: Partial<ReadableCollections> = {}): ReadableCollections => ({
   rows,
   truncated: false,
+  kept: rows && { rows, truncated: false },
+  refreshing: false,
   error: null,
   reload: vi.fn(),
   expected: "",
   ...over,
 });
+
+/** A window where only `query` matches. */
+function matchOnly(query: string) {
+  vi.stubGlobal("matchMedia", (q: string) => ({
+    matches: q === query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+}
 
 async function settle() {
   for (let i = 0; i < 3; i++)
@@ -129,16 +143,37 @@ describe("collection names and order", () => {
     ]);
   });
 
-  it("keeps collections a cycle in the tree cuts off from the top", () => {
+  it("keeps collections a cycle in the tree cuts off, starting it where the tree does", () => {
     const rows = [entry("col-a", { parent: "col-b" }), entry("col-b", { parent: "col-a" })];
-    expect(treeOrder(rows).map(({ c }) => c.namespace)).toEqual(["col-a", "col-b"]);
+    expect(treeOrder(rows).map(({ c, depth }) => [c.namespace, depth])).toEqual([
+      ["col-b", 0],
+      ["col-a", 1],
+    ]);
+    const tree = placeTree(rows);
+    expect(tree.mine.map((c) => c.namespace)).toEqual(["col-b"]);
+    expect(tree.children.get("col-b")?.map((c) => c.namespace)).toEqual(["col-a"]);
   });
 });
 
 /** The picker as Documents mounts it: the New collection dialog's open state is the page's. */
-function Picker(props: Omit<ComponentProps<typeof LibraryCollections>, "creating" | "onCreatingChange">) {
+function Picker(
+  props: Omit<
+    ComponentProps<typeof LibraryCollections>,
+    "creating" | "onCreatingChange" | "onCreated" | "repeated" | "byName"
+  >,
+) {
   const [creating, setCreating] = useState(false);
-  return <LibraryCollections {...props} creating={creating} onCreatingChange={setCreating} />;
+  const rows = props.collections.rows ?? [];
+  return (
+    <LibraryCollections
+      {...props}
+      repeated={repeatedTitles(rows)}
+      byName={new Map(rows.map((c) => [c.namespace, c]))}
+      creating={creating}
+      onCreatingChange={setCreating}
+      onCreated={vi.fn()}
+    />
+  );
 }
 
 describe("LibraryCollections", () => {
@@ -204,11 +239,7 @@ describe("LibraryCollections", () => {
   });
 
   it("on a phone shows the path as one back button and leaves the collections inside to the select", () => {
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: query === PHONE_QUERY,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    matchOnly(PHONE_QUERY);
     const rows = [
       ROWS[1],
       entry("col-q3-k", { parent: "col-q3", title: "Kid" }),
@@ -296,6 +327,31 @@ describe("useReadableCollections", () => {
     expect((probe as ReadableCollections | null)?.expected).toBe("col-new");
   });
 
+  it("lists a collection two pages both return once", async () => {
+    api.listCollections
+      .mockResolvedValueOnce({ collections: [entry("col-a"), entry("col-b")], next_cursor: "col-b" })
+      .mockResolvedValueOnce({ collections: [entry("col-b"), entry("col-c")], next_cursor: null });
+    render(<Probe />);
+    await settle();
+    expect(screen.getByTestId("probe")).toHaveTextContent("col-a,col-b,col-c");
+  });
+
+  it("keeps the last answer while the list is read again", async () => {
+    let probe: ReadableCollections | null = null;
+    function Holder() {
+      probe = useReadableCollections("acme");
+      return null;
+    }
+    api.listCollections.mockResolvedValue({ collections: [entry("col-a")], next_cursor: null });
+    render(<Holder />);
+    await settle();
+    api.listCollections.mockReturnValue(new Promise(() => {}));
+    act(() => probe?.reload());
+    const now = probe as ReadableCollections | null;
+    expect(now?.rows).toBeNull();
+    expect(now?.kept?.rows.map((c) => c.namespace)).toEqual(["col-a"]);
+  });
+
   it("reads every page", async () => {
     api.listCollections
       .mockResolvedValueOnce({ collections: [entry("col-a")], next_cursor: "col-a" })
@@ -306,6 +362,43 @@ describe("useReadableCollections", () => {
     expect(api.listCollections.mock.calls[1][1]).toMatchObject({ cursor: "col-a" });
   });
 });
+
+/** A window from 1280 px that can be narrowed. */
+function resizable() {
+  let wide = true;
+  const listeners = new Set<() => void>();
+  vi.stubGlobal("matchMedia", (q: string) => ({
+    get matches() {
+      return q === TREE_QUERY && wide;
+    },
+    addEventListener: (_: string, f: () => void) => listeners.add(f),
+    removeEventListener: (_: string, f: () => void) => listeners.delete(f),
+  }));
+  return () => {
+    wide = false;
+    for (const f of [...listeners]) f();
+  };
+}
+
+async function startCreate() {
+  let answer: (v: unknown) => void = () => {};
+  api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+  api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+  history.replaceState(null, "", "/library?collection=col-q3");
+  // In a <main>, as App draws it: an arrival focuses the page's h1 there.
+  render(
+    <main id="main">
+      <Documents />
+    </main>,
+  );
+  const tree = await screen.findByRole("navigation", { name: "Library places" });
+  await within(tree).findByRole("link", { name: "col-q3" });
+  fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
+  fireEvent.change(screen.getByRole("textbox", { name: /^New collection in/ }), { target: { value: "Q4" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+  return (r: unknown) => act(async () => answer(r));
+}
+const q4 = { namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" };
 
 describe("the Library on a collection", () => {
   beforeEach(() => {
@@ -319,12 +412,14 @@ describe("the Library on a collection", () => {
   });
   afterEach(() => {
     cleanup();
+    useStore.setState({ myNamespaces: null });
+    localStorage.clear();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     history.replaceState(null, "", "/");
   });
 
-  it("lists the collections inside below the documents, six again when another is opened", async () => {
+  it("lists the top level's collections below the documents, and a collection's as chips only", async () => {
     const kids = (parent: string) =>
       Array.from({ length: 10 }, (_, i) => entry(`${parent}-k${i}`, { parent, title: `${parent} kid ${i}` }));
     api.listCollections.mockResolvedValue({
@@ -332,26 +427,34 @@ describe("the Library on a collection", () => {
       next_cursor: null,
     });
     api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
-    history.replaceState(null, "", "/library?collection=col-q3");
+    history.replaceState(null, "", "/library");
     const { container } = render(<Documents />);
     const section = await screen.findByRole("region", { name: /Collections/ });
     // After the documents: they start where the list rules want them.
     await waitFor(() => expect(container.querySelector("[data-doc-row]")).not.toBeNull());
     const row = container.querySelector("[data-doc-row]") as Element;
     expect(row.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.click(within(section).getByRole("button", { name: "Show 4 more" }));
-    expect(within(section).getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(10);
-    fireEvent.click(within(section).getByRole("link", { name: "col-q3 kid 0" }));
+    fireEvent.click(within(section).getByRole("link", { name: "col-q3" }));
     await settle();
-    expect(within(screen.getByRole("region", { name: /Collections/ })).getAllByRole("link")).toHaveLength(6);
+    // Inside a collection the chips on its path's line list what is inside, once.
+    expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
+    // The first six, then Show more for the rest, with the focus on the first it adds.
+    const chips = screen.getByRole("navigation", { name: "Collections in col-q3" });
+    expect(within(chips).getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(6);
+    fireEvent.click(within(chips).getByRole("button", { name: "Show 4 more" }));
+    expect(within(chips).getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(10);
+    expect(within(chips).getAllByRole("link")[6]).toHaveFocus();
+    expect(within(chips).queryByRole("button")).toBeNull();
+    // The next place starts at six again.
+    fireEvent.click(within(chips).getByRole("link", { name: "col-q3 kid 0" }));
+    await settle();
+    const next = screen.getByRole("navigation", { name: "Collections in col-q3 kid 0" });
+    expect(within(next).getAllByRole("link")).toHaveLength(6);
+    expect(within(next).getByRole("button", { name: "Show 4 more" })).toBeInTheDocument();
   });
 
   it("lists no collections inside on a phone, where the select lists them", async () => {
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: query === PHONE_QUERY,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
+    matchOnly(PHONE_QUERY);
     api.listCollections.mockResolvedValue({
       collections: [ROWS[1], entry("col-q3-k", { parent: "col-q3" })],
       next_cursor: null,
@@ -361,6 +464,14 @@ describe("the Library on a collection", () => {
     await settle();
     expect(screen.getByRole("button", { name: "Show the documents of" })).toHaveTextContent("col-q3");
     expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
+  });
+
+  it("names no place in the browser tab while a linked collection is read", async () => {
+    api.listCollections.mockReturnValue(new Promise(() => {}));
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />);
+    await settle();
+    expect(document.title).toBe("Library · Loom");
   });
 
   it("reads a linked collection only once collection.list names it", async () => {
@@ -469,8 +580,118 @@ describe("the Library on a collection", () => {
     await user.click(await screen.findByRole("button", { name: "Done" }));
     await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads));
     expect(
-      await within(await screen.findByRole("region", { name: /Collections/ })).findByRole("link", { name: "Q4" }),
+      await within(await screen.findByRole("navigation", { name: "Collections in col-q3" })).findByRole("link", {
+        name: "Q4",
+      }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the documents and the dialog's place while a folder upload reads the collections again", async () => {
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+    api.knowledgeFormats.mockResolvedValue(MARKDOWN);
+    api.createCollection.mockImplementation(async () => {
+      // The read the upload asks for after it made its collection stays in flight.
+      api.listCollections.mockReturnValue(new Promise(() => {}));
+      return { namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" };
+    });
+    api.uploadKnowledgeFile.mockReturnValue(new Promise(() => {}));
+    history.replaceState(null, "", "/library?collection=col-q3");
+    const { container } = render(<Documents />);
+    await settle();
+    const docReads = api.listKnowledge.mock.calls.length;
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    fireEvent.drop(screen.getByTestId("add-doc-drop"), folderDrop("Q4", ["a.md"]));
+    const upload = await screen.findByRole("button", { name: "Upload 1 file to col-q3" });
+    await waitFor(() => expect(upload).not.toHaveAttribute("aria-disabled"));
+    const listReads = api.listCollections.mock.calls.length;
+    await user.click(upload);
+    await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThan(listReads));
+    await settle();
+    expect(screen.getByRole("dialog", { name: /col-q3/ })).toBeInTheDocument();
+    expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+    expect(api.listKnowledge.mock.calls.length).toBe(docReads);
+    expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+  });
+
+  it("keeps the documents when the dialog of a folder upload into a collection closes", async () => {
+    const q4 = entry("col-q4", { parent: "col-q3", title: "Q4" });
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+    api.knowledgeFormats.mockResolvedValue(MARKDOWN);
+    api.createCollection.mockImplementation(async () => {
+      api.listCollections.mockResolvedValue({ collections: [...ROWS, q4], next_cursor: null });
+      return { namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" };
+    });
+    api.uploadKnowledgeFile.mockImplementation(async (_id: unknown, f: File) => ({ upload_id: f.name }));
+    api.ingestKnowledge.mockImplementation(async (_id: unknown, o: { source_uri: string }) => ({
+      ingestion_id: o.source_uri,
+    }));
+    api.knowledgeIngestStatus.mockImplementation(async (_id: unknown, job: string) => ({
+      found: true,
+      ingestion_id: job,
+      source_uri: job,
+      state: "ready",
+      revision: 1,
+    }));
+    history.replaceState(null, "", "/library?collection=col-q3");
+    const { container } = render(<Documents />);
+    await settle();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    fireEvent.drop(screen.getByTestId("add-doc-drop"), folderDrop("Q4", ["b.md"]));
+    const upload = await screen.findByRole("button", { name: "Upload 1 file to col-q3" });
+    await waitFor(() => expect(upload).not.toHaveAttribute("aria-disabled"));
+    await user.click(upload);
+    const done = await screen.findByRole("button", { name: "Done" });
+    await settle();
+    const docReads = api.listKnowledge.mock.calls.length;
+    await user.click(done);
+    await settle();
+    expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+    expect(api.listKnowledge.mock.calls.length).toBe(docReads);
+    expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+  });
+
+  it("waits on close for the collection a folder upload made, keeping the documents", async () => {
+    const q4 = entry("col-q4", { parent: "col-q3", title: "Q4" });
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+    api.knowledgeFormats.mockResolvedValue(MARKDOWN);
+    api.createCollection.mockResolvedValue({ namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" });
+    api.uploadKnowledgeFile.mockImplementation(async (_id: unknown, f: File) => ({ upload_id: f.name }));
+    api.ingestKnowledge.mockImplementation(async (_id: unknown, o: { source_uri: string }) => ({
+      ingestion_id: o.source_uri,
+    }));
+    api.knowledgeIngestStatus.mockImplementation(async (_id: unknown, job: string) => ({
+      found: true,
+      ingestion_id: job,
+      source_uri: job,
+      state: "ready",
+      revision: 1,
+    }));
+    history.replaceState(null, "", "/library?collection=col-q3");
+    const { container } = render(<Documents />);
+    await settle();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add document" }));
+    fireEvent.drop(screen.getByTestId("add-doc-drop"), folderDrop("Q4", ["b.md"]));
+    const upload = await screen.findByRole("button", { name: "Upload 1 file to col-q3" });
+    await waitFor(() => expect(upload).not.toHaveAttribute("aria-disabled"));
+    await user.click(upload);
+    const done = await screen.findByRole("button", { name: "Done" });
+    await settle();
+    // A replica that has not caught up answers the first read without it.
+    api.listCollections
+      .mockResolvedValueOnce({ collections: ROWS, next_cursor: null })
+      .mockResolvedValue({ collections: [...ROWS, q4], next_cursor: null });
+    const docReads = api.listKnowledge.mock.calls.length;
+    await user.click(done);
+    const chips = await screen.findByRole("navigation", { name: "Collections in col-q3" }, { timeout: 3000 });
+    expect(await within(chips).findByRole("link", { name: "Q4" }, { timeout: 3000 })).toBeInTheDocument();
+    expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+    expect(api.listKnowledge.mock.calls.length).toBe(docReads);
   });
 
   it("says on an empty collection that a folder can be uploaded there", async () => {
@@ -795,6 +1016,205 @@ describe("the Library on a collection", () => {
     expect(within(section).getAllByRole("link").length).toBeGreaterThan(0);
   });
 
+  it("beside the tree, on a code namespace names no place and asks only for a pick", async () => {
+    matchOnly(TREE_QUERY);
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    useStore.setState({
+      identity: { org: "acme", namespace: "code-repo", agent: "loom-ui" },
+      myNamespaces: [{ namespace: "code-repo", kind: "code" } as never],
+    });
+    render(<Documents />);
+    await settle();
+    const tree = screen.getByRole("navigation", { name: "Library places" });
+    expect(within(tree).getByRole("link", { name: "My files" })).not.toHaveAttribute("aria-current");
+    // My files is in the tree only: nothing beside the page says it is shown.
+    expect(screen.getAllByText("My files").every((el) => tree.contains(el))).toBe(true);
+    expect(
+      screen.getByText(
+        "code-repo holds no documents. Pick a collection, or a memory namespace from the namespace picker.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  describe("a create answered after the tree is gone", () => {
+    it("still opens it when a resize took the tree away", async () => {
+      const narrow = resizable();
+      const answer = await startCreate();
+      act(() => narrow());
+      expect(screen.queryByRole("navigation", { name: "Library places" })).toBeNull();
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await answer(q4);
+      await settle();
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      // The move asks for New collection, which went with the tree: the arrival App makes
+      // then focuses the page's h1, as for any other move.
+      expect(useStore.getState().arriveFocus).toBe(NEW_COLLECTION_FOCUS);
+      act(() => arriveAt(null, useStore.getState().arriveFocus));
+      await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "Library" })).toHaveFocus());
+    });
+
+    it("moves nothing once the person left the Library and came back, and lists what was made", async () => {
+      resizable();
+      const answer = await startCreate();
+      const at = location.search;
+      // App mounts a view afresh on each visit: leaving closes this page, coming back opens another.
+      cleanup();
+      render(<Documents />);
+      await settle();
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await answer(q4);
+      await settle();
+      expect(location.search).toBe(at);
+      // The page shown reads the list again once, and lists the new collection.
+      expect(api.listCollections.mock.calls.length).toBe(reads + 1);
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+      expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/col-q4/), "info");
+    });
+
+    it("moves nothing once the page shows another org", async () => {
+      resizable();
+      const answer = await startCreate();
+      api.listCollections.mockReturnValue(new Promise(() => {}));
+      act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
+      await settle();
+      const at = location.search;
+      await answer(q4);
+      await settle();
+      // Nothing opens; the other org's list reads again, as after any write.
+      expect(location.search).toBe(at);
+      expect(api.listCollections).toHaveBeenLastCalledWith("other", expect.anything());
+    });
+  });
+
+  describe("refreshes", () => {
+    it("reads once for a delete after a create, not waiting again for what was made", async () => {
+      resizable();
+      const answer = await startCreate();
+      const withQ4 = [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })];
+      api.listCollections.mockResolvedValue({ collections: withQ4, next_cursor: null });
+      await answer(q4);
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q4");
+      // Delete it: the list read after no longer holds it, and that is the answer.
+      api.deleteCollection.mockResolvedValue({ deleted: true, erasure_status: "completed" });
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for Q4" }), { button: 0, ctrlKey: false });
+      await settle();
+      confirm.next = true;
+      const reads = api.listCollections.mock.calls.length;
+      fireEvent.click(screen.getByRole("menuitem", { name: "Delete collection" }));
+      await settle();
+      confirm.next = false;
+      expect(api.listCollections.mock.calls.length).toBe(reads + 1);
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(tree).not.toHaveAttribute("aria-busy");
+      expect(within(tree).queryByRole("link", { name: "Q4" })).toBeNull();
+    });
+
+    it("says it could not load the collections when the page's own read again fails", async () => {
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      api.createCollection.mockImplementation(async () => {
+        // The read the page asks for once the collection is made fails.
+        api.listCollections.mockRejectedValue(new Error("offline"));
+        return { namespace: "col-q4", parent: "col-q3", created: true, title: "Q4" };
+      });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), { target: { value: "Q4" } });
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Create" }));
+      await settle();
+      // The select, the path and the chips are empty while the page reads again: nothing to refresh.
+      expect(await screen.findByText(/Couldn't load collections/)).toBeInTheDocument();
+      expect(screen.queryByText(/Couldn't refresh collections/)).toBeNull();
+      cleanup();
+      // Beside the tree, which still draws the last answer, it is a refresh that failed.
+      resizable();
+      const answer = await startCreate();
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      await answer(q4);
+      await settle();
+      expect(await screen.findByText(/Couldn't refresh collections/)).toBeInTheDocument();
+    });
+
+    it("marks the tree busy only while it reads again for a create, not after that read failed", async () => {
+      resizable();
+      const answer = await startCreate();
+      let fail: (e: Error) => void = () => {};
+      api.listCollections.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+      await answer(q4);
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(tree).toHaveAttribute("aria-busy", "true");
+      await act(async () => fail(new Error("offline")));
+      await settle();
+      expect(tree).not.toHaveAttribute("aria-busy");
+    });
+    it("keeps the tree's rows, marked busy, while a write elsewhere reads the list again", async () => {
+      resizable();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      await within(tree).findByRole("link", { name: "col-q3" });
+      expect(tree).not.toHaveAttribute("aria-busy");
+      let answer: (v: unknown) => void = () => {};
+      api.listCollections.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      act(() => invalidateSharedCollections());
+      await settle();
+      expect(tree).toHaveAttribute("aria-busy", "true");
+      expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveAttribute("aria-current", "page");
+      await act(async () => answer({ collections: ROWS, next_cursor: null }));
+      await settle();
+      expect(tree).not.toHaveAttribute("aria-busy");
+    });
+    it("says it could not refresh the collections when a write's read again fails, keeping the list", async () => {
+      resizable();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      const tree = await screen.findByRole("navigation", { name: "Library places" });
+      await within(tree).findByRole("link", { name: "col-q3" });
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      act(() => invalidateSharedCollections());
+      await settle();
+      expect(screen.getByText(/Couldn't refresh collections/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Load collections again" })).toBeInTheDocument();
+      expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveAttribute("aria-current", "page");
+      expect(tree).not.toHaveAttribute("aria-busy");
+    });
+  });
+
+  it("beside the tree, shows none of one org's collections after a switch to another", async () => {
+    matchOnly(TREE_QUERY);
+    api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+    history.replaceState(null, "", "/library");
+    render(<Documents />);
+    const tree = await screen.findByRole("navigation", { name: "Library places" });
+    expect(await within(tree).findByRole("link", { name: "col-q3" })).toBeInTheDocument();
+    fireEvent.click(within(tree).getByRole("button", { name: "Collections in col-q3" }));
+    expect(localStorage.getItem("loom.library.expanded.acme")).toBe('["col-q3"]');
+    api.listCollections.mockReturnValue(new Promise(() => {}));
+    act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
+    await settle();
+    const after = screen.getByRole("navigation", { name: "Library places" });
+    expect(within(after).queryByRole("link", { name: "col-q3" })).toBeNull();
+    expect(within(after).queryByRole("link", { name: "My files" })).toBeNull();
+    // Acme's folds stay acme's; the other org's tree opens nothing.
+    expect(localStorage.getItem("loom.library.expanded.acme")).toBe('["col-q3"]');
+    expect(within(after).queryByRole("button", { expanded: true })).toBeNull();
+  });
+
   it("on a code namespace reads only a collection picked, and lists no namespace to pick", async () => {
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
     useStore.setState({
@@ -814,7 +1234,6 @@ describe("the Library on a collection", () => {
     fireEvent.click(menu.getByText(/col-q3/));
     await settle();
     expect(api.listKnowledge.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "col-q3" });
-    useStore.setState({ myNamespaces: null });
   });
 
   it("with no namespace, opens one's own files in place of the page; with none, lists every collection", async () => {
@@ -841,7 +1260,7 @@ describe("the Library on a collection", () => {
     await settle();
     // No files of its own (a token that is not a person's): the top level, where both lists show.
     expect(new URLSearchParams(window.location.search).get("collection")).toBeNull();
-    expect(screen.getByText("Collections are shared document libraries. Pick a collection above.")).toBeInTheDocument();
+    expect(screen.getByText("Collections are shared document libraries. Pick a collection.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Find public namespaces to join" })).toBeNull();
     expect(
       within(screen.getByRole("region", { name: /^Collections/ })).getByRole("link", { name: "Zeta" }),
@@ -900,7 +1319,7 @@ describe("the Library on a collection", () => {
     expect(screen.queryByText("No collection yet", { selector: "h2, h3, p, div" })).not.toBeInTheDocument();
     expect(screen.getByText("Pick a collection", { selector: "h2, h3, p, div" })).toBeInTheDocument();
     // Not known to hold one: the page says what is missing, and offers to join a namespace.
-    expect(screen.getByText("Your token reaches no namespace yet. Pick a collection above.")).toBeInTheDocument();
+    expect(screen.getByText("Your token reaches no namespace yet. Pick a collection.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Find public namespaces to join" })).toBeInTheDocument();
   });
 
@@ -916,7 +1335,6 @@ describe("the Library on a collection", () => {
       expect(screen.getByRole("button", { name: "Open in Patterns" }), kind).toBeInTheDocument();
       cleanup();
     }
-    useStore.setState({ myNamespaces: null });
   });
 
   it("with no namespace and no collection, says so and points at Namespaces in your org", async () => {
@@ -1004,7 +1422,6 @@ describe("the Library on a collection", () => {
     await settle();
     // A code namespace holds no documents: the header offers none to add there.
     expect(useStore.getState().libraryElsewhere).toBe(true);
-    useStore.setState({ myNamespaces: null });
   });
 
   it("keeps the whole description in an item for the search, past the cut", () => {

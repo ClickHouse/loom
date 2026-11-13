@@ -1682,6 +1682,125 @@ textarea[aria-invalid="true"]:focus-visible {
   [data-testid="select-trigger"] .collection-depth {
     padding-inline-start: 0;
   }
+  /* The Library beside its places (views/LibraryTree.tsx): from 1280 px (`TREE_QUERY`) the
+     tree is a column of its own left of the page; narrower, the page's select stands in. The
+     column's 16.5rem fits "Shared with you" and three levels of a 20-character title. */
+  @media (min-width: 1280px) {
+    .library-layout {
+      display: grid;
+      grid-template-columns: 16.5rem minmax(0, 1fr);
+      align-items: start;
+    }
+  }
+  /* Click UI's sidebar navigation has no nesting: rows take its item's padding, radius and
+     text (30 px) and the Table row tints; a level indents 1rem, as `.collection-depth`. */
+  .library-tree {
+    display: flex;
+    position: sticky;
+    top: 0;
+    flex-direction: column;
+    gap: var(--spaces-2);
+    /* Below the header (`min-h-14`) until the tree measures <main> (LibraryTree.tsx). */
+    max-height: calc(100vh - 3.5rem);
+    overflow-y: auto;
+    padding: var(--spaces-5) var(--spaces-2) var(--spaces-4) var(--spaces-4);
+    border-inline-end: 1px solid var(--click-global-color-stroke-default);
+  }
+  .library-tree-label {
+    padding: var(--spaces-4) var(--spaces-2) var(--spaces-1);
+  }
+  .library-tree ul {
+    display: flex;
+    flex-direction: column;
+    gap: var(--click-sidebar-navigation-item-global-gap);
+  }
+  .library-tree-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spaces-1);
+    padding-inline: calc(var(--depth, 0) * 1rem) var(--spaces-2);
+    border-radius: var(--click-sidebar-navigation-item-radii-all);
+  }
+  .library-tree-row:hover {
+    background: var(--click-table-row-color-background-hover);
+  }
+  .library-tree-row[data-selected] {
+    background: var(--click-table-row-color-background-active);
+  }
+  /* The place's link fills its row: the row is what a pointer aims at. */
+  .library-tree-link {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    align-items: center;
+    gap: var(--spaces-2);
+    align-self: stretch;
+    padding-block: var(--click-sidebar-navigation-item-default-space-y);
+    font: var(--click-sidebar-navigation-item-typography-default);
+    color: var(--click-global-color-text-default);
+    text-decoration: none;
+  }
+  .library-tree-row[data-selected] .library-tree-link {
+    font: var(--click-sidebar-navigation-item-typography-active);
+  }
+  /* The show/hide button: 24 px, the smallest pointer target WCAG 2.5.8 allows; an empty
+     box of the same size on a row with nothing inside. */
+  .library-tree-twist {
+    display: inline-flex;
+    flex: 0 0 1.5rem;
+    height: 1.5rem;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 0;
+    border-radius: var(--click-sidebar-navigation-item-radii-all);
+    padding: 0;
+    color: var(--color-text-muted);
+  }
+  button.library-tree-twist {
+    cursor: pointer;
+  }
+  /* New collection's form at the tree's foot: where it goes, its title, then its two
+     buttons on their own line: the column is narrow. */
+  .library-tree-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spaces-2);
+    min-width: 0;
+    padding-block: var(--spaces-1);
+  }
+  .library-tree-foot {
+    margin-top: var(--spaces-2);
+    padding-top: var(--spaces-2);
+    border-top: 1px solid var(--click-global-color-stroke-default);
+  }
+  /* Folder chips on the path's line: one sideways-scrolling row (4 px for focus rings), on
+     that line while 8rem (one chip) is left; a chip is cut at 16rem (about 25 characters). */
+  .library-chips {
+    flex: 1 1 8rem;
+    min-width: 0;
+    overflow-x: auto;
+    padding: var(--spaces-1);
+  }
+  .library-chips > ul {
+    display: flex;
+    gap: var(--spaces-2);
+    width: max-content;
+  }
+  .library-chip {
+    max-width: 16rem;
+    text-decoration: none;
+  }
+  @media (pointer: coarse) {
+    .library-tree-row {
+      min-height: var(--spacing-hit);
+    }
+    .library-tree-twist {
+      flex-basis: var(--spacing-hit);
+      height: var(--spacing-hit);
+    }
+  }
 }
 
 /* The assistant panel (layout/AssistantPanel.tsx). Click UI has no docked side panel; it

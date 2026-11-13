@@ -25,7 +25,6 @@ afterEach(() => {
 
 describe("MoveCollectionDialog", () => {
   it("moves a collection to the top level", async () => {
-    const onMoved = vi.fn();
     const onClose = vi.fn();
     render(
       <MoveCollectionDialog
@@ -33,7 +32,6 @@ describe("MoveCollectionDialog", () => {
         collection={entry("q3", "finance")}
         parents={[entry("finance"), entry("q3", "finance")]}
         all={[entry("finance"), entry("q3", "finance")]}
-        onMoved={onMoved}
         onClose={onClose}
       />,
     );
@@ -52,7 +50,6 @@ describe("MoveCollectionDialog", () => {
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "q3", ""));
-    expect(onMoved).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -70,7 +67,6 @@ describe("MoveCollectionDialog", () => {
           entry("q3-eu", "q3"),
           entry("hr"),
         ]}
-        onMoved={() => {}}
         onClose={() => {}}
       />,
     );
@@ -88,7 +84,6 @@ describe("MoveCollectionDialog", () => {
         collection={entry("q3", "corp")}
         parents={[entry("corp"), entry("finance", "corp"), entry("q3", "corp")]}
         all={[entry("corp"), entry("finance", "corp"), entry("q3", "corp")]}
-        onMoved={() => {}}
         onClose={() => {}}
       />,
     );

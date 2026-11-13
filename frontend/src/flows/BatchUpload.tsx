@@ -238,7 +238,7 @@ export function BatchUpload({
   closeWith?: (close: () => void) => void;
   /** The collections the person reads and the one shown (null for a namespace), for
    *  picked folders to become collections; none means folders keep only their paths. */
-  tree?: { rows: CollectionEntry[]; shown: CollectionEntry | null; onMade: (first: string) => void };
+  tree?: { rows: CollectionEntry[]; shown: CollectionEntry | null };
   onClose: () => void;
 }) {
   // Where the files go, as it was when the dialog opened: the Library reloads its list
@@ -298,16 +298,15 @@ export function BatchUpload({
   const [stopping, setStopping] = useState(false);
   const [status, setStatus] = useState("");
   const ctrl = useRef<AbortController | null>(null);
-  // The collections this dialog's uploads made, for the Library to list once it closes.
+  // The collections this dialog's uploads made, so a later upload finds them.
   const madeHere = useRef<string[]>([]);
-  // A folder upload ran: the Library lists its collections again once the dialog closes,
-  // whatever it made, titled, or a Stop cut short.
+  // A folder upload ran: the Library reads its collections again, in place, once the dialog
+  // closes, whatever it made, titled, or a Stop cut short (a replica may have lagged before).
   const foldersSent = useRef(false);
   // What the check read of each collection, whole or cut at its limit, for the upload to start from.
   const checkedSources = useRef(new Map<string, Map<string, KeptFields>>());
   const leave = () => {
-    const first = madeHere.current[0];
-    if (first || foldersSent.current) tree?.onMade(first ?? "");
+    if (foldersSent.current) invalidateSharedCollections(madeHere.current[0]);
     onClose();
   };
   const cancelling = useRef(false);

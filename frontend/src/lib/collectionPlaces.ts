@@ -11,6 +11,7 @@ import { collectionTitle, looksRepeated, repeatedLooks } from "./collections";
 import { isCollectionName, isPersonalCollection, type LandingTarget } from "./namespace";
 import { offersCollection } from "./tokenScope";
 import { invalidateShared, shared } from "./sharedReads";
+import { toast } from "../components/Toast";
 
 const COLLECTIONS_KEY = "collections:";
 
@@ -20,9 +21,32 @@ export function sharedCollections(org: string): Promise<CollectionListPage> {
   return shared(`${COLLECTIONS_KEY}${org}`, 30_000, () => listCollections(org));
 }
 
-/** For a write that changes a collection: the next asker reads `collection.list` afresh. */
-export function invalidateSharedCollections(): void {
+const changeListeners = new Set<(made: string) => void>();
+
+/** For a write that changes a collection: the next asker reads `collection.list` afresh, and
+ *  the Library's lists (useReadableCollections) read it again, until they list `made` (a
+ *  collection just created) when one is named. */
+export function invalidateSharedCollections(made = ""): void {
   invalidateShared(COLLECTIONS_KEY);
+  for (const listener of [...changeListeners]) listener(made);
+}
+
+/** Call `listener` after each write to a collection, with the collection it made, if any;
+ *  returns the unsubscribe. */
+export function onCollectionsChanged(listener: (made: string) => void): () => void {
+  changeListeners.add(listener);
+  return () => {
+    changeListeners.delete(listener);
+  };
+}
+
+/** After collection.create: the shared reads of the collections start again, and the person
+ *  is told whether it was made or one of that title already sits there. `typed`: the title
+ *  asked for, shown when the answer names none. */
+export function announceCreated(r: { created: boolean; title?: string; namespace: string }, typed: string): void {
+  invalidateSharedCollections();
+  const shown = r.title || typed || r.namespace;
+  toast(r.created ? `Created ${shown}` : `${shown} already exists here`, r.created ? "ok" : "info");
 }
 
 /** Whether `m` is a direct grant on a shared collection, one the collection gate admits: not

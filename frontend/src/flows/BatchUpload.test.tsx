@@ -585,7 +585,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [...rows], shown: team, onMade: () => {} }}
+          tree={{ rows: [...rows], shown: team }}
         />,
       );
       const made = await screen.findByRole("list", { name: "Collections the folders go to" });
@@ -607,7 +607,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, q3, other], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, q3, other], shown: team }}
         />,
       );
       const made = await screen.findByRole("list", { name: "Collections the folders go to" });
@@ -624,7 +624,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
         />,
       );
       const made = await screen.findByRole("list", { name: "Collections the folders go to" });
@@ -643,7 +643,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [mine], shown: mine, onMade: () => {} }}
+          tree={{ rows: [mine], shown: mine }}
         />,
       );
       const user = userEvent.setup();
@@ -672,7 +672,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [mine, docs], shown: mine, onMade: () => {} }}
+          tree={{ rows: [mine, docs], shown: mine }}
         />,
       );
       expect(await screen.findByText("Creates 2 collections:")).toBeInTheDocument();
@@ -688,7 +688,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [mine], shown: mine, onMade: () => {} }}
+          tree={{ rows: [mine], shown: mine }}
         />,
       );
       const user = userEvent.setup();
@@ -732,7 +732,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [mine, reports], shown: mine, onMade: () => {} }}
+          tree={{ rows: [mine, reports], shown: mine }}
         />,
       );
       const user = userEvent.setup();
@@ -772,7 +772,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, q3], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, q3], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -810,7 +810,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, q3], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, q3], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -855,7 +855,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, docs], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, docs], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -901,7 +901,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [mine, docs], shown: mine, onMade: () => {} }}
+          tree={{ rows: [mine, docs], shown: mine }}
         />,
       );
       const user = userEvent.setup();
@@ -951,7 +951,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [mine, docs, sub], shown: mine, onMade: () => {} }}
+          tree={{ rows: [mine, docs, sub], shown: mine }}
         />,
       );
       const user = userEvent.setup();
@@ -996,7 +996,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, q3], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, q3], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1026,7 +1026,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1066,7 +1066,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, q3], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, q3], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1098,7 +1098,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1138,7 +1138,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, q3], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, q3], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1178,7 +1178,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1212,7 +1212,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, myDocs], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, myDocs], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1238,7 +1238,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1266,7 +1266,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, q3], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, q3], shown: team }}
         />,
       );
       expect(await screen.findByText(/^Q3 holds over 10,000 documents/)).toBeInTheDocument();
@@ -1295,7 +1295,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1321,7 +1321,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1347,7 +1347,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, notes], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, notes], shown: team }}
         />,
       );
       expect(await screen.findByRole("radiogroup", { name: "1 file is already there" })).toBeInTheDocument();
@@ -1373,7 +1373,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, zoo], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, zoo], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1413,7 +1413,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, q3], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, q3], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1440,7 +1440,6 @@ describe("BatchUpload", () => {
           ? { namespace: "col-docs-own", parent: "", created: false, title: "Docs" }
           : { namespace: "col-sub", parent: o?.parent ?? "", created: true, title: o?.title },
       );
-      const onMade = vi.fn();
       render(
         <BatchUpload
           identity={{ org: "o", namespace: "col-me-1" }}
@@ -1450,16 +1449,82 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [mine, docs], shown: mine, onMade }}
+          tree={{ rows: [mine, docs], shown: mine }}
         />,
       );
       const user = userEvent.setup();
       await user.click(await screen.findByRole("button", { name: "Upload 1 file into Docs" }));
-      await user.click(await screen.findByRole("button", { name: "Done" }));
+      const done = await screen.findByRole("button", { name: "Done" });
+      const told = vi.mocked(invalidateSharedCollections).mock.calls.length;
+      await user.click(done);
       expect(vi.mocked(ingestKnowledge).mock.calls.map(([id, o]) => [id.namespace, o.source_uri])).toEqual([
         ["col-sub", "b.md"],
       ]);
-      expect(onMade).toHaveBeenCalledWith("col-sub");
+      // Closing has the Library read its collections again.
+      expect(vi.mocked(invalidateSharedCollections).mock.calls.length).toBe(told + 1);
+    });
+
+    it("lists the Library's collections again on close when a Stop cut a collection's create short", async () => {
+      let refuse: (e: unknown) => void = () => {};
+      vi.mocked(createCollection).mockReturnValue(
+        new Promise((_ok, fail) => {
+          refuse = fail;
+        }),
+      );
+      render(
+        <BatchUpload
+          identity={{ org: "o", namespace: "col-team" }}
+          place="Team"
+          entries={folderEntries(["Q3/a.md"])}
+          formats={FORMATS}
+          formatsRead
+          onAdded={() => {}}
+          onClose={() => {}}
+          tree={{ rows: [team], shown: team }}
+        />,
+      );
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Upload 1 file to Team" }));
+      await screen.findByText("Making its collection…");
+      held.next = Promise.resolve(true);
+      await user.click(screen.getByRole("button", { name: "Stop" }));
+      held.next = null;
+      refuse(new DOMException("aborted", "AbortError")); // the server may have made it all the same
+      held.next = Promise.resolve(true);
+      const done = await screen.findByRole("button", { name: "Done" });
+      const told = vi.mocked(invalidateSharedCollections).mock.calls.length;
+      await user.click(done);
+      held.next = null;
+      expect(vi.mocked(invalidateSharedCollections).mock.calls.length).toBe(told + 1);
+    });
+
+    it("lists the Library's collections again on close when the upload gave a listed one a title", async () => {
+      const untitled = { namespace: "col-q3", parent: "col-team", personal: false, role: "admin" } as const;
+      // The person is its admin: the server titles it for the folder.
+      vi.mocked(createCollection).mockResolvedValue({
+        namespace: "col-q3",
+        parent: "col-team",
+        created: false,
+        title: "Q3",
+      });
+      render(
+        <BatchUpload
+          identity={{ org: "o", namespace: "col-team" }}
+          place="Team"
+          entries={folderEntries(["Q3/a.md"])}
+          formats={FORMATS}
+          formatsRead
+          onAdded={() => {}}
+          onClose={() => {}}
+          tree={{ rows: [team, untitled], shown: team }}
+        />,
+      );
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: "Upload 1 file to Team" }));
+      const done = await screen.findByRole("button", { name: "Done" });
+      const told = vi.mocked(invalidateSharedCollections).mock.calls.length;
+      await user.click(done);
+      expect(vi.mocked(invalidateSharedCollections).mock.calls.length).toBe(told + 1);
     });
 
     it("sends a file once when two folders go to one untitled collection both their names spell", async () => {
@@ -1481,7 +1546,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team, fooBar], shown: team, onMade: () => {} }}
+          tree={{ rows: [team, fooBar], shown: team }}
         />,
       );
       vi.mocked(createCollection).mockResolvedValue({
@@ -1503,39 +1568,6 @@ describe("BatchUpload", () => {
       ).toEqual(["a.md", "b.md"]);
     });
 
-    it("lists the Library's collections again on close when a Stop cut a collection's create short", async () => {
-      let refuse: (e: unknown) => void = () => {};
-      vi.mocked(createCollection).mockReturnValue(
-        new Promise((_ok, fail) => {
-          refuse = fail;
-        }),
-      );
-      const onMade = vi.fn();
-      render(
-        <BatchUpload
-          identity={{ org: "o", namespace: "col-team" }}
-          place="Team"
-          entries={folderEntries(["Q3/a.md"])}
-          formats={FORMATS}
-          formatsRead
-          onAdded={() => {}}
-          onClose={() => {}}
-          tree={{ rows: [team], shown: team, onMade }}
-        />,
-      );
-      const user = userEvent.setup();
-      await user.click(await screen.findByRole("button", { name: "Upload 1 file to Team" }));
-      await screen.findByText("Making its collection…");
-      held.next = Promise.resolve(true);
-      await user.click(screen.getByRole("button", { name: "Stop" }));
-      held.next = null;
-      refuse(new DOMException("aborted", "AbortError")); // the server may have made it all the same
-      held.next = Promise.resolve(true);
-      await user.click(await screen.findByRole("button", { name: "Done" }));
-      held.next = null;
-      expect(onMade).toHaveBeenCalledWith("");
-    });
-
     it("checks again what is already there when late formats switch the folders to paths", async () => {
       // An earlier upload added the folder's file here by its path.
       vi.mocked(listKnowledge).mockResolvedValue({ rows: [{ source_uri: "docs/a.md" }], next_cursor: null } as never);
@@ -1545,7 +1577,7 @@ describe("BatchUpload", () => {
         entries: [...folderEntries(["docs/a.md", "docs/img/x.png"]), { file: new File(["x"], "notes.md"), path: "" }],
         onAdded: () => {},
         onClose: () => {},
-        tree: { rows: [mine], shown: mine, onMade: () => {} },
+        tree: { rows: [mine], shown: mine },
       };
       const { rerender } = render(<BatchUpload {...props} formats={null} formatsRead={false} />);
       expect(await screen.findByRole("radio", { name: "Make docs a top-level collection" })).toBeChecked();
@@ -1563,7 +1595,7 @@ describe("BatchUpload", () => {
         entries: folderEntries(["Q3/a.md", "Q3/Old/pic.png"]),
         onAdded: () => {},
         onClose: () => {},
-        tree: { rows: [mine], shown: mine, onMade: () => {} },
+        tree: { rows: [mine], shown: mine },
       };
       const { rerender } = render(<BatchUpload {...props} formats={null} formatsRead={false} />);
       expect(await screen.findByRole("radio", { name: "Make Q3 a top-level collection" })).toBeChecked();
@@ -1584,7 +1616,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [mine], shown: mine, onMade: () => {} }}
+          tree={{ rows: [mine], shown: mine }}
         />,
       );
       const nest = await screen.findByRole("radio", { name: "Make Q3 a top-level collection" });
@@ -1592,34 +1624,6 @@ describe("BatchUpload", () => {
         "A top-level collection belongs to the org: only the members you add read it.",
       );
       expect(screen.getByRole("button", { name: "Upload 3 files into Q3 and My files" })).toBeInTheDocument();
-    });
-
-    it("lists the Library's collections again on close when the upload gave a listed one a title", async () => {
-      const untitled = { namespace: "col-q3", parent: "col-team", personal: false, role: "admin" } as const;
-      // The person is its admin: the server titles it for the folder.
-      vi.mocked(createCollection).mockResolvedValue({
-        namespace: "col-q3",
-        parent: "col-team",
-        created: false,
-        title: "Q3",
-      });
-      const onMade = vi.fn();
-      render(
-        <BatchUpload
-          identity={{ org: "o", namespace: "col-team" }}
-          place="Team"
-          entries={folderEntries(["Q3/a.md"])}
-          formats={FORMATS}
-          formatsRead
-          onAdded={() => {}}
-          onClose={() => {}}
-          tree={{ rows: [team, untitled], shown: team, onMade }}
-        />,
-      );
-      const user = userEvent.setup();
-      await user.click(await screen.findByRole("button", { name: "Upload 1 file to Team" }));
-      await user.click(await screen.findByRole("button", { name: "Done" }));
-      expect(onMade).toHaveBeenCalledWith("");
     });
 
     it("treats a folder whose files are all left out as no folder", async () => {
@@ -1635,7 +1639,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [mine], shown: mine, onMade: () => {} }}
+          tree={{ rows: [mine], shown: mine }}
         />,
       );
       expect(await screen.findByRole("button", { name: "Upload 1 file to My files" })).toBeInTheDocument();
@@ -1660,7 +1664,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: chain, shown: chain[7], onMade: () => {} }}
+          tree={{ rows: chain, shown: chain[7] }}
         />,
       );
       expect(
@@ -1685,7 +1689,7 @@ describe("BatchUpload", () => {
         entries: folderEntries(["Docs/README.md", "Specs/README.md", "Pics/a.png"]),
         onAdded: () => {},
         onClose: () => {},
-        tree: { rows: [team, docs, specs], shown: team, onMade: () => {} },
+        tree: { rows: [team, docs, specs], shown: team },
       };
       const { rerender } = render(<BatchUpload {...props} formats={null} formatsRead={false} />);
       const made = await screen.findByRole("list", { name: "Collections the folders go to" });
@@ -1714,7 +1718,7 @@ describe("BatchUpload", () => {
         entries: folderEntries(["Notes/a.png", "Notes./b.md"]),
         onAdded: () => {},
         onClose: () => {},
-        tree: { rows: [team, notes], shown: team, onMade: () => {} },
+        tree: { rows: [team, notes], shown: team },
       };
       const { rerender } = render(<BatchUpload {...props} formats={null} formatsRead={false} />);
       await waitFor(() => expect(vi.mocked(listKnowledge)).toHaveBeenCalled());
@@ -1734,7 +1738,7 @@ describe("BatchUpload", () => {
           formatsRead
           onAdded={() => {}}
           onClose={() => {}}
-          tree={{ rows: [team], shown: team, onMade: () => {} }}
+          tree={{ rows: [team], shown: team }}
         />,
       );
       expect(
@@ -1758,7 +1762,6 @@ describe("BatchUpload", () => {
         created: true,
         title: o?.title,
       }));
-      const onMade = vi.fn();
       const entries = folderEntries(Array.from({ length: 201 }, (_, i) => `Q3/f${String(i).padStart(3, "0")}.md`));
       const props = { entries, formats: FORMATS, formatsRead: true, onAdded: () => {}, onClose: () => {} };
       const { rerender } = render(
@@ -1766,7 +1769,7 @@ describe("BatchUpload", () => {
           {...props}
           identity={{ org: "o", namespace: "col-team" }}
           place="Team"
-          tree={{ rows: [team], shown: team, onMade }}
+          tree={{ rows: [team], shown: team }}
         />,
       );
       const user = userEvent.setup();
@@ -1777,7 +1780,6 @@ describe("BatchUpload", () => {
       await user.click(next);
       await waitFor(() => expect(ingestKnowledge).toHaveBeenCalledTimes(201), { timeout: 10_000 });
       expect(new Set(vi.mocked(ingestKnowledge).mock.calls.map(([id]) => id.namespace))).toEqual(new Set(["col-q3"]));
-      expect(onMade).not.toHaveBeenCalled(); // the list is told once the dialog closes
     }, 30_000);
   });
 });

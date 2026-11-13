@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -33,6 +34,7 @@ import {
   type KnowledgeEntry,
   type KnowledgeDocument,
   type InlinePreview,
+  type CollectionEntry,
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
@@ -60,7 +62,8 @@ import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
-import { CollectionsInside } from "./LibraryHierarchy";
+import { TopLevelPlaces } from "./LibraryHierarchy";
+import { LibraryTree, NEW_COLLECTION_FOCUS } from "./LibraryTree";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
@@ -69,7 +72,7 @@ import { KnowledgeGaps } from "./KnowledgeGaps";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
 import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
-import { useMedia, PHONE_QUERY } from "../lib/useMedia";
+import { useMedia, PHONE_QUERY, TREE_QUERY } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
@@ -122,6 +125,15 @@ async function findDocument(
   return null;
 }
 
+/** What the browser tab names: the collection shown, else the namespace shown (`shelf`), else
+ *  nothing (a linked collection still read). My files without its address, even when another
+ *  collection is titled so, as the tree's row shows it. */
+function placeTitle(shown: CollectionEntry | null, repeated: Set<string>, shelf: string | null): string | undefined {
+  if (shown) return shown.personal ? collectionTitle(shown) : distinctTitle(shown, repeated);
+  if (shelf !== null) return `Namespace ${shelf}`;
+  return undefined;
+}
+
 /** The collection a Library link names (`?collection=`), or null for the header's namespace. */
 function linkedCollection(): string | null {
   const name = new URLSearchParams(window.location.search).get("collection");
@@ -162,15 +174,37 @@ export function Documents() {
   }, []);
   // A person's pick is a new history entry, so Back steps through the places they picked;
   // the page's own corrections (leaving a collection it cannot show) replace the entry.
-  const goTo = (c: string | null) => {
+  // `arriveFocus`: the control that takes the focus on arrival, in place of the h1.
+  const goTo = (c: string | null, arriveFocus?: string) => {
     if (c === collection) return; // the place already shown: nothing moves
     useStore.getState().clearPendingDoc();
-    useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {} });
+    useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus });
   };
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
   const collections = useReadableCollections(picked.org);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  // A collection just made: the read starts before the move so the old list never says it is
+  // missing. Nothing moves once this page closed or its org changed.
+  const openCreated = (name: string, org: string, arriveFocus?: string) => {
+    if (!mounted.current || org !== useStore.getState().identity?.org) return;
+    flushSync(() => collections.reload(name));
+    goTo(name, arriveFocus);
+  };
   const shown = collections.rows?.find((c) => c.namespace === collection) ?? null;
+  // Read once for every list of places on the page, over the last answer (kept while it is
+  // read again): titles two collections share show their address too.
+  const repeated = useMemo(() => repeatedTitles(collections.kept?.rows ?? []), [collections.kept]);
+  const byName = useMemo(
+    () => new Map((collections.kept?.rows ?? []).map((c) => [c.namespace, c])),
+    [collections.kept],
+  );
   const resolving = !!collection && collections.rows === null && !collections.error;
   // A code or tracker namespace, or none, holds no documents: the Library then reads only a
   // collection picked here.
@@ -233,6 +267,8 @@ export function Documents() {
   // The gaps tile lists other people's questions: an admin of the place shown sees it.
   const seesGaps = shown ? shown.role === "admin" : canCall("knowledge.gaps.list", roleRead.role, whoami);
   const phone = useMedia(PHONE_QUERY);
+  // From 1280 px the places are a tree beside the documents; narrower, the select stands in.
+  const wide = useMedia(TREE_QUERY);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
@@ -880,14 +916,16 @@ export function Documents() {
     [toggleRow, readOnly, writeReason],
   );
 
-  // Below the documents, so they start where the list rules want them; on a phone the
-  // select, a tree, lists the collections inside.
-  const inside = !phone && collections.rows && (
-    <CollectionsInside
+  // The top level's collections, below the documents so they start where the list rules
+  // want them. Inside a collection the chips on its path's line list them; on a phone the
+  // select, a tree, does.
+  const topLevel = !phone && !wide && collections.rows && (!shown || shown.personal) && (
+    <TopLevelPlaces
       key={shown?.namespace ?? ""}
       rows={collections.rows}
+      repeated={repeated}
+      byName={byName}
       truncated={collections.truncated}
-      current={shown}
       onPick={goTo}
       className="mt-6"
     />
@@ -897,6 +935,8 @@ export function Documents() {
       org={picked.org}
       namespace={ownShelf ? picked.namespace : null}
       collections={collections}
+      repeated={repeated}
+      byName={byName}
       current={shown}
       opening={resolving ? collection : null}
       place={collection ?? picked.namespace}
@@ -904,6 +944,25 @@ export function Documents() {
       onLeave={pickCollection}
       creating={creatingCollection}
       onCreatingChange={setCreatingCollection}
+      onCreated={(name) => openCreated(name, picked.org)}
+      besideTree={wide}
+    />
+  );
+  const tree = wide && (
+    <LibraryTree
+      // One per org: nothing read or opened in one org shows in, or is saved for, another.
+      key={picked.org}
+      org={picked.org}
+      rows={collections.kept?.rows ?? null}
+      repeated={repeated}
+      truncated={collections.kept?.truncated}
+      failed={!!collections.error}
+      busy={collections.refreshing}
+      shelf={ownShelf ? picked.namespace : null}
+      current={shown?.namespace ?? (resolving ? collection : null)}
+      onPick={goTo}
+      // The person goes on in the tree: New collection keeps the focus.
+      onCreated={(name, org) => openCreated(name, org, NEW_COLLECTION_FOCUS)}
     />
   );
 
@@ -911,7 +970,7 @@ export function Documents() {
   // folder be placed where the person looks, so the dialog takes one.
   const folderTree =
     collections.rows && !collections.truncated && (!collection || shown)
-      ? { rows: collections.rows, shown, onMade: (first: string) => collections.reload(first) }
+      ? { rows: collections.rows, shown }
       : undefined;
   // Mounted while open, beside either page, so a batch outlives a page move.
   const addDialog = addOpen && (
@@ -925,7 +984,7 @@ export function Documents() {
         batchStarted.current = v;
       }}
       identity={{ org: identity.org, namespace: identity.namespace }}
-      place={shown ? distinctTitle(shown, repeatedTitles(collections.rows ?? [])) : identity.namespace}
+      place={shown ? distinctTitle(shown, repeated) : identity.namespace}
       tree={folderTree}
       // Folders wait for a list still being read (or read again after it failed), or one too
       // long to show; a collection not in a whole list takes none.
@@ -933,10 +992,14 @@ export function Documents() {
       onAdded={reload}
     />
   );
-  // The dialog keeps one place in the tree whichever page shows, so React keeps it.
-  const withDialog = (page: ReactNode) => (
+  // Either page beside the places tree, when there is room for one. The dialog keeps one
+  // place in React's tree whichever page shows, so React keeps it.
+  const libraryPage = (page: ReactNode) => (
     <>
-      {page}
+      <div className="library-layout">
+        {tree}
+        {page}
+      </div>
       {addDialog}
     </>
   );
@@ -961,7 +1024,8 @@ export function Documents() {
             ? { label: "Open repositories", onClick: () => go.setView("code") }
             : undefined;
     const none = listed !== null && listed.length === 0;
-    const pick = none ? "Create a collection" : "Pick a collection above";
+    // Width-neutral: the places are a select above the page, or the tree beside it.
+    const pick = none ? "Create a collection" : "Pick a collection";
     const orNamespace = !picked.namespace
       ? ""
       : none
@@ -1003,16 +1067,17 @@ export function Documents() {
             </Link>
           </p>
         )}
-        {inside}
+        {topLevel}
       </PageContainer>
     );
-    return withDialog(page);
+    return libraryPage(page);
   }
 
-  return withDialog(
+  return libraryPage(
     <PageContainer>
       <PageHeader
         title="Library"
+        tab={placeTitle(shown, repeated, ownShelf && !resolving ? picked.namespace : null)}
         actions={
           <>
             {!resolving && !shown?.personal && (
@@ -1047,7 +1112,7 @@ export function Documents() {
       >
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
         <span className="hidden sm:contents">
-          {/* On a collection the select below names where the documents are. */}
+          {/* On a collection the select or the path below names where the documents are. */}
           {!shown && !resolving && <ScopeBadge kind="namespace" value={picked.namespace} />}
         </span>
       </PageHeader>
@@ -1101,8 +1166,9 @@ export function Documents() {
             ref={searchRef}
             value={query}
             onChange={(value) => setQuery(value)}
-            // A phone's field holds the short form only.
-            placeholder={phone ? "Search, or tag:specs" : "Search title, filename, description, or tag — try tag:specs"}
+            // The short form on a phone and beside the tree, whose column leaves the field
+            // narrow (217 px at 1280 px).
+            placeholder={phone || wide ? "Search, or tag:specs" : "Search title, filename, description, or tag:specs"}
             aria-label="Search library"
           />
         </ListToolbarSearch>
@@ -1247,7 +1313,7 @@ export function Documents() {
         </div>
       )}
 
-      {inside}
+      {topLevel}
 
       <Modal
         open={!!previewEntry}

@@ -120,3 +120,17 @@ export function plainName(title: string): string {
   if (!slug) return "";
   return `${PREFIX}${slug}-`.startsWith(PERSONAL_PREFIX) ? `${PREFIX}c-${slug}` : `${PREFIX}${slug}`;
 }
+
+/** server/identity/api/models_collections.py: the title field's max_length. */
+export const MAX_TITLE = 200;
+
+/** Whether a trimmed title is over MAX_TITLE, counted by character after the NFC the server
+ *  applies (an emoji, or an accent typed as two, is one). */
+export function titleTooLong(title: string): boolean {
+  return Array.from(title.normalize("NFC")).length > MAX_TITLE;
+}
+
+/** Whether a new collection can go inside `c`: one the person writes, not their own files. */
+export function canHold(c: CollectionEntry): boolean {
+  return !c.personal && c.role !== "viewer";
+}

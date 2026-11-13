@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 
 /** Under Tailwind's `sm` breakpoint: a phone, where a toolbar holds one control. */
 export const PHONE_QUERY = "(max-width: 639px)";
+/** Wide enough for the Library's tree of places beside its documents (styles.css `.library-layout`). */
+export const TREE_QUERY = "(min-width: 1280px)";
 
 /** A touch screen: the primary pointer is a finger, not a mouse. */
 export const COARSE_POINTER = "(pointer: coarse)";

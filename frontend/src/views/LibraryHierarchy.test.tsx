@@ -1,20 +1,25 @@
 /**
  * Where a collection sits: the path to it from the top, each ancestor a link, and in it a
  * parent the caller cannot read shown as a dots button, which gives its address when tapped;
- * the phone's back button; and the collections inside the one shown, or the top-level ones.
+ * the phone's back button; the chips of the collections inside the one shown; and the
+ * top-level collections listed below the documents.
  */
-import { cleanup, fireEvent, render, screen, within } from "../test/rtl";
+import type { ComponentProps } from "react";
+import { act, cleanup, fireEvent, render, screen, within } from "../test/rtl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CollectionEntry } from "../api";
 import { axeViolations } from "../test/axe";
+import { repeatedTitles } from "../lib/collections";
 import { treeOrder } from "./LibraryCollections";
 import {
   CollectionBack,
+  CollectionChips,
   CollectionPath,
-  CollectionsInside,
+  TopLevelPlaces,
   collectionPath,
-  collectionsInside,
+  childrenOf,
   sharedWithMe,
+  topLevelCollections,
 } from "./LibraryHierarchy";
 
 const entry = (namespace: string, over: Partial<CollectionEntry> = {}): CollectionEntry => ({
@@ -26,6 +31,9 @@ const entry = (namespace: string, over: Partial<CollectionEntry> = {}): Collecti
   ...over,
 });
 
+/** The list by name, as the Library passes it. */
+const byNameOf = (rows: CollectionEntry[]) => new Map(rows.map((c) => [c.namespace, c]));
+
 const ROWS = [
   entry("col-team", { title: "Team" }),
   entry("col-q3", { parent: "col-team", title: "Q3" }),
@@ -34,6 +42,30 @@ const ROWS = [
   entry("col-me-1a2b", { personal: true }),
 ];
 const byName = new Map(ROWS.map((c) => [c.namespace, c]));
+
+/** The path to `current`, with the lookups the Library passes derived from `rows`. */
+function path(
+  current: CollectionEntry,
+  rows: CollectionEntry[] = ROWS,
+  over: Partial<ComponentProps<typeof CollectionPath>> = {},
+) {
+  return render(
+    <CollectionPath
+      current={current}
+      byName={byNameOf(rows)}
+      repeated={repeatedTitles(rows)}
+      onPick={() => {}}
+      {...over}
+    />,
+  );
+}
+
+/** The top level's collections listed from `rows`, likewise. */
+function topLevel(rows: CollectionEntry[], over: Partial<ComponentProps<typeof TopLevelPlaces>> = {}) {
+  return render(
+    <TopLevelPlaces rows={rows} repeated={repeatedTitles(rows)} byName={byNameOf(rows)} onPick={() => {}} {...over} />,
+  );
+}
 
 afterEach(cleanup);
 
@@ -58,14 +90,14 @@ describe("collectionPath", () => {
 
 describe("CollectionPath", () => {
   it("says a parent missing from a list that stopped early is not listed, not unreadable", () => {
-    render(<CollectionPath current={ROWS[3]} rows={ROWS} truncated onPick={() => {}} />);
+    path(ROWS[3], ROWS, { truncated: true });
     expect(screen.getByRole("button", { name: "A collection not listed here" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "A collection you can't open" })).toBeNull();
   });
 
   it("keeps the parent and folds the ones above it, and gives one the caller cannot read no link", async () => {
     const onPick = vi.fn();
-    const { container } = render(<CollectionPath current={ROWS[2]} rows={ROWS} onPick={onPick} />);
+    const { container } = path(ROWS[2], ROWS, { onPick });
     const nav = screen.getByRole("navigation", { name: "Collection path" });
     // The select this path leads into names the current one.
     expect(within(nav).queryByText("Interviews")).toBeNull();
@@ -80,7 +112,7 @@ describe("CollectionPath", () => {
     expect(onPick).toHaveBeenCalledWith("col-team");
     expect(await axeViolations(container)).toEqual([]);
     cleanup();
-    render(<CollectionPath current={ROWS[3]} rows={ROWS} onPick={onPick} />);
+    path(ROWS[3], ROWS, { onPick });
     const hidden = screen.getByRole("navigation", { name: "Collection path" });
     expect(within(hidden).queryByRole("link", { name: /col-hidden/ })).toBeNull();
     // A tap opens what it is, by its address, as About this place names it.
@@ -96,7 +128,7 @@ describe("CollectionPath", () => {
       entry("col-c", { parent: "col-b", title: "C" }),
       entry("col-d", { parent: "col-c", title: "D" }),
     ];
-    render(<CollectionPath current={rows[2]} rows={rows} onPick={() => {}} />);
+    path(rows[2], rows);
     fireEvent.click(screen.getByRole("button", { name: "2 more above" }));
     expect(await screen.findByText(/^col-hidden: a collection you can't open/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "B" })).toBeInTheDocument();
@@ -105,51 +137,54 @@ describe("CollectionPath", () => {
 
   it("leads a top-level collection back to the place that lists it, and shows nothing without one", () => {
     const open = vi.fn();
-    render(
-      <CollectionPath
-        current={ROWS[0]}
-        rows={ROWS}
-        home={{ label: "My files", collection: "col-me", open }}
-        onPick={() => {}}
-      />,
-    );
+    path(ROWS[0], ROWS, { home: { label: "My files", collection: "col-me", open } });
     const nav = screen.getByRole("navigation", { name: "Collection path" });
     fireEvent.click(within(nav).getByRole("link", { name: "My files" }));
     expect(open).toHaveBeenCalled();
     expect(within(nav).queryByText("Team")).toBeNull();
     cleanup();
-    render(<CollectionPath current={ROWS[0]} rows={ROWS} onPick={() => {}} />);
+    path(ROWS[0]);
     expect(screen.queryByRole("navigation")).toBeNull();
+  });
+
+  it("beside the tree, names a top-level collection with no place above it by its title alone", () => {
+    path(ROWS[0], ROWS, { named: true });
+    const nav = screen.getByRole("navigation", { name: "Collection path" });
+    expect(within(nav).getAllByRole("listitem")).toHaveLength(1);
+    expect(nav).toHaveTextContent(/^Team$/);
+    expect(within(nav).queryByRole("link")).toBeNull();
+    expect(nav.querySelector("[aria-current='page']")).toHaveTextContent("Team");
   });
 });
 
-describe("CollectionsInside", () => {
+describe("topLevelCollections and childrenOf", () => {
   it("lists equal titles in the order the select does", () => {
     const rows = [entry("col-notes-ab12", { title: "notes" }), entry("col-notes", { title: "Notes" })];
-    expect(collectionsInside(rows, null).map((c) => c.namespace)).toEqual(treeOrder(rows).map(({ c }) => c.namespace));
+    expect(topLevelCollections(rows).map((c) => c.namespace)).toEqual(treeOrder(rows).map(({ c }) => c.namespace));
   });
 
-  it("counts repeated titles over every collection listed, not only the ones inside", () => {
-    const rows = [
+  it("lists a collection's children, and the top-level ones", () => {
+    expect(childrenOf(ROWS, ROWS[0]).map((c) => c.namespace)).toEqual(["col-q3"]);
+    expect(childrenOf(ROWS, ROWS[2])).toEqual([]);
+    // Top level: no personal one, and one whose parent the caller cannot read sits there.
+    expect(topLevelCollections(ROWS).map((c) => c.namespace)).toEqual(["col-shared", "col-team"]);
+  });
+});
+
+describe("TopLevelPlaces, below the documents", () => {
+  it("counts repeated titles over every collection listed, not only the top-level ones", () => {
+    topLevel([
       entry("col-team", { title: "Team" }),
       entry("col-notes", { parent: "col-team", title: "Notes" }),
       entry("col-notes-ab12", { title: "Notes" }),
-    ];
-    render(<CollectionsInside rows={rows} current={rows[0]} onPick={() => {}} />);
-    expect(screen.getByRole("link", { name: "Notes (col-notes)" })).toBeInTheDocument();
-  });
-
-  it("lists a collection's children, and on My files the top-level ones", () => {
-    expect(collectionsInside(ROWS, ROWS[0]).map((c) => c.namespace)).toEqual(["col-q3"]);
-    // Top level: no personal one, and one whose parent the caller cannot read sits there.
-    expect(collectionsInside(ROWS, ROWS[4]).map((c) => c.namespace)).toEqual(["col-shared", "col-team"]);
-    expect(collectionsInside(ROWS, null).map((c) => c.namespace)).toEqual(["col-shared", "col-team"]);
+    ]);
+    expect(screen.getByRole("link", { name: "Notes (col-notes-ab12)" })).toBeInTheDocument();
   });
 
   it("opens a collection from its row, shows six, then fifty more at a time, and nothing when empty", () => {
     const onPick = vi.fn();
-    const many = Array.from({ length: 60 }, (_, i) => entry(`col-k${i}`, { parent: "col-team", title: `Kid ${i}` }));
-    render(<CollectionsInside rows={[ROWS[0], ...many]} current={ROWS[0]} onPick={onPick} />);
+    const many = Array.from({ length: 60 }, (_, i) => entry(`col-k${i}`, { title: `Kid ${i}` }));
+    topLevel(many, { onPick });
     const section = screen.getByRole("region", { name: /Collections/ });
     expect(within(section).getAllByRole("link", { name: /^Kid / })).toHaveLength(6);
     const more = within(section).getByRole("button", { name: "Show 50 more" });
@@ -173,7 +208,7 @@ describe("CollectionsInside", () => {
     fireEvent.click(kid);
     expect(onPick).toHaveBeenCalledWith("col-k0");
     cleanup();
-    render(<CollectionsInside rows={ROWS} current={ROWS[2]} onPick={onPick} />);
+    topLevel([]);
     expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
   });
 
@@ -198,8 +233,8 @@ describe("CollectionsInside", () => {
     ];
     // A shared one's children are inside it, not listed again.
     expect(sharedWithMe(rows).map((c) => c.namespace)).toEqual(["col-claimed", "col-deep", "col-far", "col-r"]);
-    expect(collectionsInside(rows, null).map((c) => c.namespace)).toEqual(["col-lib", "col-mid", "col-ops", "col-run"]);
-    render(<CollectionsInside rows={rows} current={null} onPick={() => {}} />);
+    expect(topLevelCollections(rows).map((c) => c.namespace)).toEqual(["col-lib", "col-mid", "col-ops", "col-run"]);
+    topLevel(rows);
     const shared = screen.getByRole("region", { name: /Shared with you/ });
     expect(within(shared).getByRole("link", { name: "Research" })).toBeInTheDocument();
     expect(within(shared).getByRole("link", { name: "Research" }).parentElement?.textContent).toBe("ResearchViewer");
@@ -215,19 +250,14 @@ describe("CollectionsInside", () => {
     expect(within(own).queryByRole("link", { name: "Research" })).toBeNull();
     cleanup();
     // A list that stopped early: the missing parent may be one the caller can open.
-    render(<CollectionsInside rows={rows} truncated current={null} onPick={() => {}} />);
+    topLevel(rows, { truncated: true });
     expect(
       within(screen.getByRole("region", { name: /Shared with you/ })).getByText("inside a collection not listed here"),
     ).toBeInTheDocument();
-    cleanup();
-    // Inside a collection, only its children: no "Shared with you".
-    render(<CollectionsInside rows={rows} current={rows[0]} onPick={() => {}} />);
-    expect(screen.queryByRole("region", { name: /Shared with you/ })).toBeNull();
   });
 
   it("tells two collections with one title apart by their address", () => {
-    const rows = [entry("col-notes", { title: "Notes" }), entry("col-notes-ab12", { title: "Notes" })];
-    render(<CollectionsInside rows={rows} current={null} onPick={() => {}} />);
+    topLevel([entry("col-notes", { title: "Notes" }), entry("col-notes-ab12", { title: "Notes" })]);
     expect(screen.getByRole("link", { name: "Notes (col-notes)" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Notes (col-notes-ab12)" })).toBeInTheDocument();
   });
@@ -236,7 +266,7 @@ describe("CollectionsInside", () => {
 describe("CollectionBack, the path on a phone", () => {
   it("goes back to the parent", () => {
     const onPick = vi.fn();
-    render(<CollectionBack current={ROWS[2]} rows={ROWS} onPick={onPick} />);
+    render(<CollectionBack current={ROWS[2]} byName={byNameOf(ROWS)} onPick={onPick} />);
     fireEvent.click(screen.getByRole("button", { name: "Back to Q3" }));
     expect(onPick).toHaveBeenCalledWith("col-q3");
   });
@@ -246,7 +276,7 @@ describe("CollectionBack, the path on a phone", () => {
     render(
       <CollectionBack
         current={ROWS[0]}
-        rows={ROWS}
+        byName={byNameOf(ROWS)}
         home={{ label: "My files", collection: "col-me", open }}
         onPick={() => {}}
       />,
@@ -254,7 +284,7 @@ describe("CollectionBack, the path on a phone", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to My files" }));
     expect(open).toHaveBeenCalled();
     cleanup();
-    const { container } = render(<CollectionBack current={ROWS[0]} rows={ROWS} onPick={() => {}} />);
+    const { container } = render(<CollectionBack current={ROWS[0]} byName={byNameOf(ROWS)} onPick={() => {}} />);
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -263,7 +293,7 @@ describe("CollectionBack, the path on a phone", () => {
     render(
       <CollectionBack
         current={ROWS[3]}
-        rows={ROWS}
+        byName={byNameOf(ROWS)}
         home={{ label: "My files", collection: "col-me", open }}
         onPick={() => {}}
       />,
@@ -273,8 +303,53 @@ describe("CollectionBack, the path on a phone", () => {
   });
 
   it("says what a parent the caller cannot read is when tapped, with no place to go back to", async () => {
-    render(<CollectionBack current={ROWS[3]} rows={ROWS} onPick={() => {}} />);
+    render(<CollectionBack current={ROWS[3]} byName={byNameOf(ROWS)} onPick={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "Back: a collection you can't open" }));
     expect(await screen.findByText(/^col-hidden: a collection you can't open/)).toBeInTheDocument();
+  });
+});
+
+describe("CollectionChips", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("names their nav after the collection as the tree tells two of one title apart", () => {
+    const rows = [
+      entry("col-a", { title: "Notes" }),
+      entry("col-b", { title: "Notes" }),
+      entry("col-a-kid", { parent: "col-a", title: "Kid" }),
+    ];
+    render(<CollectionChips rows={rows} repeated={repeatedTitles(rows)} collection={rows[0]} onPick={() => {}} />);
+    expect(screen.getByRole("navigation", { name: "Collections in Notes (col-a)" })).toBeInTheDocument();
+  });
+
+  it("shows six, then fifty more at a time, the focus on the first chip the last press adds", () => {
+    const rows = [
+      ROWS[0],
+      ...Array.from({ length: 60 }, (_, i) => entry(`col-k${i}`, { parent: "col-team", title: `Kid ${i}` })),
+    ];
+    render(<CollectionChips rows={rows} repeated={repeatedTitles(rows)} collection={rows[0]} onPick={() => {}} />);
+    const nav = screen.getByRole("navigation", { name: "Collections in Team" });
+    expect(within(nav).getAllByRole("link")).toHaveLength(6);
+    const more = within(nav).getByRole("button", { name: "Show 50 more" });
+    more.focus();
+    fireEvent.click(more);
+    expect(within(nav).getAllByRole("link")).toHaveLength(56);
+    // Its button stays (four are left): the focus stays on it.
+    expect(within(nav).getByRole("button", { name: "Show 4 more" })).toHaveFocus();
+    fireEvent.click(within(nav).getByRole("button", { name: "Show 4 more" }));
+    expect(within(nav).getAllByRole("link")).toHaveLength(60);
+    expect(within(nav).getAllByRole("link")[56]).toHaveFocus();
+    expect(within(nav).queryByRole("button")).toBeNull();
+  });
+
+  it("shows a cut title whole in a tooltip on focus", async () => {
+    const long = "Interviews from the third quarter's discovery round";
+    const rows = [ROWS[0], entry("col-long", { parent: "col-team", title: long })];
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(300);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(180);
+    render(<CollectionChips rows={rows} repeated={repeatedTitles(rows)} collection={rows[0]} onPick={() => {}} />);
+    const chip = screen.getByRole("link", { name: long });
+    act(() => chip.focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(long);
   });
 });
