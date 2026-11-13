@@ -249,9 +249,8 @@ Python, JavaScript/TypeScript and the workflows. Its findings are code scanning 
 paths it leaves out, and why, are in the workflow's header.
 
 `.github/workflows/scorecard.yml` runs the OpenSSF Scorecard checks on pushes to `main`,
-when a branch protection rule changes, weekly and on demand. It publishes the score the
-README badge shows and adds the findings to code scanning; it does not run on pull
-requests and blocks no merge.
+weekly and on demand. It publishes the score the README badge shows and adds the findings
+to code scanning; it does not run on pull requests and blocks no merge.
 
 `.github/workflows/docs-site.yml` builds the documentation site with `mkdocs build
 --strict` on pull requests into `main` that touch `docs/`, `mkdocs.yml`,

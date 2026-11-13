@@ -2,13 +2,13 @@ name: scorecard
 
 # OpenSSF Scorecard publishes only from the default branch, so pull requests do not run it.
 on:
-  branch_protection_rule:
   push:
     branches: [main]
   schedule:
     - cron: "41 3 * * 2"
   workflow_dispatch:
 
+# Only the latest score counts, so a newer run cancels an older one.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -34,11 +34,6 @@ jobs:
           results_file: results.sarif
           results_format: sarif
           publish_results: true
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: scorecard-sarif
-          path: results.sarif
-          retention-days: 5
       - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: results.sarif
