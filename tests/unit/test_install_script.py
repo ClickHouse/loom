@@ -1240,9 +1240,10 @@ def test_an_upgrade_from_before_writes_no_memory(install, installer_env: dict[st
     assert not any("memory.set" in c for c in curl_log.read_text().splitlines())
 
 
-def test_sign_in_on_connects_no_agent(install, installer_env: dict[str, str]) -> None:
+@pytest.mark.parametrize("status", [401, 403])
+def test_sign_in_on_connects_no_agent(install, installer_env: dict[str, str], status: int) -> None:
     run, _ = install
-    _start_stubs(installer_env, memory_status=401)
+    _start_stubs(installer_env, memory_status=status)
     claude = _agent_cli(installer_env, "claude")
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
     assert result.returncode == 0, result.stderr
@@ -1290,10 +1291,7 @@ def test_without_a_terminal_or_loom_connect_no_agent_is_changed(
     _start_stubs(installer_env)
     claude = _agent_cli(installer_env, "claude")
     codex = _agent_cli(installer_env, "codex")
-    env = {k: v for k, v in installer_env.items() if k != "LOOM_CONNECT"}
-    installer_env.clear()
-    installer_env.update(env)
-    result = run(LOOM_SKIP_START="0")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="")
     assert result.returncode == 0, result.stderr
     # Nothing could be connected, so no client is even looked at.
     assert claude.read_text() == "" and codex.read_text() == ""
@@ -1488,11 +1486,6 @@ def test_a_failed_plugin_install_prints_the_commands_to_try_again(
     assert f"to try again: {retry}\n" in result.stdout
 
 
-def _answer_connect_prompts(env: dict[str, str], answer: bytes) -> bytes:
-    """Run a started install on a pseudo-terminal and answer every "[Y/n]" prompt."""
-    return _on_terminal(env, [], b"[Y/n]", answer, every=True)
-
-
 @pytest.mark.parametrize(("answer", "installs"), [(b"\n", True), (b"n\n", False)])
 def test_a_terminal_is_asked_before_an_agent_is_connected(
     install, installer_env: dict[str, str], answer: bytes, installs: bool
@@ -1501,7 +1494,7 @@ def test_a_terminal_is_asked_before_an_agent_is_connected(
     _start_stubs(installer_env)
     claude = _agent_cli(installer_env, "claude")
     env = {k: v for k, v in installer_env.items() if k != "LOOM_CONNECT"}
-    seen = _answer_connect_prompts({**env, "LOOM_SKIP_START": "0"}, answer)
+    seen = _on_terminal({**env, "LOOM_SKIP_START": "0"}, [], b"[Y/n]", answer, every=True)
     assert b"Connect Claude Code to Loom? [Y/n]" in seen
     installed = "plugin install loom@loom --config server_url=http://localhost:7777"
     assert (installed in claude.read_text().splitlines()) == installs

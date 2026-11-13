@@ -125,10 +125,10 @@ Run it from your home directory, or another
 [directory only you can write to](./docs/getting-started/quickstart.md#fast-path-released-image-no-clone).
 The installer starts Loom and ClickHouse, applies migrations, on a new install checks that
 a memory saves and reads back, and prints the dashboard URL: **http://localhost:7777/**.
-On a terminal it then offers to connect the coding agents it finds (Claude Code, Codex, VS
-Code) and, on a new install, opens the dashboard. The image includes the server, workers, dashboard and
-Python, TypeScript and Go compiler indexers; TypeScript dependencies are prepared
-automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
+On a terminal it then offers to connect the coding agents it finds (Claude Code, Codex,
+VS Code) and, on a new install, opens the dashboard. The image includes the server,
+workers, dashboard and Python, TypeScript and Go compiler indexers; TypeScript
+dependencies are prepared automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
 
 The installation lives in `~/.loom` (`LOOM_INSTALL_DIR` chooses another directory): the
 Compose file and the startup settings in `~/.loom/.env`. Running the install command again

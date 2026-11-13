@@ -556,7 +556,7 @@ main() {
           elif [ -n "$read_back" ]; then
             printf '\nSaved and read back a test memory, but could not delete loom/installer-check; the next run tries again.\n'
           elif [ "$http_status" = 200 ]; then
-            printf '\nSaved a test memory but could not read it back; `docker compose --project-directory %s logs loom` says why.\n' "$INSTALL_DIR"
+            printf '\nSaved a test memory but could not read it back; the next run checks again, and `docker compose --project-directory %s logs loom` says why.\n' "$INSTALL_DIR"
           fi
         fi
       fi
