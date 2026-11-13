@@ -390,17 +390,17 @@ async def test_a_client_that_never_reads_frees_its_slot_at_the_idle_timeout(
     monkeypatch.setattr(egress, "MAX_TUNNELS", 1)
     monkeypatch.setattr(settings, "code_egress_slot_wait_s", 0.2)
     monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.2)
-    monkeypatch.setattr(settings, "code_egress_idle_timeout_s", 1.5)
+    monkeypatch.setattr(settings, "code_egress_idle_timeout_s", 3.0)
     proxy, server, _reader, writer = await _tunnel_to(sends_a_lot, sock_dir, monkeypatch)
     sock = str(sock_dir / "p.sock")
     try:
         writer.write(b"request")
         writer.write_eof()  # and never reads
-        await asyncio.sleep(0.6)
+        await asyncio.sleep(1.0)
         head, refused = await _connect_answer(sock)
         refused.close()
         assert head.startswith(b"HTTP/1.1 503")  # past the half-close timeout, bytes wait
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(2.5)
         head, second = await _connect_answer(sock)
         second.close()
         assert head.startswith(b"HTTP/1.1 200")  # the idle timeout freed the slot
@@ -520,20 +520,30 @@ async def test_a_client_that_gives_up_while_its_name_is_vetted_is_not_dialled(
 async def test_a_client_that_resets_ends_the_tunnel(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    upstream_eof = asyncio.Event()
+    """A unix socket closed with unread data resets its peer; the proxy must not then
+    wait out the half-close timeout with the slot held."""
+    done = asyncio.Event()
 
-    async def waits(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        await reader.read()
-        upstream_eof.set()
+    async def sends_then_waits(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readexactly(7)
+        writer.write(b"unread")
+        await done.wait()
         writer.close()
 
-    proxy, server, _reader, writer = await _tunnel_to(waits, sock_dir, monkeypatch)
+    monkeypatch.setattr(egress, "MAX_TUNNELS", 1)
+    monkeypatch.setattr(settings, "code_egress_slot_wait_s", 2.0)
+    monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 30.0)
+    proxy, server, _reader, writer = await _tunnel_to(sends_then_waits, sock_dir, monkeypatch)
     try:
+        writer.transport.pause_reading()  # "unread" stays in the kernel's queue
         writer.write(b"request")
-        await writer.drain()
-        writer.transport.abort()  # a reset
-        await asyncio.wait_for(upstream_eof.wait(), timeout=5)
+        await asyncio.sleep(0.3)  # for it to arrive there
+        writer.transport.abort()  # closed with data unread: a reset
+        head, second = await _connect_answer(str(sock_dir / "p.sock"))
+        second.close()
+        assert head.startswith(b"HTTP/1.1 200")  # the slot came back before the 30 s
     finally:
+        done.set()
         await asyncio.wait_for(proxy.close(), timeout=5)
         server.close()
         await asyncio.wait_for(server.wait_closed(), timeout=5)

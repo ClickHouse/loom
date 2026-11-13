@@ -17,6 +17,7 @@ import contextlib
 import os
 import select
 import socket
+import struct
 import sys
 import threading
 import time
@@ -32,16 +33,21 @@ _RETRY_PAUSE_S = 0.1
 
 
 def _to_client(src: socket.socket, dst: socket.socket, to_client_done: threading.Event) -> None:
-    """Proxy to client, to the proxy's EOF or a failed write to the client."""
+    """Proxy to client, to the proxy's EOF or a failed write to the client. A write
+    that timed out resets the client: a clean end would pass a cut stream as whole."""
+    how = socket.SHUT_WR
     try:
         while data := src.recv(65536):
             dst.sendall(data)
+    except TimeoutError:
+        dst.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        how = socket.SHUT_RD  # no FIN: the close that follows sends the reset
     except OSError:
         pass
     finally:
         to_client_done.set()
         with contextlib.suppress(OSError):
-            dst.shutdown(socket.SHUT_WR)
+            dst.shutdown(how)
 
 
 def _to_proxy(src: socket.socket, dst: socket.socket, to_client_done: threading.Event) -> None:
@@ -82,7 +88,8 @@ def _start(target: Callable[..., None], *args: object) -> threading.Thread:
 
 def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore, idle_s: float) -> None:
     try:
-        conn.settimeout(idle_s)  # a client that never reads ends its bridge
+        with contextlib.suppress(OverflowError):  # past time_t: no timeout, as the proxy
+            conn.settimeout(idle_s)  # a client that never reads ends its bridge
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
             upstream.connect(path)
             to_client_done = threading.Event()

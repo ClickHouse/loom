@@ -251,7 +251,7 @@ def test_a_client_still_uploading_to_a_half_closed_proxy_keeps_its_bridge(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The server has sent EOF and still reads: each byte restarts the linger."""
-    monkeypatch.setattr(egress_relay, "_LINGER_S", 0.8)  # 0.4 s either side of a gap
+    monkeypatch.setattr(egress_relay, "_LINGER_S", 1.0)  # 0.5 s either side of a gap
     with _relay(sock_dir, 1) as (port, upstream):
         client = socket.create_connection(("127.0.0.1", port), timeout=5)
         assert upstream.arrived.acquire(timeout=5)
@@ -269,9 +269,7 @@ def test_a_client_still_uploading_to_a_half_closed_proxy_keeps_its_bridge(
         client.close()
 
 
-def test_a_client_that_never_reads_gives_its_slot_back(
-    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_client_that_never_reads_gives_its_slot_back_and_is_reset(sock_dir: Path) -> None:
     with _relay(sock_dir, 1, idle_s=0.3) as (port, upstream):
         first = socket.create_connection(("127.0.0.1", port))
         assert upstream.arrived.acquire(timeout=5)
@@ -287,6 +285,10 @@ def test_a_client_that_never_reads_gives_its_slot_back(
             second = socket.create_connection(("127.0.0.1", port))
             assert upstream.arrived.acquire(timeout=5)  # the stuck write gave up
             second.close()
+            first.settimeout(5)
+            with pytest.raises(ConnectionResetError):  # not a clean end of a cut stream
+                while first.recv(1 << 20):
+                    pass
         finally:
             first.close()
             sender.join(timeout=10)
@@ -328,3 +330,12 @@ def test_serve_without_the_idle_timeout_is_a_usage_error(
 ) -> None:
     assert egress_relay.main(["serve", "3128", "/run/loom-egress/proxy.sock", "--", "true"]) == 2
     assert "serve PORT SOCKET IDLE -- ARGV" in capsys.readouterr().err
+
+
+def test_an_idle_timeout_past_what_a_socket_takes_means_none(sock_dir: Path) -> None:
+    with _relay(sock_dir, 1, idle_s=float("inf")) as (port, upstream):
+        client = socket.create_connection(("127.0.0.1", port), timeout=5)
+        assert upstream.arrived.acquire(timeout=5)
+        upstream.held[0].sendall(b"hi")
+        assert client.recv(2) == b"hi"
+        client.close()
