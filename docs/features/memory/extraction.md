@@ -199,11 +199,11 @@ last `--days` are left alone. It never deletes.
 
 ## Inline or deferred
 
-| Mode                 | Call                           | Returns                                      | Use when                                                                   |
-| -------------------- | ------------------------------ | -------------------------------------------- | -------------------------------------------------------------------------- |
-| Inline (default)     | `defer=false`                  | `written[]` with each row's key and verdict  | You need the keys back: typed-record extraction, tests, polling backfills. |
-| Deferred             | `defer=true`                   | `deferred=true`, `queue_id`, empty `written` | The agent's hot path. Stored in `loom.memory_extraction_queue`.            |
-| Deferred by operator | `LOOM_EXTRACTION_DEFER_AGENTS` | as deferred, `deferred_by="allowlist"`       | Force named agents (or `*` = every service account) onto the queue.        |
+| Mode                 | Call                                         | Returns                                      | Use when                                                                                                                                      |
+| -------------------- | -------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inline               | `defer` unset (the default) or `defer=false` | `written[]` with each row's key and verdict  | You need the keys back: typed-record extraction, tests, polling backfills.                                                                    |
+| Deferred             | `defer=true`                                 | `deferred=true`, `queue_id`, empty `written` | The agent's hot path. Stored in `loom.memory_extraction_queue`.                                                                               |
+| Deferred by operator | `LOOM_EXTRACTION_DEFER_AGENTS`               | as deferred, `deferred_by="allowlist"`       | Force named agents (or `*` = every service account) that do not send `defer` onto the queue; an explicit `defer=false` still extracts inline. |
 
 The `extraction_queue` worker replays a deferred request through the same handler. A
 failed replay waits 15 seconds, then 1, 5 and 30 minutes between attempts, and after

@@ -1,7 +1,5 @@
-"""The typed kwargs the docs send writers to reach the wire: set's
-source_class (and a coalesced set keeps it), pin takes everything set takes,
-blacklist.add(sweep=), share(approver=),
-profile.render / system_prompt(read_scope=)."""
+"""The typed kwargs the docs send writers to reach the wire, each with the
+value the caller gave (or none when unset)."""
 
 from __future__ import annotations
 
@@ -121,3 +119,16 @@ async def test_a_set_with_relations_is_never_coalesced(agent: Agent) -> None:
     await asyncio.gather(*[agent.memory.set(k, "v", relations=[_FACT]) for k in "abcd"])
     assert not [o for o, _ in t.calls if o == "/v1/memory.bulk_set"]
     assert len([o for o, _ in t.calls if o == "/v1/memory.set"]) == 4
+
+
+async def test_set_from_messages_sends_defer_only_when_given(agent: Agent) -> None:
+    """Unset leaves the operator's extraction_defer_agents in charge; an explicit
+    False must reach the server, which honours a sent field over the allowlist."""
+    t: Any = agent.transport
+    turns = [{"role": "user", "content": "I prefer aisle seats"}]
+    await agent.memory.set_from_messages(turns)
+    assert "defer" not in t.last("/v1/memory.set_from_messages")
+    await agent.memory.set_from_messages(turns, defer=False)
+    assert t.last("/v1/memory.set_from_messages")["defer"] is False
+    await agent.memory.set_from_messages(turns, defer=True)
+    assert t.last("/v1/memory.set_from_messages")["defer"] is True
