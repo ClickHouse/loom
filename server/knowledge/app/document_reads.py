@@ -27,6 +27,7 @@ from server.knowledge.api.models_knowledge import (
     _OutlineEntry,
 )
 from server.knowledge.app import pg_serving
+from server.knowledge.app.readable import named_namespaces
 from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.chunking import Chunk
 from server.operations.read_projection import resolve as _resolve_projection
@@ -55,11 +56,11 @@ async def handle_knowledge_list(
 ) -> KnowledgeListOutput:
     """Paginated listing of one namespace's documents, or several namespaces' as one.
 
-    Joins `loom.documents FINAL` with a chunk-count aggregation. Keyset
+    Reads a page of `loom.documents FINAL`, then the live chunk counts of that page's
+    sources. Keyset
     pagination on (ingested_at DESC, namespace DESC, source_uri DESC) so the
     cursor is stable across inserts."""
     from server.core.ch import own_write_reads
-    from server.knowledge.app.readable import named_namespaces
     from server.knowledge.store import documents as documents_repo
 
     namespaces = await named_namespaces(input.org, input.namespace, input.namespaces)

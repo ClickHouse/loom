@@ -1197,6 +1197,12 @@ def cases() -> list[Case]:
             "server.knowledge.store.chunks",
             _knowledge,
             {"filters": (False, True)},
+            # A list page with a row, so its chunk counts are read too.
+            rows=lambda sql, params: (
+                [{"namespace": NS, "source_uri": "doc://a", "ingested_at": _DT}]
+                if "content_preview" in sql
+                else []
+            ),
         ),
         Case("ledger_repos", "server.insights.store.audit", _ledgers, {"filters": (False, True)}),
         Case(

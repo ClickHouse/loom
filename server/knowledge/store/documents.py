@@ -333,8 +333,6 @@ async def list_with_chunk_counts(
         "nss": namespaces,
         "lim": int(limit),
     }
-    # Predicates are bare (no `d.` prefix) because they filter the inner
-    # FINAL subquery below, not the post-join scope.
     if not include_superseded:
         extra_where += " AND superseded_at IS NULL"
     if tag_filter is not None:
@@ -351,8 +349,6 @@ async def list_with_chunk_counts(
     if cursor is not None:
         cur_ts, cur_ns, cur_uri = cursor
         if cur_ts.tzinfo is not None:
-            from datetime import UTC
-
             cur_ts = cur_ts.astimezone(UTC).replace(tzinfo=None)
         extra_where += (
             " AND (ingested_at, namespace, source_uri) < "
@@ -400,8 +396,9 @@ async def _live_chunk_counts(
           AND (namespace, source_uri) IN {{keys:Array(Tuple(String, String))}}
           AND {LIVE_CHUNK_SQL}
         GROUP BY namespace, source_uri
+        LIMIT {{n:UInt32}}
         """,
-        params={"org": org, "nss": sorted({ns for ns, _ in keys}), "keys": keys},
+        params={"org": org, "nss": sorted({ns for ns, _ in keys}), "keys": keys, "n": len(keys)},
     )
     return {(r["namespace"], r["source_uri"]): int(r["n"]) for r in rows}
 

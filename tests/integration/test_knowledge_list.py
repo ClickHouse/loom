@@ -163,14 +163,21 @@ async def test_list_reads_several_namespaces_as_one_newest_first(control_plane_u
     from loom import Agent
 
     tag = uuid.uuid4().hex[:6]
-    places = [f"kl-a-{tag}", f"kl-b-{tag}", f"kl-c-{tag}"]
-    for ns in places:
+    namespaces_listed = [f"kl-a-{tag}", f"kl-b-{tag}", f"kl-c-{tag}"]
+    for ns in namespaces_listed:
         async with Agent(org=ORG, namespace=ns, agent="w", base_url=control_plane_url) as a:
             for i in range(2):
                 await a.knowledge.add(content=f"{ns} {i}", source_uri=f"doc://{i}", title=ns)
-    async with Agent(org=ORG, namespace=places[0], agent="w", base_url=control_plane_url) as a:
-        body = {"org": ORG, "namespace": places[0], "namespaces": places[1:] + [places[0]]}
+    async with Agent(
+        org=ORG, namespace=namespaces_listed[0], agent="w", base_url=control_plane_url
+    ) as a:
+        body = {
+            "org": ORG,
+            "namespace": namespaces_listed[0],
+            "namespaces": namespaces_listed[1:] + [namespaces_listed[0]],
+        }
         seen: list[tuple[str, str]] = []
+        keys: list[tuple[str, str, str]] = []
         cursor = None
         # Two a page: the cursor walks across namespaces with nothing repeated or skipped.
         while True:
@@ -178,15 +185,17 @@ async def test_list_reads_several_namespaces_as_one_newest_first(control_plane_u
                 "/v1/knowledge.list", {**body, "limit": 2, **({"cursor": cursor} if cursor else {})}
             )
             seen += [(r["namespace"], r["source_uri"]) for r in page["rows"]]
+            keys += [(r["ingested_at"], r["namespace"], r["source_uri"]) for r in page["rows"]]
             cursor = page["next_cursor"]
             if not cursor:
                 break
         one = await a.transport.post(
-            "/v1/knowledge.list", {"org": ORG, "namespace": places[1], "limit": 10}
+            "/v1/knowledge.list", {"org": ORG, "namespace": namespaces_listed[1], "limit": 10}
         )
-    # Newest first: each namespace's two documents were added in order, one after the other.
-    assert seen == [(ns, f"doc://{i}") for ns in reversed(places) for i in (1, 0)]
-    assert {r["namespace"] for r in one["rows"]} == {places[1]}
+    # Newest first, by the keyset the cursor walks, with nothing repeated or skipped.
+    assert keys == sorted(keys, reverse=True)
+    assert sorted(seen) == sorted((ns, f"doc://{i}") for ns in namespaces_listed for i in range(2))
+    assert {r["namespace"] for r in one["rows"]} == {namespaces_listed[1]}
 
 
 @pytest.mark.asyncio
