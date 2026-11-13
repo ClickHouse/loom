@@ -144,7 +144,9 @@ def test_the_cost_cap_is_checked_before_the_next_call() -> None:
     assert spend.stopped.is_set()
 
 
-def test_the_first_failed_page_stops_the_others(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_first_failed_page_stops_the_others(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     calls: list[str] = []
 
     def fake_page(source: str, lang: t.Language, key: str, spend: t.Spend) -> None:
@@ -163,6 +165,7 @@ def test_the_first_failed_page_stops_the_others(monkeypatch: pytest.MonkeyPatch)
         t.update(every=True, codes=["ja"])
     # Pages already running stop at their next call, and no more than one per worker started.
     assert len(set(calls)) <= t.WORKERS and t.SOURCES[-1] not in calls and len(calls) < 200
+    assert "spent:" in capsys.readouterr().out
 
 
 def test_a_missing_source_stops_check_and_update(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -270,16 +273,23 @@ def test_an_anchor_into_a_stale_page_waits_for_that_page(
 
 
 def test_check_skips_anchors_of_stale_pages_only_when_asked(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     ja = t.LANGUAGES[1]
-    page = t.target_path(ja.code, t.SOURCES[1])
-    monkeypatch.setattr(t, "stale", lambda model=t.DEFAULT_MODEL: [(t.SOURCES[1], ja)])
-    seen: list[frozenset[str]] = []
-    monkeypatch.setattr(t, "link_problems", lambda waiting=frozenset(): seen.append(waiting) or [])
+    (tmp_path / "i18n/ja").mkdir(parents=True)
+    (tmp_path / "i18n/ja/a.md").write_text("[b](b.md#new-heading)\n")
+    (tmp_path / "i18n/ja/b.md").write_text('<a id="old-heading"></a>\n')
+    monkeypatch.setattr(t, "ROOT", tmp_path)
+    monkeypatch.setattr(t, "require_sources", lambda: None)
+    monkeypatch.setattr(t, "orphans", lambda: [])
+    monkeypatch.setattr(t, "untranslated_pages", lambda: [])
+    monkeypatch.setattr(t, "readme_language_line_differs", lambda: False)
+    monkeypatch.setattr(t, "target_path", lambda lang, source: f"i18n/{lang}/{source}")
+    monkeypatch.setattr(t, "stale", lambda model=t.DEFAULT_MODEL: [("b.md", ja)])
     assert t.check(skip_stale=True) == 0
-    assert t.check() == 1 and page in capsys.readouterr().out
-    assert seen == [frozenset({page}), frozenset()]
+    assert t.check() == 1
+    out = capsys.readouterr().out
+    assert "i18n/ja/a.md links to b.md#new-heading, which has no such anchor" in out
 
 
 def test_the_committed_translations_pass_check() -> None:
