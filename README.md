@@ -10,6 +10,8 @@
   <a href="https://www.npmjs.com/package/@clickhouse/loom"><img alt="TypeScript SDK on npm" src="https://img.shields.io/npm/v/%40clickhouse%2Floom?label=typescript%20sdk"></a>
   <a href="./LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <a href="https://glama.ai/mcp/servers/ClickHouse/loom"><img alt="MCP server score" src="https://glama.ai/mcp/servers/ClickHouse/loom/badges/score.svg"></a>
+  <a href="https://github.com/ClickHouse/loom/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI on main" src="https://github.com/ClickHouse/loom/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/ClickHouse/loom"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/ClickHouse/loom/badge"></a>
 </p>
 
 <p align="center">
