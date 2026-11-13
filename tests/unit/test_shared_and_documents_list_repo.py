@@ -297,7 +297,7 @@ async def test_list_with_chunk_counts_counts_only_the_page_sources() -> None:
             {"namespace": "b", "source_uri": "kb://2", "ingested_at": at},
         ]
     )
-    ch.query_all_returns.append([{"namespace": "b", "source_uri": "kb://2", "n": 3}])
+    ch.query_all_returns.append([{"namespace": "b", "source_uri": "kb://2", "chunk_count": 3}])
     rows = await documents_repo.list_with_chunk_counts("clickhouse", ["a", "b", "c"], ch=ch)
     sql, params = ch.query_all_calls[1]
     assert "FROM loom.chunks" in sql

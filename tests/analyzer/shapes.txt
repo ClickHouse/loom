@@ -856,7 +856,6 @@
 6b6d53e64bd0	ALTER TABLE loom.entity_edges DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 6b7882fdfb07	SELECT c.session_id AS session_id, c.chunk_index AS chunk_index, c.parent_memory_key AS parent_memory_key, cosineDistance(c.embedding, {q:Array(Float32)}) AS distance FROM loom.memory_chunks AS c WHER
 6b920c15b813	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
-6ba06a0a7734	SELECT namespace, source_uri, count() AS n FROM loom.chunks WHERE org = {org:String} AND (namespace, source_uri) IN {keys:Array(Tuple(String, String))} AND doc_superseded_at IS NULL AND (org, namespac
 6bb37eccea0d	SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, memory_type, if(length(toString(value_json)) > ?, toString(value_json), value) AS value, -- The stored bytes, for version rows
 6bca66927292	SELECT min(ts) AS first_ts, count() AS n FROM loom.audit_log
 6befffe2772b	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
@@ -1672,6 +1671,7 @@ c7ec8090e470	SELECT memory_key, memory_type, content_excerpt, ? - cosineDistance
 c7f72fd867b4	SELECT qualified_name, argMaxIf(symbol_id, version, tier = ?) AS scip_id, argMaxIf(symbol_id, version, tier = ?) AS ts_id, argMaxIf(signature, version, tier = ?) AS signature, any(path) AS path FROM l
 c7fbe95f8474	SELECT namespace, countIf(status=?) AS pending, countIf(status=?) AS promoted, countIf(status=?) AS rejected, if(countIf(status IN (?,?)) > ?, countIf(status=?) / countIf(status IN (?,?)), ?) AS appro
 c8167139ec34	DELETE FROM loom.memory_embeddings WHERE (org = {org:String} AND has(tags, ?) AND hasAny(tags, {src:Array(String)}) AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, String))}
+c8424367f9c9	SELECT namespace, source_uri, count() AS chunk_count FROM loom.chunks WHERE org = {org:String} AND (namespace, source_uri) IN {keys:Array(Tuple(String, String))} AND doc_superseded_at IS NULL AND (org
 c850ef07bf65	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 c85b7e038508	SELECT namespace, kind FROM loom.namespaces FINAL WHERE org = {org:String}
 c873c5cd3338	SELECT retention_days, dedup_threshold, hot_quota, conflict_policy FROM loom.namespace_types FINAL WHERE org = {org:String} AND namespace = {ns:String} AND memory_type = {mt:String} LIMIT ?

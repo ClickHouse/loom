@@ -389,17 +389,17 @@ async def _live_chunk_counts(
         return {}
     rows = await ch.query_all(
         f"""
-        SELECT namespace, source_uri, count() AS n
+        SELECT namespace, source_uri, count() AS chunk_count
         FROM loom.chunks
         WHERE org = {{org:String}}
           AND (namespace, source_uri) IN {{keys:Array(Tuple(String, String))}}
           AND {LIVE_CHUNK_SQL}
         GROUP BY namespace, source_uri
-        LIMIT {{page:UInt32}}
+        LIMIT {{n:UInt32}}
         """,
-        params={"org": org, "keys": keys, "page": len(keys)},
+        params={"org": org, "keys": keys, "n": len(keys)},
     )
-    return {(r["namespace"], r["source_uri"]): int(r["n"]) for r in rows}
+    return {(r["namespace"], r["source_uri"]): int(r["chunk_count"]) for r in rows}
 
 
 # Every column a writer carries, in schema.sql order (`content_preview` is
