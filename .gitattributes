@@ -4,6 +4,7 @@
 *.sh text eol=lf
 integrations/*/bin/loom-node text eol=lf
 integrations/grep-shim/bin/* text eol=lf
+integrations/cline/hooks/* text eol=lf
 # Skills are read by each agent's frontmatter parser: one line ending for all.
 integrations/*/skills/** text eol=lf
 skills/** text eol=lf

@@ -474,15 +474,18 @@ jobs:
         run: node --test integrations/grep-shim/tests/*.test.mjs
       - name: Cursor hook sample
         run: bash integrations/cursor/test.sh
-      - name: every hook, helper and shim script parses
-        run: for f in integrations/{claude-code-plugin,codex-plugin}/{hooks,lib,bin}/*.mjs integrations/grep-shim/bin/* integrations/grep-shim/lib/*.mjs; do node --check "$f"; done
-      - name: the Node launcher parses
-        run: for f in integrations/{claude-code-plugin,codex-plugin}/bin/loom-node; do sh -n "$f"; done
-      # The shim is installed by putting grep-shim/bin on PATH, so each entry
-      # point must resolve to an executable file. The plugins' executable bits
-      # are compared source-to-copy by the plugin sync check in the lint job.
-      - name: grep shim entry points are executable
-        run: for f in integrations/grep-shim/bin/*; do test -x "$f" || { echo "::error file=$f::not executable"; exit 1; }; done
+      - name: node --test (Cline hooks)
+        run: node --test integrations/cline/tests/*.test.mjs
+      - name: every hook, helper, shim and adapter script parses
+        run: for f in integrations/{claude-code-plugin,codex-plugin}/{hooks,lib,bin}/*.mjs integrations/cline/*.mjs integrations/grep-shim/bin/* integrations/grep-shim/lib/*.mjs; do node --check "$f"; done
+      - name: the Node launcher and the Cline hooks parse
+        run: for f in integrations/{claude-code-plugin,codex-plugin}/bin/loom-node integrations/cline/hooks/*; do sh -n "$f"; done
+      # The shim is installed by putting grep-shim/bin on PATH, and Cline runs
+      # the copied hook files directly, so each must be an executable file.
+      # The plugins' executable bits are compared source-to-copy by the plugin
+      # sync check in the lint job.
+      - name: grep shim and Cline hook entry points are executable
+        run: for f in integrations/grep-shim/bin/* integrations/cline/hooks/*; do test -x "$f" || { echo "::error file=$f::not executable"; exit 1; }; done
   # The dashboard's vitest and Playwright suites share nothing but `npm ci`, so
   # each runs as its own job, split into parts on separate runners.
   frontend-vitest:
