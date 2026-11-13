@@ -335,8 +335,10 @@ class AuthSettings(BaseModel):
     cell_router_token: Annotated[str, Field(pattern=r"^(?:lcr_[0-9a-f]{128})?$")] = ""
     # Seconds a whole placement call to the router may take before the request answers 503.
     cell_router_timeout_s: float = Field(default=5.0, gt=0)
-    # Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not
-    # held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
+    # Seconds (at least 1) between reads of the cell state rows once the first read landed
+    # (every second until then), in every process that reads them under the Postgres
+    # authority, and before an org read as not held is read again;
+    # LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
     tenancy_mode_cache_s: float = Field(default=5.0, ge=1.0)
     # The router's directory, its own Postgres database (`loom router serve` and
     # `loom router migrate`); "" = none. Never a cell's memory authority database.
@@ -5021,7 +5023,8 @@ class RuntimeSettings(BaseModel):
     # Which processes run the WorkerSupervisor: auto = the one process of the
     # deployment holding the `workers_supervisor` lease in ClickHouse
     # (server/workers/leader.py), and none outside the deployment (no
-    # LOOM_DEPLOYMENT); on = always; off = never (a pure web replica).
+    # LOOM_DEPLOYMENT); on = always (under the Postgres authority, only while the cell
+    # gate lets the process serve); off = never (a pure web replica).
     background_workers: Literal["auto", "on", "off"] = "auto"
     # auto mode: seconds a lease holder that stops renewing keeps the workers
     # before another process takes them over (failover time). At least 24: below

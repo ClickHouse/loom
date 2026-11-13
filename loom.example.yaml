@@ -714,9 +714,10 @@ settings:
   # 503. [restart]
   # cell_router_timeout_s: 5.0
 
-  # Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not
-  # held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
-  # [restart]
+  # Seconds (at least 1) between reads of the cell state rows once the first read landed
+  # (every second until then), in every process that reads them under the Postgres
+  # authority, and before an org read as not held is read again;
+  # LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. [restart]
   # tenancy_mode_cache_s: 5.0
 
   # Placement calls one cell may make in a minute, counted by each router replica.
@@ -4759,8 +4760,9 @@ settings:
 
   # Which processes run the WorkerSupervisor: auto = the one process of the deployment
   # holding the `workers_supervisor` lease in ClickHouse (server/workers/leader.py), and
-  # none outside the deployment (no LOOM_DEPLOYMENT); on = always; off = never (a pure
-  # web replica). [restart]
+  # none outside the deployment (no LOOM_DEPLOYMENT); on = always (under the Postgres
+  # authority, only while the cell gate lets the process serve); off = never (a pure web
+  # replica). [restart]
   # background_workers: "auto"
 
   # auto mode: seconds a lease holder that stops renewing keeps the workers before

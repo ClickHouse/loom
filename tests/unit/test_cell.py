@@ -29,6 +29,7 @@ def _no_code_orgs_reader(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _cell_settings(monkeypatch: pytest.MonkeyPatch, name: str = "eu-1") -> None:
     monkeypatch.setattr(settings, "cell", name)
+    monkeypatch.setattr(settings, "storage_authority", "postgres")  # a cell needs it
     monkeypatch.setattr(settings, "public_base_url", "https://eu-1.example.test")
 
 
@@ -186,6 +187,7 @@ def test_refresh_reads_the_three_rows(monkeypatch: pytest.MonkeyPatch) -> None:
             "first": {"is_first": True, "cell": "eu-1"},
             "mode": "recording",
             "own": {"current_fp": value, "next_fp": None},
+            "tenancy": False,
         }
 
     monkeypatch.setattr(pg, "fetchrow", _row)
@@ -289,7 +291,7 @@ def test_a_gated_process_stands_aside_from_the_workers(monkeypatch: pytest.Monke
     monkeypatch.setattr(leader.deployment_config, "drift", lambda: [])
     _cell_settings(monkeypatch)
     _view(monkeypatch)
-    assert "this cell does not serve" in leader._stand_aside_reason()
+    assert "the cell gate: " in leader._stand_aside_reason()
     assert leader.SupervisorLease("auto").advertised() == ""
     _serving_view(monkeypatch)
     assert leader._stand_aside_reason() == ""
@@ -312,9 +314,12 @@ def test_an_on_process_runs_its_workers_only_while_its_cell_serves(
     assert lease.held is False
 
 
-def test_an_on_process_outside_a_cell_holds_from_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_on_process_outside_a_cell_holds_from_its_first_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(settings, "cell", "")
-    lease = leader.SupervisorLease("on")
+    _view(monkeypatch)  # never read: open
+    lease = asyncio.run(leader.decide_supervisor("on"))
     assert lease.held is True
     lease.step()
     assert lease.held is True
@@ -388,7 +393,7 @@ def test_an_unprepared_cell_reads_absent_rows_and_stays_gated(
     _view(monkeypatch)
 
     async def _empty(*_a, **_k):
-        return {"first": None, "mode": None, "own": None}
+        return {"first": None, "mode": None, "own": None, "tenancy": False}
 
     monkeypatch.setattr(pg, "fetchrow", _empty)
     assert asyncio.run(cell.refresh()) is True
@@ -463,6 +468,7 @@ def test_a_malformed_own_row_is_a_failed_read_and_keeps_the_last_view(
             "first": {"is_first": False, "cell": "eu-1"},
             "mode": "enforced",
             "own": {"current_fp": json.loads(bad), "next_fp": None},
+            "tenancy": False,
         }
 
     monkeypatch.setattr(pg, "fetchrow", _row)
@@ -513,9 +519,12 @@ def test_a_failed_read_keeps_the_last_rows_only_up_to_the_stale_bound(
     assert not cell.readiness_check().ok
 
 
-def test_the_workers_child_reads_the_cell_rows_before_its_workers_start(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("in_a_cell", [True, False], ids=["in-a-cell", "outside-a-cell-reads-none"])
+def test_the_workers_child_reads_its_cell_rows_only_in_a_cell(
+    monkeypatch: pytest.MonkeyPatch, in_a_cell: bool
 ) -> None:
+    """With LOOM_CELL set the child reads its cell's rows first; with it unset (under
+    the Postgres authority too) it reads none: the parent's lease stops it."""
 
     order: list[str] = []
 
@@ -546,6 +555,8 @@ def test_the_workers_child_reads_the_cell_rows_before_its_workers_start(
         await asyncio.sleep(3600)
 
     _cell_settings(monkeypatch)
+    if not in_a_cell:
+        monkeypatch.setattr(settings, "cell", "")
     # `_serve` sets the process's lease: restored after, so later passes see none.
     monkeypatch.setattr(leader, "_CURRENT", leader.current())
     monkeypatch.setattr(worker_main.child, "read_deadlines", lambda *_a: None)
@@ -561,7 +572,7 @@ def test_the_workers_child_reads_the_cell_rows_before_its_workers_start(
     monkeypatch.setattr(ch_mod, "get_client", lambda: _Client())
     with pytest.raises(_Done):
         asyncio.run(worker_main._serve(0, 0))
-    assert order == ["services", "cell", "start_all"]
+    assert order == (["services", "cell", "start_all"] if in_a_cell else ["services", "start_all"])
 
 
 def test_the_stale_bound_leaves_room_for_three_cell_reads() -> None:
@@ -663,8 +674,12 @@ def test_the_probe_port_needs_the_postgres_authority_and_auth(
 def test_only_the_first_cell_reads_recording(
     monkeypatch: pytest.MonkeyPatch, first: tuple[bool, str] | None, stored: str, read: str
 ) -> None:
+    _cell_settings(monkeypatch)
     _view(monkeypatch, read_at=time.monotonic(), first=first, mode=stored)
     assert cell.mode() == read
+    # With LOOM_CELL unset the heartbeat reports no mode, whatever the rows hold.
+    monkeypatch.setattr(settings, "cell", "")
+    assert cell.mode() == ""
 
 
 def test_a_cells_on_process_registers_tracker_namespaces_only_in_the_deployment(

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from server.auth import tenancy
+from tests.integration._pg_database import own_database
 
 if TYPE_CHECKING:
     import asyncpg
@@ -70,59 +71,47 @@ async def _waits_on_a_lock(watcher: asyncpg.Connection, pid: int) -> None:
 async def test_attachs_mode_write_and_a_recording_insert_never_cross() -> None:
     """A running insert holds the mode row, so attach's lock waits for it to commit; an
     insert that starts while attach waits queues behind it, then reads `enforced` and
-    writes nothing. Restores the mode and rows it found."""
-    dsn = os.environ.get("LOOM_PG_DSN") or pytest.skip("LOOM_PG_DSN not set")
+    writes nothing, in a database of its own: the mode row would gate the integration
+    server."""
     import asyncpg
 
-    admin = await asyncpg.connect(dsn)
-    if not await admin.fetchval("SELECT to_regclass('loom.tenancy') IS NOT NULL"):
-        await admin.close()
-        pytest.skip("this Postgres has not applied 008_cells.sql")
-    a, b = (f"tenancy-race-{uuid.uuid4().hex[:8]}" for _ in range(2))
-    racers: list[asyncpg.Connection] = []
-    found, read = None, False
-    try:
-        found, read = await admin.fetchval("SELECT mode FROM loom.tenancy_mode"), True
-        await admin.execute("DELETE FROM loom.tenancy_mode")
-        await admin.execute("INSERT INTO loom.tenancy_mode (mode) VALUES ('recording')")
-        # The isolation the cell's pool pins (server/core/pg.py).
-        isolation = {"default_transaction_isolation": "read committed"}
-        for _ in range(3):
-            racers.append(await asyncpg.connect(dsn, server_settings=isolation))
-        held, attach, late = racers
-        # An insert is running: attach's lock waits for it.
-        tx = held.transaction()
-        await tx.start()
-        assert await held.fetchval(tenancy._RECORD, a) == 1
-        locked = attach.transaction()
-        await locked.start()
-        write = asyncio.ensure_future(attach.execute(_ATTACH_LOCK))
-        await _waits_on_a_lock(admin, attach.get_server_pid())
-        # An insert that starts now queues behind attach, not beside the running one.
-        record = asyncio.ensure_future(late.fetchval(tenancy._RECORD, b))
-        await _waits_on_a_lock(admin, late.get_server_pid())
-        await tx.commit()
-        await write
-        await attach.execute(_ATTACH_WRITE)
-        await locked.commit()
-        assert await record is None  # it read `enforced`
-        assert await admin.fetchval(tenancy._HOLDS, a) == 1
-        assert await admin.fetchval(tenancy._HOLDS, b) is None
-    finally:
+    async with own_database() as dsn:
+        admin = await asyncpg.connect(dsn)
+        a, b = (f"tenancy-race-{uuid.uuid4().hex[:8]}" for _ in range(2))
+        racers: list[asyncpg.Connection] = []
         try:
-            # End the racing backends first: one blocked in a lock wait would otherwise
-            # finish after the cleanup and write a row back.
+            await admin.execute("INSERT INTO loom.tenancy_mode (mode) VALUES ('recording')")
+            # The isolation the cell's pool pins (server/core/pg.py).
+            isolation = {"default_transaction_isolation": "read committed"}
+            for _ in range(3):
+                racers.append(await asyncpg.connect(dsn, server_settings=isolation))
+            held, attach, late = racers
+            # An insert is running: attach's lock waits for it.
+            tx = held.transaction()
+            await tx.start()
+            assert await held.fetchval(tenancy._RECORD, a) == 1
+            locked = attach.transaction()
+            await locked.start()
+            write = asyncio.ensure_future(attach.execute(_ATTACH_LOCK))
+            await _waits_on_a_lock(admin, attach.get_server_pid())
+            # An insert that starts now queues behind attach, not beside the running one.
+            record = asyncio.ensure_future(late.fetchval(tenancy._RECORD, b))
+            await _waits_on_a_lock(admin, late.get_server_pid())
+            await tx.commit()
+            await write
+            await attach.execute(_ATTACH_WRITE)
+            await locked.commit()
+            assert await record is None  # it read `enforced`
+            assert await admin.fetchval(tenancy._HOLDS, a) == 1
+            assert await admin.fetchval(tenancy._HOLDS, b) is None
+        finally:
+            # The database goes with the test; the racing backends end first, so none is
+            # left in a lock wait.
             pids = [c.get_server_pid() for c in racers]
             ended = "SELECT count(pg_terminate_backend(p, 5000)) FROM unnest($1::int[]) p"
             await admin.fetchval(ended, pids)
             for c in racers:
                 c.terminate()
-            await admin.execute("DELETE FROM loom.tenancy WHERE org = ANY($1::text[])", [a, b])
-            if read:
-                await admin.execute("DELETE FROM loom.tenancy_mode")
-                if found is not None:
-                    await admin.execute("INSERT INTO loom.tenancy_mode (mode) VALUES ($1)", found)
-        finally:
             await admin.close()
 
 

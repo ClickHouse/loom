@@ -111,8 +111,8 @@ def row(*, stopped: bool = False) -> dict[str, Any]:
         "pid": os.getpid(),
         "build_commit": settings.build_commit,
         "schema_version": schema_version(),
-        # A draining, drifted or gated-cell process answers no traffic: the live replicas'
-        # rate-limit shares leave it out.
+        # A draining or drifted process, or one the cell gate refuses, answers no traffic:
+        # the live replicas' rate-limit shares leave it out.
         "serving": int(
             bool(settings.serves_traffic)
             and not readiness.draining()

@@ -165,7 +165,11 @@ def test_a_cell_the_transports_would_close_refuses_the_command(
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
     first = {"is_first": True, "cell": "eu-1"}  # as the pool's json codec decodes it
     monkeypatch.setattr(
-        pg, "fetchrow", AsyncMock(return_value={"first": first, "mode": "recording", "own": None})
+        pg,
+        "fetchrow",
+        AsyncMock(
+            return_value={"first": first, "mode": "recording", "own": None, "tenancy": False}
+        ),
     )
     never = AsyncMock(side_effect=AssertionError("checked"))
     monkeypatch.setattr(tenancy, "ensure_held", never)
@@ -199,7 +203,9 @@ def test_a_cli_counts_the_code_orgs_as_its_server_does(monkeypatch: pytest.Monke
     first = {"is_first": True, "cell": "eu-1"}
     own = {"current_fp": accepted, "next_fp": None}
     monkeypatch.setattr(
-        pg, "fetchrow", AsyncMock(return_value={"first": first, "mode": "enforced", "own": own})
+        pg,
+        "fetchrow",
+        AsyncMock(return_value={"first": first, "mode": "enforced", "own": own, "tenancy": False}),
     )
     monkeypatch.setattr(tenancy, "ensure_held", AsyncMock(return_value=None))
     asyncio.run(_ch.check_orgs(["acme"]))
@@ -259,7 +265,7 @@ def test_a_cli_process_reads_the_cells_mode_before_it_checks(
     statements: list[str] = []
 
     async def _fetchrow(_sql: str) -> dict[str, Any]:
-        return {"first": None, "mode": mode, "own": None}
+        return {"first": None, "mode": mode, "own": None, "tenancy": False}
 
     async def _fetchval(sql: str, org: str) -> bool:
         statements.append(sql)
@@ -290,7 +296,7 @@ def test_a_cli_recording_insert_that_finds_enforced_refuses_and_places_nothing(
     statements: list[str] = []
 
     async def _fetchrow(_sql: str) -> dict[str, Any]:
-        return {"first": None, "mode": "recording", "own": None}
+        return {"first": None, "mode": "recording", "own": None, "tenancy": False}
 
     async def _fetchval(sql: str, org: str) -> None:
         statements.append(sql)  # nothing held, and the insert finds `enforced`
@@ -588,7 +594,7 @@ def test_reconcile_records_its_org_on_a_recording_cell_only_when_it_heals(
         statements.append((sql, org))
         return sql != tenancy._HOLDS  # held only once recorded
 
-    row = {"first": None, "mode": "recording", "own": None}
+    row = {"first": None, "mode": "recording", "own": None, "tenancy": False}
     monkeypatch.setattr(pg, "fetchrow", AsyncMock(return_value=row))
     monkeypatch.setattr(pg, "fetchval", _fetchval)
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
@@ -662,7 +668,7 @@ def _cli_cell(monkeypatch: pytest.MonkeyPatch, mode: str, statements: list[str])
         statements.append(sql)
         return sql != tenancy._HOLDS  # held only once recorded
 
-    row = {"first": None, "mode": mode, "own": None}
+    row = {"first": None, "mode": mode, "own": None, "tenancy": False}
     monkeypatch.setattr(pg, "fetchrow", AsyncMock(return_value=row))
     monkeypatch.setattr(pg, "fetchval", _fetchval)
     monkeypatch.setattr(pg_profile, "deployment_id", AsyncMock(return_value="d1"))
