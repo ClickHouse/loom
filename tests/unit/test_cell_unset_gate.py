@@ -242,7 +242,7 @@ def test_the_lifespan_reads_the_state_before_its_heartbeat_and_lease() -> None:
     assert [c for c in calls if c in wanted] == wanted
 
 
-def test_keep_lease_starts_and_stops_an_unset_on_processs_workers_with_the_state(
+def test_keep_lease_starts_and_stops_an_unset_on_process_workers_with_the_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(leader, "_period_s", lambda _held: 0.01)
