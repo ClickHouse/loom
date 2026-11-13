@@ -190,8 +190,11 @@ gemini extensions install https://github.com/ClickHouse/loom
 Gemini installs an extension from the repository's latest release; `--ref <branch>` installs
 another ref. The extension also installs Loom's two agent skills, `loom` and `loom-code`.
 `gemini extensions config clickhouse-loom` changes the two values later; a scripted install
-passes `--skip-settings` and sets them that way. `gemini mcp list` shows the `loom` server as
-connected once the URL and token are right.
+passes `--skip-settings` and writes `LOOM_MCP_URL` and `LOOM_API_KEY` to the extension's
+`.env` file (`~/.gemini/extensions/clickhouse-loom/.env`). `gemini mcp list` shows the `loom` server as
+connected once the URL and token are right. On a single-user server, an empty token still sends `Authorization: Bearer`, which the
+server accepts with a warning in its log for each request; `gemini mcp add` without
+`--header` (above) avoids it.
 
 Claude Desktop's custom connectors (Settings → Connectors) reach the server from the
 provider's cloud, so they need a Loom on a public HTTPS address; on the same machine,

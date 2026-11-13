@@ -13,12 +13,12 @@
   "settings": [
     {
       "name": "Loom MCP URL",
-      "description": "Your Loom server's MCP endpoint: http://localhost:7777/mcp?toolset=coding for a single-user server on this machine",
+      "description": "Your Loom server's MCP endpoint: http://localhost:7777/mcp?toolset=coding for a single-user server on this machine, or https://<your server>/mcp for a team server",
       "envVar": "LOOM_MCP_URL"
     },
     {
       "name": "Loom token",
-      "description": "A Loom token from Settings, Tokens, for a team server; leave empty for a single-user server on this machine",
+      "description": "A Loom token (dashboard Settings → Tokens) for a team server; leave empty for a single-user server on this machine",
       "envVar": "LOOM_API_KEY",
       "sensitive": true
     }
