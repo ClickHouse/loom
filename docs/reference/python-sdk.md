@@ -234,6 +234,13 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   `LoomMemoryRetriever(agent=...)` are LangChain `BaseRetriever`s over
   `knowledge.search` and `memory.search`; install the `[langchain]` extra.
   `invoke` needs a `SyncAgent`, `ainvoke` takes either agent.
+- `loom.integrations.llamaindex.LoomRetriever(agent)` is a LlamaIndex
+  `BaseRetriever` over `knowledge.search`, and `LoomMemoryBlock(agent=...)` a
+  `Memory` block that extracts flushed messages with `memory.set_from_messages`
+  and reads them back with `memory.search`; install the `[llamaindex]` extra.
+  `retrieve` needs a `SyncAgent`, and so does the block when `Memory` is used
+  through `get` / `put`; `aflush(memory)` hands what is left in the window to the
+  `Memory`'s blocks and archives it.
 - `loom.integrations.langgraph.LoomStore(agent, tags=...)` is a LangGraph
   `BaseStore`: `put` is `memory.set`, `search(query=...)` ranks with
   `memory.search` and reads values with `memory.bulk_get`, and namespace tuples

@@ -56,6 +56,8 @@ aws = ["pyjwt[crypto]>=2.8", "boto3>=1.28"]
 # The framework an adapter in loom.integrations subclasses; the LangGraph and
 # Strands adapters need none (structural twins).
 langchain = ["langchain-core>=1.0,<2"]
+# LlamaIndex moves its memory API between minor versions.
+llamaindex = ["llama-index-core>=0.14,<0.15"]
 
 [project.urls]
 Homepage = "https://clickhouse.github.io/loom/"
