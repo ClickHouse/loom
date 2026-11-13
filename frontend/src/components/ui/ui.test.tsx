@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
 import { Chip } from "./Chip";
-import { Kbd } from "./Kbd";
 import { MetaList, MetaRow } from "./Meta";
 import { Panel } from "./Panel";
 import { SectionHeading } from "./SectionHeading";
@@ -201,20 +200,16 @@ describe("TextClamp", () => {
   });
 });
 
-describe("Kbd and Tip", () => {
-  it("a key hint is a kbd element and a Tip opens from its focusable child", async () => {
+describe("Tip", () => {
+  it("opens from its focusable child", async () => {
     const user = userEvent.setup();
     const { container } = render(
       <p>
-        <Kbd>↵</Kbd> select ·{" "}
         <Tip content="Walk from this entity">
           <button type="button">Walk</button>
         </Tip>
       </p>,
     );
-    expect(container.querySelector("kbd")).toHaveTextContent("↵");
-    // The look is the .kbd rule in styles.css, on Click UI's tokens, not arbitrary values.
-    expect(container.querySelector("kbd")?.className).toBe("kbd");
     await user.tab();
     expect(screen.getByRole("button", { name: "Walk" })).toHaveFocus();
     expect(await screen.findByRole("tooltip")).toHaveTextContent("Walk from this entity");

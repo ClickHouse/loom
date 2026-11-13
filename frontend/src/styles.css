@@ -1555,29 +1555,6 @@ textarea[aria-invalid="true"]:focus-visible {
   }
 }
 
-/* Kbd (ui/Kbd.tsx): a key or a short chord. It stands in for Click UI's inline code
-   (its stroke, radius and side padding) in the badge's 500 12 px Inter, muted text on the
-   muted surface. Click UI has no key component and no token for a key's 20 px square: a
-   measured hand size. In the components layer, so a utility the caller passes (`hidden`,
-   a position) still wins. */
-@layer components {
-  .kbd {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 20px;
-    padding: 0 var(--click-codeInline-space-x);
-    border: var(--click-codeInline-stroke) solid var(--global-color-stroke-default);
-    border-radius: var(--click-codeInline-radii-all);
-    background: var(--global-color-background-muted);
-    font: var(--click-badge-typography-label-md-default);
-    line-height: 1;
-    color: var(--global-color-text-muted);
-    white-space: nowrap;
-  }
-}
-
 /* A field of chips (a tracker source's repositories): Click UI's text field frame around
    the chips and an input, since Click UI has no multi-value field. */
 @layer components {

@@ -24,7 +24,7 @@ import { DraftSearch } from "../components/ui/DraftSearch";
 import { toast, toastError } from "../components/Toast";
 import { AgentBadge } from "../components/AgentBadge";
 import { displayAgent, truncate, sentenceCase } from "../lib/format";
-import { useAbortableEffect, useKeyboard } from "../lib/hooks";
+import { useAbortableEffect } from "../lib/hooks";
 import { useRowNav } from "../lib/useRowNav";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { IconButton } from "../components/IconButton";
@@ -121,26 +121,11 @@ export function Conversations() {
   // Selected thread for the message-replay dialog. Click a thread
   // card OR a search-hit thread header → the dialog reads the full messages and shows them.
   const [openThread, setOpenThread] = useState<ReplayThread | null>(null);
-  const searchRef = useRef<HTMLInputElement | null>(null);
   // Bumped per search and per namespace change: only the latest search writes hits.
   const searchSeq = useRef(0);
   // Bumped per namespace change: a logging write that fails after the change must not
   // revert the new namespace's Record conversations switch.
   const scopeGen = useRef(0);
-
-  // `/` focuses search anywhere on Conversations (not while typing or inside the
-  // thread dialog). Same shortcut as Recall/Recent for muscle-memory consistency
-  // across the dashboard.
-  const keys = useMemo(
-    () => ({
-      "/": () => {
-        searchRef.current?.focus();
-        searchRef.current?.select();
-      },
-    }),
-    [],
-  );
-  useKeyboard(keys);
 
   // Hits, threads, the agent filter and the Record conversations switch belong to the
   // namespace they were read for; a namespace change clears them during render, so B's
@@ -376,7 +361,7 @@ export function Conversations() {
   if (countText && !busy && !loadingThreads) lastCount.current = countText;
   const countShown = busy || (loadingThreads && hits === null) ? lastCount.current : countText;
 
-  // One tab stop over each list's rows: arrows and j/k move, Enter opens.
+  // One tab stop over each list's rows: the arrows move, Enter opens.
   const threadsNav = useRowNav({ enabled: openThread === null && !!threads?.length });
   const hitsNav = useRowNav({ enabled: openThread === null && !!groupedHits?.length });
 
@@ -551,7 +536,6 @@ export function Conversations() {
         <ListToolbarSearch>
           <DraftSearch
             key={searchBox}
-            ref={searchRef}
             settle="enter"
             onSearch={(text) => {
               if (text) {

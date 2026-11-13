@@ -18,14 +18,13 @@ export interface RowNavOptions {
 /**
  * Keyboard for a list of `ui/ListRow`s whose open buttons carry `data-row-open`: a roving
  * tabindex (Click UI's Table has no row keys), as the Tasks list moves. The list is one tab
- * stop (the row last focused, else the first), `↑/↓` and `j/k` move the focus from row to
- * row, `Home/End` jump to the ends, `Enter` opens the focused row (its button's own click),
+ * stop (the row last focused, else the first), `↑/↓` move the focus from row to row,
+ * `Home/End` jump to the ends, `Enter` opens the focused row (its button's own click),
  * and `Space` toggles the row's checkbox instead of opening it. Escape is the caller's (it
  * closes its drawer, or clears a selection). Returns the ref for the list's container.
  *
- * `j/k` work from anywhere on the page that is not a field and honour the single-key
- * switch (`lib/shortcuts.ts`, through `useKeyboard`); the arrows and `Home/End` move only
- * from a row or the page itself, so a focused menu trigger or select keeps its own.
+ * The arrows and `Home/End` move only from a row or the page itself (through `useKeyboard`,
+ * which leaves fields alone), so a focused menu trigger or select keeps its own.
  *
  * Only the current row's controls (its tag chips, its menu) are tab stops, after its open
  * button; every other row's are out of the tab order, and a control that takes the focus
@@ -119,8 +118,6 @@ export function useRowNav({ enabled = true }: RowNavOptions = {}): (el: HTMLElem
       return focus(all[Math.max(0, Math.min(all.length - 1, all.indexOf(at) + step))]);
     };
     return {
-      j: () => move(1),
-      k: () => move(-1),
       ArrowDown: () => onList() && move(1),
       ArrowUp: () => onList() && move(-1),
       Home: () => !!here() && focus(rows()[0]),

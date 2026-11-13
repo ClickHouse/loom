@@ -1184,8 +1184,8 @@ export function AddRepositoryDialog({
   const overCap = remote !== null && chosen.length > Math.max(0, remote.cap);
   const valid = repoValid && (!showToken || token.trim().length > 0) && (remote ? chosen.length > 0 && !overCap : true);
   /** Ask the remote which branches exist (the first 60 matching `q`; default and
-   *  indexed always ride); a refusal becomes the token step. A search on a
-   *  truncated list asks the server again with the query. */
+   *  indexed always ride); a refusal becomes the token step. A search the shown page
+   *  cannot answer asks the server again with the query. */
   const lookup = async (q = "") => {
     if (!repoValid || looking) return;
     setLooking(true);
@@ -1218,6 +1218,13 @@ export function AddRepositoryDialog({
       .map((n) => remote.branches.find((b) => b.name === n) ?? { name: n, sha: "" });
     return [...filtered, ...kept];
   })();
+  // The text matches no branch shown, and the shown page is not all the remote holds for it:
+  // the list was cut, or it answered an earlier query. The remote's full list may hold it.
+  const askRemote =
+    !!remote &&
+    !!q &&
+    (remote.truncated || (!!remote.query && q !== remote.query.toLowerCase())) &&
+    !shownBranches.some((b) => b.name.toLowerCase().includes(q));
   const visibleSuggested = remote
     ? shownBranches.map((b) => b.name).filter((n) => remote.suggested.includes(n) && !picked.has(n))
     : [];
@@ -1353,8 +1360,9 @@ export function AddRepositoryDialog({
                   )}
                 </div>
                 {(remote.total > remote.branches.length || remote.query) && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="flex-1">
+                  // Below sm the field takes the whole row; the count and the button wrap under it.
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <div className="basis-full sm:basis-auto sm:flex-1">
                       <SearchField
                         aria-label="Search branches"
                         value={search}
@@ -1370,10 +1378,17 @@ export function AddRepositoryDialog({
                     </div>
                     <span className="text-xs text-text-muted whitespace-nowrap tabular">
                       showing {shownBranches.length} of {fmtInt(remote.total)}
-                      {remote.truncated && q && !shownBranches.some((b) => b.name.toLowerCase().includes(q))
-                        ? " — press Enter to search the remote's full list"
-                        : ""}
                     </span>
+                    {askRemote && (
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        loading={looking}
+                        onClick={() => void lookup(search.trim())}
+                      >
+                        Search the remote
+                      </Button>
+                    )}
                   </div>
                 )}
                 <ul className="flex flex-wrap gap-2 list-none p-1 m-0 max-h-56 overflow-y-auto" aria-label="Branches">
@@ -1437,7 +1452,7 @@ export function AddRepositoryDialog({
               <div className="w-48">
                 <TextField id="add-branch" label="Branch" value={branch} onChange={(v) => setBranch(v)} />
                 <div className="text-xs text-text-muted mt-1">
-                  Or press Find branches to choose from what the remote shows.
+                  Or use Find branches to choose from what the remote shows.
                 </div>
               </div>
             )}
