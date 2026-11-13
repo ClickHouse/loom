@@ -246,7 +246,8 @@ const INLINE_LINKS = new RegExp(
 /** How a page draws one link: its label already drawn, whether it is an image, its target. */
 export type LinkRenderer = (label: ReactNode[], image: boolean, target: string) => ReactNode;
 
-/** How a page draws one citation marker (the search card draws its number). */
+/** How a page draws one citation marker (the panel and the search's card draw its number,
+ *  `numberedCitations`). */
 export type CitationRenderer = (marker: string) => ReactNode;
 
 /** A line's inline Markdown as React nodes; anything else, HTML included, is text. An

@@ -2,11 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
 import { CODE_TRACKER_ONLY_CLAIMS, CODE_TRACKER_ONLY_MINE, installApi } from "./fixtures";
 
-// The header's Ask AI button (right after the search field at every width; no key opens
-// the panel), the panel's one header row, the modes the width gives the panel (beside the page from 1280 px, over it below), the window
-// it expands to from 1024 px (over the page, with no address or history change), the header
-// search's answer card against a fake chat route, the phone sheet from the top bar, and an
-// /assistant address, which lands on the landing page and opens the assistant over it.
+// The header's Ask AI button (right after the search field at every width; no key opens the
+// panel), the panel's one header row, the modes the width gives the panel (beside the page
+// from 1280 px, over it below), the window it expands to from 1024 px (over the page, with
+// no address or history change), the header search's answer card against a fake chat route,
+// the phone sheet from the top bar, and an /assistant address, which lands on the landing
+// page and opens the assistant over it.
 
 const launcher = (page: Page) => page.locator('[data-focus-key="assistant-launcher"]');
 const panel = (page: Page) => page.locator("[data-assistant-panel]");
@@ -48,8 +49,8 @@ function streamed(text: string): string {
 
 const ANSWER = "Invoices go out **weekly**, on Fridays [memory:billing/invoices@v3]. Reminders go two days before.";
 
-/** Readiness says the assistant is ready, and the chat route answers ANSWER, after `delayMs`;
- *  the bodies sent. */
+/** Readiness says the assistant is ready, and the chat route answers ANSWER, after
+ *  `delayMs`; the bodies sent. */
 async function fakeAssistant(page: Page, delayMs = 0): Promise<string[]> {
   const sent: string[] = [];
   await page.route("**/v1/health/ready", (r) =>
@@ -156,7 +157,8 @@ test("at 1280 px with the sidebar open the panel docks beside the page, which ke
   await expect(panel(page)).toHaveAttribute("data-mode", "push");
   const docked = await rect(page, "[data-assistant-panel]");
   const after = await rect(page, "main");
-  // The page's corner stays; the page gives up exactly the panel's width, at the window's right.
+  // The page's corner stays; the page gives up exactly the panel's width, at the window's
+  // right.
   expect({ left: after.left, top: after.top }).toEqual({ left: main.left, top: main.top });
   expect(main.width - after.width).toBeCloseTo(docked.width, 0);
   expect(after.width).toBeGreaterThanOrEqual(640);

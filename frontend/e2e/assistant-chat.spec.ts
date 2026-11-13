@@ -2,13 +2,13 @@ import { expect, test, type Page, type Request } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi, NAMESPACE } from "./fixtures";
 
-// The Ask AI panel's chat, opened from its launcher, against a fake chat route: the answer arrives as the
-// server-sent chunks `POST /v1/assistant/chat/completions` streams (OpenAI's chunk shape,
-// ending at `data: [DONE]`), a refusal before the stream as Loom's error envelope. The
-// answer carries every Markdown form the chat draws, a table wider than a phone, HTML and
-// an image that must stay text, and citations, each drawn as its number; the checked ones
-// follow in its Sources, led by the same numbers, from the stream's last `loom.citations`
-// event.
+// The Ask AI panel's chat, opened from its launcher, against a fake chat route: the answer
+// arrives as the server-sent chunks `POST /v1/assistant/chat/completions` streams (OpenAI's
+// chunk shape, ending at `data: [DONE]`), a refusal before the stream as Loom's error
+// envelope. The answer carries every Markdown form the chat draws, a table wider than a
+// phone, HTML and an image that must stay text, and citations, each drawn as its number;
+// the checked ones follow in its Sources, led by the same numbers, from the stream's last
+// `loom.citations` event.
 
 const SCREENSHOT = process.env.ASSISTANT_CHAT_SCREENSHOT;
 
@@ -264,7 +264,8 @@ for (const width of [360, 400]) {
           return r.width >= 44 && r.height >= 44;
         };
         const header = document.querySelector("header") as HTMLElement;
-        // Every control the top bar shows (the search field's row stays hidden until asked).
+        // Every control the top bar shows (the search field's row stays hidden until
+        // asked).
         const controls = [...header.querySelectorAll<HTMLElement>("button")].filter((b) => b.offsetParent !== null);
         const tops = new Set(controls.map((b) => Math.round(b.getBoundingClientRect().top)));
         // The phone's bottom nav (the sidebar's nav is hidden at this width).

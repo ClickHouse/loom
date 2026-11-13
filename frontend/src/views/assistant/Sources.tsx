@@ -121,8 +121,8 @@ export function Sources({
   askAgain?: () => void;
   /** Why nothing can be asked now: "Ask again with sources" shows, unavailable. */
   blocked?: string | null;
-  /** The number a citation's marker shows in a preview that numbers them (the search's
-   *  card): its row leads with it, at the id `${idPrefix}-${n}`. */
+  /** The number each citation's marker shows in the answer (`citationNumbers`): its row
+   *  leads with it, at the id `${idPrefix}-${n}`. */
   numbers?: ReadonlyMap<string, number>;
   idPrefix?: string;
 }) {
@@ -142,8 +142,8 @@ export function Sources({
     if (c.kind === "help") return () => openDocsPage(c.ref, c.anchor);
     return undefined;
   };
-  // The rows: in the order their numbers run where a preview numbers them, each named as
-  // the reader knows it; two memory rows that would read the same show their versions.
+  // The rows: in the order their numbers run, each named as the reader knows it; two memory
+  // rows that would read the same show their versions.
   const named = citations.map((c) => ({ c, ...sourceName(c) }));
   const count = new Map<string, number>();
   for (const r of named) count.set(r.name, (count.get(r.name) ?? 0) + 1);
