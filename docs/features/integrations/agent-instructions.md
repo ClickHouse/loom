@@ -14,6 +14,12 @@ tools the `coding` toolset lists, so connect the client on `?toolset=coding`:
 
 ## The block
 
+With the [Cline hooks](../../../integrations/cline/README.md), replace the block's
+paragraph that starts "Every task:" with "Every task: make these two calls." in your
+copy, so both calls stay required. Cline shows a hook's text to the model only after the
+tool it ran for, so the primer arrives after the task's first tool call and an edit's
+file block after the edit.
+
 ```markdown
 ## Loom: memory and code index
 
@@ -80,10 +86,10 @@ cannot read, listed so you can request access or adopt it), takes the block with
 
 ## Where each client reads it
 
-The block is the same everywhere; only the file and its header differ. Most of these
-clients also read `AGENTS.md`, so keep one copy where one file serves several of them; a
-client that reads two files with the block sees it twice, which costs context but
-changes nothing.
+The block is the same everywhere (apart from the Cline hooks' one-paragraph change
+above); only the file and its header differ. Most of these clients also read
+`AGENTS.md`, so keep one copy where one file serves several of them; a client that reads
+two files with the block sees it twice, which costs context but changes nothing.
 
 | Client                                                         | File                                                                   | Header before the block                                                      |
 | -------------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
