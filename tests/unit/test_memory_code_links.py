@@ -5,6 +5,7 @@ stored memory a search hit is, and the worker row and table it runs on."""
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import re
 import subprocess
@@ -3980,7 +3981,7 @@ async def test_a_link_lost_while_the_index_lagged_comes_back_once_the_index_has_
     monkeypatch,
 ) -> None:
     files = code_link_pass.RepoReads("o", "code-a")
-    row, searched = _moved_module_world(monkeypatch, files, indexed=True)
+    row, _ = _moved_module_world(monkeypatch, files, indexed=True)
     # as an older build wrote it, while the index lacked b.py: missing since c1, still
     # holding c0, the commit it was last read at
     lost = row | {"state": "missing", "changed_since": "c1"}
@@ -4176,7 +4177,9 @@ async def test_the_mirror_search_reads_what_the_ingest_indexes(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("errno_", [7, 2], ids=["argument-list-too-long", "no-git"])
+@pytest.mark.parametrize(
+    "errno_", [errno.E2BIG, errno.ENOENT], ids=["argument-list-too-long", "no-git"]
+)
 async def test_a_grep_that_cannot_start_is_a_git_error(monkeypatch, errno_) -> None:
     from server.code.app.index import gitrepo
 
@@ -4187,7 +4190,7 @@ async def test_a_grep_that_cannot_start_is_a_git_error(monkeypatch, errno_) -> N
     with pytest.raises(gitrepo.GitError) as raised:
         await gitrepo.grep_paths("/nowhere", "a" * 40, "f", ("x.py",))
     # E2BIG is the paths being too many, which leaves the index's verdict
-    assert isinstance(raised.value, gitrepo.ArgumentsTooLong) == (errno_ == 7)
+    assert isinstance(raised.value, gitrepo.ArgumentsTooLong) == (errno_ == errno.E2BIG)
 
 
 @pytest.mark.asyncio
@@ -4210,3 +4213,22 @@ async def test_paths_too_many_for_git_leave_the_index_verdict(monkeypatch) -> No
     monkeypatch.setattr(gitrepo, "grep_paths", too_long)
     scope = SimpleNamespace(cfg=SimpleNamespace(git_dir="/nowhere"))
     assert await memory_links.grep_words(scope, "c1", "f", ["a.py"], limit=5) == []
+
+
+@pytest.mark.asyncio
+async def test_a_file_over_the_ingest_byte_cap_adds_no_definition(monkeypatch, tmp_path) -> None:
+    from dataclasses import replace
+
+    from server.code.app import memory_links
+    from server.code.app.index.repo_registry import row_to_config
+
+    git, commit = _repo(tmp_path)
+    head = commit({"pkg/big.py": "def fetch_rows():\n    return 1\n" + "# pad\n" * 50})
+    base = row_to_config({"org": "o", "namespace": "code-a", "repo": "o/a"})
+    scope = memory_links.IngestScope(
+        replace(base, git_dir=str(tmp_path / ".git")), code_links.code.Denylist()
+    )
+    monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 64)
+    assert not await memory_links.symbols_indexed(scope, head, "pkg/big.py")
+    monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 1 << 20)
+    assert await memory_links.symbols_indexed(scope, head, "pkg/big.py")

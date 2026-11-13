@@ -145,7 +145,11 @@ class RepoReads:
             )
             if scope is None:
                 return None
-            paths = sorted(p for p in touched if scope.takes(p))
+
+            async def taken() -> list[str]:
+                return sorted(p for p in touched if scope.takes(p))
+
+            paths = await self._once(("taken", head, base), taken)
             found = await code.grep_words(scope, head, literal, paths, limit=limit)
             if found is None:
                 return None
