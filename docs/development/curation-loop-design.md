@@ -198,7 +198,7 @@ each break.
   refuses.
 - It refuses one that adds a key past the namespace's `memory_term_leg_max_definitions`,
   and any definition promotion while the namespace is already past it.
-- It ignores a definition's `promoted_from_candidate_id`.
+- It ignores a definition's `promoted_from_candidate_id` and names it in `ignored_args`.
 - `learnings.review` refuses, with `VALIDATION_FAILED`, a `definition` candidate that is
   not a `knowledge_gap` or `query_history` draft. Today `memory_supporters` and
   `conversation_seeder` candidates of that type are promoted; callers write both to the
@@ -617,18 +617,19 @@ words are the model's, but nothing else reached the model, which is why it outli
 erasure. The queries reach it case-folded, so the model chooses the term's capitals, and
 they decide how the term leg matches it (`IT` only as written, `it` case-folded); the
 reviewing admin checks them, and when they are wrong rejects the draft and writes and
-promotes the definition directly (`memory.set` of the namespace-wide row, under the
-governed definition's key when the term already has one, then `memory.promote`). The model
-may repeat a query word for word, so `learnings.list` shows a `knowledge_gap` draft to the
-namespace's admins only, the readers of the gaps list. A gap's id has at most one draft:
-the candidate's id derives from the gap's id, and the draft claims that id before its LLM
-call (a claim row, as `run.begin` claims a run), so a second `knowledge.gaps.draft` for
-it, sent alongside or later, answers the claimed candidate, pending or decided, without an
-LLM call or a new queue row, and a decision is never overwritten. The query-history turn
-claims its drafts' ids the same way, so two copies of a pass running at once draft each
-group once. A gap whose most asked query changes between builds gets a new id, and so may
-get a second draft. The Library page shows a gaps tile for a namespace the viewer
-administers, with a **Draft definition** action per gap.
+promotes the definition directly (`memory.set` of the namespace-wide row, under the key of
+the live shared definition that holds the term, governed or lapsed, when one does, then
+`memory.promote`). The model may repeat a query word for word, so `learnings.list` shows a
+`knowledge_gap` draft to the namespace's admins only, the readers of the gaps list. A
+gap's id has at most one draft: the candidate's id derives from the gap's id, and the
+draft claims that id before its LLM call (a claim row, as `run.begin` claims a run), so a
+second `knowledge.gaps.draft` for it, sent alongside or later, answers the claimed
+candidate, pending or decided, without an LLM call or a new queue row, and a decision is
+never overwritten. The query-history turn claims its drafts' ids the same way, so two
+copies of a pass running at once draft each group once. A gap whose most asked query
+changes between builds gets a new id, and so may get a second draft. The Library page
+shows a gaps tile for a namespace the viewer administers, with a **Draft definition**
+action per gap.
 
 ## Definitions from query history
 
@@ -702,8 +703,8 @@ holds the name, the review is refused and names them, so the admin demotes all b
 draft for a new term is written under the key its queue row carries (`memory_key`):
 `definition/` and a random id drawn when the draft claims its candidate id, so every retry
 of one review uses one key, and a draft queued again after a rollback gets a new one.
-`learnings.list` shows that key; for a revision the review writes under the governed key
-instead, which the listed key does not name; the admin finds it in
+`learnings.list` shows that key; for a revision the review writes under that definition's
+key instead, which the listed key does not name; the admin finds it in
 `memory.definitions.list` by its term, and each entry there carries the
 `promoted_from_candidate_id` the shared row holds. A definition promotes to memory only; a
 `destination` of `knowledge` or `both` is refused for these candidates. A draft rejected
@@ -732,15 +733,15 @@ order, the first that matches deciding:
 - a pinned or locked head refuses the review, as a pinned key or a lock refuses a changed
   value; the admin unpins or unlocks it (`memory.unpin`, `memory.unlock`) and reviews
   again;
-- a live, `active` head holding the governed shared copy's text is written with
-  `if_match_sha256` against that head;
+- a live, `active` head holding the shared copy's text is written with `if_match_sha256`
+  against that head;
 - no head is written with `if_absent`, a precondition the implementing pull request adds
   to `memory.set` that refuses the write when a live row holds the key, so a writer who
   creates the row first is never overwritten; a head past its `expires_at` or `valid_to`
   is no head here, since no read serves it;
-- a live row with no governed shared copy (a caller may write `definition` rows) refuses
-  it; the admin edits that row to the draft's text, with `clear_expiry`, and reviews
-  again, which the no-write case then promotes;
+- a live row with no shared copy (a caller may write `definition` rows) refuses it; the
+  admin edits that row to the draft's text, with `clear_expiry`, and reviews again, which
+  the no-write case then promotes;
 - any other head is a writer's edit, or a head the read-time check would not serve
   (`conflicted`, `duplicate`), and the review is refused rather than overwrite or promote
   it.
