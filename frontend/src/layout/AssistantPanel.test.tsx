@@ -139,6 +139,20 @@ describe("the header", () => {
     expect(await screen.findByRole("tooltip")).toHaveTextContent(new RegExp(`^${name}$`));
   });
 
+  it("keeps only Close once the session has ended, and never shows History then", async () => {
+    render(<AssistantPanel />);
+    act(() => openAssistant());
+    act(() => useDock.setState({ expired: true, history: true }));
+    const head = panel().querySelector(".assistant-head") as HTMLElement;
+    expect(
+      within(head)
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label")),
+    ).toEqual(["Close"]);
+    expect(within(head).getByRole("heading", { level: 2 })).toHaveTextContent("Ask AI");
+    act(() => useDock.setState({ expired: false, history: false }));
+  });
+
   it("History toggles the panel's History view, pressed while it shows, with Back and its title", async () => {
     render(<AssistantPanel />);
     act(() => openAssistant());

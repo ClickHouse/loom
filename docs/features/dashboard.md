@@ -162,15 +162,16 @@ deployment whose chat is not set up it keeps its plain icon: the panel then hold
 starters, Loom's own reads.
 
 The panel has one header row: the title, **Ask AI**, and the namespace in muted text, then
-icon buttons that are always there, each named and with a tooltip: **New chat** (unavailable
-while an answer is coming in), **History** (pressed while History shows), **Expand** (from
-1024 px) and **Close**. The chat asks about the header's namespace under the person's own
-access: the answer streams in as text with Markdown emphasis, lists, tables and code (no
-HTML, images or links), each citation drawn as a number by where it first appears, as the
-search's card numbers it, then its **Sources**, one row per citation as the server checked
-it, led by the same number, which in the text links to its row once the check ends, named as
-the reader knows it (a memory by its key, with its kind and version in the row's tooltip), a
-memory, document or help citation found in Loom opening where the dashboard shows it (a help
+icon buttons, each named and with a tooltip: **New chat** (unavailable while an answer is
+coming in), **History** (pressed while History shows), **Expand** (from 1024 px) and
+**Close**; once the session has ended only **Close** stays, over the line that asks to sign
+in again. The chat asks about the header's namespace under the person's own access: the
+answer streams in as text with Markdown emphasis, lists, tables and code (no HTML, images or
+links), each citation drawn as a number by where it first appears, as the search's card
+numbers it, then its **Sources**, one row per citation as the server checked it, led by the
+same number, which in the text links to its row once the check ends, named as the reader
+knows it (a memory by its key, with its kind and version in the row's tooltip), a memory,
+document or help citation found in Loom opening where the dashboard shows it (a help
 citation on the Help page at its section) and any citation not found reading "not confirmed"
 with why, and a label for the answer's [support](../architecture/assistant.md#support), none
 on an answer that makes no claim, such as a greeting or an abstention. While it answers, its
