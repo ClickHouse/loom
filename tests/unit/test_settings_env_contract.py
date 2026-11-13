@@ -56,6 +56,8 @@ _CROSS_CHECKED = {
     # URLs checked by a model validator (test_llm_gateway.py).
     "openai_base_url",
     "anthropic_base_url",
+    # Also test_local_llm.py.
+    "local_llm_base_url",
     "inference_token_url",
     # Read with the API roots and the embedder (test_llm_gateway.py).
     "inference_gateway_required",

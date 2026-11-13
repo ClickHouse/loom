@@ -1913,3 +1913,47 @@ def test_a_codex_mcp_entry_on_another_port_is_kept(
     assert result.returncode == 0, result.stderr
     assert "Codex: a loom MCP server is set up already" in result.stdout
     assert "always uses" not in result.stdout
+
+
+LOCAL_PRESET = {
+    "LOOM_LLM_PROVIDER": "local",
+    "LOOM_LLM_MODEL": "qwen2.5:3b",
+    "LOOM_LOCAL_LLM_BASE_URL": "http://host.docker.internal:11434/v1",
+    "LOOM_ASSISTANT_PROVIDER": "local",
+    "LOOM_ASSISTANT_MODEL": "qwen2.5:3b",
+    "LOOM_MEMORY_EXTRACT_VERIFY_MODELS": "qwen2.5:3b",
+    "LOOM_SESSION_BRIEF_LLM_MODEL": "",
+    "LOOM_RETRIEVAL_JUDGE_MODEL": "",
+}
+
+
+def test_local_models_ollama_sets_every_model_job_on_it(install) -> None:
+    run, target = install
+    out = run(LOOM_LOCAL_MODELS="ollama")
+    assert out.returncode == 0, out.stderr
+    assert {k: _env(target)[k] for k in LOCAL_PRESET} == LOCAL_PRESET
+    # The stub curl answers nothing, so the model is not there yet.
+    assert "ollama pull qwen2.5:3b" in out.stdout
+
+
+def test_without_a_terminal_ollama_is_not_offered(install) -> None:
+    run, target = install
+    assert run().returncode == 0
+    assert _env(target)["LOOM_LLM_PROVIDER"] == "fake"
+    assert "LOOM_LOCAL_LLM_BASE_URL" not in _env(target)
+
+
+def test_local_models_takes_only_ollama_or_off(install) -> None:
+    run, _ = install
+    out = run(LOOM_LOCAL_MODELS="llama")
+    assert out.returncode != 0 and "LOOM_LOCAL_MODELS takes ollama or off" in out.stderr
+
+
+def test_a_terminal_is_offered_a_running_ollama(installer_env) -> None:
+    # Ollama answers on this machine (every curl succeeds) and the person says yes.
+    curl = Path(installer_env["PATH"].split(":", 1)[0]) / "curl"
+    curl.write_text('#!/bin/sh\necho \'{"models":[{"name":"qwen2.5:3b"}]}\'\n')
+    seen = _on_terminal(installer_env, [], b"Use it for extraction", b"\n")
+    assert b"Loom will run its model jobs on Ollama" in seen, seen
+    assert b"ollama pull" not in seen
+    assert _env(Path(installer_env["LOOM_INSTALL_DIR"]))["LOOM_LLM_PROVIDER"] == "local"

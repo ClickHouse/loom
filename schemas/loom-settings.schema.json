@@ -84,6 +84,16 @@
           "type": "string",
           "description": "The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom writes into the agent definition at boot. \"\" = the definition's own (integrations/librechat/agent.yaml), not llm_model."
         },
+        "assistant_provider": {
+          "default": "",
+          "enum": [
+            "",
+            "anthropic",
+            "local"
+          ],
+          "type": "string",
+          "description": "The LibreChat endpoint the assistant agent runs on. \"\" = the definition's own (anthropic); \"local\" = the model server the operator runs, which LibreChat reaches at LIBRECHAT_LOCAL_LLM_BASE_URL (deploy/librechat/assistant.librechat.yaml); set assistant_model to one of its models."
+        },
         "assistant_service_email": {
           "default": "loom-assistant@loom.invalid",
           "type": "string",
@@ -3260,7 +3270,7 @@
         "llm_provider": {
           "default": "",
           "type": "string",
-          "description": "\"openai\" | \"anthropic\" | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Run `make bench-quick` before making anthropic a default."
+          "description": "\"openai\" | \"anthropic\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Run `make bench-quick` before making anthropic a default."
         },
         "llm_request_timeout_s": {
           "default": 300.0,
@@ -3294,6 +3304,11 @@
           "default": "var/models",
           "type": "string",
           "description": "Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env."
+        },
+        "local_llm_base_url": {
+          "default": "http://localhost:11434/v1",
+          "type": "string",
+          "description": "The chat-completions root of a model server the operator runs, for LOOM_LLM_PROVIDER=local: Ollama's is <host>:11434/v1, llama.cpp's server <host>:8080/v1. Called with no key."
         },
         "log_format": {
           "default": "text",

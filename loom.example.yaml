@@ -261,6 +261,12 @@ settings:
   # (integrations/librechat/agent.yaml), not llm_model. [restart]
   # assistant_model: ""
 
+  # The LibreChat endpoint the assistant agent runs on. "" = the definition's own
+  # (anthropic); "local" = the model server the operator runs, which LibreChat reaches
+  # at LIBRECHAT_LOCAL_LLM_BASE_URL (deploy/librechat/assistant.librechat.yaml); set
+  # assistant_model to one of its models. [restart]
+  # assistant_provider: ""
+
   # Model to answer with when a client's provider is still unavailable after its retries
   # (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted
   # in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" =
@@ -394,6 +400,11 @@ settings:
   # in front of Anthropic. Off the default, the key also goes as a bearer, the scheme
   # gateways take. [restart]
   # anthropic_base_url: "https://api.anthropic.com"
+
+  # The chat-completions root of a model server the operator runs, for
+  # LOOM_LLM_PROVIDER=local: Ollama's is <host>:11434/v1, llama.cpp's server
+  # <host>:8080/v1. Called with no key. [restart]
+  # local_llm_base_url: "http://localhost:11434/v1"
 
   # Model calls with no provider key: exchange an identity token (RFC 8693) at this
   # token endpoint of the gateway, and send the answer as the bearer
@@ -536,11 +547,11 @@ settings:
   # (loom.embedder_calibration), so every replica serves the same gates. [restart]
   # calibration_refresh_seconds: 60.0
 
-  # "openai" | "anthropic" | "fake"; "" = infer from LOOM_LLM_MODEL's name
-  # (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from
-  # the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once
-  # at load; an explicit value is never overridden. Run `make bench-quick` before making
-  # anthropic a default. [restart]
+  # "openai" | "anthropic" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
+  # infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* →
+  # anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
+  # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
+  # overridden. Run `make bench-quick` before making anthropic a default. [restart]
   # llm_provider: ""
 
   # A fake or key-less provider is a `warn` in /v1/health `problems`; true (production)

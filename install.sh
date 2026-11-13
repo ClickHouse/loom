@@ -86,6 +86,13 @@ main() {
       || fail "LOOM_PORT must be between 1 and 65535: $LOOM_PORT" ;;
   esac
 
+  # LOOM_LOCAL_MODELS: ollama sets extraction and the assistant on the Ollama of this
+  # machine without asking, off never offers it.
+  case ${LOOM_LOCAL_MODELS:-} in
+    '' | ollama | off) ;;
+    *) fail "LOOM_LOCAL_MODELS takes ollama or off: $LOOM_LOCAL_MODELS" ;;
+  esac
+
   # LOOM_CONNECT: which coding agents to connect without asking, as a comma list.
   case ${LOOM_CONNECT:-} in
     *[!a-z,-]* | ,* | *, | *,,*) fail "LOOM_CONNECT takes claude-code, codex, vscode, all or none, in lowercase, separated by single commas: $LOOM_CONNECT" ;;
@@ -398,6 +405,39 @@ main() {
   for key in $KEPT_SETTINGS; do
     [ -z "$(given "$key")" ] || set_env "$key" "$(given "$key")"
   done
+  # A model server on this machine (Ollama) for extraction and the assistant, no key:
+  # offered while .env still runs the fake LLM and Ollama answers here.
+  local_model=qwen2.5:3b
+  use_local=
+  if [ "${LOOM_LOCAL_MODELS:-}" = ollama ]; then
+    use_local=1
+  elif [ -z "${LOOM_LOCAL_MODELS:-}" ] && [ "$(get_env LOOM_LLM_PROVIDER)" = fake ] \
+    && [ -t 0 ] && [ -t 1 ] \
+    && curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/version >/dev/null 2>&1; then
+    printf 'Ollama answers on this machine. Use it for extraction and the assistant (%s, no API key)? [Y/n] ' "$local_model"
+    read -r answer || answer=n
+    case $answer in '' | [Yy]*) use_local=1 ;; esac
+  fi
+  if [ -n "$use_local" ]; then
+    # The container reaches the host as host.docker.internal (compose.yaml).
+    set_env LOOM_LLM_PROVIDER local
+    set_env LOOM_LLM_MODEL "$local_model"
+    set_env LOOM_LOCAL_LLM_BASE_URL http://host.docker.internal:11434/v1
+    set_env LOOM_ASSISTANT_PROVIDER local
+    set_env LOOM_ASSISTANT_MODEL "$local_model"
+    # The jobs that name a hosted model by default take the local one too.
+    set_env LOOM_MEMORY_EXTRACT_VERIFY_MODELS "$local_model"
+    for key in LOOM_SESSION_BRIEF_LLM_MODEL LOOM_CODE_BISECT_LLM_RERANK_MODEL \
+      LOOM_TRACKER_DUPCHECK_RERANK_MODEL LOOM_RETRIEVAL_JUDGE_MODEL; do
+      set_env "$key" ""
+    done
+    printf 'Loom will run its model jobs on Ollama (%s)\n' "$local_model"
+    curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/tags 2>/dev/null \
+      | grep -q "\"$local_model\"" \
+      || printf 'Pull the model before the first extraction: ollama pull %s\n' "$local_model"
+    [ "$(uname -s)" = Darwin ] \
+      || printf 'With Docker Engine on Linux the container reaches Ollama only beyond loopback: run Ollama with OLLAMA_HOST=0.0.0.0 and keep port 11434 closed to the network\n'
+  fi
   chmod 600 "$INSTALL_DIR/.env"
   umask "$saved_umask"
 

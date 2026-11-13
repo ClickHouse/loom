@@ -145,6 +145,10 @@ def _build_llm_client(provider: str, model: str, *, fake_label: str, warn: str) 
         from server.llm.anthropic import AnthropicLLMClient
 
         return AnthropicLLMClient(model=model)
+    if provider == "local":
+        from server.llm.local import LocalLLMClient
+
+        return LocalLLMClient(model=model)
     if provider == "fake":
         from server.llm.fake import FakeLLMClient
 

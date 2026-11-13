@@ -184,11 +184,12 @@ low.
 an inferred provider. `loom doctor`'s `llm_provider` line warns when the key is missing.
 The stock `.env` pins `LOOM_LLM_PROVIDER=fake`.
 
-| Provider    | Module                    | Key                 |
-| ----------- | ------------------------- | ------------------- |
-| `openai`    | `server/llm/openai.py`    | `OPENAI_API_KEY`    |
-| `anthropic` | `server/llm/anthropic.py` | `ANTHROPIC_API_KEY` |
-| `fake`      | `server/llm/fake.py`      | none                |
+| Provider    | Module                    | Key                                                  |
+| ----------- | ------------------------- | ---------------------------------------------------- |
+| `openai`    | `server/llm/openai.py`    | `OPENAI_API_KEY`                                     |
+| `anthropic` | `server/llm/anthropic.py` | `ANTHROPIC_API_KEY`                                  |
+| `local`     | `server/llm/local.py`     | none: the OpenAI client at `LOOM_LOCAL_LLM_BASE_URL` |
+| `fake`      | `server/llm/fake.py`      | none                                                 |
 
 Per-stage models (`LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_CODE_SUMMARY_MODEL` and the other
 `*_model` settings) build their own client with `get_llm_client_for_model`, inferring

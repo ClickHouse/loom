@@ -18,7 +18,8 @@ subscription credentials or API keys to Loom.
 ## What works without provider keys?
 
 The released Docker installation embeds with `local` (bge-small, 384 dimensions, on CPU
-from files the image carries) and selects the `fake-echo-1` LLM. It boots without provider
+from files the image carries) and selects the `fake-echo-1` LLM, unless it found Ollama
+running and you chose it ([a model server on your machine](#a-model-server-on-your-machine-no-api-key)). It boots without provider
 keys or network: storage, the dashboard, structural code indexing and semantic search
 work, though a hosted embedder retrieves better on paraphrase-heavy questions. The fake
 LLM does not produce meaningful extracted facts, summaries or generated answers. A
@@ -41,11 +42,12 @@ keyless providers a degraded-health condition.
 
 ## Choose a setup
 
-| What your organization has                    | Loom LLM                  | Embeddings                                             |
-| --------------------------------------------- | ------------------------- | ------------------------------------------------------ |
-| OpenAI API access                             | An available OpenAI model | OpenAI; one API key can serve both roles.              |
-| Anthropic plus an approved embedding provider | An available Claude model | OpenAI, Gemini or a compatible endpoint, with its key. |
-| Anthropic API access only                     | An available Claude model | Add an embedding provider and its API key.             |
+| What your organization has                     | Loom LLM                  | Embeddings                                             |
+| ---------------------------------------------- | ------------------------- | ------------------------------------------------------ |
+| OpenAI API access                              | An available OpenAI model | OpenAI; one API key can serve both roles.              |
+| Anthropic plus an approved embedding provider  | An available Claude model | OpenAI, Gemini or a compatible endpoint, with its key. |
+| Anthropic API access only                      | An available Claude model | Add an embedding provider and its API key.             |
+| No provider key; a model server on the machine | A local model (`local`)   | The `local` embedder the image carries.                |
 
 **One OpenAI API key is enough for both roles; an Anthropic key is not required.**
 In Models & keys, choose one main LLM and leave per-job overrides blank. All enabled
@@ -193,6 +195,54 @@ explicitly, and an override with no provider key can fall back to the fake clien
 Using one model across jobs is a convenience configuration, not the configuration behind
 every published benchmark. Tune individual jobs later using
 [models per job](../operations/deployment.md#models-per-job).
+
+### A model server on your machine, no API key
+
+`LOOM_LLM_PROVIDER=local` runs Loom's LLM jobs on a chat-completions server you run:
+[Ollama](https://ollama.com), llama.cpp's `llama-server`, or any server that speaks the
+OpenAI chat-completions format. Loom sends it no key, and its calls cost nothing in the
+cost ledger. With the released stack's `local` embedder, nothing leaves the machine.
+
+The installer offers this when Ollama answers on `localhost:11434` and `.env` still runs
+the fake LLM; `LOOM_LOCAL_MODELS=ollama` in front of `sh loom-install.sh` sets it without
+asking, `LOOM_LOCAL_MODELS=off` never offers it. It writes:
+
+```dotenv
+LOOM_LLM_PROVIDER=local
+LOOM_LLM_MODEL=qwen2.5:3b
+LOOM_LOCAL_LLM_BASE_URL=http://host.docker.internal:11434/v1
+LOOM_ASSISTANT_PROVIDER=local
+LOOM_ASSISTANT_MODEL=qwen2.5:3b
+LOOM_MEMORY_EXTRACT_VERIFY_MODELS=qwen2.5:3b
+LOOM_SESSION_BRIEF_LLM_MODEL=
+LOOM_CODE_BISECT_LLM_RERANK_MODEL=
+LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
+LOOM_RETRIEVAL_JUDGE_MODEL=
+```
+
+Pull the model first (`ollama pull qwen2.5:3b`, about 2 GB). For llama.cpp, point
+`LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root (`http://host.docker.internal:8080/v1`) and
+set `LOOM_LLM_MODEL` to the name it serves. A server run from a checkout reaches the
+model at `localhost`, the setting's default (`http://localhost:11434/v1`).
+
+- **Reaching the host.** The containers reach the machine as `host.docker.internal`. Docker
+  Desktop forwards that to services on loopback; with Docker Engine on Linux, Ollama must
+  listen beyond loopback (`OLLAMA_HOST=0.0.0.0`, with port 11434 closed to the network).
+- **The assistant.** `LOOM_ASSISTANT_PROVIDER=local` moves the assistant's agent to
+  LibreChat's `local` endpoint, which calls `LIBRECHAT_LOCAL_LLM_BASE_URL` (default
+  `http://host.docker.internal:11434/v1`). Its answers are charged nothing against the
+  namespace's daily cap. The assistant calls Loom's tools, so the model must support tool
+  calls (`qwen2.5` and `llama3.2` do in Ollama). Under the Helm chart, add
+  `LOCAL_LLM_BASE_URL` to the assistant's Secret and let the LibreChat pod reach the
+  server's port.
+- **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
+  published benchmark covers a local one, so treat a small model as a way to try Loom
+  with no key or to keep everything on the machine, not as an equal. Expect fewer and
+  coarser extracted facts, less reliable conflict judgments and shorter `memory.ask`
+  answers, and an assistant that picks tools less reliably. On CPU a call takes seconds
+  for a short reply and longer for an extraction, so a busy capture queue backs up; a
+  GPU, or a larger model on a machine with the memory for it, narrows both gaps. For a
+  team server, a hosted model answers better.
 
 ### Through an inference gateway
 

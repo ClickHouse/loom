@@ -695,9 +695,13 @@ def _note(answer: Answer, data: str) -> None:
 
 def _charge(answer: Answer) -> None:
     """The answer's spend: its usage at the model's price, or the per-answer ceiling
-    when the usage never arrived or the model has no price, so no answer is free."""
-    model = str(service.current_definition().model)
-    if answer.usage_seen and cost_accumulator.is_priced(model):
+    when the usage never arrived or the model has no price, so no answer is free. On a
+    model server the operator runs (`local`) an answer costs nothing."""
+    defn = service.current_definition()
+    model = str(defn.model)
+    if defn.provider == "local":
+        cost_accumulator.report_llm(model, answer.prompt_tokens, answer.completion_tokens)
+    elif answer.usage_seen and cost_accumulator.is_priced(model):
         cost_accumulator.report_llm(model, answer.prompt_tokens, answer.completion_tokens)
     else:
         cost_accumulator.report_charge(model, float(settings.assistant_answer_ceiling_usd))

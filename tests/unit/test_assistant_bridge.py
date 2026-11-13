@@ -239,6 +239,16 @@ def test_an_answer_cut_before_its_usage_is_charged_the_ceiling(world: _World) ->
     assert acc.cost_usd == pytest.approx(settings.assistant_answer_ceiling_usd)
 
 
+def test_an_answer_on_a_local_model_server_costs_nothing(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Cut before its usage, which on a hosted model is charged the ceiling.
+    monkeypatch.setattr(settings, "assistant_provider", "local")
+    world.stream_body = _sse({"id": "chatcmpl-3", "choices": [{"delta": {"content": "Sev"}}]})
+    _, _, (acc, _) = _answer(_caller(), QUESTION)
+    assert acc.cost_usd == 0
+
+
 def test_a_refused_answer_names_no_librechat_text(world: _World) -> None:
     world.status, world.stream_body = 500, b"internal detail at librechat:3080"
     with pytest.raises(AssistantUpstreamError) as e:

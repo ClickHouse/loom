@@ -314,6 +314,13 @@ echo "LIBRECHAT_ANTHROPIC_API_KEY=<your key>" >> .env
 echo "LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080" >> .env
 ```
 
+To answer on a model server on the machine instead of Anthropic, with no key, set
+`LOOM_ASSISTANT_PROVIDER=local` and `LOOM_ASSISTANT_MODEL` to a model it serves that takes
+tool calls; LibreChat reaches it at `LIBRECHAT_LOCAL_LLM_BASE_URL` (default
+`http://host.docker.internal:11434/v1`, Ollama on the Docker host). See
+[a model server on your machine](../../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)
+for what a small model gives up.
+
 An installed stack runs the profiles `COMPOSE_PROFILES` names (`bundled` with its own
 ClickHouse, none with yours), so add `assistant` there and start it:
 
