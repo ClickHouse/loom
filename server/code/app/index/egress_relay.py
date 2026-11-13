@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from typing import NoReturn
 
 # not a setting: the proxy's MAX_TUNNELS (a unit test pins them equal); no job holds more
 MAX_BRIDGES = 32
@@ -124,7 +125,7 @@ def accept_loop(
         _start(_bridge, conn, path, slots, idle_s)
 
 
-def serve(port: int, path: str, idle_s: float, argv: list[str]) -> None:
+def serve(port: int, path: str, idle_s: float, argv: list[str]) -> NoReturn:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", port))
@@ -177,7 +178,7 @@ def _copy_stdin(dst: socket.socket) -> None:
 
 def main(args: list[str]) -> int:
     if len(args) >= 6 and args[0] == "serve" and args[4] == "--":
-        serve(int(args[1]), args[2], float(args[3]), args[5:])
+        return serve(int(args[1]), args[2], float(args[3]), args[5:])
     if len(args) == 4 and args[0] == "connect":
         return connect(args[1], args[2], args[3])
     sys.stderr.write(

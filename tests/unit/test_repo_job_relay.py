@@ -320,8 +320,14 @@ def test_the_relay_bridges_as_many_connections_as_the_proxy_holds_tunnels() -> N
 
 def test_serve_takes_the_proxys_idle_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     served = []
-    monkeypatch.setattr(egress_relay, "serve", lambda *args: served.append(args))
-    egress_relay.main(["serve", "3128", "/run/loom-egress/proxy.sock", "300.0", "--", "true"])
+
+    def serve(*args: object) -> int:
+        served.append(args)
+        return 0
+
+    monkeypatch.setattr(egress_relay, "serve", serve)
+    args = ["serve", "3128", "/run/loom-egress/proxy.sock", "300.0", "--", "true"]
+    assert egress_relay.main(args) == 0
     assert served == [(3128, "/run/loom-egress/proxy.sock", 300.0, ["true"])]
 
 

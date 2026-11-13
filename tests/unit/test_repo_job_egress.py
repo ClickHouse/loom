@@ -9,6 +9,7 @@ import contextlib
 import logging
 import socket
 import struct
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -517,6 +518,9 @@ async def test_a_client_that_gives_up_while_its_name_is_vetted_is_not_dialled(
         await proxy.close()
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="a unix socket closed with data unread resets on Linux"
+)
 async def test_a_client_that_resets_ends_the_tunnel(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
