@@ -802,22 +802,17 @@ const CODE_UNITS: Record<string, Record<string, unknown>> = {
   },
 };
 
-/** A definition as `code.symbol` answers it: a symbol unit, which carries none of the
- *  ranking annotations (churn, amp, tested) a search result does. */
+/** A definition as `code.symbol` answers it: a symbol unit, with the compiler tier and the
+ *  signature, and none of the ranking annotations (churn, amp, tested) a search result has. */
 function symbolUnit(symbol: string) {
-  const { churn: _churn, amp: _amp, tested: _tested, ...unit } = CODE_UNITS[symbol] ?? {};
+  const { churn: _churn, amp: _amp, tested: _tested, ...unit } = CODE_UNITS[symbol];
   return { unit_id: `s-${symbol}`, symbol, tier: "scip", elided: false, ...unit, kind: "symbol" };
 }
 
-function codeUnit(symbol: string, score = 0) {
-  return {
-    unit_id: `u-${symbol}`,
-    symbol,
-    tier: "scip",
-    elided: false,
-    score,
-    ...CODE_UNITS[symbol],
-  };
+/** A hybrid search hit: a chunk unit, which carries no tier and no signature. */
+function codeUnit(symbol: string, score: number) {
+  const { signature: _signature, ...unit } = CODE_UNITS[symbol];
+  return { unit_id: `u-${symbol}`, symbol, tier: "", elided: false, score, ...unit };
 }
 
 const CODE_CALLERS: Record<string, Array<[string, string, number]>> = {
