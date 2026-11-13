@@ -69,7 +69,7 @@ block too. `explain=true` keeps everything.
    derives the floor from the embedder's calibration; 0 turns it off.
 2. **Home fact first** (`explain=true` keeps everything). When the lead memory hit is a home-namespace
    fact, or a home fact is within 0.03 similarity of the lead, that fact goes first; a fact the search ranks down
-   because its code changed (moved, or left in place with nothing below it to pass) is never lifted. The response
+   because its code changed (moved, or left in place with nothing below it to pass) never leads. The response
    then drops foreign memory hits more than 0.03 below it, home hits more than 0.15 below it, quoted Loom recalls,
    foreign knowledge hits and the conversation section. At most one transcript chunk stays as evidence. The
    comparison uses similarity, not rank, because rank includes recency and reinforcement boosts.
@@ -80,7 +80,7 @@ block too. `explain=true` keeps everything.
 
 The memory section has one paragraph per hit, `[date] [key] (type) excerpt`, in the order `memory.ask` would read
 them. A decision from the scoped repository names its namespace beside its type, `(decision, <namespace>)`, and is
-placed among the current home hits by similarity, then moved down like a home hit when its code changed. A home
+placed among the home hits its search did not rank down by similarity, then moved down like a home hit when its code changed. A home
 hit ranked down for stale code (moved, or left in place with nothing below it to pass) holds no place for a
 decision: a decision lands after it only when a hit below it that the search did not rank down is at least as
 similar, and the hit's `code_changed_places` counts only the home rows.

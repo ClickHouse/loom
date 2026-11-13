@@ -993,3 +993,16 @@ async def test_loom_search_never_lifts_a_fact_the_search_moved_to_lead(monkeypat
     payload = await _assemble(monkeypatch, out, namespace_scope="this")
     lead = (payload.get("withheld") or {}).get("lead")
     assert lead == ("where_i_live" if moved is None else None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("moved", [None, 0.0], ids=["current", "nothing-to-pass"])
+async def test_a_fact_the_search_ranked_down_never_leads_from_the_top(monkeypatch, moved) -> None:
+    fact = _hit("where_i_live", 0.47, "me")
+    if moved is not None:
+        fact.score_components = {"code_changed_places": moved}
+    far = _hit("unrelated", 0.1, "me")  # a lead fact withholds it
+    out = MemorySearchOutput(results=[fact, far], embedding_model="fake")
+    payload = await _assemble(monkeypatch, out, namespace_scope="this")
+    lead = (payload.get("withheld") or {}).get("lead")
+    assert lead == ("where_i_live" if moved is None else None)

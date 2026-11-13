@@ -46,18 +46,20 @@ def leading_home_fact(
     boosts a transcript chunk earns (recency, reinforcement), similarity is
     what the question asked for. For example, a lookup chunk at sim 0.452 /
     rank 0.532 must not outrank `where_i_live` at sim 0.470 / rank 0.486.
-    None when no home fact leads or is within the margin."""
+    None when no home fact leads or is within the margin. A fact the search ranked
+    down for its stale code (`moved`: the ids of those dicts) is never the lead: it is
+    served where the search put it, and withholds nothing."""
     if not home_ns or not mem_hits:
         return None
     first = mem_hits[0]
+    if id(first) in moved:
+        return None
     if _is_home_fact(first, home_ns):
         return first
     if not isinstance(first, dict):
         return None
     floor = float(first.get("similarity") or 0.0) - lead_margin
     for h in mem_hits[1:]:
-        # a fact the search moved down for its stale code (`moved`: the ids of those
-        # dicts) is served where the search put it, never lifted
         if id(h) in moved:
             continue
         if _is_home_fact(h, home_ns) and float(h.get("similarity") or 0.0) >= floor:
