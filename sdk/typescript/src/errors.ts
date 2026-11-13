@@ -85,7 +85,7 @@ export class LoomError extends Error {
 
 /**
  * 5xx codes never resent, with their category: a deployment's configuration (the
- * operator's fix is named in the error and in /v1/health), a model call that names no
+ * operator's fix is named in the error, /v1/health or loom doctor), a model call that names no
  * customer (a server path to fix, not a passing fault), and a write already committed
  * whose rows are still on their way.
  */
@@ -96,6 +96,7 @@ export const NEVER_RETRIED: ReadonlyMap<string, ErrorCategory> = new Map<string,
   ["GATEWAY_REQUIRED", "configuration"],
   ["MODEL_CALL_UNATTRIBUTED", "internal"],
   ["PUBLICATION_PENDING", "dependency"],
+  ["TENANCY_REFUSED", "configuration"],
 ]);
 
 /**

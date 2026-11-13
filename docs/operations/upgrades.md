@@ -79,7 +79,16 @@ checkout.
    hand: the newer build refuses to boot with it set, and under that authority no
    retention TTL reaches `loom.documents`, and a namespace's `retention_days` does not
    reach `loom.chunks` either
-   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 38).
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 38). A
+   [cell](../architecture/cells.md) moving to a build that marks its sessions and
+   carries the org triggers (rule 47) first points its `LOOM_PG_DSN` straight at
+   Postgres, past any pooler ([Postgres](./postgres.md)), and a later cell prepared and
+   then backed out by unsetting `LOOM_CELL` is cleared first
+   ([troubleshooting](./troubleshooting.md#a-process-with-loom_cell-unset-is-gated)):
+   the newer build gates its processes on its state. On a later cell already prepared,
+   the newer build's first migrating boot creates the org triggers, so an older pod
+   still running there has every insert of a tenant org's row refused (an unmapped
+   error to its callers) until it is replaced: roll the cell out in one step.
 3. Deploy the new image. The first container to boot applies the migrations; the others
    wait for it and then find nothing pending.
 4. Wait for `/v1/health` to report `status: ok` and an empty `schema.pending` before
@@ -324,6 +333,15 @@ parked delivery, so a parked one may stay. While the previous build serves, a re
 leaves out the cleared revisions
 ([Postgres operations](postgres.md#what-the-boot-checks)), and no `loom reconcile` runs:
 it would release reconcile's holds to the previous build.
+Before rolling a prepared cell (one with a `loom.cell_first` row) back to a build
+without the [cell](../architecture/cells.md) org triggers, stop every pod of the newer
+build, then run only the trigger drop of
+[A process with LOOM_CELL unset is gated](troubleshooting.md#a-process-with-loom_cell-unset-is-gated),
+not its state transaction (the cell stays prepared), and run it again if a newer pod
+boots with migrations on before the rollback ends: the older build's sessions send no
+tenancy marker, so once the newer build has created the triggers each of its writes for
+an org the cell holds no tenancy row for is refused (on a later cell before attach,
+every tenant org), and its other writes pay the triggers' state read.
 There is no migration to undo: the previous build reads and writes the newer schema.
 Its version writes to `loom.memory` and the other `ReplacingMergeTree` memory tables
 keep the columns it does not know

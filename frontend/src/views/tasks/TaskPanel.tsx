@@ -136,13 +136,12 @@ function InputValue({ v }: { v: unknown }) {
   }
 }
 
-// Each status allows at most one of these: the bar's primary, last on the right.
-// A button with a key names it in its tooltip ("Accept · A", after a `tip` that explains
-// more than the label); the help dialog lists them all.
+// Each status allows at most one of these: the bar's primary, last on the right. A `tip`
+// explains more than the label, in the button's tooltip.
 const PRIMARY_ACTIONS: ActionButton[] = [
-  { action: "accept", label: "Accept", key: "a" },
-  { action: "start", label: "Start", tip: "Claim it: to do → in progress", key: "s" },
-  { action: "complete", label: "Mark done…", key: "c" },
+  { action: "accept", label: "Accept" },
+  { action: "start", label: "Start", tip: "Claim it: to do → in progress" },
+  { action: "complete", label: "Mark done…" },
   { action: "unblock", label: "Unblock" },
   { action: "resume", label: "Resume now" },
 ];
@@ -150,16 +149,10 @@ const PRIMARY_ACTIONS: ActionButton[] = [
 // task usually goes (fail a run, park a queued task, decline the rest, reopen a closed one).
 const SECONDARY_ACTIONS: ActionButton[] = [
   { action: "fail", label: "Fail…" },
-  { action: "defer", label: "Defer…", key: "d" },
-  { action: "wont_do", label: "Won't do…", key: "x" },
+  { action: "defer", label: "Defer…" },
+  { action: "wont_do", label: "Won't do…" },
   { action: "reopen", label: "Reopen…" },
 ];
-// The key is named only where it works: not in a sheet (a dialog holds the page's keys off),
-// and not on a move the role cannot make.
-export function actionTip(b: ActionButton, showKey: boolean): string {
-  const key = b.key && showKey ? b.key.toUpperCase() : "";
-  return [b.tip ?? (key ? b.label.replace(/…$/, "") : ""), key].filter(Boolean).join(" · ");
-}
 // Everything else the status allows, under More, in this order.
 const MENU_ACTIONS: TaskAction[] = ["block", "defer", "wont_do", "edit", "reassign", "cancel"];
 
@@ -167,7 +160,6 @@ interface ActionButton {
   action: TaskAction;
   label: string;
   tip?: string;
-  key?: string;
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -498,25 +490,15 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
           <div className="mt-3 flex gap-2 items-center justify-end flex-wrap" role="group" aria-label="Actions">
             <Menu items={menu} />
             {secondary && (
-              <Unavailable reason={writeReason} tip={actionTip(secondary, !sheet && !writeReason) || undefined}>
-                <Button
-                  type="secondary"
-                  htmlType="button"
-                  aria-keyshortcuts={sheet || writeReason ? undefined : secondary.key}
-                  onClick={() => act(secondary.action)}
-                >
+              <Unavailable reason={writeReason} tip={secondary.tip}>
+                <Button type="secondary" htmlType="button" onClick={() => act(secondary.action)}>
                   {secondary.label}
                 </Button>
               </Unavailable>
             )}
             {primary && (
-              <Unavailable reason={writeReason} tip={actionTip(primary, !sheet && !writeReason) || undefined}>
-                <Button
-                  type="primary"
-                  htmlType="button"
-                  aria-keyshortcuts={sheet || writeReason ? undefined : primary.key}
-                  onClick={() => act(primary.action)}
-                >
+              <Unavailable reason={writeReason} tip={primary.tip}>
+                <Button type="primary" htmlType="button" onClick={() => act(primary.action)}>
                   {primary.label}
                 </Button>
               </Unavailable>

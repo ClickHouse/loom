@@ -444,10 +444,7 @@ export function PatternsInspector(p: PatternsInspectorProps) {
             the row header carries the risk snapshot's gap ratio and its trend (▲ worse, ▼ better) when the snapshot
             names the component
           </li>
-          <li>
-            click a cell, or focus it and press ↵, to list its issues here; pick an issue for its record and its tracker
-            graph
-          </li>
+          <li>choose a cell to list its issues here; pick an issue for its record and its tracker graph</li>
           <li>
             the tracker graph draws caused-by (left), fixed-by (right) and duplicate (below) edges from the tracker; a
             PR the graph names as the cause is marked

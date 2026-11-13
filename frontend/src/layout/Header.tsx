@@ -22,13 +22,16 @@ const HeaderSearch = lazy(() => loadHeaderSearch().then((m) => ({ default: m.Hea
 import { PendingApprovalsBell } from "../components/PendingApprovalsBell";
 import { TaskInboxBell } from "../components/TaskInboxBell";
 import { IconButton } from "../components/IconButton";
-import { Kbd, Unavailable } from "../components/ui";
+import { Unavailable } from "../components/ui";
 import { Tip } from "../components/ui/Tooltip";
 import { useMedia } from "../lib/useMedia";
 import { canWrite, needsRole, useNamespaceRole } from "../lib/namespaceRole";
 import { MenuTrigger } from "../components/ui/Menu";
-import { paletteShortcut } from "../lib/platform";
 import { forgetAssistantConversations } from "../lib/assistantStorage";
+import { openNewDialog, useNewDialogs } from "../lib/newDialogs";
+import { useDock } from "../lib/assistantDock";
+import { ASK_PLACEHOLDER, SEARCH_PLACEHOLDER, offersAsk } from "../lib/searchAsk";
+import { AssistantLauncher } from "./AssistantLauncher";
 
 /**
  * Header — top chrome of every page.
@@ -39,22 +42,28 @@ import { forgetAssistantConversations } from "../lib/assistantStorage";
  *
  * Below `md` the search input leaves the first row: a search button reveals it on its own
  * full-width row and the action cluster wraps instead of overlapping, so at 390 px the
- * search and the actions never overlap. "New" shows its word from lg and below it its
- * icon with a tooltip; it is disabled with a tooltip when the caller's role on the
+ * search and the actions never overlap. Ask AI follows the search field at every width, its
+ * word shown from xl: on a phone it leads the action cluster in the first row
+ * (layout/AssistantLauncher.tsx). "New" shows its word from lg and below it its icon with a
+ * tooltip; below md it is in the More sheet instead (layout/MobileMore.tsx), whose dialogs
+ * the header still mounts. It is disabled with a tooltip when the caller's role on the
  * namespace is viewer.
  */
 export function Header() {
   const whoami = useStore((s) => s.whoami);
   const identity = useStore((s) => s.identity);
-  const openHelp = useStore((s) => s.openHelp);
   const newWorded = useMedia(NEW_WORD_QUERY);
-  const [addMemOpen, setAddMemOpen] = useState(false);
-  const [addDocOpen, setAddDocOpen] = useState(false);
+  // Below md New is in the More sheet (layout/MobileMore.tsx): the top bar keeps one row.
+  const newShown = useMedia(MD_QUERY);
+  const addMemOpen = useNewDialogs((s) => s.memory);
+  const addDocOpen = useNewDialogs((s) => s.document);
+  const setAddMemOpen = (memory: boolean) => useNewDialogs.setState({ memory });
+  const setAddDocOpen = (document: boolean) => useNewDialogs.setState({ document });
   const libraryElsewhere = useStore((s) => s.libraryElsewhere);
   // The dialog adds to the header's namespace: it belongs to a page showing that, and a
   // Back to a collection closes it, as the Library's own dialogs close.
   useEffect(() => {
-    if (libraryElsewhere) setAddDocOpen(false);
+    if (libraryElsewhere) useNewDialogs.setState({ document: false });
   }, [libraryElsewhere]);
   const [mobileSearch, setMobileSearch] = useState(false);
   const role = useNamespaceRole(identity?.namespace);
@@ -72,7 +81,9 @@ export function Header() {
     <header className="min-h-14 border-b border-border bg-surface flex flex-wrap md:flex-nowrap items-center gap-x-2 gap-y-1.5 md:gap-3 px-3 py-2 md:px-5 md:py-0 shrink-0">
       {/* Left cluster — namespace context. Capped so a long namespace truncates
           instead of squeezing the search. */}
-      <div className="shrink min-w-0 max-w-[60%] md:min-w-24 md:max-w-[min(320px,24vw)]">
+      {/* On a phone it takes the room the actions leave (a basis of 0, so the row never
+          wraps for it) and pushes them to the right. */}
+      <div className="min-w-0 max-md:grow max-md:basis-0 md:shrink md:min-w-24 md:max-w-[min(320px,24vw)]">
         <RichNamespacePicker />
       </div>
 
@@ -90,13 +101,17 @@ export function Header() {
       >
         <DeferredHeaderSearch autoFocus={mobileSearch} />
       </div>
-      <div className="flex-1" aria-hidden />
-
+      {/* Next to the search in the tab order at every width; on a phone, where the search
+          takes its own row, the first of the actions in the top row. */}
+      <div className="max-md:order-1 shrink-0">
+        <AssistantLauncher />
+      </div>
       {/* Right cluster — primary action + user. Height-aligned at 32px to
           match the search bar and namespace picker. On a phone the buttons are icons
-          (44 px under a coarse pointer, 4 px apart) and fit one row from 360 px; the
-          cluster never grows past the header, so a narrower window wraps it. */}
-      <div className="flex flex-wrap items-center justify-end gap-1 md:gap-3 shrink-0 max-w-full">
+          (44 px under a coarse pointer, 4 px apart) and, with New in the More sheet, fit
+          one row with Ask AI from 360 px; the cluster never grows past the header, so a
+          narrower window wraps it. */}
+      <div className="max-md:order-1 md:ml-auto flex flex-wrap items-center justify-end gap-1 md:gap-3 shrink-0 max-w-full">
         <IconButton
           icon="search"
           label="Search"
@@ -107,6 +122,7 @@ export function Header() {
         />
 
         {identity &&
+          newShown &&
           (readOnly ? (
             <DisabledNew reason={needsRole("writer", identity.namespace)} />
           ) : (
@@ -127,13 +143,13 @@ export function Header() {
                 </Button>
               }
             >
-              <Dropdown.Item onSelect={() => setAddMemOpen(true)}>
+              <Dropdown.Item onSelect={() => openNewDialog("memory")}>
                 <ItemLabel icon="sparkle">Memory</ItemLabel>
               </Dropdown.Item>
               {/* New adds to the header's namespace; while the Library shows a collection,
                   its own Add document is the one that adds there. */}
               {!libraryElsewhere && (
-                <Dropdown.Item onSelect={() => setAddDocOpen(true)}>
+                <Dropdown.Item onSelect={() => openNewDialog("document")}>
                   <ItemLabel icon="document">Document</ItemLabel>
                 </Dropdown.Item>
               )}
@@ -170,17 +186,6 @@ export function Header() {
         {/* Task inbox bell: review items and blocked tasks in
             this namespace's inboxes. One task.counts call per two minutes. */}
         <TaskInboxBell />
-
-        {/* Keyboard shortcut + general help. Opens HelpDialog mounted
-            in App.tsx (state lives in the store). */}
-        {/* A phone has no keyboard: its header leaves the shortcuts out. */}
-        <IconButton
-          icon="question"
-          label="Keyboard shortcuts"
-          tooltip="Keyboard shortcuts · ?"
-          onClick={() => openHelp(true)}
-          className="max-md:pointer-coarse:hidden"
-        />
 
         {whoami && (
           <Menu
@@ -272,6 +277,9 @@ function DisabledNew({ reason }: { reason: string }) {
   );
 }
 
+/** Tailwind's `md`, from which New is in the header. */
+const MD_QUERY = "(min-width: 768px)";
+
 /** Tailwind's `lg`, from which New shows its word. */
 const NEW_WORD_QUERY = "(min-width: 1024px)";
 
@@ -286,50 +294,35 @@ function NewLabel() {
 }
 
 /** The same input in the same place, before the search body has loaded (HeaderSearch
- *  draws the same SearchField with the ⌘K / Ctrl K hint over its end while empty):
- *  it takes focus and keystrokes (kept as the draft the real box mounts
- * with), and carries the Graph view's tab-order rule. */
-function SearchPlaceholder({
-  draft,
-  onDraft,
-  focus,
-  view,
-}: {
-  draft: string;
-  onDraft: (v: string) => void;
-  focus: boolean;
-  view: string;
-}) {
+ *  draws the same SearchField): it takes focus and keystrokes, kept as the draft the real
+ *  box mounts with. */
+function SearchPlaceholder({ draft, onDraft, focus }: { draft: string; onDraft: (v: string) => void; focus: boolean }) {
   const ref = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     if (focus) ref.current?.focus();
   }, [focus]);
+  const namespace = useStore((s) => s.identity?.namespace ?? "");
+  const mine = useStore((s) => s.myNamespaces);
+  const reason = useDock((s) => s.reason);
+  const asks = offersAsk(reason, namespace, mine);
   return (
-    <div className="group relative w-full">
+    <div className="relative w-full">
       <SearchField
         ref={ref}
         aria-label="Search Loom"
-        placeholder="Search profile, memories, library…"
+        placeholder={asks ? ASK_PLACEHOLDER : SEARCH_PLACEHOLDER}
         value={draft}
         onChange={(v) => onDraft(v)}
-        tabIndex={view === "graph" ? -1 : undefined}
       />
-      {/* The hint leaves once the field has the focus or any text. */}
-      {!draft && (
-        <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex sm:group-focus-within:hidden">
-          {paletteShortcut()}
-        </Kbd>
-      )}
     </div>
   );
 }
 
 /** The search box's input is on the screen at boot; its body (state, reads, the result
  *  panel — 14 kB, a tenth of the index chunk) loads on idle after first paint, or at once
- *  on the first focus, keystroke or ⌘K, and mounts with the focus and draft the person
+ *  on the first focus or keystroke, and mounts with the focus and draft the person
  *  gave the placeholder. */
 function DeferredHeaderSearch({ autoFocus }: { autoFocus: boolean }) {
-  const view = useStore((s) => s.view);
   const [ready, setReady] = useState(autoFocus);
   const [wantFocus, setWantFocus] = useState(autoFocus);
   const [draft, setDraft] = useState("");
@@ -349,16 +342,7 @@ function DeferredHeaderSearch({ autoFocus }: { autoFocus: boolean }) {
     // lib.dom declares it, but Safari and jsdom still lack it.
     if (typeof window.requestIdleCallback === "function") idle = window.requestIdleCallback(go, { timeout: 1500 });
     else timer = setTimeout(go, 400);
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setWantFocus(true);
-        setReady(true);
-      }
-    };
-    document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("keydown", onKey);
       if (timer) clearTimeout(timer);
       if (idle !== null && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idle);
     };
@@ -378,7 +362,6 @@ function DeferredHeaderSearch({ autoFocus }: { autoFocus: boolean }) {
       <SearchPlaceholder
         draft={draft}
         focus={wantFocus}
-        view={view}
         onDraft={(v) => {
           setDraft(v);
           setWantFocus(true);

@@ -192,9 +192,8 @@ for (const [width, searchFloor, kind] of [
   });
 }
 
-// The assistant's launcher is the edge at the window's right, never in the header: with the
-// longest namespace the header still leaves the search its floor, so a later header item that
-// crowds it fails here.
+// The Ask AI button follows the search field: with the longest namespace the header still
+// leaves the search its floor, so a later header item that crowds it fails here.
 test("at 1280 px the header search keeps its floor beside the longest namespace", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const long = `team-${"0123abcd-".repeat(8)}end`;
@@ -202,8 +201,8 @@ test("at 1280 px the header search keeps its floor beside the longest namespace"
   await page.goto("/memories");
   await expect(page.locator("main h1").first()).toBeVisible();
   const launcher = page.locator('[data-focus-key="assistant-launcher"]');
-  await expect(launcher).toHaveAccessibleName("Assistant");
-  await expect(page.locator("header").locator('[data-focus-key="assistant-launcher"]')).toHaveCount(0);
+  await expect(launcher).toHaveAccessibleName("Ask AI");
+  await expect(page.locator("header").locator('[data-focus-key="assistant-launcher"]')).toHaveCount(1);
   expect((await boxOf(page.locator("#header-search"))).width).toBeGreaterThanOrEqual(160);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

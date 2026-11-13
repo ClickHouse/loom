@@ -180,6 +180,7 @@ SCAN_DIRS = (
 ROOT_FILES = (
     "README.md",
     "CONTRIBUTING.md",
+    "llms-install.md",
     "SECURITY.md",
     "CLAUDE.md",
     "AGENTS.md",

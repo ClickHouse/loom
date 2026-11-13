@@ -252,7 +252,7 @@ export function Documents() {
   const [sortBy, setSortBy] = useState<SortBy>("recency");
   const [passageHitsShown, setPassageHitsShown] = useState(false);
   const [passagesOpen, setPassagesOpen] = useState(false);
-  // The arrows and j/k move through the list focus was last in: the passages or the documents.
+  // The arrows move through the list focus was last in: the passages or the documents.
   const [keysIn, setKeysIn] = useState<"documents" | "passages">("documents");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
@@ -727,7 +727,7 @@ export function Documents() {
   const selection = useRowSelection(rowKeys, { enabled: !dialogOpen && !readOnly });
   const { selected } = selection;
   const clearSelection = selection.clear;
-  // One tab stop over the rows: arrows and j/k move, Enter previews, Space selects.
+  // One tab stop over the rows: the arrows move, Enter previews, Space selects.
   const passagesHaveKeys = passageHitsShown && keysIn === "passages";
   const listNav = useRowNav({ enabled: !dialogOpen && rowKeys.length > 0 && !passagesHaveKeys });
   const listRef = useCallback(
@@ -1313,7 +1313,7 @@ export function Documents() {
                 // A collection's document is not in the namespace the answer reads: said by title.
                 reason={
                   shown && ownShelf
-                    ? `The assistant answers about ${picked.namespace}; this document is in the collection ${collectionTitle(shown)}.`
+                    ? `Ask AI answers about ${picked.namespace}; this document is in the collection ${collectionTitle(shown)}.`
                     : undefined
                 }
                 item={{

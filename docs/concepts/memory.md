@@ -365,14 +365,30 @@ git mirror. On every indexed commit the worker follows the commit's renames and 
 | `unresolved` | Its name is gone and a new definition in its place may be it, but none certainly is. Served, with a review signal. |
 | `missing`    | The code is gone: nothing new took its place. The link keeps its place, so a revert finds it again.                |
 
+![A memory's detail in the dashboard: its linked code, one definition current and one changed since a commit](../assets/screenshots/memory-linked-code.webp)
+
+A memory's detail in the dashboard lists these links with their state
+([clip](../assets/screenshots/clip-memory-linked-code.webm)).
+
 A link follows its definition through file moves, renames (with an edit, when the new
 name is related to the old), and its class's rename within the file. A namesake in
 another class or namespace never inherits a link, and a `missing` link comes back only
-when its own name does. A file the parser fails on keeps its links as they were until it
-parses. When the fingerprint rules change, every link is re-hashed from the commits its
-hashes were taken at. When its old text is gone from git, a link that matched it takes the
-text the next check finds and a changed one stays `changed`; one whose old text no longer
-parses keeps its last state, and the worker reports it.
+when its own name does. A name gone from its file is looked for in the files changed
+since its last check as the mirror holds them, beside the index, so a definition moved by
+a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
+followed when the link is rechecked. When `memory_code_links_mirror_naming_files` or more
+of those files name it, or more than `memory_code_links_mirror_changed_files` changed
+under the entry's prefixes, or the diff cannot be read, or the paths are more than git
+takes in one command or searches in its time, the mirror adds nothing and the index
+decides. When git cannot run the search, or a definition it finds cannot be
+fingerprinted, a live link the index's namesakes do not settle is `unresolved`. Files the
+ingest would not index (outside the entry's `path_prefixes`, refused by its denylist,
+over the byte cap, binary) add no definition; a generated file, which the ingest declares
+without searching its text, does. A file the parser fails on keeps its links as they were
+until it parses. When the fingerprint rules change, every link is re-hashed from the
+commits its hashes were taken at. When its old text is gone from git, a link that matched
+it takes the text the next check finds and a changed one stays `changed`; one whose old
+text no longer parses keeps its last state, and the worker reports it.
 
 Loom never writes the memory. The namespace's `code_change_policy`
 (`namespace.register`) decides what reads make of a change:

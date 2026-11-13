@@ -616,7 +616,8 @@ async def calibrate_similarity_gates() -> None:
 
 
 async def start_cell_state() -> list[asyncio.Task[None]]:
-    """A cell's process reads its cell's rows before it serves, then on a timer."""
+    """The workers child of a cell's process reads its cell's rows before its workers
+    start, then on a timer; a failed read leaves it gated."""
     from server.code.domain.index import repos
     from server.core import cell, pg_profile
 
@@ -625,6 +626,44 @@ async def start_cell_state() -> list[asyncio.Task[None]]:
         cell.set_deployment_id(await pg_profile.deployment_id())
     await cell.refresh()
     return [cell.start_refresh_loop()]
+
+
+async def start_cell_gate() -> list[asyncio.Task[None]]:
+    """A server process under the Postgres authority (`cell.gated_by_state`) reads the
+    deployment's cell state right after its storage authority opened and migrated,
+    before its first heartbeat and its lease decision, then on a timer. A failed first
+    read refuses the boot, as a failed Postgres open does, unless Postgres migrations are
+    pending; later failures keep the last view."""
+    from server.core import cell
+
+    if not cell.gated_by_state():
+        return []
+    cell.expect_first_read()
+    if not await cell.refresh() and not SKIPPED_PG_MIGRATIONS:
+        raise RuntimeError(
+            "refusing to start: the deployment's cell state could not be read "
+            f"({cell.read_error()})"
+        )
+    # With Postgres migrations pending (LOOM_BOOT_MIGRATE off) the state tables may not
+    # exist yet: the process boots, gated and unready until a read lands.
+    return [cell.start_refresh_loop()]
+
+
+async def ensure_default_namespace() -> None:
+    """An auth-off deployment serves a single configured namespace: give it a
+    loom.namespaces row now (and warn about data stranded in others) rather than on the
+    first dashboard load, since the warning matters most to an operator who just changed
+    LOOM_DEFAULT_NAMESPACE and is watching the boot log. Not while the cell gate keeps
+    this process from writing (the row is also created lazily).
+    `auth_actually_required`, not `auth_required`: single-user identity mode with
+    auth_required=true is still an auth-off deployment."""
+    from server.core import cell
+
+    if settings.auth_actually_required() or cell.gate_reason():
+        return
+    from server.auth.default_namespace import ensure_default_namespace_cached
+
+    await ensure_default_namespace_cached()
 
 
 def start_probe_listener() -> Listener | None:
@@ -655,8 +694,7 @@ async def start_token_state() -> list[asyncio.Task[None]]:
     with query_tag("grant_cache.poll"):
         await grant_cache.poll()
     await end_user_keys.refresh()
-    loops = await start_cell_state() if settings.cell else []
-    return loops + [
+    return [
         revocation.start_refresh_loop(settings.jwt_revocation_cache_ttl_seconds),
         keyring.start_refresh_loop(),
         end_user_keys.start_refresh_loop(),
@@ -724,17 +762,20 @@ async def _apply_retention_overrides(ch: Any) -> None:
 def start_lease_loop(lease: Any, supervisor: Any, ch: Any) -> asyncio.Task[None] | None:
     """In `auto` mode keep the supervisor lease: the workers start where it is
     acquired (another process's holder died or exited) and stop where it is
-    lost. A cell's `on` process runs the loop too, with no lease: its cell's gate
-    starts and stops the workers. Returns the loop task, or None otherwise."""
-    if lease.mode != "auto" and not (lease.mode == "on" and settings.cell):
+    lost. An `on` process that reads the cell state runs the loop too, with no lease:
+    the cell's gate starts and stops the workers. Returns the loop task, or None
+    otherwise."""
+    from server.core import cell
+
+    if lease.mode != "auto" and not (lease.mode == "on" and cell.gated_by_state()):
         return None
     from server.workers import leader as _leader
 
     def _on_acquired() -> None:
         # The leader's boot duties follow the lease.
         supervisor.start_all()
-        # As at boot: only the deployment's leader registers them (a cell's `on`
-        # process outside LOOM_DEPLOYMENT is not one).
+        # As at boot: only the deployment's leader registers them (an `on` process
+        # outside LOOM_DEPLOYMENT is not one).
         if _leader.leads_deployment():
             _spawn_boot_task(register_tracker_namespaces(ch), name="loom-tracker-namespaces")
         _spawn_boot_task(_apply_retention_overrides(ch), name="loom-retention-overrides")
@@ -879,9 +920,9 @@ def register_readiness_checks(ch: Any) -> None:
     readiness.register("runtime_overrides", _overrides_ready)
     readiness.register("calibration", embedder_calibration.readiness_check)
     readiness.register("config_drift", deployment_config.readiness_check)
-    if settings.cell:
-        from server.core import cell
+    from server.core import cell
 
+    if cell.gated_by_state():
         readiness.register("cell", cell.readiness_check)
     readiness.register("sandbox", sandbox.readiness_check)
     # Reported, not required: a provider rebuild closes the gate on every

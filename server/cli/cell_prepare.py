@@ -492,6 +492,12 @@ async def prepare(
             sort_keys=True,
         )
     )
+    if answer["is_first"] and answer["mode"] == "recording" and "first" in written:
+        # The next step for the operator, after the run that prepared the cell (a rerun
+        # usually follows the rollout); stdout stays one JSON document.
+        print(
+            "loom cell prepare: prepared the first cell; roll out LOOM_CELL next", file=sys.stderr
+        )
     return 0
 
 

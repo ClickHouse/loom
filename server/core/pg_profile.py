@@ -143,6 +143,12 @@ async def _ch_record_if_migrated(ch: Any, *, warn: bool = True) -> dict[str, Any
         return None
 
 
+async def recorded_authority(ch: Any) -> dict[str, Any] | None:
+    """The authority this ClickHouse records, refusing one this configuration does not
+    match (`AuthorityMismatch`); None before a deployment's first boot."""
+    return await _recorded_matching(ch, warn=False)
+
+
 async def check_configured(ch: Any) -> None:
     """Refuse a CLI command configured for another deployment than the one recorded: an
     erasure or an import run against the wrong store would leave or write another's rows.
@@ -150,7 +156,7 @@ async def check_configured(ch: Any) -> None:
     `LOOM_PG_DSN` names is checked on the command's first connection
     (`pg.expect_deployment`), so a command that never touches memory (a token
     revocation) runs while Postgres is down."""
-    recorded = await _recorded_matching(ch, warn=False)
+    recorded = await recorded_authority(ch)
     if settings.storage_authority == "postgres":
         if not settings.pg_dsn:
             raise AuthorityMismatch(pg.NO_DSN)

@@ -3,7 +3,8 @@ import { installApi } from "./fixtures";
 
 // Keys that close and keys that pass: Escape closes the profile editor and hands the focus
 // back to its opener, and Escape on the memory list is left to the page when nothing is
-// selected.
+// selected. The dashboard has no keyboard shortcuts: no chord or one-letter key does
+// anything, and nothing shows a key.
 
 async function open(page: Page, path: string) {
   await installApi(page, { memoryRows: 8, knowledgeRows: 4, runRows: 6, profileRows: 3 });
@@ -73,4 +74,30 @@ test("Escape on the memory list is left alone while nothing is selected", async 
     return e.defaultPrevented;
   });
   expect(prevented).toBe(false);
+});
+
+test("no shortcut opens, focuses or navigates, and the header names no key", async ({ page }) => {
+  await open(page, "/memories");
+  const header = page.locator("header").first();
+  await expect(header.getByRole("button", { name: /keyboard shortcuts/i })).toHaveCount(0);
+  await expect(page.locator("#header-search kbd, header kbd")).toHaveCount(0);
+  await expect(page.locator("[aria-keyshortcuts]")).toHaveCount(0);
+  const url = page.url();
+  await page.locator("main h1").first().click();
+  for (const key of ["Control+k", "Meta+k", "?", "/", "j", "g", "m"]) await page.keyboard.press(key);
+  await page.waitForTimeout(300);
+  expect(page.url()).toBe(url);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByLabel("Search Loom")).not.toBeFocused();
+  await expect(page.locator("[data-memory-open]").first()).not.toBeFocused();
+
+  // The drawer's e, d and p do nothing: Edit, Delete and Pin are its buttons.
+  await page.locator("[data-memory-key] button").first().click();
+  const drawer = page.getByRole("dialog");
+  await expect(drawer).toBeVisible();
+  for (const key of ["e", "d", "p"]) await page.keyboard.press(key);
+  await page.waitForTimeout(300);
+  await expect(page.getByRole("button", { name: "Save new version" })).toHaveCount(0);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(1);
 });

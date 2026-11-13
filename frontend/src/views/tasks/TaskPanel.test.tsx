@@ -4,7 +4,7 @@ import { act, cleanup, render, screen, waitFor, within } from "../../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Inbox, TaskEvent, TaskListRow, TaskRow, TaskStatus } from "../../api/tasks";
-import { TaskPanel, actionTip } from "./TaskPanel";
+import { TaskPanel } from "./TaskPanel";
 import { must } from "../../test/must";
 
 // The panel is a document, the footer is the verb. Sections come from the brief; the
@@ -446,19 +446,5 @@ describe("TaskPanel", () => {
     expect(screen.getByRole("button", { name: "row" })).toHaveFocus();
     expect(errors.mock.calls.flat().join(" ")).not.toMatch(/cannot be given refs/);
     errors.mockRestore();
-  });
-});
-
-describe("actionTip", () => {
-  it("names the key beside the panel, and keeps the explanation without the key in a sheet", () => {
-    const accept = { action: "accept", label: "Accept", key: "a" } as const;
-    const start = { action: "start", label: "Start", tip: "Claim it: to do → in progress", key: "s" } as const;
-    const done = { action: "complete", label: "Mark done…", key: "c" } as const;
-    expect(actionTip(accept, true)).toBe("Accept · A");
-    expect(actionTip(done, true)).toBe("Mark done · C");
-    expect(actionTip(start, true)).toBe("Claim it: to do → in progress · S");
-    expect(actionTip(start, false)).toBe("Claim it: to do → in progress");
-    expect(actionTip(accept, false)).toBe("");
-    expect(actionTip({ action: "unblock", label: "Unblock" }, true)).toBe("");
   });
 });

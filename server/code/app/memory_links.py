@@ -12,12 +12,24 @@ from dataclasses import dataclass
 
 from server.code.app.index import gitrepo, mirrors
 from server.code.app.index.bootstrap import holds
+from server.code.app.index.denylist import (
+    Denylist,
+    indexes_symbols,
+    load_denylist,
+    takes_path,
+    under_prefixes,
+)
 from server.code.domain.anchor import Definition
 from server.code.domain.declaration import edit_pattern
 from server.code.domain.definitions import definitions
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.domain.index.remote import repo_tag
-from server.code.domain.index.repos import configured_repos, docs_namespaces, repo_for_namespace
+from server.code.domain.index.repos import (
+    RepoConfig,
+    configured_repos,
+    docs_namespaces,
+    repo_for_namespace,
+)
 from server.code.store.index import CodeRepo
 from server.settings import settings
 
@@ -126,6 +138,79 @@ async def touched_paths(org: str, namespace: str, base: str, head: str) -> set[s
     except gitrepo.GitError:
         return None
     return {e.path for e in entries if e.status != "D"}
+
+
+@dataclass(frozen=True)
+class IngestScope:
+    """What the ingest of an entry reads at one commit: its prefixes and its denylist."""
+
+    cfg: RepoConfig
+    denylist: Denylist
+
+    def under(self, path: str) -> bool:
+        """`path` is under the entry's prefixes, before its denylist is matched."""
+        return under_prefixes(self.cfg.path_prefixes, path)
+
+    def takes(self, path: str) -> bool:
+        """`path` is read by the ingest, its definitions indexed, by its name."""
+        return takes_path(self.cfg.path_prefixes, self.denylist, path, declared=True)
+
+
+async def ingest_scope(org: str, namespace: str, commit: str) -> IngestScope | None:
+    """The entry's ingest scope at `commit` (an ignore file git cannot read gives no
+    patterns, as for the ingest); None when no repository indexes `namespace`."""
+    cfg = repo_for_namespace(org, namespace)
+    if cfg is None:
+        return None
+    return IngestScope(cfg, await load_denylist(cfg, commit, gitrepo.show_file))
+
+
+async def grep_words(
+    scope: IngestScope, commit: str, literal: str, paths: list[str], *, limit: int
+) -> list[str] | None:
+    """Up to `limit` of `paths` whose text at `commit` holds the word `literal`, read
+    from the mirror; an empty list for paths too many to pass to git or to search in its
+    time (the index decides, as for a range too wide); None when git cannot tell."""
+    if not paths:
+        return []
+    try:
+        return await gitrepo.grep_paths(
+            scope.cfg.git_dir,
+            commit,
+            literal,
+            tuple(paths),
+            limit=limit,
+            literal_paths=True,
+            word=True,
+        )
+    except (gitrepo.ArgumentsTooLong, gitrepo.GrepTimedOut) as e:
+        log.warning(  # a missing link the mirror could have followed reads as the index says
+            "memory links: mirror search for %s over %d paths of %s cut short: %s",
+            literal,
+            len(paths),
+            scope.cfg.namespace,
+            type(e).__name__,
+        )
+        return []
+    except gitrepo.GitError:
+        return None
+
+
+async def indexed_names(scope: IngestScope, commit: str, path: str) -> set[str] | None:
+    """The qualified names `path` defines at `commit`, read once for both questions: None
+    when the ingest would not index its definitions (over the byte cap, refused by its
+    content) or the commit has no such file. A file that does not parse raises
+    `ParseFailed`."""
+    try:
+        data = await gitrepo.file_at(
+            scope.cfg.git_dir, commit, path, max_bytes=settings.code_ingest_max_file_bytes
+        )
+    except gitrepo.BlobTooLarge:
+        return None
+    if data is None or not indexes_symbols(scope.denylist.refusal(path, data)):
+        return None
+    pf = await asyncio.to_thread(_parse, path, data)
+    return {s.qualified_name for s in pf.symbols} if pf is not None else set()
 
 
 async def renamed_from(

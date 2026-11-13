@@ -37,7 +37,13 @@ for a local development server only.
 Loom pools its own connections. Point `LOOM_PG_DSN` past any pooler that hands a
 client a different server connection per transaction (transaction pooling): Loom's
 migrations hold a session advisory lock and its driver prepares statements, and such a
-pooler keeps neither across transactions.
+pooler keeps neither across transactions. A [cell](../architecture/cells.md)'s
+`LOOM_PG_DSN` points straight at Postgres, with no pooler of any mode: its processes
+mark each session with the startup parameter `loom.tenancy_checked`, which a session
+pooler refuses or drops (its org triggers then refuse Loom's own writes for an org the
+cell holds no row for), and `loom doctor` names a session that lost it. Scripts and bulk
+loaders never set `session_replication_role = replica` on a cell: it skips the org
+triggers.
 
 Every replica of the deployment, and its worker process, sets the same values. The full
 list, with the admission and delivery settings, is in the
@@ -89,12 +95,13 @@ synchronous_standby_names = 'FIRST 1 (loom_standby)'
 
 ## What the boot checks
 
-| Check      | Refuses to start when                                                                                                                        |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connection | `LOOM_PG_DSN` is empty or Postgres does not answer                                                                                           |
-| Migrations | an applied file of `schemas/pg_migrations/` was edited, or one this build lacks is older than its last                                       |
-| Durability | with `LOOM_PG_DURABILITY=synchronous`, `synchronous_standby_names` is empty; under any value, the role may not run `pg_logical_emit_message` |
-| Authority  | the deployment recorded the ClickHouse authority, this ClickHouse holds memory under it, or this Postgres belongs to another deployment      |
+| Check      | Refuses to start when                                                                                                                                                                                                                                                                           |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection | `LOOM_PG_DSN` is empty or Postgres does not answer                                                                                                                                                                                                                                              |
+| Migrations | an applied file of `schemas/pg_migrations/` was edited, or one this build lacks is older than its last                                                                                                                                                                                          |
+| Durability | with `LOOM_PG_DURABILITY=synchronous`, `synchronous_standby_names` is empty; under any value, the role may not run `pg_logical_emit_message`                                                                                                                                                    |
+| Authority  | the deployment recorded the ClickHouse authority, this ClickHouse holds memory under it, or this Postgres belongs to another deployment                                                                                                                                                         |
+| Cell state | the first read of the cell state rows (`loom.cell_first`, `loom.tenancy_mode`, `loom.cell_self`, `loom.tenancy`) fails; with Postgres migrations pending the process boots gated and unready until a read lands ([troubleshooting](troubleshooting.md#a-process-with-loom_cell-unset-is-gated)) |
 
 A migration waits at most 5 s for a table lock and is tried five times; a boot that
 logs `Postgres migration <file> waited too long for a lock` four times and then fails

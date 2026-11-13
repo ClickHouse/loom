@@ -1,9 +1,10 @@
 // The starters: one per question Loom's own reads answer exactly. Each asks the assistant
-// its question (when "Also ask the assistant" is on and the assistant can answer) and reads
-// its card with the person's token. The question names the arguments the card was first
-// read with, so the prose and that read are about the same thing; the card's own selects
-// read it again with others, which the question then no longer names.
+// its question (when "Also ask the model" is on and the assistant can answer) and reads its
+// card with the person's token. The question names the arguments the card was first read
+// with, so the prose and that read are about the same thing; the card's own selects read it
+// again with others, which the question then no longer names.
 import type { InspectSubject } from "../../../api";
+import type { View } from "../../../lib/state";
 import type { CardArgs, CardOp } from "./types";
 
 export type StarterId = "inventory" | "audit" | "subject" | "documents" | "mentor" | "graph" | "tune";
@@ -17,7 +18,7 @@ export interface Starter {
   title: string;
 }
 
-/** In the order the empty state lists them; the phone sheet shows the first four. */
+/** In the order the empty state lists them where the page puts none first. */
 export const STARTERS: readonly Starter[] = [
   {
     id: "inventory",
@@ -26,15 +27,31 @@ export const STARTERS: readonly Starter[] = [
     title: "Inventory",
   },
   { id: "audit", op: "namespace.audit", label: "How is this namespace being used?", title: "Audit" },
+  { id: "mentor", op: "mentor.brief", label: "What would Loom advise an agent writing here?", title: "Mentor" },
+  { id: "tune", op: "namespace.tune", label: "What could be improved here?", title: "Improvements" },
   { id: "subject", op: "memory.inspect", label: "What does a user, agent or session remember?", title: "Memories" },
   { id: "documents", op: "knowledge.inspect", label: "What documents does it hold?", title: "Documents" },
-  { id: "mentor", op: "mentor.brief", label: "What would Loom advise an agent writing here?", title: "Mentor" },
   { id: "graph", op: "graph", label: "How are an entity and its neighbours related?", title: "Relationships" },
-  { id: "tune", op: "namespace.tune", label: "What could be improved here?", title: "Improvements" },
 ];
 
-/** The starters the phone sheet shows before "More starters". */
-export const PHONE_STARTERS = 4;
+/** The starter a page leads with: the one about what that page shows. */
+const PAGE_LEADS: Partial<Record<View, StarterId>> = {
+  knowledge: "documents",
+  graph: "graph",
+  profile: "subject",
+  sessions: "subject",
+};
+
+/** The starters in the order the empty state lists them on page `view`. */
+export function startersFor(view: View): readonly Starter[] {
+  const lead = PAGE_LEADS[view];
+  if (!lead) return STARTERS;
+  return [...STARTERS.filter((s) => s.id === lead), ...STARTERS.filter((s) => s.id !== lead)];
+}
+
+/** How many starters show before "More questions": four, three on the phone sheet. */
+export const FIRST_STARTERS = 4;
+export const PHONE_STARTERS = 3;
 
 export const DAY = 86_400;
 export const AUDIT_WINDOWS: Array<{ label: string; seconds: number }> = [

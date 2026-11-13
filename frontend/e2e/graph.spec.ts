@@ -208,10 +208,11 @@ test("the Walk button walks, and Back restores the previous seed", async ({ page
   expect(errors).toEqual([]);
 });
 
-// The Explorer's own entity box is the first input Tab reaches on this view — the
-// header's ⌘K search, a look-alike, is not — and the Facets pane clips no heading: every
-// section heading is one line whose hint is a tooltip, never an ellipsis.
-test("the entity box is the first input in the tab order and no facet heading truncates", async ({ page }) => {
+// The Explorer's own entity box is the first input Tab reaches in the page, after the
+// header's search (which stays in the tab order: Tab is the keyboard's only way to it),
+// and the Facets pane clips no heading: every section heading is one line whose hint is a
+// tooltip, never an ellipsis.
+test("the entity box is the page's first input in the tab order and no facet heading truncates", async ({ page }) => {
   await installApi(page);
   const errors = collectErrors(page);
   await page.goto("/graph?seed=alpha");
@@ -223,13 +224,14 @@ test("the entity box is the first input in the tab order and no facet heading tr
     firstInput = await page.evaluate(() => {
       const el = document.activeElement;
       if (!(el instanceof HTMLElement) || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA")) return null;
+      if (!el.closest("main")) return null;
       return { tag: el.tagName, label: el.getAttribute("aria-label") };
     });
   }
   expect(firstInput).not.toBeNull();
   if (!firstInput) throw new Error("no text input reached by Tab");
   expect(firstInput.label).toContain("Seed entity");
-  await expect(page.getByLabel("Search Loom")).toHaveAttribute("tabindex", "-1");
+  await expect(page.getByLabel("Search Loom")).not.toHaveAttribute("tabindex", "-1");
 
   const facets = page.getByRole("complementary", { name: "Facets" });
   const headings = facets.getByRole("heading");

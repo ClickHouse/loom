@@ -86,7 +86,7 @@ describe("Ask about this on a Recall lab result", () => {
     // A newer query typed while these rows show: the line names the one they answer.
     fireEvent.change(screen.getByLabelText("Recall query"), { target: { value: "rollback" } });
     const second = within(table).getAllByRole("row")[2];
-    const ask = within(second).getByRole("button", { name: "Ask the assistant about this result" });
+    const ask = within(second).getByRole("button", { name: "Ask AI about this result" });
     expect(ask).toHaveTextContent("Ask");
     await userEvent.setup().click(ask);
     await waitFor(() => expect(screen.getByLabelText("Question")).toHaveFocus(), { timeout: 3000 });
@@ -103,7 +103,7 @@ describe("Ask about this on a Recall lab result", () => {
     searchMemory.mockResolvedValue({ results: [hit('say "hi"', 0.9)] });
     render(<RecallLab />);
     const table = await score('why "hi"');
-    await userEvent.setup().click(within(table).getByRole("button", { name: "Ask the assistant about this result" }));
+    await userEvent.setup().click(within(table).getByRole("button", { name: "Ask AI about this result" }));
     await waitFor(() =>
       expect(useDock.getState().item?.line).toBe('result 1, memory "say \\"hi\\"", for the query "why \\"hi\\""'),
     );
@@ -113,7 +113,7 @@ describe("Ask about this on a Recall lab result", () => {
     useStore.setState({ myNamespaces: [] });
     render(<RecallLab />);
     const table = await score();
-    for (const ask of within(table).getAllByRole("button", { name: "Ask the assistant about this result" })) {
+    for (const ask of within(table).getAllByRole("button", { name: "Ask AI about this result" })) {
       expect(ask).toHaveAttribute("aria-disabled", "true");
       expect(ask).toHaveAccessibleDescription(/^Needs viewer on .+\. An admin of it can grant that\.$/);
     }
@@ -124,9 +124,9 @@ describe("Ask about this on a Recall lab result", () => {
     render(<RecallLab />);
     const table = await score();
     const ask = within(within(table).getAllByRole("row")[1]).getByRole("button", {
-      name: "Ask the assistant about this result",
+      name: "Ask AI about this result",
     });
-    expect(ask).toHaveAccessibleDescription("The assistant can't answer now: setting up.");
+    expect(ask).toHaveAccessibleDescription("Ask AI can't answer now: setting up.");
     await userEvent.setup().click(ask);
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
     expect(useDock.getState().open).toBe(false);

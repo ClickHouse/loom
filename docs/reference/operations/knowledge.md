@@ -337,7 +337,7 @@ Report a namespace's documents, read-only.
 
 ## `knowledge.list`
 
-Paginated listing of documents in a namespace, for curation tools.
+Paginated listing of the documents of one namespace or several, for curation tools.
 
 `POST /v1/knowledge.list` · MCP `loom_knowledge_list` · role `viewer` · read
 
@@ -345,9 +345,10 @@ Paginated listing of documents in a namespace, for curation tools.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
+| `namespaces` | `list[str]` | *(computed)* | Also list the documents of these namespaces (or `@me`), each read-checked (403 for the first refused), with a `next_cursor` that holds only for the same namespaces; empty = `namespace` alone. |
 | `tags` | `list[str]` | *(computed)* | Documents carrying any one of these tags, in any case. |
 | `tags_every` | `bool` | `False` | Require every one of `tags` instead of any one; default off. |
-| `uri_prefix` | `list[str]` | *(computed)* | Directory scope: documents whose source_uri starts with one of these prefixes; empty = whole namespace. |
+| `uri_prefix` | `list[str]` | *(computed)* | Directory scope: documents whose source_uri starts with one of these prefixes; empty = no prefix filter. |
 | `include_superseded` | `bool` | `False` | Also list soft-deleted and superseded documents (their `superseded` is True). |
 | `limit` | `int` | `50` | At most this many rows per page (1-500); `next_cursor` fetches the next page. |
 | `cursor` | `str \| None` | `None` | opaque keyset cursor |

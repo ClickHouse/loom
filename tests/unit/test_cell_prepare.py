@@ -5,8 +5,10 @@ The stores and the router together: tests/integration/test_cell_prepare.py."""
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -392,3 +394,24 @@ async def test_the_processes_live_after_the_wait_are_the_ones_judged(monkeypatch
         monkeypatch.setattr(cell_prepare, name, fake)
     assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
     assert written == [(cell.as_value(after), None)] and reads == []
+    # stdout stays one JSON document; a first cell's next step goes to stderr.
+    out = capsys.readouterr()
+    assert json.loads(out.out)["is_first"] is True
+    assert out.err.strip() == "loom cell prepare: prepared the first cell; roll out LOOM_CELL next"
+    # A rerun on a cell past recording names no next step.
+    monkeypatch.setattr(
+        cell_prepare, "_register", AsyncMock(return_value={**OK, "mode": "enforced"})
+    )
+    reads.extend([[_beat("i-new", after)], [_beat("i-new", after)]])
+    assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
+    assert capsys.readouterr().err == ""
+    # A rerun in recording that writes no first row (the rollout is usually done).
+    monkeypatch.setattr(cell_prepare, "_register", AsyncMock(return_value={**OK}))
+
+    async def _own_only(*_a: Any) -> list[str]:
+        return ["own"]
+
+    monkeypatch.setattr(cell_prepare, "_write_rows", _own_only)
+    reads.extend([[_beat("i-new", after)], [_beat("i-new", after)]])
+    assert await cell_prepare.prepare(None, _args(), ROUTER) == 0
+    assert capsys.readouterr().err == ""

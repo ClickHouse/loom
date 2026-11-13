@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import * as RadixPopover from "@radix-ui/react-popover";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -24,9 +24,17 @@ import { sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { displayAgent, sentenceCase } from "../lib/format";
-import { Kbd, Loading, TagList } from "./ui";
-import { toast } from "./Toast";
-import { paletteShortcut } from "../lib/platform";
+import { Loading, TagList } from "./ui";
+import { toast, toastError } from "./Toast";
+import { openAssistantSoon, useDock } from "../lib/assistantDock";
+import { readsAsQuestion } from "../lib/readsAsQuestion";
+import { ASK_PLACEHOLDER, SEARCH_PLACEHOLDER, offersAsk } from "../lib/searchAsk";
+import { MAX_MESSAGE_CHARS, pageContext, withContext } from "../views/assistant/pageContext";
+
+// The answer card and the chat store it asks through: a chunk of their own, loaded once the
+// card shows.
+const loadSearchAnswer = () => import("../views/assistant/SearchAnswer");
+const SearchAnswer = lazy(() => loadSearchAnswer().then((m) => ({ default: m.SearchAnswer })));
 
 /** The memory group is server-side memory.search: a debounced call per settled query,
  *  aborted by the next keystroke. */
@@ -42,8 +50,27 @@ interface NsRow {
   joined: boolean;
 }
 
+/** The question asked from the box: its turn once it shows (null before), and whether
+ *  another answer held the conversation (`busy`). */
+interface CardAsk {
+  question: string;
+  turnId: string | null;
+  busy: boolean;
+}
+
 /** `autoFocus`: the phone header hides this input behind a search button; when that
- *  button reveals it, focus lands here so the palette opens without a second tap. */
+ *  button reveals it, focus lands here so the palette opens without a second tap.
+ *
+ *  A question is answered in place. The results list an 'Ask AI about "<text>"' option,
+ *  with a visible Ask: after the results for keywords, first for text that reads as a
+ *  question (lib/readsAsQuestion.ts) and holds no search filter (`tag:`, `namespace:`,
+ *  `type:`). Choosing it asks through the assistant's chat store
+ *  (views/assistant/SearchAnswer.tsx): the answer streams into the card on top, headed
+ *  "Ask AI", whose one "Continue in chat" option opens the panel on the same conversation,
+ *  and the results stay listed under it. Typing alone never asks. No Ask AI option where
+ *  the chat is off, the token's claims or a reason other than the setup starting or failing
+ *  block it, the namespace is not a memory namespace (a code, tracker or collection one),
+ *  or the question is longer than one request carries. */
 export function HeaderSearch({
   autoFocus = false,
   initialQuery = "",
@@ -58,6 +85,9 @@ export function HeaderSearch({
   const inspectProfile = useStore((s) => s.inspectProfile);
   const openDoc = useStore((s) => s.openDocument);
   const view = useStore((s) => s.view);
+  const mine = useStore((s) => s.myNamespaces);
+  const dockReason = useDock((s) => s.reason);
+  const pageOff = useDock((s) => s.pageOff);
 
   // The draft typed into the placeholder before this body loaded; the box opens on it as
   // if typed here.
@@ -71,6 +101,9 @@ export function HeaderSearch({
   const [docs, setDocs] = useState<KnowledgeEntry[]>([]);
   const [profileSections, setProfileSections] = useState<ProfileEntry[]>([]);
   const [nsRows, setNsRows] = useState<NsRow[]>([]);
+  // Once asked, the card leads the popover, above the listbox (a listbox holds options
+  // alone), and the results stay under it; other text is another question.
+  const [asked, setAsked] = useState<CardAsk | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const listboxId = useId();
@@ -168,19 +201,6 @@ export function HeaderSearch({
     inputRef.current?.focus();
     setOpen(true);
   }, [autoFocus]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        inputRef.current?.focus();
-        inputRef.current?.select();
-        setOpen(true);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
 
   // A view can ask the palette to open with a hint typed in ( the Setup checklist's "Find
   // it again" step). Honour it once, then clear.
@@ -340,8 +360,41 @@ export function HeaderSearch({
   const hasResults =
     namespacesShown.length > 0 || profileShown.length > 0 || memoryShown.length > 0 || documentsShown.length > 0;
 
+  // offersAsk (lib/searchAsk.ts) is the placeholder's test too; a question longer than one
+  // request carries, with its page line, gets no card: the route would refuse it.
+  const fits = withContext(parsed.raw, pageContext(view, null, pageOff)).length <= MAX_MESSAGE_CHARS;
+  const askable = fits && !!identity && offersAsk(dockReason, identity.namespace, mine);
+  useEffect(() => {
+    // Other text is another question: the card goes back to asking it (the answer before
+    // goes on in the conversation).
+    setAsked((a) => (a && a.question !== parsed.raw ? null : a));
+  }, [parsed.raw]);
+  // An answer asked about one namespace never shows under another.
+  useEffect(() => {
+    setAsked(null);
+  }, [identity?.namespace]);
+  // Text with a search filter (tag:, namespace:, type:) is a search: its Ask AI option
+  // comes after the results, as for keywords.
+  const filtered = parsed.tags.length > 0 || parsed.namespaces.length > 0 || parsed.typeFilters.length > 0;
+  const cardShown = parsed.raw.length > 0 && !!asked;
+  const askRowShown = askable && parsed.raw.length > 0 && !asked;
+  // A question leads with the option that asks it; keywords stay results-first.
+  const askRowFirst = askRowShown && !filtered && readsAsQuestion(q);
+  // After keywords the option waits for the memory search: until its results land, the
+  // option would be the highlighted top row, and Enter would ask instead of opening a
+  // result.
+  const memoryPending = searching && memoryQuery.length >= MEMORY_MIN_CHARS;
+  const askRowLast = askRowShown && !askRowFirst && !memoryPending;
+  useEffect(() => {
+    // A preload: a chunk that fails to load is said when the question is asked.
+    if (askRowFirst) loadSearchAnswer().catch(() => undefined);
+  }, [askRowFirst]);
+  const onGone = useCallback(() => setAsked(null), []);
+
   // Flat activation list for ↑↓ keyboard nav.
   type Activation =
+    | { kind: "continue" }
+    | { kind: "askRow" }
     | { kind: "recent"; mem: MemoryListEntry }
     | { kind: "ns"; ns: NsRow }
     | { kind: "profile"; section: ProfileEntry }
@@ -349,14 +402,27 @@ export function HeaderSearch({
     | { kind: "doc"; doc: KnowledgeEntry };
   const activations: Activation[] = useMemo(
     () => [
+      ...(cardShown ? [{ kind: "continue" as const }] : []),
+      ...(askRowFirst ? [{ kind: "askRow" as const }] : []),
       ...recentShown.map((mem) => ({ kind: "recent" as const, mem })),
       ...yourProfileShown.map((section) => ({ kind: "profile" as const, section })),
       ...namespacesShown.map((ns) => ({ kind: "ns" as const, ns })),
       ...profileShown.map((section) => ({ kind: "profile" as const, section })),
       ...memoryShown.map((mem) => ({ kind: "mem" as const, mem })),
       ...documentsShown.map((doc) => ({ kind: "doc" as const, doc })),
+      ...(askRowLast ? [{ kind: "askRow" as const }] : []),
     ],
-    [recentShown, yourProfileShown, namespacesShown, profileShown, memoryShown, documentsShown],
+    [
+      cardShown,
+      askRowFirst,
+      recentShown,
+      yourProfileShown,
+      namespacesShown,
+      profileShown,
+      memoryShown,
+      documentsShown,
+      askRowLast,
+    ],
   );
 
   // A query highlights its top hit, so Enter opens it; the empty box highlights nothing
@@ -376,10 +442,53 @@ export function HeaderSearch({
     if (listboxShown) document.getElementById(`${listboxId}-${activeIdx}`)?.scrollIntoView?.({ block: "nearest" });
   }, [listboxShown, listboxId, activeIdx]);
 
+  // Set from the first Enter until the card's chunk has loaded (or failed to): a second
+  // Enter meanwhile asks nothing.
+  const asking = useRef(false);
+  // The field's text now: text typed while the chunk loads is another question, and the one
+  // the Enter was for is not asked.
+  const raw = useRef(parsed.raw);
+  raw.current = parsed.raw;
+  /** Ask the card's question; resolves once it is on its way (or found busy). The card
+   *  shows it asked only from then: before, nothing answers it, which the card reads as a
+   *  question not asked. */
+  const askQuestion = () => {
+    const question = parsed.raw;
+    if (asking.current) return Promise.resolve();
+    asking.current = true;
+    return loadSearchAnswer()
+      .then((m) => {
+        if (raw.current !== question) return;
+        // The turn can show before the ask returns (no Locks API): its id is kept here too.
+        let shown: string | null = null;
+        const sent = m.askFromSearch(question, (turnId) => {
+          shown = turnId;
+          setAsked((a) => (a && a.question === question ? { ...a, turnId } : a));
+        });
+        setAsked({ question, turnId: shown, busy: !sent });
+        // The card's Continue in chat is the first option now.
+        setActiveIdx(0);
+      })
+      .catch((e: unknown) => toastError("Couldn't ask AI", e, { read: true }))
+      .finally(() => {
+        asking.current = false;
+      });
+  };
+
+  /** Continue in chat: the panel opens on the conversation, the popover closes. A question
+   *  the store could not ask is in the panel's field (views/assistant/SearchAnswer.tsx,
+   *  chatStore.ts). */
+  const continueInChat = () => {
+    setOpen(false);
+    openAssistantSoon();
+  };
+
   const activate = (i: number) => {
     const a = activations[i];
     if (!a) return;
-    if (a.kind === "recent") openMemory(a.mem);
+    if (a.kind === "continue") continueInChat();
+    else if (a.kind === "askRow") void askQuestion();
+    else if (a.kind === "recent") openMemory(a.mem);
     else if (a.kind === "ns") switchNs(a.ns.namespace);
     else if (a.kind === "profile") openProfileSection(a.section.label);
     else if (a.kind === "mem") openMemory({ memory_key: a.mem.memory_key, agent: a.mem.agent || "" });
@@ -413,15 +522,15 @@ export function HeaderSearch({
     }
   };
 
-  const memoryPending = searching && memoryQuery.length >= MEMORY_MIN_CHARS;
-
   // Index offsets for activeIdx → row mapping.
-  const offRecent = 0;
+  const offAskFirst = cardShown ? 1 : 0;
+  const offRecent = offAskFirst + (askRowFirst ? 1 : 0);
   const offYourProfile = offRecent + recentShown.length;
   const offNs = offYourProfile + yourProfileShown.length;
   const offProfile = offNs + namespacesShown.length;
   const offMem = offProfile + profileShown.length;
   const offDoc = offMem + memoryShown.length;
+  const offAskRow = offDoc + documentsShown.length;
 
   // The attributes every option row shares; the input names the highlighted one.
   const optionProps = (idx: number) => ({
@@ -437,6 +546,58 @@ export function HeaderSearch({
     className: OPTION_CLASS,
   });
 
+  // What the results add up to, or that nothing matches: above the results, or, while the
+  // card leads the popover, after the listbox.
+  const status = (
+    <>
+      {/* With Ask AI offered, a miss is no dead end: no "No matches" or filter tips. */}
+      {q.length > 0 &&
+        !hasResults &&
+        (memoryPending ? <Searching /> : !cardShown && !askRowShown && <NoResults q={q} />)}
+
+      {hasResults && (
+        <div className="pb-1.5 text-xs text-text-muted flex items-center justify-between">
+          <span>
+            {[
+              matchedNamespaces.length > 0 &&
+                `${matchedNamespaces.length} namespace${matchedNamespaces.length === 1 ? "" : "s"}`,
+              matchedProfile.length > 0 &&
+                `${matchedProfile.length} profile section${matchedProfile.length === 1 ? "" : "s"}`,
+              matchedDocuments.length > 0 &&
+                `${matchedDocuments.length} document${matchedDocuments.length === 1 ? "" : "s"}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        </div>
+      )}
+    </>
+  );
+
+  // The 'Ask AI about "<text>"' option, at `idx`: choosing it (a click, or Enter while it
+  // is highlighted) asks, and its Ask says so.
+  const askOption = (idx: number, className: string) => (
+    <OptionGroup id={`${listboxId}-ask`} icon="sparkle" label="Ask AI" className={className}>
+      <button
+        type="button"
+        {...optionProps(idx)}
+        aria-label={`Ask AI about "${parsed.raw}"`}
+        onClick={() => {
+          activate(idx);
+          inputRef.current?.focus();
+        }}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Icon name="sparkle" size="sm" aria-hidden="true" className="shrink-0" />
+          <span className="text-sm truncate">{`Ask AI about "${parsed.raw}"`}</span>
+          <span className="search-ask ml-auto shrink-0" aria-hidden="true">
+            Ask
+          </span>
+        </div>
+      </button>
+    </OptionGroup>
+  );
+
   // Radix counts the anchor as outside the panel, so the focus that opens the panel (or a
   // click back into the field) would close it again at once.
   const keepOpenFromAnchor = (e: Event) => {
@@ -446,7 +607,7 @@ export function HeaderSearch({
   return (
     <Popover open={popoverOpen} onOpenChange={setOpen}>
       <RadixPopover.Anchor asChild>
-        <div ref={anchorRef} className="group relative w-full">
+        <div ref={anchorRef} className="relative w-full">
           <SearchField
             ref={inputRef}
             value={q}
@@ -470,7 +631,7 @@ export function HeaderSearch({
             // After Escape or a pick the field keeps focus, so only a click reopens it.
             onClick={() => setOpen(true)}
             onKeyDown={onInputKeyDown}
-            placeholder="Search profile, memories, library…"
+            placeholder={askable ? ASK_PLACEHOLDER : SEARCH_PLACEHOLDER}
             aria-label="Search Loom"
             // WAI-ARIA combobox with a listbox popup: focus stays in the input and
             // aria-activedescendant names the highlighted option.
@@ -479,19 +640,7 @@ export function HeaderSearch({
             aria-expanded={listboxShown}
             aria-controls={listboxId}
             aria-activedescendant={listboxShown && activations[activeIdx] ? optionId(activeIdx) : undefined}
-            // On the Graph view the omnibox is the view's own input; this
-            // one leaves the tab order there (⌘K still opens it, and the
-            // hint beside it says so) so the first input Tab reaches is
-            // the entity box, not a look-alike search.
-            tabIndex={view === "graph" ? -1 : undefined}
           />
-          {/* Platform-correct (⌘K / Ctrl K); the hint leaves once the field has the focus or
-              any text, as on the placeholder field it replaces (layout/Header.tsx). */}
-          {!q && (
-            <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex sm:group-focus-within:hidden">
-              {paletteShortcut()}
-            </Kbd>
-          )}
         </div>
       </RadixPopover.Anchor>
       <Popover.Content
@@ -502,27 +651,37 @@ export function HeaderSearch({
         onInteractOutside={keepOpenFromAnchor}
         className="w-(--radix-popover-trigger-width) max-h-[70vh] overflow-y-auto"
       >
-        {q.length > 0 && !hasResults && (memoryPending ? <Searching /> : <NoResults q={q} />)}
-
-        {hasResults && (
-          <div className="pb-1.5 text-xs text-text-muted flex items-center justify-between">
-            <span>
-              {[
-                matchedNamespaces.length > 0 &&
-                  `${matchedNamespaces.length} namespace${matchedNamespaces.length === 1 ? "" : "s"}`,
-                matchedProfile.length > 0 &&
-                  `${matchedProfile.length} profile section${matchedProfile.length === 1 ? "" : "s"}`,
-                matchedDocuments.length > 0 &&
-                  `${matchedDocuments.length} document${matchedDocuments.length === 1 ? "" : "s"}`,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </span>
-          </div>
+        {asked && (
+          <Suspense fallback={<p className="text-sm text-text-muted pb-2">Answering…</p>}>
+            <SearchAnswer turnId={asked.turnId} busy={asked.busy} onGone={onGone} />
+          </Suspense>
         )}
+
+        {!cardShown && status}
 
         {activations.length > 0 && (
           <div id={listboxId} role="listbox" aria-label="Search results">
+            {cardShown && (
+              // The card's one action, an option so Enter and the arrows reach it as they
+              // reach the results under it; drawn as Click UI's button, spanning the card
+              // on a phone.
+              // biome-ignore lint/a11y/useSemanticElements: an option group inside a listbox, not form controls, so not a fieldset
+              <div role="group" aria-label="Ask AI" className="pb-2">
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  iconRight="arrow-right"
+                  {...optionProps(0)}
+                  className="search-continue max-sm:w-full"
+                  onClick={() => activate(0)}
+                >
+                  Continue in chat
+                </Button>
+              </div>
+            )}
+
+            {askRowFirst && askOption(offAskFirst, "mb-1")}
+
             {recentShown.length > 0 && (
               <OptionGroup id={`${listboxId}-recent`} icon="clock" label="Recent memories">
                 {recentShown.map((e, i) => (
@@ -617,7 +776,6 @@ export function HeaderSearch({
                       <div className="flex items-center gap-2 min-w-0">
                         <TypeIcon kind="memory" />
                         <span className="font-mono text-sm truncate">{e.memory_key}</span>
-                        <span className="text-xs text-text-muted shrink-0 ml-auto">{e.memory_type}</span>
                       </div>
                       {/* Rows are per key and agent: the agent tells two of one key apart. */}
                       <div className="pl-6 text-xs text-text-muted mt-0.5 truncate">
@@ -652,8 +810,12 @@ export function HeaderSearch({
                 })}
               </OptionGroup>
             )}
+
+            {askRowLast && askOption(offAskRow, "mt-1")}
           </div>
         )}
+
+        {cardShown && status}
 
         {q.length === 0 && <SyntaxHelp />}
 

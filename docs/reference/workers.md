@@ -79,7 +79,7 @@ terms) and tags its queries `worker.<name>` in `log_comment`.
 | Value            | Behaviour                                                                                                                                                                                         |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `auto` (default) | The process of the deployment that holds the `workers_supervisor` lease (a Keeper key in `loom._migration_lock`) runs the supervisor; the others contend for it and take it over once it expires. |
-| `on`             | Always run the supervisor (a single-process container, or a dedicated workers container).                                                                                                         |
+| `on`             | Always run the supervisor (a single-process container, or a dedicated workers container); under the Postgres authority, only while the cell gate lets the process serve.                          |
 | `off`            | Never run it (a pure web replica).                                                                                                                                                                |
 
 One lease for the whole deployment, so N replicas with `uvicorn --workers N`

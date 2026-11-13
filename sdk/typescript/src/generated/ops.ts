@@ -3874,6 +3874,7 @@ export interface KnowledgeInspectOutput {
 export interface KnowledgeListInput {
   org: string;
   namespace: string;
+  namespaces?: string[];
   tags?: string[];
   tags_every?: boolean;
   uri_prefix?: string[];
@@ -3884,6 +3885,7 @@ export interface KnowledgeListInput {
 }
 
 export interface KnowledgeListEntry {
+  namespace: string;
   source_uri: string;
   title: string;
   description?: string;

@@ -88,7 +88,9 @@ schema. These rules keep that safe. The operator procedure is in
    (`LOOM_PROJECTION_REPAIR_MAX_FAILURES_PER_PASS`); past that many, N-1 replays
    nothing else until an N replica leads.
 4. **Wire formats** (cursors, session and run ids, worker resume cursors, JSON stored in
-   rows): N reads the old and the new format, and only N+1 writes the new one.
+   rows): N reads the old and the new format, and only N+1 writes the new one. Exception:
+   a cursor for a request N-1 answers for `namespace` alone (a `knowledge.list` naming
+   `namespaces`) is new in N, and each build refuses the one the other wrote (rule 12).
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
    refresh interval (the command refuses less), so no process signs with a kid an N-1
    replica cannot verify yet.
@@ -161,6 +163,9 @@ schema. These rules keep that safe. The operator procedure is in
     nor the restore version. The restored row then reads as a statement made at the Undo,
     newer than the memory it was retired behind, so a confident update verdict can retire
     that memory although the person kept both. Pinning it prevents that.
+    N-1's `knowledge.list` rows carry no `namespace`, on any list; one naming `namespaces`
+    lists `namespace` alone there, and each build refuses the cursor the other wrote for
+    such a list, so a client paging it starts again.
 13. **A name N spells differently is a different node.** N keeps combining marks and
     NFKC-normalises an entity's name (`दिल्ली`, `İstanbul` as `istanbul`); N-1 split them
     into fragments (`द ल ल`, `i stanbul`). ASCII names spell the same in both, and so do
@@ -638,8 +643,35 @@ schema. These rules keep that safe. The operator procedure is in
     segment for bookmarks, which N answers the same way at boot (except that on a phone
     the sheet opens over the landing page), so this answer stays as long as the segment
     is served. The mixed-version gate does not check this rule;
-    `frontend/e2e/assistant-edge.spec.ts` ("an entry an earlier build pushed opens the
+    `frontend/e2e/assistant-launch.spec.ts` ("an entry an earlier build pushed opens the
     assistant on Back after a reload") does.
+
+47. **A cell's org triggers keep their names and shape** ([cells](cells.md)). The
+    session marker `loom.tenancy_checked`, the function `loom.tenancy_refuse_unheld()`,
+    the trigger names `tenancy_insert` and `tenancy_update`, and their shape (AFTER, row
+    level, on INSERT and on UPDATE) do not change, since builds N-1 and N create and
+    read them on one cell. The function body changes only through a numbered migration
+    (`CREATE OR REPLACE FUNCTION`), and `missing` accepts the body and settings any
+    shipped file writes. A changed body ships in two releases: release K adds the new
+    body to `missing` as an accepted value beside the shipped files', and the migration
+    that writes it ships no earlier than K+1, so an N-1 `loom doctor` or attach on a
+    migrated cell names no defect. The `WHEN` text lives in the code that creates the
+    triggers (`server/core/cell_triggers.py`), so a changed `WHEN` ships in three
+    releases, in the body's order: release K adds the new `WHEN` to `missing` (which
+    `loom doctor` and attach read) as an accepted value beside the one it creates; K+1
+    creates the new `WHEN` and keeps the old one accepted, so a K pod that creates a
+    trigger on a skipped table, and a K `missing` reading one K+1 created, both name no
+    defect; and the migration that drops the triggers, which the same boot then creates
+    with the new `WHEN`, ships no earlier than K+2, so the N-1 that could create a
+    skipped table's trigger already carries the new text. The gate on processes with
+    `LOOM_CELL` unset, the marker and the triggers ship in one release: a release that
+    carried the triggers without the marker would refuse Loom's own writes on a cell,
+    and one with the gate alone would leave its unchecked writers unguarded. It breaks
+    side-by-side serving in one place: on a later cell already prepared, the release's
+    first migrating boot creates the triggers, and an older pod still serving there has
+    its inserts of a tenant org's rows refused, so such a cell is rolled out in one step
+    ([upgrades](../operations/upgrades.md), step 2). The mixed-version gate does not
+    check this rule.
 
 ## What checks them
 

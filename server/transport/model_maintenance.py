@@ -1,6 +1,7 @@
 """Keep the model control plane reachable while data-plane work is draining,
 refuse work on a process whose configuration drifted from the deployment's, and
-refuse everything but the health probes on a cell its own rows do not let serve."""
+refuse everything but the health probes on a cell its own rows do not let serve, or
+on a process its deployment's cell state gates."""
 
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -8,6 +9,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from server.core import cell, deployment_config
 from server.core.errors import classified
 from server.core.model_work_gate import ModelChangeInProgress, ModelWorkGate, get_model_work_gate
+from server.settings import settings
 
 # The probes a load balancer or orchestrator reads: every gate here lets them through.
 _HEALTH_PATHS = ("/v1/health", "/v1/health/live", "/v1/health/ready", "/v1/health/deployment")
@@ -58,8 +60,13 @@ async def _refuse(
 async def _refuse_cell(scope: Scope, receive: Receive, send: Send, reason: str) -> None:
     """A cell whose own rows are unread, absent, or do not accept this process's
     configuration serves nothing but its health probes: no sign-in, mint, refresh,
-    SCIM call or page, so nothing reaches it that its directory did not accept."""
-    message = f"This server cannot serve as its cell yet: {reason}. Retry shortly."
+    SCIM call or page, so nothing reaches it that its directory did not accept. A
+    process with LOOM_CELL unset on a deployment whose cell state gates it answers
+    the same way: another process behind the same address may serve the call."""
+    if settings.cell:
+        message = f"This server cannot serve as its cell yet: {reason}. Retry shortly."
+    else:
+        message = f"This server serves nothing now: {reason}."
     await _refuse(scope, receive, send, code="AUTH_UNAVAILABLE", message=message, retry_after="5")
 
 

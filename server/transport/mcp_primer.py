@@ -31,6 +31,7 @@ from server.transport.mcp_config import (
     _ok,
     cache_hints,
 )
+from server.transport.mcp_descriptions import FIRST_STEP_HOOK
 from server.transport.mcp_identity import (
     _caller_default_context,
     _caller_defaults,
@@ -332,10 +333,10 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     collections = knowledge_search_reads_collections()
     head = (
         "**Loom-first mode active for this conversation.**\n\n"
-        "**1. Session context.** At the start of a substantial task, "
-        f"call {tool['context.pack']} once if you need a bounded bundle of "
-        "profile, relevant memories, procedures, and optional docs. For "
-        "simple activation, this primer is already enough.\n\n"
+        "**1. Task context.** First step of each task: call "
+        f"{tool['context.pack']} with the task as `query`, for the memories, decisions and "
+        f"procedures that bear on it in one bounded bundle. Skip it when {FIRST_STEP_HOOK}. "
+        "For one fact, rule 2's search alone is enough.\n\n"
         "**2. Recall lookup order.** When I ask about preferences, "
         "decisions, family/relationships, work, bills, contracts, "
         "documents I've uploaded, or 'what is X' / 'what do I know "
@@ -517,7 +518,8 @@ def _coding_instructions(toolset: str | None) -> str:
     """The memory rules `initialize` sends over the `coding` toolset, in a few lines. A
     coding agent re-reads them every turn and its plugin carries the code-index
     guidance; other listings get `_loom_rules`, and `loom_activate` the full primer."""
-    save = _tool_refs(toolset)["memory.set"]
+    tool = _tool_refs(toolset)
+    save = tool["memory.set"]
     memory = (
         "Recall before answering from memory: call `loom_search` once"
         + (
@@ -531,8 +533,13 @@ def _coding_instructions(toolset: str | None) -> str:
         if save
         else "This connection is read-only: memory writes are not available."
     )
+    # Agents with code tools do not look memory up on their own: the first step is what
+    # brings the team's memory in, unless a plugin's hooks load it for the session.
     return name_ops_for_toolset(
         "**Loom: memory and code for this session.**"
+        + f"\n\nFirst step of each task: call {tool['context.pack']} with "
+        + "the task as `query`. "
+        + f"Skip it when {FIRST_STEP_HOOK}."
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
         + memory,
         toolset,

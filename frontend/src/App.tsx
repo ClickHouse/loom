@@ -50,17 +50,14 @@ import { MobileNav } from "./layout/MobileNav";
 import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
-import { shortcutOff } from "./lib/shortcuts";
 import {
   assistantAddress,
   assistantPopstate,
   bootDock,
   loadDockRuntime,
-  onAssistantShortcut,
   openAssistantSoon,
   useDock,
 } from "./lib/assistantDock";
-import { AssistantEdge } from "./layout/AssistantLauncher";
 
 import { reloadPage } from "./lib/navigation";
 import { endSession, lostReason, sessionEndedNote, whoamiWhenReady } from "./lib/session";
@@ -107,14 +104,13 @@ const DeploymentSettings = lazy(() =>
 );
 // The shell's own optional surfaces load when first needed, not with every page. The
 // memory inspector (47 kB of source) opens on a card click; the token gate shows only
-// when signed out; the two dialogs open on a key or a click.
+// when signed out; the profile dialog opens on a click.
 const MemoryInspector = lazy(() =>
   import("./components/MemoryInspector").then((m) => ({ default: m.MemoryInspector })),
 );
 const ProfileSectionDialog = lazy(() =>
   import("./flows/ProfileSectionDialog").then((m) => ({ default: m.ProfileSectionDialog })),
 );
-const HelpDialog = lazy(() => import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })));
 const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.TokenGate })));
 const LinkTokenConfirm = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.LinkTokenConfirm })));
 // The expired-session card's chunk is fetched as the app loads, from the build that served
@@ -232,12 +228,9 @@ export default function App() {
   // Boot settles the identity (a provisional namespace, then the answer): not a switch, so
   // the deep link's memory or thread stays open.
   const bootIdentity = useStore((s) => s.bootIdentity);
-  const setView = useStore((s) => s.setView);
   const arriveFromHistory = useStore((s) => s.arriveFromHistory);
   const bootView = useStore((s) => s.bootView);
-  const helpOpen = useStore((s) => s.helpOpen);
   const inspectedProfileLabel = useStore((s) => s.inspectedProfileLabel);
-  const setHelpOpen = useStore((s) => s.openHelp);
   // A Loom page's ask to start SSO (`?sign_in=sso`), taken from the address at boot.
   const [ssoAsked, setSsoAsked] = useState(false);
   // A link token boot holds, unstored, until the person says whose account to sign in as.
@@ -249,23 +242,10 @@ export default function App() {
     answer: (ok: boolean) => void;
   } | null>(null);
 
-  // Global keyboard bindings — disabled while focus is in an input.
-  useKeyboard(
-    {
-      "?": () => setHelpOpen(true),
-      // Bound only while it has something to close, so it does not take the key (and
-      // preventDefault it) from a view or a component that handles Escape itself.
-      ...(helpOpen || inspectedKey
-        ? {
-            Escape: () => {
-              if (helpOpen) setHelpOpen(false);
-              else inspect(null);
-            },
-          }
-        : {}),
-    },
-    authed,
-  );
+  // Escape closes the memory inspector from anywhere on the page. Bound only while it is
+  // open, so it does not take the key (and preventDefault it) from a view or a component
+  // that handles Escape itself.
+  useKeyboard({ Escape: () => inspect(null) }, authed && !!inspectedKey);
 
   // Browser back/forward: the view from the URL, then the place the entry remembers — the
   // scroll of <main>, the memory in the drawer, the focused element. A move inside one
@@ -293,70 +273,15 @@ export default function App() {
     return () => window.removeEventListener("popstate", sync);
   }, [authed, arriveFromHistory]);
 
-  // The assistant panel: its modes follow the window and the sidebar, a navigation closes
-  // it at overlay and phone widths, and Ctrl+/ (⌘/) opens and closes it. Wired once the
-  // shell has drawn (the elements a modal panel makes inert exist from then on).
+  // The assistant panel: its mode follows the window and a navigation closes it at overlay
+  // and phone widths. Wired once the shell has drawn (the elements a modal panel makes
+  // inert exist from then on).
   const shellDrawn = !!identity && !!whoami_;
   useEffect(() => {
     if (!shellDrawn) return;
     bootDock();
-    document.addEventListener("keydown", onAssistantShortcut);
-    return () => document.removeEventListener("keydown", onAssistantShortcut);
   }, [shellDrawn]);
   const dockMounted = useDock((s) => s.mounted);
-
-  // Goto-prefix: `g` then a letter within 1.2s jumps view (vim/Gmail convention).
-  useEffect(() => {
-    if (!authed) return;
-    let armed = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const disarm = () => {
-      armed = false;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target;
-      if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable))
-        return;
-      if (e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e)) return;
-      if (!armed) {
-        if (e.key === "g") {
-          armed = true;
-          timer = setTimeout(disarm, 1200);
-        }
-        return;
-      }
-      // Armed — second key picks destination. `k`/`l` both map to "knowledge"
-      // (rail label is "Library", internal id is still "knowledge").
-      const dest: Record<
-        string,
-        "memories" | "knowledge" | "sessions" | "setup" | "browse" | "admin:review_queue" | "admin:activity"
-      > = {
-        m: "memories",
-        k: "knowledge",
-        l: "knowledge",
-        n: "sessions",
-        s: "setup",
-        d: "browse",
-        r: "admin:review_queue",
-        a: "admin:activity",
-      };
-      const v = dest[e.key];
-      if (v) {
-        e.preventDefault();
-        setView(v);
-      }
-      disarm();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      disarm();
-    };
-  }, [authed, setView]);
 
   // Auth bootstrap on mount
   useEffect(() => {
@@ -679,7 +604,7 @@ export default function App() {
         Skip to main content
       </a>
       <button type="button" data-dock-inert="" className={SKIP} onClick={openAssistantSoon}>
-        Go to the assistant
+        Go to Ask AI
       </button>
       {/* `data-dock-inert`: what a modal assistant panel makes inert (lib/assistantDock.ts);
           the wrappers are `display: contents`, so the layout is the children's. */}
@@ -736,10 +661,6 @@ export default function App() {
             <MobileNav />
           </div>
         </div>
-        {/* The assistant edge, from md: its column at the window's right. */}
-        <div className="contents" data-dock-inert="">
-          <AssistantEdge />
-        </div>
       </div>
       {/* Where a navigation went, said once (lib/place.ts `announce`). */}
       <p id="loom-nav-status" role="status" className="sr-only" />
@@ -758,16 +679,11 @@ export default function App() {
         </Suspense>
       )}
 
-      {/* Mounted only while open, so their chunks
-          load on the first open, not with the shell. */}
+      {/* Mounted only while open, so its chunk
+          loads on the first open, not with the shell. */}
       {inspectedProfileLabel && (
         <Suspense fallback={null}>
           <ProfileSectionDialog />
-        </Suspense>
-      )}
-      {helpOpen && (
-        <Suspense fallback={null}>
-          <HelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
         </Suspense>
       )}
       <NetworkProgress />

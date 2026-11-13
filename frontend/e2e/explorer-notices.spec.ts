@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,13 +29,20 @@ async function shot(page: Page, name: string): Promise<void> {
   await test.info().attach(name, { path: file, contentType: "image/png" });
 }
 
+/** Expand an outline row in place with its button, which the selected row shows. */
+async function expandRow(row: Locator, entity: string): Promise<void> {
+  const expand = row.getByRole("button", { name: /^Expand .* in place$/ });
+  if (!(await expand.isVisible())) await row.getByText(entity, { exact: true }).click();
+  await expand.click();
+}
+
 function collectErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   return errors;
 }
 
-// Beside the assistant docked at the push minimum (1280 px, the page keeping 592 px) the
+// Beside the assistant docked at the push minimum (1280 px, the page keeping 640 px) the
 // Explorer's three panes still sit side by side, none under another or the panel.
 test("with the assistant docked, the Explorer's panes fit beside it", async ({ page }) => {
   await installApi(page);
@@ -73,12 +80,12 @@ test("an expand's result is a toast and an inspector line — also when it chang
   await expect(notice).toHaveAttribute("aria-live", "polite");
   await expect(notice).toHaveText("");
 
-  // Select the first hop-1 node (it becomes the inspector's subject) by its name, then `e`.
+  // Select the first hop-1 node (it becomes the inspector's subject) by its name, then
+  // expand it in place.
   const first = rows.nth(1);
   await first.getByText(`${SMALL_SEED}-h1-0`, { exact: true }).click();
   await expect(page.getByRole("complementary", { name: "Inspector" })).toContainText(`${SMALL_SEED}-h1-0`);
-  await first.focus();
-  await page.keyboard.press("e");
+  await expandRow(first, `${SMALL_SEED}-h1-0`);
   await expect.poll(() => calls.related.length).toBe(1);
   expect(calls.related[0]).toMatchObject({ entity: `${SMALL_SEED}-h1-0`, top_k: 12 });
   await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1 + 3);
@@ -91,24 +98,26 @@ test("an expand's result is a toast and an inspector line — also when it chang
   await shot(page, "08-expand-added");
 
   // The next row's neighbours are all in the tree already: nothing changes,
-  // and the page still says so — one toast (the first is replaced), the
-  // inspector line names the node because another is selected.
+  // and the page still says so — one toast (the first is replaced) and the
+  // inspector line, under the node now selected.
   // (Tree order puts h1-0's new children before h1-1: find the row by name.)
   const second = tree.getByRole("treeitem", { name: new RegExp(`^${SMALL_SEED}-h1-1 ·`) });
-  await second.focus();
-  await page.keyboard.press("e");
+  await expandRow(second, `${SMALL_SEED}-h1-1`);
   await expect.poll(() => calls.related.length).toBe(2);
   expect(calls.related[1]).toMatchObject({ entity: `${SMALL_SEED}-h1-1` });
   await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1 + 3);
   await expect(toast).toHaveCount(1);
   await expect(toast).toContainText(`Nothing new under ${SMALL_SEED}-h1-1 within one hop · 3 already shown`);
-  await expect(notice).toHaveText(`${SMALL_SEED}-h1-1 — Expanded: 0 new within one hop · 3 already shown`);
+  await expect(notice).toHaveText("Expanded: 0 new within one hop · 3 already shown");
   // The status line above the canvas says the same.
   await expect(page.locator("[aria-live=polite]").filter({ hasText: "entities within" })).toContainText(
     "Nothing new under",
   );
   await shot(page, "09-expand-nothing-new");
 
+  // Another node selected, the inspector line names the node it is about.
+  await first.getByText(`${SMALL_SEED}-h1-0`, { exact: true }).click();
+  await expect(notice).toHaveText(`${SMALL_SEED}-h1-1 — Expanded: 0 new within one hop · 3 already shown`);
   // The toast leaves on its own after 4 s; the inspector line stays.
   await expect(toast).toHaveCount(0, { timeout: 8_000 });
   await expect(notice).toHaveText(`${SMALL_SEED}-h1-1 — Expanded: 0 new within one hop · 3 already shown`);
@@ -176,8 +185,7 @@ test("a re-walk drops the expand it started over: the late result lands nowhere"
   await page.goto(`/graph?seed=${SMALL_SEED}`);
   await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1);
   const rows = page.getByRole("tree", { name: "Walk outline" }).getByRole("treeitem");
-  await rows.nth(1).focus();
-  await page.keyboard.press("e");
+  await expandRow(rows.nth(1), `${SMALL_SEED}-h1-0`);
   await expect.poll(() => calls.related.length).toBe(1);
 
   // A walk setting changes while `facts.related` is still out: the view re-walks.
@@ -191,8 +199,7 @@ test("a re-walk drops the expand it started over: the late result lands nowhere"
   await expect(page.locator(TOAST)).toHaveCount(0);
   await expect(page.locator(NOTICE)).toHaveText("");
   // The node can be expanded again: the aborted expand left no `expanding` behind.
-  await rows.nth(1).focus();
-  await page.keyboard.press("e");
+  await expandRow(rows.nth(1), `${SMALL_SEED}-h1-0`);
   await expect.poll(() => calls.related.length).toBe(2);
   await expect(page.locator(NODE)).toHaveCount(SMALL_HOP1 + 1 + 3);
   await expect(page.locator(TOAST)).toHaveCount(1);

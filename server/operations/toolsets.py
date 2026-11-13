@@ -165,8 +165,8 @@ _MCP_CORE_OPS: frozenset[str] = frozenset(
 
 
 # The "coding" MCP toolset: the coding-agent archetype's listing. A coding
-# client saves, revises, reads, deletes memory, keeps a scratchpad, loads task
-# context once, and reaches the code plane; it does not open conversation
+# client saves, revises, reads, deletes memory, keeps a scratchpad, loads each
+# task's context, and reaches the code plane; it does not open conversation
 # threads, edit a profile, manage knowledge documents or namespaces, or file
 # erasures. The listing is the memory-side ops below plus _MCP_CODE_CORE_OPS
 # (the code tools ride the coding tier regardless of LOOM_MCP_CODE_TOOLS —

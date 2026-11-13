@@ -164,7 +164,7 @@
             "off"
           ],
           "type": "string",
-          "description": "Which processes run the WorkerSupervisor: auto = the one process of the deployment holding the `workers_supervisor` lease in ClickHouse (server/workers/leader.py), and none outside the deployment (no LOOM_DEPLOYMENT); on = always; off = never (a pure web replica)."
+          "description": "Which processes run the WorkerSupervisor: auto = the one process of the deployment holding the `workers_supervisor` lease in ClickHouse (server/workers/leader.py), and none outside the deployment (no LOOM_DEPLOYMENT); on = always (under the Postgres authority, only while the cell gate lets the process serve); off = never (a pure web replica)."
         },
         "bind_host": {
           "default": "127.0.0.1",
@@ -3964,6 +3964,19 @@
           "type": "number",
           "description": "Seconds a code-links pass may run before the supervisor abandons it."
         },
+        "memory_code_links_mirror_changed_files": {
+          "default": 5000,
+          "maximum": 20000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched (at most 20,000: each is an argument to git); past it, the code index alone decides."
+        },
+        "memory_code_links_mirror_naming_files": {
+          "default": 200,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Changed files that may hold a lost link's name (its callers count) for the mirror's answer to be used; from this many on, the code index alone decides."
+        },
         "memory_code_links_pending_days": {
           "default": 14,
           "minimum": 1,
@@ -6193,7 +6206,7 @@
           "default": 5.0,
           "minimum": 1.0,
           "type": "number",
-          "description": "Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this."
+          "description": "Seconds (at least 1) between reads of the cell state rows once the first read landed (every second until then), in every process that reads them under the Postgres authority, and before an org read as not held is read again; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this."
         },
         "tenant_max_concurrent_requests": {
           "default": 256,

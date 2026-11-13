@@ -27,7 +27,11 @@
   <a href="https://clickhouse.github.io/loom/">Documentation</a>
 </p>
 
-![Loom dashboard showing shared agent memories, a pinned fact and flagged conflicts](./docs/images/dashboard-memories.png)
+<p>
+  <img src="./docs/assets/screenshots/memories.webp" width="32%" alt="Loom dashboard showing shared agent memories, a pinned fact and flagged conflicts">
+  <img src="./docs/assets/screenshots/document-search.webp" width="32%" alt="Library search: three passages from a refunds policy, an on-call runbook and an FX note, each cited by document, revision and lines">
+  <img src="./docs/assets/screenshots/code-callers.webp" width="32%" alt="A repository's Explore tab: payments.fx.convert with its definition and callers">
+</p>
 
 Loom is an open-source, self-hosted MCP server that gives your agents long-term, shared
 memory: what one agent learns in a session, the next agent or tool can find.

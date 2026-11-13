@@ -606,11 +606,11 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     await D.get_one(ORG, NS, "doc://a", include_superseded=f, ch=ch)
     await D.list_with_chunk_counts(
         ORG,
-        NS,
+        [NS],
         include_superseded=f,
         tag_filter=TagFilter(("t",), "folded_any") if f else None,
         uri_prefixes=["doc://"] if f else None,
-        cursor=(_DT, "doc://a") if f else None,
+        cursor=(_DT, NS, "doc://a") if f else None,
         ch=ch,
     )
 
@@ -1197,6 +1197,14 @@ def cases() -> list[Case]:
             "server.knowledge.store.chunks",
             _knowledge,
             {"filters": (False, True)},
+            # A list page with a row, so its chunk counts are read too.
+            rows=rows_by_substring(
+                {
+                    "content_preview": [
+                        {"namespace": NS, "source_uri": "doc://a", "ingested_at": _DT}
+                    ]
+                }
+            ),
         ),
         Case("ledger_repos", "server.insights.store.audit", _ledgers, {"filters": (False, True)}),
         Case(

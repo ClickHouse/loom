@@ -2035,7 +2035,7 @@ class MemoryClient:
         record_schema: dict[str, str | builtins.list[str]] | None = None,
         memory_key: str | None = None,
         judge_extraction: bool = False,
-        defer: bool = False,
+        defer: bool | None = None,
     ) -> dict[str, object]:
         """Extract memorable facts from a raw conversation and save them.
 
@@ -2060,13 +2060,13 @@ class MemoryClient:
         records that moment and facts about the user's state at the time of
         speaking are anchored to the turn, not the session day.
 
-        `defer=True` queues the request instead of extracting inline: the
-        call returns in tens of milliseconds with `deferred: True` and a
-        `queue_id`; the server's extraction_queue worker writes the same
-        memories shortly after. Until then `search`/`ask` report
-        `pending_extraction > 0` for the scope, and `extraction_status()`
-        shows the batch. Use on an agent's hot path; keep the default when
-        you need the written keys back now.
+        `defer=True` queues the request: the call returns in tens of
+        milliseconds with `deferred: True` and a `queue_id`; the server's
+        extraction_queue worker writes the same memories shortly after. Until
+        then `search`/`ask` report `pending_extraction > 0` for the scope, and
+        `extraction_status()` shows the batch. Use on an agent's hot path.
+        `defer=False` extracts inline whatever `extraction_defer_agents` says,
+        and returns the written keys; unset leaves the choice to that setting.
 
         Returns a dict with `written: list[{memory_key, version}]`,
         `refused: list[{memory_key, verdict}]` (the extracted facts the write
@@ -2079,8 +2079,8 @@ class MemoryClient:
         )
         payload["messages"] = list(messages)
         payload["max_tokens"] = max_tokens
-        if defer:
-            payload["defer"] = True
+        if defer is not None:
+            payload["defer"] = defer
         if judge_extraction:
             payload["judge_extraction"] = True
         if extra_tags:

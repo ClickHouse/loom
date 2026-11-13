@@ -83,8 +83,9 @@ class RevocationUnavailable(AuthUnavailable):
 
 
 class CellUnavailable(AuthUnavailable):
-    """This process is a cell whose own rows are unread or do not accept its
-    configuration (`server.core.cell.gate_reason`): it judges no token."""
+    """The cell gate refuses this process (`server.core.cell.gate_reason`): a cell whose
+    own rows are unread or do not accept its configuration, or a process with LOOM_CELL
+    unset that its deployment's cell state gates. It judges no token."""
 
 
 class KeyringUnavailable(AuthUnavailable):
@@ -366,8 +367,9 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         from server.auth import keyring
         from server.core import cell
 
-        # First, before any issuer's branch: a cell configured to accept what its
-        # directory row does not judges nothing with it.
+        # First, before any issuer's branch: a process the cell gate refuses (a cell
+        # configured to accept what its directory row does not, among others) judges
+        # nothing.
         if reason := cell.gate_reason():
             raise CellUnavailable(reason)
         end_user = _end_user_key(token)

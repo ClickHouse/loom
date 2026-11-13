@@ -52,7 +52,6 @@ import { canCall } from "../lib/canCall";
 import { parseSearchQuery, type SearchQuery, takePendingSearch, toggleQueryToken } from "../lib/memoriesSearch";
 import { oneOf } from "../lib/oneOf";
 import { isPublicationPending } from "../lib/errors";
-import { shortcutOff } from "../lib/shortcuts";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useRowSelection } from "../lib/useRowSelection";
@@ -181,22 +180,6 @@ function MemoryList() {
     setSeenAgents([]);
   }
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-
-  // `/` focuses the inline search anywhere on Memories.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      // Ctrl+/ and ⌘/ are the assistant's: only a bare "/" is the search's.
-      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || shortcutOff(e)) return;
-      const t = e.target;
-      if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable))
-        return;
-      e.preventDefault();
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
 
   // Inline search: debounced semantic match on the server; the result
   // becomes a key-set filter on the already-loaded entries, so day
@@ -582,7 +565,7 @@ function MemoryList() {
   );
 
   // Keyboard nav, active when no inspector is open and not typing: the list is one tab
-  // stop, j / k and the arrows move the focus from card to card, Enter opens the focused
+  // stop, the arrows move the focus from card to card, Enter opens the focused
   // card (its button), Space selects it, and the inspector returns focus to it on close.
   const listNav = useRowNav({ enabled: !inspectedKey && flatList.length > 0 });
 
@@ -718,8 +701,8 @@ function MemoryList() {
         actions={
           <>
             {/* Not on a phone, where the title row keeps the first memory inside the first
-                screen: there the bottom nav's Assistant item opens the panel, which shows the
-                starters on an empty conversation (New conversation starts one). */}
+                screen: there the top bar's Ask AI opens the panel, which shows the starters
+                on an empty conversation (New chat starts one). */}
             {!phone && <InsightsButton />}
             <NamespaceGuideButton identity={identity} compact={phone} />
             {/* The empty state's own Add is the one primary while it shows. */}

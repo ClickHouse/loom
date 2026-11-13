@@ -198,6 +198,10 @@ Clients:
 - The [grep shim](../integrations/grep-shim.md) annotates `grep` / `rg` output with each
   hit's enclosing function.
 - In a pipeline, call the ops at fixed steps (triage, ownership, backport presence).
+- A person walks the same graph from the repository's **Explore** tab in the dashboard
+  ([clip](../../assets/screenshots/clip-code-callers.webm)):
+
+  ![A repository's Explore tab: payments.fx.convert with its definition and callers](../../assets/screenshots/code-callers.webp)
 
 If you expose `code.grep` to your own model, pass `as_of`, `abstain_code`, `note` and
 `coverage_floor` with the hits. A model that sees only matches cannot tell an empty

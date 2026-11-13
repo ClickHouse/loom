@@ -77,7 +77,6 @@ import { hasWriterClaim } from "../lib/role";
 import { historyChange, previousVersion } from "../lib/historyChange";
 import { MenuTrigger } from "./ui/Menu";
 import { GatedItem, menuReasons } from "./ui/GatedItem";
-import { shortcutOff } from "../lib/shortcuts";
 
 type SectionId = "history" | "related" | "provenance" | "lineage" | "evidence" | "links";
 const SECTIONS_KEY = "loom_inspector_sections_v1";
@@ -164,9 +163,7 @@ interface InspectorProps {
  * The shell is a Radix `Dialog`: portal, overlay, focus trap, Escape, body scroll lock;
  * focus returns to the card that opened it on close (captured here — a triggerless Radix
  * dialog restores nothing on its own). Focus lands on the drawer itself so the key is
- * announced and the `e` / `d` / `p` shortcuts work straight away; they are bound to the
- * dialog content — not `document` — so they only fire while the drawer holds focus and
- * never while a field is being typed in. The slide-in animates `transform`/`opacity` only
+ * announced. The slide-in animates `transform`/`opacity` only
  * and is disabled under `prefers-reduced-motion`; the expand toggle swaps width
  * instantly.
  */
@@ -318,33 +315,6 @@ export function MemoryInspector({
       return;
     }
     if (editing || renaming || dialogOver) e.preventDefault();
-  };
-
-  // e/d/p drive edit/delete/pin, ⌘/Ctrl+Enter saves an edit. Bound to the
-  // dialog content, so they fire only while the drawer holds focus. Radix
-  // portals bubble React events through the tree, so keystrokes from a dialog
-  // over the drawer are skipped explicitly. A key that is not found has nothing to act on.
-  const onContentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (dialogOver || !detail?.found) return;
-    const t = e.target;
-    const typing =
-      t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable);
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && editing) {
-      e.preventDefault();
-      onSaveEdit();
-      return;
-    }
-    if (typing || e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e.nativeEvent)) return;
-    if (e.key === "e" && !editing && !renaming && !valueLocked) {
-      e.preventDefault();
-      onStartEdit();
-    } else if (e.key === "d" && !deleteLocked) {
-      e.preventDefault();
-      onDelete();
-    } else if (e.key === "p") {
-      e.preventDefault();
-      onPin();
-    }
   };
 
   useEffect(() => {
@@ -1016,7 +986,6 @@ export function MemoryInspector({
           }}
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}
-          onKeyDown={onContentKeyDown}
           className={`fixed top-0 bottom-0 right-0 z-30 bg-surface border-l border-border shadow-2xl animate-slide-in flex flex-col ${
             expanded ? "w-[90vw] md:w-[85vw] max-w-none" : "w-full md:w-[640px] md:max-w-[90vw]"
           }`}

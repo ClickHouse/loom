@@ -1,6 +1,6 @@
-"""knowledge.list / get / outline: reads of the documents of one namespace, and
-`document_chunks`, a document's served chunks in order (knowledge.synthesize and
-`loom decisions extract` read through it)."""
+"""knowledge.list / get / outline: reads of a namespace's documents (a list also reads
+several), and `document_chunks`, a document's served chunks in order (knowledge.synthesize
+and `loom decisions extract` read through it)."""
 
 from __future__ import annotations
 
@@ -8,8 +8,12 @@ import json
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from server.core.cursors import decode_cursor as _decode_list_cursor
-from server.core.cursors import encode_cursor as _encode_list_cursor
+from server.core.cursors import (
+    decode_bound_cursor,
+    decode_cursor,
+    encode_bound_cursor,
+    encode_cursor,
+)
 from server.core.tag_sql import list_tag_filter
 from server.embedding import get_embedder
 from server.knowledge.api.models_knowledge import (
@@ -23,14 +27,16 @@ from server.knowledge.api.models_knowledge import (
     _OutlineEntry,
 )
 from server.knowledge.app import pg_serving
+from server.knowledge.app.readable import readable_namespaces
 from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.chunking import Chunk
 from server.operations.read_projection import resolve as _resolve_projection
 
 if TYPE_CHECKING:
+    from server.knowledge.store.documents import DocumentListRow
     from server.memory.domain.corpus_synthesis import CorpusChunk
 
-_LIST_ALWAYS = frozenset({"source_uri"})
+_LIST_ALWAYS = frozenset({"namespace", "source_uri"})
 
 
 async def document_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
@@ -48,19 +54,20 @@ async def document_tally(org: str, namespace: str) -> tuple[int, datetime | None
 async def handle_knowledge_list(
     input: KnowledgeListInput,
 ) -> KnowledgeListOutput:
-    """Paginated source_uri listing scoped to one namespace.
+    """Paginated listing of one namespace's documents, or several namespaces' as one.
 
-    Joins `loom.documents FINAL` with a chunk-count aggregation. Keyset
-    pagination on (ingested_at DESC, source_uri DESC) so the cursor is
-    stable across inserts."""
+    Reads a page of `loom.documents FINAL`, then the live chunk counts of that page's
+    sources. Keyset pagination on (ingested_at, namespace, source_uri) DESC keeps the
+    cursor stable across inserts."""
     from server.core.ch import own_write_reads
     from server.knowledge.store import documents as documents_repo
 
-    cursor = _decode_list_cursor(input.cursor) if input.cursor else None
+    namespaces = await readable_namespaces(input.org, input.namespace, input.namespaces)
+    cursor = _list_position(input.cursor, input.org, namespaces) if input.cursor else None
     with own_write_reads():  # a document added a call ago
         raw_rows = await documents_repo.list_with_chunk_counts(
             input.org,
-            input.namespace,
+            namespaces,
             include_superseded=input.include_superseded,
             tag_filter=list_tag_filter(input.tags, every=input.tags_every),
             uri_prefixes=list(input.uri_prefix) if input.uri_prefix else None,
@@ -72,6 +79,7 @@ async def handle_knowledge_list(
 
     rows = [
         _KnowledgeListEntry(
+            namespace=r["namespace"],
             source_uri=r["source_uri"],
             title=r["title"] or "",
             description=r.get("description") or "",
@@ -87,17 +95,38 @@ async def handle_knowledge_list(
         )
         for r in page
     ]
-    next_cursor = (
-        _encode_list_cursor(page[-1]["ingested_at"], page[-1]["source_uri"])
-        if rows and has_more
-        else None
-    )
+    next_cursor = _list_cursor(page[-1], input.org, namespaces) if rows and has_more else None
     # The caller's field whitelist, resolved once.
     keep = _resolve_projection(_KnowledgeListEntry, input.fields, always=_LIST_ALWAYS)
     if keep is not None:
         for e in rows:
             e._projection = keep
     return KnowledgeListOutput(rows=rows, next_cursor=next_cursor)
+
+
+def _list_cursor(last: DocumentListRow, org: str, namespaces: list[str]) -> str:
+    """Position after `last`: the plain `<ts>|<uri>` cursor for one namespace, else a bound one."""
+    if len(namespaces) == 1:
+        return encode_cursor(last["ingested_at"], last["source_uri"])
+    return encode_bound_cursor(
+        _cursor_scope(org, namespaces),
+        last["ingested_at"],
+        json.dumps([last["namespace"], last["source_uri"]]),
+    )
+
+
+def _list_position(cursor: str, org: str, namespaces: list[str]) -> tuple[datetime, str, str]:
+    """`_list_cursor` read back, for the same namespaces."""
+    if len(namespaces) == 1:
+        at, uri = decode_cursor(cursor)
+        return at, namespaces[0], uri
+    at, extra = decode_bound_cursor(cursor, _cursor_scope(org, namespaces))
+    namespace, uri = json.loads(extra)
+    return at, namespace, uri
+
+
+def _cursor_scope(org: str, namespaces: list[str]) -> list[str]:
+    return ["knowledge.list", org, *sorted(namespaces)]
 
 
 async def handle_knowledge_outline(input: KnowledgeOutlineInput) -> KnowledgeOutlineOutput:

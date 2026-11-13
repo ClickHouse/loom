@@ -423,8 +423,6 @@ interface AppState {
    *  phone's More sheet reads it too. */
   adminBadges: AdminBadges | null;
   inspect: (memoryKey: string | null, opts?: { agent?: string; userId?: string; sessionId?: string }) => void;
-  helpOpen: boolean;
-  openHelp: (v: boolean) => void;
   toggleSidebar: () => void;
   sidebarCollapsed: boolean;
   /** Navigate to Memories filtered by tag. */
@@ -451,7 +449,7 @@ interface AppState {
   memoriesVersion: number;
   bumpMemoriesVersion: () => void;
 
-  /** Ask the header's ⌘K palette to open with `hint` typed in (the checklist's "Find it
+  /** Ask the header's search palette to open with `hint` typed in (the checklist's "Find it
    *  again" step opens the existing palette instead of a search of its own). The palette
    *  clears the request once it has honoured it; `nonce` lets the same hint be requested
    *  twice. */
@@ -588,8 +586,6 @@ export const useStore = create<AppState>((set, get) => ({
       });
     }
   },
-  helpOpen: false,
-  openHelp: (helpOpen) => set({ helpOpen }),
   searchByTag: (tag) => {
     get().navigate("memories");
     set({ memoryTagFilter: tag });

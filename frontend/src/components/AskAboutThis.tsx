@@ -60,15 +60,15 @@ export function AskAboutThis({
   const why =
     callReason("assistant.ask", roleRead, whoami, namespace) ||
     reason ||
-    (!isMemoryNamespace(namespace, mine) ? "The assistant answers about a memory namespace." : null) ||
-    (unavailable ? `The assistant can't answer now: ${unavailable}.` : null);
+    (!isMemoryNamespace(namespace, mine) ? "Ask AI answers about a memory namespace." : null) ||
+    (unavailable ? `Ask AI can't answer now: ${unavailable}.` : null);
   return (
     <Unavailable reason={why}>
       <Button
         type="secondary"
         htmlType="button"
         iconLeft="sparkle"
-        aria-label={`Ask the assistant about this ${what}`}
+        aria-label={`Ask AI about this ${what}`}
         onClick={(e) => {
           e.stopPropagation();
           const st = useStore.getState();

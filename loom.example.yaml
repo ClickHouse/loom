@@ -714,9 +714,10 @@ settings:
   # 503. [restart]
   # cell_router_timeout_s: 5.0
 
-  # Seconds (at least 1) a cell keeps its three rows (LOOM_CELL) and an org read as not
-  # held; LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
-  # [restart]
+  # Seconds (at least 1) between reads of the cell state rows once the first read landed
+  # (every second until then), in every process that reads them under the Postgres
+  # authority, and before an org read as not held is read again;
+  # LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. [restart]
   # tenancy_mode_cache_s: 5.0
 
   # Placement calls one cell may make in a minute, counted by each router replica.
@@ -3457,6 +3458,15 @@ settings:
   # Changed claims one pass re-checks with the LLM under the `revise` policy. [restart]
   # memory_code_links_revise_per_pass: 20
 
+  # Changed files that may hold a lost link's name (its callers count) for the mirror's
+  # answer to be used; from this many on, the code index alone decides. [restart]
+  # memory_code_links_mirror_naming_files: 200
+
+  # Files under the entry's prefixes a lost link's commit range may change for the
+  # mirror to be searched (at most 20,000: each is an argument to git); past it, the
+  # code index alone decides. [restart]
+  # memory_code_links_mirror_changed_files: 5000
+
   # --- memory chunks ---
 
   # Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈ 400K chars;
@@ -4763,8 +4773,9 @@ settings:
 
   # Which processes run the WorkerSupervisor: auto = the one process of the deployment
   # holding the `workers_supervisor` lease in ClickHouse (server/workers/leader.py), and
-  # none outside the deployment (no LOOM_DEPLOYMENT); on = always; off = never (a pure
-  # web replica). [restart]
+  # none outside the deployment (no LOOM_DEPLOYMENT); on = always (under the Postgres
+  # authority, only while the cell gate lets the process serve); off = never (a pure web
+  # replica). [restart]
   # background_workers: "auto"
 
   # auto mode: seconds a lease holder that stops renewing keeps the workers before

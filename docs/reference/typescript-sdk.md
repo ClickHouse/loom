@@ -259,7 +259,8 @@ or memory. See [Frameworks](../features/integrations/frameworks.md#langchain).
 Strands Agents memory-store shape structurally (no dependency on the Strands
 package). A write is one `memory.set` keyed `strands/<sha256 prefix>` of the
 content, so re-adding a fact is idempotent and both SDKs write the same key; a
-search returns nothing when Loom abstains unless `honourAbstain: false`. See
+search returns nothing when Loom abstains, and leaves out memories below the
+floor, unless `honourAbstain: false`. See
 [Frameworks](../features/integrations/frameworks.md).
 
 ## Errors
@@ -296,8 +297,8 @@ the server sent):
   retryable, since the call was never sent;
 - a call the caller aborted is `input` and not retryable: the caller's choice, after which
   the call may have run;
-- a code the SDK never retries is `configuration` (`ANALYSIS_UNAVAILABLE`,
-  `CODED_WIDTH_MISMATCH`, `GATEWAY_REQUIRED`), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
+- a code the SDK never retries is `configuration` (a 503 an operator must fix, as the
+  [errors reference](./errors.md) classes it), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
   `dependency` (`PUBLICATION_PENDING`: the write is committed and its rows follow), not
   retryable;
 - a 5xx on an op that is not idempotent is not retryable, since the call may have written,

@@ -1,8 +1,15 @@
 """A cell's own state, read from its Postgres, and the gate it puts on this process.
 
-With `LOOM_CELL` unset nothing here reads a row or gates anything. With it set, a
-process serves only while three rows of its cell's Postgres are read and agree with
-its configuration (docs/architecture/cells.md, "The cell's own row"):
+A server process under the Postgres authority reads the state rows (the three below
+and whether `loom.tenancy` holds a row) whether `LOOM_CELL` is set or not, and is
+gated until its first read lands. With `LOOM_CELL` unset the process serves as a
+single deployment while the deployment is no cell (`open`) or a first cell still
+`recording`, and is gated in any other state (`state`); it keeps its verdict through
+failed reads. A process that reads nothing with `LOOM_CELL` unset (a CLI, the workers
+child) and every process under the ClickHouse authority read as `open`. With
+`LOOM_CELL` set, a process serves only while three rows of its cell's Postgres are
+read and agree with its configuration (docs/architecture/cells.md, "The cell's own
+row"):
 
 - `loom.cell_first`: whether this cell is the deployment's first, and its name;
 - `loom.tenancy_mode`: `recording` or `enforced`;
@@ -68,6 +75,24 @@ DEFAULTS: dict[str, Any] = {
 }
 
 MODES = ("recording", "enforced")
+
+# Where a process with LOOM_CELL unset is told to look when its deployment's state gates it.
+TROUBLESHOOTING = "docs/operations/troubleshooting.md#a-process-with-loom_cell-unset-is-gated"
+
+
+def state(*, first: tuple[bool, str] | None, mode: str, has_own: bool, has_tenancy: bool) -> str:
+    """The deployment's cell state from its four state rows: `open` (none), `recording`
+    (a first cell's full set, still recording), `enforced` (any other full set, a later
+    cell whose mode row reads `recording` included) or `partial` (any other mix, which
+    every gate treats as `enforced`). Prepare writes the full set in one transaction, so
+    only a hand edit or a partial restore makes `partial`."""
+    if first is None and not mode and not has_tenancy and not has_own:
+        return "open"
+    if first is None or mode not in MODES or not has_own:
+        return "partial"
+    if first[0] and mode == "recording":
+        return "recording"
+    return "enforced"
 
 
 def normalise_host(value: str) -> str:
@@ -186,11 +211,30 @@ class _View:
     mode: str = ""
     current: dict[str, Any] | None = None
     next: dict[str, Any] | None = None
+    has_tenancy: bool = False
     error: str = ""
+
+    def state(self) -> str:
+        """The cell state these rows make; a view never read is `open`."""
+        return state(
+            first=self.first,
+            mode=self.mode,
+            has_own=self.current is not None,
+            has_tenancy=self.has_tenancy,
+        )
 
 
 _view = _View()
 _deployment_id = ""
+# Set by the server process that reads the cell state (`boot.start_cell_gate`): until its
+# first read lands it is gated. Unset in a process that reads nothing (a CLI, the
+# workers child with LOOM_CELL unset), whose unread view is `open`.
+_awaiting_first_read = False
+
+
+def expect_first_read() -> None:
+    global _awaiting_first_read
+    _awaiting_first_read = True
 
 
 def set_deployment_id(deployment_id: str) -> None:
@@ -212,6 +256,8 @@ def mode() -> str:
     """The tenancy mode last read ('' before the first read or with `LOOM_CELL` unset).
     Only the first cell ever records: on a later cell any mode but `enforced` reads as
     `enforced` (docs/architecture/cells.md, "The `first` row")."""
+    if not settings.cell:
+        return ""
     if _view.first is not None and not _view.first[0] and _view.mode:
         return "enforced"
     return _view.mode
@@ -235,7 +281,9 @@ def gate_reason() -> str:
     """Why this process must serve nothing now ('' when it may serve)."""
     global _memo
     if not settings.cell:
-        return ""
+        # No stale bound: a single deployment keeps serving through a Postgres outage,
+        # and a gated one stays gated (docs/architecture/cells.md, "Invariants").
+        return _unset_reason(_view)
     view, memo = _view, _memo
     # Checked on every call, before the verdict kept for this read: time moves on. A
     # failed read trusts the last rows as long as a revocation snapshot is trusted.
@@ -254,6 +302,54 @@ def gate_reason() -> str:
     reason = _judge(view)
     _memo = _Verdict(view, _deployment_id, settings.cell, reason)
     return reason
+
+
+def read_error() -> str:
+    """Why the last read failed, as a caller may see it ('' after a read that landed)."""
+    return _view.error
+
+
+def gated_by_state() -> bool:
+    """Whether this deployment's server processes read the state rows and are gated on
+    them: under the Postgres authority, `LOOM_CELL` set or not (a cell needs that
+    authority, `settings_problem`). Under the ClickHouse authority nothing is read."""
+    from server.core import pg
+
+    return pg.enabled()
+
+
+def _unset_reason(view: _View) -> str:
+    """The gate on a process with `LOOM_CELL` unset: open while the deployment is no
+    cell or a first cell still recording."""
+    if _awaiting_first_read and view.read_at is None:
+        # A failed read is never taken for an absent row.
+        return (
+            "the deployment's cell state is not read yet"
+            + (f": {view.error}" if view.error else "")
+            + f" (see {TROUBLESHOOTING})"
+        )
+    found = view.state()
+    if found in ("open", "recording"):
+        return ""
+    if found == "enforced":
+        return (
+            "this deployment is a cell in enforced mode and LOOM_CELL is unset "
+            f"(see {TROUBLESHOOTING})"
+        )
+    present = [
+        name
+        for name, here in (
+            ("loom.cell_first", view.first is not None),
+            ("loom.tenancy_mode", bool(view.mode)),
+            ("loom.cell_self", view.current is not None),
+            ("loom.tenancy", view.has_tenancy),
+        )
+        if here
+    ]
+    return (
+        f"this deployment holds a partial cell state ({', '.join(present)} present; "
+        f"see {TROUBLESHOOTING})"
+    )
 
 
 def _judge(view: _View) -> str:
@@ -284,12 +380,37 @@ def readiness_check() -> readiness.CheckResult:
 _READ = (
     "SELECT (SELECT row_to_json(f) FROM (SELECT is_first, cell FROM loom.cell_first) f) AS first, "
     "(SELECT mode FROM loom.tenancy_mode) AS mode, "
-    "(SELECT row_to_json(s) FROM (SELECT current_fp, next_fp FROM loom.cell_self) s) AS own"
+    "(SELECT row_to_json(s) FROM (SELECT current_fp, next_fp FROM loom.cell_self) s) AS own, "
+    "EXISTS (SELECT 1 FROM loom.tenancy) AS tenancy"
 )
 
 
+# The state rows as plain columns, for `ensure` and `loom doctor`: the state verdict needs
+# no fingerprint, so a `loom.cell_self` value that does not decode fails neither a boot's
+# trigger pass nor a doctor run.
+_STATE = (
+    "SELECT (SELECT is_first FROM loom.cell_first) AS is_first, "
+    "(SELECT cell FROM loom.cell_first) AS cell, "
+    "(SELECT mode FROM loom.tenancy_mode) AS mode, "
+    "EXISTS (SELECT 1 FROM loom.cell_self) AS has_own, "
+    "EXISTS (SELECT 1 FROM loom.tenancy) AS has_tenancy"
+)
+
+
+async def read_state(conn: Any) -> str:
+    """The cell state on `conn` (`state`); raises when it cannot read."""
+    row = await conn.fetchrow(_STATE)
+    first = None if row["is_first"] is None else (bool(row["is_first"]), str(row["cell"]))
+    return state(
+        first=first,
+        mode=str(row["mode"] or ""),
+        has_own=bool(row["has_own"]),
+        has_tenancy=bool(row["has_tenancy"]),
+    )
+
+
 async def refresh() -> bool:
-    """Read the three rows in one statement. A failed read, or rows that do not
+    """Read the state rows in one statement. A failed read, or rows that do not
     decode, keeps the last view and is retried on schedule."""
     global _view
     from server.core import pg
@@ -317,6 +438,7 @@ def _decoded(row: Any) -> _View:
         mode=str(row["mode"] or "") if row else "",
         current=json_object(own.get("current_fp")) if own else None,
         next=json_object(own.get("next_fp")) if own else None,
+        has_tenancy=bool(row["tenancy"]) if row else False,
     )
 
 

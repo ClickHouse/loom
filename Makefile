@@ -147,7 +147,7 @@ test-integration:
 # their own: the frameworks' dependencies would otherwise constrain the server's
 # uv.lock. SDK_ADAPTERS_RESOLUTION=lowest-direct installs every direct requirement
 # (the SDK's own, each extra's, pytest) at its lower bound. mypy is the [dev] pin.
-SDK_ADAPTER_EXTRAS := langchain
+SDK_ADAPTER_EXTRAS := langchain llamaindex
 SDK_ADAPTERS_VENV ?= .venv-sdk-adapters
 SDK_ADAPTERS_PYTHON ?= 3.12
 SDK_ADAPTERS_RESOLUTION ?= highest

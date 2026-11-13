@@ -143,6 +143,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "COLLECTION_NAME_TAKEN": PreconditionFailed,  # a 409 with no SDK class: mapped by status
     "ERASURE_RUNNING": PreconditionFailed,  # a 409 the server names retryable
     "WRONG_CELL": WrongCell,
+    "TENANCY_REFUSED": BackendUnavailable,  # a 503 with no SDK class, never retried
     "MODEL_CALL_UNATTRIBUTED": BackendUnavailable,  # a 500 with no SDK class: mapped by status
     "MODEL_CALLS_DISABLED": AuthInsufficient,  # a 403 with no SDK class: mapped by status
     "MODEL_CALL_REFUSED": AuthInsufficient,  # a 403 with no SDK class, never retried
@@ -211,8 +212,9 @@ def test_category_and_retryable_without_a_named_class() -> None:
     assert (misuse.category, misuse.retryable) == ("input", False)
 
 
-def test_a_configuration_code_without_the_fields_is_not_retryable() -> None:
-    e = from_response({"detail": {"code": "GATEWAY_REQUIRED", "message": "m"}}, 503)
+@pytest.mark.parametrize("code", ["GATEWAY_REQUIRED", "TENANCY_REFUSED"])
+def test_a_configuration_code_without_the_fields_is_not_retryable(code: str) -> None:
+    e = from_response({"detail": {"code": code, "message": "m"}}, 503)
     assert (e.category, e.retryable) == ("configuration", False)
 
 

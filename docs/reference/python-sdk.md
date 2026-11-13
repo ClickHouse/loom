@@ -234,6 +234,14 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   `LoomMemoryRetriever(agent=...)` are LangChain `BaseRetriever`s over
   `knowledge.search` and `memory.search`; install the `[langchain]` extra.
   `invoke` needs a `SyncAgent`, `ainvoke` takes either agent.
+- `loom.integrations.llamaindex.LoomRetriever(agent)` is a LlamaIndex
+  `BaseRetriever` over `knowledge.search`, and `LoomMemoryBlock(agent=...)` a
+  `Memory` block that extracts flushed messages with
+  `memory.set_from_messages` and reads them back with `memory.search`; install
+  the `[llamaindex]` extra. `retrieve` needs a `SyncAgent`, and so does the
+  block when `Memory` is used through `get` / `put` or with `flush`;
+  `aflush(memory)` hands what is left in the window to the `Memory`'s blocks
+  and archives it.
 - `loom.integrations.langgraph.LoomStore(agent, tags=...)` is a LangGraph
   `BaseStore`: `put` is `memory.set`, `search(query=...)` ranks with
   `memory.search` and reads values with `memory.bulk_get`, and namespace tuples
@@ -242,7 +250,8 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   shuts down with the agent.
 - `loom.integrations.strands.LoomMemoryStore(agent, tags=...)` implements the
   Strands Agents memory-store protocol (`add` / `search`); `search` returns
-  nothing when Loom abstains unless `honour_abstain=False`.
+  nothing when Loom abstains, and leaves out memories below the floor, unless
+  `honour_abstain=False`.
 
 The LangGraph and Strands adapters import without their framework installed. See
 [Frameworks](../features/integrations/frameworks.md).
@@ -271,8 +280,8 @@ whose body has neither, or one the SDK raised itself:
 - an error raised before sending is `dependency` and retryable when a service the SDK
   needed first was down (an identity provider, a secret store; a sign-in answered 429 is
   `capacity`), `auth` when the caller is not signed in, else `input`;
-- a code the SDK never retries is `configuration` (`ANALYSIS_UNAVAILABLE`,
-  `CODED_WIDTH_MISMATCH`, `GATEWAY_REQUIRED`), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
+- a code the SDK never retries is `configuration` (a 503 an operator must fix, as the
+  [errors reference](./errors.md) classes it), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
   `dependency` (`PUBLICATION_PENDING`: the write is committed and its rows follow), not
   retryable;
 - a 5xx on an op that is not idempotent is not retryable, since the call may have written,
