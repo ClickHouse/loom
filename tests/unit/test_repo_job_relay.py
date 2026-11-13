@@ -188,22 +188,36 @@ def test_a_thread_that_cannot_start_is_started_again(
         client.close()
 
 
-def test_a_bridge_keeps_its_slot_until_the_proxy_closes(sock_dir: Path) -> None:
-    """A client that resets while the proxy still sends ends both pipes, but the
-    proxy holds its slot until it closes; a relay slot freed sooner would send the
-    next connection to a full proxy, to be refused."""
+def test_a_bridge_whose_client_reset_holds_its_slot_while_the_proxy_is_silent(
+    sock_dir: Path,
+) -> None:
+    """The proxy holds its slot until it closes; a relay slot freed sooner would send
+    the next connection to a full proxy, to be refused."""
     with _relay(sock_dir, 1) as (port, upstream):
         first = socket.create_connection(("127.0.0.1", port))
         assert upstream.arrived.acquire(timeout=5)
         first.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
         first.close()  # a reset
-        with contextlib.suppress(OSError):
-            for _ in range(20):
-                upstream.held[0].sendall(b"x" * 65536)
-                time.sleep(0.01)
         second = socket.create_connection(("127.0.0.1", port))
         assert not upstream.arrived.acquire(timeout=0.5)
         upstream.held[0].close()  # the proxy frees its slot
+        assert upstream.arrived.acquire(timeout=5)
+        second.close()
+
+
+def test_a_bridge_whose_client_reset_ends_while_the_proxy_still_sends(sock_dir: Path) -> None:
+    """The rest of a download nobody will read is not fetched: the proxy's next write
+    fails, and it frees its slot as the relay does."""
+    with _relay(sock_dir, 1) as (port, upstream):
+        first = socket.create_connection(("127.0.0.1", port))
+        assert upstream.arrived.acquire(timeout=5)
+        first.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        first.close()  # a reset
+        upstream.held[0].settimeout(5)
+        with pytest.raises(OSError):  # the relay has gone: the proxy's write fails
+            for _ in range(10_000):
+                upstream.held[0].sendall(b"x" * 65536)
+        second = socket.create_connection(("127.0.0.1", port))
         assert upstream.arrived.acquire(timeout=5)
         second.close()
 

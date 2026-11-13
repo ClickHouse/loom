@@ -97,11 +97,7 @@ def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore, idle_s: 
             to_client_done = threading.Event()
             back = _start(_to_client, upstream, conn, to_client_done)
             _to_proxy(conn, upstream, to_client_done)
-            back.join()
-            # A client that reset leaves the proxy's side open: wait for its EOF, so the
-            # slot is not freed while the proxy holds its own (the rest is dropped).
-            while upstream.recv(65536):
-                pass
+            back.join()  # while the proxy says nothing, it holds its slot and so do we
     except OSError:
         pass
     finally:
