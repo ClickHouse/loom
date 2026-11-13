@@ -244,7 +244,9 @@ export function Browse() {
   const typedName = listQuery.toLowerCase();
   // The role held on it: an active row only, since a pending request grants nothing yet.
   const typedRole = mineRows?.find((r) => r.namespace === typedName && r.status !== "pending")?.role;
-  // The role the server would act on: an admin claim (or auth off) admins every namespace.
+  // The role the server would act on, for the request card only: an admin claim admins every
+  // namespace. The "you read" lines need an active membership: a claim reaches no restricted
+  // repository and makes no collection exist.
   const typedReach = roleOnNamespace(whoami, mineRows, typedName);
   const typedCollection = typedName.startsWith(COLLECTION_PREFIX);
   const elsewhere = repoNames.includes(typedName)
@@ -454,14 +456,14 @@ export function Browse() {
               {/* One the caller already reads is opened there, not requested. */}
               {elsewhere === "repository" ? (
                 <>
-                  {typedReach ? "is a repository you read: open it in" : "is a repository: join or request it from"}{" "}
+                  {typedRole ? "is a repository you read: open it in" : "is a repository: join or request it from"}{" "}
                   <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
                     Repositories
                   </Link>
                 </>
               ) : (
                 <>
-                  {typedReach
+                  {typedRole
                     ? "is a collection you read: open it in the"
                     : "is a collection: ask its admin for a grant; the collections you can read are in the"}{" "}
                   <Link component="button" type="button" size="sm" onClick={() => setView("knowledge")}>

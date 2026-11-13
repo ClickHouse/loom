@@ -402,6 +402,27 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
   });
 
+  it("tells an admin by claim with no membership to join a repository or ask for a collection", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: ["ORG_ADMIN"] } });
+    browse.push({ ...browse[1], namespace: "code-loom", kind: "code", guide_summary: "" });
+    try {
+      render(<Browse />);
+      await screen.findByText("Support team runbooks");
+      const box = screen.getByRole("textbox", { name: "Search namespaces" });
+      await userEvent.type(box, "code-loom");
+      expect(await screen.findByText(/is a repository/)).toHaveTextContent(
+        "code-loom is a repository: join or request it from Repositories.",
+      );
+      await userEvent.clear(box);
+      await userEvent.type(box, "col-research");
+      expect(await screen.findByText(/is a collection/)).toHaveTextContent(
+        "col-research is a collection: ask its admin for a grant; the collections you can read are in the Library.",
+      );
+    } finally {
+      browse.pop();
+    }
+  });
+
   it("offers no request for a namespace the caller admins", async () => {
     render(<Browse />);
     await screen.findByText("Support team runbooks");
