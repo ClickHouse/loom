@@ -81,7 +81,8 @@ Once Loom answers, the installer:
 Before it starts Loom, a new install on a terminal with Ollama answering on
 `localhost:11434` is also asked whether to run Loom's model jobs on it (extraction, and
 the assistant once enabled), with no API key; `LOOM_LOCAL_MODELS=ollama` answers yes
-and `off` no ([a model server on your machine](models-and-keys.md#a-model-server-on-your-machine-no-api-key)).
+and `off` no
+([a model server on your machine](models-and-keys.md#a-model-server-on-your-machine-no-api-key)).
 
 Run from WSL, these steps act inside WSL: connect an agent that runs on Windows from
 Windows with the [connect guide](connect-a-coding-agent.md), and open the dashboard address

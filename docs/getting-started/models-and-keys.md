@@ -222,6 +222,7 @@ LOOM_LLM_RETRY_ATTEMPTS=1
 LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS=1
 LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS=3600
 LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2
+LOOM_ENTITY_EXTRACT_ENABLED=false
 LOOM_SESSION_BRIEF_LLM_MODEL=
 LOOM_CODE_BISECT_LLM_RERANK_MODEL=
 LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
@@ -255,9 +256,13 @@ a capture cut short (at that deadline, or by Loom shutting down) or whose call r
 timeout spends one of its `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2` attempts, so a session
 too long for the machine ends `failed` (`memory.extraction_status` says why) instead of
 holding the queue: a long session can need several calls in a row, each up to the
-timeout. The observe-extraction worker (`LOOM_OBSERVE_EXTRACT_ENABLED`, off by default) is
-not tuned for a local model: a pass (up to 10 sessions) longer than 900 s is cut and starts
-again from the newest session.
+timeout. Entity tagging (`LOOM_ENTITY_EXTRACT_ENABLED`) is off: it would queue behind
+extraction on a server that answers one request at a time, and its pass, cut at its
+deadline, writes nothing, so search does without entity matches. The other workers that
+call a model are not tuned for a local one: observe extraction (off by default), whose
+pass of up to 10 sessions is cut at 900 s and starts again from the newest session, and
+conversation titles and structured profiles, which run once conversation logging or a
+profile schema is set up.
 
 For llama.cpp, point `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root
 (`http://host.docker.internal:8080/v1`) and set `LOOM_LLM_MODEL` to the name it serves;

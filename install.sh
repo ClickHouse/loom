@@ -415,7 +415,7 @@ main() {
   elif [ -z "${LOOM_LOCAL_MODELS:-}" ] && [ -z "${had_env:-}" ] \
     && [ -t 0 ] && [ -t 1 ] \
     && curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/version >/dev/null 2>&1; then
-    printf 'Ollama answers on this machine. Use it for extraction and the other model jobs (%s, no API key)? [Y/n] ' "$local_model"
+    printf 'Ollama answers on this machine. Use it for extraction, the assistant and the other model jobs (%s, no API key)? [Y/n] ' "$local_model"
     read -r answer || answer=n
     case $answer in '' | [Yy]*) use_local=1 ;; esac
   fi
@@ -441,12 +441,16 @@ main() {
     # A replay too long for this machine fails on its second try rather than hold the
     # queue for its default eight.
     set_env LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS 2
+    # Entity tagging would queue behind extraction on a server that answers one request at
+    # a time, and a tagging pass cut at its deadline writes nothing: off.
+    set_env LOOM_ENTITY_EXTRACT_ENABLED false
     # Jobs whose default names a hosted model take LOOM_LLM_MODEL.
     for key in LOOM_SESSION_BRIEF_LLM_MODEL LOOM_CODE_BISECT_LLM_RERANK_MODEL \
       LOOM_TRACKER_DUPCHECK_RERANK_MODEL LOOM_RETRIEVAL_JUDGE_MODEL; do
       set_env "$key" ""
     done
     printf 'Loom will run its model jobs on Ollama (%s)\n' "$local_model"
+    printf 'The capture verifier, the conflict resolver and entity tagging are off: they judge with hosted models in mind\n'
     [ -z "${had_env:-}" ] \
       || printf 'A configuration saved in Models & keys wins over .env: choose Use environment configuration there after the restart\n'
     curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/tags 2>/dev/null \
