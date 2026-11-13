@@ -120,6 +120,26 @@ describe("the search's answer card", () => {
     expect(await panelViolations()).toEqual([]);
   });
 
+  it("offers no option after keywords until the memory search answers, so an early Enter asks nothing", async () => {
+    let release: () => void = () => undefined;
+    vi.mocked(searchMemory).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ results: [] } as never);
+        }),
+    );
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.type(field(), "invoices");
+    expect(screen.queryByRole("option", { name: 'Ask AI about "invoices"' })).toBeNull();
+    await user.keyboard("{Enter}");
+    await new Promise((r) => setTimeout(r, 300));
+    expect(chats).toHaveLength(0);
+    // Once the search answers, the option follows its results.
+    await act(async () => release());
+    expect(await screen.findByRole("option", { name: 'Ask AI about "invoices"' })).toBeInTheDocument();
+  });
+
   it("is an option after the results for keywords, and a click on it asks; Tab moves the focus on", async () => {
     const user = userEvent.setup();
     render(

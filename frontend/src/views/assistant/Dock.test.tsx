@@ -191,10 +191,19 @@ describe("reasons, worded per reader", () => {
     show();
     const body = await unavailable();
     expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat's setup is failing");
+    // Someone who can open Admin › Health is sent there; anyone else is told who fixes it.
+    const admin = who !== "viewer";
     expect(body).toHaveTextContent(
-      "Loom retries the setup on its own. Until it works, Loom can still answer these from its own reads.",
+      admin
+        ? "Loom retries the setup on its own; Admin › Health says why it fails. Until it works, Loom can still answer these from its own reads."
+        : "Loom retries the setup on its own. An admin of this deployment fixes it. Until it works, Loom can still answer these from its own reads.",
     );
     expect(within(body).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    const health = within(body).queryByRole("button", { name: "See Health" });
+    if (admin) {
+      await userEvent.click(health as HTMLElement);
+      expect(useStore.getState().view).toBe("admin:health");
+    } else expect(health).toBeNull();
     expect(screen.queryByLabelText("Question")).toBeNull();
   });
 
@@ -207,7 +216,9 @@ describe("reasons, worded per reader", () => {
     act(() => useChat.setState({ hint: { kind: "failing" } }));
     const body = await unavailable();
     expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat's setup is failing");
-    expect(within(body).getByText("Loom retries the setup on its own.")).toBeInTheDocument();
+    expect(
+      within(body).getByText("Loom retries the setup on its own. An admin of this deployment fixes it."),
+    ).toBeInTheDocument();
     expect(body).not.toHaveTextContent("own reads");
     expect(screen.queryByRole("list", { name: "Starters" })).toBeNull();
   });

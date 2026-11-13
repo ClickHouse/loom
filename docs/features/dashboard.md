@@ -152,35 +152,36 @@ admin drawer's navigation.
 The **Ask AI** button in the header, right after the search field (its icon alone below 1280
 px), opens the chat with the [assistant](../architecture/assistant.md#surfaces) on every
 page, and closes it again while it sits beside the page; no key opens it, and the search is
-the other way in. Its tooltip says what it does, with the reason it cannot answer when one is
-known; it looks pressed while the panel is open. After **Skip to main content**, a second
-skip control, **Go to Ask AI**, opens it with the focus in its field. The button is never disabled; its icon and name say when an answer is coming in, when
-one ended unseen, with the panel closed and not shown in the search's card (until it opens
-again; a reload forgets the mark), and when the assistant cannot answer, in which case the
-panel says why. On a deployment whose chat is not set up it keeps its plain icon: the panel
-then holds the starters, Loom's own reads.
+the other way in. Its tooltip says what it does, with the reason it cannot answer when one
+is known; it looks pressed while the panel is open. After **Skip to main content**, a second
+skip control, **Go to Ask AI**, opens it with the focus in its field. The button is never
+disabled; its icon and name say when an answer is coming in, when one ended unseen, with the
+panel closed and not shown in the search's card (until it opens again; a reload forgets the
+mark), and when the assistant cannot answer, in which case the panel says why. On a
+deployment whose chat is not set up it keeps its plain icon: the panel then holds the
+starters, Loom's own reads.
 
 The panel has one header row: the title, **Ask AI**, and the namespace in muted text, then
 icon buttons that are always there, each named and with a tooltip: **New chat** (unavailable
 while an answer is coming in), **History** (pressed while History shows), **Expand** (from
-1024 px) and **Close**. The chat asks about the header's namespace under
-the person's own access: the answer streams in as text with Markdown emphasis, lists, tables
-and code (no HTML, images or links), each citation drawn as a number by where it first
-appears, as the search's card numbers it, then its **Sources**, one row per citation as the
-server checked it, led by the same number, which in the text links to its row once the check
-ends, named as the reader knows it (a memory by its key, with its kind and
-version in the row's tooltip), a memory, document or help citation found in Loom opening
-where the dashboard shows it (a help citation on the Help page at its section) and any
-citation not found reading "not confirmed" with why, and a label for the answer's
-[support](../architecture/assistant.md#support), none on an answer that makes no claim, such
-as a greeting or an abstention. While it answers, its working line names the latest call it
-made ("Read the audit"), or "Answering…" before the first; a call that failed or was refused
-reads "Couldn't read …", muted. Under the finished answer the disclosure **What it read (n)**
-lists every call (see [steps](../architecture/assistant.md#steps)). **Stop** ends an answer; closing the
-panel or leaving the page does not. Once the text is complete Stop goes, and the answer
-shows "Checking sources…" until its check ends; the next question waits for that check. An
-answer whose check never came back (the connection was lost, or the page was left) reads
-"Check didn't finish". Each question goes with the conversation's newest 50 messages.
+1024 px) and **Close**. The chat asks about the header's namespace under the person's own
+access: the answer streams in as text with Markdown emphasis, lists, tables and code (no
+HTML, images or links), each citation drawn as a number by where it first appears, as the
+search's card numbers it, then its **Sources**, one row per citation as the server checked
+it, led by the same number, which in the text links to its row once the check ends, named as
+the reader knows it (a memory by its key, with its kind and version in the row's tooltip), a
+memory, document or help citation found in Loom opening where the dashboard shows it (a help
+citation on the Help page at its section) and any citation not found reading "not confirmed"
+with why, and a label for the answer's [support](../architecture/assistant.md#support), none
+on an answer that makes no claim, such as a greeting or an abstention. While it answers, its
+working line names the latest call it made ("Read the audit"), or "Answering…" before the
+first; a call that failed or was refused reads "Couldn't read …", muted. Under the finished
+answer the disclosure **What it read (n)** lists every call (see
+[steps](../architecture/assistant.md#steps)). **Stop** ends an answer; closing the panel or
+leaving the page does not. Once the text is complete Stop goes, and the answer shows
+"Checking sources…" until its check ends; the next question waits for that check. An answer
+whose check never came back (the connection was lost, or the page was left) reads "Check
+didn't finish". Each question goes with the conversation's newest 50 messages.
 
 An answer's actions are small named icon buttons under it (44 px under a coarse pointer).
 **Copy** copies a finished answer as stored, Markdown and citation markers included. The last
@@ -192,9 +193,10 @@ error retryable, or the connection was lost); its partial text keeps its numbers
 **Edit question**, an icon button on the last question, puts it in the field while the field
 is empty; Ask then replaces its answer (with sources when it was asked with them), and
 **Cancel edit** empties the field; while an edit is open, Ask again and Ask again with
-sources are not offered. Enter in the field asks and Shift+Enter adds a line. A label that could not confirm the last answer offers **Ask again with sources**,
-which asks it again with "Cite your sources." after it, shown with a "With sources" tag. A
-starter's turn asked again reads its card again.
+sources are not offered. Enter in the field asks and Shift+Enter adds a line. A label that
+could not confirm the last answer offers **Ask again with sources**, which asks it again
+with "Cite your sources." after it, shown with a "With sources" tag. A starter's turn asked
+again reads its card again.
 
 A question asked again replaces its answer only once new text comes: until then the turn
 stays as it was, and a refusal the panel explains, or an edit that did not go, offers
@@ -209,8 +211,8 @@ refused, which the panel says instead).
 full-width rows, the page's own first (documents on the Library, relationships on the Graph,
 a user's memories on Profile and Conversations): four, three on a phone, and the disclosure
 **More questions** shows the rest in place. They cover what the
-namespace holds and who appears in it (`namespace.inventory`), how it is used (the audit over
-the last 7 days, `namespace.audit`), what a user, agent or session remembers
+namespace holds and who appears in it (`namespace.inventory`), how it is used (the audit
+over the last 7 days, `namespace.audit`), what a user, agent or session remembers
 ([`memory.inspect`](namespaces-and-sharing.md#inspecting-one-user-agent-or-session), with a
 form for the id that suggests the users and agents an inventory card found), what its
 documents are ([`knowledge.inspect`](knowledge.md#inspecting-a-namespaces-documents)), what
@@ -220,17 +222,18 @@ relate (a link to the Graph) and what could be improved
 starter reads its **card** with the person's own token, gated on that read's own role and
 token scope, and shows it in the conversation: Loom's own read, so exact and with no model
 call, marked "Loom's own read · <time>", with **Read again**, the audit's window and the
-mentor's agent and window as selects that read again, and **Open in <page>** for the page that
-owns it. A mentor hint links to the page that owns its plane, an admin page only for a
-namespace admin. One line per card goes to the assistant's live region; the focus stays where
-it is. With **Also ask the model** on (the default, kept per browser; its line under it says
-that off answers from what Loom holds and on uses the namespace's model budget) the starter also asks its question, naming the card's
-arguments, as the person's turn, which spends a model answer; the answer's label is the one
-every answer gets. With it off the card stands alone, and while the assistant cannot answer
-the box is not shown and the card says why. Each user and agent on an inventory card is a
-button that runs the subject starter for it: it reads what that one remembers and asks as the
-checkbox says, and it is off as the subject starter is (while an answer is coming in, or when
-its read is refused and nothing would be asked).
+mentor's agent and window as selects that read again, and **Open in <page>** for the page
+that owns it. A mentor hint links to the page that owns its plane, an admin page only for a
+namespace admin. One line per card goes to the assistant's live region; the focus stays
+where it is. With **Also ask the model** on (the default, kept per browser; its line under
+it says that off answers from what Loom holds and on uses the namespace's model budget) the
+starter also asks its question, naming the card's arguments, as the person's turn, which
+spends a model answer; the answer's label is the one every answer gets. With it off the card
+stands alone, and while the assistant cannot answer the box is not shown and the card says
+why. Each user and agent on an inventory card is a button that runs the subject starter for
+it: it reads what that one remembers and asks as the checkbox says, and it is off as the
+subject starter is (while an answer is coming in, or when its read is refused and nothing
+would be asked).
 
 **A draft's action is the person's own click** on the existing write, under their role: a
 category draft is registered behind a confirmation that shows the current and proposed
@@ -252,27 +255,27 @@ opens the panel on the audit's card, nothing asked.
 "Includes: Memories", sends one leading line with the question (`Context: Memories page`),
 which the transcript shows as the chip, not as text. Its remove button, **Don't include this
 page**, sends nothing about the page for that question; the next question, or another page,
-carries the chip again. The chip's tooltip says the question names the page and that × leaves
-it out. **Ask about this** adds
-the item to the chip for one question ("Includes: Memories · key user/pref/lang"; the line
-names the memory's key, writer agent and the user and session it is filed under, the
-document's source URI and title, or the result's rank, key and the query its rows came from,
-each quoted). It is in the memory drawer's footer after Edit, in the document preview's
-actions before Download, and on each Recall lab result row as **Ask**. It closes the drawer
-or the preview without handing the focus back to what opened it, opens the panel in the mode
-the window gives with the focus in its field, keeps the question being typed and sends
-nothing. The item leaves with the chip, after the question is answered (one the route
-refuses comes back to the field with its chip), and when the page, the namespace, the org or
-the signed-in person changes. On a conversation about another namespace it starts a new one
-in the header's namespace, the question being typed and the chip moving to it, and says "New
-conversation in <namespace>; the one about <old> is in History." While an answer is still
-coming in there, it starts none: the panel asks how to go on with that conversation, as
-after any switch of namespace, and the chip keeps the item. The button is there for anyone
-the assistant's route admits on the namespace. It is unavailable, with the reason, while the
-assistant cannot answer, on a header namespace that holds no memories, on a document of a
-collection linked in the Library (the answer reads only the header's namespace), and in the
-drawer while an edit or a rename is open ("Save or cancel the edit first."). Where the
-deployment's chat is not set up it is absent: it only ever asks a model.
+carries the chip again. The chip's tooltip says the question names the page and that ×
+leaves it out. **Ask about this** adds the item to the chip for one question ("Includes:
+Memories · key user/pref/lang"; the line names the memory's key, writer agent and the user
+and session it is filed under, the document's source URI and title, or the result's rank,
+key and the query its rows came from, each quoted). It is in the memory drawer's footer
+after Edit, in the document preview's actions before Download, and on each Recall lab result
+row as **Ask**. It closes the drawer or the preview without handing the focus back to what
+opened it, opens the panel in the mode the window gives with the focus in its field, keeps
+the question being typed and sends nothing. The item leaves with the chip, after the
+question is answered (one the route refuses comes back to the field with its chip), and when
+the page, the namespace, the org or the signed-in person changes. On a conversation about
+another namespace it starts a new one in the header's namespace, the question being typed
+and the chip moving to it, and says "New conversation in <namespace>; the one about <old> is
+in History." While an answer is still coming in there, it starts none: the panel asks how to
+go on with that conversation, as after any switch of namespace, and the chip keeps the item.
+The button is there for anyone the assistant's route admits on the namespace. It is
+unavailable, with the reason, while the assistant cannot answer, on a header namespace that
+holds no memories, on a document of a collection linked in the Library (the answer reads
+only the header's namespace), and in the drawer while an edit or a rename is open ("Save or
+cancel the edit first."). Where the deployment's chat is not set up it is absent: it only
+ever asks a model.
 
 One panel serves every window width:
 
@@ -305,23 +308,25 @@ reads are listed under it as starters, with no question field and no **Also ask 
 and the starters stay under the last card, so one runs after another; those cards are not
 saved, and **New chat** empties the list. History shows only conversations saved before,
 opened read-only. An open puts the focus on the first starter. A setup that is failing has the
-same layout, headed "Chat's setup is failing", with **Try again**. The line that Loom can
+same layout, headed "Chat's setup is failing", with **Try again** and, for a platform or
+namespace admin, a link to Admin › Health, where the failure is shown; anyone else reads that
+an admin of this deployment fixes it. The line that Loom can
 still answer from its own reads shows only while the starters do.
 
 **Why it cannot answer** is said for the person reading it, with a link only for someone who
 can open the page it names: the assistant not set up, setting up or failing its setup
 (`/v1/health/ready`'s `assistant` check, read when the panel opens and every 10 s while it
-sets up or fails; a read that takes over 10 s counts as failed, and the chat route's
-refusal then decides), and the chat route's refusals by their `detail.reason`: auth off, an
-org-wide or narrowed token (also read from the token's own claims), a token that expires
-before an answer could finish, and model calls switched off for the org (see
-[the bridge](../architecture/assistant.md#the-bridge-each-callers-own-identity)). **Try again**
-reads readiness again and asks a refused question again once nothing refuses it, with what the
-chip shows then; when the chip's line would make it longer than the route accepts it sends
-nothing, leaving the question in the field, which says why, or, with other text there, saying
-why in the panel. **Health**
-shows the same check as its Assistant row, once readiness can be read: to platform admins
-always, and to anyone else who opens Health while the assistant sets up or fails.
+sets up or fails; a read that takes over 10 s counts as failed, and the chat route's refusal
+then decides), and the chat route's refusals by their `detail.reason`: auth off, an org-wide
+or narrowed token (also read from the token's own claims), a token that expires before an
+answer could finish, and model calls switched off for the org (see [the
+bridge](../architecture/assistant.md#the-bridge-each-callers-own-identity)). **Try again**
+reads readiness again and asks a refused question again once nothing refuses it, with what
+the chip shows then; when the chip's line would make it longer than the route accepts it
+sends nothing, leaving the question in the field, which says why, or, with other text there,
+saying why in the panel. **Health** shows the same check as its Assistant row, once
+readiness can be read: to platform admins always, and to anyone else who opens Health while
+the assistant sets up or fails.
 
 **The header search answers a question in place.** Its results end with an **Ask AI about
 "<the text>"** option, with a visible **Ask**, under an **Ask AI** label; for text that reads
@@ -344,8 +349,8 @@ in, or another tab holding the conversation) waits in the panel's empty field. C
 search while it answers leaves it answering: Ask AI shows the answer coming in, then ready.
 Where the chat is not set up, a reason keeps the assistant from answering (the token's own
 claims included, and a refusal the route gave earlier; the setup starting or failing keeps
-the option, and the card says a refusal it causes), the header's namespace holds no memories
-(a code, tracker or collection namespace), or the question with its page line is longer than
+the option, and the card says a refusal it causes), the header's namespace is not a memory
+namespace (a code, tracker or collection one), or the question with its page line is longer than
 one request carries, the search offers no Ask AI option. Where it can be offered the empty
 field reads "Search or ask a question", and while it is offered, a search that matches
 nothing says no "No matches" and gives no filter tips.

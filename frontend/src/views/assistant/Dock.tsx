@@ -17,7 +17,7 @@ import { SHORT_REASON, setDockReason, useDockMode, type AssistantReason } from "
 import { announceAssistant, closeAssistant } from "../../lib/assistantDockRuntime";
 import { CONVERSATION_PREFIX, EPOCH_KEY, INDEX_KEY, type Owner } from "../../lib/assistantStorage";
 import { canReadNamespace, isCollectionName, isMemoryNamespace } from "../../lib/namespace";
-import { hasOrgAdminClaim, hasPlatformAdminClaim } from "../../lib/role";
+import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../../lib/role";
 import { useStore } from "../../lib/state";
 import { AssistantChat, KEPT_HERE } from "./Chat";
 import {
@@ -675,8 +675,10 @@ function ReasonBody({
 export const SETUP_DOCS = { page: "features/integrations/librechat.md", anchor: "the-deployed-assistant" };
 
 /** Chat not set up (`failing`: its setup failing): the icon, a title and one sentence, then
- *  the docs on setting up the assistant service, or Try again while it fails. The line about
- *  Loom's own reads shows only while the starters, which need no model, show under it. */
+ *  the docs on setting up the assistant service, or Try again while it fails, with Admin ›
+ *  Health for someone who can open it (a platform or namespace admin) and who fixes it for
+ *  anyone else. The line about Loom's own reads shows only while the starters, which need no
+ *  model, show under it. */
 function SetupState({
   failing,
   starters,
@@ -687,8 +689,14 @@ function SetupState({
   onTryAgain: () => void;
 }) {
   const openDocsPage = useStore((s) => s.openDocsPage);
+  const whoami = useStore((s) => s.whoami);
+  const mine = useStore((s) => s.myNamespaces);
+  const namespace = useStore((s) => s.identity?.namespace ?? "");
+  const seesHealth = hasPlatformAdminClaim(whoami) || isNamespaceAdmin(whoami, mine, namespace);
   const first = failing
-    ? "Loom retries the setup on its own."
+    ? seesHealth
+      ? "Loom retries the setup on its own; Admin › Health says why it fails."
+      : "Loom retries the setup on its own. An admin of this deployment fixes it."
     : "An operator sets up the assistant service for this deployment.";
   const reads = starters
     ? failing
@@ -712,9 +720,21 @@ function SetupState({
         {reads}
       </p>
       {failing ? (
-        <Button type="secondary" htmlType="button" onClick={onTryAgain}>
-          Try again
-        </Button>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Button type="secondary" htmlType="button" onClick={onTryAgain}>
+            Try again
+          </Button>
+          {seesHealth && (
+            <Link
+              component="button"
+              type="button"
+              size="sm"
+              onClick={() => useStore.getState().navigate("admin:health", { arriveFocus: "health-assistant" })}
+            >
+              See Health
+            </Link>
+          )}
+        </div>
       ) : (
         <Link
           component="button"

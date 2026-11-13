@@ -69,8 +69,9 @@ interface CardAsk {
  *  the answer streams into the card on top, headed "Ask AI", whose one "Continue in chat"
  *  option opens the panel on the same conversation, and the results stay listed under it.
  *  Typing alone never asks. No Ask AI option where the chat is off, the token's claims or a
- *  reason other than the setup starting or failing block it, the namespace holds no
- *  memories, or the question is longer than one request carries. */
+ *  reason other than the setup starting or failing block it, the namespace is not a memory
+ *  namespace (a code, tracker or collection one), or the question is longer than one
+ *  request carries. */
 export function HeaderSearch({
   autoFocus = false,
   initialQuery = "",
@@ -393,6 +394,10 @@ export function HeaderSearch({
   const askRowShown = askable && parsed.raw.length > 0 && !asked;
   // A question leads with the option that asks it; keywords stay results-first.
   const askRowFirst = askRowShown && !filtered && readsAsQuestion(q);
+  // After keywords the option waits for the memory search: until its results land, the
+  // option would be the highlighted top row, and Enter would ask instead of opening a result.
+  const memoryPending = searching && memoryQuery.length >= MEMORY_MIN_CHARS;
+  const askRowLast = askRowShown && !askRowFirst && !memoryPending;
   useEffect(() => {
     // A preload: a chunk that fails to load is said when the question is asked.
     if (askRowFirst) loadSearchAnswer().catch(() => undefined);
@@ -418,7 +423,7 @@ export function HeaderSearch({
       ...profileShown.map((section) => ({ kind: "profile" as const, section })),
       ...memoryShown.map((mem) => ({ kind: "mem" as const, mem })),
       ...documentsShown.map((doc) => ({ kind: "doc" as const, doc })),
-      ...(askRowShown && !askRowFirst ? [{ kind: "askRow" as const }] : []),
+      ...(askRowLast ? [{ kind: "askRow" as const }] : []),
     ],
     [
       cardShown,
@@ -429,7 +434,7 @@ export function HeaderSearch({
       profileShown,
       memoryShown,
       documentsShown,
-      askRowShown,
+      askRowLast,
     ],
   );
 
@@ -529,8 +534,6 @@ export function HeaderSearch({
       activate(activeIdx);
     }
   };
-
-  const memoryPending = searching && memoryQuery.length >= MEMORY_MIN_CHARS;
 
   // Index offsets for activeIdx → row mapping.
   const offAskFirst = cardShown ? 1 : 0;
@@ -832,7 +835,7 @@ export function HeaderSearch({
               </OptionGroup>
             )}
 
-            {askRowShown && !askRowFirst && askOption(offAskRow, "mt-1")}
+            {askRowLast && askOption(offAskRow, "mt-1")}
           </div>
         )}
 
