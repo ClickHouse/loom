@@ -703,8 +703,8 @@ holds the name, the review is refused and names them, so the admin demotes all b
 draft for a new term is written under the key its queue row carries (`memory_key`):
 `definition/` and a random id drawn when the draft claims its candidate id, so every retry
 of one review uses one key, and a draft queued again after a rollback gets a new one.
-`learnings.list` shows that key; for a revision the review writes under that definition's
-key instead, which the listed key does not name; the admin finds it in
+`learnings.list` shows that key; for a revision the review writes under the matched shared
+definition's key instead, which the listed key does not name; the admin finds it in
 `memory.definitions.list` by its term, and each entry there carries the
 `promoted_from_candidate_id` the shared row holds. A definition promotes to memory only; a
 `destination` of `knowledge` or `both` is refused for these candidates. A draft rejected
@@ -744,7 +744,9 @@ order, the first that matches deciding:
   the no-write case then promotes;
 - any other head is a writer's edit, or a head the read-time check would not serve
   (`conflicted`, `duplicate`), and the review is refused rather than overwrite or promote
-  it.
+  it; the admin edits the row to the draft's text, with `clear_expiry`, and reviews again,
+  which the no-write case then promotes (after `conflicts.resolve` or
+  `memory.dedup_resolve` for a marked row), or writes and promotes it directly.
 
 A retry so completes the promotion. Rejecting the draft instead leaves any row a writer
 wrote, which the admin restores from the row's history or promotes.
