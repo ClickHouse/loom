@@ -88,7 +88,7 @@ def test_links_inside_code_are_left_alone() -> None:
 
 
 def test_a_translation_must_keep_code_links_and_numbers() -> None:
-    source = "Run `loom up` on 3 hosts, see [docs](https://x.test/a).\n\n```sh\nloom up\n```\n"
+    source = "Run `loom up` on 3 hosts, see [Loom](https://x.test/a).\n\n```sh\nloom up\n```\n"
     assert t.differences(source, source.replace("Run", "Lancez")) == []
     assert t.differences(source, source.replace("three", "3")) == []
     broken = {
@@ -128,7 +128,8 @@ def test_a_heading_or_link_text_handed_back_in_english_is_a_difference() -> None
     source = "## Get a token\n\nSee [agent memory](agent-memory.md) and [Docker](../d.md).\n"
     kept = "## Get a token\n\nVoir [agent memory](agent-memory.md) et [Docker](../d.md).\n"
     assert t.differences(source, kept) == [
-        "untranslated headings or link texts: ['Get a token', 'agent memory']"
+        "left in English (headings, link texts, alt texts, table cells): "
+        "['Get a token', 'agent memory']"
     ]
     done = "## Obtenir un jeton\n\nVoir [mémoire](agent-memory.md) et [Docker](../d.md).\n"
     assert t.differences(source, done) == []
@@ -138,10 +139,31 @@ def test_a_language_name_heading_may_stay_as_it_is() -> None:
     assert t.differences("## Go\n\nText.\n", "## Go\n\nTexto.\n") == []
 
 
-def test_a_link_to_an_english_only_page_may_keep_its_title() -> None:
+def test_a_link_to_an_english_only_page_is_translated_too() -> None:
     url = f"{t.REPO_URL}/blob/main/docs/operations/deployment.md"
     source = f"See [Deployment → Providers]({url}).\n"
-    assert t.differences(source, f"Voir [Deployment → Providers]({url}).\n") == []
+    assert t.differences(source, f"Voir [Deployment → Providers]({url}).\n")
+    assert t.differences(source, f"Voir [Déploiement → Fournisseurs]({url}).\n") == []
+
+
+def test_alt_texts_html_link_texts_and_table_cells_are_checked() -> None:
+    source = (
+        '<a href="#x">Get started</a> <img alt="Python SDK on PyPI" src="a.svg">\n'
+        "![dashboard showing memories](a.png)\n\n| Benchmark | Score |\n| --- | --- |\n"
+        "| LoCoMo (all conversations) | 0.84 |\n| Recall | 1 |\n"
+    )
+    kept = t.differences(source, source)
+    assert kept and all(
+        x in kept[0]
+        for x in (
+            "Get started",
+            "Python SDK on PyPI",
+            "dashboard showing memories",
+            "LoCoMo (all conversations)",
+        )
+    )
+    # A one-word cell ("Recall") may stay: table cells need two words to translate.
+    assert "Recall" not in kept[0]
 
 
 def test_a_translation_may_write_a_spelled_number_as_digits() -> None:
@@ -156,6 +178,43 @@ def test_the_cost_cap_is_checked_before_the_next_call() -> None:
     with pytest.raises(SystemExit, match="LOOM_I18N_MAX_USD"):
         spend.before_call()
     assert spend.stopped.is_set()
+
+
+def test_a_label_borrowed_from_another_section_keeps_the_page_unwritten(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    english = "## A\n\nSee [Get a token](t.md).\n\n## B\n\nSee [the docs](t.md).\n" + "x " * 4000
+    replies = {
+        "A": "## Ä\n\nVoir [Obtenir un jeton](t.md).\n",
+        "B": "## Bé\n\nVoir [Get a token](t.md).\n",
+    }
+    monkeypatch.setattr(t, "ROOT", tmp_path)
+    monkeypatch.setattr(t, "prepare", lambda source, lang: (english, ""))
+    monkeypatch.setattr(
+        t, "translate_text", lambda text, lang, key, spend: replies["A" if "## A" in text else "B"]
+    )
+    with pytest.raises(t.TranslationDiffers, match="Get a token"):
+        t.translate_page("docs/x.md", t.LANGUAGES[1], "key", t.Spend("claude-sonnet-5-5", 1.0))
+    assert not (tmp_path / "i18n").exists()
+
+
+def test_a_page_that_still_differs_lets_the_others_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    written: list[str] = []
+
+    def fake_page(source: str, lang: t.Language, key: str, spend: t.Spend) -> None:
+        if source == t.SOURCES[0]:
+            raise t.TranslationDiffers("ja: a translation still differs after a retry")
+        written.append(source)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    monkeypatch.setattr(t, "translate_page", fake_page)
+    monkeypatch.setattr(t, "write_language_lines", lambda: None)
+    monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
+    with pytest.raises(SystemExit, match="pages not written:\nja: a translation still differs"):
+        t.update(every=True, codes=["ja"])
+    assert sorted(written) == sorted(t.SOURCES[1:])
 
 
 def test_the_first_failed_page_stops_the_others(
