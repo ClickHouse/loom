@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime
 from typing import Any
 
@@ -58,7 +59,8 @@ def test_a_cursor_it_did_not_issue_is_refused(namespaces: list[str], cursor: str
 
 def test_a_several_namespace_cursor_with_a_byte_changed_is_refused() -> None:
     good = document_reads._list_cursor(_row("b", "doc://a"), "acme", ["a", "b"])
-    tampered = good[:-3] + ("A" if good[-3] != "A" else "B") + good[-2:]
+    raw = base64.urlsafe_b64decode(good).replace(b"doc://a", b"doc://b")
+    tampered = base64.urlsafe_b64encode(raw).decode()
     with pytest.raises(ValidationError):
         document_reads._list_position(tampered, "acme", ["a", "b"])
 
