@@ -33,7 +33,7 @@ export interface LoomRetrieverOptions extends BaseRetrieverInput {
 export interface LoomKnowledgeRetrieverOptions extends LoomRetrieverOptions {
   /** Only documents whose `source_uri` starts with one of these. */
   uriPrefix?: string[];
-  /** `all_mine` searches every namespace the token may read. Default `this`. */
+  /** `this` searches the agent's namespace; `all_mine` adds the caller's other namespaces, up to the server's fan-out cap. Default `this`. */
   namespaceScope?: NonNullable<KnowledgeSearchBody["namespace_scope"]>;
   /** Further `knowledge.search` fields (`search_mode`, `rerank`, ...). */
   searchKwargs?: Omit<KnowledgeSearchBody, "query">;
@@ -48,7 +48,7 @@ export interface LoomMemoryRetrieverOptions extends LoomRetrieverOptions {
   honourAbstain?: boolean;
 }
 
-/** Chunks from `knowledge.search`, one `Document` per chunk; the id is `<source_uri>#<chunk_idx>`. */
+/** Chunks from `knowledge.search`, one `Document` per chunk; the id is `<namespace>/<source_uri>#<chunk_idx>`. */
 export class LoomKnowledgeRetriever extends BaseRetriever {
   lc_namespace = ["loom", "retrievers", "knowledge"];
   private readonly k: number;
@@ -65,31 +65,36 @@ export class LoomKnowledgeRetriever extends BaseRetriever {
       top_k: this.k,
       ...(opts.searchTags?.length ? { tags: [...opts.searchTags] } : {}),
       ...(opts.uriPrefix?.length ? { uri_prefix: [...opts.uriPrefix] } : {}),
-      ...(opts.namespaceScope && opts.namespaceScope !== "this" ? { namespace_scope: opts.namespaceScope } : {}),
+      // Always sent: the server's own default is `all_mine`.
+      namespace_scope: opts.namespaceScope ?? "this",
     };
   }
 
   async _getRelevantDocuments(query: string, _runManager?: CallbackManagerForRetrieverRun): Promise<Document[]> {
     const out = await this.agent.call("knowledge.search", { ...this.body, query } as KnowledgeSearchBody);
-    return out.results.map(
-      (h) =>
-        new Document({
-          pageContent: h.content,
-          metadata: {
-            source_uri: h.source_uri,
-            chunk_idx: h.chunk_idx,
-            similarity: round4(h.similarity),
-            section: h.section ?? "",
-            namespace: h.namespace ?? "",
-            tags: [...h.tags],
-          },
-          id: `${h.source_uri}#${h.chunk_idx}`,
-        }),
-    );
+    return out.results.map((h) => {
+      // A hit names its namespace only on a fan-out; otherwise it is the agent's.
+      const namespace = h.namespace || this.agent.namespace;
+      return new Document({
+        pageContent: h.content,
+        metadata: {
+          source_uri: h.source_uri,
+          chunk_idx: h.chunk_idx,
+          similarity: round4(h.similarity),
+          section: h.section ?? "",
+          namespace,
+          tags: [...h.tags],
+        },
+        id: `${namespace}/${h.source_uri}#${h.chunk_idx}`,
+      });
+    });
   }
 }
 
-/** Memories from `memory.search`, one `Document` per memory; the id is the memory key. */
+/**
+ * Memories from `memory.search`, one `Document` per memory. The documents carry no id: a
+ * memory key is unique per agent, user and session, and a search reads every agent's memories.
+ */
 export class LoomMemoryRetriever extends BaseRetriever {
   lc_namespace = ["loom", "retrievers", "memory"];
   private readonly k: number;
@@ -122,10 +127,9 @@ export class LoomMemoryRetriever extends BaseRetriever {
             memory_key: h.memory_key,
             memory_type: h.memory_type,
             similarity: round4(h.similarity),
-            ...(h.source ? { source: h.source } : {}),
+            source: h.source ?? "fact", // the server's default, as the Python SDK reads it
             ...(h.valid_at ? { valid_at: h.valid_at } : {}),
           },
-          id: h.memory_key,
         }),
     );
   }

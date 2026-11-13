@@ -32,15 +32,20 @@ class _SyncSearch(_FakeSearch):
         return self._result
 
 
+def _agent(**clients: Any) -> SimpleNamespace:
+    return SimpleNamespace(namespace="support", **clients)
+
+
 def _sync_agent(**clients: Any) -> SyncAgent:
     """A SyncAgent whose clients are fakes; no loop or transport behind it."""
     agent = object.__new__(SyncAgent)
+    agent._agent = SimpleNamespace(namespace="support")  # type: ignore[attr-defined]
     for name, client in clients.items():
         setattr(agent, name, client)
     return agent
 
 
-def _chunk(uri: str, idx: int, text: str, sim: float = 0.8) -> SearchHit:
+def _chunk(uri: str, idx: int, text: str, sim: float = 0.8, namespace: str = "") -> SearchHit:
     return SearchHit(
         source_uri=uri,
         chunk_idx=idx,
@@ -48,7 +53,7 @@ def _chunk(uri: str, idx: int, text: str, sim: float = 0.8) -> SearchHit:
         tags=["policy"],
         distance=1 - sim,
         similarity=sim,
-        namespace="support",
+        namespace=namespace,
         section="Refunds",
     )
 
@@ -76,12 +81,13 @@ def test_both_are_langchain_retrievers() -> None:
 
 def test_knowledge_documents_carry_the_chunk_and_where_it_came_from() -> None:
     knowledge = _FakeSearch([_chunk("doc://refunds", 2, "Annual plans refund pro rata.", 0.91234)])
-    retriever = LoomKnowledgeRetriever(agent=SimpleNamespace(knowledge=knowledge), k=3)
+    retriever = LoomKnowledgeRetriever(agent=_agent(knowledge=knowledge), k=3)
     docs = asyncio.run(retriever.ainvoke("refund policy"))
-    assert knowledge.calls == [{"query": "refund policy", "top_k": 3}]
+    # namespace_scope is always sent: the server's own default is all_mine
+    assert knowledge.calls == [{"query": "refund policy", "top_k": 3, "namespace_scope": "this"}]
     assert len(docs) == 1
     assert docs[0].page_content == "Annual plans refund pro rata."
-    assert docs[0].id == "doc://refunds#2"
+    assert docs[0].id == "support/doc://refunds#2"
     assert docs[0].metadata == {
         "source_uri": "doc://refunds",
         "chunk_idx": 2,
@@ -92,10 +98,19 @@ def test_knowledge_documents_carry_the_chunk_and_where_it_came_from() -> None:
     }
 
 
+def test_a_fanned_out_hit_is_named_by_its_own_namespace() -> None:
+    knowledge = _FakeSearch([_chunk("doc://refunds", 0, "text", namespace="billing")])
+    retriever = LoomKnowledgeRetriever(
+        agent=_agent(knowledge=knowledge), namespace_scope="all_mine"
+    )
+    (doc,) = asyncio.run(retriever.ainvoke("refunds"))
+    assert doc.id == "billing/doc://refunds#0" and doc.metadata["namespace"] == "billing"
+
+
 def test_knowledge_search_fields_are_sent_only_when_set() -> None:
     knowledge = _FakeSearch([])
     retriever = LoomKnowledgeRetriever(
-        agent=SimpleNamespace(knowledge=knowledge),
+        agent=_agent(knowledge=knowledge),
         search_tags=["policy"],
         uri_prefix=["doc://handbook/"],
         namespace_scope="all_mine",
@@ -127,8 +142,11 @@ def test_memory_documents_carry_the_key_and_score() -> None:
         agent=SimpleNamespace(memory=memory),
         k=1,
         search_tags=["customer"],
-        memory_type="semantic",
+        memory_type="preference",
         user_id="alice",
+        session_id="s-1",
+        run_id="r-1",
+        agent_id="planner",
     )
     docs = asyncio.run(retriever.ainvoke("seating"))
     assert memory.calls == [
@@ -136,12 +154,15 @@ def test_memory_documents_carry_the_key_and_score() -> None:
             "query": "seating",
             "top_k": 1,
             "tags": ["customer"],
-            "memory_type": "semantic",
+            "memory_type": "preference",
             "user_id": "alice",
+            "session_id": "s-1",
+            "run_id": "r-1",
+            "agent_id": "planner",
         }
     ]
     assert [d.page_content for d in docs] == ["Alice prefers aisle seats"]
-    assert docs[0].id == "prefs/seat"
+    assert docs[0].id is None  # a key is unique per agent, user and session only
     assert docs[0].metadata == {
         "memory_key": "prefs/seat",
         "memory_type": "semantic",
@@ -158,15 +179,15 @@ def test_memory_abstain_returns_nothing_unless_disabled() -> None:
     loose = LoomMemoryRetriever(
         agent=SimpleNamespace(memory=_FakeSearch(weak)), honour_abstain=False
     )
-    assert [d.id for d in asyncio.run(loose.ainvoke("anything"))] == ["k"]
+    assert [d.metadata["memory_key"] for d in asyncio.run(loose.ainvoke("anything"))] == ["k"]
 
 
 def test_invoke_runs_on_a_sync_agent() -> None:
     knowledge = _SyncSearch([_chunk("doc://a", 0, "text")])
     retriever = LoomKnowledgeRetriever(agent=_sync_agent(knowledge=knowledge))
-    assert [d.id for d in retriever.invoke("q")] == ["doc://a#0"]
+    assert [d.id for d in retriever.invoke("q")] == ["support/doc://a#0"]
     # ainvoke on a SyncAgent runs the blocking call off the event loop
-    assert [d.id for d in asyncio.run(retriever.ainvoke("q"))] == ["doc://a#0"]
+    assert [d.id for d in asyncio.run(retriever.ainvoke("q"))] == ["support/doc://a#0"]
     assert len(knowledge.calls) == 2
 
 

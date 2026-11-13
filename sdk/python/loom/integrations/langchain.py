@@ -11,8 +11,8 @@ Usage::
     from loom import Agent, SyncAgent
     from loom.integrations.langchain import LoomKnowledgeRetriever
 
-    retriever = LoomKnowledgeRetriever(agent=SyncAgent(org="acme", namespace="support"))
-    docs = retriever.invoke("refund policy for annual plans")
+    with SyncAgent(org="acme", namespace="support") as agent:
+        docs = LoomKnowledgeRetriever(agent=agent).invoke("refund policy for annual plans")
 
     async with Agent(org="acme", namespace="support") as agent:
         docs = await LoomKnowledgeRetriever(agent=agent).ainvoke("refund policy")
@@ -26,7 +26,8 @@ read. Install with ``pip install 'clickhouse-loom[langchain]'``.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Literal
+from abc import abstractmethod
+from typing import Any, ClassVar, Literal
 
 try:
     from langchain_core.callbacks import (
@@ -52,16 +53,16 @@ class _LoomRetriever(BaseRetriever):
     """Loom tags every returned row must carry. (``tags`` is LangChain's
     callback tags field.)"""
 
-    _client: str  # the agent's client the search runs on
+    client_name: ClassVar[str]  # the agent's client the search runs on
 
-    def _call_kwargs(self) -> dict[str, Any]:
-        raise NotImplementedError
+    @abstractmethod
+    def _call_kwargs(self) -> dict[str, Any]: ...
 
-    def _documents(self, result: Any) -> list[Document]:
-        raise NotImplementedError
+    @abstractmethod
+    def _documents(self, result: Any) -> list[Document]: ...
 
     def _sync_search(self, query: str) -> list[Document]:
-        client = getattr(self.agent, self._client)
+        client = getattr(self.agent, self.client_name)
         return self._documents(client.search(query, **self._call_kwargs()))
 
     def _get_relevant_documents(
@@ -80,7 +81,7 @@ class _LoomRetriever(BaseRetriever):
         if isinstance(self.agent, SyncAgent):
             # A SyncAgent blocks; its own loop thread serves the call.
             return await asyncio.to_thread(self._sync_search, query)
-        client = getattr(self.agent, self._client)
+        client = getattr(self.agent, self.client_name)
         return self._documents(await client.search(query, **self._call_kwargs()))
 
 
@@ -89,14 +90,15 @@ class LoomKnowledgeRetriever(_LoomRetriever):
 
     ``page_content`` is the chunk text; ``metadata`` carries ``source_uri``,
     ``chunk_idx``, ``similarity``, ``section``, ``namespace`` and ``tags``, and
-    the document id is ``<source_uri>#<chunk_idx>``.
+    the document id is ``<namespace>/<source_uri>#<chunk_idx>``.
     """
 
-    _client = "knowledge"
+    client_name = "knowledge"
     uri_prefix: list[str] | None = None
     """Only documents whose ``source_uri`` starts with one of these."""
     namespace_scope: Literal["this", "all_mine"] = "this"
-    """``all_mine`` searches every namespace the token may read."""
+    """``this`` searches the agent's namespace; ``all_mine`` adds the caller's
+    other namespaces, up to the server's fan-out cap."""
     search_kwargs: dict[str, Any] = {}
     """Further ``knowledge.search`` fields (``search_mode``, ``rerank``, ...)."""
 
@@ -106,26 +108,30 @@ class LoomKnowledgeRetriever(_LoomRetriever):
             kwargs["tags"] = list(self.search_tags)
         if self.uri_prefix:
             kwargs["uri_prefix"] = list(self.uri_prefix)
-        if self.namespace_scope != "this":
-            kwargs["namespace_scope"] = self.namespace_scope
+        # Always sent: the server's own default is `all_mine`.
+        kwargs["namespace_scope"] = self.namespace_scope
         return kwargs
 
     def _documents(self, result: Any) -> list[Document]:
-        return [
-            Document(
-                page_content=hit.content,
-                metadata={
-                    "source_uri": hit.source_uri,
-                    "chunk_idx": hit.chunk_idx,
-                    "similarity": round(float(hit.similarity), 4),
-                    "section": hit.section,
-                    "namespace": hit.namespace,
-                    "tags": list(hit.tags),
-                },
-                id=f"{hit.source_uri}#{hit.chunk_idx}",
+        docs = []
+        for hit in result:
+            # A hit names its namespace only on a fan-out; otherwise it is the agent's.
+            namespace = hit.namespace or self.agent.namespace
+            docs.append(
+                Document(
+                    page_content=hit.content,
+                    metadata={
+                        "source_uri": hit.source_uri,
+                        "chunk_idx": hit.chunk_idx,
+                        "similarity": round(float(hit.similarity), 4),
+                        "section": hit.section,
+                        "namespace": namespace,
+                        "tags": list(hit.tags),
+                    },
+                    id=f"{namespace}/{hit.source_uri}#{hit.chunk_idx}",
+                )
             )
-            for hit in result
-        ]
+        return docs
 
 
 class LoomMemoryRetriever(_LoomRetriever):
@@ -133,26 +139,32 @@ class LoomMemoryRetriever(_LoomRetriever):
 
     ``page_content`` is the memory's text; ``metadata`` carries
     ``memory_key``, ``memory_type``, ``similarity``, ``source`` and, when set,
-    ``valid_at``, and the document id is the memory key. When Loom abstains
+    ``valid_at``. The documents carry no id: a memory key is unique per agent,
+    user and session, and a search reads every agent's memories. When Loom abstains
     (no memory above its calibrated floor) the retriever returns no documents
     unless ``honour_abstain`` is false.
     """
 
-    _client = "memory"
-    memory_type: Literal["semantic", "episodic", "procedural"] | None = None
-    """Only memories of this type."""
+    client_name = "memory"
+    memory_type: str | None = None
+    """Only memories of this type (``semantic``, ``procedural``, ``preference``, ...)."""
     user_id: str | None = None
     """The end user whose memories to read."""
+    session_id: str | None = None
+    """Only memories written in this session."""
+    run_id: str | None = None
+    """Only memories written in this run."""
+    agent_id: str | None = None
+    """Only this agent's memories."""
     honour_abstain: bool = True
 
     def _call_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"top_k": self.k}
         if self.search_tags:
             kwargs["tags"] = list(self.search_tags)
-        if self.memory_type:
-            kwargs["memory_type"] = self.memory_type
-        if self.user_id:
-            kwargs["user_id"] = self.user_id
+        for field in ("memory_type", "user_id", "session_id", "run_id", "agent_id"):
+            if getattr(self, field):
+                kwargs[field] = getattr(self, field)
         return kwargs
 
     def _documents(self, result: Any) -> list[Document]:
@@ -168,7 +180,5 @@ class LoomMemoryRetriever(_LoomRetriever):
             }
             if hit.valid_at:
                 metadata["valid_at"] = hit.valid_at
-            docs.append(
-                Document(page_content=hit.content_excerpt, metadata=metadata, id=hit.memory_key)
-            )
+            docs.append(Document(page_content=hit.content_excerpt, metadata=metadata))
         return docs

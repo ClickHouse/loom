@@ -19,7 +19,6 @@ const chunk = {
   tags: ["policy"],
   distance: 0.09,
   similarity: 0.912345,
-  namespace: "n",
   section: "Refunds",
 };
 
@@ -34,11 +33,17 @@ describe("LoomKnowledgeRetriever (LangChain.js adapter)", () => {
     const docs = await new LoomKnowledgeRetriever(agent, { k: 3 }).invoke("refund policy");
     expect(calls).toHaveLength(1);
     expect(calls[0].op).toBe("knowledge.search");
-    expect(calls[0].body).toMatchObject({ org: "o", namespace: "n", query: "refund policy", top_k: 3 });
+    expect(calls[0].body).toMatchObject({
+      org: "o",
+      namespace: "n",
+      query: "refund policy",
+      top_k: 3,
+      namespace_scope: "this",
+    });
     expect(calls[0].body).not.toHaveProperty("tags");
     expect(docs).toHaveLength(1);
     expect(docs[0].pageContent).toBe("Annual plans refund pro rata.");
-    expect(docs[0].id).toBe("doc://refunds#2");
+    expect(docs[0].id).toBe("n/doc://refunds#2");
     expect(docs[0].metadata).toEqual({
       source_uri: "doc://refunds",
       chunk_idx: 2,
@@ -47,6 +52,13 @@ describe("LoomKnowledgeRetriever (LangChain.js adapter)", () => {
       namespace: "n",
       tags: ["policy"],
     });
+  });
+
+  it("names a fanned-out hit by its own namespace", async () => {
+    const { agent } = harness({ results: [{ ...chunk, namespace: "other" }], embedding_model: "m" });
+    const docs = await new LoomKnowledgeRetriever(agent, { namespaceScope: "all_mine" }).invoke("q");
+    expect(docs[0].id).toBe("other/doc://refunds#2");
+    expect(docs[0].metadata.namespace).toBe("other");
   });
 
   it("sends its filters, and k wins over a top_k in searchKwargs", async () => {
@@ -98,7 +110,8 @@ describe("LoomMemoryRetriever (LangChain.js adapter)", () => {
       memory_type: "semantic",
       user_id: "alice",
     });
-    expect(docs.map((d) => d.id)).toEqual(["prefs/seat"]);
+    expect(docs.map((d) => d.metadata.memory_key)).toEqual(["prefs/seat"]);
+    expect(docs[0].id).toBeUndefined();
     expect(docs[0].metadata).toEqual({
       memory_key: "prefs/seat",
       memory_type: "semantic",
@@ -112,6 +125,7 @@ describe("LoomMemoryRetriever (LangChain.js adapter)", () => {
     const reply = { ...memories, abstain: true };
     expect(await new LoomMemoryRetriever(harness(reply).agent).invoke("q")).toEqual([]);
     const loose = await new LoomMemoryRetriever(harness(reply).agent, { honourAbstain: false }).invoke("q");
-    expect(loose.map((d) => d.id)).toEqual(["prefs/seat", "prefs/meal"]);
+    expect(loose.map((d) => d.metadata.memory_key)).toEqual(["prefs/seat", "prefs/meal"]);
+    expect(loose[1].metadata.source).toBe("fact");
   });
 });

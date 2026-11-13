@@ -22,7 +22,7 @@ async def test_knowledge_retriever_returns_the_ingested_chunk(agent) -> None:
     docs = await retriever.ainvoke("annual plan refund window")
     assert [d.metadata["source_uri"] for d in docs] == [uri]
     assert "pro rata" in docs[0].page_content
-    assert docs[0].id == f"{uri}#0"
+    assert docs[0].id == f"{agent.namespace}/{uri}#0"
 
 
 async def test_memory_retriever_returns_the_written_memory(agent) -> None:
@@ -33,15 +33,15 @@ async def test_memory_retriever_returns_the_written_memory(agent) -> None:
         if docs:
             break
         await asyncio.sleep(0.25)
-    assert [d.id for d in docs][:1] == ["prefs/seat"]
-    assert docs[0].metadata["memory_key"] == "prefs/seat"
+    assert [d.metadata["memory_key"] for d in docs][:1] == ["prefs/seat"]
 
 
 def test_invoke_on_a_sync_agent(control_plane_url: str) -> None:
     uri = f"doc://handbook-{uuid.uuid4().hex[:6]}"
+    namespace = f"test-{uuid.uuid4().hex[:8]}"
     with SyncAgent(
         org="test-org",
-        namespace=f"test-{uuid.uuid4().hex[:8]}",
+        namespace=namespace,
         agent="test-agent",
         base_url=control_plane_url,
         api_key=os.environ["LOOM_API_KEY"],
@@ -50,4 +50,4 @@ def test_invoke_on_a_sync_agent(control_plane_url: str) -> None:
             content="Laptops are replaced every three years.", source_uri=uri, title="Hardware"
         )
         docs = LoomKnowledgeRetriever(agent=sync_agent, uri_prefix=[uri]).invoke("laptop refresh")
-    assert [d.id for d in docs] == [f"{uri}#0"]
+    assert [d.id for d in docs] == [f"{namespace}/{uri}#0"]

@@ -24,13 +24,19 @@ describe.skipIf(!base || !key)("LangChain.js retrievers on live loom", () => {
       title: "Refunds",
     } as never);
     const docs = await new LoomKnowledgeRetriever(bot, { uriPrefix: [uri] }).invoke("annual plan refund window");
-    expect(docs.map((d) => d.id)).toEqual([`${uri}#0`]);
+    expect(docs.map((d) => d.id)).toEqual([`${ns}/${uri}#0`]);
     expect(docs[0].pageContent).toContain("pro rata");
   });
 
   it("returns a remembered memory", async () => {
     await bot.remember("prefs/seat", "Alice prefers aisle seats on long flights");
-    const docs = await new LoomMemoryRetriever(bot, { honourAbstain: false }).invoke("Alice aisle seats long flights");
-    expect(docs[0]?.id).toBe("prefs/seat");
+    const retriever = new LoomMemoryRetriever(bot, { honourAbstain: false });
+    let docs = await retriever.invoke("Alice aisle seats long flights");
+    for (let i = 0; i < 20 && docs.length === 0; i++) {
+      // the write is searchable once its embedding lands
+      await new Promise((r) => setTimeout(r, 250));
+      docs = await retriever.invoke("Alice aisle seats long flights");
+    }
+    expect(docs[0]?.metadata.memory_key).toBe("prefs/seat");
   });
 });

@@ -34,9 +34,8 @@ so they work with `invoke`, in a chain, and as an agent tool through
 from loom import Agent, SyncAgent
 from loom.integrations.langchain import LoomKnowledgeRetriever, LoomMemoryRetriever
 
-docs = LoomKnowledgeRetriever(agent=SyncAgent(org="acme", namespace="support"), k=3).invoke(
-    "refund policy for annual plans"
-)
+with SyncAgent(org="acme", namespace="support") as agent:
+    docs = LoomKnowledgeRetriever(agent=agent, k=3).invoke("refund policy for annual plans")
 
 async with Agent(org="acme", namespace="support") as agent:
     memories = await LoomMemoryRetriever(agent=agent, user_id="alice").ainvoke("seat preference")
@@ -44,28 +43,28 @@ async with Agent(org="acme", namespace="support") as agent:
 
 `invoke` needs a `SyncAgent`; `ainvoke` takes an `Agent` or a `SyncAgent`.
 
-| Retriever                | `page_content`  | `id`                       | `metadata`                                                                           |
-| ------------------------ | --------------- | -------------------------- | ------------------------------------------------------------------------------------ |
-| `LoomKnowledgeRetriever` | the chunk       | `<source_uri>#<chunk_idx>` | `source_uri`, `chunk_idx`, `similarity`, `section`, `namespace`, `tags`              |
-| `LoomMemoryRetriever`    | the memory text | the memory key             | `memory_key`, `memory_type`, `similarity`, `source`, `valid_at` when the row has one |
+| Retriever                | `page_content`  | `id`                                                                                | `metadata`                                                                           |
+| ------------------------ | --------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `LoomKnowledgeRetriever` | the chunk       | `<namespace>/<source_uri>#<chunk_idx>`                                              | `source_uri`, `chunk_idx`, `similarity`, `section`, `namespace`, `tags`              |
+| `LoomMemoryRetriever`    | the memory text | none: a key is unique per agent, user and session, and a search reads every agent's | `memory_key`, `memory_type`, `similarity`, `source`, `valid_at` when the row has one |
 
-| Field             | Retriever | Default | Effect                                                               |
-| ----------------- | --------- | ------- | -------------------------------------------------------------------- |
-| `k`               | both      | 4       | documents per query                                                  |
-| `search_tags`     | both      | none    | only rows carrying these Loom tags (`tags` is LangChain's own field) |
-| `uri_prefix`      | knowledge | none    | only documents whose `source_uri` starts with one of these           |
-| `namespace_scope` | knowledge | `this`  | `all_mine` searches every namespace the token may read               |
-| `search_kwargs`   | knowledge | none    | further `knowledge.search` fields, such as `search_mode` or `rerank` |
-| `memory_type`     | memory    | any     | only memories of this type                                           |
-| `user_id`         | memory    | none    | the end user whose memories to read                                  |
-| `honour_abstain`  | memory    | `True`  | return no documents when Loom abstains                               |
+| Field                                         | Retriever | Default | Effect                                                                        |
+| --------------------------------------------- | --------- | ------- | ----------------------------------------------------------------------------- |
+| `k`                                           | both      | 4       | documents per query                                                           |
+| `search_tags`                                 | both      | none    | only rows carrying these Loom tags (`tags` is LangChain's own field)          |
+| `uri_prefix`                                  | knowledge | none    | only documents whose `source_uri` starts with one of these                    |
+| `namespace_scope`                             | knowledge | `this`  | `all_mine` adds the caller's other namespaces, up to the server's fan-out cap |
+| `search_kwargs`                               | knowledge | none    | further `knowledge.search` fields, such as `search_mode` or `rerank`          |
+| `memory_type`                                 | memory    | any     | only memories of this type                                                    |
+| `user_id`, `session_id`, `run_id`, `agent_id` | memory    | none    | only that user's, session's, run's or agent's memories                        |
+| `honour_abstain`                              | memory    | `True`  | return no documents when Loom abstains                                        |
 
 A LangChain agent built with `create_agent` runs on LangGraph: pass `LoomStore` (below)
 as its `store` for long-term memory.
 
 The TypeScript retrievers extend `BaseRetriever` from `@langchain/core` (an optional peer
-dependency, 1.x) and take the same options in camelCase; the memory retriever's `scope`
-selects a user, session or run:
+dependency, 1.x) and take the same options in camelCase, with the memory retriever's
+user, session, run and agent in one `scope`:
 
 ```ts
 import {
