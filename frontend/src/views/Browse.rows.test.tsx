@@ -420,11 +420,11 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     expect(useStore.getState().view).toBe("knowledge");
   });
 
-  it("offers neither a request nor a Library line for a personal collection or a bare prefix", async () => {
+  it("offers neither a request nor a Library line for a personal collection, a bare prefix or a col- phrase", async () => {
     render(<Browse />);
     await screen.findByText("Support team runbooks");
     const box = screen.getByRole("textbox", { name: "Search namespaces" });
-    for (const name of ["col-me-0123456789abcdef", "col-"]) {
+    for (const name of ["col-me-0123456789abcdef", "col-", "col-research notes"]) {
       await userEvent.clear(box);
       await userEvent.type(box, name);
       expect(await screen.findByText(/No public namespaces match/)).toHaveTextContent(

@@ -208,12 +208,12 @@ export function Browse() {
   const managedTracker = adminNs.filter((r) => isTrackerKind(r.kind));
   const repoHint = repoCount > 0 && (
     <div className="text-xs text-text-muted">
-      Looking for a repository or a tracker source? Both are joined from{" "}
+      Looking for a repository? Repositories are joined from{" "}
       <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
         Repositories
       </Link>{" "}
       — {repoCount} repositor{repoCount === 1 ? "y" : "ies"} available, each with its issues & PRs when a record covers
-      it, read-only.
+      it, read-only. A public tracker namespace is listed here and joined like any other.
     </div>
   );
   const managedProps = {
@@ -242,7 +242,7 @@ export function Browse() {
   const typedCollection = typedName.startsWith(COLLECTION_PREFIX);
   const elsewhere = repoNames.includes(typedName)
     ? "repository"
-    : typedCollection && typedName.length > COLLECTION_PREFIX.length && !isPersonalCollection(typedName)
+    : isCollectionName(typedName) && typedName.length > COLLECTION_PREFIX.length && !isPersonalCollection(typedName)
       ? "collection"
       : null;
   const offersRequest =

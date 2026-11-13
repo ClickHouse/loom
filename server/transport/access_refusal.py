@@ -22,6 +22,12 @@ NO_REPO_ACCESS = "NO_REPO_ACCESS"
 ACCESS_UNVERIFIED = "ACCESS_UNVERIFIED"
 _PLANE_TOOLS = ("loom_code_", "loom_tracker_")
 _PLANE_OPS = ("code.", "tracker.")
+# Where a person asks for a namespace's grant in the dashboard: the namespace refusals and
+# a tracker index's (a code index's is requested from Repositories).
+DASHBOARD_REQUEST = (
+    "(namespace picker → Find public namespaces to join; for a private namespace, "
+    "search its exact name on Namespaces in your org)"
+)
 
 
 def is_plane_tool(tool_name: str) -> bool:
@@ -32,7 +38,12 @@ def is_plane_op(op_name: str) -> bool:
     return str(op_name or "").startswith(_PLANE_OPS)
 
 
-def _ways_in(subject: str, namespace: str) -> str:
+def is_tracker(name: str) -> bool:
+    """Whether a tool or op name is the tracker plane's."""
+    return str(name or "").startswith(("loom_tracker_", "tracker."))
+
+
+def _ways_in(subject: str, namespace: str, tracker: bool) -> str:
     if subject.startswith("sa:agent-"):
         return (
             "this is the machine's self-signup token, which has no grants of its own: claim "
@@ -40,22 +51,22 @@ def _ways_in(subject: str, namespace: str) -> str:
             "as you, or "
             "save a token for your user (`loom mint-token --save`)"
         )
-    return (
-        f"request access to {namespace!r} from the dashboard's Repositories page, "
-        "or ask its admin for a grant"
-    )
+    where = f"the dashboard {DASHBOARD_REQUEST}" if tracker else "the dashboard's Repositories page"
+    return f"request access to {namespace!r} from {where}, or ask its admin for a grant"
 
 
-def refusal(subject: str, org: str, namespace: str) -> dict[str, Any]:
+def refusal(subject: str, org: str, namespace: str, *, tracker: bool = False) -> dict[str, Any]:
     """The structured body of a code/tracker access refusal over MCP. It is the same
     whether or not the check ran: a restricted code namespace is refused before the grant
-    read that fails, so a different answer would tell it from one that does not exist."""
+    read that fails, so a different answer would tell it from one that does not exist.
+    `tracker`: the refused tool or op is the tracker plane's, whose namespace is joined
+    from the namespaces page, not Repositories."""
     where = f"{org}/{namespace}" if org else namespace
     msg = (
         f"No access: {subject or 'this token'} cannot read the index {where}. Every "
         f"code/tracker tool on it, on any Loom connection using this credential, will refuse "
         f"the same way — do not retry; fall back to local grep/Read. To get access: "
-        f"{_ways_in(subject or '', namespace)}."
+        f"{_ways_in(subject or '', namespace, tracker)}."
     )
     return {"error": msg, "code": AuthInsufficientError.code, **reason_fields(namespace)}
 

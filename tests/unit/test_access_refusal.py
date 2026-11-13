@@ -26,6 +26,26 @@ def test_a_person_is_told_to_request_the_grant() -> None:
     assert "dashboard's Repositories page" in body["error"] and "claim" not in body["error"]
 
 
+def test_a_tracker_refusal_points_to_the_namespace_picker_not_repositories() -> None:
+    auth = SimpleNamespace(subject="avery@example.com", org="clickhouse")
+    by_op = mcp_call._forbidden_result(
+        OPERATIONS_BY_NAME["tracker.item"],
+        PermissionError("cannot access"),
+        auth,
+        "clickhouse",
+        "tracker-loom",
+    )["structuredContent"]["error"]
+    by_tool = mcp_auth._not_accessible_result("loom_tracker_search", auth, "tracker-loom")[
+        "structuredContent"
+    ]["error"]
+    for text in (by_op, by_tool):
+        assert ar.DASHBOARD_REQUEST in text and "Repositories" not in text
+    code = mcp_call._forbidden_result(
+        OPERATIONS_BY_NAME["code.search"], PermissionError("x"), auth, "clickhouse", "code-loom"
+    )["structuredContent"]["error"]
+    assert "dashboard's Repositories page" in code and ar.DASHBOARD_REQUEST not in code
+
+
 def test_role_check_refusal_on_a_code_op_is_actionable() -> None:
     auth = SimpleNamespace(subject="sa:agent-x", org="clickhouse")
     out = mcp_call._forbidden_result(
@@ -69,7 +89,7 @@ def test_a_refused_collection_points_at_collection_list_and_a_namespace_does_not
     assert col["content"][0]["text"] == col["structuredContent"]["error"]
     other = mcp_auth._not_accessible_result("loom_memory_get", auth, "other")
     assert "collection.list" not in other["structuredContent"]["error"]
-    assert mcp_auth.DASHBOARD_REQUEST in other["structuredContent"]["error"]
+    assert ar.DASHBOARD_REQUEST in other["structuredContent"]["error"]
 
 
 def test_an_assistant_connection_is_pointed_at_no_tool_it_cannot_call() -> None:
@@ -87,7 +107,7 @@ def test_an_assistant_connection_is_pointed_at_no_tool_it_cannot_call() -> None:
     assert "admin" in text
     assert "loom_op" not in text and "loom_search" not in text
     plain = mcp_auth._not_accessible_result("loom_knowledge_search", auth, "other", assistant=True)
-    assert mcp_auth.DASHBOARD_REQUEST in plain["structuredContent"]["error"]
+    assert ar.DASHBOARD_REQUEST in plain["structuredContent"]["error"]
     assert "loom_search" not in plain["structuredContent"]["error"]
 
 

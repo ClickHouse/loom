@@ -382,13 +382,13 @@ widens no read: `namespace.browse` shows the org each public namespace's summary
 the whole guide is for its members (`namespace.join`). In the dashboard, the Memories
 page header has a **Guide** button beside **Add memory**, described by the guide's
 revision and summary; on a namespace with no guide it opens a writer straight into the
-editor. A first guide, from there or from Namespaces in your org, starts on an outline of what a
-newcomer asks (what the namespace holds, its keys, its tags, how to use it) that cannot
-be saved unchanged. Namespaces in your org shows a public namespace's guide summary under its
-description; for a namespace you belong to, the summary opens the guide, or the
-**Guide** menu item where no summary is shown. A writer edits it from either place,
-saving from the revision they opened, as an agent does. A namespace erasure deletes
-every revision of its guide.
+editor. A first guide, from there or from Namespaces in your org, starts on an outline
+of what a newcomer asks (what the namespace holds, its keys, its tags, how to use it)
+that cannot be saved unchanged. Namespaces in your org shows a public namespace's guide
+summary under its description; for a namespace you belong to, the summary opens the
+guide, or the **Guide** menu item where no summary is shown. A writer edits it from
+either place, saving from the revision they opened, as an agent does. A namespace
+erasure deletes every revision of its guide.
 
 ## The mentor
 
