@@ -572,11 +572,6 @@ textarea[aria-invalid="true"]:focus-visible {
 .scroll-fade [data-nav]:focus-visible {
   outline-offset: -2px;
 }
-/* The assistant edge's button is 44 px wide under a coarse pointer in a 47 px column at the
-   window's right: its ring is drawn inside it on every pointer. */
-.assistant-edge-button:focus-visible {
-  outline-offset: -2px;
-}
 /* Click UI's split button clips its halves (overflow: hidden), so its focus ring is drawn
    inside each half; on any split button, wherever it sits (ui/SplitButton). */
 .split-button button:focus-visible,
@@ -1811,7 +1806,44 @@ textarea[aria-invalid="true"]:focus-visible {
       background: var(--color-border-strong);
     }
   }
-  /* The launchers' "answer ready" dot, on the accent token, anchored to the icon. */
+  /* Under a finger a source row is a 44 px target, its text centred
+     (views/assistant/Sources.tsx): the answer's citation numbers (numberedCitations in
+     AnswerText.tsx, in the panel and the search's card) leave their touch area to these
+     rows. */
+  @media (pointer: coarse) {
+    .source-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      align-content: center;
+      column-gap: var(--spaces-1);
+      min-height: var(--spacing-hit);
+    }
+  }
+  /* The panel header's History button while History shows (aria-pressed): Click UI's ghost
+     icon button has no selected state, so it takes that button's :active tokens. */
+  .assistant-head button[aria-pressed="true"] {
+    color: var(--click-button-iconButton-color-ghost-text-active);
+    border-color: var(--click-button-iconButton-color-ghost-stroke-active);
+    background-color: var(--click-button-iconButton-color-ghost-background-active);
+  }
+  /* The search's Ask AI option's "Ask": what choosing the option does, drawn as a small
+     primary button (its tokens) inside the option, which a nested button would not be. */
+  .search-ask {
+    padding: 0 var(--spaces-2);
+    border-radius: var(--click-button-radii-all);
+    background: var(--click-button-basic-color-primary-background-default);
+    color: var(--click-button-basic-color-primary-text-default);
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+  }
+  /* The answer card's Continue in chat is a listbox option (the focus stays in the search
+     field): the option the keys moved to takes the focus ring, as the other options do. */
+  .search-continue[data-by-keys] {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  /* The Ask AI button's "answer ready" dot, on the accent token, on its corner. */
   .assistant-launcher-dot {
     position: absolute;
     top: -2px;
@@ -1820,63 +1852,36 @@ textarea[aria-invalid="true"]:focus-visible {
     height: 8px;
     border-radius: 9999px;
     background: var(--color-accent);
+    pointer-events: none;
   }
-  /* The assistant edge (layout/AssistantLauncher.tsx): a column at the window's right from
-     md, 48 px (a 1 px border and a 47 px content box), its button centred as a side tab. */
-  .assistant-edge {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    width: 48px;
-    height: 100%;
-    border-left: 1px solid var(--color-border);
-    background: var(--color-surface);
+  /* Open, the Ask AI button keeps Click UI's pressed look (its :active tokens): the
+     secondary button's from xl, the header icon buttons' ghost one below. */
+  .assistant-launcher[aria-expanded="true"] {
+    border-color: var(--click-button-basic-color-secondary-stroke-active);
+    background-color: var(--click-button-basic-color-secondary-background-active);
   }
-  /* Stands in for Click UI's sidebar navigation item, whose tokens it takes: the item has
-     no vertical label. 36 px wide (the 20 px icon and room for the inset 2 px ring), 44 px
-     under a coarse pointer, as tall as the icon and the word. Shown open: the item's active
-     fill. Its ::after carries the hit area right to the window's edge. */
-  .assistant-edge-button {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    width: 36px;
-    padding: 8px 0;
-    border: 0;
-    border-radius: var(--click-sidebar-navigation-item-radii-all);
-    font: var(--click-sidebar-navigation-item-typography-default);
-    color: var(--click-sidebar-main-navigation-item-color-text-default);
-    background: var(--click-sidebar-main-navigation-item-color-background-default);
-    cursor: pointer;
-  }
-  .assistant-edge-button > span:first-child {
-    color: var(--click-sidebar-main-navigation-item-color-icon-default);
-  }
-  .assistant-edge-button > span:last-child {
-    writing-mode: vertical-rl;
-  }
-  .assistant-edge-button:hover {
-    color: var(--click-sidebar-main-navigation-item-color-text-hover);
-    background: var(--click-sidebar-main-navigation-item-color-background-hover);
-  }
-  .assistant-edge-button[aria-expanded="true"] {
-    background: var(--click-sidebar-main-navigation-item-color-background-active);
-  }
-  .assistant-edge-button::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 100%;
-    /* The gap to the column's right: half of the 47 px content box less the button. */
-    width: calc((47px - 100%) / 2);
-  }
-  @media (pointer: coarse) {
-    .assistant-edge-button {
-      width: var(--spacing-hit);
+  /* Below xl the button is its icon, drawn as the header's other icon buttons (Click UI's
+     ghost icon button, whose tokens it takes: the frameless button's link colour would set
+     it apart): Click UI's padding and the gap before the word it hides go, so it is 32 px
+     (the frameless type is only as tall as its icon, hence the height; a coarse pointer's
+     44 px minimum still wins). */
+  @media (max-width: 1279.98px) {
+    .assistant-launcher {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      gap: 0;
+      justify-content: center;
+      color: var(--click-button-iconButton-color-ghost-text-default);
+    }
+    .assistant-launcher:hover {
+      color: var(--click-button-iconButton-color-ghost-text-hover);
+      background-color: var(--click-button-iconButton-color-ghost-background-hover);
+    }
+    .assistant-launcher[aria-expanded="true"] {
+      color: var(--click-button-iconButton-color-ghost-text-active);
+      border-color: var(--click-button-iconButton-color-ghost-stroke-active);
+      background-color: var(--click-button-iconButton-color-ghost-background-active);
     }
   }
 }

@@ -37,7 +37,13 @@ for a local development server only.
 Loom pools its own connections. Point `LOOM_PG_DSN` past any pooler that hands a
 client a different server connection per transaction (transaction pooling): Loom's
 migrations hold a session advisory lock and its driver prepares statements, and such a
-pooler keeps neither across transactions.
+pooler keeps neither across transactions. A [cell](../architecture/cells.md)'s
+`LOOM_PG_DSN` points straight at Postgres, with no pooler of any mode: its processes
+mark each session with the startup parameter `loom.tenancy_checked`, which a session
+pooler refuses or drops (its org triggers then refuse Loom's own writes for an org the
+cell holds no row for), and `loom doctor` names a session that lost it. Scripts and bulk
+loaders never set `session_replication_role = replica` on a cell: it skips the org
+triggers.
 
 Every replica of the deployment, and its worker process, sets the same values. The full
 list, with the admission and delivery settings, is in the

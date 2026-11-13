@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axeViolations } from "../../test/axe";
 import { useStore } from "../../lib/state";
 import { AssistantChat } from "./Chat";
-import { conversation, MAX_MESSAGE_CHARS, resetChat, useChat } from "./chatStore";
-import { contextLength, pageContext } from "./pageContext";
+import { conversation, resetChat, useChat } from "./chatStore";
+import { MAX_MESSAGE_CHARS, contextLength, pageContext } from "./pageContext";
 import { useDock } from "../../lib/assistantDock";
 
 // The chat posts OpenAI's chat body to /v1/assistant/chat/completions and reads the
@@ -264,8 +264,9 @@ describe("AssistantChat", () => {
       s.error({ code: "ASSISTANT_UPSTREAM_FAILED", message: "LibreChat ended the answer with an error" });
       s.close();
     });
+    // One sentence that says what happened and that the question is kept.
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The assistant could not finish this answer: LibreChat ended the answer with an error.",
+      "The model stopped before the answer finished. Your question is kept.",
     );
     expect(lastAnswer()).toHaveTextContent("Ada");
     // An error inside the stream is the chat's, not the page's: the composer stays.
@@ -281,13 +282,14 @@ describe("AssistantChat", () => {
       s.text("Ada");
       s.close();
     });
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The answer was cut off: the answer stopped before it was complete.",
-    );
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/^The answer stopped before it finished\. Your question is kept\.Retry$/);
+    // Retry sits inside the alert.
+    expect(within(alert).getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(lastAnswer()).toHaveTextContent("Ada");
   });
 
-  it("says the answer was cut off when the connection drops mid-answer", async () => {
+  it("says the answer stopped when the connection drops mid-answer", async () => {
     const s = sse();
     answers.push(() => s);
     render(<AssistantChat namespace="team" blocked={null} />);
@@ -297,7 +299,9 @@ describe("AssistantChat", () => {
       // As a browser's fetch rejects a reset connection's read.
       s.fail(new TypeError("network error"));
     });
-    expect(await screen.findByRole("alert")).toHaveTextContent("The answer was cut off");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The answer stopped before it finished. Your question is kept.",
+    );
     expect(lastAnswer()).toHaveTextContent("Ada");
   });
 
@@ -481,7 +485,7 @@ describe("AssistantChat", () => {
     expect((window as unknown as { pwned?: number }).pwned).toBeUndefined();
   });
 
-  it("shows the answer's citations as written, and the checked ones in its Sources", async () => {
+  it("numbers the answer's citations as the search's card does, and lists the checked ones in its Sources", async () => {
     const s = sse();
     answers.push(() => s);
     const { container } = render(<AssistantChat namespace="team" blocked={null} />);
@@ -503,29 +507,39 @@ describe("AssistantChat", () => {
       s.done();
     });
     const sources = await screen.findByRole("list", { name: "Sources" });
-    // The answer's own text shows each citation as written; nothing in it is a link.
-    expect(lastAnswer()).toHaveTextContent("[code:server/__init__.py:12]");
-    expect(container.querySelector("a")).toBeNull();
+    // The answer's text numbers each citation by where it first appears, and each number
+    // links to its row, which leads with the same number.
+    expect(lastAnswer()).toHaveTextContent("Fridays 1, per 2 and 3.");
+    expect(lastAnswer()).not.toHaveTextContent("[code:");
     expect(container.querySelector("strong")).toBeNull(); // `__init__` is not emphasis
+    const one = within(lastAnswer()).getByRole("link", { name: "Source 1" });
     expect(within(sources).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(sources).getAllByRole("listitem")[0]).toHaveAttribute("id", one.getAttribute("href")?.slice(1));
     expect(within(sources).getByText(/code citations are not checked/)).toBeInTheDocument();
     expect(within(sources).queryByRole("button", { name: /code:/ })).toBeNull();
     // Two of its three sources were found (code is never checked): the label leads with that.
     expect(screen.getByTestId("assistant-support")).toHaveTextContent("Partly confirmed: 2 of 3 sources found in Loom");
     const rows = within(sources).getAllByRole("listitem");
-    expect(rows[0]).toHaveTextContent(/^Found in Loom · /);
-    expect(rows[2]).toHaveTextContent(/^Not confirmed · .*\(code citations are not checked\)$/);
+    // Each row is its number and its source as the reader knows it, under one Sources
+    // label.
+    expect(rows[0]).toHaveTextContent(/^1\. billing\/invoices$/);
+    expect(rows[2]).toHaveTextContent(
+      /^3\. server\/__init__\.py:12 · not confirmed \(code citations are not checked\)$/,
+    );
     expect(sources.parentElement).not.toHaveTextContent(/verified/i);
-    const memory = within(sources).getByRole("button", { name: "memory:billing/invoices@v3" });
+    const memory = within(sources).getByRole("button", { name: "billing/invoices" });
+    // The kind and the version are its tooltip.
+    await userEvent.setup().hover(memory);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Memory billing/invoices, version 3");
     await userEvent.setup().click(memory);
     expect(useStore.getState().inspectedMemoryKey).toBe("billing/invoices");
     // Read whichever writer filed it, not as the dashboard's own agent.
     expect(useStore.getState().inspectedAgent).toBe("*");
-    await userEvent.setup().click(within(sources).getByRole("button", { name: "doc:spec.pdf § Billing" }));
+    await userEvent.setup().click(within(sources).getByRole("button", { name: "spec.pdf § Billing" }));
     expect(useStore.getState().pendingDocSourceUri).toBe("spec.pdf");
   });
 
-  it("opens a verified help citation's page on the Help view at its section, and links nothing in the answer", async () => {
+  it("opens a verified help citation's page on the Help view at its section, from its row", async () => {
     const s = sse();
     answers.push(() => s);
     const { container } = render(<AssistantChat namespace="team" blocked={null} />);
@@ -555,11 +569,12 @@ describe("AssistantChat", () => {
       s.done();
     });
     const sources = await screen.findByRole("list", { name: "Sources" });
-    expect(lastAnswer()).toHaveTextContent(text);
-    // The answer's text draws no link; the Sources entry opens the page in the dashboard.
-    expect(container.querySelector("a")).toBeNull();
+    // The answer's text draws each as its number, a link to its row, and the Sources entry
+    // opens the page in the dashboard.
+    expect(lastAnswer()).toHaveTextContent("Revoke it with loom revoke 1 and see 2.");
+    expect(container.querySelector("a[href^='http']")).toBeNull();
     expect(within(sources).getByText(/no such page in this build/)).toBeInTheDocument();
-    await userEvent.setup().click(within(sources).getByRole("button", { name: text.slice(1, -1) }));
+    await userEvent.setup().click(within(sources).getByRole("button", { name: text.slice(6, -1) }));
     expect(useStore.getState().view).toBe("help");
     expect(window.location.search).toContain("page=guides%2Ftokens-and-grants.md");
     expect(window.location.hash).toBe("#revoke-and-rotate");
@@ -788,22 +803,23 @@ describe("asking again", () => {
     // userEvent's own clipboard stands in for the browser's.
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Copy answer 1" }));
+    // The stored text, Markdown and markers as written, though the answer shows numbers.
     expect(await navigator.clipboard.readText()).toBe("On **Fridays** [memory:billing/invoices].");
-    expect(screen.getByRole("button", { name: "Copy answer 1" })).toHaveTextContent("Copied");
+    expect(lastAnswer()).toHaveTextContent("On Fridays 1.");
   });
 
-  it("Retry answers the last turn again in its place, with the context it was asked with", async () => {
+  it("Ask again answers the last turn again in its place, with the context it was asked with", async () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     await answered("Who owns billing?", "Ada does.", citationsEvent([], "none"));
     await answered("Since when?", "Since May.", citationsEvent([], "none"));
-    // Only the last answer offers Retry.
-    expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    // Only the last answer offers Ask again, a small named icon button.
+    expect(screen.getAllByRole("button", { name: /^Ask again, answer/ })).toHaveLength(1);
     // The page changed since: a retry still sends the line the question was asked with.
     useStore.setState({ view: "recall" });
     const s = sse();
     answers.push(() => s);
-    await userEvent.click(within(lastAnswer()).getByRole("button", { name: "Retry" }));
-    // Retry goes once the answer starts: the focus is in the question field, not lost.
+    await userEvent.click(within(lastAnswer()).getByRole("button", { name: "Ask again, answer 2" }));
+    // Ask again goes once the answer starts: the focus is in the question field, not lost.
     expect(screen.getByLabelText("Question")).toHaveFocus();
     expect(calls[2].body.messages).toEqual([
       { role: "user", content: `${ON_PAGE}Who owns billing?` },
@@ -853,14 +869,14 @@ describe("asking again", () => {
     expect(screen.queryByRole("button", { name: "Copy answer 1" })).toBeNull();
   });
 
-  it("offers Retry on a stopped answer", async () => {
+  it("offers Ask again on a stopped answer", async () => {
     const s = sse();
     answers.push(() => s);
     render(<AssistantChat namespace="team" blocked={null} />);
     await ask("Who owns billing?");
     await act(async () => s.text("Ada"));
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
-    expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Ask again, answer 1" })).toBeInTheDocument();
   });
 
   it("edits the last question from an empty field: its answer is replaced, and Cancel empties the field", async () => {
@@ -870,9 +886,9 @@ describe("asking again", () => {
     const user = userEvent.setup();
     // With text in the field there is no Edit: nothing typed can be lost to one.
     await user.type(field, "half typed");
-    expect(screen.queryByRole("button", { name: "Edit your question" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit question" })).toBeNull();
     await user.clear(field);
-    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    await user.click(screen.getByRole("button", { name: "Edit question" }));
     expect(field).toHaveValue("Who owns billing?");
     expect(field).toHaveFocus();
     expect(screen.getByTestId("assistant-editing")).toHaveTextContent("Ask replaces its answer.");
@@ -880,7 +896,7 @@ describe("asking again", () => {
     expect(field).toHaveValue("");
     expect(screen.queryByTestId("assistant-editing")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    await user.click(screen.getByRole("button", { name: "Edit question" }));
     await user.clear(field);
     const s = sse();
     answers.push(() => s);
@@ -901,7 +917,7 @@ describe("asking again", () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     await answered("Who owns billing?", "Ada does.", citationsEvent([], "none"));
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    await user.click(screen.getByRole("button", { name: "Edit question" }));
     expect(screen.getByTestId("assistant-editing")).toBeInTheDocument();
     // Another tab's finished turn merges in (storedChanged).
     act(() =>
@@ -926,25 +942,21 @@ describe("asking again", () => {
     ]);
   });
 
-  it("the up arrow in an empty field edits the last question, and in a field with text does not", async () => {
+  it("leaves the up arrow to the field: it edits nothing", async () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     await answered("Who owns billing?", "Ada does.", citationsEvent([], "none"));
     const field = screen.getByLabelText("Question");
-    const user = userEvent.setup();
-    await user.type(field, "x");
-    await user.keyboard("{ArrowUp}");
-    expect(field).toHaveValue("x");
-    await user.clear(field);
-    await user.keyboard("{ArrowUp}");
-    expect(field).toHaveValue("Who owns billing?");
-    expect(useChat.getState().editing?.id).toBe(useChat.getState().turns[0].id);
+    await userEvent.click(field);
+    await userEvent.keyboard("{ArrowUp}");
+    expect(field).toHaveValue("");
+    expect(useChat.getState().editing).toBeNull();
   });
 
   it("puts a turn asked again back as it was when the route refuses, the question waiting as an edit", async () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     await answered("Who owns billing?", "Ada does.", citationsEvent([], "none"));
     answers.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not yet", reason: "starting" }));
-    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.click(screen.getByRole("button", { name: "Ask again, answer 1" }));
     await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
     expect(useChat.getState().turns.map((t) => t.answer)).toEqual(["Ada does."]);
     expect(lastAnswer()).toHaveTextContent("Ada does.");
@@ -962,7 +974,7 @@ describe("asking again", () => {
       useDock.setState({ draft: "" });
     });
     answers.push(refusal(429, { code: "RATE_LIMITED", message: "spent", retryable: true }));
-    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.click(screen.getByRole("button", { name: "Ask again, answer 1" }));
     await waitFor(() => expect(useChat.getState().notice).toMatch(/^Not asked again: /));
     expect(useChat.getState().turns.map((t) => t.answer)).toEqual(["Ada does."]);
   });
@@ -982,7 +994,7 @@ describe("asking again", () => {
       s.raw(citationsEvent([], "unsupported"));
       s.done();
     });
-    await waitFor(() => expect(lastAnswer()).toHaveTextContent("Fridays [memory:billing/invoices]."));
+    await waitFor(() => expect(lastAnswer()).toHaveTextContent("Fridays 1."));
     expect(within(lastAnswer()).getByText("With sources")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Ask again with sources" })).toBeNull();
     expect(useChat.getState().turns).toHaveLength(1);
@@ -1095,7 +1107,7 @@ describe("asking again", () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     await answered("Who owns billing?", "Ada does.", citationsEvent([], "none"));
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    await user.click(screen.getByRole("button", { name: "Edit question" }));
     const field = screen.getByLabelText("Question");
     await user.clear(field);
     const s = sse();
@@ -1145,7 +1157,7 @@ describe("asking again", () => {
       again.done();
     });
     await waitFor(() => expect(useChat.getState().answering).toBe(false));
-    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    await user.click(screen.getByRole("button", { name: "Edit question" }));
     expect(screen.getByTestId("assistant-editing")).toHaveTextContent("asking with sources");
     // Past the length once " Cite your sources." follows it, the field says so.
     const limit =
@@ -1165,15 +1177,15 @@ describe("asking again", () => {
     expect(useChat.getState().turns[0]).toMatchObject({ question: "When exactly?", withSources: true });
   });
 
-  it("offers no Retry nor Ask again with sources while the last question is edited", async () => {
+  it("offers no Ask again nor Ask again with sources while the last question is edited", async () => {
     render(<AssistantChat namespace="team" blocked={null} />);
     await answered("When do invoices go out?", "Fridays.", citationsEvent([], "unsupported"));
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Edit your question" }));
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Edit question" }));
+    expect(screen.queryByRole("button", { name: "Ask again, answer 1" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Ask again with sources" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Cancel edit" }));
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask again, answer 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask again with sources" })).toBeInTheDocument();
   });
 

@@ -14,7 +14,7 @@ async function memories(page: Page) {
 for (const [width, docked] of [
   [1400, false],
   [375, false],
-  // Beside the assistant docked at the push minimum: the page keeps 592 px.
+  // Beside the assistant docked at the push minimum: the page keeps 640 px.
   [1280, true],
 ] as const) {
   test.describe(`${width} px${docked ? " with the assistant docked" : ""}`, () => {

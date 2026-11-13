@@ -94,6 +94,20 @@ class CollectionNameTakenError(LoomServerError):
         super().__init__(message, deleted=deleted, suggestion=suggestion)
 
 
+class TenancyRefusedError(LoomServerError):
+    """503 — this cell's Postgres refused a row for an org the cell holds no tenancy row
+    for (its org triggers, docs/architecture/cells.md): the session that wrote it is not
+    marked as one that ran the tenancy check. Nothing was written. A served request
+    meets it only when this process's sessions lost the marker (a pooler or proxy that
+    drops the startup parameter: point LOOM_PG_DSN straight at Postgres; `loom doctor`
+    names it), a fault of the server, not of the call: not retried, since only an
+    operator clears it. A writer that predates the check, or a script, meets the
+    SQLSTATE itself; a current Loom with LOOM_CELL unset meets this error."""
+
+    code = "TENANCY_REFUSED"
+    status_code = 503
+
+
 class WrongCellError(LoomServerError):
     """409 — the org a verified call acts in is placed in another cell of this
     deployment, or in none and the caller may not place it (docs/architecture/cells.md).
@@ -484,6 +498,7 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     "PUBLICATION_PENDING": ("dependency", False),
     # Only an operator's fix ends these; resending changes nothing.
     "SCHEMA_PENDING": ("configuration", False),
+    "TENANCY_REFUSED": ("configuration", False),
     "OVERRIDE_NOT_STORED": ("configuration", False),
     "CODED_WIDTH_MISMATCH": ("configuration", False),
     "ANALYSIS_UNAVAILABLE": ("configuration", False),

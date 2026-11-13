@@ -11,9 +11,10 @@ LibreChat is the assistant: it hosts the agent (its model, instructions and tool
 runs it headless beside Loom, reachable only from Loom. Loom supplies the agent's tools,
 which read under a token of the asker's own subject, and a read-only SQL op that
 ClickHouse itself holds to that token's org and namespaces. People chat in the
-dashboard's assistant panel, opened from the Assistant button at the window's right edge,
-or the bottom navigation's Assistant item on narrow screens; agents and scripts reach
-the same agent over HTTP, MCP and both SDKs, through Loom's origin and as themselves.
+dashboard's Ask AI panel, opened from the header's Ask AI button beside the search
+field, or ask in the header search, which answers a question in place and goes on in the
+panel; agents and scripts reach the same agent over HTTP, MCP and both SDKs, through
+Loom's origin and as themselves.
 
 ## Surfaces
 
@@ -66,7 +67,7 @@ ledger, the analysis boundary in the database, and the citation check.
 a second sign-in and LibreChat's look inside the dashboard, and would need LibreChat's
 cookies to work in a third-party frame. The dashboard's assistant panel uses Loom's
 session and components, and links verified citations into the memory and document views
-([the assistant panel](../features/dashboard.md#the-assistant-panel) has its rules).
+([the assistant panel](../features/dashboard.md#ask-ai) has its rules).
 
 ## The bridge: each caller's own identity
 
@@ -338,22 +339,26 @@ The rule reads no wording beyond the abstention sentence, and accepts these resi
 
 **Rendering.** The answer is model output that stored text can steer, so the dashboard
 renders it as text with Markdown emphasis, lists, tables and code only: no HTML, no
-images and no links in the answer's text, where each citation shows as written. The
-dashboard's `img-src 'self' data: blob:` already stops a remote image that would carry
-rows away in its URL. Under a finished answer its Sources
-(`frontend/src/views/assistant/Sources.tsx`) list each citation as the server checked
-it: one found in Loom reads "Found in Loom", a memory opening in the memory drawer, a
-document in the Library and a help citation on the Help page at its section, by the
-citation's `ref`; any other reads "Not confirmed" with its reason. A label above them
-says the answer's support in words, leading with how many sources were found when some
-were not: "Checked against what Loom holds", "Partly confirmed: n of m sources found in
-Loom", "Couldn't confirm: 0 of m sources found in Loom", "Couldn't confirm: it names …"
-(an op or setting this Loom does not have), "Couldn't confirm: it gives no sources",
-"Sources not checked" or "Not checked: it cites nothing Loom holds"; an answer whose
-`loom.citations` never came (the connection was lost after its text, or the page was left)
-reads "Check didn't finish". Each label's "Why this label" note says why it reads as it
-does; an answer whose support is `none` has no label. A value the dashboard does not know
-reads as `unchecked`.
+images and no links in the answer's text but its citations, each drawn as a number by
+where it first appears (`citationNumbers` in
+`frontend/src/views/assistant/AnswerText.tsx`), which links to the citation's Sources
+row once the check ends; the panel and the header search's card, a preview of the
+answer, number an answer alike. The dashboard's `img-src 'self' data: blob:` already
+stops a remote image that would carry rows away in its URL. Under a finished answer its
+Sources (`frontend/src/views/assistant/Sources.tsx`) list each citation as the server
+checked it, under one Sources label, each led by its number and named as the reader
+knows it (a memory by its key, its kind and version in the row's tooltip): one found in
+Loom opens, a memory in the memory drawer, a document in the Library and a help citation
+on the Help page at its section, by the citation's `ref`; any other reads "not
+confirmed" with its reason. A label above them says the answer's support in words,
+leading with how many sources were found when some were not: "Checked against what Loom
+holds", "Partly confirmed: n of m sources found in Loom", "Couldn't confirm: 0 of m
+sources found in Loom", "Couldn't confirm: it names …" (an op or setting this Loom does
+not have), "Couldn't confirm: it gives no sources", "Sources not checked" or "Not
+checked: it cites nothing Loom holds"; an answer whose `loom.citations` never came (the
+connection was lost after its text, or the page was left) reads "Check didn't finish".
+Each label's "Why this label" note says why it reads as it does; an answer whose support
+is `none` has no label. A value the dashboard does not know reads as `unchecked`.
 
 ### Steps
 
@@ -392,7 +397,7 @@ namespace exactly: `namespace.inventory`, `namespace.audit`, `memory.inspect`,
 starter's card is that read, made by the dashboard with the person's own session, not by
 the answer: it is gated on the read's own role and scope, works while the assistant cannot
 answer, and costs no model call (`frontend/src/views/assistant/cards/`). The starter also
-asks the assistant its question when the person keeps "Also ask the assistant" on; the
+asks the assistant its question when the person keeps "Also ask the model" on; the
 question names the arguments the card was first read with (the audit's window, the
 mentor's agent; the card's selects read it again with others, which the question then no
 longer names), and its answer gets the same [support](#support) label as any other, the
@@ -406,8 +411,9 @@ carry no arguments the dashboard could read again.
 
 ### Asking again
 
-Retry, an edit of the last question and "Ask again with sources" answer the last turn
-again under its own id (`frontend/src/views/assistant/chatStore.ts`), so another tab's
+Ask again (Retry on a failed answer), an edit of the last question and "Ask again with
+sources" answer the last turn again under its own id
+(`frontend/src/views/assistant/chatStore.ts`), so another tab's
 stored copy cannot bring the old answer back. The turn keeps its old answer, on screen and
 in storage, until the new text begins: an attempt that fails, is refused, is stopped or
 ends empty first puts the turn back as it was, as does a reload before then.
@@ -416,7 +422,7 @@ ends empty first puts the turn back as it was, as does a reload before then.
   edit whose words changed. It answers that turn again with the words, page line and "with
   sources" it was asked with, whatever the field holds. Another question, Cancel edit, a
   new conversation or another one opened drops it.
-- Any other ending of a Retry (a rate limit, the cost cap, a lost connection), or of an
+- Any other ending of an Ask again (a rate limit, the cost cap, a lost connection), or of an
   edit that left the words as they were, offers no Try again.
 - In each case an empty field gets the question as an edit (after Stop, only an edit's
   words), and an Ask from it goes with the chip as it shows now.
@@ -504,7 +510,7 @@ or a line break in one cannot end it: a key, a source URI, a user or a session e
 stored, never cut, and an agent, a title or the query on one line, cut at 200 characters. The
 person sees it as a chip and can remove it before it is sent; it grants nothing, and no
 server or wire field carries it
-([the assistant panel](../features/dashboard.md#the-assistant-panel)).
+([the assistant panel](../features/dashboard.md#ask-ai)).
 
 **The asker's context.** An answer's token is `viewer` on one namespace, so the agent
 cannot tell from it what the person asking may do. The bridge, which holds the caller's
@@ -1295,12 +1301,12 @@ on Back ([rolling upgrades](rolling-upgrades.md), rule 46).
    refusals, the budget share, the per-process limit, the spend on the answer's ledger
    row, the answer's id on its tool calls' rows, the citation check and the SDKs'
    streaming clients. Built.
-5. The dashboard's assistant panel, on the signed-in session and the header's namespace,
-   with a Stop button that closes the request, Copy, Retry and an edit of the last
+5. The dashboard's Ask AI panel, on the signed-in session and the header's namespace,
+   with a Stop button that closes the request, Copy, Ask again and an edit of the last
    question, each answer's checked citations under it, the reasons it cannot answer, the
    conversations kept in the browser, the page's chip on each question and "Ask about
    this" on a memory, a document and a Recall result
-   ([the assistant panel](../features/dashboard.md#the-assistant-panel)). Built.
+   ([Ask AI](../features/dashboard.md#ask-ai)). Built.
 6. Loom's documentation in the image, `help.search` and `help.get` on the toolset
    ([Loom's documentation](#looms-documentation)). Built.
 

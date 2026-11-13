@@ -2,7 +2,9 @@
 order at boot under a session advisory lock, each file in one transaction with
 its ledger row (`loom.pg_migrations`, the file's SHA-256). The router's directory
 (`schemas/router_migrations/`, `server/router/directory.py`) migrates the same way,
-on its own database, ledger schema and lock.
+on its own database, ledger schema and lock. For schema `loom`, `migrate` also marks
+its session as one that ran the tenancy check and, after the files and before the lock
+goes, runs `cell_triggers.ensure` (docs/architecture/cells.md).
 
 The rules are the ClickHouse journal's (docs/development/migrations.md): additive
 only, never edit a merged file. A ledger row whose checksum no longer matches its
@@ -100,13 +102,18 @@ async def migrate(
     On a connection of its own, with no client command timeout and no statement
     timeout: DDL on a large table runs as long as it takes. A lock it waits for is
     bounded (`lock_timeout`), so an `ALTER` queued behind a long transaction never
-    holds every read and write of the table behind it; the file is retried."""
+    holds every read and write of the table behind it; the file is retried. For schema
+    `loom` it marks the session and runs `cell_triggers.ensure` before the lock goes."""
     files = migration_files(mig_dir)
     done: list[str] = []
     # Closing the connection ends the session, and with it the advisory lock.
     async with (connect or pg.dedicated)() as conn:
         # Another boot migrating holds the lock for as long as its files take.
         await conn.execute("SELECT pg_advisory_lock($1)", lock_key)
+        if schema == "loom":
+            # A migration's data steps only copy or rewrite rows already stored here: the
+            # org triggers pass them (server/core/cell_triggers.py).
+            await conn.execute(f"SET {pg.TENANCY_MARKER} = 'on'")
         await conn.execute("SET lock_timeout = '5s'")
         await conn.execute(_ledger(schema))
         rows = await conn.fetch(f"SELECT filename, checksum FROM {schema}.pg_migrations")
@@ -114,6 +121,11 @@ async def migrate(
             await _apply(conn, name, sql, digest, schema=schema)
             log.info("applied Postgres migration %s", name)
             done.append(name)
+        if schema == "loom":
+            # On every migrating boot, after the pending files and before the lock goes.
+            from server.core import cell_triggers
+
+            await cell_triggers.ensure(conn)
     return done
 
 

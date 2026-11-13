@@ -121,11 +121,9 @@ function readQuery(key: string): string | null {
 // this decides.
 const SHEET_MIN = 1280;
 const SHEET_QUERY = `(max-width: ${SHEET_MIN - 1}px)`;
-// <main>'s width at that breakpoint with the sidebar open (less the 244 px sidebar and the
-// assistant's 48 px edge): a page made narrower (the assistant docked beside it) leaves no
-// room for the column either. The 48 is lib/assistantLayout.ts's EDGE, written out so this
-// page's chunk does not load the assistant's layout module.
-const PANEL_ROOM = SHEET_MIN - 244 - 48;
+// <main>'s width at that breakpoint with the 244 px sidebar open: a page made narrower (the
+// assistant docked beside it) leaves no room for the column either.
+const PANEL_ROOM = SHEET_MIN - 244;
 
 /** Whether <main> is narrower than PANEL_ROOM, kept current; false until measured, or where
  *  it cannot be. A yes/no, so a resize re-renders the page only when the answer changes. */

@@ -1,7 +1,7 @@
 import { cleanup, render, screen, within } from "../../test/rtl";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Citation } from "../../api/assistantChat";
-import { Sources, supportLabel } from "./Sources";
+import { Sources, sourceName, supportLabel } from "./Sources";
 
 const cite = (verified: boolean, kind = "memory"): Citation => ({
   kind,
@@ -65,8 +65,41 @@ describe("Sources", () => {
     const sql: Citation = { kind: "sql", text: "sql:SELECT 1", verified: true, reason: "", ref: "" };
     render(<Sources citations={[sql]} support="supported" answer={1} />);
     const row = within(screen.getByRole("list", { name: "Sources" })).getByRole("listitem");
-    expect(row).toHaveTextContent(/^Found in Loom · /);
+    expect(row).toHaveTextContent(/^SQL query: /);
     expect(within(row).queryByRole("button")).toBeNull();
     expect(row).not.toHaveTextContent("(");
+  });
+
+  it.each([
+    ["memory", "[memory:billing/invoices@v3]", "billing/invoices", "Memory billing/invoices, version 3"],
+    ["doc", "[doc:spec.pdf § Billing]", "spec.pdf § Billing", "Document spec.pdf § Billing"],
+    ["help", "[help:guides/x.md § Y]", "guides/x.md § Y", "Help page guides/x.md § Y"],
+    ["code", "[code:server/a.py:3]", "server/a.py:3", "Code server/a.py:3"],
+  ] as const)("names a %s citation as the reader knows it", (kind, text, name, detail) => {
+    const named = sourceName({ kind, text, verified: true, reason: "", ref: "" });
+    expect(named).toMatchObject({ name, detail });
+    // Only a memory's versions tell two rows of one source apart.
+    expect(named.versioned).toBe(kind === "memory" ? `${name}, version 3` : undefined);
+  });
+
+  it("gives a SQL row no tooltip and no tab stop: it would add nothing", () => {
+    const sql: Citation = { kind: "sql", text: "```sql\nSELECT 1\n```", verified: true, reason: "", ref: "" };
+    render(<Sources citations={[sql]} support="supported" answer={1} />);
+    const row = within(screen.getByRole("list", { name: "Sources" })).getByRole("listitem");
+    expect(row.querySelector("[tabindex]")).toBeNull();
+    expect(within(row).queryByRole("note")).toBeNull();
+  });
+
+  it("names two memory rows that would read the same by their versions", () => {
+    const v = (n: number): Citation => ({
+      kind: "memory",
+      text: `[memory:billing/invoices@v${n}]`,
+      verified: true,
+      reason: "",
+      ref: "billing/invoices",
+    });
+    render(<Sources citations={[v(2), v(3)]} support="supported" answer={1} />);
+    const rows = within(screen.getByRole("list", { name: "Sources" })).getAllByRole("listitem");
+    expect(rows.map((r) => r.textContent)).toEqual(["billing/invoices, version 2", "billing/invoices, version 3"]);
   });
 });

@@ -1313,7 +1313,7 @@ export function Documents() {
                 // A collection's document is not in the namespace the answer reads: said by title.
                 reason={
                   shown && ownShelf
-                    ? `The assistant answers about ${picked.namespace}; this document is in the collection ${collectionTitle(shown)}.`
+                    ? `Ask AI answers about ${picked.namespace}; this document is in the collection ${collectionTitle(shown)}.`
                     : undefined
                 }
                 item={{

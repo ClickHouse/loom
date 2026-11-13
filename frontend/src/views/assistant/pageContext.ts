@@ -4,7 +4,6 @@
 // sends nothing about the page. The question goes with one leading line the agent's tools
 // can read (`Context: Memories page, memory "user/pref/lang"`); the transcript shows the chip.
 import { useDock, type AskItem } from "../../lib/assistantDock";
-import { PAGE_HINT_KEY } from "../../lib/assistantStorage";
 import { useStore, type View } from "../../lib/state";
 
 /** Each page as its title (or its tab, where one page has several) names it. */
@@ -64,6 +63,9 @@ export function currentAsk(): Asked {
   return { context, item: context && item ? item : null };
 }
 
+/** The longest message one request may carry (server/assistant/api/models.py). */
+export const MAX_MESSAGE_CHARS = 20_000;
+
 /** The message a question is sent as: the context line first, then the question. */
 export function withContext(question: string, context: AskContext | null | undefined): string {
   return context ? `${context.line}\n\n${question}` : question;
@@ -72,23 +74,4 @@ export function withContext(question: string, context: AskContext | null | undef
 /** How many characters `withContext` adds before the question: the line and its blank line. */
 export function contextLength(context: AskContext | null | undefined): number {
   return context ? context.line.length + 2 : 0;
-}
-
-// The one-time hint under the field: shown until the person removes the chip once or asks
-// a first question. One key per browser, which sign-out leaves (it says only that the line
-// was seen); storage refused shows it again next time.
-export function pageHintSeen(): boolean {
-  try {
-    return localStorage.getItem(PAGE_HINT_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function markPageHintSeen(): void {
-  try {
-    localStorage.setItem(PAGE_HINT_KEY, "1");
-  } catch {
-    /* storage refused: the hint shows again next time */
-  }
 }

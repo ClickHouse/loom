@@ -660,6 +660,12 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
     # 4b. The OTel erasure index and the signing keyring: only once ClickHouse answered.
     checks += _doctor_ch_read_checks(settings if settings_ok and ch_ok else None)
 
+    # 4c. A cell's state, its tenancy marker and its org triggers (LOOM_CELL set only).
+    if settings_ok and ch_ok and settings.cell:
+        from server.cli import doctor_cell
+
+        checks += doctor_cell.cell_checks()
+
     # 5. LLM provider resolution: what extraction runs on and
     # what decided it; WARN when the provider was inferred (or named) but its
     # key is absent — the runtime then falls back to the echo client.

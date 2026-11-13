@@ -1186,6 +1186,43 @@ read rounds ran `--ops memory.bulk_set,memory.set --calls 100`, alternating the 
 `LOOM_MEMORY_BULK_PEER_READ`), `pg` without `--dead-fraction` times a vacuum of the rows
 as loaded, and `load-ch --offset` grows a load (the 500k run grew the 250k one).
 
+### A cell's org triggers
+
+`bench/cell_trigger_cost.py` measures what a [cell](../architecture/cells.md)'s org
+triggers add to writes of a guarded table (`loom.scope_generations`), in a database of
+its own on a local Postgres 16 in Docker on a shared host, with the cell in `enforced`
+and the written org held. It needs no provider and no server:
+
+```bash
+PYTHONPATH=$PWD LOOM_PG_DSN=postgresql://... .venv/bin/python bench/cell_trigger_cost.py
+```
+
+| Write                                 | Triggers off      | Triggers on       |
+| ------------------------------------- | ----------------- | ----------------- |
+| marked single-row insert, p50 / p99   | 3.08 ms / 21.0 ms | 2.38 ms / 14.1 ms |
+| unmarked single-row insert, p50 / p99 | 3.26 ms / 19.1 ms | 2.56 ms / 11.7 ms |
+
+| 500,000-row `COPY`, on minus off within a round | Median        | Over 6 rounds    |
+| ----------------------------------------------- | ------------- | ---------------- |
+| marked session                                  | 0.16 µs a row | −0.36 to 0.49 µs |
+| unmarked session                                | 13.4 µs a row | 12.1 to 13.9 µs  |
+
+Each single-row figure is the median of 5 runs of 2,000 inserts, the runs alternating
+triggers off and on; the harness checks both triggers are on, at origin, in every run
+that says so (after a bulk load an autovacuum can hold the table's lock past `ensure`'s
+100 ms, and the harness then tries again, as a later boot would). The commit and a busy
+host dominate the single-row figures, so they show no measurable cost, not a gain. Each
+`COPY` round times both sessions with the triggers off and on, in an order that rotates,
+and the cost is the difference within the round. A marked session, which every Loom
+process with `LOOM_CELL` set opens, shows no cost the rounds can tell from zero (the six
+rounds' differences range from −0.36 to 0.49 µs a row); an unmarked one pays 12 to 14 µs
+a row for the state read and the `loom.tenancy` lookup. Loom's own writes are marked, so
+this predicts the ship gate (a `memory.set` p99 rise of at most 10 ms, a delivery pass
+at most 10% slower) holds by a wide margin; the cost lands on scripts and older builds
+writing a cell without the check. This measures the triggers on the statements, not a
+whole `memory.set` through a server on a cell: the gate itself is measured end to end
+with attach.
+
 ## Reference computations
 
 Deterministic outputs of the scoring code on fixed input, pinned by unit tests. The

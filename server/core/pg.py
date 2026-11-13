@@ -200,6 +200,7 @@ async def _pool_for_loop() -> Any:
                     "statement_timeout": str(settings.pg_statement_timeout_ms),
                     # A transaction left open by a cancelled request is ended by the server.
                     "idle_in_transaction_session_timeout": idle_timeout_ms(),
+                    **marker_settings(),
                 },
                 command_timeout=settings.pg_statement_timeout_ms / 1000 + 1,
             )
@@ -272,7 +273,8 @@ def is_outage(e: BaseException) -> bool:
 def _raise_if_unavailable(
     e: Exception, *, outcome_unknown: bool = False, lost: bool = False
 ) -> None:
-    """503 POSTGRES_UNAVAILABLE for an error a retry may clear, or any error once the
+    """503 TENANCY_REFUSED for a cell's org triggers' refusal (SQLSTATE LT001); 503
+    POSTGRES_UNAVAILABLE for an error a retry may clear, or any error once the
     connection was `lost` (the driver's error then depends on when it noticed); a data
     or constraint error, whose text quotes the row or the argument, as
     PostgresRefusedError; otherwise the caller re-raises `e` as it is."""
@@ -282,6 +284,7 @@ def _raise_if_unavailable(
 
     if isinstance(e, LoomServerError):
         return  # already the answer, a refusal raised in the block included
+    _raise_if_tenancy_refused(e)
     if lost or is_outage(e):
         raise PostgresUnavailableError(
             "the commit's answer was lost" if outcome_unknown else "Postgres did not answer",
@@ -291,6 +294,40 @@ def _raise_if_unavailable(
         ("22", "23")
     ):
         raise PostgresRefusedError(e) from None
+
+
+# The org triggers' SQLSTATE (schemas/pg_migrations/011_tenancy_triggers.sql).
+TENANCY_REFUSED_SQLSTATE = "LT001"
+
+
+def _raise_if_tenancy_refused(e: BaseException) -> None:
+    if getattr(e, "sqlstate", None) == TENANCY_REFUSED_SQLSTATE:
+        from server.core.errors import TenancyRefusedError
+
+        # The function's text names the refused row's org, seldom the caller's, and holds
+        # nothing else a row carries: logged with its table, never answered.
+        log.warning(
+            "Postgres refused a row of loom.%s from an unmarked session: %s",
+            getattr(e, "table_name", None) or "?",
+            getattr(e, "message", None) or type(e).__name__,
+        )
+        raise TenancyRefusedError(
+            "this cell's Postgres refused a write from a session without the tenancy "
+            "marker; see loom doctor, or run with LOOM_CELL set"
+        ) from None
+
+
+# The setting that marks a session as one that ran the tenancy check: the org triggers'
+# WHEN skips such a session (`server.core.cell_triggers`; its name never changes,
+# rolling-upgrades rule 47).
+TENANCY_MARKER = "loom.tenancy_checked"
+
+
+def marker_settings() -> dict[str, str]:
+    """The startup parameter that marks a session of a process with LOOM_CELL set as one
+    that ran the tenancy check: it survives the pool's RESET ALL. A process with
+    LOOM_CELL unset sends none."""
+    return {TENANCY_MARKER: "on"} if settings.cell else {}
 
 
 # not a setting: a bound on returning a connection to the pool, not on a request
@@ -392,10 +429,14 @@ def may_have_committed(e: BaseException) -> bool:
 
 
 @asynccontextmanager
-async def dedicated() -> AsyncIterator[Any]:
-    """A connection of its own, outside the pool, with no client or server statement
-    timeout: for work that runs as long as it takes (migrations, an erasure's deletes).
-    A CLI process's first one checks the deployment (`expect_deployment`)."""
+async def dedicated(*, statement_timeout_ms: int = 0, marked: bool = True) -> AsyncIterator[Any]:
+    """A connection of its own, outside the pool, with no client timeout and no server
+    statement timeout unless `statement_timeout_ms` asks for one: for work that runs as
+    long as it takes (migrations, an erasure's deletes).
+    A CLI process's first one checks the deployment (`expect_deployment`).
+    `statement_timeout_ms` bounds its statements as a startup value (a RESET ALL keeps
+    it); `marked` False leaves the tenancy marker out (`loom doctor` reads a session
+    without it)."""
     import asyncpg
 
     _require_dsn()
@@ -407,10 +448,11 @@ async def dedicated() -> AsyncIterator[Any]:
                 "application_name": "loom",
                 "synchronous_commit": "on",
                 "default_transaction_isolation": "read committed",
-                "statement_timeout": "0",
+                "statement_timeout": str(statement_timeout_ms),
                 # Its statements may run long; a transaction left idle by a stalled
                 # process does not hold its locks past the pool's bound.
                 "idle_in_transaction_session_timeout": idle_timeout_ms(),
+                **(marker_settings() if marked else {}),
             },
         )
     except Exception as e:
@@ -428,7 +470,13 @@ async def dedicated() -> AsyncIterator[Any]:
             _raise_if_unavailable(e)
         raise
     try:
-        yield conn
+        try:
+            yield conn
+        except Exception as e:
+            # The block's errors pass through as they are, but for the org triggers'
+            # refusal, which every caller sees as the same 503 TENANCY_REFUSED.
+            _raise_if_tenancy_refused(e)
+            raise
     finally:
         # Bounded as `_release` is; a close that fails never replaces the block's outcome.
         try:

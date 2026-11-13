@@ -128,15 +128,13 @@ describe("Ask about this in the memory drawer", () => {
     const names = footer()
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label") || b.textContent);
-    expect(names.slice(0, 3)).toEqual(["Edit", "Ask the assistant about this memory", "More actions"]);
-    expect(footer().getByRole("button", { name: "Ask the assistant about this memory" })).toHaveTextContent(
-      "Ask about this",
-    );
+    expect(names.slice(0, 3)).toEqual(["Edit", "Ask AI about this memory", "More actions"]);
+    expect(footer().getByRole("button", { name: "Ask AI about this memory" })).toHaveTextContent("Ask about this");
   });
 
   it("closes the drawer, opens the panel with the memory in the chip and the focus in its field", async () => {
     const user = await openDrawer();
-    await user.click(footer().getByRole("button", { name: "Ask the assistant about this memory" }));
+    await user.click(footer().getByRole("button", { name: "Ask AI about this memory" }));
     await waitFor(() => expect(screen.getByLabelText("Question")).toHaveFocus(), { timeout: 3000 });
     expect(screen.queryByText("the public API allows 100 requests a minute")).not.toBeInTheDocument();
     expect(useDock.getState().open).toBe(true);
@@ -153,7 +151,7 @@ describe("Ask about this in the memory drawer", () => {
 
   it("names a key exactly as stored, its tab and double space kept", async () => {
     const user = await openDrawer("notes/a\tb  c");
-    await user.click(footer().getByRole("button", { name: "Ask the assistant about this memory" }));
+    await user.click(footer().getByRole("button", { name: "Ask AI about this memory" }));
     await waitFor(() => expect(useDock.getState().item).not.toBeNull());
     expect(useDock.getState().item?.line).toBe('memory "notes/a\\tb  c" (agent "claude-desktop")');
   });
@@ -164,7 +162,7 @@ describe("Ask about this in the memory drawer", () => {
     const value = screen.getByRole("textbox", { name: "Memory value" });
     await user.clear(value);
     await user.type(value, "a new value");
-    const ask = footer().getByRole("button", { name: "Ask the assistant about this memory" });
+    const ask = footer().getByRole("button", { name: "Ask AI about this memory" });
     expect(ask).toHaveAttribute("aria-disabled", "true");
     expect(ask).toHaveAccessibleDescription("Save or cancel the edit first.");
     await user.click(ask);
@@ -177,9 +175,9 @@ describe("Ask about this in the memory drawer", () => {
   it("is unavailable, with the reason, while the assistant cannot answer", async () => {
     useDock.setState({ reason: { kind: "not_configured" }, reasonShort: "not set up" });
     await openDrawer();
-    const ask = footer().getByRole("button", { name: "Ask the assistant about this memory" });
+    const ask = footer().getByRole("button", { name: "Ask AI about this memory" });
     expect(ask).toHaveAttribute("aria-disabled", "true");
-    expect(ask).toHaveAccessibleDescription("The assistant can't answer now: not set up.");
+    expect(ask).toHaveAccessibleDescription("Ask AI can't answer now: not set up.");
   });
 
   it("names the user and session a row is filed under, so the assistant's memory.get reads that row", async () => {
@@ -187,7 +185,7 @@ describe("Ask about this in the memory drawer", () => {
     const user = userEvent.setup();
     render(<MemoryInspector identity={owned} memoryKey="api/rate-limit" onClose={() => {}} onChanged={() => {}} />);
     await screen.findByText("the public API allows 100 requests a minute");
-    await user.click(footer().getByRole("button", { name: "Ask the assistant about this memory" }));
+    await user.click(footer().getByRole("button", { name: "Ask AI about this memory" }));
     await waitFor(() => expect(useDock.getState().item).not.toBeNull());
     expect(useDock.getState().item?.line).toBe(
       'memory "api/rate-limit" (agent "claude-desktop", user "u-42", session "s-7")',
@@ -203,8 +201,8 @@ describe("Ask about this in the memory drawer", () => {
     const user = userEvent.setup();
     render(<MemoryInspector identity={tracker} memoryKey="api/rate-limit" onClose={() => {}} onChanged={() => {}} />);
     await screen.findByText("the public API allows 100 requests a minute");
-    const ask = footer().getByRole("button", { name: "Ask the assistant about this memory" });
-    expect(ask).toHaveAccessibleDescription("The assistant answers about a memory namespace.");
+    const ask = footer().getByRole("button", { name: "Ask AI about this memory" });
+    expect(ask).toHaveAccessibleDescription("Ask AI answers about a memory namespace.");
     await user.click(ask);
     await new Promise((r) => setTimeout(r, 20));
     expect(useDock.getState().item).toBeNull();
@@ -215,7 +213,7 @@ describe("Ask about this in the memory drawer", () => {
     vi.mocked(api.listMine).mockReturnValueOnce(new Promise(() => {}));
     useStore.setState({ myNamespaces: null });
     await openDrawer();
-    const ask = footer().getByRole("button", { name: "Ask the assistant about this memory" });
+    const ask = footer().getByRole("button", { name: "Ask AI about this memory" });
     expect(ask).toHaveAttribute("aria-disabled", "true");
     expect(ask).toHaveAccessibleDescription("Your role on this namespace is still loading.");
   });
@@ -223,7 +221,7 @@ describe("Ask about this in the memory drawer", () => {
   it("is unavailable, with the role it needs, to a role the assistant's route does not admit", async () => {
     useStore.setState({ myNamespaces: [] });
     await openDrawer();
-    const ask = footer().getByRole("button", { name: "Ask the assistant about this memory" });
+    const ask = footer().getByRole("button", { name: "Ask AI about this memory" });
     expect(ask).toHaveAttribute("aria-disabled", "true");
     expect(ask).toHaveAccessibleDescription(/^Needs viewer on .+\. An admin of it can grant that\.$/);
     await userEvent.setup().click(ask);

@@ -88,7 +88,7 @@ The left rail groups pages into Memory, Activity and Sources. Every page has its
 | Page                         | URL              | What it is for                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ---------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Profile**                  | `/profile`       | The always-loaded context every AI client receives (`profile.*`), which clients read it and how (`profile.activity`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| **Memories**                 | `/memories`      | Browse and search the namespace's memories, open its [guide](namespaces-and-sharing.md#a-namespaces-guide) from the header, with its history (who changed it, when and why); open one to see its versions, provenance and verification, add or edit, and restore a deleted one within its recovery window. Its **Insights** button opens the [assistant panel](#the-assistant-panel) on its starters, which read the namespace as a whole. For someone who can write there, an empty namespace, when the account reaches only its personal one (with auth off, any empty namespace), shows **Getting started** above the list, and it comes back on later visits, as one line with **Continue** once the namespace holds memories, until it is hidden or every step is done: connect an agent (the token form opens in place; the step ticks at the token's first call or an agent's first memory here), the first memory, and, for whoever can set them, the models while none is set (the list says all set only once they are; after both steps are done, **Settings** › **Models & keys** sets them). Each step ticks from what Loom holds; **Hide** keeps it hidden for that account and namespace in this browser.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Memories**                 | `/memories`      | Browse and search the namespace's memories, open its [guide](namespaces-and-sharing.md#a-namespaces-guide) from the header, with its history (who changed it, when and why); open one to see its versions, provenance and verification, add or edit, and restore a deleted one within its recovery window. Its **Insights** button opens the [Ask AI panel](#ask-ai) on its starters, which read the namespace as a whole. For someone who can write there, an empty namespace, when the account reaches only its personal one (with auth off, any empty namespace), shows **Getting started** above the list, and it comes back on later visits, as one line with **Continue** once the namespace holds memories, until it is hidden or every step is done: connect an agent (the token form opens in place; the step ticks at the token's first call or an agent's first memory here), the first memory, and, for whoever can set them, the models while none is set (the list says all set only once they are; after both steps are done, **Settings** › **Models & keys** sets them). Each step ticks from what Loom holds; **Hide** keeps it hidden for that account and namespace in this browser.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | **Recall** (tab of Memories) | `/recall`        | "Why did this rank here": the rows the Memories list shows for a query with no filters set, in its order (keyword matches newest first, then `memory.search` hits with their ranking terms), and read past searches with every key and score they returned (`memory.search_trace_log`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **Library**                  | `/library`       | Knowledge documents: add (a file, which is uploaded for the server's extractor, badged beforehand with the format `knowledge.formats` says it is read as, and whose ingest is followed to the revision it publishes, with **Stop ingestion** while it runs, `knowledge.ingest_cancel`; several files at once, picked or dropped, each its own document followed in a list with **Retry failed** and **Stop** ([many files](knowledge.md#many-files-from-the-dashboard)); a folder, which becomes a collection with its folders nested inside it (on My files or a namespace, the person picks a top-level collection or files kept with their folder paths) ([a folder](knowledge.md#a-folder-from-the-dashboard)); or pasted text), preview, download, edit metadata, delete (the notice it raises carries **Undo**, `knowledge.restore`, which restores the document's last deleted revision, whichever delete retired it; a bulk delete's notice has none), review the typed tables a document's file became from its preview's **Tables** and approve their column types (`knowledge.dataset_get`, `knowledge.dataset_approve`), and find a passage inside the documents (**Find a passage**, `knowledge.search`; each hit is cited by its revision and place, in lines, a key, pages or slides, or rows, and opens its document). A select above the list shows the namespace picked at the top or one of the [collections](../architecture/sharing.md) the person can read (`collection.list`), as a tree with each one's title and description (its `col-…` address in **About this place**; a title shown twice carries its address); `?collection=` names it. Beside the select, a collection's path from the top on one line: the place above, the ones above the parent folded into a dots button, and the parent, each a link (a parent the person cannot read shows as a dots button, which gives its address when tapped), and below the documents **Collections** lists the ones inside it, or, on **My files** and on a namespace, the person's own top-level ones (and their own whose parent they cannot read), with **Shared with you** below them: the collections the person reads or writes but does not administer (one inside another shared with them shows inside it), each list naming the parents of a collection inside another, in words for a parent missing from the list (`collection.list` names no owner, so one shared as admin sits with the person's own, and the role is the token's: a token capped below admin lists the person's own here too). Each list shows the first six, then fifty more at a time; on a phone the path is one back button beside the select, and the select, a tree, lists the collections inside. On a code or tracker namespace, or none, the select lists only collections; with no namespace at the top, the Library opens **My files** (a token that is not a person's has no files of its own: it stays on the top level, which lists the collections). Its menu manages the members (`grants.*`) and, for its admins, moves it under another collection or to the top (`collection.move`) and deletes it, which erases what it holds (`collection.delete`); **New collection** creates one from a title, inside the one shown when the person writes there; the server derives its address, and a title already used inside the same collection (at the top level, one of the person's own) opens that one (with **Choose the address myself**, the title is kept as given) ([names and titles](../architecture/sharing.md)). The header's **New** adds to the header's namespace, so while the Library shows a collection, or a namespace that holds no documents, it offers no **Document**: the Library's own **Add document** adds where the Library shows. The select finds a collection by its title, address or description as you type. See [knowledge](knowledge.md). **Sources**, in the header's actions and counting them (its icon alone on a phone), opens the document sources of the shared namespace or collection in view below the header, with their last sync; its admins add, check, sync, rotate and retire them. |
 | **Conversations**            | `/conversations` | Stored conversation threads, replayed turn by turn (a writer renames a thread, an admin deletes one), and the saved session briefs, which a writer forgets. See [conversations and sessions](conversations-and-sessions.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -138,61 +138,84 @@ and a tracker's Edit mapping, Rotate and Retire. The repository's Access tab sho
 reader its access controls with their reasons. A restricted namespace's own gate (a token
 of its org that names it, and a direct grant) is checked by its settings, its budget cap,
 a repository's Access tab and Refresh now; its other controls follow the role, and the
-server refuses a token that gate does not admit. The header's New menu follows the role
-the dashboard knows, and the server decides the rest. On a repository's namespace, a
-member's memory writes (add, and edit or delete a row) stay available whatever its role,
-and the server checks that the row is the member's. Only what is for the org or the
-platform rather than a namespace is left out: the platform pages, Health's Workers,
-Operation mix and Projection failures tabs, Settings › Models & keys and the admin
-drawer's navigation.
+server refuses a token that gate does not admit. The header's New menu (below 768 px the
+**New** group at the top of the phone's **More** sheet, so the top bar stays one row)
+follows the role the dashboard knows, and the server decides the rest. On a repository's
+namespace, a member's memory writes (add, and edit or delete a row) stay available
+whatever its role, and the server checks that the row is the member's. Only what is for
+the org or the platform rather than a namespace is left out: the platform pages, Health's
+Workers, Operation mix and Projection failures tabs, Settings › Models & keys and the
+admin drawer's navigation.
 
-### The assistant panel
+### Ask AI
 
-![The assistant panel answering a refunds question, its citations checked against what Loom holds](../assets/screenshots/assistant-answer.webp)
+![The Ask AI panel answering a refunds question, its numbered citations checked against what Loom holds](../assets/screenshots/assistant-answer.webp)
 
-The **Assistant** button at the window's right edge (a column from 768 px, its word set
-vertically under its icon), or the bottom navigation's **Assistant** item on narrower
-screens, opens the chat with the [assistant](../architecture/assistant.md#surfaces) on every
-page, and so do **Ctrl /** and **⌘ /** (listed in the keyboard shortcuts). After **Skip to
-main content**, a second skip control, **Go to the assistant**, opens it with the focus in its
-field. The button is never disabled; its icon and name say when an answer is coming in, when
-one ended while the panel was closed (until it opens again; a reload forgets the mark), and
-when the assistant cannot answer, in which case the panel says why. On a deployment whose
-chat is not set up it keeps its plain icon: the panel then holds the starters, Loom's own
-reads. The chat asks about the header's namespace
-under the person's own access: the answer streams in as text with Markdown emphasis, lists,
-tables and code (no HTML, images or links), then its Sources, each citation as the server
-checked it, a memory, document or help citation found in Loom opening where the dashboard
-shows it (a help citation on the Help page at its section) and any citation not found saying
-why, and a label for the answer's [support](../architecture/assistant.md#support), none on
-an answer that makes no claim, such as a greeting or an abstention. While it answers, its
+The **Ask AI** button in the header, right after the search field (its icon alone below 1280
+px), opens the chat with the [assistant](../architecture/assistant.md#surfaces) on every
+page, and closes it again while it sits beside the page; no key opens it, and the search is
+the other way in. Its tooltip says what it does, with the reason it cannot answer when one
+is known; it looks pressed while the panel is open. After **Skip to main content**, a second
+skip control, **Go to Ask AI**, opens it with the focus in its field. The button is never
+disabled; its icon and name say when an answer is coming in, when one ended unseen, with the
+panel closed and not shown in the search's card (until it opens again; a reload forgets the
+mark), and when the assistant cannot answer, in which case the panel says why. On a
+deployment whose chat is not set up it keeps its plain icon: the panel then holds the
+starters, Loom's own reads.
+
+The panel has one header row: the title, **Ask AI**, and the namespace in muted text, then
+icon buttons, each named and with a tooltip: **New chat** (unavailable while an answer is
+coming in), **History** (pressed while History shows), **Expand** (from 1024 px) and
+**Close**; once the session has ended only **Close** stays, over the line that asks to sign
+in again. The chat asks about the header's namespace under the person's own access: the
+answer streams in as text with Markdown emphasis, lists, tables and code (no HTML, images or
+links), each citation drawn as a number by where it first appears, as the search's card
+numbers it, then its **Sources**, one row per citation as the server checked it, led by the
+same number, which in the text links to its row once the check ends, named as the reader
+knows it (a memory by its key, with its kind and version in the row's tooltip), a memory,
+document or help citation found in Loom opening where the dashboard shows it (a help
+citation on the Help page at its section) and any citation not found reading "not confirmed"
+with why, and a label for the answer's [support](../architecture/assistant.md#support), none
+on an answer that makes no claim, such as a greeting or an abstention. While it answers, its
 working line names the latest call it made ("Read the audit"), or "Answering…" before the
 first; a call that failed or was refused reads "Couldn't read …", muted. Under the finished
-answer **What it read (n)** lists every call (see
+answer the disclosure **What it read (n)** lists every call (see
 [steps](../architecture/assistant.md#steps)). **Stop** ends an answer; closing the panel or
 leaving the page does not. Once the text is complete Stop goes, and the answer shows
-"Checking sources…" until its check ends; the next question waits for that check. An
-answer whose check never came back (the connection was lost, or the page was left) reads
-"Check didn't finish". Each question goes with the conversation's newest 50 messages.
+"Checking sources…" until its check ends; the next question waits for that check. An answer
+whose check never came back (the connection was lost, or the page was left) reads "Check
+didn't finish". Each question goes with the conversation's newest 50 messages.
 
-**Copy** under a finished answer copies it as written, citations included. The last answer
-offers **Retry**, which answers its question again in its place with the page line it was
-asked with: after it ended, was stopped, or failed in a way that sending it again may pass
-(the server marks the error retryable, or the connection was lost). **Edit** on the last
-question, or the up arrow, puts it in the field while the field is empty; Ask then
-replaces its answer (with sources when it was asked with them), and **Cancel edit**
-empties the field; while an edit is open, Retry and Ask again with sources are not
-offered. A label that could not confirm the last answer offers **Ask again with sources**,
-which asks it again with "Cite your sources." after it, shown with a "With sources" tag. A
-starter's turn asked again reads its card again.
+An answer's actions are small named icon buttons under it (44 px under a coarse pointer).
+**Copy** copies a finished answer as stored, Markdown and citation markers included. The
+last answer offers **Ask again**, which answers its question again in its place with the
+page line it was asked with, after it ended or was stopped. An answer that failed says so in
+one sentence, "The answer stopped before it finished. Your question is kept." for a stream
+cut short, with **Retry** inside the alert where sending it again may pass (the server marks
+the error retryable, or the connection was lost); its partial text keeps its numbers,
+unlinked. **Edit question**, an icon button on the last question, puts it in the field while
+the field is empty; Ask then replaces its answer (with sources when it was asked with them),
+and **Cancel edit** empties the field; while an edit is open, Ask again and Ask again with
+sources are not offered. Enter in the field asks and Shift+Enter adds a line. A label that
+could not confirm the last answer offers **Ask again with sources**, which asks it again
+with "Cite your sources." after it, shown with a "With sources" tag. A starter's turn asked
+again reads its card again.
 
 A question asked again replaces its answer only once new text comes: until then the turn
-stays as it was, and a refusal the panel explains, or an edit that did not go, offers
-**Try again** (see [asking again](../architecture/assistant.md#asking-again)).
+stays as it was, and a refusal the panel explains, or an edit that did not go, offers **Try
+again** (see [asking again](../architecture/assistant.md#asking-again)).
 
-**Starters** list in an empty conversation, whether the assistant can answer or not: what the
-namespace holds and who appears in it (`namespace.inventory`), how it is used (the audit over
-the last 7 days, `namespace.audit`), what a user, agent or session remembers
+An empty chat shows one line about what Ask AI answers, its starters, and, under the field,
+"Chats are kept in this browser for 30 days." when the chat is saved: for a signed-in person
+whose browser lets the dashboard store it (not with auth off, and not where the browser
+refused, which the panel says instead).
+
+**Starters** list in an empty conversation, whether the assistant can answer or not, as
+full-width rows, the page's own first (documents on the Library, relationships on the Graph,
+a user's memories on Profile and Conversations): four, three on a phone, and the disclosure
+**More questions** shows the rest in place. They cover what the namespace holds and who
+appears in it (`namespace.inventory`), how it is used (the audit over the last 7 days,
+`namespace.audit`), what a user, agent or session remembers
 ([`memory.inspect`](namespaces-and-sharing.md#inspecting-one-user-agent-or-session), with a
 form for the id that suggests the users and agents an inventory card found), what its
 documents are ([`knowledge.inspect`](knowledge.md#inspecting-a-namespaces-documents)), what
@@ -202,111 +225,149 @@ relate (a link to the Graph) and what could be improved
 starter reads its **card** with the person's own token, gated on that read's own role and
 token scope, and shows it in the conversation: Loom's own read, so exact and with no model
 call, marked "Loom's own read · <time>", with **Read again**, the audit's window and the
-mentor's agent and window as selects that read again, and **Open in <page>** for the page that
-owns it. A mentor hint links to the page that owns its plane, an admin page only for a
-namespace admin. One line per card goes to the assistant's live region; the focus stays where
-it is. With **Also ask the assistant** on (the default when the assistant can answer, kept per
-browser) the starter also asks its question, naming the card's arguments, as the person's
-turn, which spends a model answer; the answer's label is the one every answer gets. With it
-off, or while the assistant cannot answer, the card stands alone. On a phone four starters
-show, and **More starters** shows the rest. Each user and agent on an inventory card is a
-button that runs the subject starter for it: it reads what that one remembers and asks as the
-checkbox says, and it is off as the subject starter is (while an answer is coming in, or when
-its read is refused and nothing would be asked).
+mentor's agent and window as selects that read again, and **Open in <page>** for the page
+that owns it. A mentor hint links to the page that owns its plane, an admin page only for a
+namespace admin. One line per card goes to the assistant's live region; the focus stays
+where it is. With **Also ask the model** on (the default, kept per browser; its line under
+it says that off answers from what Loom holds and on uses the namespace's model budget) the
+starter also asks its question, naming the card's arguments, as the person's turn, which
+spends a model answer; the answer's label is the one every answer gets. With it off the card
+stands alone, and while the assistant cannot answer the box is not shown and the card says
+why. Each user and agent on an inventory card is a button that runs the subject starter for
+it: it reads what that one remembers and asks as the checkbox says, and it is off as the
+subject starter is (while an answer is coming in, or when its read is refused and nothing
+would be asked).
 
 **A draft's action is the person's own click** on the existing write, under their role: a
 category draft is registered behind a confirmation that shows the current and proposed
 description; a guide draft opens in the guide editor on top of the guide read now, on its
 conflict view when the guide changed since the draft was read; any other draft is copied,
-its "How to apply" saying who applies it and where. A card restored from History shows
-"Read <time>", and applies nothing until it is read again. The assistant itself writes
-nothing.
+its "How to apply" saying who applies it and where. A card restored from History shows "Read
+<time>", and applies nothing until it is read again. The assistant itself writes nothing.
 
 The Memories page's **Insights** button opens the panel on the starters, with nothing asked
-(also where the chat is not set up: the starters read Loom without it):
-over a finished conversation it starts a new one; while an answer is coming in it opens on
-that conversation and says to choose New conversation once it ends. On a phone the button is
-left out, and the bottom navigation's Assistant item opens the panel, which shows the starters
-on an empty conversation (New conversation starts one). An old link to `/memories?section=insights`
-opens the panel on the audit's card, nothing asked.
+(also where the chat is not set up: the starters read Loom without it): over a finished
+conversation it starts a new one; while an answer is coming in it opens on that conversation
+and says to choose New chat once it ends. On a phone the button is left out, and the top
+bar's Ask AI opens the panel, which shows the starters on an empty conversation (New chat
+starts one). An old link to `/memories?section=insights` opens the panel on the audit's
+card, nothing asked.
 
 **Each question says which page it is asked from**, and shows it: a chip above the field,
 "Includes: Memories", sends one leading line with the question (`Context: Memories page`),
 which the transcript shows as the chip, not as text. Its remove button, **Don't include this
 page**, sends nothing about the page for that question; the next question, or another page,
-carries the chip again. "Your question names this page. Remove it here." shows under the
-field until the chip is removed once or a first question is asked. **Ask about this** adds
-the item to the chip for one question ("Includes: Memories · key user/pref/lang"; the line
-names the memory's key, writer agent and the user and session it is filed under, the
-document's source URI and title, or the result's rank, key and the query its rows came from,
-each quoted). It is in the memory drawer's footer after Edit, in the document preview's
-actions before Download, and on each Recall lab result row as **Ask**. It closes the drawer
-or the preview without handing the focus back to what opened it, opens the panel in the mode
-the window gives with the focus in its field, keeps the question being typed and sends
-nothing. The item leaves with the chip, after the question is answered (one the route
-refuses comes back to the field with its chip), and when the page, the namespace, the org or
-the signed-in person changes. On a conversation about another namespace it starts a new one
-in the header's namespace, the question being typed and the chip moving to it, and says "New
-conversation in <namespace>; the one about <old> is in History." While an answer is still
-coming in there, it starts none: the panel asks how to go on with that conversation, as
-after any switch of namespace, and the chip keeps the item. The button is there for anyone
-the assistant's route admits on the namespace. It is unavailable, with the reason, while the
-assistant cannot answer, on a header namespace that holds no memories, on a document of a
-collection linked in the Library (the answer reads only the header's namespace), and in the
-drawer while an edit or a rename is open ("Save or cancel the edit first."). Where the
-deployment's chat is not set up it is absent: it only ever asks a model.
+carries the chip again. The chip's tooltip says the question names the page and that ×
+leaves it out. **Ask about this** adds the item to the chip for one question ("Includes:
+Memories · key user/pref/lang"; the line names the memory's key, writer agent and the user
+and session it is filed under, the document's source URI and title, or the result's rank,
+key and the query its rows came from, each quoted). It is in the memory drawer's footer
+after Edit, in the document preview's actions before Download, and on each Recall lab result
+row as **Ask**. It closes the drawer or the preview without handing the focus back to what
+opened it, opens the panel in the mode the window gives with the focus in its field, keeps
+the question being typed and sends nothing. The item leaves with the chip, after the
+question is answered (one the route refuses comes back to the field with its chip), and when
+the page, the namespace, the org or the signed-in person changes. On a conversation about
+another namespace it starts a new one in the header's namespace, the question being typed
+and the chip moving to it, and says "New chat in <namespace>; the one about <old> is in
+History." While an answer is still coming in there, it starts none: the panel asks how to go
+on with that conversation, as after any switch of namespace, and the chip keeps the item.
+The button is there for anyone the assistant's route admits on the namespace. It is
+unavailable, with the reason, while the assistant cannot answer, on a header namespace that
+holds no memories, on a document of a collection linked in the Library (the answer reads
+only the header's namespace), and in the drawer while an edit or a rename is open ("Save or
+cancel the edit first."). Where the deployment's chat is not set up it is absent: it only
+ever asks a model.
 
 One panel serves every window width:
 
-- **Beside the page** while the page keeps 592 px (the edge's column at its right): 360 to
-  720 px wide (420 by default, and narrower before it covers the page), resized by its
-  splitter's drag or arrow keys (a wider grab strip under a finger), and not modal, so Tab
-  moves between the page and the panel. A navigation leaves it open.
-- **Over the page** below that: full height at the right, the page dimmed and inert, the
+- **Beside the page** from 1280 px, the page keeping at least 640 px: 360 to 720 px wide
+  (420 by default, and narrower before it covers the page), resized by its splitter's drag
+  or arrow keys (a wider grab strip under a finger), and not modal, so Tab moves between the
+  page and the panel. A navigation leaves it open.
+- **Over the page** below 1280 px: full height at the right, the page dimmed and inert, the
   focus kept inside until it closes. A navigation, Back and Forward close it.
 - **Full screen** under 640 px, with a history entry of its own: Back closes it.
-- **Expanded** from 1024 px: **Expand** makes the open panel a window over the page, anchored
-  at the right and full height, leaving a 24 px strip of the dimmed page at the left; its
-  content keeps a reading width. The address, the history and the page under it do not
-  change. **Collapse**, Esc or a click on the strip returns it to the mode the width gives;
-  **Close** and **Ctrl /** close it, and the next open is docked. A navigation from it (a link
-  in a card, Back, Forward) leaves the window first: beside the page the panel stays open, over
+- **Expanded** from 1024 px: **Expand** makes the open panel a window over the page,
+  anchored at the right and full height, leaving a 24 px strip of the dimmed page at the
+  left; its content keeps a reading width. The address, the history and the page under it do
+  not change. **Collapse**, Esc or a click on the strip returns it to the mode the width
+  gives; **Close** closes it, and the next open is docked. A navigation from it (a link in a
+  card, Back, Forward) leaves the window first: beside the page the panel stays open, over
   it the panel closes. A window narrower than 1024 px collapses it.
 
-Esc closes it from inside (after any menu or popover open in it), returning the focus to the
-button (expanded, Esc collapses the window). A change of width or of the sidebar moves the
-panel to another mode without losing the focus or the question being typed. It reopens on
-reload only where it sits beside the page, never expanded. A bookmarked `/assistant` address
-lands on the account's landing page and opens the assistant over it (expanded from 1024 px).
+Esc closes it from inside (after any menu or popover open in it), returning the focus to Ask
+AI (expanded, Esc collapses the window). A change of width moves the panel to another mode
+without losing the focus or the question being typed. It reopens on reload only where it
+sits beside the page, never expanded. A bookmarked `/assistant` address lands on the
+account's landing page and opens the assistant over it (expanded from 1024 px).
 
-Where the deployment's chat is not set up (no assistant URL), the panel is a list of Loom's
-own reads: it says chat is not set up, shows no question field, no **Try again** and no
-**Also ask the assistant**, and keeps the starters under the last card, so one runs after
-another; those cards are not saved, and the toolbar's **Clear** empties the list. History
-shows only conversations saved before, opened read-only (**New conversation** starts a new
-list). An open puts the focus on the first starter.
+**Chat not set up** (no assistant URL, or readiness says so) is one empty state: its icon,
+"Chat isn't set up", "An operator sets up the assistant service for this deployment.", and a
+link, **How to set up the assistant service**, to the [deployed
+assistant](integrations/librechat.md#the-deployed-assistant) in the docs. Loom's own reads
+are listed under it as starters, with no question field and no **Also ask the model**, and
+the starters stay under the last card, so one runs after another; those cards are not saved,
+and **New chat** empties the list. History shows only conversations saved before, opened
+read-only. An open puts the focus on the first starter. A setup that is failing has the same
+layout, headed "Chat's setup is failing", with **Try again**; a platform or namespace admin
+also gets a link to Admin › Health, where the failure is shown, and anyone but a platform
+admin reads that an admin of this deployment fixes it. The line that Loom can still answer
+from its own reads shows only while the starters do.
 
 **Why it cannot answer** is said for the person reading it, with a link only for someone who
 can open the page it names: the assistant not set up, setting up or failing its setup
 (`/v1/health/ready`'s `assistant` check, read when the panel opens and every 10 s while it
-sets up or fails; a read that takes over 10 s counts as failed, and the chat route's
-refusal then decides), and the chat route's refusals by their `detail.reason`: auth off, an
-org-wide or narrowed token (also read from the token's own claims), a token that expires
-before an answer could finish, and model calls switched off for the org (see
-[the bridge](../architecture/assistant.md#the-bridge-each-callers-own-identity)). **Try again**
-reads readiness again and asks a refused question again once nothing refuses it, with what the
-chip shows then; when the chip's line would make it longer than the route accepts it sends
-nothing, leaving the question in the field, which says why, or, with other text there, saying
-why in the panel. **Health**
-shows the same check as its Assistant row, once readiness can be read: to platform admins
-always, and to anyone else who opens Health while the assistant sets up or fails.
+sets up or fails; a read that takes over 10 s counts as failed, and the chat route's refusal
+then decides), and the chat route's refusals by their `detail.reason`: auth off, an org-wide
+or narrowed token (also read from the token's own claims), a token that expires before an
+answer could finish, and model calls switched off for the org (see [the
+bridge](../architecture/assistant.md#the-bridge-each-callers-own-identity)). **Try again**
+reads readiness again and asks a refused question again once nothing refuses it, with what
+the chip shows then; when the chip's line would make it longer than the route accepts it
+sends nothing, leaving the question in the field, which says why, or, with other text there,
+saying why in the panel. **Health** shows the same check as its Assistant row, once
+readiness can be read: to platform admins always, and to anyone else who opens Health while
+the assistant sets up or fails.
 
-**Conversations are kept in this browser**, never on the server: 30 days from their last use,
-the newest 25 turns of each, up to 256 KB a conversation and 2 MB in all, and listed under
-**History** only for the person and token scope that asked them and the namespaces their token
-reads. Signing out, or another person signing in, deletes them; a session that expired only
-hides them until the same person signs in again. **Delete** and **Delete all** remove them,
-and no other tab can write a deleted one back.
+**The header search answers a question in place.** Its results end with an **Ask AI about
+"<the text>"** option, with a visible **Ask**, under an **Ask AI** label; for text that
+reads as a question (three words or more, ending with "?" or opening with a question word
+such as what, how or is, or with explain, summarize, show me, tell me, list or compare),
+unless it holds a search filter (`tag:`, `namespace:`, `type:`), that option comes first
+instead. After keywords it follows the results once the memory search answers, so an Enter
+before then asks nothing. No option shows a key, and Tab leaves the field as it does
+anywhere. Typing never asks: choosing the option (a click, or Enter while it is highlighted)
+asks the question through the assistant as the panel's **Ask** does, in the conversation
+shown when it is about the header's namespace and otherwise in a new one, with the page's
+line (none once the panel's page chip is removed) but without an item **Ask about this** set
+for the panel's field; what is typed in the panel's field stays. A card headed **Ask AI**
+then sits on top of the results, which stay listed under it: the answer's first lines as
+they stream, each citation in them drawn as its number that, once checked, links to its row
+under the card, its working line, and once checked the label and sources the panel shows (on
+a phone, 44 px rows with their text centred); its end is said once in the assistant's live
+region. Its one action, **Continue in chat**, the first option under it, opens the panel on
+that conversation, the question and answer its last turn. A question the card could not ask
+(another answer coming in, or another tab holding the conversation) waits in the panel's
+empty field. Closing the search while it answers leaves it answering: Ask AI shows the
+answer coming in, then ready. Where the chat is not set up, a reason keeps the assistant
+from answering (the token's own claims included, and a refusal the route gave earlier; the
+setup starting or failing keeps the option, and the card says a refusal it causes), the
+header's namespace is not a memory namespace (a code, tracker or collection one), or the
+question with its page line is longer than one request carries, the search offers no Ask AI
+option. Where it can be offered the empty field reads "Search or ask a question", and while
+it is offered, a search that matches nothing says no "No matches" and gives no filter tips.
+
+**Conversations are kept in this browser**, never on the server: 30 days from their last
+use, the newest 25 turns of each, up to 256 KB a conversation and 2 MB in all, and listed
+under **History** only for the person and token scope that asked them and the namespaces
+their token reads. History is the panel's own view: its header reads **History** after a
+**Back to the chat** button, the chat shown is marked, and choosing a row opens it. Each
+row's menu holds **Delete**; at the end the privacy line and **Delete all chats**, confirmed
+inside the panel. With no one to save chats for (auth off, or a session whose whoami names
+no subject), History shows "Chats aren't saved in this session." Signing out, or another
+person signing in, deletes them; a session that expired only hides them until the same
+person signs in again, and no other tab can write a deleted one back.
 
 One answer runs in a conversation at a time, across the browser's tabs. Ask in a
 conversation another tab is answering in sends nothing, says so, and leaves the question in

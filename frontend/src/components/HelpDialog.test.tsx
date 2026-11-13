@@ -84,4 +84,11 @@ describe("HelpDialog", () => {
     expect(list.className).not.toMatch(/max-h|overflow/);
     expect(list).not.toHaveAttribute("tabindex");
   });
+
+  it("lists no key for Ask AI: it opens from its button and from search", () => {
+    render(<HelpDialog open onOpenChange={() => {}} />);
+    expect(screen.queryByText(/assistant/i)).toBeNull();
+    expect(screen.queryByText(/Ask AI/)).toBeNull();
+    expect(screen.getByText("Open the search result")).toBeInTheDocument();
+  });
 });

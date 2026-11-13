@@ -95,13 +95,13 @@ describe("Ask about this in the document preview", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preview Billing notes" }));
     await settle();
     const preview = screen.getByRole("dialog", { name: "Billing notes" });
-    const ask = within(preview).getByRole("button", { name: "Ask the assistant about this document" });
+    const ask = within(preview).getByRole("button", { name: "Ask AI about this document" });
     expect(ask).toHaveTextContent("Ask about this");
     // Secondary, just before the primary Download.
     const actions = within(preview)
       .getAllByRole("button")
       .map((b) => b.getAttribute("aria-label") || b.textContent);
-    expect(actions.indexOf("Ask the assistant about this document")).toBe(actions.indexOf("Download text (.md)") - 1);
+    expect(actions.indexOf("Ask AI about this document")).toBe(actions.indexOf("Download text (.md)") - 1);
     await userEvent.setup().click(ask);
     await waitFor(() => expect(screen.getByLabelText("Question")).toHaveFocus(), { timeout: 3000 });
     expect(screen.queryByRole("dialog", { name: "Billing notes" })).not.toBeInTheDocument();
@@ -124,7 +124,7 @@ describe("Ask about this in the document preview", () => {
     await settle();
     fireEvent.click(screen.getByRole("button", { name: /^Preview Say/ }));
     await settle();
-    await userEvent.setup().click(screen.getByRole("button", { name: "Ask the assistant about this document" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Ask AI about this document" }));
     await waitFor(() =>
       expect(useDock.getState().item?.line).toBe('document "notes/\\"q\\".md" (title "Say \\"hi\\" then stop")'),
     );
@@ -137,7 +137,7 @@ describe("Ask about this in the document preview", () => {
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Preview Billing notes" }));
     await settle();
-    await userEvent.setup().click(screen.getByRole("button", { name: "Ask the assistant about this document" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Ask AI about this document" }));
     await waitFor(() => expect(useDock.getState().item).not.toBeNull());
     expect(uri.length).toBeGreaterThan(200);
     expect(useDock.getState().item?.line).toBe(`document ${JSON.stringify(uri)} (title "Billing notes")`);
@@ -150,12 +150,10 @@ describe("Ask about this in the document preview", () => {
     expect(api.listKnowledge.mock.calls.at(-1)?.[0]).toMatchObject({ namespace: "col-plans" });
     fireEvent.click(screen.getByRole("button", { name: "Preview Billing notes" }));
     await settle();
-    const ask = screen.getByRole("button", { name: "Ask the assistant about this document" });
+    const ask = screen.getByRole("button", { name: "Ask AI about this document" });
     expect(ask).toHaveAttribute("aria-disabled", "true");
     // The collection by its title: its address is no name a person reads.
-    expect(ask).toHaveAccessibleDescription(
-      "The assistant answers about team; this document is in the collection Plans.",
-    );
+    expect(ask).toHaveAccessibleDescription("Ask AI answers about team; this document is in the collection Plans.");
     await userEvent.setup().click(ask);
     await new Promise((r) => setTimeout(r, 20));
     expect(useDock.getState().item).toBeNull();
@@ -172,9 +170,9 @@ describe("Ask about this in the document preview", () => {
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Preview Billing notes" }));
     await settle();
-    const ask = screen.getByRole("button", { name: "Ask the assistant about this document" });
+    const ask = screen.getByRole("button", { name: "Ask AI about this document" });
     expect(ask).toHaveAttribute("aria-disabled", "true");
-    expect(ask).toHaveAccessibleDescription("The assistant answers about a memory namespace.");
+    expect(ask).toHaveAccessibleDescription("Ask AI answers about a memory namespace.");
   });
 
   it.each([
@@ -285,7 +283,7 @@ describe("Ask about this in the document preview", () => {
     await settle();
     const preview = screen.getByRole("dialog", { name: "Billing notes" });
     expect(within(preview).getByRole("button", { name: "Download text (.md)" })).toBeInTheDocument();
-    const ask = within(preview).getByRole("button", { name: "Ask the assistant about this document" });
+    const ask = within(preview).getByRole("button", { name: "Ask AI about this document" });
     expect(ask).toHaveAttribute("aria-disabled", "true");
     expect(ask).toHaveAccessibleDescription(/^Needs viewer on .+\. An admin of it can grant that\.$/);
   });
