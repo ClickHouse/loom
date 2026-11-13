@@ -92,7 +92,8 @@ export function DockBody() {
   const showHistory = useDock((s) => !!s.history);
   const setShowHistory = (history: boolean) => useDock.setState({ history });
   // An open the person starts asks for the question field (openAssistant's focusField), on
-  // an open panel too (the search's Continue): History gives way to the chat, which shows it.
+  // an open panel too (the search's Continue): History gives way to the chat, which shows
+  // it.
   useEffect(() => {
     if (focusField) setShowHistory(false);
   }, [focusField]);
@@ -100,8 +101,9 @@ export function DockBody() {
   useEffect(() => {
     if (!open) setShowHistory(false);
   }, [open]);
-  // The header's New chat: a new conversation, on the chat view, its field focused. While an
-  // answer streams the button drops the click, and newConversation keeps the conversation.
+  // The header's New chat: a new conversation, on the chat view, its field focused. While
+  // an answer streams the button drops the click, and newConversation keeps the
+  // conversation.
   const newChatSeq = useDock((s) => s.newChatSeq ?? 0);
   const handledNewChat = useRef(newChatSeq);
   useEffect(() => {
@@ -297,8 +299,8 @@ export function DockBody() {
   // With the chat off the cards are a list of reads: the starters stay under the last one,
   // except under a conversation reopened from History, which is read-only.
   const startersShown = ownerSettled && !expired && !showHistory && (turns.length === 0 || (off && chatId === null));
-  // With no question field an open's focus goes to the first starter (Starters takes it), or
-  // to the panel where none renders.
+  // With no question field an open's focus goes to the first starter (Starters takes it),
+  // or to the panel where none renders.
   useEffect(() => {
     if (!setupDown || !focusField || !ownerSettled || startersShown) return;
     document.getElementById("assistant-panel")?.focus();
@@ -467,9 +469,9 @@ function History({
 }) {
   const list = useRef<HTMLUListElement>(null);
   const [confirming, setConfirming] = useState(false);
-  // Where the focus goes once a Delete, Delete all or the confirmation's buttons have drawn:
-  // a row (by its chat's id), Delete all chats, the confirmation's Cancel, else the panel
-  // header's History button, which stays.
+  // Where the focus goes once a Delete, Delete all or the confirmation's buttons have
+  // drawn: a row (by its chat's id), Delete all chats, the confirmation's Cancel, else the
+  // panel header's History button, which stays.
   const [focusTo, setFocusTo] = useState<{ row: string } | "delete-all" | "cancel" | "history" | null>(null);
   const deleteAll = useRef<HTMLButtonElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
@@ -603,8 +605,8 @@ function History({
 /** The panel header's History button (layout/AssistantPanel.tsx). */
 const historyButton = () => document.querySelector<HTMLElement>(".assistant-head button[aria-pressed]");
 
-/** Why the assistant cannot answer, in words that say who fixes it and where (the link
- *  goes only to someone who can open the page it names). */
+/** Why the assistant cannot answer, in words that say who fixes it and where (the link goes
+ *  only to someone who can open the page it names). */
 function ReasonBody({
   reason,
   starters,
@@ -675,10 +677,10 @@ function ReasonBody({
 export const SETUP_DOCS = { page: "features/integrations/librechat.md", anchor: "the-deployed-assistant" };
 
 /** Chat not set up (`failing`: its setup failing): the icon, a title and a line, then the
- *  docs on setting up the assistant service, or Try again while it fails, with Admin › Health
- *  for someone who can open it (a platform or namespace admin) and who fixes it for anyone
- *  but a platform admin. The line about Loom's own reads shows only while the starters, which
- *  need no model, show under it. */
+ *  docs on setting up the assistant service, or Try again while it fails, with Admin ›
+ *  Health for someone who can open it (a platform or namespace admin) and who fixes it for
+ *  anyone but a platform admin. The line about Loom's own reads shows only while the
+ *  starters, which need no model, show under it. */
 function SetupState({
   failing,
   starters,

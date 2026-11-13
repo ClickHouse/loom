@@ -1,5 +1,5 @@
-// Whether a starter also asks the model: the "Also ask the model" checkbox, kept in
-// this browser for whoever signs in on it (a convenience that holds nothing about the person;
+// Whether a starter also asks the model: the "Also ask the model" checkbox, kept in this
+// browser for whoever signs in on it (a convenience that holds nothing about the person;
 // with storage refused it lasts the tab), and why the assistant cannot answer now when it
 // cannot (set by the panel's body).
 import { create } from "zustand";

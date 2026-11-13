@@ -55,8 +55,8 @@ it("asks nothing for an Enter whose text changed while the card's chunk loaded",
   const field = screen.getByRole("combobox", { name: "Search Loom" });
   await user.type(field, "what does billing remember");
   await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
-  // The card's chunk, preloaded once the card shows, then resolves in a later task: Enter and
-  // the next keystroke land before it, in one go.
+  // The card's chunk, preloaded once the card shows, then resolves in a later task: Enter
+  // and the next keystroke land before it, in one go.
   await import("../views/assistant/SearchAnswer");
   act(() => {
     fireEvent.keyDown(field, { key: "Enter" });

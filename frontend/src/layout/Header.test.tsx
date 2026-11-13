@@ -153,8 +153,8 @@ describe("Header", () => {
     expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
   });
 
-  // The placeholder drawn before the search's body loads makes the body's checks, the token's
-  // claims included, so it does not change when the body arrives.
+  // The placeholder drawn before the search's body loads makes the body's checks, the
+  // token's claims included, so it does not change when the body arrives.
   it("offers asking in the search's placeholder only where the search will, not with auth off", () => {
     viewport = 1440;
     auth.off = false;

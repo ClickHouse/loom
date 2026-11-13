@@ -1,7 +1,7 @@
-// The assistant panel in the shell: the header's Ask AI button, the modes the window's width
-// gives it (push, overlay, phone sheet) and the window it expands to, what a modal panel does
-// to the page (role, trap, inert), the keys (Esc, Ctrl+J), what navigations, Back and
-// resizes do to it, and an /assistant address.
+// The assistant panel in the shell: the header's Ask AI button, the modes the window's
+// width gives it (push, overlay, phone sheet) and the window it expands to, what a modal
+// panel does to the page (role, trap, inert), the keys (Esc, Ctrl+J), what navigations,
+// Back and resizes do to it, and an /assistant address.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "./test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

@@ -37,8 +37,8 @@ const Card = lazy(() => import("./cards/Card").then((m) => ({ default: m.Card })
 const retryOffered = (t: Turn) =>
   t.state === "done" || t.state === "stopped" || ((t.state === "failed" || t.state === "refused") && !!t.retryable);
 
-/** "What it read (n)"'s list: the answer's tool calls, a disclosure under it once it ends. A
- *  call that failed or was refused is muted, not an error: the answer may still stand. */
+/** "What it read (n)"'s list: the answer's tool calls, a disclosure under it once it ends.
+ *  A call that failed or was refused is muted, not an error: the answer may still stand. */
 function StepsList({ turn, open, id }: { turn: Turn; open: boolean; id: string }) {
   const steps = turn.steps ?? [];
   return (
@@ -247,9 +247,10 @@ export function AssistantChat({
           {turns.length > 0 && (
             <ol className="space-y-4" aria-label="Conversation">
               {turns.map((t, i) => {
-                // What the turn offers: Copy on a finished answer; Ask again (Retry inside a
-                // failure's alert) and "Ask again with sources" on the last one, outside an
-                // edit. With the chat off a stored conversation is read-only: nothing asks again.
+                // What the turn offers: Copy on a finished answer; Ask again (Retry inside
+                // a failure's alert) and "Ask again with sources" on the last one, outside
+                // an edit. With the chat off a stored conversation is read-only: nothing
+                // asks again.
                 const again = !chatOff() && last?.id === t.id && !edited && !waiting;
                 const canCopy = t.state === "done" && !!t.answer.trim();
                 const canRetry = again && retryOffered(t);
@@ -257,8 +258,8 @@ export function AssistantChat({
                   again &&
                   !t.withSources &&
                   withContext(sentQuestion(t.question, true), t.context).length <= MAX_MESSAGE_CHARS;
-                // The citations are numbered as the search's card numbers them; a number links
-                // to its Sources row once the answer is done and its check has ended.
+                // The citations are numbered as the search's card numbers them; a number
+                // links to its Sources row once the answer is done and its check has ended.
                 const listed = t.state === "done" && checkingSources !== t.id;
                 const numbers = citationNumbers(t.answer);
                 const rows = new Set(listed ? (t.citations ?? []).map((c) => citationKey(c.text)) : []);

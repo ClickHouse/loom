@@ -53,8 +53,8 @@ beforeEach(() => {
 
 describe("HeaderSearch", () => {
   // The group heading names the type, so a row leads with the type's icon instead of a
-  // coloured "memory" badge and carries no memory-type label (the inspector shows it);
-  // line 1 is the key, line 2 the excerpt.
+  // coloured "memory" badge and carries no memory-type label (the inspector shows it); line
+  // 1 is the key, line 2 the excerpt.
   it("leads each memory row with its type icon, with no badge or memory-type label", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);

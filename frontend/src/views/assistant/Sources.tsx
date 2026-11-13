@@ -201,8 +201,8 @@ export function Sources({
                       </Link>
                     </Tip>
                   ) : (
-                    // A tooltip only where it adds something (a kind, a version), and with it
-                    // the tab stop that reaches it.
+                    // A tooltip only where it adds something (a kind, a version), and with
+                    // it the tab stop that reaches it.
                     <TipTarget tip={detail} disabled={!detail}>
                       <span className={c.verified ? "text-text" : "text-text-muted"}>{name}</span>
                     </TipTarget>

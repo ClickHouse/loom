@@ -45,10 +45,10 @@ import { AssistantLauncher } from "./AssistantLauncher";
  * full-width row and the action cluster wraps instead of overlapping, so at 390 px the
  * search and the actions never overlap. Ask AI follows the search field at every width, its
  * word shown from xl: on a phone it leads the action cluster in the first row
- * (layout/AssistantLauncher.tsx).
- * "New" shows its word from lg and below it its icon with a tooltip; below md it is in the
- * More sheet instead (layout/MobileMore.tsx), whose dialogs the header still mounts. It is
- * disabled with a tooltip when the caller's role on the namespace is viewer.
+ * (layout/AssistantLauncher.tsx). "New" shows its word from lg and below it its icon with a
+ * tooltip; below md it is in the More sheet instead (layout/MobileMore.tsx), whose dialogs
+ * the header still mounts. It is disabled with a tooltip when the caller's role on the
+ * namespace is viewer.
  */
 export function Header() {
   const whoami = useStore((s) => s.whoami);

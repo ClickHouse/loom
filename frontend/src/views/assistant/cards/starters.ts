@@ -1,8 +1,8 @@
 // The starters: one per question Loom's own reads answer exactly. Each asks the assistant
-// its question (when "Also ask the model" is on and the assistant can answer) and reads
-// its card with the person's token. The question names the arguments the card was first
-// read with, so the prose and that read are about the same thing; the card's own selects
-// read it again with others, which the question then no longer names.
+// its question (when "Also ask the model" is on and the assistant can answer) and reads its
+// card with the person's token. The question names the arguments the card was first read
+// with, so the prose and that read are about the same thing; the card's own selects read it
+// again with others, which the question then no longer names.
 import type { InspectSubject } from "../../../api";
 import type { View } from "../../../lib/state";
 import type { CardArgs, CardOp } from "./types";

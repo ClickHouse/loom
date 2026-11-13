@@ -292,8 +292,8 @@ export default function App() {
   }, [authed, arriveFromHistory]);
 
   // The assistant panel: its mode follows the window and a navigation closes it at overlay
-  // and phone widths. Wired once the shell has drawn (the elements a modal panel makes inert
-  // exist from then on).
+  // and phone widths. Wired once the shell has drawn (the elements a modal panel makes
+  // inert exist from then on).
   const shellDrawn = !!identity && !!whoami_;
   useEffect(() => {
     if (!shellDrawn) return;

@@ -9,16 +9,16 @@ import { toggleAssistantSoon, useDock } from "../lib/assistantDock";
 const WORD_QUERY = "(min-width: 1280px)";
 
 /**
- * The header's Ask AI button, right after the search field at every width: it opens the
- * Ask AI panel, and closes it while it sits beside the page (over the page the header is
- * inert: Close and Esc close it there), and is never disabled. From xl a
- * secondary button with its word; below it the icon alone, frameless like the header's
- * other icon buttons (32 px, 44 under a coarse pointer). One element at every width, so the
- * focus stays across a resize. Its marks, each a shape of its own and in its name: answering
- * (a spinner, a static ring under reduced motion), an answer ready (a dot on the icon),
- * unavailable (a crossed circle; a click opens the panel to the reason). A deployment whose
- * chat is not set up keeps the plain sparkle: its starters still read. Open, it takes Click
- * UI's pressed look (`aria-expanded`).
+ * The header's Ask AI button, right after the search field at every width: it opens the Ask
+ * AI panel, and closes it while it sits beside the page (over the page the header is inert:
+ * Close and Esc close it there), and is never disabled. From xl a secondary button with its
+ * word; below it the icon alone, frameless like the header's other icon buttons (32 px, 44
+ * under a coarse pointer). One element at every width, so the focus stays across a resize.
+ * Its marks, each a shape of its own and in its name: answering (a spinner, a static ring
+ * under reduced motion), an answer ready (a dot on the icon), unavailable (a crossed
+ * circle; a click opens the panel to the reason). A deployment whose chat is not set up
+ * keeps the plain sparkle: its starters still read. Open, it takes Click UI's pressed look
+ * (`aria-expanded`).
  */
 export function AssistantLauncher() {
   const open = useDock((s) => s.open);

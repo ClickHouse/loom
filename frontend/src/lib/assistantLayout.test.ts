@@ -3,9 +3,9 @@ import { PAGE_MIN, PANEL_MIN, PUSH_MIN, dockLayout, isModal, layoutOf } from "./
 import { useDock } from "./assistantDock";
 
 describe("dockLayout", () => {
-  // [window width, sidebar collapsed, mode, largest width]: push from 1280 px while the page
-  // keeps 640 px beside at least 360 px of panel, overlay below (64 px of the page in view),
-  // the phone sheet below 640 px.
+  // [window width, sidebar collapsed, mode, largest width]: push from 1280 px while the
+  // page keeps 640 px beside at least 360 px of panel, overlay below (64 px of the page in
+  // view), the phone sheet below 640 px.
   it.each([
     [639, false, "sheet", 639],
     [640, false, "overlay", 576],

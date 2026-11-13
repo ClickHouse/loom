@@ -1,7 +1,7 @@
 // The header search's answer card (components/HeaderSearch.tsx): a question asked from the
-// search box goes through the panel's chat store, into the conversation the panel shows, and
-// the card shows that turn's answer as it streams. A chunk of its own, loaded once the search
-// shows the card.
+// search box goes through the panel's chat store, into the conversation the panel shows,
+// and the card shows that turn's answer as it streams. A chunk of its own, loaded once the
+// search shows the card.
 import { useEffect, useId, type ReactNode } from "react";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Alert } from "../../components/ui/Alert";

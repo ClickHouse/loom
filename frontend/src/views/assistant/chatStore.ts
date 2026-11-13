@@ -298,14 +298,14 @@ export function ownerOf(whoami: ReturnType<typeof useStore.getState>["whoami"]):
   };
 }
 
-/** The last adoption was of no owner (a session whose whoami names no subject, so nothing is
- *  stored): adopting none again is the same owner, not a change. */
+/** The last adoption was of no owner (a session whose whoami names no subject, so nothing
+ *  is stored): adopting none again is the same owner, not a change. */
 let lastAdoptedNone = false;
 
-/** The conversations are `owner`'s from here on: what was shown, when it was someone
- *  else's (or the token's scope changed), is forgotten. The panel's body and the search's
- *  answer card both call it before they show or ask anything, so neither resets the other;
- *  only a change of owner resets. */
+/** The conversations are `owner`'s from here on: what was shown, when it was someone else's
+ *  (or the token's scope changed), is forgotten. The panel's body and the search's answer
+ *  card both call it before they show or ask anything, so neither resets the other; only a
+ *  change of owner resets. */
 export function adoptOwner(owner: Owner | null): void {
   const s = useChat.getState();
   if (s.owner && owner && sameOwner(s.owner, owner)) return;
@@ -330,7 +330,8 @@ export function latestStep(t: Turn): string | null {
 
 /** Start a new conversation in `header` when the one shown is about another namespace and
  *  nothing answers in it, answering the line that says so (newConversationLine); null when
- *  the one shown stays. The panel's Ask about this and the search's question both go by it. */
+ *  the one shown stays. The panel's Ask about this and the search's question both go by it.
+ *  */
 export function startIn(header: string): string | null {
   const c = useChat.getState();
   if (c.answering || c.turns.length === 0 || !c.namespace || c.namespace === header) return null;
@@ -628,9 +629,9 @@ async function answer(
 }
 
 /** How the panel and the search's card word an answer that failed: one sentence that says
- *  what happened and that the question is kept (the turn keeps it, Retry asks it again), for
- *  the ends the dashboard can name surely (the stream cut short, the connection lost, the
- *  model stopping inside the stream); any other failure in the server's words. */
+ *  what happened and that the question is kept (the turn keeps it, Retry asks it again),
+ *  for the ends the dashboard can name surely (the stream cut short, the connection lost,
+ *  the model stopping inside the stream); any other failure in the server's words. */
 export function turnFailure(e: unknown, refusedBefore: boolean): string {
   const inStream = !refusedBefore;
   const code = e instanceof ApiError ? e.code : "";
@@ -646,8 +647,8 @@ export function turnFailure(e: unknown, refusedBefore: boolean): string {
   return lead ? `${lead} Your question is kept.` : humanizeError(e, { read: true });
 }
 
-/** Whether turn `turnId`'s answer is on screen: in the open panel, or in the search's answer
- *  card, which shows that turn (not one it found answering when it asked). */
+/** Whether turn `turnId`'s answer is on screen: in the open panel, or in the search's
+ *  answer card, which shows that turn (not one it found answering when it asked). */
 const seen = (turnId: string) => {
   const d = useDock.getState();
   return d.open || d.answerShown === turnId;

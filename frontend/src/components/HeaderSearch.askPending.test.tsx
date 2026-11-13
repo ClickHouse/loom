@@ -6,9 +6,9 @@ import { useDock } from "../lib/assistantDock";
 import { resetChat } from "../views/assistant/chatStore";
 import { HeaderSearch } from "./HeaderSearch";
 
-// A second Enter while the first ask is still on its way (its chunk's import has not answered)
-// asks nothing more: one question goes out, and the card is not marked busy by its own first
-// ask.
+// A second Enter while the first ask is still on its way (its chunk's import has not
+// answered) asks nothing more: one question goes out, and the card is not marked busy by
+// its own first ask.
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -55,8 +55,8 @@ it("asks once for two Enters before the first ask has returned", async () => {
   const field = screen.getByRole("combobox", { name: "Search Loom" });
   await userEvent.setup().type(field, "what does billing remember");
   await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
-  // The card's chunk is loaded (the card preloads it): the first Enter's ask still waits for
-  // its import to answer, a later task, when the second Enter lands in the same go.
+  // The card's chunk is loaded (the card preloads it): the first Enter's ask still waits
+  // for its import to answer, a later task, when the second Enter lands in the same go.
   await import("../views/assistant/SearchAnswer");
   act(() => {
     fireEvent.keyDown(field, { key: "Enter" });

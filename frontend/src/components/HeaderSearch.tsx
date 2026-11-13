@@ -387,15 +387,16 @@ export function HeaderSearch({
   useEffect(() => {
     setAsked(null);
   }, [identity?.namespace]);
-  // Text with a search filter (tag:, namespace:, type:) is a search: its Ask AI option comes
-  // after the results, as for keywords.
+  // Text with a search filter (tag:, namespace:, type:) is a search: its Ask AI option
+  // comes after the results, as for keywords.
   const filtered = parsed.tags.length > 0 || parsed.namespaces.length > 0 || parsed.typeFilters.length > 0;
   const cardShown = parsed.raw.length > 0 && !!asked;
   const askRowShown = askable && parsed.raw.length > 0 && !asked;
   // A question leads with the option that asks it; keywords stay results-first.
   const askRowFirst = askRowShown && !filtered && readsAsQuestion(q);
   // After keywords the option waits for the memory search: until its results land, the
-  // option would be the highlighted top row, and Enter would ask instead of opening a result.
+  // option would be the highlighted top row, and Enter would ask instead of opening a
+  // result.
   const memoryPending = searching && memoryQuery.length >= MEMORY_MIN_CHARS;
   const askRowLast = askRowShown && !askRowFirst && !memoryPending;
   useEffect(() => {
@@ -587,8 +588,8 @@ export function HeaderSearch({
     </>
   );
 
-  // The 'Ask AI about "<text>"' option, at `idx`: choosing it (a click, or Enter while it is
-  // highlighted) asks, and its Ask says so.
+  // The 'Ask AI about "<text>"' option, at `idx`: choosing it (a click, or Enter while it
+  // is highlighted) asks, and its Ask says so.
   const askOption = (idx: number, className: string) => (
     <OptionGroup id={`${listboxId}-ask`} icon="sparkle" label="Ask AI" className={className}>
       <button
