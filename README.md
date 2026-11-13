@@ -13,7 +13,9 @@
 </p>
 
 <p align="center">
-  English · <a href="./README.zh-CN.md">简体中文</a>
+  <!-- languages -->
+  English · <a href="./i18n/zh-CN/README.md">简体中文</a> · <a href="./i18n/ja/README.md">日本語</a> · <a href="./i18n/ko/README.md">한국어</a> · <a href="./i18n/pt-BR/README.md">Português (Brasil)</a> · <a href="./i18n/es/README.md">Español</a> · <a href="./i18n/ru/README.md">Русский</a>
+  <!-- /languages -->
 </p>
 
 <p align="center">
@@ -80,7 +82,8 @@ Both coding setups use Claude Code (`claude-sonnet-5`) on the ClickHouse codebas
 cost is the whole session's model bill, excluding Loom's server-side model calls, hosting
 and indexing. Answer quality
 measures coverage of a verified answer's key points, with a contradiction penalty.
-File localization counts the right file among three named files.
+File localization counts whether the right file is among the up to three files the agent is
+asked to name at the end of its answer.
 
 The memory row compares retrieved memories with full conversation history using
 the same `gpt-5` reader. Token savings exclude memory construction; the 94% vs 90%
