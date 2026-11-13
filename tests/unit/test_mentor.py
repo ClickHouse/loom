@@ -1541,6 +1541,34 @@ def test_several_echoed_names_keep_their_quotes_and_the_advice() -> None:
     assert text.endswith("advice.")
 
 
+def test_a_long_echoed_list_is_counted_past_three() -> None:
+    echo = mentor_rules._quoted_list([f"source-{i}" for i in range(12)])
+    assert echo.count("'") == 6 and echo.endswith(", +9")
+    assert len(echo) <= mentor_rules.ECHO_CHARS + 12
+
+
+def test_the_initialize_instructions_mark_each_op_once_with_a_mentor_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rules and the cached mentor line are rendered apart; joined, each op is
+    still marked on its first mention only."""
+    from server.transport import mcp_primer
+
+    async def _defaults(*_args: Any) -> dict[str, str]:
+        return {"org": "o", "namespace": "ns", "agent": "a"}
+
+    monkeypatch.setattr(mcp_primer, "_caller_defaults", _defaults)
+    text = "keep it with working_memory.set" + mentor_rules._unlisted(("working_memory.set",))
+    m._cache_put(("o", "ns", "a"), 10**12, _fake_profile(_h("scratch_unused", text=text)))
+    joined = asyncio.run(mcp_primer._initialize_instructions(None, "core"))
+    assert "keep it with working_memory.set" in joined
+    assert (
+        joined.count("working_memory.set` (via loom_op)")
+        + joined.count("working_memory.set (via loom_op)")
+        == 1
+    )
+
+
 def test_following_the_reading_hint_through_search_query_clears_it() -> None:
     """The reading rules advise search.query, so a search.query call counts as a recall."""
     keyed = {"memory.get": 60}

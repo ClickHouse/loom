@@ -36,6 +36,7 @@ from server.transport.mcp_identity import (
     _caller_defaults,
     no_default_namespace_line,
 )
+from server.transport.mcp_op import keep_first_marks
 from server.transport.mcp_op import reachable as loom_op_reachable
 from server.transport.mcp_tools import (
     _emit_mcp_event,
@@ -493,7 +494,8 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
     )
     profile = await _profile_section(auth, defaults) if auth is not None else ""
     mentor = await _mentor_line(auth, defaults, toolset)
-    return rules + workspace + scope_line + mentor + profile
+    # the rules and the mentor line are rendered apart: mark each op once across both
+    return keep_first_marks(rules + workspace + scope_line + mentor) + profile
 
 
 def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:

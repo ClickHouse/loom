@@ -327,10 +327,17 @@ def _quoted(value: object, limit: int = ECHO_CHARS) -> str:
     return f"'{text}'"
 
 
-def _quoted_list(values: list[Any]) -> str:
-    """Several echoed values sharing one ECHO_CHARS budget."""
-    each = max(8, ECHO_CHARS // max(1, len(values)))
-    return ", ".join(_quoted(v, each) for v in values)
+# The most echoed values a hint lists by name; the rest are counted.
+ECHO_VALUES = 3
+
+
+def _quoted_list(values: list[Any], total: int | None = None) -> str:
+    """Up to ECHO_VALUES echoed values sharing one ECHO_CHARS budget, then "+K" for the
+    rest of ``total`` (default: the values given)."""
+    shown = values[:ECHO_VALUES]
+    each = ECHO_CHARS // max(1, len(shown))
+    more = (len(values) if total is None else total) - len(shown)
+    return ", ".join(_quoted(v, each) for v in shown) + (f", +{more}" if more > 0 else "")
 
 
 def clip(text: str, limit: int = HINT_CHARS) -> str:
@@ -523,7 +530,7 @@ def _rules_planes(c: _Ctx) -> None:
         and (c.searches >= CODE_UNUSED_MIN_SEARCHES or c.sets >= CODE_UNUSED_MIN_SETS)
     ):
         shown = list(c.facts.get("repo_names") or [])
-        names = _quoted_list(shown) + (f", +{repos - len(shown)}" if repos > len(shown) else "")
+        names = _quoted_list(shown, total=repos)
         c.add(
             "code_index_unused",
             "warning",
@@ -622,11 +629,13 @@ def _rules_shapes(c: _Ctx) -> None:
         and int(c.usage.get("memory.record.write", 0)) == 0
     ):
         counts = "" if int(c.usage.get("memory.aggregate", 0)) else "; memory.aggregate counts them"
+        top = c.facts.get("top_prefix")
+        prefix = _quoted(top) if top else "one prefix"
         c.add(
             "records_for_identities",
             "info",
             f"{idk} writes keyed by a number, {c.fact('top_prefix_sets')} of them "
-            f"under {_quoted(c.facts.get('top_prefix') or 'prefix')}: facts with identity — "
+            f"under {prefix}: facts with identity — "
             f"{_byname('memory_schema.register')} once, then memory.record.write{counts}.",
             ("memory_schema.register", "memory.record.write", "memory.aggregate"),
             id_keyed_sets=idk,

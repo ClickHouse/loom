@@ -237,7 +237,7 @@ def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code:
                 assert not re.search(rf"\b{tool}\b", text), f"{toolset}: {t['name']} lists {op}"
                 if "loom_op" in names and reachable(OPS[op], toolset):
                     # the trail the renderer writes the marker after: a backtick, a possessive
-                    marked = rf"(?<![\w.]){re.escape(op)}`?(?:'s)? \(via loom_op\)"
+                    marked = rf"(?<![\w.]){re.escape(op)}(?:`(?:'s?)?|(?:'s)?) \(via loom_op\)"
                     assert re.search(marked, text), (
                         f"{toolset}: {t['name']} names unlisted {op} without saying how to reach it"
                     )

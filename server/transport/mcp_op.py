@@ -138,6 +138,24 @@ def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool = False) -
     return "".join(p if i % 2 else _NAMED_OP.sub(rename, p) for i, p in enumerate(parts))
 
 
+# A marked mention as name_ops_for_listing writes it.
+_MARKED = re.compile(r"(?<![\w.])([a-z_]+(?:\.[a-z_]+){1,2})(`?(?:'s?)?) \(via loom_op\)")
+
+
+def keep_first_marks(text: str) -> str:
+    """``text``, joined from parts rendered on their own, with each op's
+    "(via loom_op)" kept on its first mention only."""
+    seen: set[str] = set()
+
+    def first(m: re.Match[str]) -> str:
+        if m.group(1) in seen:
+            return m.group(1) + m.group(2)
+        seen.add(m.group(1))
+        return m.group(0)
+
+    return _MARKED.sub(first, text)
+
+
 # The ops loom_op's text offers beside its example call (memory.related). Each
 # shows only on a listing that leaves it out and where loom_op routes it.
 _EXAMPLES: tuple[tuple[str, str], ...] = (
