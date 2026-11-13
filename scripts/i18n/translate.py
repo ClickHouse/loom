@@ -1,7 +1,7 @@
 """Machine translations of a fixed set of English pages into i18n/<lang>/.
 
     python -m scripts.i18n.translate check    # exit 1: a page is stale, orphaned, or has a broken
-                                              # link or an English label
+                                              # link, an English label or an old language line
     python -m scripts.i18n.translate update   # translate the stale pages (needs ANTHROPIC_API_KEY)
     python -m scripts.i18n.translate update --all [--lang ja ...]   # after a prompt change
 
@@ -15,7 +15,9 @@ English anchor, so `#anchor` links keep working on the translated page. The firs
 each translation stamps the git blob of the English page it was made from; `check`
 compares that stamp with the file.
 A change to the model or a banner makes every page stale; a change to the prompt does not:
-regenerate with `--all`.
+regenerate with `--all`. The READMEs carry a generated language line that `update` rewrites
+without translating; adding a language changes the English README's line, so its blob, and
+every README is translated again.
 
 The run estimates its cost before the first call and stops when the estimate, or the
 spend reported by the API, passes LOOM_I18N_MAX_USD (default 5). Every call checks the cap
@@ -650,8 +652,9 @@ def write_language_lines() -> None:
         file = ROOT / path
         text = file.read_text()
         match = LANGUAGE_LINE.search(text)
-        if match:
-            file.write_text(text[: match.start()] + language_line(path) + text[match.end() :])
+        if not match:
+            raise SystemExit(f"{path} has no <!-- languages --> markers")
+        file.write_text(text[: match.start()] + language_line(path) + text[match.end() :])
 
 
 # ---- commands -------------------------------------------------------------------------

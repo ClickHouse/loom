@@ -247,7 +247,7 @@ def test_a_new_language_is_linked_from_every_readme_without_translating(
     ja = t.LANGUAGES[1]
     extra = t.Language("xx", "Xx", "Xx", ja.banner, ja.style)
     monkeypatch.setattr(t, "LANGUAGES", (*t.LANGUAGES, extra))
-    assert len(t.language_lines_differ()) == 1 + len(t.LANGUAGES) - 1
+    assert t.language_lines_differ() == t.readmes()
     t.write_language_lines()
     assert t.language_lines_differ() == []
     assert '<a href="../xx/README.md">Xx</a>' in (tmp_path / "i18n/ja/README.md").read_text()
