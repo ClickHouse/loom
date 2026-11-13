@@ -2,5 +2,5 @@
 mkdocs-material==9.7.7
 # Lets list content nest at 2 spaces, as Prettier writes the docs.
 mdx-truly-sane-lists==1.3
-# Pulled in by the theme; pinned to a release with the security fixes that is at least two weeks old.
+# mkdocs.yml loads pymdownx.tasklist and pymdownx.superfences; 11.0.1 and later carry the advisory fixes.
 pymdown-extensions==12.3
