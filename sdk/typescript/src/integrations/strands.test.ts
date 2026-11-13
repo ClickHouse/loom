@@ -65,6 +65,23 @@ describe("LoomMemoryStore (Strands adapter)", () => {
     ]);
   });
 
+  it("leaves out a hit below the floor, unless told to keep it", async () => {
+    const reply = {
+      results: [
+        { memory_key: "k1", memory_type: "semantic", content_excerpt: "aisle", similarity: 0.9 },
+        { memory_key: "k2", memory_type: "semantic", content_excerpt: "x", similarity: 0.2, below_threshold: true },
+        { memory_key: "k3", memory_type: "semantic", content_excerpt: "espresso", similarity: 0.8 },
+      ],
+    };
+    // three rows for two results: the floor is applied before the cut
+    const strict = await new LoomMemoryStore(harness(reply).agent, { maxSearchResults: 2 }).search("q");
+    expect(strict.map((e) => e.metadata?.memory_key)).toEqual(["k1", "k3"]);
+    const loose = await new LoomMemoryStore(harness(reply).agent, { maxSearchResults: 2, honourAbstain: false }).search(
+      "q",
+    );
+    expect(loose.map((e) => e.metadata?.memory_key)).toEqual(["k1", "k2"]);
+  });
+
   it("returns nothing when loom abstains, unless told to keep the hits", async () => {
     const reply = {
       abstain: true,

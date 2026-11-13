@@ -5,6 +5,7 @@ returns, abstention, and which agent serves invoke and ainvoke."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import importlib
 import sys
 from types import SimpleNamespace
@@ -299,3 +300,13 @@ def test_invoke_on_a_real_sync_agent_posts_through_its_loop() -> None:
             doc.id
         ]
     assert [p for p, _ in wire.posts] == ["/v1/knowledge.search", "/v1/knowledge.search"]
+
+
+def test_memory_below_the_floor_is_left_out_unless_disabled() -> None:
+    weak = dataclasses.replace(_memory("k2", "a weak match", 0.2), below_threshold=True)
+    # three rows for k=2: the floor is applied before the cut
+    result = _memories([_memory("k1", "aisle seats", 0.9), weak, _memory("k3", "vegetarian", 0.8)])
+    strict = LoomMemoryRetriever(agent=_agent(memory=_FakeSearch(result)), k=2)
+    assert [d.metadata["memory_key"] for d in asyncio.run(strict.ainvoke("seat"))] == ["k1", "k3"]
+    loose = LoomMemoryRetriever(agent=_agent(memory=_FakeSearch(result)), k=2, honour_abstain=False)
+    assert [d.metadata["memory_key"] for d in asyncio.run(loose.ainvoke("seat"))] == ["k1", "k2"]

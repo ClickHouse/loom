@@ -393,7 +393,7 @@ const memories = await new LoomMemoryRetriever(bot, { scope: { userId: "u-42" } 
 );
 ```
 
-Both extend `BaseRetriever` from `@langchain/core` (install it next to the SDK; it is an optional peer dependency) and return one `Document` per document chunk (`knowledge.search`) or memory (`memory.search`). The memory retriever returns nothing when loom abstains unless `honourAbstain: false`.
+Both extend `BaseRetriever` from `@langchain/core` (install it next to the SDK; it is an optional peer dependency) and return one `Document` per document chunk (`knowledge.search`) or memory (`memory.search`). The memory retriever returns nothing when loom abstains, and leaves out memories below the floor, unless `honourAbstain: false`.
 
 ## Strands Agents
 
@@ -405,7 +405,7 @@ await store.add("Prefers an aisle seat", { source: "chat" });
 const entries = await store.search("which seat?", { maxSearchResults: 3 });
 ```
 
-No dependency on the Strands package: the `MemoryStore` shape (`name`, `writable`, `add(content, metadata)`, `search(query, { maxSearchResults })`) is structural, and the store behaves like the Python adapter. A write is one `memory.set` keyed `strands/<sha256 prefix>` of the content, so re-adding a fact is idempotent and both SDKs write the same key. The metadata's short `kind`, `source`, `topic` and `category` strings become `key:value` tags. A search is limited to the store's tags and `memoryType` (default `semantic`) and returns nothing when loom abstains (`honourAbstain: false` keeps the hits); each entry carries `memory_key`, `memory_type`, `similarity` and, when known, `source` and `valid_at`.
+No dependency on the Strands package: the `MemoryStore` shape (`name`, `writable`, `add(content, metadata)`, `search(query, { maxSearchResults })`) is structural, and the store behaves like the Python adapter. A write is one `memory.set` keyed `strands/<sha256 prefix>` of the content, so re-adding a fact is idempotent and both SDKs write the same key. The metadata's short `kind`, `source`, `topic` and `category` strings become `key:value` tags. A search is limited to the store's tags and `memoryType` (default `semantic`); it returns nothing when loom abstains and leaves out hits below the floor, unless `honourAbstain: false`; each entry carries `memory_key`, `memory_type`, `similarity` and, when known, `source` and `valid_at`.
 
 ## How the types stay true
 

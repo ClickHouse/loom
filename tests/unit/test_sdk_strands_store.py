@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from types import SimpleNamespace
 
 from loom.integrations.strands import LoomMemoryStore, MemoryEntry, _content_key
@@ -87,3 +88,15 @@ def test_protocol_attributes_present() -> None:
     store = LoomMemoryStore(SimpleNamespace(memory=_FakeMemory([])))
     assert store.name == "loom" and store.writable is True and store.extraction is None
     assert store.max_search_results == 3 and store.description
+
+
+def test_a_hit_below_the_floor_is_left_out_unless_disabled() -> None:
+    weak = dataclasses.replace(_hit("k2", "weak", 0.2), below_threshold=True)
+    # three rows for two results: the floor is applied before the cut
+    hits = [_hit("k1", "oat-milk lattes", 0.9), weak, _hit("k3", "espresso", 0.8)]
+    strict = LoomMemoryStore(SimpleNamespace(memory=_FakeMemory(hits)), max_search_results=2)
+    assert [e.metadata["memory_key"] for e in asyncio.run(strict.search("coffee"))] == ["k1", "k3"]
+    loose = LoomMemoryStore(
+        SimpleNamespace(memory=_FakeMemory(hits)), max_search_results=2, honour_abstain=False
+    )
+    assert [e.metadata["memory_key"] for e in asyncio.run(loose.search("coffee"))] == ["k1", "k2"]

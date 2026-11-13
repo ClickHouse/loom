@@ -44,7 +44,7 @@ export interface LoomMemoryStoreOptions {
   tags?: string[];
   /** Results per search when the caller does not say. Default 3. */
   maxSearchResults?: number;
-  /** Return nothing when loom abstains (no hit above its calibrated floor). Default true. */
+  /** Return nothing when loom abstains (no hit above its calibrated floor), and leave out hits below it. Default true. */
   honourAbstain?: boolean;
   /** Key prefix; the key is `<prefix>/<sha256(content) first 20 hex>`, as in the Python adapter. Default `strands`. */
   keyPrefix?: string;
@@ -98,7 +98,7 @@ export class LoomMemoryStore {
     });
   }
 
-  /** `memory.search` limited to this store's tags and type; empty when loom abstains. */
+  /** `memory.search` limited to this store's tags and type; empty when loom abstains, and without hits below the floor, unless `honourAbstain` is false. */
   async search(query: string, options: SearchOptions = {}): Promise<MemoryEntry[]> {
     const topK = options.maxSearchResults ?? this.maxSearchResults;
     const out = await this.agent.recall(query, {
@@ -108,7 +108,10 @@ export class LoomMemoryStore {
       ...(this.tags.length ? { tags: [...this.tags] } : {}),
     });
     if (this.honourAbstain && out.abstain) return [];
-    return (out.results ?? []).slice(0, topK).map((h) => ({
+    // A response that does not abstain can still carry rows below the floor; honouring abstention
+    // drops them. Derived rows may come back above the top_k slice, so cut after filtering.
+    const hits = (out.results ?? []).filter((h) => !(this.honourAbstain && h.below_threshold)).slice(0, topK);
+    return hits.map((h) => ({
       content: h.content_excerpt,
       storeName: this.name,
       metadata: {

@@ -57,7 +57,7 @@ async with Agent(org="acme", namespace="support") as agent:
 | `search_kwargs`                               | knowledge | none                                      | further `knowledge.search` fields, such as `search_mode` or `rerank`                 |
 | `memory_type`                                 | memory    | every searchable type except `reflection` | only memories of this type                                                           |
 | `user_id`, `session_id`, `run_id`, `agent_id` | memory    | none                                      | only that user's, session's, run's or agent's memories                               |
-| `honour_abstain`                              | memory    | `True`                                    | return no documents when Loom abstains                                               |
+| `honour_abstain`                              | memory    | `True`                                    | leave out memories below Loom's floor; no documents when Loom abstains               |
 
 A LangChain agent built with `create_agent` runs on LangGraph: pass `LoomStore` (below)
 as its `store` for long-term memory.
@@ -154,17 +154,18 @@ const store = new LoomMemoryStore(agent, { tags: ["customer"] });
   `source`, `topic` and `category` (strings up to 64 characters) become `key:value` tags.
 - **`search`** runs `memory.search` limited to the store's tags and memory type. When Loom
   **abstains** (no hit above its calibrated floor), the store returns nothing rather than
-  a weak match, so the Memory Manager injects no context at all. Each entry's metadata
-  carries `memory_key`, `memory_type`, `similarity`, `source` and `valid_at`.
+  a weak match, so the Memory Manager injects no context at all; a hit below the floor
+  in a response that does not abstain is left out too. Each entry's metadata carries
+  `memory_key`, `memory_type`, `similarity`, `source` and `valid_at`.
 
-| Option (Python / TypeScript)              | Default    | Effect                                                      |
-| ----------------------------------------- | ---------- | ----------------------------------------------------------- |
-| `memory_type` / `memoryType`              | `semantic` | the type every write carries and every search is limited to |
-| `tags`                                    | none       | stamped on every write; searches require them               |
-| `max_search_results` / `maxSearchResults` | 3          | results per search when the caller does not say             |
-| `honour_abstain` / `honourAbstain`        | `true`     | return nothing when Loom abstains                           |
-| `key_prefix` / `keyPrefix`                | `strands`  | key prefix                                                  |
-| — / `scope`                               | none       | TypeScript only: a per-store user, session or run scope     |
+| Option (Python / TypeScript)              | Default    | Effect                                                        |
+| ----------------------------------------- | ---------- | ------------------------------------------------------------- |
+| `memory_type` / `memoryType`              | `semantic` | the type every write carries and every search is limited to   |
+| `tags`                                    | none       | stamped on every write; searches require them                 |
+| `max_search_results` / `maxSearchResults` | 3          | results per search when the caller does not say               |
+| `honour_abstain` / `honourAbstain`        | `true`     | leave out hits below Loom's floor; nothing when Loom abstains |
+| `key_prefix` / `keyPrefix`                | `strands`  | key prefix                                                    |
+| — / `scope`                               | none       | TypeScript only: a per-store user, session or run scope       |
 
 ## Agent orchestrators
 
