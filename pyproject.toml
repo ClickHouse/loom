@@ -97,6 +97,9 @@ dev = [
   "types-PyYAML>=6.0",
   "ruff==0.16.9",
   "build>=1.0",
+  # The SDK's framework adapters subclass the framework's own classes; their
+  # unit tests run against these (sdk/python/pyproject.toml's extras).
+  "langchain-core==1.8.0",
 ]
 # Operator CLI extra — needed only by `dev/loom_ingest.py` to fetch an S3
 # source. Not a server dep; the CLI lazy-imports it with an actionable error

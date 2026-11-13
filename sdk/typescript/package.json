@@ -18,6 +18,16 @@
         "default": "./dist/index.cjs"
       }
     },
+    "./integrations/langchain": {
+      "import": {
+        "types": "./dist/integrations/langchain.d.mts",
+        "default": "./dist/integrations/langchain.mjs"
+      },
+      "require": {
+        "types": "./dist/integrations/langchain.d.cts",
+        "default": "./dist/integrations/langchain.cjs"
+      }
+    },
     "./integrations/strands": {
       "import": {
         "types": "./dist/integrations/strands.d.mts",
@@ -81,16 +91,21 @@
     "node": ">=20.0.0"
   },
   "peerDependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.0.0"
+    "@aws-sdk/client-secrets-manager": "^3.0.0",
+    "@langchain/core": ">=1.0.0 <2.0.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-secrets-manager": {
+      "optional": true
+    },
+    "@langchain/core": {
       "optional": true
     }
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.14",
+    "@langchain/core": "1.4.0",
     "@types/node": "^22.0.0",
     "publint": "^0.3.24",
     "tsdown": "^0.23.0",

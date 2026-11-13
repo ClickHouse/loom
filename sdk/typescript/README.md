@@ -380,6 +380,21 @@ const recentAudit = await collect(
 );
 ```
 
+## LangChain.js
+
+```ts
+import {
+  LoomKnowledgeRetriever,
+  LoomMemoryRetriever,
+} from "@clickhouse/loom/integrations/langchain";
+const docs = await new LoomKnowledgeRetriever(bot, { k: 3 }).invoke("refund policy");
+const memories = await new LoomMemoryRetriever(bot, { scope: { userId: "u-42" } }).invoke(
+  "which seat?",
+);
+```
+
+Both extend `BaseRetriever` from `@langchain/core` (install it next to the SDK; it is an optional peer dependency) and return one `Document` per document chunk (`knowledge.search`) or memory (`memory.search`). The memory retriever returns nothing when loom abstains unless `honourAbstain: false`.
+
 ## Strands Agents
 
 ```ts

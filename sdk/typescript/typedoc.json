@@ -1,6 +1,6 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  "entryPoints": ["src/index.ts", "src/integrations/strands.ts"],
+  "entryPoints": ["src/index.ts", "src/integrations/langchain.ts", "src/integrations/strands.ts"],
   "out": "docs/api",
   "readme": "README.md",
   "name": "@clickhouse/loom",

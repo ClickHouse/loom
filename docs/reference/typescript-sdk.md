@@ -24,8 +24,9 @@ then run `npm install <clone>/sdk/typescript` in your project.
 
 The package ships ESM and CommonJS builds with their own declaration files and
 imports no Node built-in when it loads; signing in loads `node:fs` and the
-other built-ins it needs on first use. The Strands adapter is a second entry
-point, `@clickhouse/loom/integrations/strands`.
+other built-ins it needs on first use. The framework adapters are their own entry
+points: `@clickhouse/loom/integrations/langchain` and
+`@clickhouse/loom/integrations/strands`.
 
 ## Credentials
 
@@ -243,6 +244,14 @@ const recentAudit = await collect(
   50,
 );
 ```
+
+## LangChain.js adapter
+
+`LoomKnowledgeRetriever` and `LoomMemoryRetriever` from
+`@clickhouse/loom/integrations/langchain` extend `BaseRetriever` from
+`@langchain/core`, an optional peer dependency: install it next to the SDK. They
+search `knowledge.search` and `memory.search` and return one `Document` per chunk
+or memory. See [Frameworks](../features/integrations/frameworks.md#langchain).
 
 ## Strands adapter
 

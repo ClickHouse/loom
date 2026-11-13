@@ -230,6 +230,10 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
 
 ## Framework adapters
 
+- `loom.integrations.langchain.LoomKnowledgeRetriever(agent=...)` and
+  `LoomMemoryRetriever(agent=...)` are LangChain `BaseRetriever`s over
+  `knowledge.search` and `memory.search`; install the `[langchain]` extra.
+  `invoke` needs a `SyncAgent`, `ainvoke` takes either agent.
 - `loom.integrations.langgraph.LoomStore(agent, tags=...)` is a LangGraph
   `BaseStore`: `put` is `memory.set`, `search(query=...)` ranks with
   `memory.search` and reads values with `memory.bulk_get`, and namespace tuples
@@ -240,7 +244,7 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   Strands Agents memory-store protocol (`add` / `search`); `search` returns
   nothing when Loom abstains unless `honour_abstain=False`.
 
-Both import their framework lazily. See
+The LangGraph and Strands adapters import their framework lazily. See
 [Frameworks](../features/integrations/frameworks.md).
 
 ## Errors
