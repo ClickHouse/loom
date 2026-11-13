@@ -539,8 +539,8 @@ export default function App() {
         // URL routing: an explicit path (e.g. /memories) always wins — the landing rule decides a
         // view only for the bare root. A deep link keeps its view; its namespace is the
         // default-namespace chain's answer, else the first reachable namespace of the
-        // kind the view needs (a code or QA one for Repositories, Graph, Settings, Namespaces in your org
-        // and the admin views; nothing for a memory view, which renders its own empty
+        // kind the view needs (a code or QA one for Repositories, Graph, Settings, the
+        // namespaces page and the admin views; nothing for a memory view, which renders its own empty
         // state — see `ViewSwitch`). No deep link is redirected to Setup.
         if (initial) {
           const ns = deepLinkNamespace(initial, pick, reach, mine);

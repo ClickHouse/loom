@@ -396,9 +396,9 @@ export function NamespacePickerList({
             Hide system namespaces
           </Button>
         )}
-        {/* Browsing and joining public namespaces is part of picking one,
-          so the Namespaces in your org page is reached from here, not from the rail. One
-          call to action: the empty list above already carries it. */}
+        {/* Finding a public namespace to join is part of picking one, so the namespaces
+          page is reached from here, not from the rail. One call to action: the empty list
+          above already carries it. */}
         {known != null && (hasJoined || !!query) && (
           <Button
             type="empty"
@@ -410,7 +410,7 @@ export function NamespacePickerList({
               setView("browse");
             }}
           >
-            Browse public namespaces
+            Find public namespaces to join
           </Button>
         )}
         <Button type="empty" htmlType="button" iconLeft="plus" align="left" onClick={onCreate}>

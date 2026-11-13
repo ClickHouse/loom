@@ -218,7 +218,7 @@ describe("Namespaces in your org: the rows", () => {
     const menu = await screen.findByRole("menu", { name: "Actions for team" });
     await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
     await user.click(await screen.findByRole("button", { name: "Write the guide" }));
-    // A first guide from Namespaces in your org starts on the same outline, which does not save unchanged.
+    // A first guide from the namespaces page starts on the same outline, which does not save unchanged.
     const editor = await screen.findByLabelText("Guide (Markdown)");
     expect((editor as HTMLTextAreaElement).value).toContain("## What this namespace holds");
     expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");

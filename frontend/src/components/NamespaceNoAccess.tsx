@@ -37,7 +37,7 @@ export function NamespaceNoAccess({ namespace }: { namespace: string }) {
         action={
           unchecked || (identity && current)
             ? undefined
-            : { label: "Browse public namespaces", onClick: () => setView("browse") }
+            : { label: "Find public namespaces to join", onClick: () => setView("browse") }
         }
       >
         {(unchecked || (identity && current)) && (
@@ -66,7 +66,7 @@ export function NamespaceNoAccess({ namespace }: { namespace: string }) {
       <p className="text-center text-sm text-text-muted">
         Or pick another namespace from the{" "}
         <Link component="button" type="button" onClick={() => openNamespacePicker(true)}>
-          namespace menu
+          namespace picker
         </Link>{" "}
         in the header.
       </p>

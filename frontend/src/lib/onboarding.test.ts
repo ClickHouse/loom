@@ -33,7 +33,7 @@ describe("shouldShowGettingStarted", () => {
     expect(shouldShowGettingStarted({ mine: [row("personal-a")], memoryTotal: 1 })).toBe(false);
   });
 
-  it("hides for an account that already created or joined another space", () => {
+  it("hides for an account that already created or joined another namespace", () => {
     expect(
       shouldShowGettingStarted({ mine: [row("personal-a"), row("team-x", { role: "writer" })], memoryTotal: 0 }),
     ).toBe(false);

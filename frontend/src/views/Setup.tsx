@@ -117,7 +117,7 @@ export function Setup() {
               tracker source from Repositories, or ask for a grant.
               <span className="mt-2 flex flex-wrap items-center gap-3">
                 <Button type="empty" htmlType="button" onClick={() => openNamespacePicker(true)}>
-                  Namespace menu
+                  Namespace picker
                 </Button>
                 {whoami && (
                   <Button type="primary" htmlType="button" iconLeft="code" onClick={() => setView("code")}>

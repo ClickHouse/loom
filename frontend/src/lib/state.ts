@@ -338,7 +338,7 @@ export type GateReason = "expired" | "ended" | "refused" | null;
  *  on its own lately, whether it is over its LLM cap, and the agents new in the last 24 h. */
 export interface AdminBadges {
   conflicts: number | null;
-  autoResolved?: boolean;
+  autoResolved: boolean;
   overCap: boolean;
   newAgents: number;
 }
@@ -569,8 +569,8 @@ export const useStore = create<AppState>((set, get) => ({
     addressPageNamespace();
   },
   namespacePickerOpen: false,
-  adminBadges: null,
   openNamespacePicker: (namespacePickerOpen) => set({ namespacePickerOpen }),
+  adminBadges: null,
   inspect: (inspectedMemoryKey, opts) => {
     const { identity, deniedNamespace } = get();
     // A memory opens in the namespace the page reads (the palette searches that one): a

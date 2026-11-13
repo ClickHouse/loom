@@ -268,13 +268,13 @@ describe("the admin list on every width", () => {
 
   it("redraws the open sheet when a new badge answer lands", async () => {
     seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
-    useStore.setState({ adminBadges: { conflicts: 3, overCap: false, newAgents: 0 } });
+    useStore.setState({ adminBadges: { conflicts: 3, autoResolved: false, overCap: false, newAgents: 0 } });
     render(<MobileNav />);
     await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
     const sheet = await screen.findByRole("dialog", { name: "More" });
     const review = () => within(sheet).getByRole("link", { name: /Review queue/ });
     expect(review()).toHaveTextContent("3");
-    act(() => useStore.setState({ adminBadges: { conflicts: 5, overCap: false, newAgents: 0 } }));
+    act(() => useStore.setState({ adminBadges: { conflicts: 5, autoResolved: false, overCap: false, newAgents: 0 } }));
     expect(review()).toHaveTextContent("5");
   });
 
@@ -294,6 +294,32 @@ describe("the admin list on every width", () => {
     expect(within(admin()).queryByRole("link", { name: /Review queue/ })).toBeNull();
   });
 
+  it("shows no badge from the other org after an org switch", async () => {
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["PLATFORM_ADMIN"] }, null);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    expect(screen.getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    act(() => useStore.setState({ identity: { org: "other", namespace: "team-a", agent: "loom-ui" } }));
+    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+    await painted();
+    expect(countConflicts).toHaveBeenLastCalledWith({ org: "other", namespace: "team-a" });
+    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+  });
+
+  it("draws Usage's warning dot and the Agents count on the More sheet", async () => {
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ adminBadges: { conflicts: null, autoResolved: false, overCap: true, newAgents: 2 } });
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    const sheet = await screen.findByRole("dialog", { name: "More" });
+    const admin = within(sheet).getByRole("navigation", { name: "Admin" });
+    const usage = within(admin).getByRole("link", { name: /Usage/ });
+    expect(within(usage).getByRole("img", { name: "Attention required" })).toBeInTheDocument();
+    expect(within(admin).getByRole("link", { name: /Agents/ })).toHaveTextContent("2");
+  });
+
   it("writes nothing once unmounted while a read is out", async () => {
     let settle: (n: number) => void = () => {};
     vi.mocked(countConflicts).mockReturnValueOnce(new Promise<number>((r) => (settle = r)));
@@ -310,7 +336,7 @@ describe("the admin list on every width", () => {
   it("hides a badge whose read fails, though the session remembered one", async () => {
     sessionStorage.setItem(
       "loom_badge_v1:badges:dev/team-a",
-      JSON.stringify({ at: Date.now(), v: { conflicts: 3, overCap: false, newAgents: 0 } }),
+      JSON.stringify({ at: Date.now(), v: { conflicts: 3, autoResolved: false, overCap: false, newAgents: 0 } }),
     );
     vi.mocked(countConflicts).mockRejectedValueOnce(new Error("offline"));
     seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);

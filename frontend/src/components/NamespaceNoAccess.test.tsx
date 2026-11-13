@@ -71,7 +71,7 @@ describe("NamespaceNoAccess", () => {
 
   it("opens the namespace picker from its link", async () => {
     render(<NamespaceNoAccess namespace="group-b-shared" />);
-    await userEvent.click(screen.getByRole("button", { name: "namespace menu" }));
+    await userEvent.click(screen.getByRole("button", { name: "namespace picker" }));
     expect(useStore.getState().namespacePickerOpen).toBe(true);
   });
 
@@ -87,7 +87,7 @@ describe("NamespaceNoAccess", () => {
     useStore.setState({ identity: { ...team, namespace: "" } });
     render(<NamespaceNoAccess namespace="group-b-shared" />);
     expect(screen.queryByRole("button", { name: /^Continue/ })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Browse public namespaces" }));
+    await userEvent.click(screen.getByRole("button", { name: "Find public namespaces to join" }));
     expect(useStore.getState()).toMatchObject({ view: "browse", deniedNamespace: null });
   });
 });

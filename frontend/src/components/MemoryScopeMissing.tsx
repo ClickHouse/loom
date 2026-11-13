@@ -47,7 +47,7 @@ export function MemoryScopeMissing({ view }: { view: View }) {
         icon="cards"
         title="No memory namespace to read"
         description={`${title} reads a memory namespace, and your token reaches none yet. Join a public namespace, or ask for a grant; anything you can already reach is in the namespace picker.`}
-        action={{ label: "Browse public namespaces", onClick: () => setView("browse") }}
+        action={{ label: "Find public namespaces to join", onClick: () => setView("browse") }}
       />
     );
   } else if (kind === "qa") {

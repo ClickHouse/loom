@@ -263,7 +263,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                     {
                       value: "public",
                       label: "Public",
-                      description: "Anyone in the org can find and join it.",
+                      description: "Listed for anyone in the org to find; How people join decides who gets in.",
                     },
                   ]}
                 />
