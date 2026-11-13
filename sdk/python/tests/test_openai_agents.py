@@ -113,6 +113,12 @@ def test_a_refused_call_returns_the_error_to_the_model() -> None:
     assert "query" in out
 
 
+def test_a_non_integer_argument_returns_the_error_to_the_model() -> None:
+    (recall,) = loom_tools(_FakeAgent({}), only=["loom_recall"])  # type: ignore[arg-type]
+    out = _invoke(recall, {"query": "seat", "top_k": "five"})
+    assert out == 'loom_recall failed: tool argument top_k must be an integer, got "five"'
+
+
 def test_a_server_error_returns_the_error_to_the_model() -> None:
     class _Down(_FakeAgent):
         async def call(self, op: str, body: dict[str, Any], **scope: Any) -> dict[str, Any]:

@@ -335,6 +335,10 @@ async def test_tools_reject_unknown_bad_json_and_missing_args_and_truncate() -> 
         await tools.execute("loom_recall", "{not json")
     with pytest.raises(LoomError, match="query is required"):
         await tools.execute("loom_recall", {"query": ""})
+    with pytest.raises(LoomError, match='top_k must be an integer, got "five"'):
+        await tools.execute("loom_recall", {"query": "seat", "top_k": "five"})
+    with pytest.raises(LoomError, match="offset must be an integer, got 1.5"):
+        await tools.execute("loom_fetch", {"blob_key": "b", "offset": 1.5})
     assert "no parked text under blob_key=nope" in await tools.execute(
         "loom_fetch", {"blob_key": "nope"}
     )

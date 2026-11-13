@@ -1,9 +1,9 @@
 """Loom as tools for the OpenAI Agents SDK.
 
 ``loom_tools`` returns Loom's agent verbs (``loom_remember``, ``loom_recall``,
-``loom_ask``, ``loom_offload``, ``loom_fetch``, ``loom_note``) as the SDK's
-``FunctionTool`` objects, so a model keeps and reads long-term memory in Loom
-during a run::
+``loom_ask``, ``loom_offload``, ``loom_fetch``, ``loom_note``) as the OpenAI
+Agents SDK's ``FunctionTool`` objects, so a model keeps and reads long-term
+memory in Loom during a run::
 
     from agents import Agent as OpenAIAgent, Runner
     from loom import Agent

@@ -256,7 +256,7 @@ class AgentTools:
         if name == "loom_recall":
             body = {"query": _str(a, "query")}
             if a.get("top_k") is not None:
-                body["top_k"] = int(a["top_k"])
+                body["top_k"] = _int(a, "top_k")
             r = await call("memory.search", body)
             return {
                 "memories": [
@@ -286,7 +286,7 @@ class AgentTools:
             body = {"blob_key": _str(a, "blob_key")}
             for k in ("pattern", "offset", "limit"):
                 if a.get(k) is not None:
-                    body[k] = a[k] if k == "pattern" else int(a[k])
+                    body[k] = a[k] if k == "pattern" else _int(a, k)
             r = await call("context.fetch", body)
             if not r.get("found"):
                 return f"no parked text under blob_key={body['blob_key']} (expired or never stored)"
@@ -311,6 +311,18 @@ def _parse_args(args: str | Mapping[str, Any] | None) -> dict[str, Any]:
             raise LoomError("tool arguments are not valid JSON") from e
         return dict(parsed) if isinstance(parsed, Mapping) else {}
     return dict(args)
+
+
+def _int(a: Mapping[str, Any], key: str) -> int:
+    v = a[key]
+    if isinstance(v, str):  # models sometimes quote a number
+        try:
+            v = int(v.strip())
+        except ValueError:
+            pass
+    if isinstance(v, bool) or not isinstance(v, int):
+        raise LoomError(f"tool argument {key} must be an integer, got {json.dumps(v)}")
+    return v
 
 
 def _str(a: Mapping[str, Any], key: str) -> str:

@@ -3,8 +3,9 @@
  * `loom.integrations.openai_agents`).
  *
  * `loomTools` returns Loom's agent verbs (`loom_remember`, `loom_recall`,
- * `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note`) as the SDK's function
- * tools, so a model keeps and reads long-term memory in Loom during a run:
+ * `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note`) as the OpenAI Agents
+ * SDK's function tools, so a model keeps and reads long-term memory in Loom
+ * during a run:
  *
  *     const assistant = new Agent({ name: "assistant", tools: loomTools(bot, { userId: "alice" }) });
  *     const result = await run(assistant, "Book my usual seat to Lisbon");

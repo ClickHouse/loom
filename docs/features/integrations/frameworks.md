@@ -4,11 +4,11 @@ The SDKs ship adapters that present Loom through a framework's own memory or ret
 interface. An adapter needs its framework: in Python, the SDK extra its section names
 (`pip install 'clickhouse-loom[langchain]'` and so on); in TypeScript, the framework
 package, an optional peer dependency. The LangGraph and Strands adapters import without
-their framework. Identity comes from the Loom `Agent` the adapter wraps, and
-isolation is Loom's namespace authorization. Every adapter calls your Loom server through
-the SDK: the data is stored in your Loom deployment (ClickHouse, and Postgres for live
-memory under the [Postgres memory authority](../../architecture/storage-authority.md)), and
-no adapter adds or needs another database, vector store or cache.
+their framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is
+Loom's namespace authorization. Every adapter calls your Loom server through the SDK: the
+data is stored in your Loom deployment (ClickHouse, and Postgres for live memory under the
+[Postgres memory authority](../../architecture/storage-authority.md)), and no adapter adds
+or needs another database, vector store or cache.
 
 | Framework                      | Adapter                                         | SDK                                                       | Framework interface                    |
 | ------------------------------ | ----------------------------------------------- | --------------------------------------------------------- | -------------------------------------- |
@@ -152,8 +152,8 @@ receives reaches Loom.
 
 ## OpenAI Agents SDK
 
-`loom_tools` returns Loom's agent verbs as the SDK's `FunctionTool`s, so the model keeps
-and reads long-term memory in Loom during a run. Install with
+`loom_tools` returns Loom's agent verbs as the OpenAI Agents SDK's `FunctionTool`s, so the
+model keeps and reads long-term memory in Loom during a run. Install with
 `pip install 'clickhouse-loom[openai-agents]'` (`openai-agents` 0.24).
 
 ```python
@@ -181,10 +181,10 @@ parameters, so the tools are not strict. A call Loom refuses (a missing argument
 rejected value, a server error) returns `<tool> failed: <message>` to the model, which can
 correct the call; the run goes on.
 
-Conversation history stays in the session store the run is given: the SDK's `Session`
-protocol removes and clears items, and Loom's conversations are append-only. To keep what
-a conversation established, give the model `loom_remember`, or send the turns to
-`memory.set_from_messages`.
+Conversation history stays in the session store the run is given: the OpenAI Agents
+SDK's `Session` protocol removes and clears items, and Loom's conversations are
+append-only. To keep what a conversation established, give the model `loom_remember`, or
+send the turns to `memory.set_from_messages`.
 
 In TypeScript, `loomTools(agent, scope)` from `@clickhouse/loom/integrations/openai-agents`
 returns the same tools built with `tool()` from `@openai/agents`, an optional peer
