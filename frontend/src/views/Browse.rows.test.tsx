@@ -583,6 +583,24 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     }
   });
 
+  it("counts a requested repository the page does not list, and still sends its name to Repositories", async () => {
+    const before = [...mine];
+    mine.push({ ...mine[1], namespace: "code-private", kind: "code", status: "pending" });
+    try {
+      render(<Browse />);
+      await screen.findByText("Support team runbooks");
+      // Repositories lists a requested repository too, so the hint counts it.
+      expect(screen.getByText(/1 repository available/)).toBeInTheDocument();
+      await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "code-private");
+      expect(await screen.findByText(/is a repository/)).toHaveTextContent(
+        "code-private is a repository: join or request it from Repositories.",
+      );
+      expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+    } finally {
+      mine.splice(0, mine.length, ...before);
+    }
+  });
+
   it("points a repository's exact name to Repositories instead of a request", async () => {
     browse.push({ ...browse[1], namespace: "code-loom", kind: "code", guide_summary: "" });
     try {
