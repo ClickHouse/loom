@@ -6,7 +6,7 @@
 
 # Casos de uso
 
-Cada página responde a uma pergunta que pessoas e agentes fazem ao procurar uma ferramenta: o que o Loom
+Cada página responde a uma pergunta que pessoas e agentes fazem quando procuram uma ferramenta: o que o Loom
 faz para essa necessidade e por onde começar.
 
 | Necessidade                                                                      | Página                                                     |
@@ -16,10 +16,10 @@ faz para essa necessidade e por onde começar.
 | Um índice de código e inteligência de código para agentes de programação         | [Índice de código](code-intelligence.md)                   |
 | O que o índice de código oferece por linguagem (C++, Python, TypeScript, Go, Rust, Java) | [Índice de código por linguagem](code-intelligence-by-language.md) |
 | Menor custo de modelo para agentes de programação                                | [Custo de agentes de programação](coding-agent-cost.md)    |
-| Contexto compartilhado entre agentes em um fluxo de trabalho multiagente         | [Multiagente](multi-agent.md)                              |
+| Contexto compartilhado entre agentes em um fluxo de trabalho com vários agentes  | [Multiagente](multi-agent.md)                              |
 | Memória, recuperação, auditoria e exclusão para agentes autônomos                | [Agentes autônomos](autonomous-agents.md)                  |
 | Execuções de agentes, traces, tracker e histórico de PRs                         | [Execuções e histórico de PRs](runs-and-pr-history.md)     |
-| Memória de agente auto-hospedada em ClickHouse, com Docker ou Kubernetes         | [Auto-hospedagem em ClickHouse](self-hosted-clickhouse.md) |
+| Memória de agente auto-hospedada no ClickHouse, com Docker ou Kubernetes         | [Auto-hospedado no ClickHouse](self-hosted-clickhouse.md)  |
 
 [Quando o Loom não é adequado](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#when-it-does-not-fit) lista as
 necessidades que outra ferramenta atende melhor.

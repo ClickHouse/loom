@@ -6,44 +6,44 @@
 
 # Memória de agente self-hosted no ClickHouse
 
-O Loom roda na sua própria infraestrutura, com Docker ou no Kubernetes com o Helm chart, e
+O Loom roda na sua própria infraestrutura, com Docker ou no Kubernetes com o seu Helm chart, e
 armazena memória de agente, documentos, conversas e índices de código como tabelas no ClickHouse. Uma
-implantação pode escolher o Postgres no primeiro boot para o estado de memória e conhecimento ativo. Os dados
-ficam armazenados somente nos seus stores (os provedores de modelos hospedados e os destinos de trace que você configura
-recebem o que processam), e o que seus agentes sabem pode ser consultado com SQL.
+implantação pode escolher o Postgres na primeira inicialização para o estado de memória e conhecimento em tempo real. Os dados são
+armazenados somente nos seus próprios armazenamentos (os provedores de modelos hospedados e os destinos de traces que você configura
+recebem o que processam), e o que os seus agentes sabem pode ser consultado com SQL.
 
 <a id="what-you-get"></a>
 
 ## O que você recebe
 
 - **Docker ou Kubernetes.** O instalador de uma linha inicia a stack local; o Helm chart
-  executa N réplicas idênticas atrás de uma única URL. [Deployment](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md) ·
-  [Kubernetes](https://github.com/ClickHouse/loom/blob/main/docs/operations/kubernetes.md) · [Running N replicas](https://github.com/ClickHouse/loom/blob/main/docs/operations/replicas.md)
-- **ClickHouse OSS ou ClickHouse Cloud.** [Choosing the ClickHouse](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md#choosing-the-clickhouse) ·
-  [ClickHouse Cloud and Managed Postgres](https://github.com/ClickHouse/loom/blob/main/docs/operations/clickhouse-cloud.md)
-- **Um único store para vetores, texto e auditoria.** Sob a autoridade padrão do ClickHouse,
-  busca vetorial, lexical e em grafo, filtros, auditoria e exclusão são SQL em um único banco de dados.
-  [Storage authority](https://github.com/ClickHouse/loom/blob/main/docs/architecture/storage-authority.md)
-- **Multiusuário.** Orgs, namespaces, papéis, tokens e single sign-on.
-  [Identities and namespaces](https://github.com/ClickHouse/loom/blob/main/docs/concepts/identities-and-namespaces.md) ·
-  [Single sign-on](https://github.com/ClickHouse/loom/blob/main/docs/operations/sso.md)
-- **Modelos locais.** A stack lançada gera embeddings na CPU com um modelo local incluído, e
-  o provedor de embeddings aceita um endpoint compatível com a OpenAI que você mesmo executa.
-  [Models and API keys](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/models-and-keys.md)
+  executa N réplicas idênticas atrás de uma única URL. [Implantação](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md) ·
+  [Kubernetes](https://github.com/ClickHouse/loom/blob/main/docs/operations/kubernetes.md) · [Executando N réplicas](https://github.com/ClickHouse/loom/blob/main/docs/operations/replicas.md)
+- **ClickHouse OSS ou ClickHouse Cloud.** [Escolhendo o ClickHouse](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md#choosing-the-clickhouse) ·
+  [ClickHouse Cloud e Managed Postgres](https://github.com/ClickHouse/loom/blob/main/docs/operations/clickhouse-cloud.md)
+- **Um único armazenamento para vetores, texto e auditoria.** Sob a autoridade padrão do ClickHouse,
+  a busca vetorial, lexical e em grafo, os filtros, a auditoria e a exclusão são SQL em um único banco de dados.
+  [Autoridade de armazenamento](https://github.com/ClickHouse/loom/blob/main/docs/architecture/storage-authority.md)
+- **Multiusuário.** Organizações, namespaces, papéis, tokens e login único.
+  [Identidades e namespaces](https://github.com/ClickHouse/loom/blob/main/docs/concepts/identities-and-namespaces.md) ·
+  [Login único](https://github.com/ClickHouse/loom/blob/main/docs/operations/sso.md)
+- **Modelos locais.** A stack publicada gera embeddings na CPU com um modelo local incluído, e
+  o provedor de embeddings aceita um endpoint compatível com OpenAI que você mesmo executa.
+  [Modelos e chaves de API](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/models-and-keys.md)
 
 <a id="measured"></a>
 
 ## Medições
 
 Uma carga sintética de memórias com 2.4 versões por chave e embeddings de 3072 dimensões (dois
-vetores por linha) ocupou cerca de 13.6 KB por chave no ClickHouse, quase tudo na linha do
-embedding; um embedder menor ocupa menos, e partes com poucas linhas carregam um pouco mais por linha
+vetores por linha) ocupou cerca de 13.6 KB por chave no ClickHouse, quase todo na linha
+de embedding; um embedder menor ocupa menos, e partes com poucas linhas carregam um pouco mais por linha
 até serem mescladas.
-[Memory at scale](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#memory-at-scale)
+[Memória em escala](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#memory-at-scale)
 
 <a id="start"></a>
 
-## Primeiros passos
+## Início
 
-[Início rápido](../getting-started/quickstart.md) · [Prerequisites](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites) ·
-[Upgrades](https://github.com/ClickHouse/loom/blob/main/docs/operations/upgrades.md) · [Backup and recovery](https://github.com/ClickHouse/loom/blob/main/docs/operations/backup-and-recovery.md)
+[Início rápido](../getting-started/quickstart.md) · [Pré-requisitos](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites) ·
+[Atualizações](https://github.com/ClickHouse/loom/blob/main/docs/operations/upgrades.md) · [Backup e recuperação](https://github.com/ClickHouse/loom/blob/main/docs/operations/backup-and-recovery.md)
