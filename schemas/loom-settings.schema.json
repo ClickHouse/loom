@@ -2742,7 +2742,7 @@
           "default": 0.0,
           "minimum": 0,
           "type": "number",
-          "description": "Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass` replays) may run before the supervisor abandons it; 0 = four intervals, 60 s to 900."
+          "description": "Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass` replays) may run before the supervisor abandons it; 0 = four intervals, kept 60-900 s."
         },
         "extraction_queue_namespace_concurrency": {
           "default": 4,
@@ -3282,7 +3282,7 @@
           "default": 300.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds an LLM call waits for its reply before the client retries. Generous on purpose: it only catches a hung connection, so a slow model or a long output never hits it. Calls that must be fast set their own, shorter deadline (HyDE, search budgets)."
+          "description": "Seconds an LLM call waits for its reply before the client retries. Generous for hosted models, where only a hung connection reaches it; a model server on a CPU can need longer (the local preset sets 900). Calls that must be fast set their own, shorter deadline (HyDE, search budgets)."
         },
         "llm_rerank_skip_above": {
           "default": 0.62,

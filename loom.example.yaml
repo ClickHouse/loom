@@ -571,10 +571,10 @@ settings:
   # the most it has spent) and capped here. [restart]
   # llm_hidden_reasoning_reserve_max: 16384
 
-  # Seconds an LLM call waits for its reply before the client retries. Generous on
-  # purpose: it only catches a hung connection, so a slow model or a long output never
-  # hits it. Calls that must be fast set their own, shorter deadline (HyDE, search
-  # budgets). [restart]
+  # Seconds an LLM call waits for its reply before the client retries. Generous for
+  # hosted models, where only a hung connection reaches it; a model server on a CPU can
+  # need longer (the local preset sets 900). Calls that must be fast set their own,
+  # shorter deadline (HyDE, search budgets). [restart]
   # llm_request_timeout_s: 300.0
 
   # Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped
@@ -2567,8 +2567,8 @@ settings:
   # extraction_queue_interval_seconds: 15
 
   # Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass`
-  # replays) may run before the supervisor abandons it; 0 = four intervals, 60 s to 900.
-  # [restart]
+  # replays) may run before the supervisor abandons it; 0 = four intervals, kept 60-900
+  # s. [restart]
   # extraction_queue_max_pass_seconds: 0.0
 
   # Most queued batches one pass claims. [live]

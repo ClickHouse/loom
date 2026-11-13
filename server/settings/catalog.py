@@ -2105,7 +2105,7 @@ class ExtractionSettings(BaseModel):
     # Seconds between deferred-extraction queue passes.
     extraction_queue_interval_seconds: int = 15
     # Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass`
-    # replays) may run before the supervisor abandons it; 0 = four intervals, 60 s to 900.
+    # replays) may run before the supervisor abandons it; 0 = four intervals, kept 60-900 s.
     extraction_queue_max_pass_seconds: float = Field(default=0.0, ge=0)
     # Most queued batches one pass claims.
     extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=0)
@@ -4802,10 +4802,10 @@ class ProviderSettings(ModelSettings):
     # reasoning. The reserve per model is learned from the reasoning tokens its
     # replies report (twice the most it has spent) and capped here.
     llm_hidden_reasoning_reserve_max: int = Field(16384, ge=0)
-    # Seconds an LLM call waits for its reply before the client retries. Generous
-    # on purpose: it only catches a hung connection, so a slow model or a long
-    # output never hits it. Calls that must be fast set their own, shorter
-    # deadline (HyDE, search budgets).
+    # Seconds an LLM call waits for its reply before the client retries. Generous for
+    # hosted models, where only a hung connection reaches it; a model server on a CPU
+    # can need longer (the local preset sets 900). Calls that must be fast set their
+    # own, shorter deadline (HyDE, search budgets).
     llm_request_timeout_s: float = Field(300.0, gt=0)
     # Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped
     # connection) before the fallback model takes over.
