@@ -536,7 +536,8 @@ def _coding_instructions(toolset: str | None) -> str:
     # brings the team's memory in, unless a plugin's hooks load it for the session.
     return name_ops_for_toolset(
         "**Loom: memory and code for this session.**"
-        + "\n\nFirst step of each task: call `context.pack` with the task as `query`. "
+        + f"\n\nFirst step of each task: call {_tool_refs(toolset)['context.pack']} with "
+        + "the task as `query`. "
         + f"Skip it when {FIRST_STEP_HOOK}."
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
         + memory,

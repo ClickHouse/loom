@@ -458,5 +458,9 @@ def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
     assert "For one fact, rule 2's search alone is enough." in rules
     summary = first_sentence(TOOL_DESCRIPTIONS["context.pack"])
     assert summary.startswith("A task's memories, decisions and procedures: call it first")
-    assert len(summary) <= 140  # loom_op's help catalog cuts a purpose there
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport.mcp_op import _purpose
+
+    # loom_op's help catalog shows its own cut of the same sentence
+    assert _purpose(OPERATIONS_BY_NAME["context.pack"]).endswith(f"unless {FIRST_STEP_HOOK}.")
     assert summary.endswith(f"unless {FIRST_STEP_HOOK}.")
