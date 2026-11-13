@@ -975,6 +975,14 @@ async def test_a_memory_whose_code_changed_is_served_lower_after_the_verdict(
     assert out.results[3].score_components["code_changed_places"] == -3.0
     # the verdict read the results in relevance order
     assert (out.abstain, out.retrieval_confidence) == (plain.abstain, plain.retrieval_confidence)
+    # a retry pass leaves the move to the search it joins
+    search_env.hits = hits()
+    child = _input(top_k=5)
+    child._merged_into_parent = True
+    from server.memory.app.search import handle_memory_search
+
+    joined = await handle_memory_search(child)
+    assert [h.memory_key for h in joined.results][0] == "stale"
     # 0 places moves nothing
     from server.settings import settings
 

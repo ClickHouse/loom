@@ -82,32 +82,44 @@ def worst_commit(links: Sequence[Mapping[str, Any]]) -> str:
 _PLACED = ("identifier_match", "anchor_first", "recent_first")
 
 
+def _placed(hit: Any) -> bool:
+    return any(k in hit.score_components for k in _PLACED)
+
+
 def rank_down(hits: list[Any], places: int) -> list[Any]:
-    """`hits` with each one marked `_code_ranked_down` moved `places` down among the rows
-    their score places, never past the last; a row pinned by an identifier match or a
-    tier keeps its slot. A moved hit scores just below the hit it lands under, so a sort
-    by score keeps the order; `score_components.code_changed_places` says how far it
-    moved (negative, in places, as a reranker's `rerank_delta`), and the mark is spent."""
-    out = list(hits)
-    for hit in [h for h in hits if getattr(h, "_code_ranked_down", False)]:
+    """`hits` with each one marked `_code_ranked_down` moved below the next `places` rows
+    that are neither marked nor placed by an identifier match or a tier, never past the
+    last; a placed row keeps its slot. A moved hit scores between the rows around it (or
+    ties the one above, when they tie), so a stable sort by score keeps the order;
+    `score_components.code_changed_places` counts the rows it moved below (negative, as a
+    reranker's `rerank_delta`), and the mark is spent."""
+    marked = [h for h in hits if getattr(h, "_code_ranked_down", False)]
+    for hit in marked:
         hit._code_ranked_down = False
-        if places <= 0 or any(k in hit.score_components for k in _PLACED):
-            continue
+    moving = {id(h) for h in marked if not _placed(h)} if places > 0 else set()
+    out = list(hits)
+    # bottom-up: a stale row moves past the same rows whether or not one above it moves
+    for hit in [h for h in reversed(hits) if id(h) in moving]:
         at = next(i for i, h in enumerate(out) if h is hit)  # by identity: hits compare by value
-        free = [
-            i
-            for i, h in enumerate(out)
-            if i > at and not any(k in h.score_components for k in _PLACED)
-        ]
-        if not free:
+        passed, to = 0, at
+        for i in range(at + 1, len(out)):
+            if passed == places:
+                break
+            if id(out[i]) not in moving and not _placed(out[i]):
+                passed, to = passed + 1, i
+        if not passed:
             continue
-        to = free[min(places, len(free)) - 1]
         out.insert(to, out.pop(at))
-        score = math.nextafter(min(float(hit.rank_score), float(out[to - 1].rank_score)), -math.inf)
+        above = float(out[to - 1].rank_score)
+        below = float(out[to + 1].rank_score) if to + 1 < len(out) else None
+        if below is None or below > above:
+            score = math.nextafter(above, -math.inf)
+        else:
+            score = (above + below) / 2  # `above` itself when they tie
         hit.rank_score = score
         hit.score_components = {
             **hit.score_components,
-            "code_changed_places": float(at - to),
+            "code_changed_places": float(-passed),
             "rank_score": score,
         }
     return out

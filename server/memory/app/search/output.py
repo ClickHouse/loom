@@ -231,8 +231,8 @@ async def _shape_final_hits(
     ctx.stale_dropped += stale_recent + stale_anchor
     # After the verdict, which read relevance, and the tiers, which cut to top_k: a
     # memory whose code changed is served lower, never left out. A date order is the
-    # answer and stays as it is.
-    if not ctx.chronological_intent:
+    # answer and stays as it is; a retry pass leaves the move to the search it joins.
+    if not (ctx.chronological_intent or getattr(input, "_merged_into_parent", False)):
         places = settings.memory_search_code_changed_positions
         anchored = code_change.rank_down(anchored, places)
     final_hits = _apply_min_body_chars(anchored, input)

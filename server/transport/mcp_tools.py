@@ -620,8 +620,6 @@ _WHY_LABELS: dict[str, str] = {
 }
 # Base scores, not reasons (a reranked row's own fused score among them).
 _WHY_SKIP = {"rank_score_raw", "rank_score", "rank_score_pre_rerank"}
-# Moves in places, printed on their own.
-_WHY_PLACES = {"code_changed_places"}
 
 
 def why_note(hit: dict[str, Any]) -> str:
@@ -648,8 +646,9 @@ def why_note(hit: dict[str, Any]) -> str:
             key=lambda kv: -abs(kv[1]),
         )
         for name, v in ranked:
-            skip = name in _WHY_SKIP or name in _WHY_PLACES or name.startswith("rerank_")
-            if skip or abs(v) < 0.005:
+            if name in _WHY_SKIP or name.startswith("rerank_") or abs(v) < 0.005:
+                continue
+            if name == "code_changed_places":  # printed above, in places
                 continue
             parts.append(f"{_WHY_LABELS.get(name, name)}{v:+.2f}")
     return ", ".join(parts)

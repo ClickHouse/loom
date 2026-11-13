@@ -3922,6 +3922,8 @@ def test_a_marked_hit_moves_down_within_the_served_results() -> None:
 def test_a_marked_hit_never_leaves_the_results_and_unmarked_ones_never_move() -> None:
     out = code_change.rank_down(_ranked("a", "b", "c", down=("a", "b")), 3)
     assert [h.memory_key for h in out] == ["c", "a", "b"]  # in their own order, last
+    # each counts the rows it moved below, the other stale one not among them
+    assert [h.score_components["code_changed_places"] for h in out[1:]] == [-1.0, -1.0]
     assert [h.memory_key for h in code_change.rank_down(_ranked("a", "b", "c"), 3)] == [
         "a",
         "b",
@@ -3954,3 +3956,26 @@ def test_a_row_placed_by_an_identifier_or_a_tier_keeps_its_slot() -> None:
     tail = _ranked("stale", "b", "anchor", down=("stale",))
     tail[2].score_components = {"anchor_first": 1.0}
     assert [h.memory_key for h in code_change.rank_down(tail, 3)] == ["b", "stale", "anchor"]
+
+
+def test_two_stale_rows_each_move_past_their_places_and_say_so() -> None:
+    out = code_change.rank_down(_ranked("a", "b", "c", "d", "e", "f", down=("a", "b")), 3)
+    assert [h.memory_key for h in out] == ["c", "d", "e", "a", "b", "f"]
+    assert [out[i].score_components["code_changed_places"] for i in (3, 4)] == [-3.0, -3.0]
+    assert sorted(out, key=lambda h: -h.rank_score) == out
+
+
+def test_a_moved_row_ties_the_row_above_it_inside_a_tie_and_packs_in_place() -> None:
+    from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
+
+    hits = _ranked("s", "b", "c", "d", "e", down=("s",))
+    hits[0].rank_score = 0.9
+    for h in hits[1:]:
+        h.rank_score = 0.5
+    out = code_change.rank_down(hits, 1)
+    assert [h.memory_key for h in out] == ["b", "s", "c", "d", "e"]
+    assert out[1].rank_score == 0.5
+    items = [
+        EvidenceItem(citation=h.memory_key, text=h.memory_key, score=h.rank_score) for h in out
+    ]
+    assert pack_evidence(items, char_budget=10_000).citations == ["b", "s", "c", "d", "e"]

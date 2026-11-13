@@ -26,8 +26,9 @@ class EvidenceItem:
     author: str = ""
     # The keys a digest compressed, so a summary says what it derives from.
     derived_from: tuple[str, ...] = ()
-    # `changed@<commit>` when the memory's linked code changed, was not found again or
-    # went (` code_state=…` on the line); "" otherwise.
+    # `<state>@<commit>` (the state alone when no commit is known) when the memory's
+    # linked code changed, was not found again or went (` code_state=…` on the line);
+    # "" otherwise.
     code: str = ""
 
 
