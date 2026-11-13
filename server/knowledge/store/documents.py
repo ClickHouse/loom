@@ -395,9 +395,9 @@ async def _live_chunk_counts(
           AND (namespace, source_uri) IN {{keys:Array(Tuple(String, String))}}
           AND {LIVE_CHUNK_SQL}
         GROUP BY namespace, source_uri
-        LIMIT {{n:UInt32}}
+        LIMIT {{page:UInt32}}
         """,
-        params={"org": org, "keys": keys, "n": len(keys)},
+        params={"org": org, "keys": keys, "page": len(keys)},
     )
     return {(r["namespace"], r["source_uri"]): int(r["n"]) for r in rows}
 

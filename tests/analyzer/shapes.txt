@@ -749,7 +749,6 @@
 5d2e62ce8f95	SELECT count() AS n FROM loom.memory_drops WHERE org = {org:String} AND namespace = {ns:String}
 5d8fbc4e4072	SELECT count() AS n FROM loom.memory_record_versions WHERE org = {org:String} AND namespace IN {ns:Array(String)}
 5da02e185da3	SELECT ? AS present FROM loom.code_files WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL LIMIT ?
-5dbdf37363be	SELECT namespace, source_uri, count() AS n FROM loom.chunks WHERE org = {org:String} AND (namespace, source_uri) IN {keys:Array(Tuple(String, String))} AND doc_superseded_at IS NULL AND (org, namespac
 5df15c3b47a5	SELECT toString(tier) AS tier, count() AS edges, max(created_at) AS last_at FROM loom.code_edges FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL GROUP BY tier
 5e8b03fa60c0	SELECT session_id FROM loom.session_summaries FINAL WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String} AND user_id = {uid:String} AND tombstoned_at IS NULL AND session_id
 5e9d05fdddf9	SELECT * FROM loom.code_scip_batches FINAL WHERE org = {org:String} AND namespace = {ns:String} AND batch_id = {bid:UUID}
@@ -857,6 +856,7 @@
 6b6d53e64bd0	ALTER TABLE loom.entity_edges DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 6b7882fdfb07	SELECT c.session_id AS session_id, c.chunk_index AS chunk_index, c.parent_memory_key AS parent_memory_key, cosineDistance(c.embedding, {q:Array(Float32)}) AS distance FROM loom.memory_chunks AS c WHER
 6b920c15b813	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
+6ba06a0a7734	SELECT namespace, source_uri, count() AS n FROM loom.chunks WHERE org = {org:String} AND (namespace, source_uri) IN {keys:Array(Tuple(String, String))} AND doc_superseded_at IS NULL AND (org, namespac
 6bb37eccea0d	SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, memory_type, if(length(toString(value_json)) > ?, toString(value_json), value) AS value, -- The stored bytes, for version rows
 6bca66927292	SELECT min(ts) AS first_ts, count() AS n FROM loom.audit_log
 6befffe2772b	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
