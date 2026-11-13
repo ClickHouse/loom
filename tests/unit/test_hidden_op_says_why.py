@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
+
 import pytest
 
 from server.operations.toolsets import _MCP_HIDDEN_OPS
@@ -89,8 +92,6 @@ def test_a_readonly_refusal_says_read_only_only_for_a_write_alternative(name: st
 def test_a_readonly_refusal_sends_the_model_only_where_it_can_go(name: str) -> None:
     """On readonly, every op a refusal names is listed there or routed by loom_op
     (scanned on its own, not with the renderer's pattern)."""
-    import re
-
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.transport.mcp_tools import listed_tool_names
 
@@ -152,8 +153,6 @@ def test_apply_says_it_never_creates_a_memory() -> None:
 
 def test_a_direct_call_to_a_hidden_tool_names_ops_for_its_toolset() -> None:
     """tools/call of a hidden tool by name refuses with the same rendered text."""
-    import asyncio
-
     from server.transport import mcp_call
 
     resp = asyncio.run(mcp_call._resolve_tool(9, "loom_memory_bulk_get", None, None, "coding"))
