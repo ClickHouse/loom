@@ -4,8 +4,8 @@ shared_repo backs memory.promote / memory.demote. Its insert + fetch
 shape is the loom.shared lifecycle contract; the embedding-side
 tombstone is what makes memory.search reflect a demote.
 
-list_with_chunk_counts is the JOIN under knowledge.list — the most
-complex documents-side query.
+list_with_chunk_counts reads a page of loom.documents FINAL, then the
+live chunk counts of that page's sources.
 """
 
 from __future__ import annotations
@@ -276,20 +276,34 @@ async def test_list_with_chunk_counts_default_excludes_superseded() -> None:
     can opt-in via include_superseded=True."""
     ch = StubCH()
     ch.query_all_returns.append([])
-    await documents_repo.list_with_chunk_counts("clickhouse", "ns", ch=ch)
+    await documents_repo.list_with_chunk_counts("clickhouse", ["ns"], ch=ch)
     sql, params = ch.query_all_calls[0]
-    # Predicates filter the inner FINAL subquery (bare, no d. prefix); the
-    # outer query keeps the d. alias for the join + ordering.
     assert "superseded_at IS NULL" in sql
-    assert "LEFT JOIN" in sql
-    assert "ORDER BY d.ingested_at DESC, d.source_uri DESC" in sql
-    assert params["lim"] == 50
-    # the chunk counts are read for this namespace only, not every tenant's
-    counts = sql.split("LEFT JOIN", 1)[1]
-    assert (
-        "FROM loom.chunks\n            WHERE org = {org:String} AND namespace = {ns:String}"
-        in counts
+    assert "ORDER BY ingested_at DESC, namespace DESC, source_uri DESC" in sql
+    assert params["lim"] == 50 and params["ns"] == ["ns"]
+    # An empty page reads no chunks.
+    assert len(ch.query_all_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_with_chunk_counts_counts_only_the_page_sources() -> None:
+    """The chunk counts read only the page's (namespace, source_uri) pairs, not every
+    chunk of the namespaces listed."""
+    ch = StubCH()
+    at = datetime(2026, 5, 17, 12, 0)
+    ch.query_all_returns.append(
+        [
+            {"namespace": "a", "source_uri": "kb://1", "ingested_at": at},
+            {"namespace": "b", "source_uri": "kb://2", "ingested_at": at},
+        ]
     )
+    ch.query_all_returns.append([{"namespace": "b", "source_uri": "kb://2", "chunk_count": 3}])
+    rows = await documents_repo.list_with_chunk_counts("clickhouse", ["a", "b", "c"], ch=ch)
+    sql, params = ch.query_all_calls[1]
+    assert "FROM loom.chunks" in sql
+    assert "(namespace, source_uri) IN {keys:Array(Tuple(String, String))}" in sql
+    assert params["keys"] == [("a", "kb://1"), ("b", "kb://2")]
+    assert [r["chunk_count"] for r in rows] == [0, 3]
 
 
 @pytest.mark.asyncio
@@ -298,14 +312,12 @@ async def test_list_with_chunk_counts_include_superseded_drops_filter() -> None:
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
         "clickhouse",
-        "ns",
+        ["ns"],
         include_superseded=True,
         ch=ch,
     )
     sql, _ = ch.query_all_calls[0]
-    # The documents filter is dropped; the chunk-count subquery still carries
-    # its own `doc_superseded_at IS NULL`, so match the doc filter precisely.
-    assert "AND superseded_at IS NULL" not in sql
+    assert "superseded_at IS NULL" not in sql
 
 
 @pytest.mark.asyncio
@@ -315,18 +327,18 @@ async def test_list_with_chunk_counts_cursor_strips_tz_for_ch() -> None:
     to UTC-naive before it is bound."""
     ch = StubCH()
     ch.query_all_returns.append([])
-    cursor = (datetime(2026, 5, 17, 12, 0, tzinfo=UTC), "kb://policy.md")
+    cursor = (datetime(2026, 5, 17, 12, 0, tzinfo=UTC), "ns", "kb://policy.md")
     await documents_repo.list_with_chunk_counts(
         "clickhouse",
-        "ns",
+        ["ns"],
         cursor=cursor,
         ch=ch,
     )
     sql, params = ch.query_all_calls[0]
-    assert "(toDateTime({cur_ts:String}, 'UTC'), {cur_uri:String})" in sql
+    assert "(toDateTime({cur_ts:String}, 'UTC'), {cur_ns:String}, {cur_uri:String})" in sql
     # Both cursor values are bound parameters, never text in the statement.
     assert params["cur_ts"] == "2026-05-17 12:00:00" and "2026-05-17" not in sql
-    assert params["cur_uri"] == "kb://policy.md"
+    assert (params["cur_ns"], params["cur_uri"]) == ("ns", "kb://policy.md")
 
 
 @pytest.mark.asyncio
@@ -335,7 +347,7 @@ async def test_list_with_chunk_counts_matches_tags_in_any_case() -> None:
     ch = StubCH()
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
-        "clickhouse", "ns", tag_filter=TagFilter(("Specs",), "folded_any"), ch=ch
+        "clickhouse", ["ns"], tag_filter=TagFilter(("Specs",), "folded_any"), ch=ch
     )
     sql, params = ch.query_all_calls[0]
     assert _FOLDED_ANY in sql
@@ -349,7 +361,7 @@ async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
     ch = StubCH()
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
-        "clickhouse", "ns", tag_filter=TagFilter(("Specs", "onboarding"), "folded_all"), ch=ch
+        "clickhouse", ["ns"], tag_filter=TagFilter(("Specs", "onboarding"), "folded_all"), ch=ch
     )
     sql, params = ch.query_all_calls[0]
     assert _FOLDED_ALL in sql

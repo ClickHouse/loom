@@ -88,7 +88,9 @@ schema. These rules keep that safe. The operator procedure is in
    (`LOOM_PROJECTION_REPAIR_MAX_FAILURES_PER_PASS`); past that many, N-1 replays
    nothing else until an N replica leads.
 4. **Wire formats** (cursors, session and run ids, worker resume cursors, JSON stored in
-   rows): N reads the old and the new format, and only N+1 writes the new one.
+   rows): N reads the old and the new format, and only N+1 writes the new one. Exception:
+   a cursor for a request N-1 answers for `namespace` alone (a `knowledge.list` naming
+   `namespaces`) is new in N, and each build refuses the one the other wrote (rule 12).
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
    refresh interval (the command refuses less), so no process signs with a kid an N-1
    replica cannot verify yet.
@@ -161,6 +163,9 @@ schema. These rules keep that safe. The operator procedure is in
     nor the restore version. The restored row then reads as a statement made at the Undo,
     newer than the memory it was retired behind, so a confident update verdict can retire
     that memory although the person kept both. Pinning it prevents that.
+    N-1's `knowledge.list` rows carry no `namespace`, on any list; one naming `namespaces`
+    lists `namespace` alone there, and each build refuses the cursor the other wrote for
+    such a list, so a client paging it starts again.
 13. **A name N spells differently is a different node.** N keeps combining marks and
     NFKC-normalises an entity's name (`दिल्ली`, `İstanbul` as `istanbul`); N-1 split them
     into fragments (`द ल ल`, `i stanbul`). ASCII names spell the same in both, and so do

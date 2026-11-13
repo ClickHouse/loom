@@ -21,6 +21,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeSearchOutput,
     _SearchHit,
 )
+from server.knowledge.app.readable import readable_namespaces
 from server.knowledge.domain.chunking import embedding_text
 from server.memory.app.log_once import LogOnce
 from server.settings import settings
@@ -61,7 +62,7 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     search = _namespaces_search(input, embedder, query_vec, pool, dropped)
     skipped: list[str] = []
     if input.namespaces:
-        namespaces = await _named_namespaces(input)
+        namespaces = await readable_namespaces(input.org, input.namespace, input.namespaces)
     else:
         namespaces, skipped = await namespaces_to_search(
             input.org,
@@ -314,33 +315,6 @@ async def _search_private_first(
         may_end=not_noise(),
         span=functools.partial(traced, "ch.query.chunks", top_k=input.top_k),
     )
-
-
-async def _named_namespaces(input: KnowledgeSearchInput) -> list[str]:
-    """`namespace` (the transport gated it) and the ones the request names,
-    each gated as a read of its own (`@me` is the end user's personal
-    collection): AuthInsufficientError for the first the caller may not read."""
-    from server.auth.authz import check_authorized
-    from server.auth.context import current_auth
-    from server.auth.gateway import personal_namespace
-    from server.core.errors import AuthInsufficientError, ValidationError
-    from server.operations.base import Role
-
-    auth = current_auth()
-    out = [input.namespace]
-    for name in input.namespaces:
-        try:
-            namespace = personal_namespace(auth, input.org, name)
-        except ValueError as e:
-            raise ValidationError(str(e)) from e
-        if namespace in out:
-            continue
-        try:
-            await check_authorized(auth, Role.VIEWER, org=input.org, namespace=namespace)
-        except PermissionError as e:
-            raise AuthInsufficientError(str(e)) from e
-        out.append(namespace)
-    return out
 
 
 def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_SearchHit]:

@@ -47,7 +47,7 @@ the operations reference.
 | `knowledge.upsert`          | writer | Add or replace the document at a `source_uri`; earlier chunks are superseded.          |
 | `knowledge.search`          | viewer | Hybrid passage search (vector, BM25 and exact keys fused).                             |
 | `knowledge.get`             | viewer | One document's full text and metadata by `source_uri`.                                 |
-| `knowledge.list`            | viewer | Documents of a namespace, paged by an opaque cursor, filterable by tag and URI prefix. |
+| `knowledge.list`            | viewer | Documents of one or more namespaces in cursor pages, filterable by tag and URI prefix. |
 | `knowledge.outline`         | viewer | A document's table of contents, and optionally one section's assembled text.           |
 | `knowledge.synthesize`      | viewer | Complete a task over whole documents, or calculate over datasets, with the LLM.        |
 | `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` rewrites the chunks' context.    |

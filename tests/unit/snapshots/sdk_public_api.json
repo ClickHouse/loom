@@ -2611,7 +2611,8 @@
           "tags_every",
           "include_superseded",
           "limit",
-          "cursor"
+          "cursor",
+          "namespaces"
         ],
         "outline": [
           "source_uri",
