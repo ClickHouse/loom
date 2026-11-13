@@ -325,6 +325,7 @@ def test_tracker_hint_needs_a_source_test_tagged_writes_and_no_qa_calls(
     }
     text = p.hint("tracker_unused").text  # type: ignore[union-attr]
     assert "0 tracker.* calls" in text and "qa." not in text
+    assert "the tracker source ('qa') answers tracker.similar" in text
     m.reset_cache()
     _wire(
         monkeypatch,
@@ -2175,16 +2176,8 @@ def test_a_rendered_hint_grows_only_by_one_name_change_per_op(toolset: str) -> N
 
 
 def test_every_rule_that_echoes_a_caller_value_is_in_the_echo_table() -> None:
-    """Each _quoted/_quoted_list call belongs to a rule in _ECHOES, so a new echo,
-    even in a function that already has one, fails here until the table covers it."""
-    echoes = {
-        "_rules_planes": (2, {"code_index_unused", "tracker_unused"}),
-        "_coordination_sentence": (3, {"coordination_loop"}),
-        "_rules_shapes": (1, {"records_for_identities"}),
-        "_rules_identity": (1, set()),  # agent_unnamed echoes only '-' or '*'
-        "_rule_set_churn": (1, {"set_churn"}),
-        "_rule_search_identifier": (1, {"search_identifier_query"}),
-    }
+    """Pins each function's echo count and the echoing rules to _ECHOES, so a new
+    echo, even in a function that already has one, fails until the table covers it."""
     calls = {
         name: len(re.findall(r"\b_quoted(?:_list)?\(", inspect.getsource(f)))
         for name, f in vars(mentor_rules).items()
@@ -2192,6 +2185,19 @@ def test_every_rule_that_echoes_a_caller_value_is_in_the_echo_table() -> None:
         and f.__module__ == mentor_rules.__name__
         and name not in ("_quoted", "_quoted_list")
     }
-    assert {n: k for n, k in calls.items() if k} == {n: k for n, (k, _) in echoes.items()}
-    tabled = {key.split(",")[0] for key in _ECHOES}
-    assert set().union(*(codes for _, codes in echoes.values())) == tabled
+    assert {n: k for n, k in calls.items() if k} == {
+        "_rules_planes": 2,
+        "_coordination_sentence": 3,
+        "_rules_shapes": 1,
+        "_rules_identity": 1,  # agent_unnamed echoes only '-' or '*'
+        "_rule_set_churn": 1,
+        "_rule_search_identifier": 1,
+    }
+    assert {key.split(",")[0] for key in _ECHOES} == {
+        "code_index_unused",
+        "tracker_unused",
+        "coordination_loop",
+        "records_for_identities",
+        "set_churn",
+        "search_identifier_query",
+    }
