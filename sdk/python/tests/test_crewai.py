@@ -301,13 +301,21 @@ def test_an_unnarrowed_recall_stays_within_memory_search_s_top_k_bound() -> None
 def test_a_crew_runs_on_when_loom_is_unreachable() -> None:
     class _Down(_FakeMemory):
         def search(self, query: str, **kw: Any) -> MemorySearchResult:
+            super().search(query, **kw)
+            raise BackendUnavailable("loom unreachable")
+
+        def set(self, key: str, value: str, **kw: Any) -> dict[str, Any]:
+            super().set(key, value, **kw)
             raise BackendUnavailable("loom unreachable")
 
         def set_from_messages(self, messages: list[dict[str, Any]], **kw: Any) -> dict[str, Any]:
+            super().set_from_messages(messages, **kw)
             raise BackendUnavailable("loom unreachable")
 
     llm = _FakeLLM(model="fake")
     agent = CrewAgent(role="travel agent", goal="book seats", backstory="", llm=llm)
     task = Task(description="Which seat does Alice want?", expected_output="a seat", agent=agent)
-    crew = Crew(agents=[agent], tasks=[task], memory=_memory(_Down()))
+    down = _Down()
+    crew = Crew(agents=[agent], tasks=[task], memory=_memory(down))
     assert crew.kickoff().raw == "Alice wants an aisle seat."  # no memory, no error
+    assert [op for op, _, _ in down.calls] == ["search", "set_from_messages"]  # both tried
