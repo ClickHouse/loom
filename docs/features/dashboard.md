@@ -199,8 +199,8 @@ with "Cite your sources." after it, shown with a "With sources" tag. A starter's
 again reads its card again.
 
 A question asked again replaces its answer only once new text comes: until then the turn
-stays as it was, and a refusal the panel explains, or an edit that did not go, offers
-**Try again** (see [asking again](../architecture/assistant.md#asking-again)).
+stays as it was, and a refusal the panel explains, or an edit that did not go, offers **Try
+again** (see [asking again](../architecture/assistant.md#asking-again)).
 
 An empty chat shows one line about what Ask AI answers, its starters, and, under the field,
 "Chats are kept in this browser for 30 days." when the chat is saved: for a signed-in person
@@ -239,17 +239,16 @@ would be asked).
 category draft is registered behind a confirmation that shows the current and proposed
 description; a guide draft opens in the guide editor on top of the guide read now, on its
 conflict view when the guide changed since the draft was read; any other draft is copied,
-its "How to apply" saying who applies it and where. A card restored from History shows
-"Read <time>", and applies nothing until it is read again. The assistant itself writes
-nothing.
+its "How to apply" saying who applies it and where. A card restored from History shows "Read
+<time>", and applies nothing until it is read again. The assistant itself writes nothing.
 
 The Memories page's **Insights** button opens the panel on the starters, with nothing asked
-(also where the chat is not set up: the starters read Loom without it):
-over a finished conversation it starts a new one; while an answer is coming in it opens on
-that conversation and says to choose New chat once it ends. On a phone the button is left
-out, and the top bar's Ask AI opens the panel, which shows the starters on an empty
-conversation (New chat starts one). An old link to `/memories?section=insights`
-opens the panel on the audit's card, nothing asked.
+(also where the chat is not set up: the starters read Loom without it): over a finished
+conversation it starts a new one; while an answer is coming in it opens on that conversation
+and says to choose New chat once it ends. On a phone the button is left out, and the top
+bar's Ask AI opens the panel, which shows the starters on an empty conversation (New chat
+starts one). An old link to `/memories?section=insights` opens the panel on the audit's
+card, nothing asked.
 
 **Each question says which page it is asked from**, and shows it: a chip above the field,
 "Includes: Memories", sends one leading line with the question (`Context: Memories page`),
@@ -294,10 +293,10 @@ One panel serves every window width:
   card, Back, Forward) leaves the window first: beside the page the panel stays open, over
   it the panel closes. A window narrower than 1024 px collapses it.
 
-Esc closes it from inside (after any menu or popover open in it), returning the focus to
-Ask AI (expanded, Esc collapses the window). A change of width moves the panel to another
-mode without losing the focus or the question being typed. It reopens on reload only where
-it sits beside the page, never expanded. A bookmarked `/assistant` address lands on the
+Esc closes it from inside (after any menu or popover open in it), returning the focus to Ask
+AI (expanded, Esc collapses the window). A change of width moves the panel to another mode
+without losing the focus or the question being typed. It reopens on reload only where it
+sits beside the page, never expanded. A bookmarked `/assistant` address lands on the
 account's landing page and opens the assistant over it (expanded from 1024 px).
 
 **Chat not set up** (no assistant URL, or readiness says so) is one empty state: its icon,

@@ -8,8 +8,8 @@ LibreChat is an optional chat client for investigating a namespace: what it hold
 is used, and cited answers over its memories, documents and code. The model calls Loom's
 assistant tools over MCP with the signed-in person's own token. Loom stays the authority
 for memory, documents, retrieval and the diagnostic rules; LibreChat keeps the chat. The
-dashboard's [assistant panel](../dashboard.md#ask-ai) answers the same inspect
-and tune questions with no model and no second store, as the cards its starters read.
+dashboard's [Ask AI panel](../dashboard.md#ask-ai) answers the same inspect and tune
+questions with no model and no second store, as the cards its starters read.
 
 The configuration, a local compose file and the qualification harness are in
 [`integrations/librechat/`](../../../integrations/librechat/README.md). Other LibreChat
