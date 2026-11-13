@@ -602,7 +602,7 @@ function History({
   );
 }
 
-/** The panel header's History button (layout/AssistantPanel.tsx). */
+/** The panel header's History button (layout/AssistantHeader.tsx). */
 const historyButton = () => document.querySelector<HTMLElement>(".assistant-head button[aria-pressed]");
 
 /** Why the assistant cannot answer, in words that say who fixes it and where (the link goes
