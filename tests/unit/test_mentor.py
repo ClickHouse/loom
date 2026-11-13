@@ -2175,20 +2175,23 @@ def test_a_rendered_hint_grows_only_by_one_name_change_per_op(toolset: str) -> N
 
 
 def test_every_rule_that_echoes_a_caller_value_is_in_the_echo_table() -> None:
-    """A new echoing rule needs an _ECHOES entry; agent_unnamed echoes only '-', '' or '*'."""
-    echoing = {
-        name
+    """Each _quoted/_quoted_list call belongs to a rule in _ECHOES, so a new echo,
+    even in a function that already has one, fails here until the table covers it."""
+    echoes = {
+        "_rules_planes": (2, {"code_index_unused", "tracker_unused"}),
+        "_coordination_sentence": (3, {"coordination_loop"}),
+        "_rules_shapes": (1, {"records_for_identities"}),
+        "_rules_identity": (1, set()),  # agent_unnamed echoes only '-' or '*'
+        "_rule_set_churn": (1, {"set_churn"}),
+        "_rule_search_identifier": (1, {"search_identifier_query"}),
+    }
+    calls = {
+        name: len(re.findall(r"\b_quoted(?:_list)?\(", inspect.getsource(f)))
         for name, f in vars(mentor_rules).items()
         if inspect.isfunction(f)
         and f.__module__ == mentor_rules.__name__
         and name not in ("_quoted", "_quoted_list")
-        and re.search(r"\b_quoted(_list)?\(", inspect.getsource(f))
     }
-    assert echoing == {
-        "_rules_planes",  # code_index_unused, tracker_unused
-        "_coordination_sentence",  # coordination_loop
-        "_rules_shapes",  # records_for_identities
-        "_rules_identity",  # agent_unnamed
-        "_rule_set_churn",
-        "_rule_search_identifier",
-    }
+    assert {n: k for n, k in calls.items() if k} == {n: k for n, (k, _) in echoes.items()}
+    tabled = {key.split(",")[0] for key in _ECHOES}
+    assert set().union(*(codes for _, codes in echoes.values())) == tabled

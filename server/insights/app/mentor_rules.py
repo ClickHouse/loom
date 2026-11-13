@@ -544,16 +544,21 @@ def _rules_planes(c: _Ctx) -> None:
         and _prefix_count(c.usage, "tracker") == 0
         and c.fact("tracker_tagged_sets") > 0
     ):
+        sources = list(tracker_sources)
+        echo = _quoted_list(sources[:1], total=len(sources))
+        answers = (
+            f"the tracker source ({echo}) answers"
+            if len(sources) == 1
+            else f"tracker sources ({echo}) answer"
+        )
         c.add(
             "tracker_unused",
             "warning",
-            f"{c.fact('tracker_tagged_sets')} test/flaky/ci writes, 0 tracker.* calls: "
-            f"tracker sources ({_quoted_list(list(tracker_sources)[:1], len(tracker_sources))}) "
-            "answer "
+            f"{c.fact('tracker_tagged_sets')} test/flaky/ci writes, 0 tracker.* calls: {answers} "
             "tracker.similar, tracker.duplicate_check, tracker.flaky, tracker.test_signal.",
             ("tracker.similar", "tracker.duplicate_check", "tracker.flaky", "tracker.test_signal"),
             tracker_tagged_sets=c.fact("tracker_tagged_sets"),
-            sources=list(tracker_sources),
+            sources=sources,
         )
     hist = _count(c.usage, HISTORY_OPS)
     if hist >= BISECT_MIN_HISTORY_CALLS and int(c.usage.get("code.bisect_candidates", 0)) == 0:
