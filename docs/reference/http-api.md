@@ -175,10 +175,9 @@ curl -sX POST "$LOOM/v1/memory.set" \
   filled and, where the op requires it, the call is refused. Every other op names
   its own namespace and agent; on a single-user server with no token, a blank or
   `"-"` namespace on one that requires a namespace (code and tracker ops aside) is
-  refused as missing. A call with a token
-  (one the Python SDK finds by itself included:
-  [Credentials](python-sdk.md#credentials)) gets nothing filled, and neither does any
-  call in another identity mode.
+  refused as missing. A call with a token (one the Python SDK finds by itself
+  included: [Credentials](python-sdk.md#credentials)) gets nothing filled, and
+  neither does any call in another identity mode.
 - **`consumer`.** Any body may carry `consumer`, a short tag for the product or
   module calling; it is stored on the request and audit ledgers. A token minted
   with a consumer overrides it. See
@@ -213,8 +212,9 @@ MCP `tools/call` runs the same sequence, but for the single-user fill, which is 
   op the token's own org (on a single-user server with no token, the install's
   org and, on the ops listed under Identity above, its namespace), and a
   namespace with no org to pair it with is `400 IDENTITY_INCOMPLETE`. A padded
-  `org` or `namespace` is stripped. Over MCP, a connection's `X-Loom-Code-Scope` names the repository for any `code.*`
-  call that names none, the `code.repo.*` writes included.
+  `org` or `namespace` is stripped. Over MCP, a connection's `X-Loom-Code-Scope`
+  names the repository for any `code.*` call that names none, the `code.repo.*`
+  writes included.
 - An idempotent replay is looked up only after authorization and policy admit
   the call, so a stored answer never reaches another principal.
 - A rate limiter or traffic classifier that fails lets the request through and
