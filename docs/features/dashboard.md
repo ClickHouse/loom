@@ -184,15 +184,15 @@ whose check never came back (the connection was lost, or the page was left) read
 didn't finish". Each question goes with the conversation's newest 50 messages.
 
 An answer's actions are small named icon buttons under it (44 px under a coarse pointer).
-**Copy** copies a finished answer as stored, Markdown and citation markers included. The last
-answer offers **Ask again**, which answers its question again in its place with the page line
-it was asked with, after it ended or was stopped. An answer that failed says so in one
-sentence, "The answer stopped before it finished. Your question is kept." for a stream cut
-short, with **Retry** inside the alert where sending it again may pass (the server marks the
-error retryable, or the connection was lost); its partial text keeps its numbers, unlinked.
-**Edit question**, an icon button on the last question, puts it in the field while the field
-is empty; Ask then replaces its answer (with sources when it was asked with them), and
-**Cancel edit** empties the field; while an edit is open, Ask again and Ask again with
+**Copy** copies a finished answer as stored, Markdown and citation markers included. The
+last answer offers **Ask again**, which answers its question again in its place with the
+page line it was asked with, after it ended or was stopped. An answer that failed says so in
+one sentence, "The answer stopped before it finished. Your question is kept." for a stream
+cut short, with **Retry** inside the alert where sending it again may pass (the server marks
+the error retryable, or the connection was lost); its partial text keeps its numbers,
+unlinked. **Edit question**, an icon button on the last question, puts it in the field while
+the field is empty; Ask then replaces its answer (with sources when it was asked with them),
+and **Cancel edit** empties the field; while an edit is open, Ask again and Ask again with
 sources are not offered. Enter in the field asks and Shift+Enter adds a line. A label that
 could not confirm the last answer offers **Ask again with sources**, which asks it again
 with "Cite your sources." after it, shown with a "With sources" tag. A starter's turn asked
@@ -266,9 +266,9 @@ the question being typed and sends nothing. The item leaves with the chip, after
 question is answered (one the route refuses comes back to the field with its chip), and when
 the page, the namespace, the org or the signed-in person changes. On a conversation about
 another namespace it starts a new one in the header's namespace, the question being typed
-and the chip moving to it, and says "New conversation in <namespace>; the one about <old> is
-in History." While an answer is still coming in there, it starts none: the panel asks how to
-go on with that conversation, as after any switch of namespace, and the chip keeps the item.
+and the chip moving to it, and says "New chat in <namespace>; the one about <old> is in
+History." While an answer is still coming in there, it starts none: the panel asks how to go
+on with that conversation, as after any switch of namespace, and the chip keeps the item.
 The button is there for anyone the assistant's route admits on the namespace. It is
 unavailable, with the reason, while the assistant cannot answer, on a header namespace that
 holds no memories, on a document of a collection linked in the Library (the answer reads
@@ -302,10 +302,10 @@ account's landing page and opens the assistant over it (expanded from 1024 px).
 **Chat not set up** (no assistant URL, or readiness says so) is one empty state: its icon,
 "Chat isn't set up", "An operator sets up the assistant service for this deployment.", and a
 link, **How to set up the assistant service**, to the [deployed
-assistant](integrations/librechat.md#the-deployed-assistant) in the docs. Loom's own reads are
-listed under it as starters, with no question field and no **Also ask the model**, and the
-starters stay under the last card, so one runs after another; those cards are not saved, and
-**New chat** empties the list. History shows only conversations saved before, opened
+assistant](integrations/librechat.md#the-deployed-assistant) in the docs. Loom's own reads
+are listed under it as starters, with no question field and no **Also ask the model**, and
+the starters stay under the last card, so one runs after another; those cards are not saved,
+and **New chat** empties the list. History shows only conversations saved before, opened
 read-only. An open puts the focus on the first starter. A setup that is failing has the same
 layout, headed "Chat's setup is failing", with **Try again**; a platform or namespace admin
 also gets a link to Admin › Health, where the failure is shown, and anyone but a platform
@@ -328,32 +328,32 @@ readiness can be read: to platform admins always, and to anyone else who opens H
 the assistant sets up or fails.
 
 **The header search answers a question in place.** Its results end with an **Ask AI about
-"<the text>"** option, with a visible **Ask**, under an **Ask AI** label; for text that reads
-as a question (three words or more, ending with "?" or opening with a question word such as
-what, how or is, or with explain, summarize, show me, tell me, list or compare), unless it
-holds a search filter (`tag:`, `namespace:`, `type:`), that option comes first instead. After
-keywords it follows the results once the memory search answers, so an Enter before then asks
-nothing. No option shows a key, and Tab leaves the field as it does anywhere. Typing never
-asks: choosing the option (a click, or Enter while it is highlighted) asks the question
-through the assistant as the panel's **Ask** does, in the conversation shown when it is about
-the header's namespace and otherwise in a new one, with the page's line (none once the panel's
-page chip is removed) but without an item **Ask about this** set for the panel's field; what
-is typed in the panel's field stays. A card headed **Ask AI** then sits on top of the results,
-which stay listed under it: the answer's first lines as they stream, each citation in them
-drawn as its number that, once checked, links to its row under the card, its working line, and
-once checked the label and sources the panel shows (on a phone, 44 px rows with their text
-centred); its end is said once in the assistant's live region. Its one action, **Continue in
-chat**, the first option under it, opens the panel on that conversation, the question and
-answer its last turn. A question the card could not ask (another answer coming in, or another
-tab holding the conversation) waits in the panel's empty field. Closing the search while it
-answers leaves it answering: Ask AI shows the answer coming in, then ready. Where the chat is
-not set up, a reason keeps the assistant from answering (the token's own claims included, and
-a refusal the route gave earlier; the setup starting or failing keeps the option, and the card
-says a refusal it causes), the header's namespace is not a memory namespace (a code, tracker
-or collection one), or the question with its page line is longer than one request carries, the
-search offers no Ask AI option. Where it can be offered the empty field reads "Search or ask a
-question", and while it is offered, a search that matches nothing says no "No matches" and
-gives no filter tips.
+"<the text>"** option, with a visible **Ask**, under an **Ask AI** label; for text that
+reads as a question (three words or more, ending with "?" or opening with a question word
+such as what, how or is, or with explain, summarize, show me, tell me, list or compare),
+unless it holds a search filter (`tag:`, `namespace:`, `type:`), that option comes first
+instead. After keywords it follows the results once the memory search answers, so an Enter
+before then asks nothing. No option shows a key, and Tab leaves the field as it does
+anywhere. Typing never asks: choosing the option (a click, or Enter while it is highlighted)
+asks the question through the assistant as the panel's **Ask** does, in the conversation
+shown when it is about the header's namespace and otherwise in a new one, with the page's
+line (none once the panel's page chip is removed) but without an item **Ask about this** set
+for the panel's field; what is typed in the panel's field stays. A card headed **Ask AI**
+then sits on top of the results, which stay listed under it: the answer's first lines as
+they stream, each citation in them drawn as its number that, once checked, links to its row
+under the card, its working line, and once checked the label and sources the panel shows (on
+a phone, 44 px rows with their text centred); its end is said once in the assistant's live
+region. Its one action, **Continue in chat**, the first option under it, opens the panel on
+that conversation, the question and answer its last turn. A question the card could not ask
+(another answer coming in, or another tab holding the conversation) waits in the panel's
+empty field. Closing the search while it answers leaves it answering: Ask AI shows the
+answer coming in, then ready. Where the chat is not set up, a reason keeps the assistant
+from answering (the token's own claims included, and a refusal the route gave earlier; the
+setup starting or failing keeps the option, and the card says a refusal it causes), the
+header's namespace is not a memory namespace (a code, tracker or collection one), or the
+question with its page line is longer than one request carries, the search offers no Ask AI
+option. Where it can be offered the empty field reads "Search or ask a question", and while
+it is offered, a search that matches nothing says no "No matches" and gives no filter tips.
 
 **Conversations are kept in this browser**, never on the server: 30 days from their last
 use, the newest 25 turns of each, up to 256 KB a conversation and 2 MB in all, and listed
