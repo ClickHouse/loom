@@ -724,14 +724,13 @@ const PASSAGES = [
   },
 ];
 
-/** The Audit log's events, each with the subject its op records (its input, or its
- *  `audit_subject`). A memory write names its writer as `kind:subject`; any other audited op
- *  names the token's subject. */
 const AGENT_SUBJECT = "sa:claude-code-7f2a";
 const AGENT_WRITER = `process:${AGENT_SUBJECT}`;
 const BOT_WRITER = "process:sa:support-bot-91c3";
+/** The Audit log's events, with the subject fields the Audit log's labels read. A memory
+ *  write names its writer as `kind:subject`; any other audited op names the token's
+ *  subject. Each memory write is as old as the memory it saved. */
 const AUDIT_ROWS = [
-  { h: 0.5, event_type: "memory.set", actor: `human:${SUBJECT}`, subject: { memory_key: "deploys/policy/windows" } },
   { h: 1.5, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "api/rate-limit/public" } },
   { h: 2.0, event_type: "memory.set", actor: AGENT_WRITER, subject: { memory_key: "staging/db/read-only-window" } },
   {
@@ -740,8 +739,9 @@ const AUDIT_ROWS = [
     actor: SUBJECT,
     subject: { role: "writer", namespace: NS_SUPPORT, subject: "sa:support-bot-91c3" },
   },
-  { h: 4.4, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "support/refunds/approval" } },
-  { h: 5.0, event_type: "memory.delete", actor: AGENT_SUBJECT, subject: { memory_key: "staging/db/legacy-host" } },
+  { h: 3.5, event_type: "memory.set", actor: AGENT_WRITER, subject: { memory_key: "deploys/policy/windows" } },
+  { h: 4.6, event_type: "memory.delete", actor: AGENT_SUBJECT, subject: { memory_key: "staging/db/legacy-host" } },
+  { h: 5.0, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "support/refunds/approval" } },
   { h: 6.7, event_type: "memory.promote", actor: SUBJECT, subject: { memory_key: "procedures/rollback-prod" } },
   { h: 8.2, event_type: "namespace.join", actor: "dev2@acme.example", subject: { namespace: NS, role: "viewer" } },
   { h: 12.0, event_type: "knowledge.delete", actor: SUBJECT, subject: { source_uri: "runbooks/old-pager-rota.md" } },
@@ -1118,6 +1118,12 @@ async function settle(page: Page): Promise<void> {
   await page.mouse.move(0, 0);
 }
 
+// The unmocked calls each test made, printed with LOOM_DOCS_DEBUG=1.
+test.afterEach(() => {
+  if (process.env.LOOM_DOCS_DEBUG) console.log(debugCalls.join("\n"));
+  debugCalls.length = 0;
+});
+
 async function capture(page: Page, name: string): Promise<void> {
   fs.mkdirSync(OUT, { recursive: true });
   await settle(page);
@@ -1214,11 +1220,6 @@ test.describe("docs screenshots", () => {
   test.skip(!ENABLED, "set LOOM_DOCS_SCREENSHOTS=1 to regenerate docs/images");
   test.use({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2, colorScheme: "dark" });
 
-  test.afterEach(() => {
-    if (process.env.LOOM_DOCS_DEBUG) console.log(debugCalls.join("\n"));
-    debugCalls.length = 0;
-  });
-
   test("memories", async ({ page }) => {
     await installDemoApi(page);
     await page.goto("/memories");
@@ -1284,11 +1285,6 @@ test.describe("docs screenshots at 1440 px", () => {
   test.skip(!ENABLED, "set LOOM_DOCS_SCREENSHOTS=1 to regenerate docs/assets/screenshots");
   test.use({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme: "dark" });
 
-  test.afterEach(() => {
-    if (process.env.LOOM_DOCS_DEBUG) console.log(debugCalls.join("\n"));
-    debugCalls.length = 0;
-  });
-
   test("memory linked files", async ({ page }) => {
     await installDemoApi(page);
     await steps.linkedCode(page);
@@ -1343,11 +1339,6 @@ test.describe("docs clips", () => {
   // Smaller than the shots: a clip plays inline at page width, where 1280 px reads the same
   // and the file stays small.
   const SIZE = { width: 1280, height: 800 };
-
-  test.afterEach(() => {
-    if (process.env.LOOM_DOCS_DEBUG) console.log(debugCalls.join("\n"));
-    debugCalls.length = 0;
-  });
 
   async function record(browser: Browser, name: string, run: (page: Page) => Promise<void>): Promise<void> {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-clip-"));
