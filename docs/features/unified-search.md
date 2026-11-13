@@ -68,7 +68,8 @@ block too. `explain=true` keeps everything.
    `LOOM_MCP_LOOM_SEARCH_FOREIGN_MARGIN` (0.08) more. `LOOM_MCP_LOOM_SEARCH_PRECISION_FLOOR` below 0 (the default)
    derives the floor from the embedder's calibration; 0 turns it off.
 2. **Home fact first** (`explain=true` keeps everything). When the lead memory hit is a home-namespace
-   fact, or a home fact is within 0.03 similarity of the lead, that fact goes first. The response then drops foreign
+   fact, or a home fact is within 0.03 similarity of the lead, that fact goes first; a fact the search moved down
+   because its code changed is never lifted. The response then drops foreign
    memory hits more than 0.03 below it, home hits more than 0.15 below it, quoted Loom recalls, foreign knowledge
    hits and the conversation section. At most one transcript chunk stays as evidence. The comparison uses similarity,
    not rank, because rank includes recency and reinforcement boosts.
@@ -79,7 +80,7 @@ block too. `explain=true` keeps everything.
 
 The memory section has one paragraph per hit, `[date] [key] (type) excerpt`, in the order `memory.ask` would read
 them. A decision from the scoped repository names its namespace beside its type, `(decision, <namespace>)`, and is
-placed among the home hits by similarity.
+placed among the home hits by similarity, then moved down like a home hit when its code changed.
 
 The reading rule rides ahead of the block once per MCP session, then as a one-line pointer (every time for a client
 that sends no session id).
