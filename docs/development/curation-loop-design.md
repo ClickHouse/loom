@@ -173,10 +173,11 @@ reader:
   while the count is past it; the admin demotes definitions until the namespace is back
   within it. The read that follows is limited to the ceiling's rows plus one and applies
   the same two rules to the rows it finds, so a promotion committed after the count is
-  caught. Within the ceiling a revision of a key already promoted replaces its row and is
-  never refused by it. This is the name check. The review path runs it before its write,
-  so a refused review writes nothing, and `memory.promote` runs it again at the promotion,
-  which catches a term or key that landed in between. Names are compared folded, as above.
+  caught. Within the ceiling a revision of a key that holds a live shared definition
+  replaces its row and is never refused by it. This is the name check. The review path
+  runs it before its write, so a refused review writes nothing, and `memory.promote` runs
+  it again at the promotion, which catches a term or key that landed in between. Names are
+  compared folded, as above.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row, whose `target_key` differs from the
   source's key or lies outside `definition/`, so a revision always lands on the governed
@@ -867,8 +868,8 @@ the op budgets before they ship it.
 - A definition's promotion, through `memory.promote` or `learnings.review`, counts the
   namespace's definition rows and then reads them, at most
   `memory_term_leg_max_definitions` plus one (past it the promotion is refused), to check
-  its term and aliases; the review path makes it twice, once before its write and once at
-  the promotion.
+  its term and aliases; the review path runs the count and the read twice, once before its
+  write and once at the promotion.
 - `memory.definitions.list` counts the rows (`count()`), reads the full values of at most
   the ceiling's rows, the ones the term leg reads, to find names held by more than one,
   and marks the rest `capped` from their key, `promoted_at`, `promotion_event` and
