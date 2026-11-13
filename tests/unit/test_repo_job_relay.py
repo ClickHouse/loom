@@ -251,7 +251,7 @@ def test_a_client_still_uploading_to_a_half_closed_proxy_keeps_its_bridge(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The server has sent EOF and still reads: each byte restarts the linger."""
-    monkeypatch.setattr(egress_relay, "_LINGER_S", 0.5)  # room around each gap
+    monkeypatch.setattr(egress_relay, "_LINGER_S", 0.6)  # 0.3 s either side of a gap
     with _relay(sock_dir, 1) as (port, upstream):
         client = socket.create_connection(("127.0.0.1", port), timeout=5)
         assert upstream.arrived.acquire(timeout=5)
@@ -260,7 +260,7 @@ def test_a_client_still_uploading_to_a_half_closed_proxy_keeps_its_bridge(
         chunks = 4
         for _ in range(chunks):  # each gap longer than one linger, shorter than two
             client.sendall(b"x")
-            time.sleep(1.3 * egress_relay._LINGER_S)
+            time.sleep(1.5 * egress_relay._LINGER_S)
         received = b""
         upstream.held[0].settimeout(5)
         while len(received) < chunks:

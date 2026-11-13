@@ -546,7 +546,7 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   once. Once the proxy's side of a tunnel has ended (the server closed or reset it, or
   the proxy closed it), the relay ends its connection after at least a second without a
   byte from the client. A client that never reads what it was sent keeps its relay
-  connection, and so its relay slot.
+  connection, and so its relay slot, until it reads, closes or the job ends.
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are

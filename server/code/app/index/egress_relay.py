@@ -22,10 +22,11 @@ from collections.abc import Callable
 
 # not a setting: the proxy's MAX_TUNNELS (a unit test pins them equal); no job holds more
 MAX_BRIDGES = 32
-# The shortest silence from a client, after the proxy's side has ended, that ends
-# its bridge.
+# A client's silence, once the proxy's side has ended, that ends its bridge.
 # not a setting: a pause between writes, far below any timeout to tune
 _LINGER_S = 1.0
+# not a setting: a pause before trying again at a kernel limit
+_RETRY_PAUSE_S = 0.1
 
 
 def _to_client(src: socket.socket, dst: socket.socket, to_client_done: threading.Event) -> None:
@@ -42,9 +43,9 @@ def _to_client(src: socket.socket, dst: socket.socket, to_client_done: threading
 
 
 def _to_proxy(src: socket.socket, dst: socket.socket, to_client_done: threading.Event) -> None:
-    """Client to proxy, to the client's EOF, or to a full `_LINGER_S` without a byte
-    once the proxy-to-client direction has ended: a client may keep a finished
-    connection open."""
+    """Client to proxy, to the client's EOF, or to a silence once the proxy-to-client
+    direction has ended: a client may keep a finished connection open. The silence
+    is one to two `_LINGER_S`, and two after a byte from the client."""
     lingering = False
     try:
         while True:
@@ -74,7 +75,7 @@ def _start(target: Callable[..., None], *args: object) -> threading.Thread:
             thread.start()
             return thread
         except RuntimeError:
-            time.sleep(0.1)
+            time.sleep(_RETRY_PAUSE_S)
 
 
 def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
@@ -105,7 +106,7 @@ def accept_loop(listener: socket.socket, path: str, slots: threading.Semaphore) 
             conn, _ = listener.accept()
         except OSError:  # ENFILE, ECONNABORTED and the like
             slots.release()
-            time.sleep(0.1)
+            time.sleep(_RETRY_PAUSE_S)
             continue
         _start(_bridge, conn, path, slots)
 

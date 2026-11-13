@@ -23,6 +23,8 @@ from server.code.app.index.gitrepo import auth_env
 from tests.unit._hosts import resolves
 
 _HAS_SANDBOX = sandbox.sandbox_available()
+_SOMAXCONN_PATH = Path("/proc/sys/net/core/somaxconn")  # Linux only, as the sandbox is
+_SOMAXCONN = int(_SOMAXCONN_PATH.read_text()) if _SOMAXCONN_PATH.exists() else 0
 
 
 @pytest.fixture(autouse=True)
@@ -170,7 +172,10 @@ async def test_the_proxy_refuses_private_targets_and_redirects_to_them(
 
 async def test_a_burst_of_connections_leaves_the_relay_running(monkeypatch) -> None:
     """A client that opens far more connections than the job may have tasks (pnpm's
-    metadata check): the relay bridges a few at a time and still serves the next."""
+    metadata check): the relay bridges 32 at a time and still serves the next. The
+    300 wait in the relay's listen backlog, which net.core.somaxconn bounds."""
+    if _SOMAXCONN < 300:
+        pytest.skip("net.core.somaxconn is below 300 here")
     monkeypatch.setattr(sandbox.settings, "code_sandbox_max_pids", 128)
 
     async def answer(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

@@ -98,19 +98,19 @@ async def _splice(
 
 async def _until_server_quiet(
     server_side: asyncio.Task[None], traffic: _Traffic, to_client: asyncio.StreamWriter
-) -> None:
+) -> bool:
     """Wait until the server side ends, or is quiet for `code_egress_half_close_timeout_s`
-    (`code_egress_idle_timeout_s` while bytes still wait for the client)."""
+    (`code_egress_idle_timeout_s` while bytes still wait for the client). True when
+    the wait ended with bytes the client never read."""
     while not server_side.done():
         half_close = settings.code_egress_half_close_timeout_s
         buffered = to_client.transport.get_write_buffer_size()
         limit = settings.code_egress_idle_timeout_s if buffered else half_close
         quiet = time.monotonic() - traffic.last
         if quiet >= limit:
-            if buffered:  # a client that never reads: drop it, or closing waits on it
-                to_client.transport.abort()
-            return
+            return bool(buffered)
         await asyncio.wait({server_side}, timeout=min(limit - quiet, half_close))
+    return False
 
 
 class EgressProxy:
@@ -177,7 +177,8 @@ class EgressProxy:
         try:
             await _splice(reader, up_writer, traffic)
             if traffic.moved:  # an EOF before any byte means the client gave up: end now
-                await _until_server_quiet(server_side, traffic, writer)
+                if await _until_server_quiet(server_side, traffic, writer):
+                    writer.transport.abort()  # closing would wait for a client that never reads
         finally:
             up_writer.close()
             server_side.cancel()
