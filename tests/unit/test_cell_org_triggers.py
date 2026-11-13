@@ -170,6 +170,13 @@ _CHANGES_ORG = (
     re.compile(r"\bRENAME\s+(?:COLUMN\s+)?\"?org\"?\s+TO\b", re.I),
     re.compile(r"\bDROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?\"?org\"?(?!\w)", re.I),
 )
+# A data step that sets a row's org: the migration session is marked, so no trigger
+# would refuse it. The SET list ends at WHERE or FROM, where an org may be compared.
+_SETS_ORG = re.compile(
+    r"\bUPDATE\s+[\w.\"]+(?:\s+(?:AS\s+)?\w+)?\s+SET\b(?:(?!\b(?:WHERE|FROM)\b)[^;])*?"
+    r"(?<![\w.])\"?org\"?\s*=",
+    re.I,
+)
 # An `org` column added to a table after it was created: its key is not checked here.
 _ADDS_ORG = re.compile(r"\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\"?org\"?\s", re.I)
 
@@ -181,6 +188,7 @@ def test_no_migration_retypes_renames_drops_or_adds_an_org_column(path: Any) -> 
         assert not rule.search(sql), rule.pattern
     # An org column belongs in its CREATE TABLE, where the key test reads it.
     assert not _ADDS_ORG.search(sql)
+    assert not _SETS_ORG.search(sql)
 
 
 @pytest.mark.parametrize(
@@ -199,6 +207,21 @@ def test_the_org_column_rules_catch_every_spelling(statement: str) -> None:
     assert any(rule.search(statement) for rule in _CHANGES_ORG)
     assert _ADDS_ORG.search("ALTER TABLE loom.t ADD COLUMN org text;")
     assert not any(rule.search("ALTER TABLE loom.t DROP organisation;") for rule in _CHANGES_ORG)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE loom.t SET org = 'x';",
+        "UPDATE loom.t AS t SET seq = 1, org = lower(org) WHERE true;",
+        "UPDATE loom.t SET \"org\"='x';",
+    ],
+)
+def test_the_set_org_rule_catches_a_data_step_that_moves_a_row(statement: str) -> None:
+    assert _SETS_ORG.search(statement)
+    assert not _SETS_ORG.search("UPDATE loom.t SET seq = 1 WHERE org = 'x';")
+    assert not _SETS_ORG.search("UPDATE loom.t SET seq = 1 FROM loom.u WHERE u.org = t.org;")
+    assert not _SETS_ORG.search("UPDATE loom.t SET t.organisation = 1;")
 
 
 def _tables(sql: str) -> list[tuple[str, str]]:
