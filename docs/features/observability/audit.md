@@ -239,9 +239,10 @@ All settings are in the [configuration reference](../../reference/configuration.
 - **Fail-open writes.** A failed audit insert loses the row and never fails the operation,
   except a `memory.restore` that undoes a retirement and a `namespace.restore`, which
   depend on their record. The row is inserted directly before the response, not queued,
-  so a crash loses only the row of a call still in flight. Under the Postgres authority a
-  memory write's audit row is durable in Postgres before the write answers
-  ([audit](../../architecture/storage-authority.md#audit)).
+  so a crash loses only the row of a call still in flight (with
+  `LOOM_RESTRICTED_AUDIT_INLINE=false`, also a restricted-access row written after its
+  answer). Under the Postgres authority a memory write's audit row is durable in Postgres
+  before the write answers ([audit](../../architecture/storage-authority.md#audit)).
 - **Detection, not prevention.** Anyone with write access to the ClickHouse table can
   alter it. The verifier shows the change; it cannot undo it.
 - **Bounded look-back.** The per-row check reads the last hour; the checkpoint recount
