@@ -271,15 +271,17 @@ exceed the gate.
 
 ### Row-scoped operations
 
-An op addressed only by an org-wide id (a `memory_id`, `erasure_id` or blacklist
-`pattern_id`), such as `memory.get_by_id`, declares `row_scoped=True` on its
-`Operation`. The transport only checks that the token holds the role somewhere in the
-org. The handler authorizes the caller on the scope that holds the row, on one of two
-paths:
+An op addressed by an org-wide id alone (a `memory_id`, `erasure_id` or blacklist
+`pattern_id`), such as `memory.get_by_id`, gets no namespace check from the transport:
+it declares `row_scoped=True` on its `Operation` (or, for `memory.verify`, which can
+also be addressed by namespace and key, `skip_namespace_authz=True`), and the transport
+only checks that the token holds the role somewhere in the org. The handler authorizes
+the caller on the scope that holds the row, on one of two paths:
 
-- **Before the read.** `memory.get_by_id` and `memory.update_by_id` resolve the id to
-  the namespaces that hold it (`id_namespace.namespace_for_id`), keep the ones the caller
-  reaches (`authz.row_reach`), and read the row only when exactly one remains.
+- **Before the read.** `memory.get_by_id`, `memory.update_by_id` and `memory.verify`
+  (by id) resolve the id to the namespaces that hold it (`id_namespace.namespace_for_id`),
+  keep the ones the caller reaches (`authz.row_reach`), and read the row only when
+  exactly one remains.
 - **After the read.** `memory.redact`, `erasure.status` and `blacklist.remove` fetch the
   row and then check the caller on its scope: `authz.row_in_scope` for a row held in a
   namespace. An erasure saga of a user needs the org-wide view, and a saga over several

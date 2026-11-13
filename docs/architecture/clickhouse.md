@@ -520,9 +520,9 @@ flush never fails a request; a crash loses the queue.
   candidates and rescores them at full precision. Coding and patch parts are re-probed
   every `LOOM_VECTOR_CODES_STATE_PROBE_SECONDS`; a failed probe reads as "not patch-free".
   A replica that rejects the setting has it dropped and the read retried. The memory fact
-  leg has its own switch, `LOOM_MEMORY_SEARCH_FACT_CODES_FIRST`: `auto` follows its own
-  patch-parts probe, every `LOOM_MEMORY_EMBEDDINGS_PATCH_PARTS_PROBE_SECONDS`, and `on`
-  and `auto` read as off while `LOOM_VECTOR_SEARCH_QUANTIZED_CODES` is false or the
+  leg has its own switch, `LOOM_MEMORY_SEARCH_FACT_CODES_FIRST`. Its `auto` follows its
+  own patch-parts probe (every `LOOM_MEMORY_EMBEDDINGS_PATCH_PARTS_PROBE_SECONDS`). Both
+  `on` and `auto` read as off while `LOOM_VECTOR_SEARCH_QUANTIZED_CODES` is false or the
   replica does not know the setting. Its over-fetch is
   `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER`.
 - **Fixed-length placeholders.** Rows awaiting an embedding store zero vectors with
