@@ -329,10 +329,11 @@ def test_both_plugins_link_the_data_handling_section() -> None:
     assert "\n## Data handling\n" in _site_page(url).read_text()
 
 
-def test_listing_links_into_the_repository_resolve() -> None:
-    """The registry listing, the plugin manifests, the SDK packages, the citation and the
-    chart publish absolute links into this repository and the documentation site, which the
-    doc-link check does not follow; a renamed file breaks them."""
+def test_published_links_resolve() -> None:
+    """The registry listing, the plugin manifests, both pyproject files, the SDK packages
+    and their READMEs, the citation, the chart and the issue templates publish absolute
+    repository and site links, which the doc-link check does not follow; a renamed file
+    breaks them."""
     text = "\n".join(
         (ROOT / f).read_text()
         for f in (
@@ -347,6 +348,9 @@ def test_listing_links_into_the_repository_resolve() -> None:
             "deploy/helm/loom/Chart.yaml",
             ".github/ISSUE_TEMPLATE/config.yml",
             ".github/ISSUE_TEMPLATE/10_question.yaml",
+            ".github/ISSUE_TEMPLATE/80_documentation-issue.yaml",
+            "sdk/python/README.md",
+            "sdk/typescript/README.md",
         )
     )
     links = re.findall(
