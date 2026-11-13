@@ -572,8 +572,8 @@ describe("the search's answer card", () => {
   it("with the page line on, a question that would pass the length only without it gets a card once the chip is off", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
-    // 19,990 characters: under one request's length alone, over it with "Context: Memories
-    // page".
+    // 19,990 characters: under one request's length alone, over it with
+    // "Context: Memories page".
     const long = `what ${"x".repeat(19_984)}?`;
     expect(long).toHaveLength(20_000 - 10);
     await user.click(field());

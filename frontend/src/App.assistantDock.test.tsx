@@ -1,7 +1,8 @@
 // The assistant panel in the shell: the header's Ask AI button, the modes the window's
 // width gives it (push, overlay, phone sheet) and the window it expands to, what a modal
-// panel does to the page (role, trap, inert), the keys (Esc, and that Ctrl+J, ⌘J and Ctrl+/
-// open nothing), what navigations, Back and resizes do to it, and an /assistant address.
+// panel does to the page (role, trap, inert), the keys (Esc, and that Ctrl+J, ⌘J, Ctrl+/,
+// ⌘/ and a bare j open nothing), what navigations, Back and resizes do to it, and an
+// /assistant address.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "./test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -526,12 +527,13 @@ describe("overlay mode (below the push threshold)", () => {
 });
 
 describe("keys", () => {
-  it("opens nothing on Ctrl+J, ⌘J, Ctrl+/ or a bare j: Ask AI opens from its button and from search", async () => {
+  it("opens nothing on Ctrl+J, ⌘J, Ctrl+/, ⌘/ or a bare j: Ask AI opens from its button and from search", async () => {
     await boot(1440);
     for (const key of [
       { key: "j", ctrlKey: true },
       { key: "j", metaKey: true },
       { key: "/", ctrlKey: true },
+      { key: "/", metaKey: true },
       { key: "j" },
     ])
       fireEvent.keyDown(document.body, key);

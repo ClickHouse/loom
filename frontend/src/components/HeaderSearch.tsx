@@ -66,10 +66,10 @@ interface CardAsk {
  *  with a visible Ask: after the results for keywords, first for text that reads as a
  *  question (lib/readsAsQuestion.ts) and holds no search filter (`tag:`, `namespace:`,
  *  `type:`). Choosing it asks through the assistant's chat store
- *  (views/assistant/SearchAnswer.tsx): the answer streams into the card on top, headed "Ask
- *  AI", whose one "Continue in chat" option opens the panel on the same conversation, and
- *  the results stay listed under it. Typing alone never asks. No Ask AI option where the
- *  chat is off, the token's claims or a reason other than the setup starting or failing
+ *  (views/assistant/SearchAnswer.tsx): the answer streams into the card on top, headed
+ *  "Ask AI", whose one "Continue in chat" option opens the panel on the same conversation,
+ *  and the results stay listed under it. Typing alone never asks. No Ask AI option where
+ *  the chat is off, the token's claims or a reason other than the setup starting or failing
  *  block it, the namespace is not a memory namespace (a code, tracker or collection one),
  *  or the question is longer than one request carries. */
 export function HeaderSearch({
