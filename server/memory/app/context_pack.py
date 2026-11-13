@@ -496,17 +496,6 @@ def _code_change(hit: Any) -> tuple[str, str]:
     return state, code_change.worst_commit(getattr(hit, "_code_links", None) or [])
 
 
-def _code_note(hit: Any) -> str:
-    """The note a pack line carries when the hit's linked code changed or went."""
-    return code_change.note(*_code_change(hit))
-
-
-def _code_label(hit: Any) -> str:
-    """`<state>@<commit>` (the state alone when no commit is known), or ''."""
-    state, commit = _code_change(hit)
-    return f"{state}@{commit[:12]}" if commit else state
-
-
 async def _pack_decisions_from_hits(
     st: _PackState, decision_hits: list[Any], actors: _KeyWriters, *, abstained: bool
 ) -> None:
@@ -547,7 +536,8 @@ async def _pack_decisions_from_hits(
         made = str(rec.get("made_at") or "")[:10]
         author = _hit_author(actors, input, h)
         line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
-        line += (f" {made}" if made else "") + _code_note(h) + f" {scenario}"
+        line += (f" {made}" if made else "") + code_change.note(*_code_change(h))
+        line += f" {scenario}"
         if outcome:
             line += f" → {rec['stage']}: {outcome}"
         if states_reason(rec):
@@ -657,7 +647,7 @@ async def _pack_memories(st: _PackState) -> None:
                     conflict=getattr(h, "status", "") == "conflicted",
                     author=_hit_author(actors, input, h),
                     derived_from=tuple(getattr(h, "derived_from", None) or ()),
-                    code=_code_label(h),
+                    code=code_change.label(*_code_change(h)),
                 )
             )
         packed = pack_evidence(

@@ -68,6 +68,14 @@ def note(state: str, commit: str = "") -> str:
     return f" ({what}{at}: {ask})"
 
 
+def label(state: str, commit: str = "") -> str:
+    """`<state>@<commit>` for a line's labels (the state alone without a commit); '' for a
+    state that needs none."""
+    if state not in _NOTES:
+        return ""
+    return f"{state}@{commit[:12]}" if commit else state
+
+
 def worst_commit(links: Sequence[Mapping[str, Any]]) -> str:
     """The commit that put a memory in its worst state, when that state is one a read
     notes: of its links in that state, the first by path and name."""
