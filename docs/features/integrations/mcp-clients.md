@@ -187,9 +187,8 @@ server, a token (leave it empty for a single-user server):
 gemini extensions install https://github.com/ClickHouse/loom
 ```
 
-Gemini installs an extension from the repository's latest release, and the release after
-1.2.0 is the first that carries `gemini-extension.json`; until then, add `--ref main`. The
-extension also installs Loom's two agent skills, `loom` and `loom-code`.
+Gemini installs an extension from the repository's latest release; `--ref <branch>` installs
+another ref. The extension also installs Loom's two agent skills, `loom` and `loom-code`.
 `gemini extensions config clickhouse-loom` changes the two values later; a scripted install
 passes `--skip-settings` and sets them that way. `gemini mcp list` shows the `loom` server as
 connected once the URL and token are right.

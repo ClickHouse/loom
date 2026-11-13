@@ -18,15 +18,14 @@ def test_every_variable_the_server_entry_uses_is_a_setting() -> None:
 
 
 def test_the_token_is_a_sensitive_setting_sent_as_a_bearer() -> None:
-    # An empty token sends "Bearer ", which an MCP connection to a single-user (open) server
-    # ignores (server/transport/mcp.py), so one entry serves both kinds of server.
-    assert MANIFEST["mcpServers"]["loom"]["headers"] == {"Authorization": "Bearer ${LOOM_TOKEN}"}
-    token = next(s for s in MANIFEST["settings"] if s["envVar"] == "LOOM_TOKEN")
+    # An empty token sends "Bearer ": a single-user (open) server serves the MCP call with no
+    # auth and logs a warning (server/transport/mcp.py); a team server answers 401.
+    assert MANIFEST["mcpServers"]["loom"]["headers"] == {"Authorization": "Bearer ${LOOM_API_KEY}"}
+    token = next(s for s in MANIFEST["settings"] if s["envVar"] == "LOOM_API_KEY")
     assert token["sensitive"] is True
 
 
 def test_the_extension_name_and_install_line_match_the_docs() -> None:
     page = (ROOT / "docs/features/integrations/mcp-clients.md").read_text()
-    assert MANIFEST["name"] == "clickhouse-loom"
     assert f"gemini extensions config {MANIFEST['name']}" in page
     assert "gemini extensions install https://github.com/ClickHouse/loom" in page
