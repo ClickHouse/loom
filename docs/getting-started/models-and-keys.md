@@ -241,15 +241,16 @@ serves only as `LOOM_LLM_MODEL`.
   marks them). A local model has no price, so each answer counts
   `LOOM_ASSISTANT_ANSWER_CEILING_USD` against the namespace's daily model cost cap, as any
   unpriced model does. Under the Helm chart, add `LOCAL_LLM_BASE_URL` to the assistant's
-  Secret and let the LibreChat pod reach the server's port.
+  Secret; the chart's policy lets LibreChat reach only DNS, its database, Loom and TCP
+  443, so a server on another port needs a NetworkPolicy of your own that selects the
+  LibreChat pod.
 - **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
   published benchmark covers a local one, so treat a small model as a way to try Loom
-  with no key or to keep everything on the machine, not as an equal. Expect fewer and
-  coarser extracted facts, less reliable conflict judgments, shorter `memory.ask` answers
-  and an assistant that picks tools less reliably. A small model on a CPU is slow on long
-  prompts such as extraction, so a busy capture queue backs up; a GPU, or a larger model
-  on a machine with the memory for it, narrows both gaps. For a team server, a hosted
-  model answers better.
+  with no key or to keep everything on the machine, not as an equal: expect extraction,
+  conflict judgments, `memory.ask` answers and the assistant's tool use to be weaker, by
+  an amount nobody has measured. A small model on a CPU is slow on long prompts such as
+  extraction, so a busy capture queue backs up; a GPU, or a larger model on a machine
+  with the memory for it, helps. For a team server, a hosted model answers better.
 
 ### Through an inference gateway
 
@@ -281,7 +282,8 @@ matches only if it is listed.
 
 - **At start**, Loom refuses to load with no `LOOM_INFERENCE_GATEWAY_HOSTS`,
   or while `LOOM_OPENAI_BASE_URL`, `LOOM_ANTHROPIC_BASE_URL`,
-  `LOOM_EMBEDDING_BASE_URL`, `LOOM_INFERENCE_TOKEN_URL` or an entry of
+  `LOOM_EMBEDDING_BASE_URL`, `LOOM_INFERENCE_TOKEN_URL` (and `LOOM_LOCAL_LLM_BASE_URL`
+  while `LOOM_LLM_PROVIDER=local`) or an entry of
   `LOOM_RERANK_ENDPOINTS_JSON` names another host, while the embedder is
   Gemini's, or while `LOOM_CODE_SEARCH_RERANK_DEFAULT` or
   `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT` is `builtin:cohere`.
