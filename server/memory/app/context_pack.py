@@ -488,11 +488,9 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
 
 
 def _code_change(hit: Any) -> tuple[str, str]:
-    """(state, commit) for a hit whose linked code changed, was not found again or is gone;
-    ('', '') otherwise."""
+    """The hit's code state and the commit of its worst link (`worst_commit`: '' for a
+    state no note names)."""
     state = str(getattr(hit, "code_state", "") or "")
-    if state not in code_change.DEMOTED:
-        return "", ""
     return state, code_change.worst_commit(getattr(hit, "_code_links", None) or [])
 
 
