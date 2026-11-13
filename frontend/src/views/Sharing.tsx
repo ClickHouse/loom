@@ -30,7 +30,7 @@ import { isCollectionName } from "../lib/namespace";
 export function Sharing() {
   // The summary itself spans every namespace the caller holds a grant on
   // ("what you're sharing" needs all of them); the Tool activity table is
-  // filtered to the namespace this page shows. Re-fetch when the namespace switcher fires
+  // filtered to the namespace this page shows. Re-fetch when the namespace picker fires
   // so the filter follows it.
   const identity = useIdentity();
   const [showAllNamespaces, setShowAllNamespaces] = useState(false);

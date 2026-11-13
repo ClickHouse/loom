@@ -18,7 +18,7 @@ import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { GuideDialog } from "../flows/GuideDialog";
-import { NAMESPACE_NAME, isCollectionName, isPersonalCollection } from "../lib/namespace";
+import { COLLECTION_PREFIX, NAMESPACE_NAME, isCollectionName, isPersonalCollection } from "../lib/namespace";
 import { canEditGuide, roleOnNamespace } from "../lib/namespaceRole";
 import { callReason } from "../lib/callReason";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
@@ -236,16 +236,19 @@ export function Browse() {
   // Names are lowercase, so the search is compared lowercased. A name on which the caller
   // holds a role below admin keeps the card: its alert offers the higher role. A
   // repository is requested from Repositories, and a collection is shared in the Library,
-  // never joined: their names get a line pointing there instead.
+  // never joined: their names get a line pointing there instead. A personal collection is
+  // no one else's to reach, so its name gets neither.
   const typedName = listQuery.toLowerCase();
+  const typedCollection = typedName.startsWith(COLLECTION_PREFIX);
   const elsewhere = repoNames.includes(typedName)
-    ? { is: "a repository: request it from", page: "Repositories", view: "code" as const }
-    : isCollectionName(typedName)
-      ? { is: "a collection: it is shared in the", page: "Library", view: "knowledge" as const }
+    ? "repository"
+    : typedCollection && typedName.length > COLLECTION_PREFIX.length && !isPersonalCollection(typedName)
+      ? "collection"
       : null;
   const offersRequest =
     NAMESPACE_NAME.test(typedName) &&
     !elsewhere &&
+    !typedCollection &&
     myRole[typedName] !== "admin" &&
     !filtered.some((r) => r.namespace === typedName);
   const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
@@ -440,10 +443,22 @@ export function Browse() {
 
           {rows !== null && elsewhere && (
             <p className={`text-sm text-text-muted ${filtered.length > 0 ? "mt-3" : ""}`}>
-              <span className="font-mono">{typedName}</span> is {elsewhere.is}{" "}
-              <Link component="button" type="button" size="sm" onClick={() => setView(elsewhere.view)}>
-                {elsewhere.page}
-              </Link>
+              <span className="font-mono">{typedName}</span>{" "}
+              {elsewhere === "repository" ? (
+                <>
+                  is a repository: request it from{" "}
+                  <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
+                    Repositories
+                  </Link>
+                </>
+              ) : (
+                <>
+                  is a collection: it is shared in the{" "}
+                  <Link component="button" type="button" size="sm" onClick={() => setView("knowledge")}>
+                    Library
+                  </Link>
+                </>
+              )}
               .
             </p>
           )}

@@ -376,6 +376,8 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "my_ns");
     expect(await screen.findByText(/No public namespaces match/)).toHaveTextContent("No public namespaces match my_ns");
     expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByRole("textbox", { name: "Search namespaces" })).toHaveValue("");
   });
 
   it("offers no request for a namespace the caller admins", async () => {
@@ -399,6 +401,8 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
       );
       expect(screen.getByText("The platform team")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+      await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(screen.getByRole("textbox", { name: "Search namespaces" })).toHaveValue("");
     } finally {
       browse[0].description = description;
     }
@@ -414,6 +418,21 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     expect(screen.queryByText(/No public namespaces match/)).toBeNull();
     await userEvent.click(within(line).getByRole("button", { name: "Library" }));
     expect(useStore.getState().view).toBe("knowledge");
+  });
+
+  it("offers neither a request nor a Library line for a personal collection or a bare prefix", async () => {
+    render(<Browse />);
+    await screen.findByText("Support team runbooks");
+    const box = screen.getByRole("textbox", { name: "Search namespaces" });
+    for (const name of ["col-me-0123456789abcdef", "col-"]) {
+      await userEvent.clear(box);
+      await userEvent.type(box, name);
+      expect(await screen.findByText(/No public namespaces match/)).toHaveTextContent(
+        `No public namespaces match ${name}`,
+      );
+      expect(screen.queryByText(/is a collection/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+    }
   });
 
   it("points a repository's exact name to Repositories instead of a request", async () => {

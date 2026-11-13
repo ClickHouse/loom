@@ -11,7 +11,7 @@ import { isReferenceKind, kindOf } from "../lib/namespace";
  * Loom views mix scopes — most are namespace-scoped (Audit log for the
  * selected namespace), one is Loom-wide (worker health), some are
  * derived from a primary key. Without an explicit indicator, users
- * see "page named Usage, namespace dropdown at the top, columns of
+ * see "page named Usage, namespace picker at the top, columns of
  * data" and reasonably assume it's filtered. When the columns happen
  * to show null/empty values (because of SQL aggregation), they
  * conclude "the page is broken" — when it's just unscoped display.

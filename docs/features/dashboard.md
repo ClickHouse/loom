@@ -102,7 +102,8 @@ Three views are reached from elsewhere rather than the rail: **Namespaces in you
 [guide](namespaces-and-sharing.md#a-namespaces-guide) summary, and the guide itself for
 a namespace you belong to, opened from the namespace picker; a search offers **Request
 access** when no listed public namespace has exactly that name, which is how a private
-namespace is asked for by name), **Graph**
+namespace is asked for by name, except a name you admin, a repository's name, which points
+to Repositories, and a collection's, which points to the Library), **Graph**
 (`/graph`, the entity graph explorer, opened from an entity; see
 [entity graph](entity-graph.md)) and **Help** (`/help?page=<page>#<section>`, a page of
 Loom's documentation as the running build ships it, read with `help.get` under the
@@ -399,7 +400,7 @@ routes serve the dashboard; they are not an integration surface.
 ## Limits
 
 - Dashboard pages answer 503 until `frontend/dist/index.html` exists.
-- In auth-off mode there is no namespace switcher: the page serves
+- In auth-off mode there is no namespace picker: the page serves
   `LOOM_DEFAULT_NAMESPACE` only, never persists a different pick, and ignores a URL's
   `?namespace=`.
 - Choosing a namespace in the picker also saves it server-side as the person's default,
