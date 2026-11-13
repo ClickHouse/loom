@@ -1,9 +1,6 @@
 name: scorecard
 
-# OpenSSF Scorecard: checks the repository's security practices (pinned actions,
-# token permissions, branch protection, signed releases and more), publishes the
-# result that the README badge shows, and adds the findings to code scanning. It
-# publishes only from the default branch, so pull requests do not run it.
+# OpenSSF Scorecard publishes only from the default branch, so pull requests do not run it.
 on:
   branch_protection_rule:
   push:
@@ -26,10 +23,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      # code scanning upload
-      security-events: write
-      # the OIDC token that publishing the result needs
-      id-token: write
+      security-events: write # code scanning upload
+      id-token: write # publishing the result (OIDC)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
