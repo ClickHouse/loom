@@ -635,6 +635,7 @@ main() {
   # only a server without sign-in takes that. LOOM_CONNECT=none looks for none.
   agents=
   kept=
+  guide=
   # Without a terminal and without LOOM_CONNECT no client can be connected, so
   # none is looked at either.
   if [ -z "${LOOM_CONNECT:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; then
@@ -740,7 +741,7 @@ main() {
       guide=1
     fi
   fi
-  [ -z "${guide:-}" ] \
+  [ -z "$guide" ] \
     || printf '\nConnect an agent: https://github.com/%s/blob/main/docs/getting-started/connect-a-coding-agent.md\n' "$REPOSITORY"
 
   # The dashboard, for a new install on a desktop: a terminal, no SSH session and
