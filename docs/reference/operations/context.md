@@ -74,7 +74,7 @@ Park a large tool result (log, page, diff, query output) outside the model conte
 
 ## `context.pack`
 
-Call first at the start of each task, unless a Loom hook already put this task's context in the conversation, with the task as `query`.
+The memories, decisions and procedures for a task, and the profile, optionally docs/conversations, in one prompt-sized bundle: call it first at the start of each task, with the task as `query`.
 
 `POST /v1/context.pack` · MCP `loom_context_pack` · role `viewer` · read
 

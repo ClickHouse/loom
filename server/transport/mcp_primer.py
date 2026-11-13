@@ -31,7 +31,7 @@ from server.transport.mcp_config import (
     _ok,
     cache_hints,
 )
-from server.transport.mcp_descriptions import FIRST_STEP_UNLESS
+from server.transport.mcp_descriptions import FIRST_STEP_SKIP
 from server.transport.mcp_identity import (
     _caller_default_context,
     _caller_defaults,
@@ -334,8 +334,9 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     head = (
         "**Loom-first mode active for this conversation.**\n\n"
         "**1. Session context.** First step of each task: call "
-        f"{tool['context.pack']} with the task, {FIRST_STEP_UNLESS}: the "
-        "memories, decisions and procedures for it in one bounded bundle.\n\n"
+        f"{tool['context.pack']} with the task, for the memories, decisions and "
+        f"procedures that bear on it in one bounded bundle. {FIRST_STEP_SKIP}. "
+        "For one fact, rule 2's search alone is enough.\n\n"
         "**2. Recall lookup order.** When I ask about preferences, "
         "decisions, family/relationships, work, bills, contracts, "
         "documents I've uploaded, or 'what is X' / 'what do I know "
@@ -532,10 +533,10 @@ def _coding_instructions(toolset: str | None) -> str:
         else "This connection is read-only: memory writes are not available."
     )
     # Agents with code tools do not look memory up on their own: the first step is what
-    # brings the team's memory in, unless a plugin's hook already did.
+    # brings the team's memory in, unless a plugin's hooks load it for the session.
     return name_ops_for_toolset(
         "**Loom: memory and code for this session.**"
-        + f"\n\nFirst step of each task: call `context.pack` with the task, {FIRST_STEP_UNLESS}."
+        + f"\n\nFirst step of each task: call `context.pack` with the task. {FIRST_STEP_SKIP}."
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
         + memory,
         toolset,

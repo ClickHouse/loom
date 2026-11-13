@@ -278,7 +278,7 @@ Fields for every `context` op: [operations/context.md](operations/context.md).
 | --- | --- | --- | --- | --- | --- |
 | [`context.fetch`](operations/context.md#contextfetch) | Read back a parked result by key: a character slice (offset/limit) or only the lines matching a regex (pattern, with context_lines). | viewer | read | no |  |
 | [`context.offload`](operations/context.md#contextoffload) | Park a large tool result (log, page, diff, query output) outside the model context. | writer | idempotent | no |  |
-| [`context.pack`](operations/context.md#contextpack) | Call first at the start of each task, unless a Loom hook already put this task's context in the conversation, with the task as `query`. | viewer | read | yes |  |
+| [`context.pack`](operations/context.md#contextpack) | The memories, decisions and procedures for a task, and the profile, optionally docs/conversations, in one prompt-sized bundle: call it first at the start of each task, with the task as `query`. | viewer | read | yes |  |
 
 ### conversation
 
