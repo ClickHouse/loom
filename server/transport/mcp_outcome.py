@@ -288,8 +288,8 @@ def _mentor_hint(
     namer: Callable[[str], str],
 ) -> tuple[str, str] | None:
     """The mentor's one hint for this call, its ops named by ``namer`` for the
-    caller's listing, or None; the code is published on the request context for the ledger
-    row. Never raises and never reads the store."""
+    caller's listing, or None; the code is published on the request context
+    for the ledger row. Never raises and never reads the store."""
     try:
         from server.insights.app import mentor as _mentor
         from server.observability.ledger import set_hint_context

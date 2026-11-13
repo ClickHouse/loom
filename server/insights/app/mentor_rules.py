@@ -78,6 +78,9 @@ SETS = (
 PACKS = ("context.pack", "loom_activate", "memory.stack", "memory.brief")
 HISTORY_OPS = ("code.blame_range", "code.history", "code.symbol_history")
 
+# Who acts on a conflict: an agent cannot settle one over MCP.
+_CONFLICTS_ACTOR = "the user resolves conflicts in the dashboard's Review queue"
+
 # The plane an op belongs to, for `mentor.brief`'s planes table and the
 # "when" a hint points at. Prefix → (plane, one-line when).
 PLANES: tuple[tuple[str, str, str, bool], ...] = (
@@ -157,7 +160,7 @@ PLANES: tuple[tuple[str, str, str, bool], ...] = (
     (
         "conflicts",
         "conflicts",
-        "two facts that disagree: the user settles them in the dashboard's Review queue",
+        "two facts that disagree: " + _CONFLICTS_ACTOR,
         True,
     ),
     (
@@ -287,7 +290,7 @@ def _unlisted(ops: tuple[str, ...]) -> str:
         if op in _MCP_HIDDEN_OPS:
             # Name who acts, never a route an agent could chase.
             if op.startswith("conflicts."):
-                return " (the user resolves conflicts in the dashboard's Review queue)"
+                return f" ({_CONFLICTS_ACTOR})"
             return f" ({op} is not an agent tool; skip it over MCP)"
         if "core" not in sets:
             return _LOOM_OP_NOTE.format(op)
