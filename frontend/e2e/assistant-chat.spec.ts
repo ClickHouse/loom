@@ -232,11 +232,11 @@ test("an unavailable assistant is a plain state, not a crash", async ({ page }) 
   );
   await ask(page, "Who owns billing?");
   // A refusal that names no reason reads as not set up: one empty state, with the link to
-  // Models & keys for a platform admin, the starters under it, and no question field.
+  // the docs on setting up the assistant service, and no question field.
   const why = panel(page).getByTestId("assistant-unavailable");
   await expect(why).toHaveAttribute("data-reason", "not_configured");
   await expect(why.getByRole("heading", { level: 3 })).toHaveText("Chat isn't set up");
-  await expect(why.getByRole("button", { name: "Open Models & keys" })).toBeVisible();
+  await expect(why.getByRole("button", { name: "How to set up the assistant service" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Question" })).toHaveCount(0);
   await expect(panel(page).getByRole("checkbox")).toHaveCount(0);
   // Chat not set up is no broken mark on the launcher: its starters still read.
@@ -341,7 +341,7 @@ for (const width of [1440, 1024, 390]) {
     const key = "alerts/2026-09-19/0001";
     await page.goto(`/memories?memory=${encodeURIComponent(key)}`, { waitUntil: "domcontentloaded" });
     const drawer = page.getByRole("dialog", { name: key });
-    const ask = drawer.locator("footer").getByRole("button", { name: "Ask the assistant about this memory" });
+    const ask = drawer.locator("footer").getByRole("button", { name: "Ask AI about this memory" });
     await expect(ask).toHaveText("Ask about this");
     await ask.click();
     await expect(drawer).toBeHidden();
@@ -381,7 +381,7 @@ test("at 390 px, Ask about this in the document preview opens the sheet, which B
   const uri = "docs/runbooks/handbook-000.md";
   await page.goto(`/library?doc=${encodeURIComponent(uri)}`, { waitUntil: "domcontentloaded" });
   const preview = page.getByRole("dialog", { name: "Runbook 0: lane 0 recovery" });
-  const ask = preview.getByRole("button", { name: "Ask the assistant about this document" });
+  const ask = preview.getByRole("button", { name: "Ask AI about this document" });
   await expect(ask).toHaveText("Ask about this");
   await ask.click();
   await expect(preview).toBeHidden();

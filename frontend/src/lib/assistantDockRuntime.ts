@@ -142,7 +142,7 @@ export function expandAssistant(): void {
   // An expired session keeps the panel beside the page, where the session card stays reachable.
   if (!s.open || s.expanded || s.expired || window.innerWidth < EXPAND_MIN) return;
   useDock.setState({ expanded: true, expandedFromPush: layoutOf(s).mode === "push" });
-  announceAssistant("The assistant fills the window");
+  announceAssistant("Ask AI fills the window");
 }
 
 /** Collapse: the window goes back to the mode the width gives. */
@@ -150,7 +150,7 @@ export function collapseAssistant(): void {
   if (!useDock.getState().expanded) return;
   useDock.setState({ expanded: false, expandedFromPush: false });
   const push = layoutOf(useDock.getState()).mode === "push";
-  announceAssistant(push ? "The assistant is beside the page" : "The assistant is over the page");
+  announceAssistant(push ? "Ask AI is beside the page" : "Ask AI is over the page");
 }
 
 /** A navigation, Back or a session expiry leaves the window first; the docked rule follows. */

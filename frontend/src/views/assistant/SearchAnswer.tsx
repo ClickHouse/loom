@@ -115,7 +115,7 @@ export function SearchAnswer({
   else if (!turn) {
     // Not asked after all, once nothing answers: the route refused before the answer, or
     // another tab answers in the conversation. The panel says why at more length.
-    const why = hint ? `The assistant can't answer: ${SHORT_REASON[hint.kind]}.` : notice;
+    const why = hint ? `Ask AI can't answer: ${SHORT_REASON[hint.kind]}.` : notice;
     body = <p className="text-sm text-text-muted">{!answering && why ? why : "Answering…"}</p>;
   } else {
     const text = preview(turn.answer);

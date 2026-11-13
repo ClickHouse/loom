@@ -110,8 +110,7 @@ export function AuditBody({ result }: { result: NamespaceAuditResult }) {
           {s.unembedded_rows.toLocaleString()} · gets {s.gets.toLocaleString()} / searches {s.searches.toLocaleString()}{" "}
           / sets {s.sets.toLocaleString()} (ratio{" "}
           {s.get_search_ratio.toLocaleString(undefined, { maximumFractionDigits: 1 })})
-          {s.inspector_calls > 0 &&
-            ` · ${s.inspector_calls.toLocaleString()} dashboard and assistant calls not counted`}
+          {s.inspector_calls > 0 && ` · ${s.inspector_calls.toLocaleString()} dashboard and Ask AI calls not counted`}
           {(s.typed_gets ?? 0) > 0 &&
             ` · ${(s.typed_gets ?? 0).toLocaleString()} procedure reads left out of the ratio`}
         </span>

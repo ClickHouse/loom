@@ -190,7 +190,7 @@ describe("Assistant: the audit card", () => {
     expect(summary).toHaveTextContent("live 786 rows");
     expect(summary).toHaveTextContent("gets 6,606 / searches 52 / sets 910");
     expect(summary).toHaveTextContent("ratio 127");
-    expect(summary).toHaveTextContent("12 dashboard and assistant calls not counted");
+    expect(summary).toHaveTextContent("12 dashboard and Ask AI calls not counted");
 
     // Sorted by severity, humanised codes, share as a percentage.
     const rows = screen.getAllByTestId("audit-finding");

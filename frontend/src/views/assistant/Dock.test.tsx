@@ -19,7 +19,7 @@ import { PANEL_DEFAULT } from "../../lib/assistantLayout";
 import { INDEX_KEY } from "../../lib/assistantStorage";
 import { axeViolations } from "../../test/axe";
 import { AssistantHeader } from "../../layout/AssistantHeader";
-import { READINESS_POLL_MS, DockBody } from "./Dock";
+import { NOT_SAVED, READINESS_POLL_MS, SETUP_DOCS, DockBody } from "./Dock";
 import { READINESS_TIMEOUT_MS } from "./readiness";
 import { OTHER_TAB, resetChat, useChat } from "./chatStore";
 import {
@@ -98,7 +98,7 @@ const unavailable = () => screen.findByTestId("assistant-unavailable", {}, { tim
 
 async function askIt(question: string) {
   const user = userEvent.setup();
-  await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
   await user.type(screen.getByLabelText("Question"), question);
   await user.click(screen.getByRole("button", { name: "Ask" }));
   return user;
@@ -163,34 +163,26 @@ afterEach(() => {
 const refusal = (status: number, detail: object) => () => json({ detail }, status);
 
 describe("reasons, worded per reader", () => {
-  it.each<[Who, string, boolean]>([
-    [
-      "platform",
-      "Chat isn't set upAn admin chooses the model and key in Models & keys. Until then, Loom can still answer these from its own reads.",
-      true,
-    ],
-    ["nsAdmin", "Chat isn't set upAsk an admin to set it up in Models & keys.", false],
-    ["viewer", "Chat isn't set upAsk an admin to set it up in Models & keys.", false],
-  ])("not configured, for a %s", async (who, text, link) => {
+  it.each<Who>(["platform", "nsAdmin", "viewer"])("not configured, for a %s", async (who) => {
     check = null;
     signIn(who);
     show();
     const body = await unavailable();
     expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat isn't set up");
-    expect(body).toHaveTextContent(text);
-    // The link shows only to a caller who can open Models & keys.
-    const open = within(body).queryByRole("button", { name: "Open Models & keys" });
-    expect(!!open).toBe(link);
+    expect(body).toHaveTextContent(
+      "Chat isn't set upAn operator sets up the assistant service for this deployment. Until then, Loom can still answer these from its own reads.",
+    );
+    expect(body).not.toHaveTextContent("Models & keys");
     // No question field and no box: the starters under it are Loom's own reads.
     expect(screen.queryByLabelText("Question")).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(await screen.findByRole("list", { name: "Starters" })).toBeInTheDocument();
     await waitFor(() => expect(useDock.getState().reason).toEqual({ kind: "not_configured" }));
-    if (open) {
-      await userEvent.click(open);
-      expect(useStore.getState().view).toBe("setup");
-      expect(window.location.search).toContain("tab=models");
-    }
+    // Every reader gets the docs that say how an operator sets the service up.
+    await userEvent.click(within(body).getByRole("button", { name: "How to set up the assistant service" }));
+    expect(useStore.getState().view).toBe("help");
+    expect(window.location.search).toContain(`page=${encodeURIComponent(SETUP_DOCS.page)}`);
+    expect(window.location.hash).toBe(`#${SETUP_DOCS.anchor}`);
   });
 
   it.each<Who>(["platform", "nsAdmin", "viewer"])("failing, for a %s", async (who) => {
@@ -198,12 +190,26 @@ describe("reasons, worded per reader", () => {
     signIn(who);
     show();
     const body = await unavailable();
-    expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat can't reach its model");
+    expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat's setup is failing");
     expect(body).toHaveTextContent(
-      "Loom retries the setup on its own; until it works, Loom can still answer these from its own reads.",
+      "Loom retries the setup on its own. Until it works, Loom can still answer these from its own reads.",
     );
     expect(within(body).getByRole("button", { name: "Try again" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Question")).toBeNull();
+  });
+
+  it("says nothing about the starters' reads in a conversation that has turns, where none show", async () => {
+    signIn("viewer");
+    show();
+    chat.push(() => answer("Ada owns billing."));
+    await askIt("Who owns billing?");
+    await screen.findByText("Ada owns billing.");
+    act(() => useChat.setState({ hint: { kind: "failing" } }));
+    const body = await unavailable();
+    expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat's setup is failing");
+    expect(within(body).getByText("Loom retries the setup on its own.")).toBeInTheDocument();
+    expect(body).not.toHaveTextContent("own reads");
+    expect(screen.queryByRole("list", { name: "Starters" })).toBeNull();
   });
 
   it("starting, and readiness is read again while it sets up", async () => {
@@ -257,7 +263,7 @@ describe("reasons, worded per reader", () => {
     signIn("platform");
     show();
     expect(await unavailable()).toHaveTextContent(
-      "The assistant answers as the signed-in person, so it needs auth on. An operator turns auth on for this deployment.",
+      "Ask AI answers as the signed-in person, so it needs auth on. An operator turns auth on for this deployment.",
     );
     expect(paths).toEqual([]);
     expect(localStorage.getItem(INDEX_KEY)).toBeNull();
@@ -267,7 +273,7 @@ describe("reasons, worded per reader", () => {
     signIn("viewer", { org: "*" });
     show();
     expect(await unavailable()).toHaveTextContent(
-      "This token works across every org; the assistant answers in one. Sign in with a token for one org.",
+      "This token works across every org; Ask AI answers in one. Sign in with a token for one org.",
     );
   });
 
@@ -283,7 +289,7 @@ describe("reasons, worded per reader", () => {
     signIn("viewer", { read_user_id: "u1" });
     show();
     expect(await unavailable()).toHaveTextContent(
-      "This token can't use the assistant: it is narrowed to user u1. Sign in with a token that reads the whole namespace.",
+      "This token can't use Ask AI: it is narrowed to user u1. Sign in with a token that reads the whole namespace.",
     );
   });
 
@@ -826,7 +832,7 @@ describe("Try again", () => {
     });
     await waitFor(() => expect(screen.queryByTestId("assistant-unavailable")).toBeNull());
     // The notice line, beside what the live region said.
-    const line = "The assistant can't answer: setting up. The answer before it stays.";
+    const line = "Ask AI can't answer: setting up. The answer before it stays.";
     expect(screen.getAllByText(line).filter((el) => el.id !== "loom-assistant-status")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
     expect(screen.getByText("Ada.")).toBeInTheDocument();
@@ -1042,6 +1048,75 @@ describe("History", () => {
   });
 });
 
+describe("with no owner to save chats for", () => {
+  it.each([
+    [
+      "auth off",
+      () => {
+        mode.authOff = true;
+        signIn("viewer");
+      },
+    ],
+    [
+      "a whoami with no subject",
+      () => {
+        signIn("viewer");
+        useStore.setState({
+          whoami: { authenticated: true, subject: "", org: "acme", namespaces: ["team"], roles: [] } as never,
+        });
+      },
+    ],
+  ])("History shows its view with a line that nothing is saved, for %s", async (_who, setUp) => {
+    setUp();
+    const { container } = show();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "History" }));
+    // The header and the body agree: History, with Back, and no chat under it.
+    expect(screen.getByRole("heading", { level: 2, name: "History" })).toBeInTheDocument();
+    expect(screen.getByText(NOT_SAVED)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Saved chats" })).toBeNull();
+    expect(screen.queryByRole("list", { name: "Starters" })).toBeNull();
+    expect(screen.queryByLabelText("Question")).toBeNull();
+    expect(screen.queryByTestId("assistant-unavailable")).toBeNull();
+    expect(await axeViolations(container)).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Back to the chat" }));
+    expect(screen.queryByText(NOT_SAVED)).toBeNull();
+  });
+});
+
+describe("the line that chats are kept in this browser", () => {
+  const KEPT = "Chats are kept in this browser for 30 days.";
+  const ready = () => waitFor(() => expect(screen.getByLabelText("Question")).toBeInTheDocument());
+
+  it("shows under an empty chat for an owner whose browser saves", async () => {
+    signIn("viewer");
+    show();
+    await ready();
+    expect(screen.getByText(KEPT)).toBeInTheDocument();
+  });
+
+  it("is absent with no owner: nothing is saved", async () => {
+    signIn("viewer");
+    useStore.setState({
+      whoami: { authenticated: true, subject: "", org: "acme", namespaces: ["team"], roles: [] } as never,
+    });
+    show();
+    await ready();
+    expect(screen.queryByText(KEPT)).toBeNull();
+  });
+
+  it("is absent where the browser refused to save, which the panel says instead", async () => {
+    signIn("viewer");
+    show();
+    await ready();
+    act(() => useChat.setState({ storageOff: true }));
+    expect(screen.queryByText(KEPT)).toBeNull();
+    expect(
+      screen.getByText("This browser refused to save conversations: this one lasts until the tab closes."),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("the conversation", () => {
   it("is saved when its turn starts, so a reload mid-answer shows it as stopped", async () => {
     signIn("viewer");
@@ -1206,7 +1281,7 @@ describe("the conversation", () => {
     // With "Also ask" on, the pick's card says why nothing was asked, as a starter's does.
     expect(
       await screen.findByText(
-        "The assistant can't answer: pick how to go on with this conversation first. This is Loom's own read.",
+        "Ask AI can't answer: pick how to go on with this conversation first. This is Loom's own read.",
       ),
     ).toBeInTheDocument();
   });
@@ -1272,7 +1347,7 @@ describe("the conversation", () => {
     });
     show();
     expect(
-      await screen.findByText("The assistant answers about a memory namespace. Pick one in the namespace picker."),
+      await screen.findByText("Ask AI answers about a memory namespace. Pick one in the namespace picker."),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-disabled", "true");
   });
@@ -1282,13 +1357,13 @@ describe("the conversation", () => {
     show();
     chat.push(() => answer("Ada."));
     const user = userEvent.setup();
-    await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
     await user.type(screen.getByLabelText("Question"), "Who?");
     act(() => useDock.setState({ open: false }));
     await user.click(screen.getByRole("button", { name: "Ask" }));
     await waitFor(() => expect(useDock.getState().unread).toBe(true));
     await waitFor(() =>
-      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("Assistant answer ready"),
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("Ask AI answer ready"),
     );
   });
 });
@@ -1351,7 +1426,7 @@ const saved = (turns: Turn[]) =>
 async function openSaved(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "History" }));
   await user.click(screen.getByRole("button", { name: "Invoices" }));
-  await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
 }
 
 describe("two tabs", () => {
@@ -1843,9 +1918,7 @@ describe("a refused first question", () => {
     await unavailable();
     expect(useChat.getState()).toMatchObject({ id: null, namespace: null, turns: [] });
     await waitFor(() =>
-      expect(document.getElementById("loom-assistant-status")).toHaveTextContent(
-        "The assistant can't answer: setting up.",
-      ),
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("Ask AI can't answer: setting up."),
     );
     act(() =>
       useStore.setState({
@@ -1882,7 +1955,7 @@ describe("a refused first question", () => {
       }),
     );
     await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
-    await screen.findByText("The assistant answers about a memory namespace. Pick one in the namespace picker.");
+    await screen.findByText("Ask AI answers about a memory namespace. Pick one in the namespace picker.");
     expect(asked).toEqual(["team"]);
   });
 
@@ -1903,11 +1976,11 @@ describe("readiness", () => {
     hangReady = true;
     signIn("viewer");
     show();
-    expect(screen.getByText("Getting the assistant ready…")).toBeInTheDocument();
+    expect(screen.getByText("Getting Ask AI ready…")).toBeInTheDocument();
     await act(async () => {
       vi.advanceTimersByTime(READINESS_TIMEOUT_MS + 10);
     });
-    await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
     expect(screen.queryByTestId("assistant-unavailable")).not.toBeInTheDocument();
     await userEvent.setup({ advanceTimers: vi.advanceTimersByTime }).type(screen.getByLabelText("Question"), "Who?");
     expect(screen.getByRole("button", { name: "Ask" })).not.toHaveAttribute("aria-disabled");
@@ -2244,7 +2317,7 @@ describe("Ask about this, the edge cases", () => {
     signIn("viewer");
     show();
     chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
-    await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
     // Fits beside "Context: Memories page", not beside the item's longer line.
     const question = "x".repeat(19_970);
     act(() => useDock.setState({ draft: question }));
@@ -2254,7 +2327,7 @@ describe("Ask about this, the edge cases", () => {
     expect(sent).toHaveLength(1);
     act(() => askAbout(item()));
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
     await new Promise((r) => setTimeout(r, 50));
     expect(sent).toHaveLength(1);
     const field = screen.getByLabelText("Question");
@@ -2268,7 +2341,7 @@ describe("Ask about this, the edge cases", () => {
     signIn("viewer");
     show();
     chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
-    await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
     act(() => useDock.setState({ draft: "x".repeat(19_970) }));
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Ask" }));
@@ -2289,7 +2362,7 @@ describe("Ask about this, the edge cases", () => {
     signIn("viewer");
     show();
     chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
-    await waitFor(() => expect(screen.queryByText("Getting the assistant ready…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
     act(() => useDock.setState({ draft: "x".repeat(19_970) }));
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Ask" }));

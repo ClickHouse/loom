@@ -43,10 +43,7 @@ export function AssistantHeader({ expanded }: { expanded: boolean }) {
             icon="plus"
             label="New chat"
             reason={working ? "An answer is still coming in." : null}
-            onClick={() => {
-              if (useDock.getState().working) return;
-              useDock.setState((s) => ({ newChatSeq: (s.newChatSeq ?? 0) + 1 }));
-            }}
+            onClick={() => useDock.setState((s) => ({ newChatSeq: (s.newChatSeq ?? 0) + 1 }))}
           />
           <IconButton
             icon="clock"

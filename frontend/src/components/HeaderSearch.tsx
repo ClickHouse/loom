@@ -488,7 +488,7 @@ export function HeaderSearch({
         // The card's Continue in chat is the first option now.
         setActiveIdx(0);
       })
-      .catch((e: unknown) => toastError("Couldn't ask the assistant", e, { read: true }))
+      .catch((e: unknown) => toastError("Couldn't ask AI", e, { read: true }))
       .finally(() => {
         asking.current = false;
       });

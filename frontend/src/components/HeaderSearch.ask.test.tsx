@@ -197,6 +197,35 @@ describe("the search's answer card", () => {
     expect(await panelViolations()).toEqual([]);
   });
 
+  it("keeps a finished card's Sources rows out of Tab's reach: Tab leaves the search, and the panel's rows are the way", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <HeaderSearch />
+        <button type="button">after</button>
+      </>,
+    );
+    await user.type(field(), "how often are invoices sent?");
+    await screen.findByRole("option", { name: 'Ask AI about "how often are invoices sent?"' });
+    await user.keyboard("{Enter}");
+    await answer("Invoices go out weekly [memory:billing/invoices@v1].");
+    const card = screen.getByTestId("search-answer");
+    const sources = within(card).getByRole("list", { name: "Sources" });
+    expect(within(sources).getAllByRole("button").length).toBeGreaterThan(0);
+    const inPanel = () => !!document.activeElement?.closest("[data-header-search-panel]");
+    field().focus();
+    // Tab moves on from the field to its clear button, the card still open, then out of the
+    // search, which closes the results and the card with them: no Tab lands in the card.
+    await user.tab();
+    expect(screen.getByRole("button", { name: "clear input" })).toHaveFocus();
+    expect(screen.getByTestId("search-answer")).toBeInTheDocument();
+    expect(inPanel()).toBe(false);
+    await user.tab();
+    expect(screen.getByRole("button", { name: "after" })).toHaveFocus();
+    expect(inPanel()).toBe(false);
+    expect(screen.queryByTestId("search-answer")).toBeNull();
+  });
+
   it("Enter on Continue in chat opens the panel on the same conversation", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
@@ -350,7 +379,7 @@ describe("the search's answer card", () => {
         new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "narrowed", detail: { reason: "narrowed" } }),
       );
     });
-    expect(await screen.findByTestId("search-answer")).toHaveTextContent("The assistant can't answer");
+    expect(await screen.findByTestId("search-answer")).toHaveTextContent("Ask AI can't answer");
     expect(screen.getByRole("button", { name: "Ask AI, unavailable" })).toBeInTheDocument();
     await user.clear(field());
     await user.type(field(), "who wrote the invoice policy");
@@ -423,7 +452,7 @@ describe("the search's answer card", () => {
         new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "narrowed", detail: { reason: "narrowed" } }),
       );
     });
-    await waitFor(() => expect(screen.getByTestId("search-answer")).toHaveTextContent("The assistant can't answer"));
+    await waitFor(() => expect(screen.getByTestId("search-answer")).toHaveTextContent("Ask AI can't answer"));
     expect(screen.getByTestId("search-answer")).not.toHaveTextContent("still coming in");
   });
 
@@ -552,7 +581,7 @@ describe("the search's answer card", () => {
         }),
       );
     });
-    expect(await screen.findByTestId("search-answer")).toHaveTextContent("The assistant can't answer: setting up.");
+    expect(await screen.findByTestId("search-answer")).toHaveTextContent("Ask AI can't answer: setting up.");
   });
 
   it("keeps results first for a question with a search filter, its Ask AI option last", async () => {

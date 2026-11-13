@@ -313,14 +313,14 @@ describe("the expanded window (from 1024 px)", () => {
     expect(button).toHaveAccessibleName("Collapse");
     expect(button).toHaveFocus();
     await waitFor(() =>
-      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("The assistant fills the window"),
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("Ask AI fills the window"),
     );
     // From push, a spacer keeps <main>'s width under the window.
     expect(document.querySelector("[data-assistant-spacer]")).toHaveStyle({ width: "420px" });
     await userEvent.setup().click(button);
     expect(panel()).toHaveAttribute("data-mode", "push");
     await waitFor(() =>
-      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("The assistant is beside the page"),
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("Ask AI is beside the page"),
     );
   });
 
@@ -331,7 +331,7 @@ describe("the expanded window (from 1024 px)", () => {
     await userEvent.setup().keyboard("{Escape}");
     expect(panel()).toHaveAttribute("data-mode", "overlay");
     await waitFor(() =>
-      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("The assistant is over the page"),
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("Ask AI is over the page"),
     );
     await userEvent.setup().click(toggle("Expand"));
     await userEvent.setup().click(document.querySelector(".assistant-scrim") as HTMLElement);
@@ -684,27 +684,20 @@ describe("the assistant's live region", () => {
 });
 
 describe("chat not set up", () => {
-  it("Open Models & keys, at overlay widths, closes the panel and opens Settings at Models & keys", async () => {
-    assistantCheck = null;
-    whoamiRoles = ["platform_admin"];
-    await boot(900);
-    await userEvent.setup().click(launcher());
-    const open = await screen.findByRole("button", { name: "Open Models & keys" }, { timeout: 5000 });
-    expect(screen.getByTestId("assistant-unavailable")).toHaveTextContent("Chat isn't set up");
-    await userEvent.setup().click(open);
-    await until(() => panel().hasAttribute("hidden"));
-    expect(useStore.getState().view).toBe("setup");
-    expect(location.search).toContain("tab=models");
-    expect(inertOnPage()).toBeNull();
-  });
-
-  it("says who sets it up, with no link, to a caller who cannot open Models & keys", async () => {
+  it("links every reader, at overlay widths, to the docs on setting up the assistant service", async () => {
     assistantCheck = null;
     await boot(900);
     await userEvent.setup().click(launcher());
     const body = await screen.findByTestId("assistant-unavailable", {}, { timeout: 5000 });
-    expect(body).toHaveTextContent("Ask an admin to set it up in Models & keys.");
-    expect(within(body).queryByRole("button")).toBeNull();
+    expect(body).toHaveTextContent("Chat isn't set up");
+    expect(body).toHaveTextContent("An operator sets up the assistant service for this deployment.");
+    expect(body).not.toHaveTextContent("Models & keys");
+    await userEvent.setup().click(within(body).getByRole("button", { name: "How to set up the assistant service" }));
+    await until(() => panel().hasAttribute("hidden"));
+    expect(useStore.getState().view).toBe("help");
+    expect(location.search).toContain("page=features");
+    expect(location.hash).toBe("#the-deployed-assistant");
+    expect(inertOnPage()).toBeNull();
   });
 });
 

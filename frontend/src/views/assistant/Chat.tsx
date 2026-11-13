@@ -156,6 +156,8 @@ export function AssistantChat({
   const answering = useChat((s) => s.answering);
   const checkingSources = useChat((s) => s.checkingSources);
   const editing = useChat((s) => s.editing);
+  // Kept only for an owner, in a browser that lets it save.
+  const saved = useChat((s) => !!s.owner && !s.storageOff);
   const draft = useDock((s) => s.draft);
   const focusField = useDock((s) => s.focusField);
   const view = useStore((s) => s.view);
@@ -423,7 +425,7 @@ export function AssistantChat({
                 </Button>
               </Unavailable>
             </div>
-            {turns.length === 0 && <p className="text-xs text-text-muted">{KEPT_HERE}</p>}
+            {turns.length === 0 && saved && <p className="text-xs text-text-muted">{KEPT_HERE}</p>}
           </div>
         </form>
       )}

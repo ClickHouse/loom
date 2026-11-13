@@ -510,7 +510,7 @@ async function answer(
   // or one asked again from the transcript, never came from the field: what is typed there,
   // and its chip, stay.
   if (fromField) useDock.setState({ draft: "", item: null, pageOff: false });
-  announceAssistant("The assistant is answering.");
+  announceAssistant("Ask AI is answering.");
   // Saved at its start: a reload mid-answer shows it as stopped. Other tabs leave a turn
   // still answering out until it ends. A turn asked again is stored as it was until its new
   // text begins.
@@ -542,7 +542,7 @@ async function answer(
     const unread = !seen(turnId) && change.state === "done" && !saidDone;
     if (unread) {
       useDock.setState({ unread: true });
-      announceAssistant("Assistant answer ready");
+      announceAssistant("Ask AI answer ready");
     } else if (said) announceAssistant(said);
   };
   // What ended the answer: null when its stream ended.
@@ -691,7 +691,7 @@ function putBack(
     : e === null
       ? "No new answer came: the answer before it stays."
       : reason
-        ? `The assistant can't answer: ${SHORT_REASON[reason.kind]}. The answer before it stays.`
+        ? `Ask AI can't answer: ${SHORT_REASON[reason.kind]}. The answer before it stays.`
         : `Not asked again: ${humanizeError(e, { read: true, bare: true })}`;
   // Try again asks it again: a refusal the panel shows, and an edit, whose words are
   // nowhere else once the field holds other text.
@@ -799,7 +799,7 @@ function takeBack(
     useChat.setState({ id: null, namespace: null, trimmed: false });
   } else save({ held, drop: turnId });
   settle(mine);
-  announceAssistant(`The assistant can't answer: ${SHORT_REASON[reason.kind]}.`);
+  announceAssistant(`Ask AI can't answer: ${SHORT_REASON[reason.kind]}.`);
 }
 
 /** The route refused a starter's question before the answer: the turn becomes the card
@@ -827,7 +827,7 @@ function cardAlone(
   if (reason) showReason();
   settle(mine);
   save({ held });
-  announceAssistant(`The assistant can't answer: ${why}.`);
+  announceAssistant(`Ask AI can't answer: ${why}.`);
 }
 
 /** A question that was never answered goes back to the field with the chip it was asked

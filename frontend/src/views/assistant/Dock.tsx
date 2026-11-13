@@ -57,9 +57,9 @@ function blockedBy(c: {
   memory: boolean;
   mismatch: boolean;
 }): string | null {
-  if (c.reason) return "The assistant can't answer now: the panel says why.";
-  if (c.checking) return "Getting the assistant ready.";
-  if (!c.memory) return "The assistant answers about a memory namespace.";
+  if (c.reason) return "Ask AI can't answer now: the panel says why.";
+  if (c.checking) return "Getting Ask AI ready.";
+  if (!c.memory) return "Ask AI answers about a memory namespace.";
   if (c.mismatch) return "Pick how to go on with this conversation first.";
   return null;
 }
@@ -100,13 +100,12 @@ export function DockBody() {
     if (!open) setShowHistory(false);
   }, [open]);
   // The header's New chat: a new conversation, on the chat view, its field focused. While an
-  // answer streams the button is unavailable, and the store keeps the conversation.
+  // answer streams the button drops the click, and newConversation keeps the conversation.
   const newChatSeq = useDock((s) => s.newChatSeq ?? 0);
   const handledNewChat = useRef(newChatSeq);
   useEffect(() => {
     if (newChatSeq === handledNewChat.current) return;
     handledNewChat.current = newChatSeq;
-    if (useChat.getState().answering) return;
     newConversation();
     useDock.setState({ history: false, focusField: true });
   }, [newChatSeq]);
@@ -296,8 +295,7 @@ export function DockBody() {
 
   // With the chat off the cards are a list of reads: the starters stay under the last one,
   // except under a conversation reopened from History, which is read-only.
-  const startersShown =
-    ownerSettled && !expired && !(showHistory && owner) && (turns.length === 0 || (off && chatId === null));
+  const startersShown = ownerSettled && !expired && !showHistory && (turns.length === 0 || (off && chatId === null));
   // With no question field an open's focus goes to the first starter (Starters takes it), or
   // to the panel where none renders.
   useEffect(() => {
@@ -320,7 +318,12 @@ export function DockBody() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {showHistory && owner ? (
+      {showHistory && !owner ? (
+        // No owner (auth off, or a session whose whoami names no subject): nothing is saved.
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
+          <p className="assistant-column text-sm text-text-muted">{NOT_SAVED}</p>
+        </div>
+      ) : showHistory && owner ? (
         <History
           owner={owner}
           readable={readable}
@@ -342,14 +345,14 @@ export function DockBody() {
           <div className="px-4 pt-3 pb-2 min-h-0 overflow-y-auto">
             <div className="assistant-column space-y-3">
               {reason ? (
-                <ReasonBody reason={reason} onTryAgain={() => void tryAgain()} />
+                <ReasonBody reason={reason} starters={startersShown} onTryAgain={() => void tryAgain()} />
               ) : checking ? (
                 <p className="text-sm text-text-muted" role="status">
-                  Getting the assistant ready…
+                  Getting Ask AI ready…
                 </p>
               ) : !memory ? (
                 <p className="text-sm text-text-muted">
-                  The assistant answers about a memory namespace. Pick one in the namespace picker.
+                  Ask AI answers about a memory namespace. Pick one in the namespace picker.
                 </p>
               ) : mismatch && convNamespace ? (
                 <Mismatch old={convNamespace} now={namespace} />
@@ -379,6 +382,9 @@ export function DockBody() {
     </div>
   );
 }
+
+/** History with no owner to save chats for. */
+export const NOT_SAVED = "Chats aren't saved in this session.";
 
 /** Where the chats are kept and what deleting does, said at the end of History. */
 function keptHere(): string {
@@ -598,7 +604,16 @@ const historyButton = () => document.querySelector<HTMLElement>(".assistant-head
 
 /** Why the assistant cannot answer, in words that say who fixes it and where (the link
  *  goes only to someone who can open the page it names). */
-function ReasonBody({ reason, onTryAgain }: { reason: AssistantReason; onTryAgain: () => void }) {
+function ReasonBody({
+  reason,
+  starters,
+  onTryAgain,
+}: {
+  reason: AssistantReason;
+  /** The starters show under it. */
+  starters: boolean;
+  onTryAgain: () => void;
+}) {
   const whoami = useStore((s) => s.whoami);
   const identity = useStore((s) => s.identity);
   const platform = hasPlatformAdminClaim(whoami);
@@ -611,18 +626,18 @@ function ReasonBody({ reason, onTryAgain }: { reason: AssistantReason; onTryAgai
   );
   // Chat not set up, or its setup failing: one empty state, Loom's own reads under it.
   if (reason.kind === "not_configured" || reason.kind === "failing")
-    return <SetupState failing={reason.kind === "failing"} onTryAgain={onTryAgain} />;
+    return <SetupState failing={reason.kind === "failing"} starters={starters} onTryAgain={onTryAgain} />;
   let text: ReactNode;
   switch (reason.kind) {
     case "auth_off":
       text =
-        "The assistant answers as the signed-in person, so it needs auth on. An operator turns auth on for this deployment.";
+        "Ask AI answers as the signed-in person, so it needs auth on. An operator turns auth on for this deployment.";
       break;
     case "org_wide":
-      text = "This token works across every org; the assistant answers in one. Sign in with a token for one org.";
+      text = "This token works across every org; Ask AI answers in one. Sign in with a token for one org.";
       break;
     case "narrowed":
-      text = `This token can't use the assistant: it is narrowed to ${reason.scope}. Sign in with a token that reads the whole namespace.`;
+      text = `This token can't use Ask AI: it is narrowed to ${reason.scope}. Sign in with a token that reads the whole namespace.`;
       break;
     case "token_expires_soon":
       text = `This token expires ${reason.leftS === undefined ? "" : `in ${reason.leftS} s, `}sooner than an answer can take. Sign in again or use a longer-lived token.`;
@@ -655,18 +670,30 @@ function ReasonBody({ reason, onTryAgain }: { reason: AssistantReason; onTryAgai
   );
 }
 
+/** Where the docs say how an operator sets up the assistant service. */
+export const SETUP_DOCS = { page: "features/integrations/librechat.md", anchor: "the-deployed-assistant" };
+
 /** Chat not set up (`failing`: its setup failing): the icon, a title and one sentence, then
- *  Open Models & keys for a caller who can open that page, or Try again while it fails. The
- *  starters under it are Loom's own reads, which need no model. */
-function SetupState({ failing, onTryAgain }: { failing: boolean; onTryAgain: () => void }) {
-  const whoami = useStore((s) => s.whoami);
-  // Settings › Models & keys shows to a platform admin, and to everyone with auth off.
-  const canOpen = isAuthDisabled() || hasPlatformAdminClaim(whoami);
-  const sentence = failing
-    ? "Loom retries the setup on its own; until it works, Loom can still answer these from its own reads."
-    : canOpen
-      ? "An admin chooses the model and key in Models & keys. Until then, Loom can still answer these from its own reads."
-      : "Ask an admin to set it up in Models & keys.";
+ *  the docs on setting up the assistant service, or Try again while it fails. The line about
+ *  Loom's own reads shows only while the starters, which need no model, show under it. */
+function SetupState({
+  failing,
+  starters,
+  onTryAgain,
+}: {
+  failing: boolean;
+  starters: boolean;
+  onTryAgain: () => void;
+}) {
+  const openDocsPage = useStore((s) => s.openDocsPage);
+  const first = failing
+    ? "Loom retries the setup on its own."
+    : "An operator sets up the assistant service for this deployment.";
+  const reads = starters
+    ? failing
+      ? " Until it works, Loom can still answer these from its own reads."
+      : " Until then, Loom can still answer these from its own reads."
+    : "";
   return (
     <div
       className="flex flex-col items-center gap-2 py-4 text-center"
@@ -677,23 +704,25 @@ function SetupState({ failing, onTryAgain }: { failing: boolean; onTryAgain: () 
         <Icon name={failing ? "warning" : "sparkle"} size="md" aria-hidden="true" />
       </div>
       <Title type="h3" size="sm">
-        {failing ? "Chat can't reach its model" : "Chat isn't set up"}
+        {failing ? "Chat's setup is failing" : "Chat isn't set up"}
       </Title>
-      <p className="max-w-sm text-sm text-text-muted">{sentence}</p>
+      <p className="max-w-sm text-sm text-text-muted">
+        {first}
+        {reads}
+      </p>
       {failing ? (
         <Button type="secondary" htmlType="button" onClick={onTryAgain}>
           Try again
         </Button>
       ) : (
-        canOpen && (
-          <Button
-            type="secondary"
-            htmlType="button"
-            onClick={() => useStore.getState().navigate("setup", { query: { tab: "models" } })}
-          >
-            Open Models & keys
-          </Button>
-        )
+        <Link
+          component="button"
+          type="button"
+          size="sm"
+          onClick={() => openDocsPage(SETUP_DOCS.page, SETUP_DOCS.anchor)}
+        >
+          How to set up the assistant service
+        </Link>
       )}
     </div>
   );

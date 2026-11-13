@@ -201,7 +201,9 @@ stays as it was, and a refusal the panel explains, or an edit that did not go, o
 **Try again** (see [asking again](../architecture/assistant.md#asking-again)).
 
 An empty chat shows one line about what Ask AI answers, its starters, and, under the field,
-"Chats are kept in this browser for 30 days."
+"Chats are kept in this browser for 30 days." when the chat is saved: for a signed-in person
+whose browser lets the dashboard store it (not with auth off, and not where the browser
+refused, which the panel says instead).
 
 **Starters** list in an empty conversation, whether the assistant can answer or not, as
 full-width rows, the page's own first (documents on the Library, relationships on the Graph,
@@ -296,14 +298,15 @@ it sits beside the page, never expanded. A bookmarked `/assistant` address lands
 account's landing page and opens the assistant over it (expanded from 1024 px).
 
 **Chat not set up** (no assistant URL, or readiness says so) is one empty state: its icon,
-"Chat isn't set up" and one sentence. **Open Models & keys** shows for a caller who can open
-Settings › Models & keys (a platform admin, or anyone with auth off); anyone else reads "Ask
-an admin to set it up in Models & keys." Loom's own reads are listed under it as starters,
-with no question field and no **Also ask the model**, and the starters stay under the last
-card, so one runs after another; those cards are not saved, and **New chat** empties the
-list. History shows only conversations saved before, opened read-only. An open puts the focus
-on the first starter. A setup that is failing has the same layout, headed "Chat can't reach
-its model", with **Try again**.
+"Chat isn't set up", "An operator sets up the assistant service for this deployment.", and a
+link, **How to set up the assistant service**, to the
+[deployed assistant](integrations/librechat.md#the-deployed-assistant) in the docs. Loom's own
+reads are listed under it as starters, with no question field and no **Also ask the model**,
+and the starters stay under the last card, so one runs after another; those cards are not
+saved, and **New chat** empties the list. History shows only conversations saved before,
+opened read-only. An open puts the focus on the first starter. A setup that is failing has the
+same layout, headed "Chat's setup is failing", with **Try again**. The line that Loom can
+still answer from its own reads shows only while the starters do.
 
 **Why it cannot answer** is said for the person reading it, with a link only for someone who
 can open the page it names: the assistant not set up, setting up or failing its setup
@@ -353,6 +356,8 @@ the newest 25 turns of each, up to 256 KB a conversation and 2 MB in all, and li
 reads. History is the panel's own view: its header reads **History** after a **Back to the
 chat** button, the chat shown is marked, and choosing a row opens it. Each row's menu holds
 **Delete**; at the end the privacy line and **Delete all chats**, confirmed inside the panel.
+With no one to save chats for (auth off, or a session whose whoami names no subject),
+History shows "Chats aren't saved in this session."
 Signing out, or another person signing in, deletes them; a session that expired only hides
 them until the same person signs in again, and no other tab can write a deleted one back.
 

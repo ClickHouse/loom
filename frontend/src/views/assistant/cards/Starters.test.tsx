@@ -541,7 +541,7 @@ describe("a starter that asks the assistant", () => {
     expect(screen.queryByRole("checkbox", { name: "Also ask the model" })).toBeNull();
     await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
     expect(
-      await screen.findByText("The assistant can't answer: model calls are off. This is Loom's own read."),
+      await screen.findByText("Ask AI can't answer: model calls are off. This is Loom's own read."),
     ).toBeInTheDocument();
     expect(sent).toHaveLength(0);
   });
@@ -613,7 +613,7 @@ describe("a starter whose question is refused", () => {
     expect(await within(card).findByTestId("audit-summary")).toBeInTheDocument();
     expect(
       // The route's own words, so a wait and try again is said.
-      within(card).getByText(/^The assistant can't answer: .*slow down.*\. This is Loom's own read\.$/),
+      within(card).getByText(/^Ask AI can't answer: .*slow down.*\. This is Loom's own read\.$/),
     ).toBeInTheDocument();
     expect(useChat.getState().turns.map((t) => t.state)).toEqual(["card"]);
     expect(useChat.getState().id).not.toBeNull();
@@ -656,7 +656,7 @@ describe("a starter while another tab answers in the conversation", () => {
     expect(await within(card).findByTestId("audit-summary")).toBeInTheDocument();
     expect(
       within(card).getByText(
-        "The assistant can't answer: another tab is answering in this conversation. This is Loom's own read.",
+        "Ask AI can't answer: another tab is answering in this conversation. This is Loom's own read.",
       ),
     ).toBeInTheDocument();
     expect(useChat.getState().turns.map((t) => t.state)).toEqual(["card"]);
