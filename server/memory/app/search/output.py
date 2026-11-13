@@ -220,7 +220,9 @@ def move_stale(hits: list[Any], input: Any) -> list[Any]:
     out = code_change.rank_down(hits, settings.memory_search_code_changed_places)
     moved = [h for h in out if h.score_components.get("code_changed_places")]
     for h in moved:
-        h.explanation = ""  # a fact row's is the one `_decorate_hits` writes
+        # only fact rows are marked, and their explanation is `_decorate_hits`' own:
+        # cleared here, it is written again with the score the row is served with
+        h.explanation = ""
     _decorate_hits(moved, input=input)
     return out
 

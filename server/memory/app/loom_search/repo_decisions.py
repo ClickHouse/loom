@@ -117,7 +117,7 @@ def merge_memory_hits(
             (
                 i + 1
                 for i, b in enumerate(base)
-                if b.similarity >= h.similarity and "code_changed_places" not in b.score_components
+                if b.similarity >= h.similarity and not code_change.moved(b)
             ),
             default=0,
         )

@@ -27,6 +27,7 @@ from server.memory.app.loom_search.answer_first import answer_first
 from server.memory.app.loom_search.repo_decisions import memory_with_repo_decisions
 from server.memory.app.loom_search.tracker_leg import tracker_leg
 from server.memory.app.profile_search import search_profile
+from server.memory.domain import code_change
 
 log = logging.getLogger(__name__)
 
@@ -280,9 +281,7 @@ async def search_sections(
         memory = mem_result.model_dump()
         models = {id(d): (d, m) for d, m in zip(memory["results"], mem_result.results, strict=True)}
         settled = mem_result._settled_input
-        moved = frozenset(
-            i for i, (_, m) in models.items() if "code_changed_places" in m.score_components
-        )
+        moved = frozenset(i for i, (_, m) in models.items() if code_change.moved(m))
         payload["memory"] = drop_flagged_hits(memory)
     if isinstance(know_result, Exception):
         payload["knowledge"] = {"error": _leg_error("knowledge", know_result), "results": []}

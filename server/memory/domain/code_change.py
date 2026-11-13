@@ -103,8 +103,9 @@ def spend_marks(hits: list[Any]) -> list[Any]:
     return marked
 
 
-def _moved(hit: Any) -> bool:
-    """A row an earlier pass already moved for stale code: no current row to pass."""
+def moved(hit: Any) -> bool:
+    """A row a search moved for stale code (`rank_down`; 0 places counts): no current row
+    for a later move to pass, nor one a later step may lift."""
     return "code_changed_places" in hit.score_components
 
 
@@ -117,9 +118,9 @@ def _below_the_floor(hit: Any) -> bool:
 def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any]:
     """`hits` with each one marked `_code_ranked_down` moved below the next `places` rows
     that are neither marked, already moved, nor placed by an identifier match or a tier,
-    never past the
-    last nor below a row served only as filler (`_below_the_floor`). A placed row is
-    never counted as a place and never moved down (one the move passes rises a slot).
+    never past the last nor below a row served only as filler (`_below_the_floor`). A
+    placed row is never counted as a place and never moved down (one the move passes
+    rises a slot).
 
     A moved hit scores between the rows around it (or ties the one above, when they
     tie), so a stable sort by score keeps the order; with `rescore` False it keeps its
@@ -138,13 +139,13 @@ def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any
         for i in range(at + 1, len(out)):
             if passed == places or _below_the_floor(out[i]):
                 break
-            if id(out[i]) not in moving and not _placed(out[i]) and not _moved(out[i]):
+            if id(out[i]) not in moving and not _placed(out[i]) and not moved(out[i]):
                 passed, to = passed + 1, i
         if not passed:
             hit.score_components = {**hit.score_components, "code_changed_places": 0.0}
             continue
         out.insert(to, out.pop(at))
-        moved = {"code_changed_places": float(-passed)}
+        record = {"code_changed_places": float(-passed)}
         if rescore:
             above = float(out[to - 1].rank_score)
             below = float(out[to + 1].rank_score) if to + 1 < len(out) else None
@@ -152,8 +153,8 @@ def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any
                 hit.rank_score = math.nextafter(above, -math.inf)
             else:
                 hit.rank_score = (above + below) / 2  # `above` itself when they tie
-            moved["rank_score"] = hit.rank_score
-        hit.score_components = {**hit.score_components, **moved}
+            record["rank_score"] = hit.rank_score
+        hit.score_components = {**hit.score_components, **record}
     return out
 
 
