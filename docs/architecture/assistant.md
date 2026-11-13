@@ -1135,7 +1135,8 @@ from Loom, and both run its v0.8.8 configuration,
 - **Settings:** `LOOM_ASSISTANT_LIBRECHAT_URL` names LibreChat's internal address; unset,
   Loom sets up nothing, and the dashboard, which learns it from its boot snippet
   (`window.__LOOM_ASSISTANT`), shows the panel without its chat: the starters still read.
-  `LOOM_ASSISTANT_MODEL` replaces the definition's model.
+  `LOOM_ASSISTANT_MODEL` and `LOOM_ASSISTANT_PROVIDER` replace the definition's model and
+  provider.
 
 Each replica sets the service up in its background at boot. Over a row that has its key
 and agent, a boot asks LibreChat, with the stored key and no sign-in, whether the agent
