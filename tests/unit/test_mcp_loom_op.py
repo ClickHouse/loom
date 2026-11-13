@@ -105,6 +105,8 @@ def test_loom_op_runs_the_target_through_the_listed_tool_path(
 def test_a_handler_over_mcp_names_mentor_ops_for_the_listing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A handler run over MCP sees the call's `hint_namer`, as context.pack and
+    mentor.brief do; `test_name` only carries the rendered text back out."""
     from server.insights.app import mentor
 
     tool = "loom_tracker_flaky"

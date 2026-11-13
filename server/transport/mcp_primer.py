@@ -215,8 +215,9 @@ async def _get_prompt(
 def _tool_refs(toolset: str | None) -> dict[str, str | None]:
     """Each op the primer points at, by op name, or None when the connection
     reaches it neither as a listed tool nor through `loom_op` (a write on a
-    connection whose `loom_op` routes reads only), so the primer never asks for a
-    call the client cannot make. `name_ops_for_toolset` then names them as the listing does."""
+    connection whose `loom_op` routes reads only), so the primer never asks for
+    a call the client cannot make. `name_ops_for_toolset` then names them as
+    the listing does."""
     listed = {op.name for op in listed_ops(toolset)}
     out: dict[str, str | None] = {}
     for name in (

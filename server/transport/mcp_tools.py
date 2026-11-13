@@ -492,10 +492,11 @@ async def _tools_descriptor(
 
     Description is `_TOOL_DESCRIPTIONS[op.name]` if present, else a metadata
     fallback, with the ops it names rendered for this listing
-    (`name_ops_for_listing`, every schema field description the profile sends too). The caller's
-    default-workspace context is delivered once via the `initialize`
-    `instructions` field, not duplicated per tool; descriptors are
-    caller-independent. ``toolset`` is the per-request ``?toolset=`` override.
+    (`name_ops_for_listing`; every schema field description the profile sends
+    too). The caller's default-workspace context is delivered once via the
+    `initialize` `instructions` field, not duplicated per tool; descriptors
+    are caller-independent. ``toolset`` is the per-request ``?toolset=``
+    override.
     """
     from server.settings import settings
 
