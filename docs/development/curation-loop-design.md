@@ -174,10 +174,10 @@ reader:
   within it. The read that follows is limited to the ceiling's rows plus one and applies
   the same two rules to the rows it finds, so a promotion committed after the count is
   caught. Within the ceiling a revision of a key that holds a live shared definition
-  replaces its row and is never refused by it. This is the name check. The review path
-  runs it before its write, so a refused review writes nothing, and `memory.promote` runs
-  it again at the promotion, which catches a term or key that landed in between. Names are
-  compared folded, as above.
+  replaces its row and is never refused by the ceiling. This is the name check. The review
+  path runs it before its write, so a refused review writes nothing, and `memory.promote`
+  runs it again at the promotion, which catches a term or key that landed in between.
+  Names are compared folded, as above.
 - **`memory.promote` refuses a definition** (type `definition` or a `definition/` target
   key) whose source is not the namespace-wide row, whose `target_key` differs from the
   source's key or lies outside `definition/`, so a revision always lands on the governed
@@ -694,29 +694,30 @@ and the pinned-key check run as for any write. Then the review promotes that row
 shared layer through `memory.promote`, with the reviewer's server-stamped actor as
 `promoted_by` and the candidate's id ([learnings review
 queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). The admin
-promoting a definition is the person standing behind it. A draft for a term already
-governed revises that definition: the review writes under the key of the live shared
-definition whose folded term or alias equals the draft's term, and the promotion replaces
-its shared row. When more than one live shared definition holds the name, the review is
-refused and names them, so the admin demotes all but one. A draft for a new term is
-written under the key its queue row carries (`memory_key`): `definition/` and a random id
-drawn when the draft claims its candidate id, so every retry of one review uses one key,
-and a draft queued again after a rollback gets a new one. `learnings.list` shows that key;
-for a revision the review writes under the governed key instead, which the listed key does
-not name; the admin finds it in `memory.definitions.list` by its term, and each entry
-there carries the `promoted_from_candidate_id` the shared row holds. A definition promotes
-to memory only; a `destination` of `knowledge` or `both` is refused for these candidates.
-A draft rejected before any promotion attempt leaves nothing behind but its queue row.
-Between the write and the promotion the row is an ordinary namespace-wide row, which the
-ordinary legs read for those moments. A `memory.set` answering `PUBLICATION_PENDING` has
-committed the write (the authority serves it), so the review carries on with the
-promotion. A promotion refused after the write (a racing edit or a racing term) undoes the
-review's own write, with `if_match_sha256` against the version it wrote, so a row a writer
-changed since is left to that writer, and leaves the candidate pending. For a revision it
-writes the previous head's text back, so the old definition is governed again with no new
-promotion; for a new term it tombstones the row with `memory.delete` and `if_match_sha256`
-against the version it wrote, a precondition the implementing pull request adds to
-`memory.delete` as `memory.set` has it, so a writer's edit made since is never deleted.
+promoting a definition is the person standing behind it. A draft for a term a live shared
+definition already holds, governed or lapsed, revises that definition: the review writes
+under the key of the live shared definition whose folded term or alias equals the draft's
+term, and the promotion replaces its shared row. When more than one live shared definition
+holds the name, the review is refused and names them, so the admin demotes all but one. A
+draft for a new term is written under the key its queue row carries (`memory_key`):
+`definition/` and a random id drawn when the draft claims its candidate id, so every retry
+of one review uses one key, and a draft queued again after a rollback gets a new one.
+`learnings.list` shows that key; for a revision the review writes under the governed key
+instead, which the listed key does not name; the admin finds it in
+`memory.definitions.list` by its term, and each entry there carries the
+`promoted_from_candidate_id` the shared row holds. A definition promotes to memory only; a
+`destination` of `knowledge` or `both` is refused for these candidates. A draft rejected
+before any promotion attempt leaves nothing behind but its queue row. Between the write
+and the promotion the row is an ordinary namespace-wide row, which the ordinary legs read
+for those moments. A `memory.set` answering `PUBLICATION_PENDING` has committed the write
+(the authority serves it), so the review carries on with the promotion. A promotion
+refused after the write (a racing edit or a racing term) undoes the review's own write,
+with `if_match_sha256` against the version it wrote, so a row a writer changed since is
+left to that writer, and leaves the candidate pending. For a revision it writes the
+previous head's text back, so the old definition is governed again with no new promotion;
+for a new term it tombstones the row with `memory.delete` and `if_match_sha256` against
+the version it wrote, a precondition the implementing pull request adds to `memory.delete`
+as `memory.set` has it, so a writer's edit made since is never deleted.
 
 Every attempt, the first and each retry, decides from the head it reads, checking these in
 order, the first that matches deciding:
