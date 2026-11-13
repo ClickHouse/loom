@@ -123,7 +123,7 @@ The plugin carries `loom-memory`, `loom-code`, `loom-mentor`, `loom-optimize`,
 [claude-code.md](claude-code.md#skills). Codex loads them from the plugin; invoke one by
 name (`$loom-status`) or let its description trigger it.
 
-## A short contract for AGENTS.md
+## AGENTS.md without the plugin
 
 With the plugin, the skills above carry the contract and `AGENTS.md` needs none. Codex
 without the plugin reads the block in [agent instructions](agent-instructions.md) from

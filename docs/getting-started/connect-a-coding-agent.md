@@ -89,7 +89,7 @@ get the tools; transcript capture needs a hook, which [Cursor](../features/integ
 has and the others take from a [transcript template](../features/integrations/index.md#transcript-capture-hooks).
 [MCP clients](../features/integrations/mcp-clients.md) covers toolsets and the entry the
 command writes. Then add the [agent instructions](../features/integrations/agent-instructions.md)
-block to the client's rule file, so the agent knows when to call the tools.
+block to a coding client's rule file, so the agent knows when to call the tools.
 
 ## Check that it works
 
