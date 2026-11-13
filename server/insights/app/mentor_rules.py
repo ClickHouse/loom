@@ -548,6 +548,7 @@ def _rules_planes(c: _Ctx) -> None:
         and c.fact("tracker_tagged_sets") > 0
     ):
         sources = list(tracker_sources)
+        # one source keeps the four tracker ops and the note within HINT_CHARS
         echo = _quoted_list(sources[:1], total=len(sources))
         answers = (
             f"the tracker source ({echo}) answers"
