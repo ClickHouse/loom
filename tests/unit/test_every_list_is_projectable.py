@@ -38,6 +38,7 @@ UNPROJECTED: dict[str, str] = {
     "HelpSearchInput": "at most ten short hits of the shipped docs, read whole",
     "CollectionListInput": "four short fields per collection; a page is read whole",
     "BlacklistListInput": "a short admin list; no page reads it in part",
+    "KnowledgeGapsListInput": "a short admin list of at most 200 gaps; the tile reads it whole",
     "CodeHistoryInput": "a per-file history read whole",
     "CodeSymbolHistoryInput": "a per-symbol history read whole",
     "ConflictsAllowlistListInput": "a short admin list",

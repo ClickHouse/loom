@@ -21,6 +21,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeSearchOutput,
     _SearchHit,
 )
+from server.knowledge.app import gaps as gaps_app
 from server.knowledge.app.readable import readable_namespaces
 from server.knowledge.domain.chunking import embedding_text
 from server.memory.app.log_once import LogOnce
@@ -83,6 +84,10 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     top = noise_last(all_hits)[: input.top_k]
     if input.narrow_spans and top:
         await _narrow_spans(embedder, query_vec, top)
+    if _missed(input, top, skipped=bool(skipped), dropped=bool(dropped.count)):
+        gaps_app.record_miss(
+            op="knowledge.search", org=input.org, namespace=input.namespace, query=input.query
+        )
     return KnowledgeSearchOutput(
         results=top,
         embedding_model=embedder.model_name,
@@ -90,6 +95,35 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
         reranked_by=reranked_by,
         stale_dropped=dropped.count,
     )
+
+
+# The fields that narrow a knowledge.search to part of the namespace's documents.
+_HARD_FILTERS = (
+    "tags",
+    "since_seconds",
+    "namespaces",
+    "uri_prefix",
+    "session_ids",
+    "source_classes",
+    "formats",
+    "block_types",
+)
+
+
+def _missed(
+    input: KnowledgeSearchInput, top: list[_SearchHit], *, skipped: bool, dropped: bool
+) -> bool:
+    """No hit answers an unfiltered query: none as close as the noise filter's threshold,
+    none an exact-key match, and in lexical mode none at all (its hits are BM25's,
+    whatever their cosine). A fan-out that stopped short, or hits the authority dropped,
+    is no gap."""
+    if not settings.knowledge_gaps_enabled or skipped or dropped:
+        return False
+    if gaps_app.filtered(input, _HARD_FILTERS):
+        return False
+    if input.search_mode == "lexical" and top:
+        return False
+    return not any(h.similarity >= _close() or h.keys_matched for h in top)
 
 
 def noise_last(hits: list[_SearchHit]) -> list[_SearchHit]:

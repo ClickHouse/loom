@@ -22,6 +22,7 @@ from server.erasure.store.mutations import namespaces_of, ns_list_predicate, pur
 from server.erasure.store.predicates import (
     LIVE,
     MEMORY_NS_EQ,
+    MISS_ASKER,
     NS_EQ,
     ORPHAN_LEARNINGS,
     PAYLOAD_UID,
@@ -308,6 +309,12 @@ _CENSUS: tuple[Substrate, ...] = (
         "memory_exposures.delete",
     ),
     Substrate("loom.search_trace_log", "1", None, "search_trace_log.delete", None),
+    Substrate(
+        "loom.search_misses", "1", MISS_ASKER, "search_misses.delete", "search_misses.delete"
+    ),
+    # A gap names no user, so the census counts it in the namespace scope only; the
+    # user's search_misses.delete step also deletes the builds of the user's namespaces.
+    Substrate("loom.knowledge_gaps", "1", None, "knowledge_gaps.delete", None),
     # A replayed response body quotes whatever the op returned. The rows name
     # the caller's org and subject but no namespace and no end user, so both
     # scopes clear and count the org's rows (a cache — the cost is one miss
@@ -834,11 +841,14 @@ async def residue_census(
     scope_value: str | Sequence[str],
     *,
     ch: _CHClient | None = None,
+    spellings: Sequence[str] | None = None,
 ) -> dict[str, int]:
     """Live rows still in scope, per substrate: ClickHouse's tables (`table_residue`)
-    and the Postgres authority's. Bucket objects are not counted here: see
-    `object_residue`, which a namespace scope's verify and `evidence_census` add."""
-    out = await table_residue(org, scope_type, scope_value, ch=ch)
+    and the Postgres authority's. A user scope's `spellings` are the user's spellings,
+    the user id among them, lower-cased: what a step keyed by spelling deletes under.
+    Bucket objects are not counted here: see `object_residue`, which a namespace scope's
+    verify and `evidence_census` add."""
+    out = await table_residue(org, scope_type, scope_value, ch=ch, spellings=spellings)
     out.update(await pg_residue(org, scope_type, scope_value))
     return out
 
@@ -849,6 +859,7 @@ async def table_residue(
     scope_value: str | Sequence[str],
     *,
     ch: _CHClient | None = None,
+    spellings: Sequence[str] | None = None,
 ) -> dict[str, int]:
     """Live rows still in scope per ClickHouse table. One count() per table; FINAL
     on the ReplacingMergeTree tables so an un-merged tombstone row does not
@@ -859,7 +870,13 @@ async def table_residue(
     if scope_type == "namespace":
         params["ns"] = [str(x) for x in scope_value] if ns_list else scope_value
     else:
+        if spellings is None:
+            # A census without them would count misses under the subject's own spelling
+            # only, and pass while those filed under another remain.
+            raise TypeError("a user-scope census needs the user's spellings (census_spellings)")
         params["uid"] = scope_value
+        # The spellings a step keyed by spelling deletes under (`search_misses`), lower-cased.
+        params["spellings"] = list(spellings)
     out: dict[str, int] = {}
     # A purge leaves nothing behind, so its census counts every row, not the
     # live ones.
@@ -893,11 +910,12 @@ async def evidence_census(
     scope_value: str | Sequence[str],
     *,
     ch: _CHClient | None = None,
+    spellings: Sequence[str] | None = None,
 ) -> tuple[dict[str, int], dict[str, Exception]]:
     """`residue_census` for evidence, not a verdict: ClickHouse's tables, then Postgres
     and the bucket each on its own, so a store that cannot be read (often why a step
     failed) costs only its own counts. Returns the counts and each such store's error."""
-    out = await table_residue(org, scope_type, scope_value, ch=ch)
+    out = await table_residue(org, scope_type, scope_value, ch=ch, spellings=spellings)
     errors: dict[str, Exception] = {}
     try:
         out.update(await pg_residue(org, scope_type, scope_value))

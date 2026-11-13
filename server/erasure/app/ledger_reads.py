@@ -38,10 +38,18 @@ async def open_namespace_erasures(org: str) -> list[dict[str, Any]]:
 
 
 async def unfinished_reaching(
-    org: str, namespace: str, user_id: str | None, since_s: int, margin_s: int
+    org: str,
+    namespace: str,
+    user_id: str | None,
+    since_s: int,
+    margin_s: int,
+    *,
+    skip_abandoned: bool = False,
 ) -> list[dict[str, Any]]:
     """The org's unfinished erasures that may reach `namespace` (`ledger.unfinished_reaching`)."""
-    return await ledger.unfinished_reaching(org, namespace, user_id, since_s, margin_s)
+    return await ledger.unfinished_reaching(
+        org, namespace, user_id, since_s, margin_s, skip_abandoned=skip_abandoned
+    )
 
 
 def purges(row: dict[str, Any]) -> bool:

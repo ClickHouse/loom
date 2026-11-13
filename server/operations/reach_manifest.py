@@ -290,6 +290,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "knowledge.formats": ("dashboard",),
+    "knowledge.gaps.list": ("dashboard",),
     "knowledge.get": (
         "sdk_method",
         "plugin_hook",

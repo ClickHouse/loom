@@ -110,7 +110,8 @@ async def _census_and_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         else ("n" if c["scope"] == "namespace" else "alice")
     )
     scope_type = "user_id" if c["scope"] == "user_id" else "namespace"
-    await erasure_census.residue_census(ORG, scope_type, scope_value, ch=ch)
+    spellings = ["alice"] if scope_type == "user_id" else None
+    await erasure_census.residue_census(ORG, scope_type, scope_value, ch=ch, spellings=spellings)
     from server.erasure.store import steps_pg
 
     names = scope_value if isinstance(scope_value, list) else [scope_value]

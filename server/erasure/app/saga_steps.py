@@ -66,7 +66,10 @@ async def _step_verify_residue(
     """Verified forgetting: count what is still live in scope across every
     substrate the read paths touch. Fills `holder` for the terminal
     checkpoint; zero is the only pass."""
-    per_table = await erasure_census.residue_census(org, scope_type, scope_value)
+    spellings = await census_spellings(org, scope_type, scope_value)
+    per_table = await erasure_census.residue_census(
+        org, scope_type, scope_value, spellings=spellings
+    )
     if scope_type == "namespace":  # and the scope's objects left in the document bucket
         per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
             org, scope_value
@@ -94,6 +97,33 @@ async def _step_purge_code_index_by_ns(org: str, namespace: _NS) -> int:
 # than the link worker's pass deadline (a test holds it so)
 _LINK_PASS_WAIT_S = DEADLINE_CAP_SECONDS
 _SOURCE_RETIRE_WAIT_S = 30.0  # not a setting: well inside a request and the recovery pass
+
+
+async def census_spellings(org: str, scope_type: str, scope_value: object) -> list[str]:
+    """The spellings a census of the scope counts misses under: the user's, for a user
+    scope (`folded_spellings`), and none for any other."""
+    if scope_type != "user_id":
+        return []
+    return await folded_spellings(org, str(scope_value))
+
+
+async def folded_spellings(org: str, user_id: str) -> list[str]:
+    """Every spelling the directory ties to the user (`aliases.spellings`, unverified
+    ties included, as a revocation reaches), so a miss stored under any of them, folded
+    when the tie stood differently, is found. A failed directory read raises: the step
+    fails closed and the saga retries it."""
+    from server.auth.aliases import spellings
+
+    # Lower-cased, as MISS_ASKER compares them; spellings includes the user id.
+    return sorted({s.lower() for s in await spellings(org, user_id)})
+
+
+async def _step_delete_search_misses_by_user(org: str, user_id: str) -> int:
+    """The user's misses, and first the gap builds of the namespaces they asked in, found
+    through those misses: derived rows the next pass rebuilds without the user."""
+    spellings = await folded_spellings(org, user_id)
+    n = await ledger_steps.delete_knowledge_gaps_by_user(org, spellings)
+    return n + await ledger_steps.delete_search_misses_by_user(org, spellings)
 
 
 async def _step_delete_code_links_by_user(org: str, user_id: str) -> int:
@@ -198,6 +228,8 @@ _LATE_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("memory_exposures.delete", ledger_steps.delete_memory_exposures_by_namespace),
     ("search_trace_log.delete", ledger_steps.delete_search_trace_log_by_namespace),
     ("code_search_trace.delete", ledger_steps.delete_code_search_trace_by_namespace),
+    ("search_misses.delete", ledger_steps.delete_search_misses_by_namespace),
+    ("knowledge_gaps.delete", ledger_steps.delete_knowledge_gaps_by_namespace),
     ("events.delete", ledger_steps.delete_events_by_namespace),
     ("memory_drops.delete", ledger_steps.delete_memory_drops_by_namespace),
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_namespace),
@@ -218,6 +250,7 @@ _LATE_STEPS_USER: tuple[UserStep, ...] = (
     ("session_briefs.delete", ledger_steps.delete_session_briefs_by_user),
     ("memory_exposures.delete", ledger_steps.delete_memory_exposures_by_user),
     ("code_search_trace.delete", ledger_steps.delete_code_search_trace_by_user),
+    ("search_misses.delete", _step_delete_search_misses_by_user),
     ("events.delete", ledger_steps.delete_events_by_user),
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_user),
     ("memory_webhook_outbox.delete", ledger_steps.delete_memory_webhook_outbox_by_user),

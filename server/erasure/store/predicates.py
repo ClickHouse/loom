@@ -176,6 +176,13 @@ COMMUNITY_ROWS_IN = (
 # table with a user_id column.
 LIVE = "tombstoned_at IS NULL"
 UID = "user_id = {uid:String}"
+# A miss the user asked, as its asker or as the end user it was filed under, under any
+# of the user's spellings (`spellings`, the user id among them, lower-cased). `asker` is
+# stored lower-cased; `user_id` keeps the case the token gave it, so it is lower-cased
+# here in UTF-8, as the spellings are.
+MISS_ASKER = (
+    "(has({spellings:Array(String)}, asker) OR has({spellings:Array(String)}, lowerUTF8(user_id)))"
+)
 # A projection failure's writer: its payload's identity (a bulk write's, a replay's), or
 # the identity of a retired row it owes the record of.
 PAYLOAD_UID = (

@@ -1345,6 +1345,15 @@ class KnowledgeOps:
             await self._agent.call("knowledge.formats", body, **options),
         )
 
+    async def gaps_list(
+        self, body: _ops.KnowledgeGapsListBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeGapsListOutput:
+        """`knowledge.gaps.list`."""
+        return cast(
+            "_ops.KnowledgeGapsListOutput",
+            await self._agent.call("knowledge.gaps.list", body, **options),
+        )
+
     async def get(
         self, body: _ops.KnowledgeGetBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeGetOutput:

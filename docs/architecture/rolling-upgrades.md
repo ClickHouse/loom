@@ -672,6 +672,16 @@ schema. These rules keep that safe. The operator procedure is in
     its inserts of a tenant org's rows refused, so such a cell is rolled out in one step
     ([upgrades](../operations/upgrades.md), step 2). The mixed-version gate does not
     check this rule.
+48. **Knowledge gaps** (`loom.search_misses` and `loom.knowledge_gaps`, migration 95):
+    N-1's erasure saga has no step for either table. So while any live replica's schema
+    version is below 95, or no heartbeat has been read, no miss is recorded, the
+    `knowledge_gaps` worker writes nothing and `knowledge.gaps.list` answers 503, as
+    `namespace.guide_set` does under rule 24. The operator turns
+    `LOOM_KNOWLEDGE_GAPS_ENABLED` on only once every replica runs N. Before a rollback,
+    turn it off and delete both tables' rows, then delete again after the first N-1
+    replica serves ([knowledge gaps](knowledge-gaps.md#rolling-upgrades)).
+    `tests/unit/test_knowledge_gaps.py` checks the refusals; the mixed-version gate does
+    not.
 
 ## What checks them
 

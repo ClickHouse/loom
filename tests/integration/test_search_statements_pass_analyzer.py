@@ -460,7 +460,7 @@ async def test_erasure_census_and_orphan_statements_pass_the_analyzer(ch_client)
 
     ch = _RecordingCH()
     await erasure_census.residue_census("o", "namespace", ["a", "b"], ch=ch)  # type: ignore[arg-type]
-    await erasure_census.residue_census("o", "user_id", "alice", ch=ch)  # type: ignore[arg-type]
+    await erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])  # type: ignore[arg-type]
     await graph_steps.delete_entity_vectors_by_namespace("o", ["a", "b"], ch=ch)  # type: ignore[arg-type]
     await graph_steps.delete_entity_vectors_by_user("o", "alice", ch=ch)  # type: ignore[arg-type]
     await erasure_ledger.list_failed_requests(org="o", ch=ch)  # type: ignore[arg-type]
@@ -889,7 +889,7 @@ async def test_chunk_provenance_and_rollup_statements_pass_the_analyzer(ch_clien
             return [{"namespace": "n", "memory_key": "k"}] if "FROM loom.memory " in sql else []
 
     ch = _KeysCH()
-    await erasure_census.residue_census("o", "user_id", "alice", ch=ch)  # type: ignore[arg-type]
+    await erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])  # type: ignore[arg-type]
     await graph_steps.tombstone_source_links_by_user("o", "alice", ch=ch)  # type: ignore[arg-type]
     await graph_steps.tombstone_source_links_by_namespace("o", ["a", "b"], ch=ch)  # type: ignore[arg-type]
     links = [(sql, p) for sql, p in ch.calls if "loom.memory_chunk_sources" in sql]
@@ -1461,7 +1461,7 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
     ):
         await fn("o", "alice", ch=ch)  # type: ignore[arg-type]
     await erasure_census.residue_census("o", "namespace", ns, ch=ch)  # type: ignore[arg-type]
-    await erasure_census.residue_census("o", "user_id", "alice", ch=ch)  # type: ignore[arg-type]
+    await erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])  # type: ignore[arg-type]
     assert len(mutations) >= 29 and len(ch.calls) >= 29 + 50 + 31
     for i, (sql, params) in enumerate(ch.calls):
         try:
@@ -1502,7 +1502,7 @@ async def test_cache_key_axis_and_credential_ledger_statements_pass_the_analyzer
     await graph_steps.delete_entity_communities_by_user("o", "alice", ch=ch)  # type: ignore[arg-type]
     await memory_repo.delete_llm_response_cache_by_key("o", "k1", ch=ch)  # type: ignore[arg-type]
     await memory_repo.delete_ask_precedents_by_key("o", "k1", ch=ch)  # type: ignore[arg-type]
-    await erasure_census.residue_census("o", "user_id", "alice", ch=ch)  # type: ignore[arg-type]
+    await erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])  # type: ignore[arg-type]
     counts = [c for c in ch.calls if c[0].lstrip().startswith("SELECT count()")]
     assert len(counts) >= 5 + 23
     assert any("hasAny(window_keys," in sql for sql, _ in counts)
