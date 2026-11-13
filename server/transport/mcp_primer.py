@@ -332,10 +332,10 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     collections = knowledge_search_reads_collections()
     head = (
         "**Loom-first mode active for this conversation.**\n\n"
-        "**1. Session context.** At the start of a substantial task, "
-        f"call {tool['context.pack']} once if you need a bounded bundle of "
-        "profile, relevant memories, procedures, and optional docs. For "
-        "simple activation, this primer is already enough.\n\n"
+        "**1. Session context.** First step of each task: call "
+        f"{tool['context.pack']} with the task, before reading code: the "
+        "team's memories, decisions and procedures for it in one bounded bundle. "
+        "Skip it when Loom context is already in this conversation.\n\n"
         "**2. Recall lookup order.** When I ask about preferences, "
         "decisions, family/relationships, work, bills, contracts, "
         "documents I've uploaded, or 'what is X' / 'what do I know "
@@ -531,8 +531,17 @@ def _coding_instructions(toolset: str | None) -> str:
         if save
         else "This connection is read-only: memory writes are not available."
     )
+    # Agents with code tools do not look memory up on their own: the first step is what
+    # brings the team's memory in, unless a plugin's hook already did.
+    first = (
+        "\n\nFirst step of each task: call context.pack with the task, unless Loom context "
+        "(a session primer or recalled memories) is already in this conversation."
+        if _tool_refs(toolset)["context.pack"]
+        else ""
+    )
     return name_ops_for_toolset(
         "**Loom: memory and code for this session.**"
+        + first
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
         + memory,
         toolset,
