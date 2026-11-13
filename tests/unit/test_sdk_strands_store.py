@@ -92,8 +92,11 @@ def test_protocol_attributes_present() -> None:
 
 def test_a_hit_below_the_floor_is_left_out_unless_disabled() -> None:
     weak = dataclasses.replace(_hit("k2", "weak", 0.2), below_threshold=True)
-    hits = [_hit("k1", "oat-milk lattes", 0.9), weak]
-    strict = LoomMemoryStore(SimpleNamespace(memory=_FakeMemory(hits)))
-    assert [e.metadata["memory_key"] for e in asyncio.run(strict.search("coffee"))] == ["k1"]
-    loose = LoomMemoryStore(SimpleNamespace(memory=_FakeMemory(hits)), honour_abstain=False)
+    # three rows for two results: the floor is applied before the cut
+    hits = [_hit("k1", "oat-milk lattes", 0.9), weak, _hit("k3", "espresso", 0.8)]
+    strict = LoomMemoryStore(SimpleNamespace(memory=_FakeMemory(hits)), max_search_results=2)
+    assert [e.metadata["memory_key"] for e in asyncio.run(strict.search("coffee"))] == ["k1", "k3"]
+    loose = LoomMemoryStore(
+        SimpleNamespace(memory=_FakeMemory(hits)), max_search_results=2, honour_abstain=False
+    )
     assert [e.metadata["memory_key"] for e in asyncio.run(loose.search("coffee"))] == ["k1", "k2"]

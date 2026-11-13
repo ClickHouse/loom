@@ -119,8 +119,9 @@ export class LoomMemoryRetriever extends BaseRetriever {
   async _getRelevantDocuments(query: string, _runManager?: CallbackManagerForRetrieverRun): Promise<Document[]> {
     const out = await this.agent.recall(query, this.body);
     if (this.honourAbstain && out.abstain) return [];
-    // Rows under the floor ride along with a strong first hit; honouring abstention drops them.
-    const hits = (out.results ?? []).slice(0, this.k).filter((h) => !(this.honourAbstain && h.below_threshold));
+    // A response that does not abstain can still carry rows below the floor; honouring abstention
+    // drops them. Derived rows may come back above the top_k slice, so cut after filtering.
+    const hits = (out.results ?? []).filter((h) => !(this.honourAbstain && h.below_threshold)).slice(0, this.k);
     return hits.map(
       (h) =>
         new Document({

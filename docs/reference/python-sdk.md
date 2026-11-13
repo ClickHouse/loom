@@ -242,7 +242,8 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   shuts down with the agent.
 - `loom.integrations.strands.LoomMemoryStore(agent, tags=...)` implements the
   Strands Agents memory-store protocol (`add` / `search`); `search` returns
-  nothing when Loom abstains unless `honour_abstain=False`.
+  nothing when Loom abstains, and leaves out memories below the floor, unless
+  `honour_abstain=False`.
 
 The LangGraph and Strands adapters import without their framework installed. See
 [Frameworks](../features/integrations/frameworks.md).

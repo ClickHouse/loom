@@ -259,7 +259,8 @@ or memory. See [Frameworks](../features/integrations/frameworks.md#langchain).
 Strands Agents memory-store shape structurally (no dependency on the Strands
 package). A write is one `memory.set` keyed `strands/<sha256 prefix>` of the
 content, so re-adding a fact is idempotent and both SDKs write the same key; a
-search returns nothing when Loom abstains unless `honourAbstain: false`. See
+search returns nothing when Loom abstains, and leaves out memories below the floor, unless
+`honourAbstain: false`. See
 [Frameworks](../features/integrations/frameworks.md).
 
 ## Errors

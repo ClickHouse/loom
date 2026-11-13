@@ -304,8 +304,9 @@ def test_invoke_on_a_real_sync_agent_posts_through_its_loop() -> None:
 
 def test_memory_below_the_floor_is_left_out_unless_disabled() -> None:
     weak = dataclasses.replace(_memory("k2", "a weak match", 0.2), below_threshold=True)
-    result = _memories([_memory("k1", "Alice prefers aisle seats", 0.9), weak])
-    strict = LoomMemoryRetriever(agent=_agent(memory=_FakeSearch(result)))
-    assert [d.metadata["memory_key"] for d in asyncio.run(strict.ainvoke("seat"))] == ["k1"]
-    loose = LoomMemoryRetriever(agent=_agent(memory=_FakeSearch(result)), honour_abstain=False)
+    # three rows for k=2: the floor is applied before the cut
+    result = _memories([_memory("k1", "aisle seats", 0.9), weak, _memory("k3", "vegetarian", 0.8)])
+    strict = LoomMemoryRetriever(agent=_agent(memory=_FakeSearch(result)), k=2)
+    assert [d.metadata["memory_key"] for d in asyncio.run(strict.ainvoke("seat"))] == ["k1", "k3"]
+    loose = LoomMemoryRetriever(agent=_agent(memory=_FakeSearch(result)), k=2, honour_abstain=False)
     assert [d.metadata["memory_key"] for d in asyncio.run(loose.ainvoke("seat"))] == ["k1", "k2"]

@@ -119,15 +119,16 @@ class LoomMemoryStore:
             tags=self._tags or None,
             memory_type=self._memory_type,
         )
-        hits = list(result)[:top_k]
+        hits = list(result)
         if self._honour_abstain:
             if result.abstain:
                 return []
-            # Rows under the floor ride along with a strong first hit; honouring
-            # abstention drops them.
+            # A response that does not abstain can still carry rows below the
+            # floor; honouring abstention drops them.
             hits = [hit for hit in hits if not hit.below_threshold]
         entries: list[MemoryEntry] = []
-        for hit in hits:
+        # Derived rows may come back above the top_k slice: cut after filtering.
+        for hit in hits[:top_k]:
             entries.append(
                 MemoryEntry(
                     content=hit.content_excerpt,

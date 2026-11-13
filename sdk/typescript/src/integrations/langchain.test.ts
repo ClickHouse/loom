@@ -124,12 +124,14 @@ describe("LoomMemoryRetriever (LangChain.js adapter)", () => {
   });
 
   it("leaves out a memory below the floor, unless told not to", async () => {
+    // three rows for k=2: the floor is applied before the cut
+    const extra = { memory_key: "prefs/home", memory_type: "semantic", content_excerpt: "Lisbon", similarity: 0.8 };
     const reply = {
-      results: [memories.results[0], { ...memories.results[1], below_threshold: true }],
+      results: [memories.results[0], { ...memories.results[1], below_threshold: true }, extra],
     };
-    const strict = await new LoomMemoryRetriever(harness(reply).agent).invoke("q");
-    expect(strict.map((d) => d.metadata.memory_key)).toEqual(["prefs/seat"]);
-    const loose = await new LoomMemoryRetriever(harness(reply).agent, { honourAbstain: false }).invoke("q");
+    const strict = await new LoomMemoryRetriever(harness(reply).agent, { k: 2 }).invoke("q");
+    expect(strict.map((d) => d.metadata.memory_key)).toEqual(["prefs/seat", "prefs/home"]);
+    const loose = await new LoomMemoryRetriever(harness(reply).agent, { k: 2, honourAbstain: false }).invoke("q");
     expect(loose.map((d) => d.metadata.memory_key)).toEqual(["prefs/seat", "prefs/meal"]);
   });
 

@@ -170,15 +170,16 @@ class LoomMemoryRetriever(_LoomRetriever):
         return kwargs
 
     def _documents(self, result: Any) -> list[Document]:
-        hits = list(result)[: self.k]
+        hits = list(result)
         if self.honour_abstain:
             if result.abstain:
                 return []
-            # Rows under the floor ride along with a strong first hit; honouring
-            # abstention drops them.
+            # A response that does not abstain can still carry rows below the
+            # floor; honouring abstention drops them.
             hits = [hit for hit in hits if not hit.below_threshold]
+        # Derived rows may come back above the top_k slice: cut after filtering.
         docs = []
-        for hit in hits:
+        for hit in hits[: self.k]:
             metadata: dict[str, Any] = {
                 # Named on a fan-out (the server's memory_search_default_namespace_scope).
                 "namespace": hit.namespace or self.agent.namespace,
