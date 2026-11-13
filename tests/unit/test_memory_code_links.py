@@ -3915,8 +3915,6 @@ def test_a_marked_hit_moves_down_within_the_served_results() -> None:
     assert moved.score_components == {"code_changed_places": -3.0, "rank_score": moved.rank_score}
     # a sort by score keeps the order, as context.pack's evidence sort does
     assert sorted(out, key=lambda h: -h.rank_score) == out
-    # the mark is spent: a second pass (an iterative retry's merge) moves nothing
-    assert [h.memory_key for h in code_change.rank_down(out, 3)] == ["b", "c", "d", "a", "e"]
 
 
 def test_a_marked_hit_never_leaves_the_results_and_unmarked_ones_never_move() -> None:
@@ -3979,3 +3977,12 @@ def test_a_moved_row_ties_the_row_above_it_inside_a_tie_and_packs_in_place() -> 
         EvidenceItem(citation=h.memory_key, text=h.memory_key, score=h.rank_score) for h in out
     ]
     assert pack_evidence(items, char_budget=10_000).citations == ["b", "s", "c", "d", "e"]
+
+
+def test_a_move_stops_at_the_similarity_floor() -> None:
+    hits = _ranked("s", "b", "f1", "f2", down=("s",))
+    for h in hits[2:]:
+        h.score_components = {"below_floor": 1.0}
+    out = code_change.rank_down(hits, 3)
+    assert [h.memory_key for h in out] == ["b", "s", "f1", "f2"]
+    assert out[1].score_components["code_changed_places"] == -1.0

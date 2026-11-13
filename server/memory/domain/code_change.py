@@ -89,13 +89,11 @@ def _placed(hit: Any) -> bool:
 def rank_down(hits: list[Any], places: int) -> list[Any]:
     """`hits` with each one marked `_code_ranked_down` moved below the next `places` rows
     that are neither marked nor placed by an identifier match or a tier, never past the
-    last; a placed row keeps its slot. A moved hit scores between the rows around it (or
-    ties the one above, when they tie), so a stable sort by score keeps the order;
-    `score_components.code_changed_places` counts the rows it moved below (negative, as a
-    reranker's `rerank_delta`), and the mark is spent."""
+    last nor below the similarity floor; a placed row keeps its slot. A moved hit scores
+    between the rows around it (or ties the one above, when they tie), so a stable sort
+    by score keeps the order; `score_components.code_changed_places` counts the rows it
+    moved below (negative, as a reranker's `rerank_delta`)."""
     marked = [h for h in hits if getattr(h, "_code_ranked_down", False)]
-    for hit in marked:
-        hit._code_ranked_down = False
     moving = {id(h) for h in marked if not _placed(h)} if places > 0 else set()
     out = list(hits)
     # bottom-up: a stale row moves past the same rows whether or not one above it moves
@@ -103,7 +101,7 @@ def rank_down(hits: list[Any], places: int) -> list[Any]:
         at = next(i for i, h in enumerate(out) if h is hit)  # by identity: hits compare by value
         passed, to = 0, at
         for i in range(at + 1, len(out)):
-            if passed == places:
+            if passed == places or out[i].score_components.get("below_floor"):
                 break
             if id(out[i]) not in moving and not _placed(out[i]):
                 passed, to = passed + 1, i

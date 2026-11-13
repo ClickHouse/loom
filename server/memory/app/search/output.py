@@ -225,18 +225,20 @@ async def _shape_final_hits(
     namespaces = ctx.namespaces
     actual_work = ctx.actual_work
     _clock = ctx.clock
+    similar = final_hits
     recent, stale_recent = await _prepend_recent(final_hits, input, ctx.stale_versions)
     anchored, stale_anchor = await _prepend_anchor(recent, input, ctx.stale_versions)
     ctx.stale_dropped += stale_recent + stale_anchor
-    # After the verdict, which read relevance, and the tiers, which cut to top_k: a
-    # memory whose code changed is served lower, never left out. A date order is the
-    # answer and stays as it is; a retry pass leaves the move to the search it joins.
-    if not (ctx.chronological_intent or getattr(input, "_merged_into_parent", False)):
-        places = settings.memory_search_code_changed_positions
-        anchored = code_change.rank_down(anchored, places)
-    # the similarity hits, by the scores they are served with
-    _decorate_hits(final_hits, input=input)
     final_hits = _apply_min_body_chars(anchored, input)
+    # After the verdict, which read relevance, and the tiers and body floor, which cut
+    # rows: a memory whose code changed is served lower, never left out. A date order is
+    # the answer and stays as it is. A retry pass leaves the move, and the explanation
+    # that names the served score, to the search it joins.
+    if not getattr(input, "_merged_into_parent", False):
+        if not ctx.chronological_intent:
+            places = settings.memory_search_code_changed_positions
+            final_hits = code_change.rank_down(final_hits, places)
+        _decorate_hits(similar, input=input)
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)
     )

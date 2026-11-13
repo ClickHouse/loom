@@ -421,7 +421,7 @@ The links are read where the code is:
   namespace the caller can read.
 - `memory.for_file` serves memories linked to code in the file beside those whose
   `files` name it. A line whose code changed, was not found again or went says so and
-  names the commit that did it; `context.pack` decision lines carry the same note, and
+  names the first indexed commit at which it read so; `context.pack` decision lines carry the same note, and
   its memory lines a `code_state=<state>@<commit>` label.
 - `memory.get` returns the links as `code` (with any `suggestion`); `memory.search` hits
   read from a memory's own row carry its worst link as `code_state` (a chunk, record or
