@@ -248,9 +248,10 @@ def test_a_client_still_sending_after_the_proxy_closed_frees_its_slot(sock_dir: 
 
 
 def test_a_client_still_uploading_to_a_half_closed_proxy_keeps_its_bridge(
-    sock_dir: Path,
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The server has sent EOF and still reads: each byte restarts the linger."""
+    monkeypatch.setattr(egress_relay, "_LINGER_S", 0.5)  # room around each gap
     with _relay(sock_dir, 1) as (port, upstream):
         client = socket.create_connection(("127.0.0.1", port), timeout=5)
         assert upstream.arrived.acquire(timeout=5)

@@ -107,6 +107,8 @@ async def _until_server_quiet(
         limit = settings.code_egress_idle_timeout_s if buffered else half_close
         quiet = time.monotonic() - traffic.last
         if quiet >= limit:
+            if buffered:  # a client that never reads: drop it, or closing waits on it
+                to_client.transport.abort()
             return
         await asyncio.wait({server_side}, timeout=min(limit - quiet, half_close))
 
@@ -157,6 +159,8 @@ class EgressProxy:
             logger.warning("egress refused %r: %s", line[:200], reason)
             writer.write(f"HTTP/1.1 {status} Refused\r\n\r\n{reason}\n".encode())
             await writer.drain()
+            return
+        if reader.at_eof():  # the client gave up while the name was vetted
             return
         try:
             up_reader, up_writer = await asyncio.wait_for(

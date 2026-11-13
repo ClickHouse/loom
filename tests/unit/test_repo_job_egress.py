@@ -402,10 +402,12 @@ async def test_a_client_that_never_reads_frees_its_slot_at_the_idle_timeout(
         head, second = await _connect_answer(sock)
         second.close()
         assert head.startswith(b"HTTP/1.1 200")  # the idle timeout freed the slot
-    finally:
-        writer.close()  # the proxy's close waits for its connections to close
         done.set()
-        await asyncio.wait_for(proxy.close(), timeout=5)
+        await asyncio.wait_for(proxy.close(), timeout=5)  # the stuck client is dropped
+    finally:
+        writer.close()
+        done.set()
+        await proxy.close()
         server.close()
         await asyncio.wait_for(server.wait_closed(), timeout=5)
 
@@ -483,6 +485,34 @@ async def test_a_server_that_resets_ends_the_tunnel(
         await asyncio.wait_for(proxy.close(), timeout=5)
         server.close()
         await asyncio.wait_for(server.wait_closed(), timeout=5)
+
+
+async def test_a_client_that_gives_up_while_its_name_is_vetted_is_not_dialled(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dialled = []
+
+    async def slow_vet(host: str) -> tuple[str, str]:
+        await asyncio.sleep(0.2)
+        return "", PUBLIC
+
+    async def open_connection(host: str, port: int, **kw: Any) -> Any:
+        dialled.append(host)
+        raise OSError("not reached")
+
+    monkeypatch.setattr(egress, "vet_host", slow_vet)
+    monkeypatch.setattr(egress.asyncio, "open_connection", open_connection)
+    sock = str(sock_dir / "p.sock")
+    proxy = await egress.start_proxy(sock, None)
+    try:
+        reader, writer = await asyncio.open_unix_connection(sock)
+        writer.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
+        writer.write_eof()
+        assert await asyncio.wait_for(reader.read(), timeout=5) == b""
+        assert dialled == []
+        writer.close()
+    finally:
+        await proxy.close()
 
 
 async def test_close_ends_an_open_tunnel_and_its_server_side(

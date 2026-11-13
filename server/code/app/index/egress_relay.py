@@ -22,7 +22,8 @@ from collections.abc import Callable
 
 # not a setting: the proxy's MAX_TUNNELS (a unit test pins them equal); no job holds more
 MAX_BRIDGES = 32
-# How long a client may stay silent once the proxy's side has ended.
+# The shortest silence from a client, after the proxy's side has ended, that ends
+# its bridge.
 # not a setting: a pause between writes, far below any timeout to tune
 _LINGER_S = 1.0
 
