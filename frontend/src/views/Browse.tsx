@@ -225,14 +225,12 @@ export function Browse() {
   // The rows filter by the text a render behind the box, so a keystroke paints the box
   // first; the memoised rows render again only when what they show changes.
   const listQuery = useDeferredValue(query).trim();
-  const filtered = useMemo(() => {
-    const q = listQuery.toLowerCase();
-    return (rows || []).filter((r) => matchesSpace(r, q));
-  }, [rows, listQuery]);
-  const managedShown = managedMemory.filter((r) => matchesSpace(r, listQuery.toLowerCase()));
+  // Names are lowercase, so the search is compared lowercased.
+  const typedName = listQuery.toLowerCase();
+  const filtered = useMemo(() => (rows || []).filter((r) => matchesSpace(r, typedName)), [rows, typedName]);
+  const managedShown = managedMemory.filter((r) => matchesSpace(r, typedName));
   // A namespace name no listed row carries may be a private one to request, even beside
   // partial matches; a repository's or collection's name points to its page instead.
-  const typedName = listQuery.toLowerCase();
   // Active rows only (a pending request grants nothing); the "you read" lines use this,
   // since an admin claim reaches no restricted repository and makes no collection exist.
   const typedRole = mineRows?.find((r) => r.namespace === typedName && r.status !== "pending")?.role;
