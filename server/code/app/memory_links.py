@@ -128,6 +128,20 @@ async def touched_paths(org: str, namespace: str, base: str, head: str) -> set[s
     return {e.path for e in entries if e.status != "D"}
 
 
+async def containing(
+    org: str, namespace: str, commit: str, literal: str, paths: list[str], *, limit: int
+) -> list[str] | None:
+    """Up to `limit` of `paths` whose text at `commit` holds `literal`, read from the
+    mirror; None when git cannot tell."""
+    cfg = repo_for_namespace(org, namespace)
+    if cfg is None or not commit or not paths:
+        return None if cfg is None else []
+    try:
+        return await gitrepo.grep_paths(cfg.git_dir, commit, literal, tuple(paths), limit=limit)
+    except gitrepo.GitError:
+        return None
+
+
 async def renamed_from(
     org: str, namespace: str, base: str, head: str, paths: list[str]
 ) -> dict[str, str] | None:

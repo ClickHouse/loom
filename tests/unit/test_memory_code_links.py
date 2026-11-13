@@ -3843,3 +3843,94 @@ async def test_elsewhere_finds_the_same_name_and_the_same_name_in_another_module
     monkeypatch.setattr(code_link_recheck.code, "candidates", candidates)
     found = await code_link_recheck._elsewhere("o", "code-a", {"pkg.a::fn": "pkg/a.py"})
     assert dict(found) == {"pkg.a::fn": [same, moved]}
+
+
+def _moved_module_world(monkeypatch, files, indexed: bool, copied_first: bool = False):
+    """c0: `fetch_rows` in pkg/a.py. c1: pkg/a.py is deleted and pkg/b.py, a new module,
+    defines it (with `copied_first`, b.py already held a copy at c0). The mirror has every
+    commit; the code index holds b.py only when `indexed` (a commit past the ingest's
+    per-commit cap leaves it out until a backfill)."""
+    from server.code.domain.anchor import Definition
+
+    keep = "def keep():\n    return 0\n"
+    commits = {("c0", "pkg/a.py"): _ROWS + "\n\n" + keep, ("c1", "pkg/b.py"): _ROWS}
+    if copied_first:
+        commits[("c0", "pkg/b.py")] = _ROWS
+
+    async def at(commit, path):
+        src = commits.get((commit, path))
+        return _file(path, src) if src is not None else None
+
+    async def candidates(org, cns, *, names=None, qualified_names=None):
+        return [Definition("pkg/b.py", "pkg.b::fetch_rows", "fetch_rows")] if indexed else []
+
+    async def containing(commit, name, paths, *, limit):
+        hits = [p for (c, p), src in commits.items() if c == commit and p in paths and name in src]
+        return sorted(hits)[:limit]
+
+    _reads(monkeypatch, files, at)
+    _history(monkeypatch, files, commits)
+    monkeypatch.setattr(files, "containing", containing)
+    monkeypatch.setattr(code_links.code, "candidates", candidates)
+    (d,) = [x for x in _file("pkg/a.py", _ROWS).defs if x.name == "fetch_rows"]
+    return _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": d.qualified_name,
+            "anchored_path": "pkg/a.py",
+            "anchored_name": d.qualified_name,
+            "anchored_commit": "c0",
+            "body_hash": d.body_hash,
+            "checked_hash": d.body_hash,
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": "c0",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
+
+
+_MOVED = code_link_pass.Range("c0", {"pkg/a.py": "", "pkg/b.py": "pkg/b.py"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("indexed", [True, False], ids=["indexed", "index-behind-the-mirror"])
+async def test_a_name_moved_into_a_new_module_is_followed_whether_or_not_the_index_has_it(
+    monkeypatch, indexed
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row = _moved_module_world(monkeypatch, files, indexed)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("moved", "pkg/b.py")]
+
+
+@pytest.mark.asyncio
+async def test_a_copy_the_index_does_not_hold_is_still_another_definition(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row = _moved_module_world(monkeypatch, files, indexed=False, copied_first=True)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("missing", "pkg/a.py")]
+
+
+@pytest.mark.asyncio
+async def test_a_link_lost_while_the_index_lagged_comes_back_once_its_move_is_found(
+    monkeypatch,
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row = _moved_module_world(monkeypatch, files, indexed=True)
+    # marked missing at c1 by a build that looked only in the index, which lacked b.py
+    lost = row | {"state": "missing", "changed_since": "c1", "checked_commit": "c1"}
+    moves = await code_link_recheck._recheck("o", "code-a", [lost], None, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("moved", "pkg/b.py")]
+
+
+@pytest.mark.asyncio
+async def test_a_range_too_wide_to_search_leaves_a_lost_name_unresolved(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row = _moved_module_world(monkeypatch, files, indexed=False)
+    monkeypatch.setattr(code_link_recheck, "_MAX_SEARCHED", 0)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.changed_since) for m in moves] == [("unresolved", "c1")]

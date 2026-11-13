@@ -125,6 +125,15 @@ class RepoReads:
             lambda: code.renamed_from(self.org, self.cns, base, head, paths),
         )
 
+    async def containing(
+        self, commit: str, literal: str, paths: list[str], *, limit: int
+    ) -> list[str] | None:
+        """Up to `limit` of `paths` whose text at `commit` holds `literal`."""
+        return await self._once(
+            ("containing", commit, literal, limit, *paths),
+            lambda: code.containing(self.org, self.cns, commit, literal, paths, limit=limit),
+        )
+
     async def names(self, commit: str, path: str) -> set[str] | None:
         """The qualified names `path` defines at `commit`, read without fingerprints."""
         if (commit, path) in self._parsed:  # parsed in full already
