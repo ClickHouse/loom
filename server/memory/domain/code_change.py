@@ -103,7 +103,7 @@ def spend_marks(hits: list[Any]) -> list[Any]:
     return marked
 
 
-def moved(hit: Any) -> bool:
+def ranked_down(hit: Any) -> bool:
     """A row a search moved for stale code (`rank_down`; 0 places counts): no current row
     for a later move to pass, nor one a later step may lift."""
     return "code_changed_places" in hit.score_components
@@ -139,7 +139,7 @@ def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any
         for i in range(at + 1, len(out)):
             if passed == places or _below_the_floor(out[i]):
                 break
-            if id(out[i]) not in moving and not _placed(out[i]) and not moved(out[i]):
+            if id(out[i]) not in moving and not _placed(out[i]) and not ranked_down(out[i]):
                 passed, to = passed + 1, i
         if not passed:
             hit.score_components = {**hit.score_components, "code_changed_places": 0.0}

@@ -385,8 +385,9 @@ Loom never writes the memory. The namespace's `code_change_policy`
 
 Under every policy, a memory that a search still serves ranks lower when its worst link
 is `changed`, `unresolved` or `missing`: it moves below the next
-`memory_search_code_changed_places` (3) rows that rank by score, never out of the results nor below a row served only as filler
-(under the similarity floor, or flagged below the abstain threshold), after the
+`memory_search_code_changed_places` (3) current rows that rank by score (another stale
+or already-moved row is not counted), never out of the results nor below a row served
+only as filler (under the similarity floor, or flagged below the abstain threshold), after the
 confidence and abstain checks have read them in relevance order;
 `score_components.code_changed_places` says how far. These are never moved down:
 

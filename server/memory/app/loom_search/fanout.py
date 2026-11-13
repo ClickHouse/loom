@@ -281,7 +281,7 @@ async def search_sections(
         memory = mem_result.model_dump()
         models = {id(d): (d, m) for d, m in zip(memory["results"], mem_result.results, strict=True)}
         settled = mem_result._settled_input
-        moved = frozenset(i for i, (_, m) in models.items() if code_change.moved(m))
+        moved = frozenset(i for i, (_, m) in models.items() if code_change.ranked_down(m))
         payload["memory"] = drop_flagged_hits(memory)
     if isinstance(know_result, Exception):
         payload["knowledge"] = {"error": _leg_error("knowledge", know_result), "results": []}
