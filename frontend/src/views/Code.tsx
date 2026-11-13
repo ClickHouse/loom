@@ -1184,8 +1184,8 @@ export function AddRepositoryDialog({
   const overCap = remote !== null && chosen.length > Math.max(0, remote.cap);
   const valid = repoValid && (!showToken || token.trim().length > 0) && (remote ? chosen.length > 0 && !overCap : true);
   /** Ask the remote which branches exist (the first 60 matching `q`; default and
-   *  indexed always ride); a refusal becomes the token step. A search on a
-   *  truncated list asks the server again with the query. */
+   *  indexed always ride); a refusal becomes the token step. A search the shown page
+   *  cannot answer asks the server again with the query. */
   const lookup = async (q = "") => {
     if (!repoValid || looking) return;
     setLooking(true);
