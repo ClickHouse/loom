@@ -533,10 +533,10 @@ main() {
       http_status=$(api memory.get "{$memory}")
       if [ "$http_status" = 200 ] && [ -f "$pending" ]; then
         # A first save on a cold server can take a while (its first embedding).
-        saved=$(api memory.set "{$memory,\"value\":\"A check the installer saves and deletes.\"}" 60)
-        if [ "$saved" != 200 ]; then
+        set_status=$(api memory.set "{$memory,\"value\":\"A check the installer saves and deletes.\"}" 60)
+        if [ "$set_status" != 200 ]; then
           # It may still land: the marker stays, and the next run deletes it.
-          printf '\nCould not confirm a test memory saved (HTTP %s); the next run checks again and deletes it. `docker compose --project-directory %s logs loom` says why.\n' "$saved" "$INSTALL_DIR"
+          printf '\nCould not confirm a test memory saved (HTTP %s); the next run checks again and deletes it. `docker compose --project-directory %s logs loom` says why.\n' "$set_status" "$INSTALL_DIR"
         else
           # A replicated ClickHouse can answer the first read before it has the row.
           tries=0
@@ -549,8 +549,8 @@ main() {
           done
           read_back=
           if [ "$http_status" = 200 ] && found; then read_back=1; fi
-          deleted=$(api memory.delete "{$memory}")
-          if [ -n "$read_back" ] && [ "$deleted" = 200 ]; then
+          delete_status=$(api memory.delete "{$memory}")
+          if [ -n "$read_back" ] && [ "$delete_status" = 200 ]; then
             rm -f "$pending"
             printf '\nSaved, read back and deleted a test memory: writes and reads work.\n'
           elif [ -n "$read_back" ]; then
@@ -732,8 +732,8 @@ main() {
       esac
     done
     if [ -n "$agents" ]; then
-      printf '\nConnected: %s. Start a new session and say "Remember that I deploy only on Tuesdays";\n' "${agents#, }"
-      printf 'in the next session, ask "When do I deploy?"\n'
+      printf '\nConnected: %s. Start a new session and say "Remember that I never deploy on Friday.";\n' "${agents#, }"
+      printf 'in the next session, ask "When can I deploy?"\n'
     elif [ -n "$kept" ]; then
       printf '\nYour agents keep the Loom setup they had.\n'
     else

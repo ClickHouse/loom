@@ -150,7 +150,7 @@ codespace. Dashboard: https://<codespace name>-7777.app.github.dev`, the **Ports
 forwarded address for port 7777); the installer's `http://127.0.0.1:7777/` above it is the
 codespace's own address. In the codespace's terminal, run `cd ~ && claude` (outside the
 checkout, whose instructions are for working on Loom itself), sign in, and say "Remember
-that I deploy only on Tuesdays"; in a new `claude` session, ask "When do I deploy?".
+that I never deploy on Friday."; in a new `claude` session, ask "When can I deploy?".
 
 The try-out runs single-user, with no sign-in. In the browser, port 7777 is forwarded
 privately: its address answers only your GitHub account. Keep it private: public, or

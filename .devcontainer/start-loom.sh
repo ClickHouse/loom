@@ -50,6 +50,6 @@ claude plugin install loom@loom
 # The installer printed the dashboard at 127.0.0.1, the codespace's own address.
 printf '\nLoom is running in the codespace. Dashboard: %s\n' "${codespace_url:-the forwarded port 7777 (Ports tab)}"
 cat <<'TEXT'
-Try it: run `cd ~ && claude`, sign in, and say "Remember that I deploy only on
-Tuesdays". In a new `claude` session, ask "When do I deploy?".
+Try it: run `cd ~ && claude`, sign in, and say "Remember that I never deploy
+on Friday." In a new `claude` session, ask "When can I deploy?".
 TEXT
