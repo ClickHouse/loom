@@ -3458,6 +3458,15 @@ settings:
   # Changed claims one pass re-checks with the LLM under the `revise` policy. [restart]
   # memory_code_links_revise_per_pass: 20
 
+  # Changed files that may hold a lost link's name (its callers count) for the mirror's
+  # answer to be used; from this many on, the code index alone decides. [restart]
+  # memory_code_links_mirror_naming_files: 200
+
+  # Files under the entry's prefixes a lost link's commit range may change for the
+  # mirror to be searched (at most 20,000: each is an argument to git); past it, the
+  # code index alone decides. [restart]
+  # memory_code_links_mirror_changed_files: 5000
+
   # --- memory chunks ---
 
   # Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈ 400K chars;

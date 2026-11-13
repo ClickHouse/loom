@@ -3964,6 +3964,19 @@
           "type": "number",
           "description": "Seconds a code-links pass may run before the supervisor abandons it."
         },
+        "memory_code_links_mirror_changed_files": {
+          "default": 5000,
+          "maximum": 20000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched (at most 20,000: each is an argument to git); past it, the code index alone decides."
+        },
+        "memory_code_links_mirror_naming_files": {
+          "default": 200,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Changed files that may hold a lost link's name (its callers count) for the mirror's answer to be used; from this many on, the code index alone decides."
+        },
         "memory_code_links_pending_days": {
           "default": 14,
           "minimum": 1,

@@ -5,6 +5,7 @@ stored memory a search hit is, and the worker row and table it runs on."""
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import re
 import subprocess
@@ -31,6 +32,8 @@ from server.settings import settings
 
 # the policy's own texts and judge, which the `world` fixture stubs
 _TEXTS, _JUDGE = code_link_policy._texts, code_link_policy._judge
+# the mirror search, which an autouse fixture stubs
+_REAL_CONTAINING = code_link_pass.RepoReads.containing
 
 
 @pytest.fixture(autouse=True)
@@ -56,6 +59,16 @@ def _mirror_holds_every_commit(monkeypatch):
         return True
 
     monkeypatch.setattr(code_link_pass.RepoReads, "has", has)
+
+
+@pytest.fixture(autouse=True)
+def _mirror_names_nothing_else(monkeypatch):
+    # the fakes' history lives in their index and file reads: a search of the mirror for
+    # a lost name finds nothing more unless a test says so
+    async def containing(self, base, head, literal, *, limit):
+        return []
+
+    monkeypatch.setattr(code_link_pass.RepoReads, "containing", containing)
 
 
 def _full(link: dict[str, Any]) -> dict[str, Any]:
@@ -3843,3 +3856,467 @@ async def test_elsewhere_finds_the_same_name_and_the_same_name_in_another_module
     monkeypatch.setattr(code_link_recheck.code, "candidates", candidates)
     found = await code_link_recheck._elsewhere("o", "code-a", {"pkg.a::fn": "pkg/a.py"})
     assert dict(found) == {"pkg.a::fn": [same, moved]}
+
+
+def _moved_module_world(
+    monkeypatch,
+    files,
+    indexed: bool,
+    copied_first: bool = False,
+    stale_source: bool = False,
+    edited: bool = False,
+):
+    """c0: `fetch_rows` in pkg/a.py. c1: pkg/a.py is deleted and pkg/b.py, a new module,
+    defines it (with `copied_first`, b.py already held a copy at c0). c2: an unrelated
+    edit to pkg/c.py. The mirror has every commit; the code index holds b.py only when
+    `indexed` (a commit past the ingest's per-commit cap leaves it out until a backfill),
+    and with `stale_source` it still holds a.py's old definition (that file was past the
+    cap too). With `edited`, b.py's copy is edited on the way. Returns the fresh link row
+    and the mirror searches made."""
+    from server.code.domain.anchor import Definition
+
+    keep = "def keep():\n    return 0\n"
+    moved = _ROWS.replace("out.append(i)", "out.append(i * 2)") if edited else _ROWS
+    commits = {
+        ("c0", "pkg/a.py"): _ROWS + "\n\n" + keep,
+        ("c0", "pkg/c.py"): "c = 0\n",
+        ("c1", "pkg/b.py"): moved,
+        ("c1", "pkg/c.py"): "c = 0\n",
+        ("c2", "pkg/b.py"): moved,
+        ("c2", "pkg/c.py"): "c = 1\n",
+    }
+    if copied_first:  # there before, then edited elsewhere in the file: the mirror finds it
+        commits[("c0", "pkg/b.py")] = _ROWS
+        commits[("c1", "pkg/b.py")] = commits[("c2", "pkg/b.py")] = _ROWS + "\n# touched\n"
+    searched: list[tuple[str, str, str]] = []
+
+    async def at(commit, path):
+        src = commits.get((commit, path))
+        return _file(path, src) if src is not None else None
+
+    async def candidates(org, cns, *, names=None, qualified_names=None):
+        held = [Definition("pkg/a.py", "pkg.a::fetch_rows", "fetch_rows")] if stale_source else []
+        return held + (
+            [Definition("pkg/b.py", "pkg.b::fetch_rows", "fetch_rows")] if indexed else []
+        )
+
+    async def containing(base, head, literal, *, limit):
+        # as `RepoReads.containing`: the changed files naming it, none from `limit` on
+        searched.append((head, literal, base))
+        changed = {p for c, p in commits if c == head and commits[(c, p)] != commits.get((base, p))}
+        hits = sorted(p for p in changed if literal in commits[(head, p)])
+        return [] if len(hits) >= limit else hits
+
+    async def is_ancestor(ancestor, descendant):
+        return ancestor <= descendant  # one line of history: c0, c1, c2
+
+    async def range_of(base, head):
+        paths = {p for c, p in commits if c in (base, head)}
+        changed = {p for p in paths if commits.get((base, p)) != commits.get((head, p))}
+        return code_link_pass.Range(base, {p: p if (head, p) in commits else "" for p in changed})
+
+    _reads(monkeypatch, files, at)
+    _history(monkeypatch, files, commits)
+    monkeypatch.setattr(files, "containing", containing)
+    monkeypatch.setattr(files, "is_ancestor", is_ancestor)
+    monkeypatch.setattr(files, "range", range_of)
+    monkeypatch.setattr(code_links.code, "candidates", candidates)
+    (d,) = [x for x in _file("pkg/a.py", _ROWS).defs if x.name == "fetch_rows"]
+    row = _full(
+        {
+            "org": "o",
+            "code_namespace": "code-a",
+            "path": "pkg/a.py",
+            "qualified_name": d.qualified_name,
+            "anchored_path": "pkg/a.py",
+            "anchored_name": d.qualified_name,
+            "anchored_commit": "c0",
+            "body_hash": d.body_hash,
+            "checked_hash": d.body_hash,
+            "state": "fresh",
+            "changed_since": "",
+            "checked_commit": "c0",
+            "memory_id": "m1",
+            "version": 1,
+        }
+    )
+    return row, searched
+
+
+_MOVED = code_link_pass.Range("c0", {"pkg/a.py": "", "pkg/b.py": "pkg/b.py"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("indexed", [True, False], ids=["indexed", "index-behind-the-mirror"])
+async def test_a_name_moved_into_a_new_module_is_followed_whether_or_not_the_index_has_it(
+    monkeypatch, indexed
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, searched = _moved_module_world(monkeypatch, files, indexed)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("moved", "pkg/b.py")]
+    assert searched == [("c1", "fetch_rows", "c0")]
+
+
+@pytest.mark.asyncio
+async def test_a_move_is_followed_while_the_index_still_holds_the_old_definition(
+    monkeypatch,
+) -> None:
+    # both files past the cap: the index still has a.py's definition and lacks b.py
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False, stale_source=True)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("moved", "pkg/b.py")]
+
+
+@pytest.mark.asyncio
+async def test_a_copy_the_index_does_not_hold_is_still_another_definition(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False, copied_first=True)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert searched == [("c1", "fetch_rows", "c0")]  # the mirror found b.py's copy
+    assert [(m.link.state, m.link.path) for m in moves] == [("missing", "pkg/a.py")]
+
+
+@pytest.mark.asyncio
+async def test_a_link_lost_while_the_index_lagged_comes_back_once_the_index_has_its_move(
+    monkeypatch,
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=True)
+    # as an older build wrote it, while the index lacked b.py: missing since c1, still
+    # holding c0, the commit it was last read at
+    lost = row | {"state": "missing", "changed_since": "c1"}
+
+    async def lost_rows(org, cns, *, days):
+        return [lost]
+
+    monkeypatch.setattr(code_links.store, "lost", lost_rows)
+    # `_lost` hands it to a recheck once a range touches a file the index places it in
+    later = code_link_pass.Range("c1", {"pkg/b.py": "pkg/b.py", "pkg/c.py": "pkg/c.py"})
+    assert await code_link_recheck._lost("o", "code-a", set(later.paths)) == [lost]
+    moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("moved", "pkg/b.py")]
+
+
+@pytest.mark.asyncio
+async def test_a_missing_link_is_never_handed_to_an_edited_copy_the_mirror_finds(
+    monkeypatch,
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
+    lost = row | {"state": "missing", "changed_since": "c1"}
+    later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
+    moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
+    assert searched == [("c2", "fetch_rows", "c0")]  # the mirror was searched
+    assert moves == []  # and the copy it found leaves the link missing
+
+
+@pytest.mark.asyncio
+async def test_a_full_recheck_of_a_missing_link_leaves_it_to_the_index(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False)
+    lost = row | {"state": "missing", "changed_since": "c1"}
+    moves = await code_link_recheck._recheck("o", "code-a", [lost], None, "c1", files)
+    assert searched == [] and moves == []
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_link_is_searched_from_its_own_check_on_a_later_range(
+    monkeypatch,
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False)
+    unsure = row | {"state": "unresolved", "changed_since": "c1"}
+    later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})  # touches no b.py
+    moves = await code_link_recheck._recheck("o", "code-a", [unsure], later, "c2", files)
+    assert searched == [("c2", "fetch_rows", "c0")]
+    assert [(m.link.state, m.link.path) for m in moves] == [("moved", "pkg/b.py")]
+
+
+@pytest.mark.asyncio
+async def test_a_mirror_git_cannot_read_leaves_a_lost_name_unresolved(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False)
+
+    async def containing(base, head, literal, *, limit):
+        return None
+
+    monkeypatch.setattr(files, "containing", containing)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.changed_since) for m in moves] == [("unresolved", "c1")]
+
+
+@pytest.mark.asyncio
+async def test_a_name_too_many_changed_files_hold_leaves_the_index_verdict(monkeypatch) -> None:
+    # `close` or `parse` in a wide commit: callers fill the page, so the mirror adds
+    # nothing and the link settles as the index says, never unresolved for good
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False)
+    monkeypatch.setattr(settings, "memory_code_links_mirror_naming_files", 1)  # b.py fills it
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("missing", "pkg/a.py")]
+
+
+@pytest.mark.asyncio
+async def test_the_mirror_is_not_searched_over_a_range_too_wide_or_unread(monkeypatch) -> None:
+    monkeypatch.setattr(code_link_pass.RepoReads, "containing", _REAL_CONTAINING)
+    files = code_link_pass.RepoReads("o", "code-a")
+    seen: list[set[str] | None] = [None, {"a.py", "b.py"}]
+
+    async def touched(base, head):
+        return seen.pop(0)
+
+    async def grep(*a, **k):
+        raise AssertionError("not searched")
+
+    async def ingest_scope(org, cns, commit):
+        return SimpleNamespace(under=lambda path: True, takes=lambda path: True)
+
+    monkeypatch.setattr(files, "touched", touched)
+    monkeypatch.setattr(code_links.code, "grep_words", grep)
+    monkeypatch.setattr(code_links.code, "ingest_scope", ingest_scope)
+    assert await files.containing("c0", "c1", "f", limit=5) == []  # the range is unread
+    monkeypatch.setattr(settings, "memory_code_links_mirror_changed_files", 1)
+    assert await files.containing("b0", "c1", "f", limit=5) == []  # too wide
+
+
+@pytest.mark.asyncio
+async def test_the_changed_files_bound_counts_only_paths_under_the_prefixes(monkeypatch) -> None:
+    monkeypatch.setattr(code_link_pass.RepoReads, "containing", _REAL_CONTAINING)
+    files = code_link_pass.RepoReads("o", "code-a")
+    searched: list[list[str]] = []
+
+    async def touched(base, head):
+        return {"src/a.py", "docs/x.py", "tools/y.py", "tools/z.py"}
+
+    async def ingest_scope(org, cns, commit):
+        return SimpleNamespace(under=lambda p: p.startswith("src/"), takes=lambda p: True)
+
+    async def grep(scope, commit, literal, paths, *, limit):
+        searched.append(paths)
+        return []
+
+    monkeypatch.setattr(files, "touched", touched)
+    monkeypatch.setattr(code_links.code, "ingest_scope", ingest_scope)
+    monkeypatch.setattr(code_links.code, "grep_words", grep)
+    monkeypatch.setattr(settings, "memory_code_links_mirror_changed_files", 1)
+    assert await files.containing("b0", "c1", "f", limit=5) == []
+    assert searched == [["src/a.py"]]  # four changed, one under the prefix: within the bound
+
+
+@pytest.mark.asyncio
+async def test_a_mirror_grep_names_files_as_written(tmp_path) -> None:
+    from server.code.app.index import gitrepo
+
+    git, commit = _repo(tmp_path)
+    head = commit(
+        {
+            "café.py": "fetch_rows()\n",
+            "a[1].py": "fetch_rows()\n",
+            'q"uote.py': "fetch_rows()\n",
+            "ab.py": "x\n",
+            "pre.py": "prefetch_rows()\n",  # the name inside a longer word: not it
+        }
+    )
+    paths = ("café.py", "a[1].py", 'q"uote.py', "ab.py", "pre.py")
+    found = await gitrepo.grep_paths(
+        str(tmp_path / ".git"), head, "fetch_rows", paths, literal_paths=True, word=True
+    )
+    assert sorted(found) == ["a[1].py", "café.py", 'q"uote.py']
+
+
+@pytest.mark.asyncio
+async def test_an_edited_move_the_index_settles_is_followed_when_the_mirror_cannot_answer(
+    monkeypatch,
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=True, edited=True)
+
+    async def containing(base, head, literal, *, limit):
+        return None  # git could not be read
+
+    monkeypatch.setattr(files, "containing", containing)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("changed", "pkg/b.py")]
+
+
+@pytest.mark.asyncio
+async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypatch) -> None:
+    # through the real search: z.py names it and does not parse, b.py holds the edited
+    # move; z.py adds nothing, so the move is followed
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
+    monkeypatch.setattr(files, "containing", _REAL_CONTAINING.__get__(files))
+    scope = SimpleNamespace(under=lambda path: True, takes=lambda path: True)
+    names = files.names
+
+    async def ingest_scope(org, cns, commit):
+        return scope
+
+    async def grep(scope, commit, literal, paths, *, limit):
+        return ["pkg/b.py", "pkg/z.py"]
+
+    async def indexed_names(scope, commit, path):
+        if path == "pkg/z.py":
+            raise code_links.code.ParseFailed(path, "parse: SyntaxError")
+        return await names(commit, path)
+
+    monkeypatch.setattr(code_links.code, "ingest_scope", ingest_scope)
+    monkeypatch.setattr(code_links.code, "grep_words", grep)
+    monkeypatch.setattr(code_links.code, "indexed_names", indexed_names)
+    assert await files.containing("c0", "c1", "fetch_rows", limit=5) == ["pkg/b.py"]
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("changed", "pkg/b.py")]
+
+
+@pytest.mark.asyncio
+async def test_the_mirror_search_reads_what_the_ingest_indexes(monkeypatch, tmp_path) -> None:
+    from dataclasses import replace
+
+    from server.code.app import memory_links
+    from server.code.app.index.repo_registry import row_to_config
+
+    git, commit = _repo(tmp_path)
+    head = commit(
+        {
+            ".loomignore": "gen/\n",
+            "pkg/b.py": "def fetch_rows():\n    return 1\n",
+            "gen/rows.py": "def fetch_rows():\n    return 2\n",  # the ignore file refuses it
+            # generated: declared, not searched, so its definitions are indexed
+            "pkg/mock.py": "# @generated\ndef fetch_rows():\n    return 3\n",
+            "pkg/blob.bin": "fetch_rows\0\0",  # binary: refused
+        }
+    )
+    # an entry added from the page: no prefixes (the whole tree), generated files refused
+    base = row_to_config({"org": "o", "namespace": "code-a", "repo": "o/a"})
+    cfg = replace(base, git_dir=str(tmp_path / ".git"), exclude_generated=True)
+    assert cfg.path_prefixes == ()
+    monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: cfg)
+    monkeypatch.setattr(code_link_pass.RepoReads, "containing", _REAL_CONTAINING)
+    touched = {"gen/rows.py", "pkg/b.py", "pkg/mock.py", "pkg/blob.bin"}
+
+    def reads() -> Any:
+        files = code_link_pass.RepoReads("o", "code-a")
+
+        async def changed(base, head):
+            return touched
+
+        monkeypatch.setattr(files, "touched", changed)
+        return files
+
+    found = await reads().containing("c0", head, "fetch_rows", limit=4)
+    assert found == ["pkg/b.py", "pkg/mock.py"]
+    # a path refused by name is left out before the page is counted, by content after
+    assert await reads().containing("c0", head, "fetch_rows", limit=3) == []
+    prefixed = replace(cfg, path_prefixes=("gen/",))
+    monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: prefixed)
+    assert await reads().containing("c0", head, "fetch_rows", limit=4) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "errno_", [errno.E2BIG, errno.ENOENT], ids=["argument-list-too-long", "no-git"]
+)
+async def test_a_grep_that_cannot_start_is_a_git_error(monkeypatch, errno_) -> None:
+    from server.code.app.index import gitrepo
+
+    async def cannot_start(*a, **k):
+        raise OSError(errno_, "cannot start")
+
+    monkeypatch.setattr(gitrepo.asyncio, "create_subprocess_exec", cannot_start)
+    with pytest.raises(gitrepo.GitError) as raised:
+        await gitrepo.grep_paths("/nowhere", "a" * 40, "f", ("x.py",))
+    # E2BIG is the paths being too many, which leaves the index's verdict
+    assert isinstance(raised.value, gitrepo.ArgumentsTooLong) == (errno_ == errno.E2BIG)
+
+
+@pytest.mark.asyncio
+async def test_the_mirror_is_searched_for_a_name_without_its_ordinal(monkeypatch) -> None:
+    # the grep reads a link's name without the index's `#N` ordinal (the fixture's Python
+    # numbers no duplicate, so this checks the search, not where the link goes)
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False)
+    second = row | {"qualified_name": row["qualified_name"] + "#2"}
+    await code_link_recheck._recheck("o", "code-a", [second], _MOVED, "c1", files)
+    assert searched == [("c1", "fetch_rows", "c0")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("why", ["too-many-arguments", "timed-out"])
+async def test_paths_too_many_for_git_leave_the_index_verdict(monkeypatch, why) -> None:
+    from server.code.app import memory_links
+    from server.code.app.index import gitrepo
+
+    async def too_many(*a, **k):
+        raise (gitrepo.ArgumentsTooLong if why == "too-many-arguments" else gitrepo.GrepTimedOut)(
+            "many paths"
+        )
+
+    monkeypatch.setattr(gitrepo, "grep_paths", too_many)
+    scope = SimpleNamespace(cfg=SimpleNamespace(git_dir="/nowhere", namespace="code-a"))
+    assert await memory_links.grep_words(scope, "c1", "f", ["a.py"], limit=5) == []
+
+
+@pytest.mark.asyncio
+async def test_a_file_over_the_ingest_byte_cap_adds_no_definition(monkeypatch, tmp_path) -> None:
+    from dataclasses import replace
+
+    from server.code.app import memory_links
+    from server.code.app.index.repo_registry import row_to_config
+
+    git, commit = _repo(tmp_path)
+    head = commit({"pkg/big.py": "def fetch_rows():\n    return 1\n" + "# pad\n" * 50})
+    base = row_to_config({"org": "o", "namespace": "code-a", "repo": "o/a"})
+    scope = memory_links.IngestScope(
+        replace(base, git_dir=str(tmp_path / ".git")), code_links.code.Denylist()
+    )
+    monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 64)
+    assert await memory_links.indexed_names(scope, head, "pkg/big.py") is None
+    monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 1 << 20)
+    assert await memory_links.indexed_names(scope, head, "pkg/big.py") == {"pkg.big::fetch_rows"}
+
+
+@pytest.mark.asyncio
+async def test_a_missing_link_stays_missing_when_the_mirror_cannot_be_read(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False)
+
+    async def containing(base, head, literal, *, limit):
+        return None
+
+    monkeypatch.setattr(files, "containing", containing)
+    lost = row | {"state": "missing", "changed_since": "c1"}
+    later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
+    moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
+    assert moves == []  # never unresolved: a missing link is not made unsure
+
+
+@pytest.mark.asyncio
+async def test_a_missing_link_checked_at_head_searches_nothing(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False)
+    monkeypatch.setattr(files, "containing", _REAL_CONTAINING.__get__(files))
+
+    async def grep(*a, **k):
+        raise AssertionError("not searched")
+
+    monkeypatch.setattr(code_links.code, "grep_words", grep)
+    lost = row | {"state": "missing", "changed_since": "c1", "checked_commit": "c1"}
+    later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
+    assert await code_link_recheck._recheck("o", "code-a", [lost], later, "c1", files) == []
+
+
+@pytest.mark.asyncio
+async def test_a_found_definition_that_cannot_be_fingerprinted_leaves_a_live_link_unsure(
+    monkeypatch,
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
+
+    async def no_fingerprints(commit, path, qualified_name):
+        raise code_links.code.ParseFailed(path, "fingerprint failed")
+
+    monkeypatch.setattr(files, "defs", no_fingerprints)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [m.link.state for m in moves] == ["unresolved"]

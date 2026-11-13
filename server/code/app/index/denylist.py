@@ -160,6 +160,34 @@ def _pattern_hits(path: str, pattern: str) -> bool:
     return "/" not in pattern and fnmatch.fnmatchcase(posixpath.basename(path), pattern)
 
 
+# a refusal that still lets a file's definitions into the index: the generated rule
+# declares a file (its types and functions) without searching its text
+GENERATED_REFUSAL = "excluded: generated"
+
+
+def indexes_symbols(reason: str) -> bool:
+    """Whether a file refused for `reason` ('' = not refused) has its definitions in the
+    index (`ingest._declared_not_searched`)."""
+    return not reason or reason.startswith(GENERATED_REFUSAL)
+
+
+def under_prefixes(path_prefixes: tuple[str, ...], path: str) -> bool:
+    """`path` is under an entry's prefixes (none = the whole tree)."""
+    return path.startswith(path_prefixes or ("",))
+
+
+def takes_path(
+    path_prefixes: tuple[str, ...], denylist: Denylist, path: str, *, declared: bool
+) -> bool:
+    """An entry's scope by a path's name: under its prefixes (none = the whole tree) and
+    not refused by its denylist, or, with `declared`, refused only as a generated file,
+    whose definitions the ingest still declares."""
+    if not under_prefixes(path_prefixes, path):
+        return False
+    why = denylist.reason(path)
+    return indexes_symbols(why) if declared else not why
+
+
 @dataclass(frozen=True)
 class Denylist:
     builtin: bool = False
@@ -178,7 +206,7 @@ class Denylist:
         if self.exclude_generated:
             gen = is_generated(path, source)
             if gen:
-                return f"excluded: generated ({gen})"
+                return f"{GENERATED_REFUSAL} ({gen})"
         return ""
 
     # Directory prefixes under `contrib/` that ARE indexed although `include_contrib` is
@@ -209,7 +237,7 @@ class Denylist:
         base = posixpath.basename(lower)
         for infix in DEFAULT_INFIXES:
             if infix in base:
-                return f"excluded: generated ({infix})"
+                return f"{GENERATED_REFUSAL} ({infix})"
         segments = path.split("/")[:-1]
         for seg in segments:
             if seg in DEFAULT_DIRS:
