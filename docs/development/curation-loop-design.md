@@ -87,15 +87,15 @@ own. An admin read, `memory.definitions.list`, lists the namespace's shared defi
 with the read-time check's verdict on each and the reason a lapsed one lapsed (its text
 changed, it is `medium` or `high`, gone, expired, past its `valid_to`, promoted from a row
 that is not the namespace-wide one, or no longer `active`), and lists a definition that
-passes the check but is not served because a later promotion holds one of its names as
-`shadowed`, naming the row that wins. Each entry carries its key, term, aliases and
-`promoted_from_candidate_id`. A changed text is promoted again. On N no automatic verdict
-retires or marks a definition's source (the exemptions below, and the negative-outcome
-quarantine of `memory.outcome`, which skips a definition's namespace-wide row as it skips
-a locked one; `memory.outcome_run` records harm events and quarantines nothing), so a
-source that is no longer `active` was rejected by a writer, or left that way by N-1 or
-before this design. The sensitivity sweep can still relabel a source, which lapses it as a
-relabel does. The admin brings it back by the way it lapsed:
+passes the check but is not served because another promotion that wins under the rule
+below holds one of its names as `shadowed`, naming the row that wins. Each entry carries
+its key, term, aliases and `promoted_from_candidate_id`. A changed text is promoted again.
+On N no automatic verdict retires or marks a definition's source (the exemptions below,
+and the negative-outcome quarantine of `memory.outcome`, which skips a definition's
+namespace-wide row as it skips a locked one; `memory.outcome_run` records harm events and
+quarantines nothing), so a source that is no longer `active` was rejected by a writer, or
+left that way by N-1 or before this design. The sensitivity sweep can still relabel a
+source, which lapses it as a relabel does. The admin brings it back by the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
@@ -271,12 +271,11 @@ request that adds it.
 characters, as a name does, so `MRR` matches the full-width `什么是ＭＲＲ` and `churn rate`
 matches a query that puts two spaces between the words; only case follows the per-word
 rule below. Every combining mark (category M) is first joined to the letter or number
-before it (with any marks already joined to that), in the term and in the query, and the
-rules compare these joined characters by their base: a term's edge that ends in a mark is
-its base letter's edge, and a neighbour that is a mark sitting on a letter is that letter.
-A mark at the start of the query or of a name, or after a space or punctuation, joins
-nothing and counts as punctuation. A term or alias then matches where it appears in the
-query, at whole joined characters, with no character next to it that continues its edge:
+before it (with any marks already joined to that), in the term and in the query, and a
+joined character takes its base's place in the rules below. A mark with no letter or
+number before it joins nothing and counts as punctuation. A term or alias then matches
+where it appears in the query, at whole joined characters, with no character next to it
+that continues its edge:
 
 - next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
   those;
@@ -292,11 +291,11 @@ query, at whole joined characters, with no character next to it that continues i
 
 So `рост` does not match inside "простой" and `café` not inside "cafés", while `MRR`
 matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". Case is decided per word of
-the name, a word being a run of letters, marks and numbers (Unicode L, M and N): a word
-written all in capitals, or with a capital after its first letter, matches only as
-written, and any other word matches case-folded. So `IT` does not match "what is it" and
-`GitHub` stays exact, while `Churn Rate` matches "what is our churn rate" and `ARR growth`
-matches "ARR Growth" but not "arr growth".
+the name, a word being a run of joined letters and numbers (Unicode L and N, with their
+marks): a word written all in capitals, or with a capital after its first letter, matches
+only as written, and any other word matches case-folded. So `IT` does not match "what is
+it" and `GitHub` stays exact, while `Churn Rate` matches "what is our churn rate" and
+`ARR growth` matches "ARR Growth" but not "arr growth".
 
 **Placement.** Matched rows go to the top of the served list with `governed = true`, in
 the order their names first appear in the query. Two names that start at the same place
@@ -851,8 +850,10 @@ the op budgets before they ship it.
   on every `memory.search`, every `context.pack` turn and every `memory.ask` sub-search.
 - A definition's promotion reads the namespace's definition rows, at most
   `memory_term_leg_max_definitions`, to check its term and aliases.
-  `memory.definitions.list` reads one page of them, with a limit and a cursor, and reads
-  each listed definition's source row.
+  `memory.definitions.list` reads the namespace's definition rows, at most that ceiling,
+  to count them and find names held by more than one, and returns a page of them, with a
+  limit and a cursor; it reads the source row of each listed definition and of each
+  definition that competes for one of its names.
 
 ## Rolling upgrades
 
