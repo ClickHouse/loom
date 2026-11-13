@@ -134,7 +134,8 @@ export function SearchAnswer({
             {inline(text, undefined, numberedCitations(numbers, rows, rowPrefix))}
           </p>
         )}
-        {/* A finished answer that is only a table or code: the preview has no words for it. */}
+        {/* A finished answer that is only a table or code: the preview has no words for
+            it. */}
         {!text && turn.state === "done" && turn.answer.trim() && (
           <p className="text-sm text-text-muted">The answer holds a table or code: continue in chat to read it.</p>
         )}

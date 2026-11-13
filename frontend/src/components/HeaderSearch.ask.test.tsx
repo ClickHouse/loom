@@ -282,7 +282,8 @@ describe("the search's answer card", () => {
   });
 
   it("asks a conversation about another namespace in a new one", async () => {
-    // The signed-in person's conversation (the owner the search adopts), about another namespace.
+    // The signed-in person's conversation (the owner the search adopts), about another
+    // namespace.
     useChat.setState({
       owner: { subject: "ada", org: "dev", scope: "-", user: "-" },
       id: "old",
@@ -571,7 +572,8 @@ describe("the search's answer card", () => {
   it("with the page line on, a question that would pass the length only without it gets a card once the chip is off", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
-    // 19,990 characters: under one request's length alone, over it with "Context: Memories page".
+    // 19,990 characters: under one request's length alone, over it with "Context: Memories
+    // page".
     const long = `what ${"x".repeat(19_984)}?`;
     expect(long).toHaveLength(20_000 - 10);
     await user.click(field());
@@ -636,7 +638,8 @@ describe("the search's answer card", () => {
       render(<HeaderSearch />);
       await user.type(field(), "what does billing remember");
       await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
-      // The search has answered and its "Searching" status gone: what is left is what shows.
+      // The search has answered and its "Searching" status gone: what is left is what
+      // shows.
       await waitFor(() =>
         expect(searchMemory).toHaveBeenCalledWith(expect.anything(), "what does billing remember", expect.anything()),
       );

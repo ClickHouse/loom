@@ -62,16 +62,16 @@ interface CardAsk {
 /** `autoFocus`: the phone header hides this input behind a search button; when that
  *  button reveals it, focus lands here so the palette opens without a second tap.
  *
- *  A question is answered in place. The results list an 'Ask AI about "<text>"' option, with
- *  a visible Ask: after the results for keywords, first for text that reads as a question
- *  (lib/readsAsQuestion.ts) and holds no search filter (`tag:`, `namespace:`, `type:`).
- *  Choosing it asks through the assistant's chat store (views/assistant/SearchAnswer.tsx):
- *  the answer streams into the card on top, headed "Ask AI", whose one "Continue in chat"
- *  option opens the panel on the same conversation, and the results stay listed under it.
- *  Typing alone never asks. No Ask AI option where the chat is off, the token's claims or a
- *  reason other than the setup starting or failing block it, the namespace is not a memory
- *  namespace (a code, tracker or collection one), or the question is longer than one
- *  request carries. */
+ *  A question is answered in place. The results list an 'Ask AI about "<text>"' option,
+ *  with a visible Ask: after the results for keywords, first for text that reads as a
+ *  question (lib/readsAsQuestion.ts) and holds no search filter (`tag:`, `namespace:`,
+ *  `type:`). Choosing it asks through the assistant's chat store
+ *  (views/assistant/SearchAnswer.tsx): the answer streams into the card on top, headed "Ask
+ *  AI", whose one "Continue in chat" option opens the panel on the same conversation, and
+ *  the results stay listed under it. Typing alone never asks. No Ask AI option where the
+ *  chat is off, the token's claims or a reason other than the setup starting or failing
+ *  block it, the namespace is not a memory namespace (a code, tracker or collection one),
+ *  or the question is longer than one request carries. */
 export function HeaderSearch({
   autoFocus = false,
   initialQuery = "",
@@ -688,8 +688,9 @@ export function HeaderSearch({
         {activations.length > 0 && (
           <div id={listboxId} role="listbox" aria-label="Search results">
             {cardShown && (
-              // The card's one action, an option so Enter and the arrows reach it as they reach
-              // the results under it; drawn as Click UI's button, spanning the card on a phone.
+              // The card's one action, an option so Enter and the arrows reach it as they
+              // reach the results under it; drawn as Click UI's button, spanning the card
+              // on a phone.
               // biome-ignore lint/a11y/useSemanticElements: an option group inside a listbox, not form controls, so not a fieldset
               <div role="group" aria-label="Ask AI" className="pb-2">
                 <Button

@@ -37,8 +37,8 @@ export function AssistantLauncher() {
   const reason = reasonShort || null;
   return (
     <span className="relative inline-flex shrink-0">
-      {/* The word names it from xl, and the tooltip says what it does, with a reason it can't
-          answer; below xl the icon is all there is, and the tooltip names it. */}
+      {/* The word names it from xl, and the tooltip says what it does, with a reason it
+          can't answer; below xl the icon is all there is, and the tooltip names it. */}
       <Tip content={reason ? `Ask AI: ${reason}` : TIP} side="bottom">
         <Button
           type={worded ? "secondary" : "empty"}

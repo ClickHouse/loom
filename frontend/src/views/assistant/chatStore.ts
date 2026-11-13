@@ -330,8 +330,8 @@ export function latestStep(t: Turn): string | null {
 
 /** Start a new conversation in `header` when the one shown is about another namespace and
  *  nothing answers in it, answering the line that says so (newConversationLine); null when
- *  the one shown stays. The panel's Ask about this and the search's question both go by it.
- *  */
+ *  the one shown stays. The panel's Ask about this and the search's question both go by
+ *  it. */
 export function startIn(header: string): string | null {
   const c = useChat.getState();
   if (c.answering || c.turns.length === 0 || !c.namespace || c.namespace === header) return null;
@@ -655,8 +655,8 @@ const seen = (turnId: string) => {
 };
 
 /** The reason the launcher and the search's card go by, after the route's refusal changed
- *  `hint`: in the panel's order (the token's claims, the refusal, readiness). The panel's body
- *  sets the same while it is mounted; without it, nothing else would. */
+ *  `hint`: in the panel's order (the token's claims, the refusal, readiness). The panel's
+ *  body sets the same while it is mounted; without it, nothing else would. */
 function showReason(): void {
   const s = useChat.getState();
   setDockReason(chatOff() ? { kind: "not_configured" } : (claimReason() ?? s.hint ?? s.readiness));

@@ -322,7 +322,7 @@ export function DockBody() {
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {showHistory && !owner ? (
-        // No owner (auth off, or a session whose whoami names no subject): nothing is saved.
+        // No owner (auth off, or a whoami that names no subject): nothing is saved.
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
           <p className="assistant-column text-sm text-text-muted">{NOT_SAVED}</p>
         </div>
@@ -696,7 +696,8 @@ function SetupState({
   const namespace = useStore((s) => s.identity?.namespace ?? "");
   const platform = hasPlatformAdminClaim(whoami);
   const seesHealth = platform || isNamespaceAdmin(whoami, mine, namespace);
-  // Only a platform admin fixes the deployment's setup; a namespace admin sees why it fails.
+  // Only a platform admin fixes the deployment's setup; a namespace admin sees why it
+  // fails.
   const why = seesHealth
     ? "Loom retries the setup on its own; Admin › Health says why it fails."
     : "Loom retries the setup on its own.";

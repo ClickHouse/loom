@@ -520,7 +520,8 @@ describe("AssistantChat", () => {
     // Two of its three sources were found (code is never checked): the label leads with that.
     expect(screen.getByTestId("assistant-support")).toHaveTextContent("Partly confirmed: 2 of 3 sources found in Loom");
     const rows = within(sources).getAllByRole("listitem");
-    // Each row is its number and its source as the reader knows it, under one Sources label.
+    // Each row is its number and its source as the reader knows it, under one Sources
+    // label.
     expect(rows[0]).toHaveTextContent(/^1\. billing\/invoices$/);
     expect(rows[2]).toHaveTextContent(
       /^3\. server\/__init__\.py:12 · not confirmed \(code citations are not checked\)$/,

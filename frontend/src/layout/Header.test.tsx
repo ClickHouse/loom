@@ -41,7 +41,8 @@ const jwtOnly: MyNamespaceEntry[] = [
   },
 ];
 
-/** The window's width the media queries read: 900 px (from md, below lg) unless a test sets it. */
+/** The window's width the media queries read: 900 px (from md, below lg) unless a test
+ *  sets it. */
 let viewport = 900;
 beforeEach(() => {
   resetNamespaceRoleCache();
@@ -166,7 +167,7 @@ describe("Header", () => {
     const again = render(<Header />);
     expect(screen.getByLabelText("Search Loom")).toHaveAttribute("placeholder", "Search profile, memories, library…");
     again.unmount();
-    // An org-wide token keeps the assistant from answering, so the search will not offer it.
+    // An org-wide token keeps the assistant from answering, so the search won't offer it.
     auth.off = false;
     const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
     localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ org: "*", sub: "ada" })}.sig`);

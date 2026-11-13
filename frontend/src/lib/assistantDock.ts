@@ -6,13 +6,13 @@
 // (views/assistant/Dock.tsx). It opens from the header's Ask AI button, beside the search
 // field at every width (layout/AssistantLauncher.tsx), and from the search's answer card.
 //
-// One panel element serves every mode, and only its position, the trap and the page's inert
-// change between them, so a resize keeps the focus and the draft:   push     beside <main>
-// from PUSH_MIN px wide, <main> keeping at least PAGE_MIN; non-modal.   overlay  over the
-// page at the right, full height, a scrim and the page inert; modal.   sheet    below
-// PHONE_MIN px wide, full screen with a history entry of its own; modal.   expanded a
-// window over the page from EXPAND_MIN px, anchored at the right; modal. It
-// changes neither the address nor the history, and a reload never restores it.
+// One panel element serves every mode, and only its position, the trap and the page's
+// inert change between them, so a resize keeps the focus and the draft:
+//   push     beside <main> from PUSH_MIN px, <main> keeping at least PAGE_MIN; non-modal.
+//   overlay  over the page at the right, full height, a scrim and the page inert; modal.
+//   sheet    below PHONE_MIN px wide, full screen with a history entry of its own; modal.
+//   expanded a window over the page from EXPAND_MIN px, anchored at the right; modal. It
+//            changes neither the address nor the history, and a reload never restores it.
 import { create } from "zustand";
 import { isAuthDisabled } from "../api";
 import { INDEX_KEY, PANEL_KEY } from "./assistantStorage";
@@ -73,7 +73,7 @@ export interface DockState {
   entering?: boolean;
   /** Bumped by the Memories page's Insights button: the panel opens on the starters. */
   startersSeq?: number;
-  /** The panel shows History in place of the chat (its header's History button, pressed). */
+  /** History shows in place of the chat (the header's History button, pressed). */
   history?: boolean;
   /** Bumped by the header's New chat, so the panel's body starts one once. */
   newChatSeq?: number;
