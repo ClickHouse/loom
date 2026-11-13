@@ -528,7 +528,7 @@ class KnowledgeListInput(BaseModel):
 
     org: str
     namespace: str
-    # Also list these namespaces (or `@me`) in the same list, each read-checked (403 for the
+    # Also list the documents of these namespaces (or `@me`), each read-checked (403 for the
     # first refused); empty = `namespace` alone.
     namespaces: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
         default_factory=list, max_length=100

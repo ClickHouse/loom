@@ -359,7 +359,7 @@ class KnowledgeClient:
         include_superseded: bool = False,
         limit: int = 50,
         cursor: str | None = None,
-        namespaces: builtins.list[str] | None = None,
+        namespaces: list[str] | None = None,
         **extra: Any,
     ) -> dict[str, Any]:
         """Paginated listing of this namespace's documents, or several namespaces' as one.
