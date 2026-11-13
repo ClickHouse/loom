@@ -4,25 +4,26 @@
 
 <a id="a-code-index-for-coding-agents"></a>
 
-# Um índice de código para agentes de programação
+# Um índice de código para agentes de código
 
-O Loom oferece aos agentes de programação um índice compartilhado dos seus repositórios git, servido via MCP, de modo que o agente faz uma pergunta sobre a estrutura do código e recebe as linhas que a respondem, em vez de ler arquivos inteiros. Requer um repositório adicionado e `LOOM_CODE_INGEST_ENABLED=true`. Como o índice é construído e mantido atualizado está descrito na [visão geral do índice de código](https://github.com/ClickHouse/loom/blob/main/docs/features/code-index/overview.md).
+O Loom oferece aos agentes de código um índice compartilhado dos seus repositórios git, servido via MCP, para que o agente faça uma pergunta sobre a estrutura do código e receba as linhas que a respondem, em vez de ler arquivos inteiros. Requer um repositório adicionado e `LOOM_CODE_INGEST_ENABLED=true`. Como o índice é construído e mantido atualizado está descrito na [visão geral do índice de código](https://github.com/ClickHouse/loom/blob/main/docs/features/code-index/overview.md).
 
 <a id="what-you-get"></a>
 
 ## O que você recebe
 
 - **Definições, chamadores e impacto.** `code.symbol`, `code.callers` e `code.impact`
-  respondem com o arquivo e a linha, e cada resposta indica o commit e o nível de índice por trás
-  dela. [Code operations](https://github.com/ClickHouse/loom/blob/main/docs/features/code-index/operations.md)
+  respondem com o arquivo e a linha, e cada resposta informa o commit e o nível de índice
+  por trás dela. [Code operations](https://github.com/ClickHouse/loom/blob/main/docs/features/code-index/operations.md)
 - **Busca por significado e por string exata.** `code.search` encontra onde um mecanismo vive;
   `code.grep` encontra uma mensagem ou um identificador exato.
-- **Histórico e pull requests.** Histórico de PRs mergeados com comentários de revisão, uma verificação de duplicidade
-  antes do PR e candidatos de bisect para uma regressão. Isso exige que o histórico de PRs esteja ativado
-  (`LOOM_CODE_PR_HISTORY_ENABLED`); os comentários de revisão e os PRs abertos também exigem um token do GitHub.
-  [History, PRs and releases](https://github.com/ClickHouse/loom/blob/main/docs/features/code-index/history-and-prs.md) explica o que cada
-  um exige.
-- **Atualização visível.** O índice fica atrás da branch pelos commits mergeados, e uma
+- **Histórico e pull requests.** Histórico de PRs mesclados com comentários de revisão, uma
+  verificação de duplicidade antes do PR e candidatos de bisect para uma regressão. Isso exige
+  o histórico de PRs ativado (`LOOM_CODE_PR_HISTORY_ENABLED`); os comentários de revisão e os
+  PRs abertos também exigem um token do GitHub.
+  [History, PRs and releases](https://github.com/ClickHouse/loom/blob/main/docs/features/code-index/history-and-prs.md) diz o que cada um
+  exige.
+- **Atualização que você consegue ver.** O índice fica atrás do branch pelos commits mesclados, e uma
   resposta desatualizada avisa isso. [Freshness](https://github.com/ClickHouse/loom/blob/main/docs/features/code-index/freshness.md)
 - **Plugins.** O plugin do Claude Code se conecta no toolset `coding` e o plugin do Codex
   em `core,coding,tracker,tasks`; ambos listam as ferramentas de código. O Cursor e outros clientes MCP usam
@@ -33,9 +34,13 @@ O Loom oferece aos agentes de programação um índice compartilhado dos seus re
 
 ## Resultados medidos
 
-No repositório do ClickHouse, o Claude Code com Loom apontou o arquivo correto entre os três indicados em 96.4% de 36 perguntas conceituais (10 execuções pareadas), contra 91.4% sem ele, com custo de modelo 21% menor (a fatura de modelo do agente; as chamadas de modelo do próprio Loom não estão incluídas).
-Em 200 issues do SWE-bench Verified, `code.search` posicionou um arquivo alterado entre os 10 primeiros resultados em 82% dos casos (localização de arquivos, não resolução de issues), contra 57% do BM25 sobre todos os arquivos indexados e 79% do BM25 apenas sobre arquivos `.py`; a diferença em relação ao BM25 apenas sobre `.py` está dentro do ruído.
-[Com e sem Loom](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#with-and-without-loom) ·
+No repositório do ClickHouse, o Claude Code com Loom indicou o arquivo correto entre os três propostos em
+96.4% de 36 perguntas conceituais (10 execuções pareadas), contra 91.4% sem o Loom, com um custo de
+modelo 21% menor (a fatura de modelo do agente; as chamadas de modelo do próprio Loom não entram na conta).
+Em 200 issues do SWE-bench Verified, o `code.search` classificou um arquivo alterado entre os 10 primeiros
+resultados em 82% dos casos (localização de arquivos, não resolução de issues), contra 57% do BM25 sobre todos os
+arquivos indexados e 79% do BM25 apenas sobre arquivos `.py`; a diferença para o BM25 só com `.py` está dentro do ruído.
+[Com e sem o Loom](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#with-and-without-loom) ·
 [Localização de arquivos no SWE-bench Verified](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#swe-bench-verified-file-localization)
 
 <a id="start"></a>

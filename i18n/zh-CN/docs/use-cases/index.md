@@ -14,9 +14,9 @@
 | 为 agent 提供知识和文档搜索（RAG）                                | [Document search](document-search.md)                  |
 | 为编码 agent 提供代码索引和代码智能                               | [Code index](code-intelligence.md)                     |
 | 降低编码 agent 的模型成本                                         | [Coding-agent cost](coding-agent-cost.md)              |
-| 在多 agent 工作流中让 agent 共享上下文                            | [Multi-agent](multi-agent.md)                          |
+| 多 agent 工作流中 agent 之间的共享上下文                          | [Multi-agent](multi-agent.md)                          |
 | 为自主 agent 提供记忆、召回、审计和擦除                           | [Autonomous agents](autonomous-agents.md)              |
-| agent 运行、trace、tracker 和 PR 历史                             | [Runs and PR history](runs-and-pr-history.md)          |
-| 基于 ClickHouse 自托管 agent 记忆，使用 Docker 或 Kubernetes      | [Self-hosted on ClickHouse](self-hosted-clickhouse.md) |
+| agent 运行记录、trace、tracker 和 PR 历史                         | [Runs and PR history](runs-and-pr-history.md)          |
+| 基于 ClickHouse 的自托管 agent 记忆，使用 Docker 或 Kubernetes    | [Self-hosted on ClickHouse](self-hosted-clickhouse.md) |
 
 [Loom 不适用的情况](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#when-it-does-not-fit)列出了其他工具更适合满足的需求。

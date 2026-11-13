@@ -6,14 +6,14 @@
 
 # Menor custo de modelo para agentes de código
 
-Com o plugin do Loom e o índice de código, o Claude Code respondeu perguntas sobre a base de código do ClickHouse com um custo de modelo de 6% a 21% menor do que sem ele, nos três conjuntos de perguntas medidos. A economia foi de 20% em 24 perguntas avaliadas pela qualidade da resposta (qualidade da resposta de 0.84 contra 0.78), de 21% em 36 perguntas conceituais e de 6% em 24 perguntas multi-hop, nas quais rastrear um bug até sua correção em uma release branch custou o mesmo nos dois casos.
+Com o plugin do Loom e o índice de código, o Claude Code respondeu a perguntas sobre a base de código do ClickHouse com um custo de modelo de 6% a 21% menor do que sem ele, nos três conjuntos de perguntas medidos. A economia foi de 20% em 24 perguntas avaliadas pela resposta (qualidade da resposta de 0.84 contra 0.78), de 21% em 36 perguntas conceituais e de 6% em 24 perguntas multi-hop, nas quais rastrear um bug até a sua correção em uma branch de release custou o mesmo nos dois casos.
 
 <a id="what-was-measured"></a>
 
 ## O que foi medido
 
-Os dois grupos executaram o Claude Code (`claude-sonnet-5`) no mesmo checkout: uma sessão simples e outra com o plugin do Loom e o toolset `coding`. O custo é a fatura de modelo da sessão inteira e exclui as chamadas de modelo feitas pelo próprio servidor do Loom, a hospedagem e a indexação. A comparação mede o plugin como um todo; ela não separa o índice de código da memória. Os resultados são específicos das cargas de trabalho testadas. Com o Loom, uma pergunta leva mais tempo no relógio: a busca por prompt do plugin e as idas e vindas do MCP adicionam latência. A forma como o custo por pergunta é comparado com o ruído entre execuções está na página de resultados.
-[With and without Loom](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#with-and-without-loom) traz todos os conjuntos, o protocolo e os artefatos, e [evaluate Loom](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/evaluate.md) mostra como medi-lo no seu próprio repositório.
+Os dois grupos executaram o Claude Code (`claude-sonnet-5`) no mesmo checkout: uma sessão simples e outra com o plugin do Loom e o toolset `coding`. O custo é a fatura de modelo da sessão inteira e exclui as chamadas de modelo feitas pelo próprio servidor do Loom, a hospedagem e a indexação. A comparação mede o plugin como um todo; ela não separa o índice de código da memória. Os resultados são específicos das cargas de trabalho testadas. Com o Loom, uma pergunta leva mais tempo no relógio: a busca do plugin a cada prompt e as idas e vindas do MCP adicionam latência. A página de resultados explica como o custo por pergunta é comparado com o ruído entre execuções.
+[With and without Loom](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#with-and-without-loom) traz todos os conjuntos, o protocolo e os artefatos, e [evaluate Loom](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/evaluate.md) mostra como medir o Loom no seu próprio repositório.
 
 Para a memória lida por um modelo, em vez de um histórico de chat inteiro, veja
 [agent memory](agent-memory.md#measured).
@@ -24,8 +24,8 @@ Para a memória lida por um modelo, em vez de um histórico de chat inteiro, vej
 
 - **Respostas do índice em vez de leituras de arquivos.** `code.symbol`, `code.callers` e `code.search`
   retornam as linhas que respondem a uma pergunta sobre estrutura. [Índice de código](code-intelligence.md)
-- **Contexto salvo em vez de redescoberta.** As decisões e descobertas que uma sessão salva são
-  carregadas no início da sessão seguinte. [Memória compartilhada](agent-memory.md)
+- **Contexto salvo em vez de redescoberta.** Decisões e descobertas que uma sessão salva são
+  carregadas no início da próxima sessão. [Memória compartilhada](agent-memory.md)
 
 O Loom também registra o que gasta com embeddings e chamadas de LLM por operação.
 [Custo e uso](https://github.com/ClickHouse/loom/blob/main/docs/features/observability/cost-and-usage.md)

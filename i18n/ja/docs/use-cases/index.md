@@ -6,17 +6,17 @@
 
 # ユースケース
 
-各ページは、ツールを探す人やエージェントが抱く「Loom はそのニーズに対して何ができるのか、どこから始めればよいのか」という疑問に答えます。
+各ページは、ツールを探すときに人やエージェントが抱く疑問の一つに答えます。そのニーズに対して Loom が何をするのか、そしてどこから始めればよいかを説明します。
 
 | ニーズ                                                            | ページ                                                 |
 | ----------------------------------------------------------------- | ------------------------------------------------------ |
-| AI エージェント向けの長期記憶と共有メモリ (MCP メモリサーバー)    | [Agent memory](agent-memory.md)                        |
-| エージェント向けのナレッジ検索とドキュメント検索 (RAG)            | [Document search](document-search.md)                  |
-| コーディングエージェント向けのコードインデックスとコードインテリジェンス | [Code index](code-intelligence.md)                     |
-| コーディングエージェントのモデルコストの削減                      | [Coding-agent cost](coding-agent-cost.md)              |
-| マルチエージェントワークフローにおけるエージェント間の共有コンテキスト | [Multi-agent](multi-agent.md)                          |
-| 自律型エージェント向けのメモリ、リコール、監査、消去              | [Autonomous agents](autonomous-agents.md)              |
-| エージェントの実行、トレース、トラッカー、PR 履歴                 | [Runs and PR history](runs-and-pr-history.md)          |
-| ClickHouse 上のセルフホスト型エージェントメモリ (Docker または Kubernetes 対応) | [Self-hosted on ClickHouse](self-hosted-clickhouse.md) |
+| AI エージェント向けの長期メモリと共有メモリ（MCP メモリサーバー） | [エージェントメモリ](agent-memory.md)                  |
+| エージェント向けのナレッジ検索とドキュメント検索（RAG）           | [ドキュメント検索](document-search.md)                 |
+| コーディングエージェント向けのコードインデックスとコードインテリジェンス | [コードインデックス](code-intelligence.md)         |
+| コーディングエージェントのモデルコストの削減                      | [コーディングエージェントのコスト](coding-agent-cost.md) |
+| マルチエージェントワークフローでのエージェント間の共有コンテキスト | [マルチエージェント](multi-agent.md)                   |
+| 自律型エージェント向けのメモリ、リコール、監査、消去              | [自律型エージェント](autonomous-agents.md)             |
+| エージェントの実行、トレース、トラッカー、PR 履歴                 | [実行と PR 履歴](runs-and-pr-history.md)               |
+| Docker または Kubernetes を使った、ClickHouse 上のセルフホスト型エージェントメモリ | [ClickHouse でのセルフホスト](self-hosted-clickhouse.md) |
 
-[Loom が適さない場合](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#when-it-does-not-fit)では、他のツールのほうが適しているニーズを一覧で示しています。
+[Loom が適さない場合](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#when-it-does-not-fit)では、他のツールのほうが適しているニーズを紹介しています。
