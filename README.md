@@ -116,7 +116,8 @@ To try it with nothing installed, open it in a codespace:
 ([what it runs and who can reach it](./docs/getting-started/quickstart.md#try-it-in-github-codespaces))
 
 For the default personal installation, with Docker installed (on Windows, in a WSL 2
-terminal, with Docker Desktop's WSL integration turned on for that distribution):
+terminal where `docker` works: Docker Desktop with its WSL integration on, or Docker Engine
+installed in the distribution):
 
 ```bash
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
