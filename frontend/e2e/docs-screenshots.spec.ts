@@ -631,7 +631,7 @@ const SERVICE_ACCOUNTS = [
   {
     name: "support-bot",
     sa_subject: "sa:support-bot-91c3",
-    namespaces: [NS_SUPPORT],
+    namespaces: [NS, NS_SUPPORT],
     roles: ["writer"],
     ttl_days: 365,
     created_by: SUBJECT,
@@ -640,7 +640,7 @@ const SERVICE_ACCOUNTS = [
     revoked_at: null,
     revoked_by: "",
     last_used_at: ago(1.1),
-    ns_roles: { [NS_SUPPORT]: "writer" },
+    ns_roles: { [NS]: "writer", [NS_SUPPORT]: "writer" },
   },
 ];
 
@@ -756,7 +756,7 @@ const PASSAGES = [
   },
 ];
 
-const AGENT_SUBJECT = "sa:claude-code-7f2a";
+const AGENT_SUBJECT = "sa:claude-code-laptop-4f2a";
 const AGENT_WRITER = `process:${AGENT_SUBJECT}`;
 const BOT_WRITER = "process:sa:support-bot-91c3";
 /** The Audit log's events, with the subject fields the Audit log's labels read. A memory
@@ -765,16 +765,17 @@ const BOT_WRITER = "process:sa:support-bot-91c3";
 const AUDIT_ROWS = [
   { h: 1.5, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "api/rate-limit/public" } },
   { h: 2.0, event_type: "memory.set", actor: AGENT_WRITER, subject: { memory_key: "staging/db/read-only-window" } },
-  {
-    h: 3.1,
-    event_type: "grants.create",
-    actor: SUBJECT,
-    subject: { role: "writer", namespace: NS_SUPPORT, subject: "sa:support-bot-91c3" },
-  },
   { h: 3.5, event_type: "memory.set", actor: AGENT_WRITER, subject: { memory_key: "deploys/policy/windows" } },
   { h: 4.6, event_type: "memory.delete", actor: AGENT_SUBJECT, subject: { memory_key: "staging/db/legacy-host" } },
   { h: 5.0, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "support/refunds/approval" } },
   { h: 8.2, event_type: "namespace.join", actor: "dev2@acme.example", subject: { namespace: NS, role: "viewer" } },
+  // The support bot's writes above come after this grant of the namespace they land in.
+  {
+    h: 9.0,
+    event_type: "grants.create",
+    actor: SUBJECT,
+    subject: { role: "writer", namespace: NS, subject: "sa:support-bot-91c3" },
+  },
   { h: 12.0, event_type: "knowledge.delete", actor: SUBJECT, subject: { source_uri: "runbooks/old-pager-rota.md" } },
   {
     h: 20.0,
