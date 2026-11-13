@@ -373,14 +373,9 @@ export function HeaderSearch({
   const hasResults =
     namespacesShown.length > 0 || profileShown.length > 0 || memoryShown.length > 0 || documentsShown.length > 0;
 
-  // Whether a question can be asked from here: the chat on, no reason known to block it (the
-  // token's own claims are read here: the panel's behaviour, which also reads them, may not
-  // have loaded), and a memory namespace in the header (the assistant answers about one).
-  // A question longer than one request carries, with the page line it would be sent with,
-  // gets no card: the route would refuse it.
+  // offersAsk (lib/searchAsk.ts) is the placeholder's test too; a question longer than one
+  // request carries, with its page line, gets no card: the route would refuse it.
   const fits = withContext(parsed.raw, pageContext(view, null, pageOff)).length <= MAX_MESSAGE_CHARS;
-  // A setup that is starting or failing keeps the card: a refusal it causes is said on the
-  // card.
   const askable = fits && !!identity && offersAsk(dockReason, identity.namespace, mine);
   useEffect(() => {
     // Other text is another question: the card goes back to asking it (the answer before
