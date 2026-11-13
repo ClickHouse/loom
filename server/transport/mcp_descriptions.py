@@ -6,6 +6,10 @@ builds the tools/list descriptors.
 
 from __future__ import annotations
 
+# When an agent skips the first-step context.pack: the same words wherever the step is
+# named (context.pack's description here, the MCP instructions in mcp_primer).
+FIRST_STEP_UNLESS = "unless a Loom hook already put this task's context in the conversation"
+
 # The one revision policy. Descriptions that each state their own revision
 # rule end up contradicting one another in the listing, so every description
 # that speaks about a changed fact interpolates this text;
@@ -1180,10 +1184,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # ---- Context pack (session startup bundle) ----
     "context.pack": (
-        "Call first, with the task as `query`, at the start of each task, before "
-        "reading code: the team's memories, decisions and procedures for it, and the "
-        "profile, optionally docs/conversations, in one prompt-sized bundle. Skip it "
-        "when Loom context is already in the conversation. "
+        f"Call first at the start of each task, {FIRST_STEP_UNLESS}, with the task as "
+        "`query`. It returns the memories, decisions and procedures for the task, and the "
+        "profile, optionally docs/conversations, in one prompt-sized bundle. "
         "`include_runs=true` adds a manifest of your recent sessions and runs "
         "(goal, outcome, tool calls, files) — shortlist there "
         "before opening one with memory.evidence or memory.digests. For one "

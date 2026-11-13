@@ -436,3 +436,22 @@ def test_the_primers_drop_the_collections_clause_when_search_does_not_span_them(
     monkeypatch.setattr(settings, "knowledge_search_fanout_kinds", "")
     full = mcp_primer._loom_rules("core", None)
     assert "and the collections you can read" in full
+
+
+def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
+    """The coding instructions, the full primer and context.pack's description name the
+    first step and its one exception in the same words."""
+    from server.transport import mcp_primer
+    from server.transport.mcp_descriptions import FIRST_STEP_UNLESS, TOOL_DESCRIPTIONS
+
+    coding = mcp_primer._coding_instructions("coding")
+    assert (
+        f"First step of each task: call `loom_context_pack` with the task, {FIRST_STEP_UNLESS}."
+        in coding
+    )
+    rules = mcp_primer._loom_rules("core", None)
+    assert "**1. Session context.** First step of each task: call `loom_context_pack`" in rules
+    assert FIRST_STEP_UNLESS in rules
+    assert TOOL_DESCRIPTIONS["context.pack"].startswith(
+        f"Call first at the start of each task, {FIRST_STEP_UNLESS}"
+    )
