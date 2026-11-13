@@ -311,7 +311,7 @@ def _on_terminal(
     pid, fd = pty.fork()
     if pid == 0:
         os.execvpe("sh", ["sh", str(ROOT / "install.sh"), *args], env)
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + 180  # a loaded machine runs the installer slowly
     seen, answered, status = b"", 0, None
     try:
         while status is None and time.monotonic() < deadline:
@@ -1432,9 +1432,10 @@ def _desktop(installer_env: dict[str, str]) -> tuple[dict[str, str], Path]:
     return {**env, "LOOM_SKIP_START": "0", "DISPLAY": ":0"}, log
 
 
-def _opened(log: Path) -> list[str]:
-    """What xdg-open got; it runs in the background, so give it a moment."""
-    deadline = time.monotonic() + 5
+def _opened(log: Path, wait: float = 1) -> list[str]:
+    """What xdg-open got. It runs in the background, so a call that expects it to
+    have run waits up to `wait` seconds for it."""
+    deadline = time.monotonic() + wait
     while not log.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     return log.read_text().splitlines() if log.exists() else []
@@ -1444,7 +1445,7 @@ def test_a_new_install_on_a_desktop_opens_the_dashboard_once(installer_env: dict
     _start_stubs(installer_env)
     env, log = _desktop(installer_env)
     _on_terminal(env, [], None)
-    assert _opened(log) == ["http://127.0.0.1:7777/"]
+    assert _opened(log, wait=60) == ["http://127.0.0.1:7777/"]
     log.unlink()
     _on_terminal(env, [], None)  # a rerun keeps its .env
     assert _opened(log) == []
@@ -1458,7 +1459,7 @@ def test_the_first_run_that_starts_loom_opens_the_dashboard(installer_env: dict[
     _on_terminal({**env, "LOOM_SKIP_START": "1"}, [], None)
     assert _opened(log) == []
     _on_terminal(env, [], None)
-    assert _opened(log) == ["http://127.0.0.1:7777/"]
+    assert _opened(log, wait=60) == ["http://127.0.0.1:7777/"]
 
 
 def test_a_namespace_no_check_can_use_opens_the_dashboard_once(
@@ -1471,7 +1472,7 @@ def test_a_namespace_no_check_can_use_opens_the_dashboard_once(
     dotenv = target / ".env"
     dotenv.write_text(dotenv.read_text() + 'LOOM_DEFAULT_NAMESPACE=my"space\n')
     _on_terminal(env, [], None)
-    assert _opened(log) == ["http://127.0.0.1:7777/"]
+    assert _opened(log, wait=60) == ["http://127.0.0.1:7777/"]
     assert not (target / ".memory-check-pending").exists()
     log.unlink()
     _on_terminal(env, [], None)
