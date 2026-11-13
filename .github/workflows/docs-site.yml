@@ -1,10 +1,9 @@
 name: docs site
 
 # Builds the documentation site from docs/ on pull requests that touch it and on every push
-# to main, and publishes it to GitHub
-# Pages from main once the repository variable DOCS_SITE_ENABLED is "true" (set it after
-# Pages is switched to "GitHub Actions" in Settings → Pages). Until then the deploy job
-# is skipped, so main stays green.
+# to main, and publishes it to GitHub Pages from main once the repository variable
+# DOCS_SITE_ENABLED is "true" (set it after Pages is switched to "GitHub Actions" in
+# Settings → Pages). Until then the deploy job is skipped, so main stays green.
 on:
   push:
     branches: [main]

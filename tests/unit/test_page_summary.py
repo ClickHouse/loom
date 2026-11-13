@@ -30,3 +30,15 @@ def test_the_summary_skips_tables_lists_and_code_and_drops_link_targets(tmp_path
         "The [thing](other.md) answers one question. Then more.\n"
     )
     assert page_summary(page) == ("The thing page", "The thing answers one question.")
+
+
+def test_a_long_link_target_does_not_push_the_cut_inside_the_link(tmp_path: Path) -> None:
+    page = tmp_path / "page.md"
+    target = "../" + "very-long-segment/" * 20 + "page.md"
+    words = " ".join(["word"] * 40)
+    page.write_text(
+        f"# Page\n\nThe {words} [configuration reference]({target}) and more words follow.\n"
+    )
+    _title, summary = page_summary(page)
+    assert "[" not in summary and "](" not in summary
+    assert len(summary) <= 240
