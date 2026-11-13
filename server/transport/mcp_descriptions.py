@@ -288,7 +288,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: Explicit, unambiguous user request — 'delete the X "
         "doc', 'remove the lease from my library'.\n"
         "WHEN NOT: Never as cleanup, never on inferred intent. For "
-        "erasing everything about a user, use erasure.request — that cascades "
+        "erasing a user's data, use erasure.request — that cascades "
         "across external systems too.\n"
         "ARGS: Just `source_uri`."
     ),

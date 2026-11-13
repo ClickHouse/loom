@@ -581,7 +581,7 @@ class KnowledgeDeleteInput(BaseModel):
     until an erasure, or a retention TTL an operator set under the ClickHouse authority,
     removes it.
 
-    To erase everything about a user, use the erasure plane — it cascades across
+    To erase a user's data, use the erasure plane — it cascades across
     external systems too.
     """
 
