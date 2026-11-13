@@ -173,8 +173,9 @@ The plugins ship a `loom-memory` skill
 (`integrations/claude-code-plugin/skills/loom-memory/`, generated into the Codex plugin)
 that encodes this guide for a model. A coding agent on plain MCP gets the [agent
 instructions](../features/integrations/agent-instructions.md) block, whose last memory
-line is this review in short; any other agent copies the questions below into its
-instructions. Before reporting done, write only what earns a yes:
+line is this review in short and which can take the questions below for the full review;
+any other agent copies them into its instructions. Before reporting done, write only
+what earns a yes:
 
 1. Did I make or learn a decision, constraint or owner a future session needs?
 2. Did an existing memory turn out wrong or outdated? Update it, same key.

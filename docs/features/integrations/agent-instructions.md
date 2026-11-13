@@ -63,18 +63,18 @@ Code
 indexed branch:
 
 ```bash
-curl -s -X POST https://loom.example.com/v1/code.repos -H "Authorization: Bearer $LOOM_API_KEY" \
-  -H 'Content-Type: application/json' -d '{"repo": "<owner>/<name>"}'
+curl -s -X POST https://loom.example.com/v1/code.repos \
+  -H "Authorization: Bearer $LOOM_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"repo": "<owner>/<name>", "fields": ["branch", "primary_namespace", "readable"]}'
 ```
 
-Replace `<code-namespace>` with the `namespace` of the branch's row and
-`<team-namespace>` with its `primary_namespace` (the trunk branch's, where team file
-rules and decisions live); for the trunk branch the two are the same. A branch indexed
-on its own carries its own row's `namespace` in its copy of the file. A repository with
-no row (not indexed, or `code.repos` answers that code intelligence is off), or whose
-row says `readable: false` (a repository this token cannot read, listed so you can join
-it or ask for access), takes the block without `extra_namespaces`, the team-rule line
-and the Code section.
+Replace `<code-namespace>` with the `namespace` of the row for the branch this copy of
+the file is committed on and `<team-namespace>` with its `primary_namespace` (the trunk
+branch's, where team file rules and decisions live); for the trunk branch the two are
+the same. A repository with no row (not indexed, or `code.repos` answers that code
+intelligence is off), or whose row says `readable: false` (a repository this token
+cannot read, listed so you can join it or ask for access), takes the block without
+`extra_namespaces`, the team-rule line and the Code section.
 
 ## Where each client reads it
 
