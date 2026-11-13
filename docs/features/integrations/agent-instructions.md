@@ -44,7 +44,9 @@ Memory
 - A rule the user states for the whole team about a file: `loom_memory_set` with
   `namespace` `<team-namespace>`, the file in `files` and the tag `constraint`.
 - A fact that changed: `loom_memory_update` on the same key, in the namespace the row
-  lives in (`<team-namespace>` for a team rule), never a second copy.
+  lives in, never a second copy. A team rule someone else wrote is not yours to update:
+  follow the refusal's `hint` (a corrected rule under a new key, with `files` and the tag
+  `constraint`).
 - Your plan and checklist for this task: `loom_working_memory_set`, not `loom_memory_set`.
 - Before reporting done, one pass over what should outlive the session.
 
@@ -80,18 +82,22 @@ cannot read, listed so you can request access or adopt it), takes the block with
 ## Where each client reads it
 
 The block is the same everywhere; only the file and its header differ. Cursor, Cline,
-Devin Desktop and VS Code also read `AGENTS.md`, so one file can serve them all;
-their own rule files keep the block apart from other instructions.
+Devin Desktop, VS Code and Zed also read `AGENTS.md`, so one file can serve them all;
+put the block in one file a client reads, not in both.
 
-| Client                                                         | File                                                                                                                                                                        | Header before the block                                                      |
-| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Codex without the plugin, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root                                                                                                                                          | none                                                                         |
-| Zed                                                            | the first instruction file it finds (`.rules`, `.cursorrules` and others before `AGENTS.md`), so the block goes in that one, or in `AGENTS.md` when the repository has none | none                                                                         |
-| Claude Code without the plugin                                 | `CLAUDE.md` at the repository root                                                                                                                                          | none                                                                         |
-| Cursor                                                         | `.cursor/rules/loom.mdc`                                                                                                                                                    | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
-| Devin Desktop (Windsurf)                                       | `.devin/rules/loom.md` (`.windsurf/rules/loom.md` on a Windsurf build)                                                                                                      | `---`, `trigger: always_on`, `---`                                           |
-| Cline                                                          | `.clinerules/loom.md`                                                                                                                                                       | none                                                                         |
-| VS Code (GitHub Copilot)                                       | `.github/copilot-instructions.md`                                                                                                                                           | none                                                                         |
+| Client                                                         | File                                                                   | Header before the block                                                      |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Codex without the plugin, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root                                     | none                                                                         |
+| Zed                                                            | the first instruction file it finds (below)                            | none                                                                         |
+| Claude Code without the plugin                                 | `CLAUDE.md` at the repository root                                     | none                                                                         |
+| Cursor                                                         | `.cursor/rules/loom.mdc`                                               | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
+| Devin Desktop (Windsurf)                                       | `.devin/rules/loom.md` (`.windsurf/rules/loom.md` on a Windsurf build) | `---`, `trigger: always_on`, `---`                                           |
+| Cline                                                          | `.clinerules/loom.md`                                                  | none                                                                         |
+| VS Code (GitHub Copilot)                                       | `.github/copilot-instructions.md`                                      | none                                                                         |
+
+Zed reads only the first instruction file it finds (`.rules`, `.cursorrules` and others
+before `AGENTS.md`), so the block goes in that one, or in `AGENTS.md` when the repository
+has none.
 
 Each header line goes on its own line. The Cursor file, for example, starts:
 
