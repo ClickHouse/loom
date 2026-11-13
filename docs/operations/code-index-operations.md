@@ -533,18 +533,20 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   connects to the address it vetted. Plain HTTP has no route. One job holds at most 32
   tunnels at a time. A client inside the sandbox reaches the proxy through a local relay
   (its HTTPS proxy), which bridges at most 32 connections; one more waits until a bridge
-  ends. Any other connection over the cap at the proxy is refused after 5 seconds, and
-  so is a relay connection while ssh tunnels hold some of the slots. The proxy logs the
-  first refusal, and the total when the job ends if there was more than one.
+  ends. Any other connection over the cap at the proxy is refused after
+  `LOOM_CODE_EGRESS_SLOT_WAIT_S` (5 s by default), and so is a relay connection while
+  ssh tunnels hold some of the slots. The proxy logs the first refusal, and the total
+  when the job ends if there was more than one.
 
-  A tunnel idle for 5 minutes is closed. Once its client has sent EOF, it is closed
-  after `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` (10 s by default) without a byte either
-  way; while bytes still wait for a slow client, the idle timeout applies instead. A
-  tunnel whose client sent EOF before any byte moved (a connection it gave up on) is
-  closed at once. Once the proxy's side of a tunnel has ended (the server closed it, or
-  the proxy did), the relay ends its connection after at least a second without a byte
-  from the client. A client that never reads what it was sent
-  keeps its relay connection, and so its relay slot.
+  A tunnel with no byte either way for `LOOM_CODE_EGRESS_IDLE_TIMEOUT_S` (5 minutes by
+  default) is closed. Once its client has sent EOF, it is closed after
+  `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` (10 s by default) without a byte either way;
+  while bytes still wait for a slow client, the idle timeout applies instead. A tunnel
+  whose client sent EOF before any byte moved (a connection it gave up on) is closed at
+  once. Once the proxy's side of a tunnel has ended (the server closed it, or the proxy
+  did), the relay ends its connection after at least a second without a byte from the
+  client. A client that never reads what it was sent keeps its relay connection, and so
+  its relay slot.
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are

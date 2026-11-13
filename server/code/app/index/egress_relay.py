@@ -20,8 +20,7 @@ import threading
 import time
 from collections.abc import Callable
 
-# Connections bridged at a time: the proxy's MAX_TUNNELS, as no job holds more.
-# not a setting: the proxy's own cap
+# not a setting: the proxy's MAX_TUNNELS (a unit test pins them equal); no job holds more
 MAX_BRIDGES = 32
 # How long a client may stay silent once the proxy's side of its tunnel has ended
 # (the server closed it, or the proxy did).

@@ -14,11 +14,13 @@ or a package download gets the same answer:
 
 Anything that is not CONNECT (plain http) is refused. One job holds at most
 `MAX_TUNNELS` tunnels; one more waits up to `code_egress_slot_wait_s` and is refused with
-a 503 (the first refusal and the job's count are logged). A tunnel with no byte either
-way for `code_egress_idle_timeout_s` is closed, or for `code_egress_half_close_timeout_s`
-once its client has sent EOF, at once if no byte moved before that EOF. The relay
-inside the sandbox bridges at most `MAX_TUNNELS` connections, so the rest wait in its
-listen backlog.
+a 503 (the first refusal and the job's count are logged). The relay inside the sandbox
+bridges at most as many connections, so the rest wait in its listen backlog.
+
+A tunnel with no byte either way for `code_egress_idle_timeout_s` is closed. Once its
+client has sent EOF, it is closed after `code_egress_half_close_timeout_s` without a
+byte, or after the idle timeout while bytes still wait for the client. A tunnel whose
+client sent EOF before any byte moved is closed at once.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from server.core.hosts import vet_host
 from server.settings import settings
@@ -57,11 +60,19 @@ async def vet_connect(
     return 200, "", address, port
 
 
+@dataclass
+class _Traffic:
+    """What both directions of one tunnel have moved, and when they last did."""
+
+    last: float
+    moved: int = 0
+
+
 async def _splice(
-    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, last_active: list[float]
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, traffic: _Traffic
 ) -> None:
     """Copy `reader` to `writer` until EOF, or until neither direction of the
-    tunnel has moved a byte for `code_egress_idle_timeout_s` (`last_active[0]` is shared by
+    tunnel has moved a byte for `code_egress_idle_timeout_s` (`traffic` is shared by
     both directions, so a long download with a silent client stays open)."""
     try:
         while True:
@@ -70,12 +81,13 @@ async def _splice(
                     reader.read(65536), timeout=settings.code_egress_idle_timeout_s
                 )
             except TimeoutError:
-                if time.monotonic() - last_active[0] >= settings.code_egress_idle_timeout_s:
+                if time.monotonic() - traffic.last >= settings.code_egress_idle_timeout_s:
                     return
                 continue
             if not data:
                 break
-            last_active[0] = time.monotonic()
+            traffic.last = time.monotonic()
+            traffic.moved += len(data)
             writer.write(data)
             await writer.drain()
         if writer.can_write_eof():
@@ -85,7 +97,7 @@ async def _splice(
 
 
 async def _until_server_quiet(
-    server_side: asyncio.Task[None], last_active: list[float], to_client: asyncio.StreamWriter
+    server_side: asyncio.Task[None], traffic: _Traffic, to_client: asyncio.StreamWriter
 ) -> None:
     """Wait until the server is quiet for `code_egress_half_close_timeout_s`, or for
     `code_egress_idle_timeout_s` while bytes still wait for the client."""
@@ -93,7 +105,7 @@ async def _until_server_quiet(
         half_close = settings.code_egress_half_close_timeout_s
         buffered = to_client.transport.get_write_buffer_size()
         limit = settings.code_egress_idle_timeout_s if buffered else half_close
-        quiet = time.monotonic() - last_active[0]
+        quiet = time.monotonic() - traffic.last
         if quiet >= limit:
             return
         await asyncio.wait({server_side}, timeout=min(limit - quiet, half_close))
@@ -156,14 +168,13 @@ class EgressProxy:
             await writer.drain()
             return
         writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
-        opened = time.monotonic()
-        last_active = [opened]
-        server_side = asyncio.create_task(_splice(up_reader, writer, last_active))
+        traffic = _Traffic(last=time.monotonic())
+        server_side = asyncio.create_task(_splice(up_reader, writer, traffic))
         try:
-            await _splice(reader, up_writer, last_active)
-            client_gave_up = last_active[0] == opened  # EOF before any byte moved
+            await _splice(reader, up_writer, traffic)
+            client_gave_up = not traffic.moved  # its EOF came before any byte either way
             if not client_gave_up:
-                await _until_server_quiet(server_side, last_active, writer)
+                await _until_server_quiet(server_side, traffic, writer)
         finally:
             up_writer.close()
             server_side.cancel()

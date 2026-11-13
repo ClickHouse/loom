@@ -116,8 +116,8 @@ def _relay(
     assert bridges_done
 
 
-def _thread_failing_on(start: int) -> types.SimpleNamespace:
-    """A stand-in for the relay's `threading` whose `start`-th thread start fails.
+def _thread_failing_on(nth: int) -> types.SimpleNamespace:
+    """A stand-in for the relay's `threading` whose `nth` thread start fails.
     The relay must not count on restarting a Thread whose start failed, so this one
     refuses too."""
     starts = 0
@@ -130,7 +130,7 @@ def _thread_failing_on(start: int) -> types.SimpleNamespace:
             if self.failed:
                 raise RuntimeError("threads can only be started once")
             starts += 1
-            if starts == start:
+            if starts == nth:
                 self.failed = True
                 raise RuntimeError("can't start new thread")
             super().start()
@@ -240,6 +240,27 @@ def test_a_client_still_sending_after_the_proxy_closed_frees_its_slot(sock_dir: 
             stop.set()
             sender.join()
             first.close()
+
+
+def test_a_client_still_uploading_to_a_half_closed_proxy_keeps_its_bridge(
+    sock_dir: Path,
+) -> None:
+    """The server has sent EOF and still reads: each byte restarts the linger."""
+    with _relay(sock_dir, 1) as (port, upstream):
+        client = socket.create_connection(("127.0.0.1", port), timeout=5)
+        assert upstream.arrived.acquire(timeout=5)
+        upstream.held[0].shutdown(socket.SHUT_WR)  # the proxy's side has ended
+        assert client.recv(1) == b""
+        chunks = 4
+        for _ in range(chunks):  # each gap longer than one linger, shorter than two
+            client.sendall(b"x")
+            time.sleep(1.3 * egress_relay._LINGER_S)
+        received = b""
+        upstream.held[0].settimeout(5)
+        while len(received) < chunks:
+            received += upstream.held[0].recv(chunks)
+        assert received == b"x" * chunks
+        client.close()
 
 
 def test_an_upstream_socket_that_cannot_open_costs_its_connection_only(
