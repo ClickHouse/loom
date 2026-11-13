@@ -124,7 +124,7 @@ install commands. For one repository, put the entry in `<repo>/.mcp.json`:
 ```
 
 Without the plugin's skills, add the [agent instructions](agent-instructions.md) block to
-the repository's `CLAUDE.md`.
+the repository's `CLAUDE.md`, or to its `AGENTS.md` with `@AGENTS.md` in `CLAUDE.md`.
 
 ## Codex without the plugin
 
