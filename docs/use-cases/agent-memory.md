@@ -22,9 +22,10 @@ agent, or by a person at the dashboard. This page shows how that works and where
 - **Long-term memory for your coding agent, shared across agents.** The Claude Code and
   Codex plugins load relevant context at session start and capture the session as it
   runs. Cursor, GitHub Copilot, Gemini CLI, Cline, Kilo Code, OpenCode, goose, Zed and other
-  MCP clients connect to the same server, so a fact one agent saves is found by the others.
+  MCP clients connect to the same server, and agents on the same namespace find the facts
+  one another saves.
   [Connect a coding agent](../getting-started/connect-a-coding-agent.md) ·
-  [the config for each client](../features/integrations/mcp-clients.md#other-editors-and-agents)
+  [MCP clients](../features/integrations/mcp-clients.md)
 - **Per-user memory for your own agent.** The Python and TypeScript SDKs write and read
   memory per end user. [Your first agent](../getting-started/first-agent.md)
 

@@ -22,10 +22,11 @@ what it gives in each language is in [code index by language](code-intelligence-
   answer says so. [Freshness](../features/code-index/freshness.md)
 - **Plugins and MCP clients.** The Claude Code plugin connects on the `coding` toolset and
   the Codex plugin on `core,coding,tracker,tasks`; both list the code tools. Cursor, GitHub
-  Copilot, Gemini CLI, Cline, Kilo Code, OpenCode and other MCP clients use
-  `?toolset=coding`.
+  Copilot, Gemini CLI, Cline, Kilo Code, OpenCode and other MCP clients list them with
+  `?toolset=coding` on their URL (`loom install` adds it for Cursor; `--toolset coding` adds
+  it for the others it writes).
   [Connect a coding agent](../getting-started/connect-a-coding-agent.md) ·
-  [the config for each client](../features/integrations/mcp-clients.md#other-editors-and-agents)
+  [MCP clients](../features/integrations/mcp-clients.md)
 
 ## Measured
 
