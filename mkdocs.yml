@@ -12,7 +12,6 @@ theme:
   custom_dir: scripts/docs_site/overrides
   features: [navigation.sections, search.suggest, content.code.copy, content.action.edit]
 markdown_extensions:
-  - tables
   - admonition
   - attr_list
   - mdx_truly_sane_lists # nests list content at 2 spaces (its default), as Prettier writes the docs
