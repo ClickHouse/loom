@@ -337,12 +337,14 @@ async def _recheck(
     for r in found:
         renamed, far = r.renamed, []
         candidates: list[Definition] = []
+        mirror_unsure = False
         if r.lost:
             # the index's namesakes, and the mirror's: the index may not hold the files a
             # commit past the ingest's per-commit cap changed, or still hold their old text
             mirror = await _in_mirror(files, r, head)
-            if mirror is None and r.before.state != "missing":
-                renamed = Successor(None, uncertain=True)  # the mirror could not answer
+            # a mirror that cannot answer leaves the link unsure only where the index's
+            # namesakes do not settle it
+            mirror_unsure = mirror is None and r.before.state != "missing"
             both = [*elsewhere.get(r.before.qualified_name, []), *(mirror or [])]
             candidates = list({(d.path, d.qualified_name): d for d in both}.values())
         if candidates:
@@ -368,7 +370,7 @@ async def _recheck(
             renamed=renamed.definition,
             renamed_exactly=renamed.exact,
             elsewhere=far,
-            uncertain=renamed.uncertain,
+            uncertain=renamed.uncertain or mirror_unsure,
             carried=renamed.carried,
             head=head,
         )
@@ -400,7 +402,7 @@ async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[De
                     found += await files.defs(head, path, name)
         except code.ParseFailed:
             unread = True
-    return None if unread and not found else found
+    return None if unread else found
 
 
 async def _namesakes(

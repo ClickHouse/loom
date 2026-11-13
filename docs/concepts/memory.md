@@ -370,10 +370,10 @@ name is related to the old), and its class's rename within the file. A namesake 
 another class or namespace never inherits a link, and a `missing` link comes back only
 when its own name does. A name gone from its file is looked for in the other files the
 commits since its last check touched, read from the mirror as its own file is, so a
-commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) never
-makes a moved definition read as gone; when that search cannot answer (a range of more
-than 5,000 files, more than 200 files naming it, a read that fails), the link is
-`unresolved`. A file the parser fails on keeps its links as they were until it parses.
+commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) does not
+make a definition moved by it read as gone when the link is rechecked; when that search
+cannot answer (a range of more than 5,000 files, 200 or more files naming it, a read
+that fails) and the index's namesakes do not settle it, the link is `unresolved`. A file the parser fails on keeps its links as they were until it parses.
 When the fingerprint rules change, every link is re-hashed from the commits its
 hashes were taken at. When its old text is gone from git, a link that matched it takes the
 text the next check finds and a changed one stays `changed`; one whose old text no longer

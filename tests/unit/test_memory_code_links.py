@@ -3856,23 +3856,30 @@ async def test_elsewhere_finds_the_same_name_and_the_same_name_in_another_module
 
 
 def _moved_module_world(
-    monkeypatch, files, indexed: bool, copied_first: bool = False, stale_source: bool = False
+    monkeypatch,
+    files,
+    indexed: bool,
+    copied_first: bool = False,
+    stale_source: bool = False,
+    edited: bool = False,
 ):
     """c0: `fetch_rows` in pkg/a.py. c1: pkg/a.py is deleted and pkg/b.py, a new module,
     defines it (with `copied_first`, b.py already held a copy at c0). c2: an unrelated
     edit to pkg/c.py. The mirror has every commit; the code index holds b.py only when
     `indexed` (a commit past the ingest's per-commit cap leaves it out until a backfill),
     and with `stale_source` it still holds a.py's old definition (that file was past the
-    cap too). Returns the fresh link row and the mirror searches made."""
+    cap too). With `edited`, b.py's copy is edited on the way. Returns the fresh link row
+    and the mirror searches made."""
     from server.code.domain.anchor import Definition
 
     keep = "def keep():\n    return 0\n"
+    moved = _ROWS.replace("out.append(i)", "out.append(i * 2)") if edited else _ROWS
     commits = {
         ("c0", "pkg/a.py"): _ROWS + "\n\n" + keep,
         ("c0", "pkg/c.py"): "c = 0\n",
-        ("c1", "pkg/b.py"): _ROWS,
+        ("c1", "pkg/b.py"): moved,
         ("c1", "pkg/c.py"): "c = 0\n",
-        ("c2", "pkg/b.py"): _ROWS,
+        ("c2", "pkg/b.py"): moved,
         ("c2", "pkg/c.py"): "c = 1\n",
     }
     if copied_first:
@@ -4023,9 +4030,52 @@ async def test_a_mirror_grep_names_files_as_written(tmp_path) -> None:
     from server.code.app.index import gitrepo
 
     git, commit = _repo(tmp_path)
-    head = commit({"café.py": "fetch_rows()\n", "a[1].py": "fetch_rows()\n", "ab.py": "x\n"})
-    paths = ("café.py", "a[1].py", "ab.py")
+    head = commit(
+        {
+            "café.py": "fetch_rows()\n",
+            "a[1].py": "fetch_rows()\n",
+            "ab.py": "x\n",
+            "pre.py": "prefetch_rows()\n",  # the name inside a longer word: not it
+        }
+    )
+    paths = ("café.py", "a[1].py", "ab.py", "pre.py")
     found = await gitrepo.grep_paths(
-        str(tmp_path / ".git"), head, "fetch_rows", paths, literal_paths=True
+        str(tmp_path / ".git"), head, "fetch_rows", paths, literal_paths=True, word=True
     )
     assert sorted(found) == ["a[1].py", "café.py"]
+
+
+@pytest.mark.asyncio
+async def test_an_edited_move_the_index_settles_is_followed_when_the_mirror_cannot_answer(
+    monkeypatch,
+) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=True, edited=True)
+
+    async def containing(head, literal, base, *, limit):
+        return None  # say a range too wide to search
+
+    monkeypatch.setattr(files, "containing", containing)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("changed", "pkg/b.py")]
+
+
+@pytest.mark.asyncio
+async def test_a_file_naming_it_that_does_not_parse_leaves_the_mirror_unsure(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
+    names = files.names
+
+    async def containing(head, literal, base, *, limit):
+        return ["pkg/b.py", "pkg/z.py"]
+
+    async def unparsed(commit, path):
+        if path == "pkg/z.py":
+            raise code_links.code.ParseFailed(path, "over the size cap")
+        return await names(commit, path)
+
+    monkeypatch.setattr(files, "containing", containing)
+    monkeypatch.setattr(files, "names", unparsed)
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    # z.py may hold another definition of it: b.py's edited copy is not taken on trust
+    assert [m.link.state for m in moves] == ["unresolved"]

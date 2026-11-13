@@ -131,8 +131,8 @@ async def touched_paths(org: str, namespace: str, base: str, head: str) -> set[s
 async def containing(
     org: str, namespace: str, commit: str, literal: str, paths: list[str], *, limit: int
 ) -> list[str] | None:
-    """Up to `limit` of `paths` whose text at `commit` holds `literal`, read from the
-    mirror; None when git cannot tell."""
+    """Up to `limit` of `paths` whose text at `commit` holds the word `literal`, read
+    from the mirror; None when git cannot tell."""
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:
         return None
@@ -140,7 +140,7 @@ async def containing(
         return []
     try:
         return await gitrepo.grep_paths(
-            cfg.git_dir, commit, literal, tuple(paths), limit=limit, literal_paths=True
+            cfg.git_dir, commit, literal, tuple(paths), limit=limit, literal_paths=True, word=True
         )
     except gitrepo.GitError:
         return None

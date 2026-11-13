@@ -144,7 +144,7 @@ class RepoReads:
                 self.org, self.cns, head, literal, sorted(touched), limit=limit
             )
 
-        return await self._once(("containing", head, literal, base, limit), read)
+        return await self._once(("containing", head, literal, base), read)
 
     async def names(self, commit: str, path: str) -> set[str] | None:
         """The qualified names `path` defines at `commit`, read without fingerprints."""
