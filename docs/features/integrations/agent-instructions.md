@@ -73,7 +73,7 @@ the file is committed on and `<team-namespace>` with its `primary_namespace` (th
 branch's, where team file rules and decisions live); for the trunk branch the two are
 the same. A repository with no row (not indexed, or `code.repos` answers that code
 intelligence is off), or whose row says `readable: false` (a repository this token
-cannot read, listed so you can join it or ask for access), takes the block without
+cannot read, listed so you can request access or adopt it), takes the block without
 `extra_namespaces`, the team-rule line and the Code section.
 
 ## Where each client reads it
