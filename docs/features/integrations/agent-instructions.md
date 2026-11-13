@@ -21,7 +21,7 @@ tools the `coding` toolset lists, so connect the client on `?toolset=coding`:
 Loom is connected as an MCP server; its tools are named `loom_*`. A tool you do not see
 listed runs through `loom_op` with the op's dotted name (`loom_code_symbol` is
 `code.symbol`, `loom_working_memory_set` is `working_memory.set`); `loom_op` with
-`{"op": "help"}` lists them.
+`{"op": "help", "query": "<words>"}` finds them.
 
 Every task (no hook loads Loom for you, so these two calls are not optional)
 
@@ -64,12 +64,13 @@ curl -s -X POST https://loom.example.com/v1/code.repos -H "Authorization: Bearer
   -H 'Content-Type: application/json' -d '{"repo": "<owner>/<name>"}'
 ```
 
-Replace `<code-namespace>` with the `namespace` of the branch's row and `<team-namespace>`
-with its `primary_namespace` (the trunk branch's, where team file rules and decisions
-live); for the trunk branch the two are the same. A branch indexed on its own carries its
-own row's `namespace` in its copy of the file. A repository with no row (not indexed,
-or not readable with this token) takes the block without `extra_namespaces` and without
-its Code section.
+Replace `<code-namespace>` with the `namespace` of the branch's row and
+`<team-namespace>` with its `primary_namespace` (the trunk branch's, where team file
+rules and decisions live); for the trunk branch the two are the same. A branch indexed
+on its own carries its own row's `namespace` in its copy of the file. A repository with
+no row (not indexed), or whose row says `readable: false` (an admin's view of a
+repository without a grant on it), takes the block without `extra_namespaces` and
+without its Code section.
 
 ## Where each client reads it
 
@@ -118,12 +119,13 @@ Each line is the short form of what the plugins teach:
   skill, which the plugins' code shunt enforces.
 
 The block's last memory line stands for the end-of-task review; to spell it out, copy
-its questions from the
-[agent-integration guide](../../guides/agent-integration.md#7-follow-the-memory-skills-review)
-under the block. The skills carry the detail the block leaves out: the receipt fields,
-documents versus memories, the stop rules. The `loom` and `loom-code` skills can be installed beside the
-block for that detail ([coding agents](index.md#coding-agents)); `loom` covers what
-`loom-memory` teaches. They have no hooks, so they do not replace the block's two calls.
+its questions from the [agent-integration
+guide](../../guides/agent-integration.md#7-follow-the-memory-skills-review) under the
+block. The skills carry the detail the block leaves out: the receipt fields, documents
+versus memories, the stop rules. The `loom` and `loom-code` skills can be installed
+beside the block for that detail ([coding agents](index.md#coding-agents)); `loom`
+covers what `loom-memory` teaches. They have no hooks, so they do not replace the
+block's two calls.
 
 ## Related
 
