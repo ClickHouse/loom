@@ -1807,8 +1807,9 @@ textarea[aria-invalid="true"]:focus-visible {
     }
   }
   /* Under a finger a source row is a 44 px target, its text centred
-     (views/assistant/Sources.tsx): the search card's citation numbers leave their touch
-     area to these rows (SearchAnswer.tsx). */
+     (views/assistant/Sources.tsx): the answer's citation numbers (numberedCitations in
+     AnswerText.tsx, in the panel and the search's card) leave their touch area to these
+     rows. */
   @media (pointer: coarse) {
     .source-row {
       display: flex;
