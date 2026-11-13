@@ -1016,7 +1016,8 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    (`LOOM_MEMORY_SEARCH_IDENTIFIER_GROUNDING`).
 8. **Assemble and record** (`assemble.py`, `output.py`, `telemetry.py`). The window is
    cut to budget; with `paging=true` a larger pool is parked in `loom.context_blobs`.
-   Trace, exposure and query-node rows are inserted directly, fire-and-forget.
+   Trace, exposure and query-node rows are inserted directly, fire-and-forget (an exposure a
+   breadth rule counts is a waited insert before the answer).
 
 With `LOOM_ADAPTIVE_THRESHOLDS` on, the similarity gates come from the embedder's own
 cosine distribution (`memory/app/embedder_calibration.py`); the scalar settings are the

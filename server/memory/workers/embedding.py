@@ -1,8 +1,8 @@
 """Embedding recovery worker.
 
-Scans for stub rows (`embedding_dim = 0`), written by the paths that can wait
-for a vector (such as `memory.promote` on an embed failure), and
-for memories with no embedding row; computes the embedding and writes a
+Scans for two kinds of row: stubs (`embedding_dim = 0`), which the paths that
+can wait for a vector write (such as `memory.promote` on an embed failure), and
+memories with no embedding row. It computes the embedding and writes a
 replacement row that wins under ReplacingMergeTree FINAL. `memory.search`
 filters `embedding_dim > 0`, so stubs are hidden until filled.
 

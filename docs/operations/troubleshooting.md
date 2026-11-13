@@ -205,7 +205,7 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   - After turning auth on for the first time, every call needs a token: mint one as
     above.
 
-### A call answers as for a missing row for an id you know exists
+### An id you know exists reads as missing
 
 - **Cause:** an op addressed only by an org-wide id, such as `memory.get_by_id`,
   answers as for a missing row (`found=False`, `updated=False`, `redacted=False` or
