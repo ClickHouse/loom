@@ -20,10 +20,12 @@ from server.core.errors import AuthInsufficientError, unverified_class
 NO_REPO_ACCESS = "NO_REPO_ACCESS"
 # The check itself could not run (a grant could not be read): the caller may hold access.
 ACCESS_UNVERIFIED = "ACCESS_UNVERIFIED"
-_PLANE_TOOLS = ("loom_code_", "loom_tracker_")
-_PLANE_OPS = ("code.", "tracker.")
+_TRACKER_TOOL = "loom_tracker_"
+_TRACKER_OP = "tracker."
+_PLANE_TOOLS = ("loom_code_", _TRACKER_TOOL)
+_PLANE_OPS = ("code.", _TRACKER_OP)
 # Where a person asks for a namespace's grant in the dashboard: the namespace refusals and
-# a tracker index's (a code index's is requested from Repositories).
+# a tracker namespace's (a repository's index is requested from Repositories).
 DASHBOARD_REQUEST = (
     "(namespace picker → Find public namespaces to join; for a private namespace, "
     "search its exact name on Namespaces in your org)"
@@ -40,7 +42,7 @@ def is_plane_op(op_name: str) -> bool:
 
 def is_tracker(name: str) -> bool:
     """Whether a tool or op name is the tracker plane's."""
-    return str(name or "").startswith(("loom_tracker_", "tracker."))
+    return str(name or "").startswith((_TRACKER_TOOL, _TRACKER_OP))
 
 
 def _ways_in(subject: str, namespace: str, tracker: bool) -> str:
@@ -51,7 +53,15 @@ def _ways_in(subject: str, namespace: str, tracker: bool) -> str:
             "as you, or "
             "save a token for your user (`loom mint-token --save`)"
         )
-    where = f"the dashboard {DASHBOARD_REQUEST}" if tracker else "the dashboard's Repositories page"
+    # A tracker tool or op may be refused on a repository's index bound to a tracker, and
+    # the refusal cannot read the namespace's kind, so it names both ways in.
+    where = (
+        "the dashboard: the Repositories page for a repository's index, or the namespace "
+        "picker → Find public namespaces to join for a tracker namespace (for a private "
+        "one, search its exact name on Namespaces in your org)"
+        if tracker
+        else "the dashboard's Repositories page"
+    )
     return f"request access to {namespace!r} from {where}, or ask its admin for a grant"
 
 
@@ -59,8 +69,8 @@ def refusal(subject: str, org: str, namespace: str, *, tracker: bool = False) ->
     """The structured body of a code/tracker access refusal over MCP. It is the same
     whether or not the check ran: a restricted code namespace is refused before the grant
     read that fails, so a different answer would tell it from one that does not exist.
-    `tracker`: the refused tool or op is the tracker plane's, whose namespace is joined
-    from the namespaces page, not Repositories."""
+    `tracker`: the refused tool or op is the tracker plane's, whose namespace may be a
+    tracker namespace, joined from the namespace picker, or a repository's index."""
     where = f"{org}/{namespace}" if org else namespace
     msg = (
         f"No access: {subject or 'this token'} cannot read the index {where}. Every "

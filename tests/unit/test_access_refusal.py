@@ -26,7 +26,7 @@ def test_a_person_is_told_to_request_the_grant() -> None:
     assert "dashboard's Repositories page" in body["error"] and "claim" not in body["error"]
 
 
-def test_a_tracker_refusal_points_to_the_namespace_picker_not_repositories() -> None:
+def test_a_tracker_refusal_names_the_namespace_picker_and_repositories() -> None:
     auth = SimpleNamespace(subject="avery@example.com", org="clickhouse")
     by_op = mcp_call._forbidden_result(
         OPERATIONS_BY_NAME["tracker.item"],
@@ -39,7 +39,13 @@ def test_a_tracker_refusal_points_to_the_namespace_picker_not_repositories() -> 
         "structuredContent"
     ]["error"]
     for text in (by_op, by_tool):
-        assert ar.DASHBOARD_REQUEST in text and "Repositories" not in text
+        assert "namespace picker → Find public namespaces to join for a tracker namespace" in text
+        assert "search its exact name on Namespaces in your org" in text
+    # A tracker op on a repository's index bound to a tracker: Repositories is named too.
+    on_code = mcp_call._forbidden_result(
+        OPERATIONS_BY_NAME["tracker.item"], PermissionError("x"), auth, "clickhouse", "code-loom"
+    )["structuredContent"]["error"]
+    assert "the Repositories page for a repository's index" in on_code
     code = mcp_call._forbidden_result(
         OPERATIONS_BY_NAME["code.search"], PermissionError("x"), auth, "clickhouse", "code-loom"
     )["structuredContent"]["error"]

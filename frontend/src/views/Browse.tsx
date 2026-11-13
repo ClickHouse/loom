@@ -206,14 +206,20 @@ export function Browse() {
   );
   const managedCode = adminNs.filter((r) => isCodeKind(r.kind));
   const managedTracker = adminNs.filter((r) => isTrackerKind(r.kind));
-  const repoHint = repoCount > 0 && (
+  const listsTracker = !!rows?.some((r) => isTrackerKind(r.kind));
+  const repoHint = (repoCount > 0 || listsTracker) && (
     <div className="text-xs text-text-muted">
-      Looking for a repository? Repositories are joined from{" "}
-      <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
-        Repositories
-      </Link>{" "}
-      — {repoCount} repositor{repoCount === 1 ? "y" : "ies"} available, each with its issues & PRs when a record covers
-      it, read-only. A public tracker namespace is listed here and joined like any other.
+      {repoCount > 0 && (
+        <>
+          Looking for a repository? Repositories are joined from the{" "}
+          <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
+            Repositories page
+          </Link>{" "}
+          — {repoCount} repositor{repoCount === 1 ? "y" : "ies"} available, each with its issues & PRs when a record
+          covers it, read-only.{" "}
+        </>
+      )}
+      {listsTracker && "A public tracker namespace is listed here and joined like any other."}
     </div>
   );
   const managedProps = {
@@ -453,7 +459,7 @@ export function Browse() {
                 </>
               ) : (
                 <>
-                  is a collection: it is shared in the{" "}
+                  is a collection: ask its admin for a grant; the collections you can read are in the{" "}
                   <Link component="button" type="button" size="sm" onClick={() => setView("knowledge")}>
                     Library
                   </Link>

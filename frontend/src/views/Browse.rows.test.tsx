@@ -370,6 +370,17 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     }
   });
 
+  it("requests a private name typed in capitals by its lowercase name", async () => {
+    render(<Browse />);
+    await screen.findByText("Support team runbooks");
+    await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "Support");
+    expect(await screen.findByText("No public namespace named", { exact: false })).toHaveTextContent(
+      "No public namespace named support.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Request access" }));
+    expect(joinNamespace).toHaveBeenCalledWith("acme", "support", { role: "viewer" });
+  });
+
   it("says nothing matches a search that is no namespace name, and offers no request", async () => {
     render(<Browse />);
     await screen.findByText("Support team runbooks");
@@ -412,8 +423,10 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     render(<Browse />);
     await screen.findByText("Support team runbooks");
     await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "col-research");
-    const line = await screen.findByText(/is a collection: it is shared in the/);
-    expect(line).toHaveTextContent("col-research is a collection: it is shared in the Library.");
+    const line = await screen.findByText(/is a collection: ask its admin for a grant/);
+    expect(line).toHaveTextContent(
+      "col-research is a collection: ask its admin for a grant; the collections you can read are in the Library.",
+    );
     expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
     expect(screen.queryByText(/No public namespaces match/)).toBeNull();
     await userEvent.click(within(line).getByRole("button", { name: "Library" }));
