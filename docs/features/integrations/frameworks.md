@@ -366,9 +366,10 @@ client can speak for several agents.
 ## Failure modes
 
 - **Abstain is not an error.** An empty search means nothing cleared Loom's floor.
-- **CrewAI carries on without memory when a memory call fails.** A crew logs a failed
-  recall or save and runs the task anyway, so an unreachable Loom shows in the crew's logs,
-  not as an error.
+- **CrewAI carries on without memory when a memory call fails.** A crew runs the task
+  anyway: a failed save prints only for a `verbose` agent, and a failed recall shows only as
+  a `MemoryRetrievalFailedEvent` on CrewAI's event bus, so an unreachable Loom is otherwise
+  silent.
 - **A refused tool call is a message, not an exception.** The OpenAI Agents SDK tools
   return Loom's error to the model as the call's result.
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as

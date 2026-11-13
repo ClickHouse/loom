@@ -16,6 +16,7 @@ from crewai.llms.base_llm import BaseLLM
 from crewai.memory.unified_memory import Memory
 from crewai.tools.memory_tools import RememberTool
 from loom import Agent, SyncAgent
+from loom.errors import BackendUnavailable
 from loom.integrations.crewai import LoomCrewMemory
 from loom.memory import MemorySearchHit, MemorySearchResult
 from pydantic import Field, ValidationError
@@ -295,3 +296,18 @@ def test_an_unnarrowed_recall_stays_within_memory_search_s_top_k_bound() -> None
     _memory(fake).recall("Alice", limit=600)
     ((_, _, kw),) = fake.calls
     assert kw["top_k"] == 500
+
+
+def test_a_crew_runs_on_when_loom_is_unreachable() -> None:
+    class _Down(_FakeMemory):
+        def search(self, query: str, **kw: Any) -> MemorySearchResult:
+            raise BackendUnavailable("loom unreachable")
+
+        def set_from_messages(self, messages: list[dict[str, Any]], **kw: Any) -> dict[str, Any]:
+            raise BackendUnavailable("loom unreachable")
+
+    llm = _FakeLLM(model="fake")
+    agent = CrewAgent(role="travel agent", goal="book seats", backstory="", llm=llm)
+    task = Task(description="Which seat does Alice want?", expected_output="a seat", agent=agent)
+    crew = Crew(agents=[agent], tasks=[task], memory=_memory(_Down()))
+    assert crew.kickoff().raw == "Alice wants an aisle seat."  # no memory, no error
