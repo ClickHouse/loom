@@ -19,8 +19,7 @@ import { isRecord, pickOption } from "./fixtures";
 
 const ENABLED = process.env.LOOM_DOCS_SCREENSHOTS === "1";
 const OUT = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/images");
-// The 1440 px shots (WebP) and the clips (WebM). The PNGs above stay where they are: the
-// English pages link them.
+// The 1440 px shots (WebP) and the clips (WebM); OUT keeps the PNGs the English pages link.
 const OUT_ASSETS = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/assets/screenshots");
 const NOW = Date.parse("2026-09-28T15:00:00Z");
 
