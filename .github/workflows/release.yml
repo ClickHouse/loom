@@ -473,8 +473,9 @@ jobs:
             image: ghcr.io/clickhouse/loom
             file: Dockerfile
             pin: image.digest
-            # The repository's title and description, metadata-action's defaults.
-            labels: ""
+            # Title and description are the repository's, metadata-action's defaults.
+            labels: |
+              org.opencontainers.image.documentation=https://clickhouse.github.io/loom/
           - artifact: extractor
             image: ghcr.io/clickhouse/loom-extractor
             file: extractor/Dockerfile
@@ -482,6 +483,7 @@ jobs:
             labels: |
               org.opencontainers.image.title=loom-extractor
               org.opencontainers.image.description=Loom's document extractor service, which parses originals apart from the server
+              org.opencontainers.image.documentation=https://clickhouse.github.io/loom/
           - arch: amd64
             runner: ubuntu-latest
           - arch: arm64
@@ -510,7 +512,8 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ matrix.image }}
-          # The extractor's own title and description; the defaults are the repository's.
+          # Added to metadata-action's defaults: the extractor's own title and description,
+          # and both images' documentation link.
           labels: ${{ matrix.labels }}
           # docker-tag adds `:latest` when this is the highest final version;
           # metadata-action would add it to any final version.

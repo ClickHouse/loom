@@ -76,7 +76,7 @@
   "bugs": {
     "url": "https://github.com/ClickHouse/loom/issues"
   },
-  "homepage": "https://github.com/ClickHouse/loom/blob/main/docs/reference/typescript-sdk.md",
+  "homepage": "https://clickhouse.github.io/loom/reference/typescript-sdk/",
   "engines": {
     "node": ">=20.0.0"
   },

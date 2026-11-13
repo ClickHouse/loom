@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        > Check the [documentation](https://github.com/ClickHouse/loom/tree/main/docs) first: the [FAQ](https://github.com/ClickHouse/loom/blob/main/docs/faq.md) and [troubleshooting](https://github.com/ClickHouse/loom/blob/main/docs/operations/troubleshooting.md) answer the common ones.
+        > Check the [documentation](https://clickhouse.github.io/loom/) first: the [FAQ](https://github.com/ClickHouse/loom/blob/main/docs/faq.md) and [troubleshooting](https://github.com/ClickHouse/loom/blob/main/docs/operations/troubleshooting.md) answer the common ones.
         > Search [existing issues](https://github.com/ClickHouse/loom/issues?q=is%3Aissue) before asking.
   - type: textarea
     attributes:

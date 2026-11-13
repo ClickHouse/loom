@@ -24,7 +24,7 @@
   <a href="#get-started">Get started</a> ·
   <a href="#why-loom">Capabilities</a> ·
   <a href="#integrations">Integrations</a> ·
-  <a href="./docs/index.md">Documentation</a>
+  <a href="https://clickhouse.github.io/loom/">Documentation</a>
 </p>
 
 ![Loom dashboard showing shared agent memories, a pinned fact and flagged conflicts](./docs/images/dashboard-memories.png)
@@ -278,7 +278,7 @@ and the full protocols, models and artifacts.
 ## Documentation and contributing
 
 For shared agent context, code intelligence and permissioned retrieval, start with the
-[documentation](./docs/index.md). For deployment requirements, see the
+[documentation](https://clickhouse.github.io/loom/). For deployment requirements, see the
 [prerequisites](./docs/getting-started/overview.md#prerequisites).
 
 [Deployment](./docs/operations/deployment.md) · [FAQ](./docs/faq.md) ·

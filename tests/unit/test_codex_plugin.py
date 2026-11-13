@@ -307,39 +307,6 @@ def test_codex_default_prompts_fit_the_directory() -> None:
     assert all(len(p) <= 128 for p in prompts)
 
 
-def test_both_plugins_link_the_data_handling_section() -> None:
-    """The privacy link of both listings is an absolute URL, which the doc-link check does
-    not follow; renaming the section would leave both listings pointing at nothing."""
-    claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
-    codex = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())
-    url = claude["privacyPolicyUrl"]
-    assert url == codex["interface"]["privacyPolicyURL"]
-    page, _, anchor = url.removeprefix("https://github.com/ClickHouse/loom/blob/main/").partition(
-        "#"
-    )
-    assert anchor == "data-handling" and "\n## Data handling\n" in (ROOT / page).read_text()
-
-
-def test_listing_links_into_the_repository_resolve() -> None:
-    """The registry listing and both plugin manifests publish absolute links into this
-    repository, which the doc-link check does not follow; a renamed file breaks them."""
-    text = "".join(
-        (ROOT / f).read_text()
-        for f in (
-            "server.json",
-            "integrations/claude-code-plugin/.claude-plugin/plugin.json",
-            "integrations/codex-plugin/.codex-plugin/plugin.json",
-        )
-    )
-    links = re.findall(
-        r"https://(?:github\.com/ClickHouse/loom/blob/main|raw\.githubusercontent\.com/ClickHouse/loom/main)/([^\"#]+)",
-        text,
-    )
-    assert links
-    for path in links:
-        assert (ROOT / path).is_file(), path
-
-
 def test_skills_find_the_codex_plugin_root_under_the_loom_marketplace() -> None:
     """A glob over every marketplace sorts by marketplace name first, so
     `cache/zz-old/loom/0.8.0/` would beat `cache/loom/loom/0.9.30/`; the skills

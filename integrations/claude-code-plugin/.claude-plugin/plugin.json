@@ -6,7 +6,7 @@
   "author": {
     "name": "ClickHouse"
   },
-  "homepage": "https://github.com/ClickHouse/loom",
+  "homepage": "https://clickhouse.github.io/loom/",
   "repository": "https://github.com/ClickHouse/loom",
   "license": "Apache-2.0",
   "keywords": [
@@ -22,9 +22,9 @@
     "self-hosted"
   ],
   "icon": "./assets/icon.png",
-  "documentationUrl": "https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/claude-code.md",
+  "documentationUrl": "https://clickhouse.github.io/loom/features/integrations/claude-code/",
   "supportUrl": "https://github.com/ClickHouse/loom/issues",
-  "privacyPolicyUrl": "https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/claude-code.md#data-handling",
+  "privacyPolicyUrl": "https://clickhouse.github.io/loom/features/integrations/claude-code/#data-handling",
   "userConfig": {
     "server_url": {
       "type": "string",

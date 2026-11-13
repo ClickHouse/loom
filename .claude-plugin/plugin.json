@@ -3,7 +3,7 @@
   "version": "1.2.0",
   "description": "Code search and code intelligence for repositories in a Loom code index (the loom-code Agent Skill: code.* first, then read only that), and the loom Agent Skill: how an agent uses Loom. Skills only, no hooks.",
   "author": { "name": "ClickHouse" },
-  "homepage": "https://github.com/ClickHouse/loom",
+  "homepage": "https://clickhouse.github.io/loom/",
   "repository": "https://github.com/ClickHouse/loom",
   "license": "Apache-2.0",
   "keywords": ["code-intelligence", "code-search", "agent-memory", "mcp", "clickhouse", "agent", "skill"],

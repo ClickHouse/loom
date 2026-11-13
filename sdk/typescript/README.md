@@ -1,6 +1,6 @@
 # @clickhouse/loom — TypeScript SDK
 
-Typed client for [ClickHouse Loom](https://github.com/ClickHouse/loom), a self-hosted server that gives AI agents shared long-term memory, document search and a code index. Every wire operation the server declares is a typed method here; the types are generated from the server's operation registry, so what the deployment serves is what the SDK types.
+Typed client for [ClickHouse Loom](https://clickhouse.github.io/loom/), a self-hosted server that gives AI agents shared long-term memory, document search and a code index. Every wire operation the server declares is a typed method here; the types are generated from the server's operation registry, so what the deployment serves is what the SDK types.
 
 ```bash
 npm install @clickhouse/loom
