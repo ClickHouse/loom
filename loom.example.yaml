@@ -2567,8 +2567,8 @@ settings:
   # extraction_queue_interval_seconds: 15
 
   # Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass`
-  # replays) may run before the supervisor cancels it; 0 = four intervals, 60 to 900 s.
-  # [restart]
+  # replays) may run before the supervisor cancels it; 0 = four intervals, kept between
+  # 60 and 900 s. [restart]
   # extraction_queue_max_pass_seconds: 0.0
 
   # Most queued batches one pass claims. [live]
