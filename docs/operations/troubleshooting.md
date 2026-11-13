@@ -216,7 +216,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   `namespace.restore` ([row-scoped operations](../architecture/security.md#row-scoped-operations)).
 - **Fix:** use a token with the access the op needs
   ([tokens and grants](../guides/tokens-and-grants.md)); for an id in several
-  namespaces, address the row by key in its namespace (`memory.get`).
+  namespaces, address the row by key in its namespace (`memory.get`, or
+  `memory.update` for a write).
 
 ## Schema and upgrades
 
