@@ -1527,6 +1527,10 @@ def test_a_call_hint_on_mcp_names_ops_for_its_listing() -> None:
     assert core is not None and coding is not None
     assert "loom_search recalls by meaning" in core[1] and "memory.list (via loom_op)" in core[1]
     assert "loom_search recalls by meaning" in coding[1] and "(call " not in coding[1]
+    # a value the caller sent keeps its op-like name: it is data, not a reference
+    args = {**args, "memory_key": "run.get"}
+    echo = mcp_outcome._mentor_hint("memory.get", args, {"found": False}, "s-echo", "core")
+    assert echo is not None and "no row at 'run.get':" in echo[1]
 
 
 def test_no_hint_text_writes_an_op_as_a_call_or_names_a_hidden_op() -> None:

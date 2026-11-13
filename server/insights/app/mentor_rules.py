@@ -324,8 +324,9 @@ def clip(text: str, limit: int = HINT_CHARS) -> str:
 
 
 def clip_keeping_note(text: str) -> str:
-    """``text`` clipped to HINT_CHARS with its _unlisted note whole: the body is cut,
-    never the note, as _Ctx.add does for a profile hint."""
+    """``text`` clipped to HINT_CHARS with a "(call X via loom_op)" note at its end kept
+    whole, as _Ctx.add keeps a profile hint's: that note says how to reach the op. The
+    other notes _unlisted writes are part of the body and clip with it."""
     m = _LOOM_OP_NOTE_RE.search(text)
     if m is None:
         return clip(text)
@@ -904,9 +905,10 @@ def _rule_get_miss(
     if op != "memory.get" or not _get_missed(res):
         return None
     key = str(args.get("memory_key") or "")
+    where = repr(key) if key else "that key"
     return (
         "get_miss",
-        f"no row at {key or 'that key'}: search.query recalls by meaning, memory.list with a "
+        f"no row at {where}: search.query recalls by meaning, memory.list with a "
         "key prefix lists the siblings, and a moved key answers with canonical_key (follow=true).",
     )
 
@@ -955,7 +957,7 @@ def _rule_set_duplicate(
         return None
     return (
         "set_duplicate",
-        f"this write duplicates {res['duplicate_of']}: revise that key instead (same key = new "
+        f"this write duplicates {res['duplicate_of']!r}: revise that key instead (same key = new "
         "version), or memory.link supersedes if this one replaces it.",
     )
 

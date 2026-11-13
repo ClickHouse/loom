@@ -106,6 +106,10 @@ _NAMED_OP = re.compile(
 )
 
 
+# A span in single quotes whose quotes touch no letter: not a possessive or a contraction.
+_QUOTED = re.compile(r"((?<![A-Za-z])'[^'\n]*'(?![A-Za-z]))")
+
+
 def _lookup(name: str) -> Operation | None:
     """The op a prose mention names, by tool name or dotted op name."""
     return TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
@@ -133,7 +137,9 @@ def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool = False) -
         marked.add(op.name)
         return f"{op.name}{trail} (via loom_op)"
 
-    return _NAMED_OP.sub(rename, text)
+    # A quoted span is a value or the caller's own words: it keeps its op-like names.
+    parts = _QUOTED.split(text)
+    return "".join(p if i % 2 else _NAMED_OP.sub(rename, p) for i, p in enumerate(parts))
 
 
 # The ops loom_op's text offers beside its example call (memory.related). Each

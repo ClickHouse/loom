@@ -212,12 +212,11 @@ async def _get_prompt(
 
 
 def _tool_refs(toolset: str | None) -> dict[str, str | None]:
-    """How the primer names each op it points at, on this connection's
-    toolset: its own tool when the listing carries it, else its op name marked
-    "(via loom_op)", as the tool descriptions mark it, and None when neither reaches
-    it (a write on a connection whose `loom_op` routes reads only), so the
-    primer never asks for a call the client cannot make."""
-    listed = {op.name: op.mcp_tool_name for op in listed_ops(toolset)}
+    """Each op the primer points at, by op name, or None when the connection
+    reaches it neither as a listed tool nor through `loom_op` (a write on a
+    connection whose `loom_op` routes reads only), so the primer never asks for a
+    call the client cannot make. `_for_listing` then names them as the listing does."""
+    listed = {op.name for op in listed_ops(toolset)}
     out: dict[str, str | None] = {}
     for name in (
         "context.pack",
@@ -227,13 +226,20 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
         "mentor.guide",
         "collection.list",
     ):
-        if name in listed:
-            out[name] = f"`{listed[name]}`"
-        elif loom_op_reachable(OPERATIONS_BY_NAME[name], toolset):
-            out[name] = f"`{name}` (via loom_op)"
-        else:
-            out[name] = None
+        reached = name in listed or loom_op_reachable(OPERATIONS_BY_NAME[name], toolset)
+        out[name] = f"`{name}`" if reached else None
     return out
+
+
+# Holds the caller's default workspace while the rules are rendered: it is the
+# caller's data, not prose that names ops.
+_DEFAULTS = "\x00defaults\x00"
+
+
+def _for_listing(text: str, toolset: str | None) -> str:
+    """``text`` naming each op as the ``toolset`` listing does, the first mention of
+    an unlisted one marked "(via loom_op)", as the tool descriptions do."""
+    return name_ops_for_listing(text, listed_tool_names(toolset), writes=routes_writes(toolset))
 
 
 def _write_rules(tool: dict[str, str | None]) -> str:
@@ -332,7 +338,8 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     """The Loom-first rules with the caller's default workspace baked in, naming
     the tools the connection's ``toolset`` listing carries."""
     tool = _tool_refs(toolset)
-    return (
+    collections = knowledge_search_reads_collections()
+    text = (
         "**Loom-first mode active for this conversation.**\n\n"
         "**1. Session context.** At the start of a substantial task, "
         f"call {tool['context.pack']} once if you need a bounded bundle of "
@@ -344,23 +351,20 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
         "about Y':\n"
         "   a. Call `loom_search` once. It searches memory, profile, "
         "knowledge (your namespaces' documents"
+        + (" and the collections you can read" if collections else "")
+        + "), and conversations server-side in one round trip."
         + (
-            " and the collections you can read"
-            + (
-                f"; {tool['collection.list']} names those collections"
-                if tool["collection.list"]
-                else ""
-            )
-            if knowledge_search_reads_collections()
+            f" {tool['collection.list']} names those collections."
+            if collections and tool["collection.list"]
             else ""
         )
-        + "), and conversations server-side in one round trip.\n"
+        + "\n"
         "   b. If it returns nothing relevant, fall through to "
         "native memory / past-conversation context — don't surface "
         "'not in Loom' as a final answer.\n\n"
         + _write_rules(tool)
         + "**5. Defaults.** "
-        + _defaults_clause(defaults)
+        + _DEFAULTS
         + "\n\n"
         "**6. Native memory.** Use as fallback when Loom returns "
         "nothing, or as primary store for Claude-only ephemeral "
@@ -374,6 +378,7 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
         "where each kind of state goes and how to read what comes back "
         '(`part: "reference"` lists every plane).'
     )
+    return _for_listing(text, toolset).replace(_DEFAULTS, _defaults_clause(defaults))
 
 
 def _assistant_primer(defaults: dict[str, Any] | None) -> str:
@@ -531,10 +536,11 @@ def _coding_instructions(toolset: str | None) -> str:
         if save
         else "This connection is read-only: memory writes are not available."
     )
-    return (
+    return _for_listing(
         "**Loom: memory and code for this session.**"
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
-        + memory
+        + memory,
+        toolset,
     )
 
 

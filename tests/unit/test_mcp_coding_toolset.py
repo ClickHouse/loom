@@ -403,9 +403,25 @@ def test_mcp_always_load_tools_names_the_flagged_ops(monkeypatch) -> None:
 
 def test_the_primer_names_collection_list_by_the_tool_that_reaches_it() -> None:
     refs = mcp_primer._tool_refs("core")
-    assert refs["collection.list"] == "`collection.list` (via loom_op)"
+    assert refs["collection.list"] == "`collection.list`"
     rules = mcp_primer._write_rules(refs)
     assert "shared collection (`col-…`)" in rules
+    # the rendered primer names it as core's listing does, outside any parenthesis
+    assert "`collection.list` (via loom_op) names those collections." in mcp_primer._loom_rules(
+        "core", None
+    )
+
+
+@pytest.mark.parametrize("toolset", ["core", "coding", "tasks", "tracker", "atomic", "readonly"])
+def test_the_primer_marks_each_unlisted_op_once_and_outside_parentheses(toolset: str) -> None:
+    import re
+
+    for text in (mcp_primer._loom_rules(toolset, None), mcp_primer._coding_instructions(toolset)):
+        for marker in re.finditer(re.escape("(via loom_op)"), text):
+            before = re.sub(r"`[^`]*`", "", text[: marker.start()])
+            assert before.count("(") == before.count(")"), (toolset, text)
+        marked = re.findall(r"`?([a-z_]+(?:\.[a-z_]+)+)`? \(via loom_op\)", text)
+        assert len(marked) == len(set(marked)), (toolset, marked)
 
 
 def test_the_primers_say_loom_search_reads_collections() -> None:
