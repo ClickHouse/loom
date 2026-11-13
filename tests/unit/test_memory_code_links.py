@@ -4001,8 +4001,8 @@ async def test_a_missing_link_is_never_handed_to_an_edited_copy_the_mirror_finds
     lost = row | {"state": "missing", "changed_since": "c1"}
     later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
     moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
-    assert searched == [("c2", "fetch_rows", "c0")]  # the mirror found the copy
-    assert moves == []  # and the link stays missing
+    assert searched == [("c2", "fetch_rows", "c0")]  # the mirror was searched
+    assert moves == []  # and the copy it found leaves the link missing
 
 
 @pytest.mark.asyncio
@@ -4011,7 +4011,7 @@ async def test_a_full_recheck_of_a_missing_link_leaves_it_to_the_index(monkeypat
     row, searched = _moved_module_world(monkeypatch, files, indexed=False)
     lost = row | {"state": "missing", "changed_since": "c1"}
     moves = await code_link_recheck._recheck("o", "code-a", [lost], None, "c1", files)
-    assert searched == [] and [m.link.state for m in moves] in ([], ["missing"])
+    assert searched == [] and moves == []
 
 
 @pytest.mark.asyncio
@@ -4158,3 +4158,15 @@ async def test_the_mirror_search_leaves_out_what_the_ingest_does_not_index(
     prefixed = replace(cfg, path_prefixes=("gen/",))
     monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: prefixed)
     assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=3) == []
+
+
+@pytest.mark.asyncio
+async def test_a_grep_that_cannot_start_is_a_git_error(monkeypatch) -> None:
+    from server.code.app.index import gitrepo
+
+    async def too_long(*a, **k):
+        raise OSError(7, "Argument list too long")
+
+    monkeypatch.setattr(gitrepo.asyncio, "create_subprocess_exec", too_long)
+    with pytest.raises(gitrepo.GitError):
+        await gitrepo.grep_paths("/nowhere", "a" * 40, "f", ("x.py",))

@@ -372,26 +372,29 @@ async def grep_paths(
     a whole word with `word`), under `pathspecs` (file paths taken as written with
     `literal_paths`, else pathspecs with their magic) — `git grep -l -F`. Exit 1 with
     nothing on stderr is git's "no match", not an error."""
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        *UNQUOTED_PATHS,
-        *(["--literal-pathspecs"] if literal_paths else []),
-        "--git-dir",
-        git_dir,
-        "grep",
-        "-l",
-        "-z",
-        "-F",
-        *(["-w"] if word else []),
-        "-e",
-        literal,
-        _rev(rev),
-        "--",
-        *pathspecs,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=auth_env(),
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            *UNQUOTED_PATHS,
+            *(["--literal-pathspecs"] if literal_paths else []),
+            "--git-dir",
+            git_dir,
+            "grep",
+            "-l",
+            "-z",
+            "-F",
+            *(["-w"] if word else []),
+            "-e",
+            literal,
+            _rev(rev),
+            "--",
+            *pathspecs,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=auth_env(),
+        )
+    except OSError as e:  # an argument list past the system's limit, or no git to run
+        raise GitError(f"git grep {literal[:40]} did not start: {e}") from None
     try:
         out, err = await communicate_or_kill(proc, timeout_s=timeout_s)
     except TimeoutError:

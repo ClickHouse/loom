@@ -18,6 +18,7 @@ from server.code.domain.anchor import (
     locate,
     recheck,
     resolve,
+    unnumbered,
 )
 from server.code.domain.declaration import fingerprint_version
 from server.code.domain.index.repos import repo_for_namespace
@@ -377,18 +378,14 @@ async def _recheck(
 
 async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[Definition] | None:
     """The definitions of the lost link's name, inside their module, that the mirror holds
-    at `head` in the files changed since the commit it is searched from (`_searched_from`):
-    what the index may not hold yet. Only adds to the index's namesakes: a search too
-    wide to run, or one that too many files answer, adds none and the index's verdict
-    stands, as does a file the parser fails on, of which the index holds no definition
-    either. None when git could
-    not be read: then a live link is unsure."""
+    at `head` in the files changed since `_searched_from`: what the index may not hold
+    yet. It only adds to the index's namesakes; None when git cannot be read."""
     qn = r.before.qualified_name
     if r.before.state == "missing" and r.range is None:
         return []  # a full recheck of a link long gone: the index decides, as before
     base = _searched_from(r.before, r.row, r.range)
     limit = settings.memory_code_links_mirror_naming_files
-    paths = await files.containing(head, bare_name(qn), base, limit=limit)
+    paths = await files.containing(head, unnumbered(bare_name(qn)), base, limit=limit)
     if paths is None:
         return None
     local, found = local_name(qn, r.before.read_path), []
