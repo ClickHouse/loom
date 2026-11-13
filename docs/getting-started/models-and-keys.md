@@ -19,13 +19,14 @@ subscription credentials or API keys to Loom.
 
 The released Docker installation embeds with `local` (bge-small, 384 dimensions, on CPU
 from files the image carries) and selects the `fake-echo-1` LLM, unless it found Ollama
-running and you chose it ([a model server on your machine](#a-model-server-on-your-machine-no-api-key)). It boots without provider
-keys or network: storage, the dashboard, structural code indexing and semantic search
-work, though a hosted embedder retrieves better on paraphrase-heavy questions. The fake
-LLM does not produce meaningful extracted facts, summaries or generated answers. A
-checkout's `.env` selects `fake-ngram-3072` embeddings, which match on character overlap.
-An upgraded installation keeps the embedder its `~/.loom/.env` names; switching it to
-`local` is a model change like any other, and re-embeds what is stored.
+running and you chose it ([a model server on your
+machine](#a-model-server-on-your-machine-no-api-key)). It boots without provider keys or
+network: storage, the dashboard, structural code indexing and semantic search work,
+though a hosted embedder retrieves better on paraphrase-heavy questions. The fake LLM
+does not produce meaningful extracted facts, summaries or generated answers. A
+checkout's `.env` selects `fake-ngram-3072` embeddings, which match on character
+overlap. An upgraded installation keeps the embedder its `~/.loom/.env` names; switching
+it to `local` is a model change like any other, and re-embeds what is stored.
 
 For stronger retrieval over paraphrase-heavy content, configure a hosted embedding
 provider. For automatic fact extraction, summaries and generated answers, configure an
@@ -221,7 +222,10 @@ LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
 LOOM_RETRIEVAL_JUDGE_MODEL=
 ```
 
-Pull the model first (`ollama pull qwen2.5:3b`, about 2 GB). For llama.cpp, point
+Pull the model first (`ollama pull qwen2.5:3b`, about 2 GB), and give Ollama a context
+window that holds Loom's prompts: extraction sends about 15,000 tokens, and Ollama cuts a
+longer prompt to its window without an error, so run it with
+`OLLAMA_CONTEXT_LENGTH=32768` (the window `qwen2.5` takes). For llama.cpp, point
 `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root (`http://host.docker.internal:8080/v1`) and
 set `LOOM_LLM_MODEL` to the name it serves. A server run from a checkout reaches the
 model at `localhost`, the setting's default (`http://localhost:11434/v1`). A per-job model

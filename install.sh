@@ -437,6 +437,7 @@ main() {
     curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/tags 2>/dev/null \
       | grep -q "\"$local_model\"" \
       || printf 'Pull the model before the first extraction: ollama pull %s\n' "$local_model"
+    printf 'Run Ollama with OLLAMA_CONTEXT_LENGTH=32768: extraction prompts are longer than its default window, which cuts them silently\n'
     [ "$(uname -s)" = Darwin ] \
       || printf 'With Docker Engine on Linux the container reaches Ollama only beyond loopback: run Ollama with OLLAMA_HOST=0.0.0.0 and keep port 11434 closed to the network\n'
   fi

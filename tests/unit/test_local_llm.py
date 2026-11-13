@@ -178,3 +178,22 @@ def test_behind_an_inference_gateway_the_local_client_sends_its_token(
     asyncio.run(LocalLLMClient("qwen2.5:3b").complete("s", "u", max_tokens=10))
     ((_, headers, _),) = _setup.calls
     assert headers["Authorization"] == "Bearer workload-token"
+
+
+def test_the_capture_verifier_on_the_deployments_own_model_is_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import pipeline
+    from server.settings import settings
+
+    # No key anywhere: a hosted-looking name that is the local deployment's own model
+    # still gets its verifier, rather than being skipped as keyless.
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    monkeypatch.setattr(settings, "llm_model", "gpt-oss:20b")
+    monkeypatch.setattr(settings, "memory_extract_verify_models", "gpt-oss:20b")
+    state = type("State", (), {"llm_cache": None, "org": "o", "namespace": "n"})()
+    from server.memory.app import extract
+
+    monkeypatch.setattr(extract, "extractor_llm_cache_on", lambda _: False)
+    clients = pipeline._verify_clients(state)  # type: ignore[arg-type]
+    assert [c.provider for c in clients] == ["local"]

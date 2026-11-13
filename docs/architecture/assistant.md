@@ -435,8 +435,8 @@ stored one, or the same with another model, so during a rolling upgrade a build 
 never overwrites N's definition, and a changed `LOOM_ASSISTANT_MODEL` or
 `LOOM_ASSISTANT_PROVIDER` takes effect at the next boot. One exception: a build that
 predates `LOOM_ASSISTANT_PROVIDER` ignores it, so with it set that build rewrites the
-agent onto the file's provider under the local model's name; unset it before rolling
-back. While N rolls out, and after a rollback, N's definition stays, and a tool
+agent onto the file's provider under the local model's name; unset it and
+`LOOM_ASSISTANT_MODEL` before rolling back. While N rolls out, and after a rollback, N's definition stays, and a tool
 call it names that an N-1 pod does not serve answers `UNKNOWN_OP` there until every pod
 runs N.
 
