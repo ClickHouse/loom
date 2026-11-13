@@ -33,7 +33,8 @@ This merges a `mcpServers.loom` entry (`url` plus an `Authorization` header) int
 per-client file table are in [MCP clients](mcp-clients.md#wire-a-client-with-loom-install).
 
 Then add `.cursor/rules/loom.mdc` from [agent instructions](agent-instructions.md), so
-the agent knows when to recall, save and use the code index.
+the agent knows when to recall, save and use the code index, unless the repository's
+`AGENTS.md` already carries the block.
 
 ## Transcript capture
 
