@@ -75,6 +75,15 @@ def resolve_llm_provider(
     return ResolvedLLM("fake", model or DEFAULT_MODEL_BY_PROVIDER["fake"], "nothing set")
 
 
+def provider_of(model: str, main_model: str, main_provider: str) -> str:
+    """The provider a job's `model` runs on: the deployment's own model on its resolved
+    provider (a local server may serve a model whose name looks hosted, `gpt-oss`), any
+    other model on the provider its name names, else the deployment's."""
+    if model == main_model:
+        return main_provider
+    return provider_for_model(model, main_provider)
+
+
 def provider_for_model(model: str, default: str) -> str:
     """Infer the provider from a model-override name so a stage can run on a
     DIFFERENT provider than the global LOOM_LLM_PROVIDER (e.g. opus synthesis

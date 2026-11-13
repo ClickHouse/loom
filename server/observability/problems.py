@@ -303,13 +303,19 @@ def _runtime_problems(state: HealthState) -> list[Problem]:
         when = f" {age}s ago" if age is not None else ""
         key_env = _key_env_for_health_name(name)
         behind = f"{key_env}'s quota" if key_env else f"the key and quota behind {name}"
+        fix = f"Check {behind} and the provider's status page"
+        if name.startswith("local:"):
+            # A model server the operator runs has no key: it is down or lacks the model.
+            fix = (
+                "Check that the model server at LOOM_LOCAL_LLM_BASE_URL is running and "
+                "serves LOOM_LLM_MODEL (Ollama: ollama pull <model>)"
+            )
         out.append(
             Problem(
                 f"provider_failing:{name}",
                 "error",
                 f"The last call to {name} failed{when}: {err}",
-                f"Check {behind} and the provider's status page; the flag clears on the "
-                "next successful call.",
+                f"{fix}; the flag clears on the next successful call.",
                 source="runtime",
             )
         )

@@ -147,14 +147,10 @@ class Settings(
         return self
 
     def provider_of(self, model: str) -> str:
-        """The provider a job's `model` runs on: the deployment's own model on the resolved
-        provider (a local server may serve a model whose name looks hosted, `gpt-oss`), any
-        other model on the provider its name names, else the deployment's."""
-        from server.core.llm_provider import provider_for_model
+        """The provider a job's `model` runs on (`server.core.llm_provider.provider_of`)."""
+        from server.core.llm_provider import provider_of
 
-        if model == self.llm_model:
-            return self.llm_provider
-        return provider_for_model(model, self.llm_provider)
+        return provider_of(model, self.llm_model, self.llm_provider)
 
     def conflict_resolver_provider(self) -> str:
         """The provider the conflict resolver's model runs on."""

@@ -235,7 +235,6 @@ def get_llm_client_for_model(model: str | None) -> LLMClient:
     """
     from server.settings import settings
 
-    # The deployment's own model is the default client (`Settings.provider_of`).
     if not model or model == settings.llm_model:
         return get_llm_client()
 

@@ -14,7 +14,7 @@ import httpx
 
 from server.clients._http_errors import provider_error_code
 from server.core.errors import GatewayRequiredError
-from server.core.llm_provider import provider_for_model
+from server.core.llm_provider import provider_of
 from server.core.schema.vector_codec_ddl import codable
 from server.core.vectors import codes_state
 from server.embedding._provider import MalformedEmbedding
@@ -156,7 +156,10 @@ async def validate_providers(
     models: set[tuple[str, str]] = {(setup.llm.provider, setup.llm.model)}
     extra = list(setup.llm.overrides.values())
     extra.extend(setup.llm.verification_models or [])
-    models.update((provider_for_model(model, setup.llm.provider), model) for model in extra)
+    # The provider each job will run on, by the rule the runtime applies.
+    models.update(
+        (provider_of(model, setup.llm.model, setup.llm.provider), model) for model in extra
+    )
     checks = [
         await _check("llm", provider, model, keys.get(provider, ""), 0)
         for provider, model in sorted(models)

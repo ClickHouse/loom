@@ -155,3 +155,12 @@ def test_the_deployments_model_named_again_runs_on_its_provider(
     monkeypatch.setattr(settings, "conflict_resolver_model", "gpt-oss:20b")
     assert settings.conflict_resolver_provider() == "local"
     assert settings.provider_of("gpt-6-luna") == "openai"
+
+
+def test_the_setup_check_and_the_runtime_name_one_provider() -> None:
+    from server.core.llm_provider import provider_of
+
+    # A job naming the main model runs on the main provider; others by their name.
+    assert provider_of("claude-x", "claude-x", "openai") == "openai"
+    assert provider_of("claude-y", "claude-x", "openai") == "anthropic"
+    assert provider_of("llama3.2:3b", "qwen2.5:3b", "local") == "local"
