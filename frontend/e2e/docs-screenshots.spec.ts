@@ -423,11 +423,13 @@ function coverage() {
   };
 }
 
-/** `code.index_status` for the main branch: every stage at the tip, each worker healthy. */
+/** `code.index_status` for the main branch: every stage at the tip, each worker healthy,
+ *  at its default interval and last run within it. */
 function indexStatus() {
-  const worker = (minutes: number) => ({
+  const WEEK = 7 * 24 * 3600;
+  const worker = (minutes: number, interval: number) => ({
     enabled: true,
-    interval_seconds: 60,
+    interval_seconds: interval,
     last_run_at: ago(minutes / 60),
     last_duration_ms: 2400,
     consecutive_failures: 0,
@@ -476,13 +478,13 @@ function indexStatus() {
       scip_commit_py: { value: head, detail: "", updated_at: agoCh(0.5) },
     },
     workers: {
-      code_ingest: worker(2),
-      code_embed_recovery: worker(3),
-      code_graph_stats: worker(9),
-      code_pr_history: worker(1),
-      code_summary: worker(14),
-      code_scip_py_delta: worker(4),
-      code_scip_apply: worker(4),
+      code_ingest: worker(1.5, 120),
+      code_embed_recovery: worker(0.4, 30),
+      code_graph_stats: worker(9 * 60, WEEK),
+      code_pr_history: worker(11, 900),
+      code_summary: worker(14 * 60, WEEK),
+      code_scip_py_delta: worker(4, 600),
+      code_scip_apply: worker(0.8, 60),
     },
   };
 }
