@@ -37,6 +37,7 @@ from server.transport.mcp_schemas import (
     apply_schema_profile,
     collapse_nullable,
 )
+from tests.unit.loom_op_marks import assert_marked_once_outside_parentheses
 
 OPS = {op.name: op for op in ALL_OPERATIONS}
 TOOL_TO_OP = {op.mcp_tool_name: op.name for op in ALL_OPERATIONS}
@@ -341,10 +342,7 @@ def test_no_rendered_text_splits_a_call_or_a_code_span(toolset: str, code: bool)
         for text in _texts(t):
             assert "(via loom_op)(" not in text, (toolset, t["name"], text)
             assert "(via loom_op) (via loom_op)" not in text, (toolset, t["name"], text)
-            for marker in re.finditer(re.escape("(via loom_op)"), text):
-                # a marker sits outside any parenthesis; code spans do not count
-                before = re.sub(r"`[^`]*`", "", text[: marker.start()])
-                assert before.count("(") == before.count(")"), (toolset, t["name"], text)
+            assert_marked_once_outside_parentheses(text, (toolset, t["name"]))
             inside_spans = text.split("`")[1::2]
             assert not any("(via loom_op)" in span for span in inside_spans), (toolset, t["name"])
 

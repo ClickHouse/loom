@@ -115,7 +115,8 @@ def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool = False) -
     """``text`` as a client of this listing reads it. A client calls a listed op
     by its tool name, so every op the listing carries is named by its tool. An
     op it does not carry keeps its dotted name, the one `loom_op` takes, and its
-    first mention says "(via loom_op)". It stays unmarked when `loom_op` does not
+    first mention says "(via loom_op)", after a closing backtick, a possessive 's or a
+    plural possessive following a code span (`op`'). It stays unmarked when `loom_op` does not
     route it: a hidden op, a write when ``writes`` is false, or any op on a
     listing without `loom_op`."""
     has_loom_op = LOOM_OP_TOOL_NAME in listed

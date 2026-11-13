@@ -1,7 +1,7 @@
 """`loom_op` reaches an op the roster leaves unlisted.
 
-Claude Code's MCP client calls only tools it was listed, so ops the docs call
-"callable by name" (tracker.flaky, task.pull, …) need a listed way in.
+Claude Code's MCP client calls only tools it was listed, so ops a listing names
+with "(via loom_op)" (tracker.flaky, task.pull, …) need a listed way in.
 `loom_op {op, arguments}` is rewritten
 into the target's own `tools/call` before authorization, so it runs the same
 path a listed tool runs."""

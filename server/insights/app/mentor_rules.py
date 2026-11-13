@@ -259,7 +259,8 @@ _LISTED_VIA_ALIAS = frozenset({"memory.search", "knowledge.search", "conversatio
 
 # The note _unlisted adds for an op the core listing leaves out, and its pattern.
 _LOOM_OP_NOTE = " (call {} via loom_op)"
-_LOOM_OP_NOTE_RE = re.compile(r" \(call [a-z_.]+ via loom_op\)")
+# The note ends a hint: anchored, so an echoed value that spells one is not taken for it.
+_LOOM_OP_NOTE_RE = re.compile(r" \(call [a-z_.]+ via loom_op\)\Z")
 
 
 def without_listing_note(text: str) -> str:
@@ -512,7 +513,7 @@ def _rules_reliance(c: _Ctx) -> None:
         c.add(
             "reads_miss",
             "warning",
-            f"{missed} of {asked} keys asked of memory.get / bulk_get this week were not there: "
+            f"{missed} of {asked} keys asked for by key this week were not there: "
             "a key from a search result that misses is a chunk or a moved key — follow "
             "canonical_key, or recall by meaning with search.query.",
             ("memory.get", "search.query", "memory.search"),
@@ -679,10 +680,11 @@ def _coordination_sentence(c: _Ctx, hot_set: bool, hot_get: bool) -> tuple[str, 
             set_key,
         )
     parts: list[str] = []
+    each = ECHO_CHARS // (2 if hot_set and hot_get else 1)  # the two keys share the budget
     if hot_set:
-        parts.append(f"one key, {_quoted(set_key)}, was written {ms}×")
+        parts.append(f"one key, {_quoted(set_key, each)}, was written {ms}×")
     if hot_get:
-        parts.append(f"one key, {_quoted(get_key)}, was read {mg}×")
+        parts.append(f"one key, {_quoted(get_key, each)}, was read {mg}×")
     return " and ".join(parts) + " in a single session", set_key if hot_set else get_key
 
 

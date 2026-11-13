@@ -6,6 +6,7 @@ import pytest
 
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import mcp_op
+from tests.unit.loom_op_marks import assert_marked_once_outside_parentheses
 
 
 def _call(op: str, arguments: dict | None = None) -> dict:
@@ -103,15 +104,9 @@ def test_a_readonly_refusal_sends_the_model_only_where_it_can_go(name: str) -> N
 
 @pytest.mark.parametrize("toolset", ["core", "coding", "tracker", "readonly"])
 def test_a_rendered_refusal_marks_each_op_once_outside_parentheses(toolset: str) -> None:
-    import re
-
     for name in sorted(mcp_op._INSTEAD):
         text = mcp_op.hidden_refusal(name, toolset)["instead"]
-        for marker in re.finditer(re.escape("(via loom_op)"), text):
-            before = re.sub(r"`[^`]*`", "", text[: marker.start()])
-            assert before.count("(") == before.count(")"), (toolset, name, text)
-        marked = re.findall(r"([a-z_]+(?:\.[a-z_]+)+)`? \(via loom_op\)", text)
-        assert len(marked) == len(set(marked)), (toolset, name, marked)
+        assert_marked_once_outside_parentheses(text, (toolset, name))
 
 
 def test_a_readonly_refusal_keeps_its_reason() -> None:

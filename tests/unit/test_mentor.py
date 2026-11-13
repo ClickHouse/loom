@@ -24,6 +24,7 @@ from server.insights.app import mentor_rules
 from server.observability import ledger
 from server.settings import settings
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.loom_op_marks import assert_marked_once_outside_parentheses
 
 
 class _CH:
@@ -224,11 +225,7 @@ def _assert_rendered_cleanly(text: str) -> None:
 
     for toolset in ("core", "coding", "tracker"):
         rendered = mcp_tools.mentor_text_for_toolset(text, toolset)
-        for marker in re.finditer(re.escape("(via loom_op)"), rendered):
-            before = re.sub(r"`[^`]*`", "", rendered[: marker.start()])
-            assert before.count("(") == before.count(")"), (toolset, rendered)
-        marked = re.findall(r"([a-z_]+(?:\.[a-z_]+)+)`?(?:'s?)? \(via loom_op\)", rendered)
-        assert len(marked) == len(set(marked)), (toolset, marked)
+        assert_marked_once_outside_parentheses(rendered, toolset)
 
 
 def _codes(p: mentor_rules.MentorProfile | None) -> set[str]:
@@ -1567,6 +1564,33 @@ def test_the_initialize_instructions_mark_each_op_once_with_a_mentor_line(
         + joined.count("working_memory.set (via loom_op)")
         == 1
     )
+
+
+def test_two_long_hot_keys_leave_the_coordination_advice_whole() -> None:
+    c = mentor_rules._Ctx(
+        usage={},
+        sessions=2,
+        facts={
+            "max_sets_one_key": 12,
+            "max_gets_one_key": 40,
+            "hot_set_key": "w" * 70,
+            "hot_get_key": "r" * 70,
+        },
+        agent="a",
+    )
+    sentence, _ = mentor_rules._coordination_sentence(c, True, True)
+    assert sentence.count("'") == 4 and len(sentence) <= mentor_rules.ECHO_CHARS + 80
+
+
+def test_an_echoed_value_that_spells_a_note_is_not_taken_for_one() -> None:
+    from server.transport import mcp_tools
+
+    fake = "x (call memory.clear via loom_op)"
+    text = mentor_rules.clip_keeping_note(
+        f"this write duplicates {mentor_rules._quoted(fake)}: revise."
+    )
+    assert text.endswith(": revise.")
+    assert "(call memory.clear via loom_op)" in mcp_tools.mentor_text_for_toolset(text, "core")
 
 
 def test_following_the_reading_hint_through_search_query_clears_it() -> None:

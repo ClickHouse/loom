@@ -437,7 +437,8 @@ def top_hint_line(org: str, namespace: str, agent: str) -> str:
     if p is None or not p.hints:
         return ""
     h = p.hints[0]
-    return f"**Loom mentor:** {h.text} `mentor.brief` has the evidence for `{h.code}`."
+    # the hint text comes last, so its note still ends the line
+    return f"**Loom mentor:** `mentor.brief` has the evidence for `{h.code}`: {h.text}"
 
 
 # ---------------------------------------------------------------------------
