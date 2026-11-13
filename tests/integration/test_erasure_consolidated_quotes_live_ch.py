@@ -147,7 +147,9 @@ async def test_the_answers_that_quoted_a_consolidated_row_leave_with_its_source(
         unmerged = "SELECT count() FROM loom.memory WHERE org = {org:String} "
         unmerged += "AND memory_key = 'topic-rebuilt' AND has(tags, 'src:user_diet')"
         first = ch_client.query(unmerged, parameters={"org": org}).result_rows[0][0]
-        before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
+        before = await erasure_census.residue_census(
+            org, "user_id", "alice", ch=ch, spellings=["alice"]
+        )
         last = ch_client.query(unmerged, parameters={"org": org}).result_rows[0][0]
         extra = {first, last} if purge else {0}
         assert before["loom.memory"] - 2 in extra
@@ -158,7 +160,9 @@ async def test_the_answers_that_quoted_a_consolidated_row_leave_with_its_source(
         for name, step in _STEPS[:-1]:
             await _run(name, step, org, ch)
         # counted while the user's keys still name the rows: a purge's census reads none
-        mid = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
+        mid = await erasure_census.residue_census(
+            org, "user_id", "alice", ch=ch, spellings=["alice"]
+        )
         assert {t: mid[t] for t in caches} == dict.fromkeys(caches, 0)
         # an answer cached after the cache steps that quotes a summary they retired
         ch_client.insert(
@@ -177,7 +181,9 @@ async def test_the_answers_that_quoted_a_consolidated_row_leave_with_its_source(
                 await _run(*_STEPS[-1], org, ch)
         await _run(*_STEPS[-1], org, ch)
         assert not crash or stopped == ["loom.memory"]
-        after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
+        after = await erasure_census.residue_census(
+            org, "user_id", "alice", ch=ch, spellings=["alice"]
+        )
     assert after["loom.memory"] == 0
 
     memory = "SELECT memory_key FROM loom.memory FINAL WHERE org = {org:String}"

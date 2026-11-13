@@ -282,6 +282,14 @@ _WORKERS: tuple[_Worker, ...] = (
         "conversation_titler_interval_seconds",
     ),
     _Worker(
+        "knowledge_gaps",
+        "server.knowledge.workers.knowledge_gaps",
+        "knowledge_gaps_enabled",
+        "knowledge_gaps_interval_seconds",
+        first_pass_due="first_pass_due",  # Misses waiting → now
+        max_pass_setting="knowledge_gaps_max_pass_seconds",
+    ),
+    _Worker(
         "profile_consolidation",
         "server.memory.workers.profile_consolidation",
         "profile_consolidation_enabled",

@@ -154,8 +154,14 @@ const BUDGET: Record<string, { render: () => JSX.Element; view: View; allow: Rec
     render: () => <Documents />,
     view: "knowledge",
     // The select above the list reads the collections the person can open, once; the
-    // Sources section reads the place's document sources, once.
-    allow: { "/v1/knowledge.list": 1, "/v1/collection.list": 1, "/v1/knowledge.source.list": 1 },
+    // Sources section reads the place's document sources, once; an admin's gaps tile reads
+    // the namespace's gaps, once.
+    allow: {
+      "/v1/knowledge.list": 1,
+      "/v1/collection.list": 1,
+      "/v1/knowledge.source.list": 1,
+      "/v1/knowledge.gaps.list": 1,
+    },
   },
   Repositories: {
     render: () => <CodeView />,

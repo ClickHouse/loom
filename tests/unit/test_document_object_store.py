@@ -1621,7 +1621,7 @@ def test_an_evidence_census_keeps_the_table_counts_when_postgres_or_the_bucket_i
         {"loom.chunks": 2},
         {"postgres": pg_error, "bucket": down},
     )
-    assert asyncio.run(erasure_census.evidence_census("o", "user_id", "u")) == (
+    assert asyncio.run(erasure_census.evidence_census("o", "user_id", "u", spellings=["u"])) == (
         {"loom.chunks": 2},
         {"postgres": pg_error},
     ), "a user scope lists no bucket"
@@ -1638,8 +1638,12 @@ def test_a_namespace_verify_counts_the_bucket_objects_left(
     async def left(*args: Any, **kw: Any) -> int:
         return 3
 
+    async def spellings(org: str, subject: str) -> list[str]:
+        return [subject]
+
     monkeypatch.setattr(saga_steps.erasure_census, "residue_census", tables)
     monkeypatch.setattr(saga_steps.erasure_census, "object_residue", left)
+    monkeypatch.setattr("server.auth.aliases.spellings", spellings)
     holder: dict[str, Any] = {}
     with pytest.raises(saga_steps.ErasureResidueError):
         asyncio.run(saga_steps._step_verify_residue("o", "namespace", "a", holder))

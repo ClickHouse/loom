@@ -33,6 +33,8 @@ class SACreator:
 
     subject: str
     inherits: bool
+    # "agent" for an agent sign-up's account, whose creator is a namespace, not a person.
+    kind: str = ""
 
 
 # (org, sa_subject) -> (time.monotonic() of the read, its creator). Kept for
@@ -81,7 +83,7 @@ async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SAC
     try:
         row = await ch.query_one(
             """
-            SELECT created_by, inherit_creator_grants
+            SELECT created_by, inherit_creator_grants, kind
             FROM loom.service_accounts FINAL
             WHERE org = {org:String} AND sa_subject = {sub:String}
               AND revoked_at IS NULL
@@ -96,7 +98,11 @@ async def sa_creator(org: str, sa_subject: str, *, ch: Any | None = None) -> SAC
     creator = str((row or {}).get("created_by") or "")
     if not creator:
         return None
-    found = SACreator(subject=creator, inherits=bool((row or {}).get("inherit_creator_grants")))
+    found = SACreator(
+        subject=creator,
+        inherits=bool((row or {}).get("inherit_creator_grants")),
+        kind=str((row or {}).get("kind") or ""),
+    )
     if len(_creators) >= _CREATOR_CACHE_MAX:
         _creators.clear()
     _creators[key] = (time.monotonic(), found)

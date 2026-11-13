@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 186 tables + 5 views + 19 materialized views.
+-- Counts: 188 tables + 5 views + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (186)
+-- Tables (188)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -2055,6 +2055,25 @@ ORDER BY (seen_at, process)
 TTL toDateTime(seen_at) + toIntervalDay(1)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
+-- loom.knowledge_gaps
+CREATE TABLE IF NOT EXISTS loom.knowledge_gaps
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `build` UInt64,
+    `gap_id` String,
+    `head` String,
+    `samples` Array(String),
+    `askers` UInt32,
+    `asks` UInt32,
+    `last_at` DateTime,
+    `built_at` DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (org, namespace, build, gap_id)
+TTL built_at + toIntervalDay(7)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.knowledge_ingest_cancels
 CREATE TABLE IF NOT EXISTS loom.knowledge_ingest_cancels
 (
@@ -3736,6 +3755,25 @@ CREATE TABLE IF NOT EXISTS loom.scim_users
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY id
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.search_misses
+CREATE TABLE IF NOT EXISTS loom.search_misses
+(
+    `ts` DateTime DEFAULT now(),
+    `miss_id` String,
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `asker` String,
+    `normalized` String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(ts)
+ORDER BY (org, namespace, ts)
+TTL ts + toIntervalDay(16)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.search_trace_log

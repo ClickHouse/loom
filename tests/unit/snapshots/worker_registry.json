@@ -267,6 +267,22 @@
    }
   },
   {
+   "deadline_seconds()": 3600.0,
+   "due_scope": null,
+   "first_pass_due": {
+    "id": "server.knowledge.workers.knowledge_gaps:first_pass_due"
+   },
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400,
+   "max_pass_seconds": 3600.0,
+   "name": "knowledge_gaps",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.knowledge_gaps:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 900.0,
    "due_scope": null,
    "first_pass_due": null,

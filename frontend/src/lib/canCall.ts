@@ -116,6 +116,8 @@ export const OP_MIN_ROLE = {
   "knowledge.source.rotate": ADMIN,
   "knowledge.source.remove": ADMIN,
   "knowledge.source.sync_now": ADMIN,
+  // The Library's gaps tile lists other people's questions.
+  "knowledge.gaps.list": ADMIN,
   // Listed for the registry mirror, not yet consulted at a call site: the
   // other namespace-scoped ops a view reads on mount. Each is the page's
   // own content (the view renders the humanized 403) or a secondary read

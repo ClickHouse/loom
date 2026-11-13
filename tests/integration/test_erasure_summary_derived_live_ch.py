@@ -237,10 +237,14 @@ async def test_what_a_summary_of_the_users_memories_fed_leaves_with_it(
     _seed_shared(ch_client, org)
     _seed_shared(ch_client, org, ("user_diet",), user="alice")  # a copy of her own row
     with erasure_mutations.purge_scope(purge), erasure_mutations.saga_scope(f"erasure-{org}"):
-        before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
+        before = await erasure_census.residue_census(
+            org, "user_id", "alice", ch=ch, spellings=["alice"]
+        )
         assert {t: before[t] for t in _COUNTED} == _COUNTED
         await _run(_STEPS, org, ch)
-        after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
+        after = await erasure_census.residue_census(
+            org, "user_id", "alice", ch=ch, spellings=["alice"]
+        )
     assert {t: after[t] for t in _COUNTED} == dict.fromkeys(_COUNTED, 0)
 
     history = "SELECT concat(user_id, ':', memory_key, ':', toString(version))"
@@ -365,12 +369,16 @@ async def test_outside_a_purge_a_late_summary_reopens_its_steps(ch_client, ch) -
         await _run(_STEPS, org, ch)
         _insert(ch_client, "loom.memory", _MEMORY_COLS, [row])
         _seed_shared(ch_client, org, ("topic-late",))  # and promoted at once
-        residue = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
+        residue = await erasure_census.residue_census(
+            org, "user_id", "alice", ch=ch, spellings=["alice"]
+        )
         assert (residue["loom.memory"], residue["loom.memory_versions"]) == (1, 1)
         reopened = erasure_census.steps_to_reopen(residue, "user_id")
         assert {"memory_versions.delete", "memory.retire"} <= reopened
         await _run([s for s in _STEPS if s[0] in reopened], org, ch)
-        after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
+        after = await erasure_census.residue_census(
+            org, "user_id", "alice", ch=ch, spellings=["alice"]
+        )
     assert (after["loom.memory"], after["loom.memory_versions"]) == (0, 0)
     # loom.shared is not counted: memory.retire takes the copy
     shared = f"SELECT memory_key FROM loom.shared FINAL{_WHERE} AND tombstoned_at IS NULL"

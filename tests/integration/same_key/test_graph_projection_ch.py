@@ -2444,9 +2444,13 @@ async def test_a_users_row_links_are_erased_after_their_memory_row_is_gone(ch, o
     theirs = {**link, "memory_id": str(uuid.uuid4()), "user_id": "u2"}
     await ch.insert("loom.entity_triple_rows", [link, theirs])
     # The census counts by the same predicate the step deletes by.
-    assert (await residue_census(org, "user_id", USER, ch=ch))["loom.entity_triple_rows"] == 1
+    assert (await residue_census(org, "user_id", USER, ch=ch, spellings=[USER.lower()]))[
+        "loom.entity_triple_rows"
+    ] == 1
     await delete_graph_links_by_user(org, USER, ch=ch)
-    assert (await residue_census(org, "user_id", USER, ch=ch))["loom.entity_triple_rows"] == 0
+    assert (await residue_census(org, "user_id", USER, ch=ch, spellings=[USER.lower()]))[
+        "loom.entity_triple_rows"
+    ] == 0
     rows = await ch.query_all(
         "SELECT user_id FROM loom.entity_triple_rows WHERE org = {org:String}"
         " SETTINGS select_sequential_consistency = 1",
@@ -2473,9 +2477,13 @@ async def test_a_users_edge_row_links_are_erased(ch, org) -> None:
     }
     theirs = {**link, "memory_id": str(uuid.uuid4()), "user_id": "u2"}
     await ch.insert("loom.entity_edge_rows", [link, theirs])
-    assert (await residue_census(org, "user_id", USER, ch=ch))["loom.entity_edge_rows"] == 1
+    assert (await residue_census(org, "user_id", USER, ch=ch, spellings=[USER.lower()]))[
+        "loom.entity_edge_rows"
+    ] == 1
     await delete_graph_links_by_user(org, USER, ch=ch)
-    assert (await residue_census(org, "user_id", USER, ch=ch))["loom.entity_edge_rows"] == 0
+    assert (await residue_census(org, "user_id", USER, ch=ch, spellings=[USER.lower()]))[
+        "loom.entity_edge_rows"
+    ] == 0
     rows = await ch.query_all(
         "SELECT user_id FROM loom.entity_edge_rows WHERE org = {org:String}"
         " SETTINGS select_sequential_consistency = 1",
