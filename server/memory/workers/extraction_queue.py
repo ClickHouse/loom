@@ -136,9 +136,8 @@ def _local_server_timeout(e: BaseException) -> bool:
         url = e.request.url
     except RuntimeError:  # raised without its request: not known to be the local server
         return False
-    # Under the root the local client posts to, so a hosted model behind the same
-    # gateway host is not taken for it.
-    # Normalised as httpx sends it (a lower-case host, no default port).
+    # Under the local root as httpx sends it (lower-case host, no default port), so a
+    # hosted model behind the same gateway host is not taken for it.
     root = str(httpx.URL(settings.local_llm_base_url.rstrip("/")))
     return str(url).startswith(root + "/")
 
