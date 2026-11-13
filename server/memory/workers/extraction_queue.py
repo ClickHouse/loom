@@ -138,7 +138,9 @@ def _local_server_timeout(e: BaseException) -> bool:
         return False
     # Under the root the local client posts to, so a hosted model behind the same
     # gateway host is not taken for it.
-    return str(url).startswith(settings.local_llm_base_url.rstrip("/") + "/")
+    # Normalised as httpx sends it (a lower-case host, no default port).
+    root = str(httpx.URL(settings.local_llm_base_url.rstrip("/")))
+    return str(url).startswith(root + "/")
 
 
 def unreachable(e: BaseException) -> bool:

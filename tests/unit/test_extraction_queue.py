@@ -833,6 +833,20 @@ async def test_a_local_model_that_times_out_spends_an_attempt(
 
 
 @pytest.mark.asyncio
+async def test_a_local_root_written_with_a_default_port_still_matches_its_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    monkeypatch.setattr(settings, "local_llm_base_url", "http://Ollama:80/v1")
+    sent = httpx.Request("POST", "http://Ollama:80/v1/chat/completions")
+    _replaying(monkeypatch, httpx.ReadTimeout("no reply", request=sent))
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
+    assert res.unreachable == 0 and res.failures == ["q1: failed"]
+
+
+@pytest.mark.asyncio
 async def test_a_timeout_raised_without_its_request_spends_none_on_a_local_deployment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

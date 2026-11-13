@@ -250,7 +250,7 @@ a reply rather than the hosted default of 300, and tries it once
 The workers that extract in the background give a pass a deadline, so the preset lets a
 deferred-extraction pass, which replays the captures the coding plugins send, run an hour
 on one batch (`LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS`, by default four of its intervals,
-at least 60 s and at most 900; a batch's lease is kept a minute longer) and an
+at least 60 s and at most 900; a batch's lease is kept at least a minute longer) and an
 observe-extraction pass an hour (`LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS`, default 900).
 On a `local` provider a capture cut short (at that deadline, or by the server restarting)
 or whose call ran out its timeout spends one of its `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2`
