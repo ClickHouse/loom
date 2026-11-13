@@ -299,7 +299,7 @@ def test_an_object_store_agent_is_told_to_recall_by_meaning_and_move_the_lease(
     assert "key 'sre/lease' was read 116×" in loop.text and "written" not in loop.text
     key_only = p.hint("recall_by_key_only")
     assert key_only is not None and key_only.evidence == {"gets": 6606, "searches": 52}
-    # memory.search is listed as loom_search; the note names the op that is not
+    # search.query is listed as loom_search; the note names the op that is not
     assert key_only.text.endswith(" (call working_memory.set via loom_op)")
 
 
@@ -403,7 +403,7 @@ def test_every_other_rule_fires_on_its_fact_and_the_profile_keeps_eight(
         assert len(h.text) <= mentor_rules.HINT_CHARS
         assert h.ops
         _assert_rendered_cleanly(h.text)
-    # loom_search is listed under another name; the note names the op that is not
+    # search.query is on every listing (as loom_search); the note names the op that is not
     abstains = next(h for h in full if h.code == "search_abstains")
     assert abstains.text.endswith(" (call namespace.audit via loom_op)")
 
