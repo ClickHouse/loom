@@ -2724,7 +2724,7 @@
           "default": 600,
           "minimum": 60,
           "type": "integer",
-          "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker may claim a batch still waiting in the pass."
+          "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_pass_seconds`), or an overlapping worker may claim a batch still waiting in the pass."
         },
         "extraction_queue_max_attempts": {
           "default": 8,
@@ -2739,10 +2739,10 @@
           "description": "Most queued batches one pass claims."
         },
         "extraction_queue_max_pass_seconds": {
-          "default": 60.0,
-          "exclusiveMinimum": 0,
+          "default": 0.0,
+          "minimum": 0,
           "type": "number",
-          "description": "Seconds a deferred-extraction pass may run before the supervisor abandons it; a model slower than this per batch needs it raised (and the lease above it)."
+          "description": "Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass` replays) may run before the supervisor abandons it; 0 = four intervals, at least 60 s and at most 900. Keep `extraction_queue_lease_seconds` above it."
         },
         "extraction_queue_namespace_concurrency": {
           "default": 4,

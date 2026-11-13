@@ -2104,15 +2104,15 @@ class ExtractionSettings(BaseModel):
     extraction_defer_agents: Annotated[str, LIVE] = ""
     # Seconds between deferred-extraction queue passes.
     extraction_queue_interval_seconds: int = 15
-    # Seconds a deferred-extraction pass may run before the supervisor abandons it; a
-    # model slower than this per batch needs it raised (and the lease above it).
-    extraction_queue_max_pass_seconds: float = Field(default=60.0, gt=0)
+    # Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass`
+    # replays) may run before the supervisor abandons it; 0 = four intervals, at least 60 s
+    # and at most 900. Keep `extraction_queue_lease_seconds` above it.
+    extraction_queue_max_pass_seconds: float = Field(default=0.0, ge=0)
     # Most queued batches one pass claims.
     extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Seconds a claimed batch stays leased to one worker before another may claim it; at
-    # least a minute. Set it above the longest pass
-    # (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping
-    # worker may claim a batch still waiting in the pass.
+    # least a minute. Set it above the longest pass (`extraction_queue_max_pass_seconds`),
+    # or an overlapping worker may claim a batch still waiting in the pass.
     extraction_queue_lease_seconds: Annotated[int, LIVE] = Field(default=600, ge=60)
     # Attempts before a failing batch stops returning to `pending` and is marked failed;
     # each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or

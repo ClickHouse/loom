@@ -2566,17 +2566,17 @@ settings:
   # Seconds between deferred-extraction queue passes. [restart]
   # extraction_queue_interval_seconds: 15
 
-  # Seconds a deferred-extraction pass may run before the supervisor abandons it; a
-  # model slower than this per batch needs it raised (and the lease above it). [restart]
-  # extraction_queue_max_pass_seconds: 60.0
+  # Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass`
+  # replays) may run before the supervisor abandons it; 0 = four intervals, at least 60
+  # s and at most 900. Keep `extraction_queue_lease_seconds` above it. [restart]
+  # extraction_queue_max_pass_seconds: 0.0
 
   # Most queued batches one pass claims. [live]
   # extraction_queue_max_batches_per_pass: 8
 
   # Seconds a claimed batch stays leased to one worker before another may claim it; at
-  # least a minute. Set it above the longest pass
-  # (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker
-  # may claim a batch still waiting in the pass. [live]
+  # least a minute. Set it above the longest pass (`extraction_queue_max_pass_seconds`),
+  # or an overlapping worker may claim a batch still waiting in the pass. [live]
   # extraction_queue_lease_seconds: 600
 
   # Attempts before a failing batch stops returning to `pending` and is marked failed;

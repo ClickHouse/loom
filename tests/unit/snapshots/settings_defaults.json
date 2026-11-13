@@ -495,7 +495,7 @@
  "extraction_queue_lease_seconds": 600,
  "extraction_queue_max_attempts": 3,
  "extraction_queue_max_batches_per_pass": 8,
- "extraction_queue_max_pass_seconds": 60.0,
+ "extraction_queue_max_pass_seconds": 0.0,
  "extraction_queue_namespace_concurrency": 4,
  "facts_traverse_hub_share": 0.01,
  "facts_traverse_rank_by": "cosine",

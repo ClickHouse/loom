@@ -136,6 +136,17 @@ def test_a_workers_spec_takes_its_pass_deadline_from_its_setting(
     assert registry._spec_for(row).max_pass_seconds == 42.0
 
 
+def test_the_extraction_queue_keeps_four_intervals_while_its_deadline_is_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    row = _row("extraction_queue")
+    monkeypatch.setattr(settings, "extraction_queue_max_pass_seconds", 0.0)
+    monkeypatch.setattr(settings, "extraction_queue_interval_seconds", 60)
+    assert registry._spec_for(row).deadline_seconds() == 240.0
+
+
 def test_a_pass_deadline_is_a_setting_or_derived_in_its_worker() -> None:
     """No row pins a number: a deadline is a setting, or a constant its worker derives."""
     for row in _ROWS:
