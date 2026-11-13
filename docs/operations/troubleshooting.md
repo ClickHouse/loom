@@ -211,10 +211,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   answers as for a missing row rather than a 403 that would confirm the id exists. The
   usual cause is a token without the op's role on the row's namespace. `memory.get_by_id`
   and `memory.update_by_id` also answer so when the caller reaches more than one
-  namespace holding the id, as after a `namespace.restore`, and a grant read that fails
-  answers so until a retry succeeds.
-  [Row-scoped operations](../architecture/security.md#row-scoped-operations) has every
-  case.
+  namespace holding the id, as after a `namespace.restore`.
+  [Row-scoped operations](../architecture/security.md#row-scoped-operations) has the rule
+  and its exceptions.
 - **Fix:** use a token with the op's role on the row's namespace
   ([tokens and grants](../guides/tokens-and-grants.md)); for an id in several
   namespaces, address the row by key in its namespace (`memory.get`, or
