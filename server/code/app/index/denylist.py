@@ -173,7 +173,7 @@ def indexes_symbols(reason: str) -> bool:
 
 def under_prefixes(path_prefixes: tuple[str, ...], path: str) -> bool:
     """`path` is under an entry's prefixes (none = the whole tree)."""
-    return path.startswith(tuple(path_prefixes) or ("",))
+    return path.startswith(path_prefixes or ("",))
 
 
 def takes_path(

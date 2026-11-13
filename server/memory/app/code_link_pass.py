@@ -159,22 +159,21 @@ class RepoReads:
             )
             if scope is None:
                 return None
-            key = ("indexed paths", base, head)
-            if key not in self._read:
+
+            async def in_scope() -> tuple[int, list[str] | None]:
                 # by prefix first: the denylist is matched only on a range within the bound
                 under = [p for p in touched if scope.under(p)]
-                bound = settings.memory_code_links_mirror_changed_files
-                # the count alone when too wide, so each name searched over it is logged
-                self._read[key] = (
-                    len(under) if len(under) > bound else sorted(filter(scope.takes, under))
-                )
-            paths = self._read[key]
-            if isinstance(paths, int):
+                if len(under) > settings.memory_code_links_mirror_changed_files:
+                    return len(under), None
+                return len(under), sorted(filter(scope.takes, under))
+
+            count, paths = await self._once(("indexed paths", base, head), in_scope)
+            if paths is None:
                 log.info(
                     "memory links: %s not searched for in the mirror: %d files changed "
                     "in %s..%s of %s, past memory_code_links_mirror_changed_files",
                     literal,
-                    paths,
+                    count,
                     base[:12],
                     head[:12],
                     self.cns,
