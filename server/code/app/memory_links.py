@@ -20,6 +20,7 @@ from server.code.domain.definitions import definitions
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import (
+    WHOLE_TREE,
     RepoConfig,
     configured_repos,
     docs_namespaces,
@@ -138,10 +139,9 @@ async def touched_paths(org: str, namespace: str, base: str, head: str) -> set[s
 async def containing(
     org: str, namespace: str, commit: str, literal: str, paths: list[str], *, limit: int
 ) -> list[str] | None:
-    """Those of `paths` the entry indexes whose text at `commit` holds the word
-    `literal`, read from the mirror, the paths the ingest refuses left out; an empty list
-    when `limit` or more hold it (no telling which is the definition); None when git
-    cannot tell."""
+    """Those of `paths` the ingest would index whose text at `commit` holds the word
+    `literal`, read from the mirror; an empty list when `limit` or more hold it (no telling
+    which is the definition); None when git cannot tell."""
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:
         return None
@@ -150,15 +150,30 @@ async def containing(
     try:
         denied = await _denylist_at(cfg, commit)
         # what the ingest reads (`ingest_pass._scope_of`): under the prefixes, not refused
-        paths = [p for p in paths if p.startswith(cfg.path_prefixes) and not denied.reason(p)]
+        prefixes = tuple(cfg.path_prefixes) or WHOLE_TREE
+        paths = [p for p in paths if p.startswith(prefixes) and not denied.reason(p)]
         if not paths:
             return []
         found = await gitrepo.grep_paths(
             cfg.git_dir, commit, literal, tuple(paths), limit=limit, literal_paths=True, word=True
         )
+        if len(found) >= limit:
+            return []  # a cut list is never taken as whole
+        return [p for p in found if await _indexed(cfg, denied, commit, p)]
     except gitrepo.GitError:
         return None
-    return [] if len(found) >= limit else found  # a cut list is never taken as whole
+
+
+async def _indexed(cfg: RepoConfig, denied: Denylist, commit: str, path: str) -> bool:
+    """The ingest would index `path` at `commit` by its content: not over the byte cap,
+    not binary, not generated when the entry refuses generated files."""
+    try:
+        data = await gitrepo.file_at(
+            cfg.git_dir, commit, path, max_bytes=settings.code_ingest_max_file_bytes
+        )
+    except gitrepo.BlobTooLarge:
+        return False
+    return data is not None and not denied.refusal(path, data)
 
 
 # the last commits' denylists per entry (its ignore and attributes files read at the commit)

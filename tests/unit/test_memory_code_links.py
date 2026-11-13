@@ -3997,11 +3997,12 @@ async def test_a_missing_link_is_never_handed_to_an_edited_copy_the_mirror_finds
     monkeypatch,
 ) -> None:
     files = code_link_pass.RepoReads("o", "code-a")
-    row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
     lost = row | {"state": "missing", "changed_since": "c1"}
     later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
     moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
-    assert [m.link.state for m in moves] in ([], ["missing"])
+    assert searched == [("c2", "fetch_rows", "c0")]  # the mirror found the copy
+    assert moves == []  # and the link stays missing
 
 
 @pytest.mark.asyncio
@@ -4129,36 +4130,31 @@ async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypat
 async def test_the_mirror_search_leaves_out_what_the_ingest_does_not_index(
     monkeypatch, tmp_path
 ) -> None:
+    from dataclasses import replace
+
     from server.code.app import memory_links
+    from server.code.app.index.repo_registry import row_to_config
 
     git, commit = _repo(tmp_path)
     head = commit(
         {
             ".loomignore": "gen/\n",
             "pkg/b.py": "def fetch_rows():\n    return 1\n",
-            "tools/rows.py": "def fetch_rows():\n    return 3\n",  # outside the entry's prefixes
-            "gen/rows.py": "def fetch_rows():\n    return 2\n",  # the ingest refuses it
+            "gen/rows.py": "def fetch_rows():\n    return 2\n",  # the ignore file refuses it
+            "pkg/mock.py": "# @generated\ndef fetch_rows():\n    return 3\n",  # generated
         }
     )
-    from dataclasses import dataclass
-
-    @dataclass(frozen=True)
-    class Entry:  # the fields of a `RepoConfig` the search reads
-        git_dir: str
-        label: str = "t"
-        ignore_file: str = ".loomignore"
-        exclude: tuple[str, ...] = ()
-        include_contrib: bool = False
-        include_contrib_paths: tuple[str, ...] = ()
-        exclude_generated: bool = False
-        path_prefixes: tuple[str, ...] = ("pkg/", "gen/")
-
-    cfg = Entry(git_dir=str(tmp_path / ".git"))
+    # an entry added from the page: no prefixes (the whole tree), generated files refused
+    base = row_to_config({"org": "o", "namespace": "code-a", "repo": "o/a"})
+    cfg = replace(base, git_dir=str(tmp_path / ".git"), exclude_generated=True)
+    assert cfg.path_prefixes == ()
     monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: cfg)
     monkeypatch.setattr(memory_links, "_DENYLISTS", type(memory_links._DENYLISTS)())
-    paths = ["gen/rows.py", "pkg/b.py", "tools/rows.py"]
+    paths = ["gen/rows.py", "pkg/b.py", "pkg/mock.py"]
     found = await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=3)
     assert found == ["pkg/b.py"]
-    # the refused and unindexed files are left out before the page is counted
-    assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=2) == ["pkg/b.py"]
-    assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=1) == []
+    # a path refused by name is left out before the page is counted, by content after
+    assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=2) == []
+    prefixed = replace(cfg, path_prefixes=("gen/",))
+    monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: prefixed)
+    assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=3) == []

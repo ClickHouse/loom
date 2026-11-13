@@ -377,10 +377,11 @@ async def _recheck(
 
 async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[Definition] | None:
     """The definitions of the lost link's name, inside their module, that the mirror holds
-    at `head` in the files changed since it was last in place: what the index may not
-    hold yet. Only adds to the index's namesakes: a search too wide to run, or one that
-    too many files answer, adds none and the index's verdict stands, as does a file the
-    parser fails on, of which the index holds no definition either. None when git could
+    at `head` in the files changed since the commit it is searched from (`_searched_from`):
+    what the index may not hold yet. Only adds to the index's namesakes: a search too
+    wide to run, or one that too many files answer, adds none and the index's verdict
+    stands, as does a file the parser fails on, of which the index holds no definition
+    either. None when git could
     not be read: then a live link is unsure."""
     qn = r.before.qualified_name
     if r.before.state == "missing" and r.range is None:

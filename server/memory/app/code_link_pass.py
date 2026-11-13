@@ -130,7 +130,7 @@ class RepoReads:
         self, head: str, literal: str, base: str, *, limit: int
     ) -> list[str] | None:
         """The files `base..head` added or changed whose text at `head` holds the word
-        `literal`, fewer than `limit`, those the ingest does not index left out; an empty
+        `literal`, fewer than `limit`, those the ingest would not index left out; an empty
         list when the range's diff cannot be read (a force-push, a diff git fails on),
         more than `memory_code_links_mirror_changed_files` changed or `limit` or more
         hold it; None when the mirror cannot be searched."""

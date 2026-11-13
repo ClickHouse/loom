@@ -3456,8 +3456,8 @@ settings:
   # Changed claims one pass re-checks with the LLM under the `revise` policy. [restart]
   # memory_code_links_revise_per_pass: 20
 
-  # Files that name a lost link's definition (callers too) the mirror is searched across
-  # for where it went; from this many on, the code index alone decides. [restart]
+  # Changed files that may hold a lost link's name (its callers count) for the mirror's
+  # answer to be used; from this many on, the code index alone decides. [restart]
   # memory_code_links_mirror_naming_files: 200
 
   # Files a lost link's commit range may change for the mirror to be searched; past it,

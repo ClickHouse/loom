@@ -3974,7 +3974,7 @@
           "default": 200,
           "minimum": 1,
           "type": "integer",
-          "description": "Files that name a lost link's definition (callers too) the mirror is searched across for where it went; from this many on, the code index alone decides."
+          "description": "Changed files that may hold a lost link's name (its callers count) for the mirror's answer to be used; from this many on, the code index alone decides."
         },
         "memory_code_links_pending_days": {
           "default": 14,
