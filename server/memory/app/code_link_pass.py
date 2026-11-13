@@ -141,29 +141,43 @@ class RepoReads:
 
         async def read() -> list[str] | None:
             touched = await self.touched(base, head) if base else None
-            if not touched:
-                return []
-            if len(touched) > settings.memory_code_links_mirror_changed_files:
+            if touched is None:
                 log.info(
-                    "memory links: %s not searched for in the mirror: %d files changed in "
-                    "%s..%s of %s, past memory_code_links_mirror_changed_files",
+                    "memory links: %s not searched for in the mirror: %s..%s of %s cannot be read",
                     literal,
-                    len(touched),
                     base[:12],
                     head[:12],
                     self.cns,
                 )
+                return []
+            if not touched:
                 return []
             scope = await self._once(
                 ("scope", head), lambda: code.ingest_scope(self.org, self.cns, head)
             )
             if scope is None:
                 return None
-
-            async def taken() -> list[str]:
-                return sorted(p for p in touched if scope.takes(p))
-
-            paths = await self._once(("indexed paths", base, head), taken)
+            key = ("indexed paths", base, head)
+            if key not in self._read:
+                # the prefix test first: the bound is on what git would be given
+                prefixes = tuple(scope.cfg.path_prefixes) or ("",)
+                under = [p for p in touched if p.startswith(prefixes)]
+                if len(under) > settings.memory_code_links_mirror_changed_files:
+                    log.info(
+                        "memory links: %s not searched for in the mirror: %d files changed "
+                        "in %s..%s of %s, past memory_code_links_mirror_changed_files",
+                        literal,
+                        len(under),
+                        base[:12],
+                        head[:12],
+                        self.cns,
+                    )
+                    self._read[key] = None
+                else:
+                    self._read[key] = sorted(p for p in under if scope.takes(p))
+            paths = self._read[key]
+            if paths is None:
+                return []
             found = await code.grep_words(scope, head, literal, paths, limit=limit)
             if found is None:
                 return None

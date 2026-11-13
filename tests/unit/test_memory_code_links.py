@@ -4070,8 +4070,12 @@ async def test_the_mirror_is_not_searched_over_a_range_too_wide_or_unread(monkey
     async def grep(*a, **k):
         raise AssertionError("not searched")
 
+    async def ingest_scope(org, cns, commit):
+        return SimpleNamespace(cfg=SimpleNamespace(path_prefixes=()), takes=lambda path: True)
+
     monkeypatch.setattr(files, "touched", touched)
     monkeypatch.setattr(code_links.code, "grep_words", grep)
+    monkeypatch.setattr(code_links.code, "ingest_scope", ingest_scope)
     assert await files.containing("c0", "c1", "f", limit=5) == []  # the range is unread
     monkeypatch.setattr(settings, "memory_code_links_mirror_changed_files", 1)
     assert await files.containing("b0", "c1", "f", limit=5) == []  # too wide
@@ -4120,7 +4124,7 @@ async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypat
     files = code_link_pass.RepoReads("o", "code-a")
     row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
     monkeypatch.setattr(files, "containing", _REAL_CONTAINING.__get__(files))
-    scope = SimpleNamespace(takes=lambda path: True)
+    scope = SimpleNamespace(cfg=SimpleNamespace(path_prefixes=()), takes=lambda path: True)
     names = files.names
 
     async def ingest_scope(org, cns, commit):

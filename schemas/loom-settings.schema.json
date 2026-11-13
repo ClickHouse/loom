@@ -3969,7 +3969,7 @@
           "maximum": 20000,
           "minimum": 1,
           "type": "integer",
-          "description": "Files a lost link's commit range may change for the mirror to be searched (at most 20,000: each is an argument to git); past it, the code index alone decides."
+          "description": "Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched (at most 20,000: each is an argument to git); past it, the code index alone decides."
         },
         "memory_code_links_mirror_naming_files": {
           "default": 200,

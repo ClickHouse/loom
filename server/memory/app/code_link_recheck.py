@@ -339,8 +339,8 @@ async def _recheck(
             # the index's namesakes, and the mirror's: the index may not hold the files a
             # commit past the ingest's per-commit cap changed, or still hold their old text
             mirror = await _in_mirror(files, r, head)
-            # a mirror git cannot read leaves the link unsure where the index's namesakes
-            # do not settle it
+            # a mirror git cannot read, or a found definition it cannot fingerprint,
+            # leaves the link unsure where the index's namesakes do not settle it
             mirror_unsure = mirror is None and r.before.state != "missing"
             both = [*elsewhere.get(r.before.qualified_name, []), *(mirror or [])]
             candidates = list({(d.path, d.qualified_name): d for d in both}.values())
@@ -379,7 +379,8 @@ async def _recheck(
 async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[Definition] | None:
     """The definitions of the lost link's name, inside their module, that the mirror holds
     at `head` in the files changed since `_searched_from`: what the index may not hold
-    yet. It only adds to the index's namesakes; None when git cannot be read."""
+    yet. It only adds to the index's namesakes; None when git cannot be read or a found
+    definition cannot be fingerprinted: then a live link is unsure."""
     qn = r.before.qualified_name
     if r.before.state == "missing" and r.range is None:
         return []  # a full recheck of a link long gone: the index decides, as before
