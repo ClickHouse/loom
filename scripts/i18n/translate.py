@@ -5,15 +5,15 @@
     python -m scripts.i18n.translate update   # translate the stale pages (needs ANTHROPIC_API_KEY)
     python -m scripts.i18n.translate update --all [--lang ja ...]   # after a prompt change
 
-Each page is sent to the Messages API one `## ` section at a time. A section's
-translation is kept only when its fenced code blocks (in order), inline code spans, link
-targets, URLs, heading anchors and numbers match the English section; otherwise the call is
-retried once with the differences named, then the run fails. Relative links in the prose
-are rewritten before translation: a page of the set links to its translation, anything
-else to the English file on GitHub. Every heading gets an explicit `<a id>` with its
-English anchor, so `#anchor` links keep working on the translated page. The first line of
-each translation stamps the git blob of the English page it was made from; `check`
-compares that stamp with the file.
+A short page is sent to the Messages API in one call, a longer one a `## ` section at a
+time (`WHOLE_PAGE_CHARS`). A translation is kept only when its fenced code blocks (in
+order), inline code spans, link targets, URLs, heading anchors and numbers match the
+English; otherwise the call is retried once with the differences named, then the run
+fails. Relative links in the prose are rewritten before translation: a page of the set
+links to its translation, anything else to the English file on GitHub. Every heading gets
+an explicit `<a id>` with its English anchor, so `#anchor` links keep working on the
+translated page. The first line of each translation stamps the git blob of the English
+page it was made from; `check` compares that stamp with the file.
 A change to the model or a banner makes every page stale; a change to the prompt does not:
 regenerate with `--all`. The READMEs carry a generated language line that `update` rewrites
 without translating; adding a language changes the English README's line, so its blob, and
@@ -153,8 +153,7 @@ KEPT_WORDS = frozenset(
     """loom clickhouse postgres claude code codex cursor docker compose mcp sdk sdks python
     typescript node langgraph strands kubernetes helm github codespaces http https api cli
     okf rag llm json yaml sql oidc scim tls otel clickstack langfuse gemini vs windsurf zed
-    cline pypi npm apache ci url id token namespace go rust java javascript c cmake terraform
-    hcl jsonnet protobuf vue svelte astro angular tla shell bash dockerfile makefile""".split()
+    cline pypi npm apache ci url id token namespace go rust java javascript c""".split()
 )
 URL = re.compile(r"https?://[^\s<>()\"'`*\]]+")
 # A code span may wrap across lines; Markdown renders the break as a space.
@@ -528,7 +527,7 @@ class Spend:
 
 
 def request_chars(source: str, lang: Language) -> int:
-    """The characters one translation of `source` sends: each section with the system prompt."""
+    """The characters one translation of `source` sends: each request with the system prompt."""
     text, _ = prepare(source, lang)
     system = len(SYSTEM.format(language=lang.english, style=lang.style))
     return sum(len(s) + system for s in english_sections(text))
@@ -638,10 +637,18 @@ def render(source: str, lang: Language, body: str, line: str, model: str) -> str
     return header(source, lang, model, blob(source)) + body
 
 
+# A page up to this size goes in one call, so its terms stay the same from section to
+# section; a longer one goes a section at a time, within what one reply holds.
+WHOLE_PAGE_CHARS = 8000
+
+
 def english_sections(text: str) -> list[str]:
-    """The page's sections as sent, each heading with its page-wide anchor."""
+    """The page's requests as sent, each heading with its page-wide anchor: the whole page
+    when it is short, else one `## ` section each."""
     seen: Counter[str] = Counter()
-    return [anchor_headings(s, seen) for s in sections(text)]
+    parts = [anchor_headings(s, seen) for s in sections(text)]
+    whole = "\n".join(parts)
+    return [whole] if len(whole) <= WHOLE_PAGE_CHARS else parts
 
 
 def translate_page(source: str, lang: Language, key: str, spend: Spend) -> None:

@@ -12,36 +12,24 @@ Loom индексирует ваши документы (Markdown и текст,
 
 ## Что вы получаете
 
-- **Чанки, следующие структуре документа.** `knowledge.add` сохраняет текст и,
-  при необходимости, исходный файл; Loom разбивает его по заголовкам, нарезает каждый раздел на окна и
-  строит эмбеддинги для каждого чанка. [Knowledge documents](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md)
-- **Цитирование.** Каждый результат содержит `source_uri` документа и фрагмент текста, поэтому агент может цитировать
-  источник и ссылаться на него.
-- **Единый поиск по памяти, документам и разговорам.** `loom_search` выполняет поиск по памяти,
-  знаниям, профилю и разговорам одним вызовом, по всем пространствам имён памяти вызывающего.
-  [Unified search](https://github.com/ClickHouse/loom/blob/main/docs/features/unified-search.md)
-- **Источники документов.** Администраторы пространства имён могут зарегистрировать источники, из которых Loom загружает документы;
-  для воркера синхронизации нужна переменная `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`.
-  [Document sources](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md#document-sources)
-- **Порог сходства.** `loom_search` отбрасывает результаты из знаний, не достигающие порога сходства,
-  вместо того чтобы отдавать модели слабый фрагмент. [`loom_search`](https://github.com/ClickHouse/loom/blob/main/docs/features/unified-search.md#loom_search)
-- **Контроль доступа к каждому фрагменту.** Документы хранятся в пространствах имён с ролями viewer, writer и
-  admin. [Namespaces and sharing](https://github.com/ClickHouse/loom/blob/main/docs/features/namespaces-and-sharing.md)
+- **Чанки, следующие структуре документа.** `knowledge.add` сохраняет текст и, при необходимости, исходный файл; Loom делит его по заголовкам, нарезает каждый раздел окнами и создаёт эмбеддинг для каждого чанка. [Документы knowledge](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md)
+- **Цитаты.** Результат содержит `source_uri` документа и фрагмент, поэтому агент может процитировать источник и дать на него ссылку.
+- **Единый поиск по памяти, документам и диалогам.** `loom_search` одним вызовом выполняет поиск по памяти, knowledge, профилю и диалогам во всех пространствах имён памяти вызывающего. [Единый поиск](https://github.com/ClickHouse/loom/blob/main/docs/features/unified-search.md)
+- **Источники документов.** Администраторы пространства имён могут зарегистрировать источники, из которых Loom забирает документы; для рабочего процесса синхронизации нужна переменная `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`.
+  [Источники документов](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md#document-sources)
+- **Порог сходства.** `loom_search` отбрасывает результаты knowledge с сходством ниже порога, а не передаёт модели слабый фрагмент. [`loom_search`](https://github.com/ClickHouse/loom/blob/main/docs/features/unified-search.md#loom_search)
+- **Контроль доступа к каждому фрагменту.** Документы хранятся в пространствах имён с ролями viewer, writer и admin. [Пространства имён и совместный доступ](https://github.com/ClickHouse/loom/blob/main/docs/features/namespaces-and-sharing.md)
 
 <a id="measured"></a>
 
-## Результаты измерений
+## Измерения
 
-На зафиксированном корпусе файлов PDF, DOCX и PPTX (27 отложенных файлов) экстрактор Loom
-с включённым OCR (по умолчанию) показал 0.999 по полноте текста (text recall) и 0.991 по F1 для ячеек таблиц (table cell F1) в
-измеренном прогоне ([разбор документов](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#document-parsing)).
-Качество поиска по документам измерено лишь частично;
-в разделе [покрытие и известные пробелы](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/coverage.md) описано, чего пока не хватает.
+На зафиксированном корпусе файлов PDF, DOCX и PPTX (27 отложенных файлов) экстрактор Loom с включённым OCR (по умолчанию) показал полноту текста 0.999 и F1 по ячейкам таблиц 0.991 в измеренном прогоне ([разбор документов](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#document-parsing)). Качество поиска по документам измерено лишь частично; [покрытие и известные пробелы](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/coverage.md) описывают, чего пока не хватает.
 
 <a id="start"></a>
 
 ## Начало работы
 
-[Краткое руководство](../getting-started/quickstart.md) запускает стек вместе со службой extractor. Добавьте документ на странице Library панели управления, с помощью `knowledge.add` для текста или, для файла, который extractor преобразует, с помощью `knowledge.upload`, а затем `knowledge.ingest` ([загрузка файлов](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md#ingesting-files)).
+[Быстрый старт](../getting-started/quickstart.md) запускает стек вместе с сервисом извлечения. Добавьте документ на странице Library в панели управления, через `knowledge.add` для текста или, для файла, который преобразует экстрактор, через `knowledge.upload`, а затем `knowledge.ingest` ([загрузка файлов](https://github.com/ClickHouse/loom/blob/main/docs/features/knowledge.md#ingesting-files)).
 
-Некоторые операции на этой странице отмечены как экспериментальные на [странице статуса](https://github.com/ClickHouse/loom/blob/main/docs/reference/status.md).
+Некоторые операции на этой странице помечены как экспериментальные на [странице статуса](https://github.com/ClickHouse/loom/blob/main/docs/reference/status.md).

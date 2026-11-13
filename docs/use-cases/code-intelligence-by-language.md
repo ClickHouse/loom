@@ -4,7 +4,8 @@ Loom's code index answers a coding agent's structure questions in the languages 
 repository holds: where a symbol is defined, who calls it, and what a change touches.
 Needs a repository added and `LOOM_CODE_INGEST_ENABLED=true`. Every language gets the fast
 tier, parsed with tree-sitter grammars or hand-written scanners; C/C++, Python, TypeScript
-and Go can add a compiler tier that resolves names the way the compiler does. The full list of extensions and edges is the
+and Go can add a compiler tier that resolves names the way the compiler does. The full
+list of extensions and edges is the
 [language support table](../features/code-index/overview.md#language-support), and the
 compiler tiers' setup is in
 [code index operations](../operations/code-index-operations.md#compiler-tier).
@@ -19,8 +20,8 @@ Symbols, calls, includes, inheritance and overrides come from the fast tier; the
 compiler tier (`scip-clang`) resolves overloads, templates and namespaces from the
 project's build, so `code.symbol` with `uses_brief: true` on a qualified name such as
 `DB::IMergeTreeDataPart::getBytesOnDisk` returns the one definition, its call-site count
-and its top call sites with their enclosing functions, each marked `tier: "scip"`. The compiler tier needs the
-project's CMake build setup.
+and its top call sites with their enclosing functions, each marked `tier: "scip"`. The
+compiler tier needs the project's CMake build setup.
 
 ## Python
 

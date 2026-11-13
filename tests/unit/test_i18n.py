@@ -24,6 +24,15 @@ def test_a_page_cuts_into_sections_that_join_back_to_it(source: str) -> None:
     assert "\n".join(t.sections(text)) == text
 
 
+def test_a_short_page_goes_in_one_request_and_a_long_one_by_section() -> None:
+    short = "# T\n\nintro\n\n## One\n\nx\n\n## Two\n\ny\n"
+    assert len(t.english_sections(short)) == 1
+    long = short + ("## More\n\n" + "z " * 5000 + "\n")
+    assert len(t.english_sections(long)) == 4
+    # Anchors stay page-wide across the requests.
+    assert "\n".join(t.english_sections(long)).count('<a id="') == 4
+
+
 def test_sections_start_at_level_two_headings_outside_code() -> None:
     page = "# Title\n\nintro\n\n## One\n\n```md\n## not a heading\n```\n\n## Two\n"
     assert [s.split("\n")[0] for s in t.sections(page)] == ["# Title", "## One", "## Two"]
