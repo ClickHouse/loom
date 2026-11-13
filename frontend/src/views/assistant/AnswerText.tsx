@@ -188,7 +188,7 @@ export function citationNumbers(text: string): Map<string, number> {
 }
 
 /** Draws a marker as its number from `numbers`: a link to its Sources row (at the id
- *  `${prefix}-${n}`) once the rows show (`rows`, by key), else the number alone. The link
+ *  `${prefix}-${n}`) once the rows show (`rows`, by key), else the number alone. The number
  *  is a link, not a button, and no tab stop: the rows are the keyboard's way to the
  *  sources, and their 44 px rows the finger's (a button's touch area round the number would
  *  widen the line). */
