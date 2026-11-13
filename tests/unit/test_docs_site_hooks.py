@@ -191,4 +191,4 @@ def test_previous_and_next_links_follow_the_sorted_sidebar() -> None:
     assert nav.pages == [home, overview, faq]
     assert home.previous_page is None and home.next_page is overview
     assert overview.previous_page is home and overview.next_page is faq
-    assert faq.next_page is None
+    assert faq.previous_page is overview and faq.next_page is None
