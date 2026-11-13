@@ -20,7 +20,7 @@ import { isRecord, pickOption } from "./fixtures";
 const ENABLED = process.env.LOOM_DOCS_SCREENSHOTS === "1";
 const OUT = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/images");
 // The 1440 px shots (WebP) and the clips (WebM). The PNGs above stay where they are: the
-// English pages link them, and the translated READMEs link the memories PNG by URL.
+// English pages link them.
 const OUT_ASSETS = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/assets/screenshots");
 const NOW = Date.parse("2026-09-28T15:00:00Z");
 
@@ -806,13 +806,22 @@ const CODE_UNITS: Record<string, Record<string, unknown>> = {
  *  signature, and none of the ranking annotations (churn, amp, tested) a search result has. */
 function symbolUnit(symbol: string) {
   const { churn: _churn, amp: _amp, tested: _tested, ...unit } = CODE_UNITS[symbol];
-  return { unit_id: `s-${symbol}`, symbol, tier: "scip", elided: false, ...unit, kind: "symbol" };
+  return { unit_id: `s-${symbol}`, symbol, tier: "scip", elided: false, score: 0, ...unit, kind: "symbol" };
 }
 
-/** A hybrid search hit: a chunk unit, which carries no tier and no signature. */
+/** A hybrid search hit: a chunk unit, with an empty tier and signature and the leg that
+ *  found it. */
 function codeUnit(symbol: string, score: number) {
-  const { signature: _signature, ...unit } = CODE_UNITS[symbol];
-  return { unit_id: `u-${symbol}`, symbol, tier: "", elided: false, score, ...unit };
+  return {
+    unit_id: `u-${symbol}`,
+    symbol,
+    tier: "",
+    elided: false,
+    score,
+    via: "both",
+    ...CODE_UNITS[symbol],
+    signature: "",
+  };
 }
 
 const CODE_CALLERS: Record<string, Array<[string, string, number]>> = {
@@ -862,6 +871,7 @@ const ASSISTANT_CITATIONS = [
     verified: true,
     reason: "",
     ref: "policies/refunds.md",
+    anchor: "",
   },
   {
     kind: "memory",
@@ -869,6 +879,7 @@ const ASSISTANT_CITATIONS = [
     verified: true,
     reason: "",
     ref: "payments/fx/rounding",
+    anchor: "",
   },
 ];
 
