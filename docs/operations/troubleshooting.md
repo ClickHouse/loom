@@ -208,13 +208,14 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 ### An id you know exists reads as missing
 
 - **Cause:** an op addressed only by an org-wide id, such as `memory.get_by_id`,
-  answers as for a missing row (`found=False`, `updated=False`, `redacted=False` or
-  `removed=False`) rather than a 403 that would confirm the id exists. It does so when
-  the caller lacks the access the op needs (its role on the row's namespace, or the
-  org-wide view for a user's erasure), and `memory.get_by_id` and `memory.update_by_id`
-  also do so when the caller reaches more than one namespace holding the id, as after a
-  `namespace.restore` ([row-scoped operations](../architecture/security.md#row-scoped-operations)).
-- **Fix:** use a token with the access the op needs
+  answers as for a missing row rather than a 403 that would confirm the id exists. The
+  usual cause is a token without the op's role on the row's namespace. `memory.get_by_id`
+  and `memory.update_by_id` also answer so when the caller reaches more than one
+  namespace holding the id, as after a `namespace.restore`, and a grant read that fails
+  answers so until a retry succeeds.
+  [Row-scoped operations](../architecture/security.md#row-scoped-operations) has every
+  case.
+- **Fix:** use a token with the op's role on the row's namespace
   ([tokens and grants](../guides/tokens-and-grants.md)); for an id in several
   namespaces, address the row by key in its namespace (`memory.get`, or
   `memory.update` for a write).
