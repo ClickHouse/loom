@@ -699,7 +699,7 @@ def check(skip_stale: bool = False) -> int:
     return 1 if problems else 0
 
 
-# Pages translated at once; each page's sections still go one after another.
+# Pages translated at once; each page's requests still go one after another.
 WORKERS = 6
 
 
