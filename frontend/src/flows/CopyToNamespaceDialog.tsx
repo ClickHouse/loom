@@ -139,7 +139,7 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey }:
             label="Reason (optional — recorded on the audit log)"
             value={rationale}
             onChange={setRationale}
-            placeholder="promoting a validated finding to the shared space"
+            placeholder="promoting a validated finding to the shared namespace"
           />
           {error && <Alert role="alert" state="danger" text={error} />}
         </div>

@@ -33,13 +33,13 @@ describe("shouldShowGettingStarted", () => {
     expect(shouldShowGettingStarted({ mine: [row("personal-a")], memoryTotal: 1 })).toBe(false);
   });
 
-  it("hides for an account that already created or joined another space", () => {
+  it("hides for an account that already created or joined another namespace", () => {
     expect(
       shouldShowGettingStarted({ mine: [row("personal-a"), row("team-x", { role: "writer" })], memoryTotal: 0 }),
     ).toBe(false);
   });
 
-  it("ignores repositories, wildcards and pending requests when counting other spaces", () => {
+  it("ignores repositories, wildcards and pending requests when counting other namespaces", () => {
     const mine = [
       row("personal-a"),
       row("repo-1", { kind: "code" }),

@@ -3,8 +3,8 @@ import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../components/IconButton";
 import { Tip } from "../components/ui/Tooltip";
-import { useStore, viewHref, type View } from "../lib/state";
-import { countConflicts, countNewAgents, type WhoAmI } from "../api";
+import { useStore, viewHref, type AdminBadges, type View } from "../lib/state";
+import { countConflicts, countNewAgents, type MyNamespaceEntry, type WhoAmI } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
 import { sharedBudgetStatus, sharedHasAutoResolved } from "../lib/sharedReads";
 import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../lib/role";
@@ -67,12 +67,12 @@ export interface NavItem {
 // The rail is three labelled groups around the questions a user brings — what does my AI
 // know (Memory), what has it been doing (Activity), what can it reach (Sources) — with
 // Profile on top as the identity surface and Settings at the foot. Recall is a tab of
-// Memories (MemoryTabs), Spaces (browse/join) lives in the namespace picker, Graph is a
-// drill-down from an entity, Flow is in the admin drawer.
+// Memories (MemoryTabs), Namespaces in your org (browse/join) is reached from the namespace
+// picker, Graph is a drill-down from an entity, Flow is in the admin drawer.
 //
-// RAIL_GROUPS, ADMIN_BASE and ADMIN_OPERATOR_ONLY are exported for MobileNav: the phone's
-// "More" sheet is generated from these same arrays, so a section added here appears there
-// under the same label. MAIN is the flat rail the tests read.
+// RAIL_GROUPS, SETTINGS_ITEM, adminItems and NavBadge are exported for the phone's "More"
+// sheet, which is generated from them, so a section added here appears there under the same label.
+// MAIN is the flat rail the tests read.
 interface NavGroup {
   label: string | null;
   items: NavItem[];
@@ -126,12 +126,12 @@ export const SETTINGS_ITEM: NavItem = { id: "setup", label: "Settings", icon: "g
 // emptiness is noise. The route stays resolvable for deep links; when there's actually
 // something to review the entry slides in automatically via the badge logic below.
 //
-// Badges are layered on at render time via `visibleAdmin` so the
+// Badges are layered on at render time by `adminItems` so the
 // labels can come straight from the const while count / warning
 // state stays reactive.
 // The drawer reads as three workflows — Review (decide something), Observe (see what
 // happened), Access (who may) — rather than a flat list. ADMIN_GROUPS is the rendering
-// order; ADMIN_BASE stays the flat list MobileNav and the tests read. Guardrails (the
+// order; ADMIN_BASE stays the flat list adminItems and the tests read. Guardrails (the
 // blacklist) is in the drawer so it is reachable from somewhere other than Settings.
 export const ADMIN_GROUPS: NavGroup[] = [
   {
@@ -147,7 +147,7 @@ export const ADMIN_GROUPS: NavGroup[] = [
     label: "Observe",
     items: [
       { id: "admin:health", label: "Health", icon: "activity", scope: "namespace" },
-      { id: "admin:activity", label: "Activity", icon: "history", scope: "namespace" },
+      { id: "admin:activity", label: "Audit log", icon: "history", scope: "namespace" },
       // Flow (route id "sharing" — stable deep links): a READ-ONLY observability
       // view — where memories flow (writes/recalls, cross-namespace reach,
       // per-tool producer/consumer activity, memberships).
@@ -207,6 +207,38 @@ export function groupAdminItems(visible: NavItem[]): NavGroup[] {
   return out;
 }
 
+/** The Admin entries a caller sees, in the drawer's order, with their badges. None unless
+ *  the caller admins the namespace (an admin grant from list_mine, or an admin claim), so a
+ *  viewer never sees an entry with a 403 behind it. Review queue leads while there is
+ *  something to review; the operator entries follow the caller's claims. The sidebar and
+ *  the phone's More sheet both list these. */
+export function adminItems(
+  whoami: WhoAmI | null,
+  mine: MyNamespaceEntry[] | null,
+  namespace: string,
+  badges: AdminBadges | null,
+): NavItem[] {
+  if (!isNamespaceAdmin(whoami, mine, namespace)) return [];
+  // Over cap on Usage is a warning dot; Agents counts the clients new in the last 24 h.
+  const items = [...ADMIN_BASE, ...operatorItems(whoami)].map((item): NavItem => {
+    if (item.id === "admin:usage" && badges?.overCap) return { ...item, badge: 999, badgeTone: "warn" };
+    if (item.id === "admin:agents" && badges?.newAgents)
+      return { ...item, badge: badges.newAgents, badgeTone: "accent" };
+    return item;
+  });
+  const open = !!badges?.conflicts;
+  if (!open && !badges?.autoResolved) return items;
+  // Open conflicts warn with their count; recent auto-resolutions alone use the
+  // Auto-resolved tab's icon, no number.
+  const review: NavItem = {
+    id: "admin:review_queue",
+    label: "Review queue",
+    icon: open ? "warning" : "flash",
+    badge: badges?.conflicts || undefined,
+  };
+  return [review, ...items];
+}
+
 export function Sidebar() {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
@@ -214,26 +246,13 @@ export function Sidebar() {
   const collapsed = useStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useStore((s) => s.toggleSidebar);
   const [adminOpen, setAdminOpen] = useState(isDrawerView(view));
-  const [conflictCount, setConflictCount] = useState<number | null>(null);
-  // A recent automatic retirement: the queue's Auto-resolved tab has something to show.
-  const [autoResolved, setAutoResolved] = useState(false);
-  // Lean notification surface: badge admin items that have actionable
-  // state right now. Over-cap on Usage = burning $; new-since-24h on
-  // Agents = unexpected client connected.
-  const [overCap, setOverCap] = useState(false);
-  const [newAgent24hCount, setNewAgent24hCount] = useState(0);
-  const newAgentsRef = useRef(0);
-  newAgentsRef.current = newAgent24hCount;
+  // Lean notification surface: badge admin items that have actionable state right now. The
+  // answer is kept in the store, where the phone's More sheet reads it too.
+  const badges = useStore((s) => s.adminBadges);
   const agentsTick = useRef(0);
 
-  // Operator-only items (Users, which reads admin.users) get appended for an ORG_ADMIN /
-  // PLATFORM_ADMIN claim. Auth-disabled dev mode shows them too (the operator IS the user).
   const whoami = useStore((s) => s.whoami);
-  const adminBase = [...ADMIN_BASE, ...operatorItems(whoami)];
-  // The drawer is for admins of the current namespace (an admin grant from list_mine, or
-  // an admin claim), so a viewer never sees an entry with a 403 behind it.
   const myNamespaces = useStore((s) => s.myNamespaces);
-  const canAdmin = isNamespaceAdmin(whoami, myNamespaces, identity?.namespace ?? "");
   // The drawer may stay fail-open (a transient list_mine failure must not hide an admin's
   // controls, and deep links still resolve), but the polls that badge it need a POSITIVE
   // admin signal — an admin claim or an active admin grant on this namespace.
@@ -246,39 +265,7 @@ export function Sidebar() {
   // tracker namespace has none, so its admin is not polled for them either.
   const pollsBadges = roleHere === "admin" && isMemoryNamespace(identity?.namespace ?? "", myNamespaces);
 
-  // Layer status badges onto the static ADMIN list. Usage gets a
-  // warning indicator (badge=999 + warn tone-styled) when this
-  // namespace is over its 24h LLM cap. Agents gets a numeric badge
-  // showing how many distinct MCP clients connected in the last 24h
-  // with ops > 0 — picks up "did I authorize this MCP connection"
-  // anxiety without nagging, with a count so the magnitude is
-  // legible.
-  const adminWithBadges: NavItem[] = adminBase.map((item) => {
-    if (item.id === "admin:usage" && overCap) {
-      return { ...item, badge: 999, badgeTone: "warn" as const };
-    }
-    if (item.id === "admin:agents" && newAgent24hCount > 0) {
-      return { ...item, badge: newAgent24hCount, badgeTone: "accent" as const };
-    }
-    return item;
-  });
-  const openConflicts = conflictCount != null && conflictCount > 0;
-  // The count is of open conflicts; recent auto-resolutions alone show the entry, no number.
-  const reviewBadge = openConflicts ? conflictCount : undefined;
-  const visibleAdmin: NavItem[] = !canAdmin
-    ? []
-    : openConflicts || autoResolved
-      ? [
-          // Open conflicts warn; recent auto-resolutions alone use the Auto-resolved tab's icon.
-          {
-            id: "admin:review_queue",
-            label: "Review queue",
-            icon: openConflicts ? "warning" : "flash",
-            badge: reviewBadge,
-          },
-          ...adminWithBadges,
-        ]
-      : adminWithBadges;
+  const visibleAdmin = adminItems(whoami, myNamespaces, identity?.namespace ?? "", badges);
 
   // Fetch conflict count + recent auto-resolutions + budget + agents activity on identity
   // change and refresh every 60s. All four are fail-quiet — a missing
@@ -296,31 +283,21 @@ export function Sidebar() {
   useEffect(() => {
     if (!badgeKey) return;
     agentsTick.current = 0;
-    const last = readSession<{ conflicts: number | null; autoResolved?: boolean; overCap: boolean; newAgents: number }>(
-      badgeKey,
-      BADGE_SESSION_TTL_MS,
-    );
-    setConflictCount(last ? last.conflicts : null);
-    setAutoResolved(last ? !!last.autoResolved : false);
-    setOverCap(last ? last.overCap : false);
-    setNewAgent24hCount(last ? last.newAgents : 0);
+    useStore.setState({ adminBadges: readSession<AdminBadges>(badgeKey, BADGE_SESSION_TTL_MS) });
   }, [badgeKey]);
   useAfterPaint(() => {
     if (!identity || !pollsBadges) return;
     let cancelled = false;
     const fetch_ = async () => {
       const tasks: Promise<void>[] = [];
-      const next = { conflicts: null as number | null, autoResolved: false, overCap: false, newAgents: 0 };
+      const next: AdminBadges = { conflicts: null, autoResolved: false, overCap: false, newAgents: 0 };
       if (canCall("conflicts.list", roleHere, whoami)) {
         tasks.push(
           // The badge asks for the number, not 100 rows with their values (33 MB per tick
           // on a large namespace).
           countConflicts({ org: identity.org, namespace: identity.namespace })
             .then((n) => {
-              if (!cancelled) {
-                next.conflicts = n;
-                setConflictCount(n);
-              }
+              next.conflicts = n;
             })
             .catch(() => {
               /* hide */
@@ -334,10 +311,7 @@ export function Sidebar() {
           // Shared with the Review queue page, which asks the same question.
           sharedHasAutoResolved({ org: identity.org, namespace: identity.namespace })
             .then((found) => {
-              if (!cancelled) {
-                next.autoResolved = found;
-                setAutoResolved(found);
-              }
+              next.autoResolved = found;
             })
             .catch(() => {
               /* hide */
@@ -348,10 +322,7 @@ export function Sidebar() {
         tasks.push(
           sharedBudgetStatus({ org: identity.org, namespace: identity.namespace })
             .then((s) => {
-              if (!cancelled) {
-                next.overCap = !!s.over_cap;
-                setOverCap(!!s.over_cap);
-              }
+              next.overCap = !!s.over_cap;
             })
             .catch(() => {
               /* hide */
@@ -367,20 +338,21 @@ export function Sidebar() {
           // namespace in the body: a scoped token is refused without one
           countNewAgents({ org: identity.org, namespace: identity.namespace, window_hours: 24 })
             .then((count) => {
-              if (cancelled) return;
               next.newAgents = count;
-              setNewAgent24hCount(count);
             })
             .catch(() => {
               /* hide */
             }),
         );
       } else {
-        next.newAgents = newAgentsRef.current;
+        next.newAgents = useStore.getState().adminBadges?.newAgents ?? 0;
       }
       agentsTick.current += 1;
+      // One answer once every read settles: a failed read hides its badge.
       await Promise.allSettled(tasks);
-      if (!cancelled) writeSession(badgeKey, next);
+      if (cancelled) return;
+      useStore.setState({ adminBadges: next });
+      writeSession(badgeKey, next);
     };
     void fetch_();
     // 60 s and only while the tab is visible (hidden tabs read nothing).
@@ -625,7 +597,7 @@ function collapsedName(item: NavItem): string {
 }
 
 /** A nav entry's count (Click UI's small solid badge), or a dot at 999+ for "attention". */
-function NavBadge({
+export function NavBadge({
   count,
   tone,
   collapsed,

@@ -578,7 +578,8 @@ def code_access_check(
     fix = (
         "claim this machine's self-signup namespace in the dashboard (the code is in "
         "~/.loom/claim-*.txt) so its token acts as you, or save a token for your own "
-        "user (`loom mint-token --save`), or request access from the dashboard's Spaces page"
+        "user (`loom mint-token --save`), or request access from the dashboard's "
+        "Repositories page"
     )
     if readers:
         return [

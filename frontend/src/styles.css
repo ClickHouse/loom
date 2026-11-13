@@ -562,7 +562,7 @@ textarea[aria-invalid="true"]:focus-visible {
    (options, group buttons, a group's "Show all") and the Library's text preview, which
    fills its pane. Inbox items stack flush, where an outset ring would cover the next one.
    A clipping box that holds other controls leaves them 4 px of room instead: a lane's
-   "Show all" (.tq-more), the picker's withdraw and "Find public namespaces" buttons
+   "Show all" (.tq-more), the picker's withdraw and "Find public namespaces to join" buttons
    (e2e/focus-rings.spec.ts walks every page for a clipped ring). */
 .explorer-outline [role="treeitem"]:focus-visible,
 .doc-preview-text:focus-visible,

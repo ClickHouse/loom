@@ -25,7 +25,7 @@ import { Chip, ListTime, LoadingSkeleton, PageHeader, Unavailable } from "../../
 import { ListState } from "../../components/ui/ListState";
 
 /** With no namespace to name: who manages the patterns. */
-export const PRIVACY_FILTERS_MANAGED_BY_ADMIN = "Refusal patterns are managed by an admin of this space.";
+export const PRIVACY_FILTERS_MANAGED_BY_ADMIN = "Refusal patterns are managed by an admin of this namespace.";
 /** A viewer who may list but not add. */
 export const PRIVACY_FILTERS_READ_ONLY =
   "You can see the patterns here but not change them: a writer adds patterns and deletes a namespace pattern's stored matches; an admin removes patterns.";

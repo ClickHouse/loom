@@ -334,6 +334,15 @@ export function pathnameView(): View | null {
  *  sign-in link brought that it refused is "refused"; a first visit carries null. */
 export type GateReason = "expired" | "ended" | "refused" | null;
 
+/** One namespace's admin badge answer: its open conflicts, whether Loom retired a memory
+ *  on its own lately, whether it is over its LLM cap, and the agents new in the last 24 h. */
+export interface AdminBadges {
+  conflicts: number | null;
+  autoResolved: boolean;
+  overCap: boolean;
+  newAgents: number;
+}
+
 interface AppState {
   authed: boolean;
   whoami: WhoAmI | null;
@@ -410,6 +419,9 @@ interface AppState {
    *  user picks one). The picker clears the flag once it has opened. */
   namespacePickerOpen: boolean;
   openNamespacePicker: (v: boolean) => void;
+  /** The sidebar's latest badge answer for the current namespace, which it writes; the
+   *  phone's More sheet reads it too. */
+  adminBadges: AdminBadges | null;
   inspect: (memoryKey: string | null, opts?: { agent?: string; userId?: string; sessionId?: string }) => void;
   helpOpen: boolean;
   openHelp: (v: boolean) => void;
@@ -558,6 +570,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
   namespacePickerOpen: false,
   openNamespacePicker: (namespacePickerOpen) => set({ namespacePickerOpen }),
+  adminBadges: null,
   inspect: (inspectedMemoryKey, opts) => {
     const { identity, deniedNamespace } = get();
     // A memory opens in the namespace the page reads (the palette searches that one): a

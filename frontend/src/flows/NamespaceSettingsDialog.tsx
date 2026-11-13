@@ -54,7 +54,7 @@ interface Props {
  * Members dialog = "people in this namespace + their roles"
  * Settings dialog = "what is this namespace"
  *
- * Both open from Discover's "Namespaces you manage" section.
+ * Both open from Namespaces in your org's "Namespaces you manage" section.
  */
 export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, label }: Props) {
   const whoami = useStore((s) => s.whoami);
@@ -258,12 +258,13 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                     {
                       value: "private",
                       label: "Private",
-                      description: "Only members you grant. Doesn't appear in Spaces.",
+                      description: "Only members you grant. Not listed for the org to join.",
                     },
                     {
                       value: "public",
                       label: "Public",
-                      description: "Anyone in the org can find + join this namespace via Spaces.",
+                      description:
+                        "Listed for anyone in the org to find; the How people join setting decides who gets in.",
                     },
                   ]}
                 />

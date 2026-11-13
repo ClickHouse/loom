@@ -93,7 +93,7 @@ export function isMemoryNamespace(namespace: string, mine: readonly MyNamespaceE
 }
 
 /** Views that read the memory plane of the picked namespace. Everything else —
- *  Repositories, Graph, Discover, Setup, the admin views — reads the org, the code plane
+ *  Repositories, Graph, Namespaces in your org, Setup, the admin views — reads the org, the code plane
  *  or the tracker plane and works on a code or tracker namespace. */
 const MEMORY_VIEWS: ReadonlySet<View> = new Set<View>([
   "memories",

@@ -45,7 +45,7 @@ export function NamespacePickerList({
   /** The picker's trigger, which holds the focus while this panel loads. */
   triggerRef: RefObject<HTMLButtonElement>;
   onPick: (namespace: string) => void;
-  /** Close the popover (before a jump to Spaces). */
+  /** Close the popover (before a jump to Namespaces in your org). */
   onClose: () => void;
   /** Close the popover and open the create dialog. */
   onCreate: () => void;
@@ -167,7 +167,7 @@ export function NamespacePickerList({
   const owned = byRole(["admin"]);
   const joined = byRole(["writer", "viewer"]);
   const transient = byRole(["jwt"]);
-  // Joined anything, grouped or not: the Spaces link moves from the list to the footer.
+  // Joined anything, grouped or not: the link to public namespaces moves from the list to the footer.
   const hasJoined = listed.some((r) => !kindGroup(r) && r.role !== "admin");
 
   // Sort each group: current selection first, then most-recently-joined.
@@ -341,7 +341,7 @@ export function NamespacePickerList({
                 setView("browse");
               }}
             >
-              Find public namespaces to join in Spaces
+              Find public namespaces to join
             </Button>
           </div>
         )}
@@ -396,9 +396,9 @@ export function NamespacePickerList({
             Hide system namespaces
           </Button>
         )}
-        {/* Browsing and joining spaces is part of picking one,
-          so the Spaces page is reached from here, not from the rail. One
-          call to action: the empty list above already carries it. */}
+        {/* Finding a public namespace to join is part of picking one, so Namespaces in your
+          org is reached from here, not from the rail. One call to action: the empty list
+          above already carries it. */}
         {known != null && (hasJoined || !!query) && (
           <Button
             type="empty"
@@ -410,7 +410,7 @@ export function NamespacePickerList({
               setView("browse");
             }}
           >
-            Browse and join spaces
+            Find public namespaces to join
           </Button>
         )}
         <Button type="empty" htmlType="button" iconLeft="plus" align="left" onClick={onCreate}>
@@ -430,7 +430,7 @@ export function NamespacePickerList({
         </Button>
         {/* One line: a taller footer shrinks the list and gives it a scrollbar. The button above
             says where collections are. */}
-        <p className="px-3 pt-1 text-xs text-text-muted">A namespace is a project's or an agent's memory.</p>
+        <p className="px-3 pt-1 text-xs text-text-muted">A namespace holds memories, code or tracker data.</p>
       </div>
     </>
   );

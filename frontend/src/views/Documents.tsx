@@ -951,7 +951,7 @@ export function Documents() {
     const action = picking
       ? undefined
       : !picked.namespace
-        ? { label: "Browse and join spaces", onClick: () => go.setView("browse") }
+        ? { label: "Find public namespaces to join", onClick: () => go.setView("browse") }
         : kind === "qa" || kind === "tracker"
           ? { label: "Open in Patterns", onClick: () => go.navigate("graph", { query: { mode: "patterns" } }) }
           : kind === "code"
@@ -962,8 +962,8 @@ export function Documents() {
     const orNamespace = !picked.namespace
       ? ""
       : none
-        ? ", or pick a memory namespace from the namespace menu"
-        : ", or a memory namespace from the namespace menu";
+        ? ", or pick a memory namespace from the namespace picker"
+        : ", or a memory namespace from the namespace picker";
     const where = picked.namespace
       ? `${picked.namespace} holds no documents. `
       : picking
@@ -980,7 +980,7 @@ export function Documents() {
           <EmptyState
             icon="folder-open"
             title={none ? "No collection yet" : "Pick a collection"}
-            // With no namespace to reach, the namespace menu holds none to offer.
+            // With no namespace to reach, the namespace picker holds none to offer.
             description={`${where}${pick}${orNamespace}.`}
             action={none ? { label: "New collection", onClick: () => setCreatingCollection(true) } : action}
             actions={
@@ -996,7 +996,7 @@ export function Documents() {
         {picked.namespace && (
           <p className="text-center text-sm text-text-muted">
             <Link component="button" type="button" onClick={() => go.openNamespacePicker(true)}>
-              Open the namespace menu
+              Open the namespace picker
             </Link>
           </p>
         )}

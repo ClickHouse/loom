@@ -113,11 +113,11 @@ export function Setup() {
           size="medium"
           text={
             <>
-              <strong>No namespace selected.</strong> Your token can reach no namespace yet. Join a repository or
-              tracker source from Repositories, or ask for a grant.
+              <strong>No namespace selected.</strong> Your token can reach no namespace yet. Join a repository from
+              Repositories or a namespace from the namespace picker, or ask for a grant.
               <span className="mt-2 flex flex-wrap items-center gap-3">
                 <Button type="empty" htmlType="button" onClick={() => openNamespacePicker(true)}>
-                  Namespace menu
+                  Namespace picker
                 </Button>
                 {whoami && (
                   <Button type="primary" htmlType="button" iconLeft="code" onClick={() => setView("code")}>

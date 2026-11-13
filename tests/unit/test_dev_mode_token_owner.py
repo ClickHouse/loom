@@ -259,7 +259,8 @@ def test_a_wildcard_token_from_a_wildcard_bearer_names_the_personal_namespace(
 def test_a_wildcard_token_names_where_its_unaddressed_calls_land(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Alice's saved switcher pick is a team she writes: MCP lands there, so the page says so.
+    # Alice's saved pick in the namespace picker is a team she writes: MCP lands there, so the
+    # page says so.
     from server.auth import aliases
     from server.identity.app import caller_defaults
 

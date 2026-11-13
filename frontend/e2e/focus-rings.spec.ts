@@ -454,7 +454,7 @@ for (const phone of [false, true]) {
       });
     }
 
-    test("Spaces with a member's guide summary: every focus ring is drawn whole", async ({ page }) => {
+    test("Namespaces in your org with a member's guide summary: every focus ring is drawn whole", async ({ page }) => {
       // A member of team-002, the last row, which carries a guide summary: its link sits
       // above the row's open button and truncates its own text. The walk arrows down the
       // rows and tabs into the last one's controls.

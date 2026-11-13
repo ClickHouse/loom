@@ -271,12 +271,20 @@ describe("NamespacePicker groups", () => {
     expect(within(dialog).getByRole("button", { name: /Support agent/ })).toBeInTheDocument();
   });
 
-  it("keeps the footer's Spaces link for someone whose joined namespaces all sit in a family", async () => {
+  it("names the picker's trigger Namespace", () => {
+    seed("team");
+    render(<NamespacePicker />);
+    expect(screen.getByRole("button", { name: /^Namespace: team/ })).toHaveTextContent(/^Namespace/);
+  });
+
+  it("keeps the link to public namespaces in the footer for someone whose joined namespaces all sit in a family", async () => {
     seed("team", [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")]);
     render(<NamespacePicker />);
     const dialog = await openPicker();
-    expect(within(dialog).getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "Find public namespaces to join in Spaces" })).toBeNull();
+    const links = within(dialog).getAllByRole("button", { name: "Find public namespaces to join" });
+    expect(links).toHaveLength(1);
+    // The footer's: beside Create namespace, not at the end of the list.
+    expect(links[0].parentElement).toBe(within(dialog).getByRole("button", { name: "Create namespace" }).parentElement);
   });
 
   it("groups the names once per list, not again for each keystroke of a search", async () => {
@@ -391,7 +399,10 @@ describe("NamespacePicker groups", () => {
     seed("team");
     render(<NamespacePicker />);
     const dialog = await openPicker();
-    expect(within(dialog).getByText(/^A namespace is a project's or an agent's memory\./)).toBeInTheDocument();
+    expect(within(dialog).getByText("A namespace holds memories, code or tracker data.")).toHaveClass(
+      "text-xs",
+      "text-text-muted",
+    );
     fireEvent.click(group(dialog, /^Repositories/));
     expect(within(dialog).getByText("Code that Loom indexes, read-only.")).toBeInTheDocument();
   });

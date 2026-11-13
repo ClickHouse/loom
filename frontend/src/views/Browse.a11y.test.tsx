@@ -43,7 +43,8 @@ describe("Browse: the namespace count", () => {
 describe("Browse: the way to Repositories", () => {
   it("is a Click UI link-styled button at the 12 px of its sentence", async () => {
     render(<Browse />);
-    const go = await screen.findByRole("button", { name: "Repositories" });
+    const go = await screen.findByRole("button", { name: "Repositories page" });
+    expect(go.parentElement).toHaveTextContent(/^Repositories are joined from the Repositories page — /);
     expect(go.className).toMatch(/\blink_size_sm/);
     await userEvent.setup().click(go);
     expect(useStore.getState().view).toBe("code");

@@ -22,7 +22,7 @@ export function setSavedNamespace(ns: string): void {
   // pinned to LOOM_DEFAULT_NAMESPACE and the MCP resolver uses the same
   // setting, so there is no pick to save — and persisting one to
   // `loom.user_state` would silently retarget agent writes away from the dashboard. Belt
-  // to the picker's suspenders (it doesn't render a switcher in this mode).
+  // to the picker's suspenders (`NamespacePicker` shows the one namespace as static text in this mode).
   if (isAuthDisabled()) return;
   localStorage.setItem(KEY_NAMESPACE, ns);
   // Persist server-side too so MCP clients pick up the same default the

@@ -531,11 +531,11 @@ describe("a link's namespace", () => {
     await until(() => useStore.getState().view === "knowledge");
     expect(useStore.getState().identity?.namespace).toBe("");
     expect(screen.queryByText(/can reach no namespace yet/)).toBeNull();
-    // The namespace menu holds nothing for this account: the page sends no one there.
+    // The namespace picker holds nothing for this account: the page sends no one there.
     expect(
       await screen.findByText(/^Collections are shared document libraries\. Pick a collection above\.$/),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open the namespace menu" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open the namespace picker" })).toBeNull();
   });
 
   it("lands an account whose only collection is its own on Setup", async () => {

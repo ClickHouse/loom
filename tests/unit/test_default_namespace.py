@@ -409,7 +409,7 @@ async def test_mcp_defaults_use_default_namespace_in_single_user(  # type: ignor
 ) -> None:
     """The blocking gap: an auth-off MCP/SDK caller must land in the SAME
     namespace the dashboard serves — not `personal-you`, and not a stale
-    `loom.user_state` row left by an old switcher click (no DB lookup at
+    `loom.user_state` row left by an old click in the namespace picker (no DB lookup at
     all: get_client raising proves the resolution is static)."""
     from server.settings import settings
     from server.transport.mcp_identity import _caller_defaults

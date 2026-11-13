@@ -488,7 +488,7 @@ export default function App() {
         setAuthed(true);
         setWhoami(w);
         // Saved pick → the user's own namespace → first real claim → none. Access comes
-        // from the JWT `namespaces` claim AND namespaces JOINed via Discover
+        // from the JWT `namespaces` claim AND namespaces joined from Namespaces in your org
         // (loom.namespace_grants, not in the JWT), so list_mine is consulted too — else a
         // refresh flips joined-namespace users back. The claim's ORDER is never a
         // preference, and `*` is never a namespace name. A link's `?namespace=` comes
@@ -539,9 +539,9 @@ export default function App() {
         // URL routing: an explicit path (e.g. /memories) always wins — the landing rule decides a
         // view only for the bare root. A deep link keeps its view; its namespace is the
         // default-namespace chain's answer, else the first reachable namespace of the
-        // kind the view needs (a code or QA one for Repositories, Graph, Settings, Spaces
-        // and the admin views; nothing for a memory view, which renders its own empty
-        // state — see `ViewSwitch`). No deep link is redirected to Setup.
+        // kind the view needs (a code or QA one for Repositories, Graph, Settings,
+        // Namespaces in your org and the admin views; nothing for a memory view, which renders
+        // its own empty state — see `ViewSwitch`). No deep link is redirected to Setup.
         if (initial) {
           const ns = deepLinkNamespace(initial, pick, reach, mine);
           // An empty namespace is the honest "nothing selected" state; every

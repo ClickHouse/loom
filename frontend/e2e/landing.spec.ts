@@ -162,7 +162,7 @@ test("a token that reaches nothing lands on Setup with the join-or-grant notice 
   const notice = page.getByRole("status").filter({ hasText: "No namespace selected" });
   await expect(notice).toBeVisible();
   await expect(notice).toContainText(
-    "Your token can reach no namespace yet. Join a repository or tracker source from Repositories, or ask for a grant.",
+    "Your token can reach no namespace yet. Join a repository from Repositories or a namespace from the namespace picker, or ask for a grant.",
   );
   await expect(notice).not.toContainText("memory namespace");
   await shot(page, "18-landing-nothing-reachable-setup");

@@ -40,8 +40,11 @@ def _ways_in(subject: str, namespace: str) -> str:
             "as you, or "
             "save a token for your user (`loom mint-token --save`)"
         )
+    # One sentence for both planes: the refusal cannot read whether the index is a
+    # repository's or a tracker namespace's.
     return (
-        f"request access to {namespace!r} from the dashboard's Spaces page, "
+        f"request access to {namespace!r} from the dashboard's Repositories page (for a "
+        "tracker namespace, search its exact name on the Namespaces in your org page), "
         "or ask its admin for a grant"
     )
 

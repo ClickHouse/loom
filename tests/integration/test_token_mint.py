@@ -150,7 +150,7 @@ async def test_a_default_token_reads_everything_and_carries_every_client_setup(
 
 
 def _save_default(ch_client: Any, org: str, subject: str, namespace: str) -> None:
-    """The person's dashboard switcher pick ("" clears it)."""
+    """The person's pick in the dashboard's namespace picker ("" clears it)."""
     row = [org, subject, namespace, time.time_ns()]
     ch_client.insert(
         "loom.user_state", [row], column_names=["org", "subject", "default_namespace", "version"]
@@ -161,8 +161,8 @@ def _save_default(ch_client: Any, org: str, subject: str, namespace: str) -> Non
 async def test_a_bare_star_token_follows_the_pick_and_a_named_home_beats_it(
     control_plane_url: str, ch_client: Any
 ) -> None:
-    """A person who writes two namespaces and picked the second in the switcher: a bare
-    `*` token saves there; one made with the first named before `*` saves to the first."""
+    """A person who writes two namespaces and picked the second in the namespace picker: a
+    bare `*` token saves there; one made with the first named before `*` saves to the first."""
     from server.auth.personal_namespace import derive_personal_slug
 
     org = unique_org("mint")

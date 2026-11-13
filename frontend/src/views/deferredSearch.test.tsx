@@ -148,7 +148,7 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     expect(screen.getByText("zzzz", { selector: ".font-mono" })).toBeInTheDocument();
   });
 
-  it("Activity: clearing a filter that matched nothing names it until the rows return", async () => {
+  it("Audit log: clearing a filter that matched nothing names it until the rows return", async () => {
     render(<Audit />);
     await screen.findByText("alice");
     const box = screen.getByRole("textbox", { name: "Filter audit events" });
@@ -159,7 +159,7 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     expect(screen.queryByText("the filters in force", { exact: false })).toBeNull();
   });
 
-  it("Spaces: a word the rows have not taken yet leaves the count at what is shown", async () => {
+  it("Namespaces in your org: a word the rows have not taken yet leaves the count at what is shown", async () => {
     render(<Browse />);
     await screen.findByText("beta");
     await typeHeld(screen.getByLabelText("Search namespaces"), "alp");
@@ -167,7 +167,7 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     expect(screen.getByLabelText("Namespaces")).toHaveTextContent("2 namespaces");
   });
 
-  it("Spaces: with no public namespaces, a typed name waits for the rows before offering a request", async () => {
+  it("Namespaces in your org: with no public namespaces, a typed name waits for the rows before offering a request", async () => {
     api.browseNamespaces.mockResolvedValue([]);
     render(<Browse />);
     await screen.findByText("No public namespaces yet");
@@ -175,15 +175,15 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     expect(screen.queryByText(/namespace\.register/)).toBeNull();
     await typeHeld(screen.getByLabelText("Search namespaces"), "zzz");
     expect(screen.getByText("No public namespaces yet")).toBeInTheDocument();
-    expect(screen.queryByText("No public namespace matching", { exact: false })).toBeNull();
+    expect(screen.queryByText("No listed public namespace named", { exact: false })).toBeNull();
   });
 
-  it("Spaces: clearing a name that matched nothing keeps the request card on that name until the rows return", async () => {
+  it("Namespaces in your org: clearing a name that matched nothing keeps the request card on that name until the rows return", async () => {
     render(<Browse />);
     await screen.findByText("beta");
     const box = screen.getByLabelText("Search namespaces");
     await userEvent.type(box, "zzz");
-    await screen.findByText("No public namespace matching", { exact: false });
+    await screen.findByText("No listed public namespace named", { exact: false });
     await clearHeld(box);
     expect(screen.getByLabelText("Namespaces")).toHaveTextContent("0 namespaces");
     expect(screen.getAllByText("zzz", { selector: ".font-mono" }).length).toBeGreaterThan(0);

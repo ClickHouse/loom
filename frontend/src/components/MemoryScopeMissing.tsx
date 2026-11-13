@@ -46,8 +46,8 @@ export function MemoryScopeMissing({ view }: { view: View }) {
       <EmptyState
         icon="cards"
         title="No memory namespace to read"
-        description={`${title} reads a memory namespace, and your token reaches none yet. Join one from Spaces (namespace picker → Browse and join), or ask for a grant; anything you can already reach is in the namespace menu.`}
-        action={{ label: "Browse and join spaces", onClick: () => setView("browse") }}
+        description={`${title} reads a memory namespace, and your token reaches none yet. Join a public namespace, or ask for a grant; anything you can already reach is in the namespace picker.`}
+        action={{ label: "Find public namespaces to join", onClick: () => setView("browse") }}
       />
     );
   } else if (kind === "qa") {
@@ -79,7 +79,7 @@ export function MemoryScopeMissing({ view }: { view: View }) {
       <p className="text-center text-sm text-text-muted">
         Reading memories? Pick a memory namespace from the{" "}
         <Link component="button" type="button" onClick={() => openNamespacePicker(true)}>
-          namespace menu
+          namespace picker
         </Link>{" "}
         in the header.
       </p>

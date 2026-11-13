@@ -1227,7 +1227,7 @@ describe("the conversation", () => {
     });
     show();
     expect(
-      await screen.findByText("The assistant answers about a memory namespace. Pick one in the namespace menu."),
+      await screen.findByText("The assistant answers about a memory namespace. Pick one in the namespace picker."),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-disabled", "true");
   });
@@ -1837,7 +1837,7 @@ describe("a refused first question", () => {
       }),
     );
     await userEvent.setup().click(screen.getByRole("button", { name: "Try again" }));
-    await screen.findByText("The assistant answers about a memory namespace. Pick one in the namespace menu.");
+    await screen.findByText("The assistant answers about a memory namespace. Pick one in the namespace picker.");
     expect(asked).toEqual(["team"]);
   });
 

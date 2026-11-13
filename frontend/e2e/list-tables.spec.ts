@@ -3,7 +3,7 @@ import { violations } from "./axe";
 import { codeReposFixture, dockAssistant, installApi } from "./fixtures";
 
 // The pages whose rows are columns of comparable fields are Click UI Tables (Runs, Users,
-// Agents, Activity, Usage, the review queue, Health's workers); the long ones page with
+// Agents, Audit log, Usage, the review queue, Health's workers); the long ones page with
 // Click UI's Pagination bar or load more at the bottom. At desktop and phone width each
 // has rows, stays clean under axe, and never scrolls the page sideways (under 769 px Click
 // UI lays a table out as a list of cards).

@@ -39,7 +39,7 @@ describe("landingNamespace: the saved pick wins when it is still reachable", () 
     expect(landingNamespace("team-b", ["bot-corpus", "team-b"], mine)).toBe("team-b");
   });
 
-  it("accepts a saved pick reachable only through list_mine (joined via Discover, not in the JWT)", () => {
+  it("accepts a saved pick reachable only through list_mine (joined from Namespaces in your org, not in the JWT)", () => {
     expect(landingNamespace("joined", ["claimed"], [entry("joined")])).toBe("joined");
   });
 

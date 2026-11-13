@@ -368,7 +368,7 @@ export function DockBody() {
                 </p>
               ) : !memory ? (
                 <p className="text-sm text-text-muted">
-                  The assistant answers about a memory namespace. Pick one in the namespace menu.
+                  The assistant answers about a memory namespace. Pick one in the namespace picker.
                 </p>
               ) : mismatch && convNamespace ? (
                 <Mismatch old={convNamespace} now={namespace} />

@@ -30,7 +30,7 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 vi.mock("../lib/sharedReads", () => ({ sharedMine: () => Promise.resolve([]) }));
 
-describe("Spaces row renders", () => {
+describe("a public namespace row renders", () => {
   beforeEach(() => {
     renders.count = 0;
     useStore.setState({ authed: true, identity: { org: "acme", namespace: "team", agent: "loom-ui" }, view: "browse" });

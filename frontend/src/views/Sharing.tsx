@@ -7,7 +7,7 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { Table } from "@clickhouse/click-ui/Table";
 import { Title } from "@clickhouse/click-ui/Title";
-import { getMySharingSummary, type SharingSummary, type CodeRepoSummary } from "../api";
+import { getMySharingSummary, isAuthDisabled, type SharingSummary, type CodeRepoSummary } from "../api";
 import { sharedCodeRepos, sharedMine } from "../lib/sharedReads";
 import { useStore, useIdentity } from "../lib/state";
 import { canCallCodeRepos } from "../lib/canCall";
@@ -30,7 +30,7 @@ import { isCollectionName } from "../lib/namespace";
 export function Sharing() {
   // The summary itself spans every namespace the caller holds a grant on
   // ("what you're sharing" needs all of them); the Tool activity table is
-  // filtered to the namespace this page shows. Re-fetch when the namespace switcher fires
+  // filtered to the namespace this page shows. Re-fetch when the namespace picker fires
   // so the filter follows it.
   const identity = useIdentity();
   const [showAllNamespaces, setShowAllNamespaces] = useState(false);
@@ -175,7 +175,10 @@ export function Sharing() {
         <EmptyState
           icon="share-network"
           title="No activity yet"
-          description="Once your agents start writing memories — or you join a public namespace from Spaces (namespace picker → Browse and join) — the cross-tool flow will appear here."
+          // With auth off the header shows the one namespace, and no picker to point at.
+          description={`Once your agents start writing memories — or you join a public namespace${
+            isAuthDisabled() ? "" : " from the namespace picker → Find public namespaces to join"
+          } — the cross-tool flow will appear here.`}
         />
       </PageContainer>
     );
@@ -210,7 +213,7 @@ export function Sharing() {
 
       {/* WHAT YOU'RE SHARING — namespace membership with member count
           and your 7-day activity. Rows ordered by recent activity
-          (heat) so high-traffic spaces float to the top. */}
+          (heat) so high-traffic namespaces float to the top. */}
       <section className="mb-8">
         <Title type="h2" size="sm" className="mb-3">
           What you're sharing

@@ -30,7 +30,7 @@ beforeEach(() => {
 
 describe("mobileMoreItems", () => {
   it("lists every sidebar route: MAIN, the admin drawer and Setup", () => {
-    const ids = mobileMoreItems(admin, null, NS).flatMap((g) => g.items.map((i) => i.id));
+    const ids = mobileMoreItems(admin, null, NS, null).flatMap((g) => g.items.map((i) => i.id));
     const primary = ["memories", "knowledge"];
     const expected = [
       ...MAIN.map((m) => m.id),
@@ -46,7 +46,7 @@ describe("mobileMoreItems", () => {
 
   it("uses the sidebar's labels verbatim", () => {
     const labels = new Map(
-      mobileMoreItems(admin, null, NS).flatMap((g) => g.items.map((i) => [i.id, i.label] as const)),
+      mobileMoreItems(admin, null, NS, null).flatMap((g) => g.items.map((i) => [i.id, i.label] as const)),
     );
     for (const m of [...MAIN, ...ADMIN_BASE]) {
       if (["memories", "knowledge"].includes(m.id)) continue;
@@ -56,7 +56,8 @@ describe("mobileMoreItems", () => {
   });
 
   it("shows operator-only entries to platform admins only", () => {
-    const ids = (w: typeof writer) => mobileMoreItems(w, [row("admin")], NS).flatMap((g) => g.items.map((i) => i.id));
+    const ids = (w: typeof writer) =>
+      mobileMoreItems(w, [row("admin")], NS, null).flatMap((g) => g.items.map((i) => i.id));
     expect(ids(admin)).toContain("admin:users");
     expect(ids(writer)).toContain("admin:health");
     expect(ids(writer)).not.toContain("admin:users");
@@ -65,7 +66,7 @@ describe("mobileMoreItems", () => {
   it("a viewer without an admin claim sees no ADMIN group (jwt-only namespace, the audit's case)", async () => {
     const viewer = { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"] };
     const jwtOnly = [row("jwt")];
-    expect(mobileMoreItems(viewer, jwtOnly, NS).map((g) => g.group)).not.toContain("Admin");
+    expect(mobileMoreItems(viewer, jwtOnly, NS, null).map((g) => g.group)).not.toContain("Admin");
     useStore.setState({ whoami: viewer, myNamespaces: jwtOnly });
     render(<MobileNav />);
     await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
@@ -76,7 +77,8 @@ describe("mobileMoreItems", () => {
   });
 
   it("follows the sidebar's 8540 gate: no Admin group for a writer or viewer of the namespace", () => {
-    const groups = (role: MyNamespaceEntry["role"]) => mobileMoreItems(writer, [row(role)], NS).map((g) => g.group);
+    const groups = (role: MyNamespaceEntry["role"]) =>
+      mobileMoreItems(writer, [row(role)], NS, null).map((g) => g.group);
     // The sheet carries the rail's groups, then Settings, then Admin for an admin
     expect(groups("admin")).toEqual(["Memory", "Activity", "Sources", "Settings", "Admin"]);
     expect(groups("writer")).toEqual(["Memory", "Activity", "Sources", "Settings"]);
