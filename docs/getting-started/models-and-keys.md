@@ -270,10 +270,10 @@ same model.
 - **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
   published benchmark covers a local one, so treat a small model as a way to try Loom
   with no key or to keep everything on the machine, not as an equal: expect extraction,
-  `memory.ask` answers and the assistant's tool use to be weaker, by
-  an amount nobody has measured. A small model on a CPU is slow on long prompts such as
-  extraction, so a busy capture queue backs up; a GPU, or a larger model on a machine
-  with the memory for it, helps. For a team server, a hosted model answers better.
+  `memory.ask` answers and the assistant's tool use to be weaker, by an amount nobody
+  has measured. A small model on a CPU is slow on long prompts such as extraction, so a
+  busy capture queue backs up; a GPU, or a larger model on a machine with the memory for
+  it, helps. For a team server, a hosted model answers better.
 
 ### Through an inference gateway
 

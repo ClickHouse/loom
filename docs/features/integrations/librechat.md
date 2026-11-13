@@ -316,9 +316,11 @@ echo "LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080" >> .env
 
 To answer on a model server on the machine instead of Anthropic, with no key, set
 `LOOM_ASSISTANT_PROVIDER=local`, `LOOM_ASSISTANT_MODEL` to a model it serves that takes
-tool calls, and `LOOM_ASSISTANT_ANSWER_CEILING_USD=0`, since an unpriced model's answer
-is otherwise charged $0.10 against the daily cap; LibreChat reaches it at `LIBRECHAT_LOCAL_LLM_BASE_URL` (default
-`http://host.docker.internal:11434/v1`, Ollama on the Docker host). See
+tool calls, and `LOOM_ASSISTANT_ANSWER_CEILING_USD=0`: an unpriced model's answer is
+otherwise charged $0.10 against the assistant's share of the daily cost cap, five
+answers a day at the defaults. LibreChat reaches the server at
+`LIBRECHAT_LOCAL_LLM_BASE_URL` (default `http://host.docker.internal:11434/v1`, Ollama
+on the Docker host). See
 [a model server on your machine](../../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)
 for what a small model gives up and what an answer costs.
 
