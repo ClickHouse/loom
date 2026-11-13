@@ -290,8 +290,8 @@ the row, on one of two paths:
   namespaces needs flat membership of the org. An org blacklist pattern of the caller's
   own org needs `ORG_ADMIN` and a global pattern needs `PLATFORM_ADMIN`.
 
-Every refusal answers as a missing row does, except those two blacklist cases, which
-refuse with 403 since neither pattern belongs to another tenant.
+Every refusal on these two paths answers as a missing row does, except those two
+blacklist cases, which refuse with 403 since neither pattern belongs to another tenant.
 
 **Why not 403.** A 403 confirms the id exists in another tenant. "Not found" makes a
 foreign row and a missing row look the same.
