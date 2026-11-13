@@ -5,9 +5,8 @@ its own dependencies, never the Loom server. The server sends the original's byt
 to, reads the artifact back as untrusted input, and cuts structural chunks from its blocks, so a SQL statement, a TOML
 key and a Markdown section are all cited by a locator into the source. Loom ships a reference extractor
 (`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL, TOML, CSV, PDF, DOCX, PPTX, XLSX and, with
-`pyarrow` installed, Parquet; an operator can run another behind the same
-[wire contract](../reference/extractor-contract.md). `knowledge.ingest` extracts an uploaded
-original this way ([ingestion](#ingestion)), and the document-source sync calls it for the PDFs, `.pptx` and `.docx`
+`pyarrow` installed, Parquet; an operator can run another behind the same [wire
+contract](../reference/extractor-contract.md). `knowledge.ingest` extracts an uploaded original this way ([ingestion](#ingestion)), and the document-source sync calls it for the PDFs, `.pptx` and `.docx`
 files a registered folder holds ([syncing a source](../features/knowledge.md#syncing-a-source)); `knowledge.add` takes
 text the caller extracted.
 

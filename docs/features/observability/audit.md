@@ -241,8 +241,8 @@ All settings are in the [configuration reference](../../reference/configuration.
   depend on their record. A row is inserted directly as its work runs, not queued: an
   op's row before its response, a detached erasure's as each step runs. A crash loses
   only the rows of work still in flight (with `LOOM_RESTRICTED_AUDIT_INLINE=false`, also a
-  restricted-access row written after its answer). Under the Postgres authority a memory write's audit row is durable in Postgres
-  before the write answers ([audit](../../architecture/storage-authority.md#audit)).
+  restricted-access row written after its answer). Under the Postgres authority a memory
+  write's audit row is durable in Postgres before the write answers ([audit](../../architecture/storage-authority.md#audit)).
 - **Detection, not prevention.** Anyone with write access to the ClickHouse table can
   alter it. The verifier shows the change; it cannot undo it.
 - **Bounded look-back.** The per-row check reads the last hour; the checkpoint recount

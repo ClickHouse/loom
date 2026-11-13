@@ -93,8 +93,9 @@ class Operation:
     audit: bool = False
     # Skip the transport-level namespace-access check. Used by self-service
     # ops where the caller is operating ON a namespace (join, leave,
-    # fresh register) rather than IN one — the handler enforces its own
-    # rules (membership, visibility, owner). Role check still runs.
+    # fresh register) rather than IN one, and by ops whose target only the
+    # handler can resolve (memory.verify by id, the erasure ops by scope) —
+    # the handler enforces its own rules. Role check still runs.
     skip_namespace_authz: bool = False
     # The op reads facts about the DEPLOYMENT (its build, its op registry), not any
     # org's or namespace's data. A scoped token — whose authority is per-namespace and

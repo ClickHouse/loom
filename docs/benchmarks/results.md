@@ -151,7 +151,7 @@ The same answers graded by two more judges with the official prompt: `gpt-6.1-so
 `claude-opus-5-5` 97.6%. The re-grade's three judges, these two and `gpt-4o-2024-08-06`,
 agree with each other on 98.8–99.8% of the questions.
 
-The table's per-type figures are the `ask` labels in `longmemeval_s.csv`. The re-grade in
+The table's `memory.ask` figures are the `ask` labels in `longmemeval_s.csv`. The re-grade in
 `longmemeval_s_judges.json` called `gpt-4o-2024-08-06` again on the same answers, and at
 least two of its labels differ from the table's: on net, one multi-session answer it
 counts correct (91.7% → 92.5%) and one preference answer it counts wrong (100% → 96.7%),
@@ -1144,7 +1144,7 @@ cap, and was not run.
 **Extrapolated, and the ceiling hit first.** Each figure grows linearly with what it
 reads:
 
-1. **A read scope's exact vector scan**, at about one million memories in one scope
+1. **A read scope's vector scan (no vector index)**, at about one million memories in one scope
    (org, namespace, agent, user). At 0.6 KB a row, a search and every write's conflict
    check read 0.6 GB at 1M rows, 6 GB at 10M and 60 GB at 100M, each call: seconds per
    call before 10M. The size of the largest scope sets it, not the total number of
