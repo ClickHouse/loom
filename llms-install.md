@@ -12,9 +12,9 @@ extractor and ClickHouse) and serves MCP over streamable HTTP. A coding agent co
 
 ## 1. Check for a running Loom
 
-On Windows, run the `curl`, `docker` and installer commands in a WSL 2 terminal where
-`docker` works. The Cline entry in step 3 goes in the configuration of the Cline the user
-runs.
+On Windows, run every shell command in steps 1 to 3 (`curl`, `docker`, the `~/.loom`
+check, `env` and the installer) in a WSL 2 terminal where `docker` works. Cline on Windows
+keeps its configuration on Windows: write the step 3 entry there, not inside WSL.
 
 ```bash
 curl -sS --noproxy '*' http://localhost:7777/v1/health
