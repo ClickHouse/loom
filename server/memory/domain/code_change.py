@@ -103,11 +103,18 @@ def spend_marks(hits: list[Any]) -> list[Any]:
     return marked
 
 
+def _below_the_floor(hit: Any) -> bool:
+    """A row the search serves only as filler: under the similarity floor, or flagged
+    below the abstain threshold."""
+    return bool(hit.score_components.get("below_floor") or getattr(hit, "below_threshold", False))
+
+
 def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any]:
     """`hits` with each one marked `_code_ranked_down` moved below the next `places` rows
     that are neither marked nor placed by an identifier match or a tier, never past the
-    last nor below the similarity floor; a placed row is never counted as a place and
-    never moved down (one the move passes rises a slot). A moved hit scores
+    last nor below a row served only as filler (`_below_the_floor`); a placed row is
+    never counted as a place and never moved down (one the move passes rises a slot). A
+    moved hit scores
     between the rows around it (or ties the one above, when they tie), so a stable sort
     by score keeps the order; `score_components.code_changed_places` counts the rows it
     moved below (negative, as a reranker's `rerank_delta`; 0 for one with nothing below
@@ -122,7 +129,7 @@ def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any
         at = next(i for i, h in enumerate(out) if h is hit)  # by identity: hits compare by value
         passed, to = 0, at
         for i in range(at + 1, len(out)):
-            if passed == places or out[i].score_components.get("below_floor"):
+            if passed == places or _below_the_floor(out[i]):
                 break
             if id(out[i]) not in moving and not _placed(out[i]):
                 passed, to = passed + 1, i

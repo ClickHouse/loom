@@ -218,7 +218,7 @@ def move_stale(hits: list[Any], input: Any) -> list[Any]:
     """`hits` with each one whose linked code changed moved down (`code_change.rank_down`),
     its explanation rewritten with the score it is served with."""
     out = code_change.rank_down(hits, settings.memory_search_code_changed_places)
-    moved = [h for h in out if "code_changed_places" in h.score_components]
+    moved = [h for h in out if h.score_components.get("code_changed_places")]
     for h in moved:
         h.explanation = ""  # a fact row's is the one `_decorate_hits` writes
     _decorate_hits(moved, input=input)

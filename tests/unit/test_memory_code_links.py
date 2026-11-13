@@ -3995,3 +3995,11 @@ def test_a_move_stops_at_the_similarity_floor() -> None:
     out = code_change.rank_down(hits, 3)
     assert [h.memory_key for h in out] == ["b", "s", "f1", "f2"]
     assert out[1].score_components["code_changed_places"] == -1.0
+
+
+def test_a_move_stops_at_a_row_flagged_below_the_threshold() -> None:
+    hits = _ranked("s", "b", "f1", "f2", down=("s",))
+    for h in hits[2:]:
+        h.below_threshold = True
+    out = code_change.rank_down(hits, 3)
+    assert [h.memory_key for h in out] == ["b", "s", "f1", "f2"]
