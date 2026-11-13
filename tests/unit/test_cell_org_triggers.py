@@ -243,33 +243,68 @@ def _tables(sql: str) -> list[tuple[str, str]]:
 
 
 _ORG_COLUMN = re.compile(r"(?:^|[(,])\s*\"?org\"?\s", re.I | re.M)
+# A key that does not lead with org: a column-level UNIQUE on another column, or a
+# table-level, added or indexed key whose first column is not org.
+_COLUMN_UNIQUE = re.compile(r"(?:^|[(,])\s*\"?(\w+)\"?\s[^,\n]*\bUNIQUE\b(?!\s*\()", re.I | re.M)
+_TABLE_KEY = re.compile(r"\b(?:UNIQUE|PRIMARY\s+KEY)\s*\(\s*\"?(\w+)", re.I)
+_ADDED_KEY = re.compile(
+    r"\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?([\w.\"]+)[^;]*?\bADD\s+"
+    r"(?:CONSTRAINT\s+\S+\s+)?(?:UNIQUE|PRIMARY\s+KEY)\s*\(\s*\"?(\w+)",
+    re.I,
+)
+_UNIQUE_INDEX = re.compile(
+    r"CREATE\s+UNIQUE\s+INDEX\b[^;]*?\bON\s+(?:ONLY\s+)?([\w.\"]+)[^(;]*\(\s*\"?(\w+)", re.I
+)
+
+
+def _keys_not_led_by_org(sql: str) -> list[str]:
+    """Each key of an org-keyed table in `sql` that does not lead with org, and each
+    org-keyed table with no primary key led by org."""
+    found, org_tables = [], set()
+    for name, body in _tables(sql):
+        if not _ORG_COLUMN.search(body):
+            continue
+        org_tables.add(name.replace('"', ""))
+        inline = re.search(r"(?:^|[(,])\s*\"?org\"?\s[^,\n]*PRIMARY KEY", body, re.I | re.M)
+        if not inline and not re.search(r"PRIMARY KEY\s*\(\s*\"?org\b", body, re.I):
+            found.append(f"{name}: no primary key led by org")
+        for m in _TABLE_KEY.finditer(body):
+            if m.group(1).lower() != "org":
+                found.append(f"{name}: {m.group(0)}")
+        for m in _COLUMN_UNIQUE.finditer(body):
+            if m.group(1).lower() != "org":
+                found.append(f"{name}: {m.group(1)} UNIQUE")
+    for rule in (_ADDED_KEY, _UNIQUE_INDEX):
+        for m in rule.finditer(sql):
+            if m.group(1).replace('"', "") in org_tables and m.group(2).lower() != "org":
+                found.append(m.group(0))
+    return found
 
 
 def test_an_org_keyed_table_leads_its_primary_key_and_every_unique_key_with_org() -> None:
     """An upsert matches on a key: one led by org only ever hits the same org's row,
     which the update trigger may let through."""
-    checked, org_tables = 0, set()
-    for path in _FILES:
-        sql = _sql(path)
-        for name, body in _tables(sql):
-            if not _ORG_COLUMN.search(body):
-                continue
-            checked += 1
-            org_tables.add(name.replace('"', ""))
-            inline = re.search(r"(?:^|[(,])\s*\"?org\"?\s[^,\n]*PRIMARY KEY", body, re.I | re.M)
-            key = re.search(r"PRIMARY KEY\s*\(\s*\"?(\w+)", body, re.I)
-            assert inline or (key and key.group(1) == "org"), f"{path.name}: {name}"
-            for unique in re.finditer(r"\bUNIQUE\s*\(\s*\"?(\w+)", body, re.I):
-                assert unique.group(1) == "org", f"{path.name}: {name}"
-    for path in _FILES:
-        for m in re.finditer(
-            r"CREATE\s+UNIQUE\s+INDEX\b[^;]*?\bON\s+(?:ONLY\s+)?([\w.\"]+)[^(;]*\(\s*\"?(\w+)",
-            _sql(path),
-            re.I,
-        ):
-            if m.group(1).replace('"', "") in org_tables:
-                assert m.group(2) == "org", f"{path.name}: {m.group(0)}"
-    assert checked >= 10
+    sql = "\n".join(_sql(path) for path in _FILES)
+    assert _keys_not_led_by_org(sql) == []
+    assert sum(1 for _n, body in _tables(sql) if _ORG_COLUMN.search(body)) >= 10
+
+
+_TABLE = "CREATE TABLE loom.t (\n    org text NOT NULL,\n    id bigint NOT NULL{},\n    PRIMARY KEY ({})\n);\n"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        _TABLE.format("", "id, org"),
+        _TABLE.format(" UNIQUE", "org, id"),
+        _TABLE.format(",\n    UNIQUE (id)", "org, id"),
+        _TABLE.format("", "org, id") + "ALTER TABLE loom.t ADD CONSTRAINT t_u UNIQUE (id);",
+        _TABLE.format("", "org, id") + "CREATE UNIQUE INDEX t_i ON loom.t (id);",
+    ],
+)
+def test_the_key_rule_names_a_key_not_led_by_org(sql: str) -> None:
+    assert _keys_not_led_by_org(sql)
+    assert _keys_not_led_by_org(_TABLE.format(",\n    UNIQUE (org, id)", "org, id")) == []
 
 
 # loom doctor's cell checks (server/cli/doctor_cell.py).
