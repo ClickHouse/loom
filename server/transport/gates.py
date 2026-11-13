@@ -197,7 +197,8 @@ async def with_single_user_identity(
     where the call left it out: only for a call with no token on a single-user server.
     The org (`caller_org`) on every op but code and tracker ones; the namespace
     (`default_namespace`, as MCP asks it) and the agent on a SINGLE_USER_FILLED_OPS
-    op. A field is filled when missing, null, or a string the gates read as absent."""
+    op. A field is filled when missing, null, or a string the gates read as absent
+    (`_absent`: an agent of "-" is kept)."""
     from server.identity.app.caller_home import caller_org, default_namespace
     from server.settings import settings
     from server.transport.arg_check import did_you_mean, unknown_args
@@ -243,7 +244,7 @@ async def with_single_user_identity(
 def _absent(name: str, value: Any) -> bool:
     """Missing, null, or a string the gates read as no identity. An agent of "-"
     names no agent, which the agents views leave out, so it is kept."""
-    if name == "agent" and isinstance(value, str) and value.strip() == "-":
+    if name == "agent" and value == "-":
         return False
     return value is None or (isinstance(value, str) and present(value) is None)
 
