@@ -115,8 +115,8 @@ other clients.
    one). The tool list includes `loom_memory_set` and `loom_search`.
 2. Pick a key `setup/check/<random digits>` and call `loom_memory_get` on it. If it is
    found, pick another key.
-3. Call `loom_memory_set` with that `memory_key` and a short `value`, then
-   `loom_memory_get` with the same key: it returns the value.
+3. Call `loom_memory_set` with that `memory_key` and a short `value` that contains the
+   same digits, then `loom_memory_get` with the same key: it returns the value.
 4. Call `loom_memory_delete` with that key.
 5. Tell the user where the dashboard is: the `Dashboard:` address the installer printed,
    or `http://localhost:7777/` when Loom was already running.
