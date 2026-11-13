@@ -760,7 +760,8 @@ const AUDIT_ROWS = [
   subject: JSON.stringify(subject),
 }));
 
-/** The acme/payments code the Explore tab reads: FX conversion and the two places that call it. */
+/** The acme/payments code the Explore tab reads: FX conversion, the refund that calls it, and
+ *  the API handler that calls the refund. */
 const CODE_UNITS: Record<string, Record<string, unknown>> = {
   "payments.fx.convert": {
     path: "payments/fx.py",
@@ -777,7 +778,7 @@ const CODE_UNITS: Record<string, Record<string, unknown>> = {
   "payments.refunds.refund": {
     path: "payments/refunds.py",
     start_line: 9,
-    end_line: 16,
+    end_line: 11,
     kind: "function",
     signature: 'def refund(charge_id: str, amount: Decimal, currency: str, settle_in: str = "USD") -> None',
     description: "Reverses a captured charge and posts the balanced ledger entry.",
@@ -1285,10 +1286,10 @@ test.describe("docs screenshots at 1440 px", () => {
   test.skip(!ENABLED, "set LOOM_DOCS_SCREENSHOTS=1 to regenerate docs/assets/screenshots");
   test.use({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme: "dark" });
 
-  test("memory linked files", async ({ page }) => {
+  test("memory linked code", async ({ page }) => {
     await installDemoApi(page);
     await steps.linkedCode(page);
-    await captureWebp(page, "memory-linked-files");
+    await captureWebp(page, "memory-linked-code");
   });
 
   test("memories", async ({ page }) => {
