@@ -31,7 +31,7 @@ from server.transport.mcp_config import (
     _ok,
     cache_hints,
 )
-from server.transport.mcp_descriptions import FIRST_STEP_HOOK, FIRST_STEP_SECTIONS
+from server.transport.mcp_descriptions import FIRST_STEP_HOOK
 from server.transport.mcp_identity import (
     _caller_default_context,
     _caller_defaults,
@@ -334,8 +334,7 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     head = (
         "**Loom-first mode active for this conversation.**\n\n"
         "**1. Task context.** First step of each task: call "
-        f"{tool['context.pack']} with the task as `query` and `only_sections` "
-        f"{FIRST_STEP_SECTIONS}, for the memories, decisions and "
+        f"{tool['context.pack']} with the task as `query`, for the memories, decisions and "
         f"procedures that bear on it in one bounded bundle. Skip it when {FIRST_STEP_HOOK}. "
         "For one fact, rule 2's search alone is enough.\n\n"
         "**2. Recall lookup order.** When I ask about preferences, "
@@ -539,7 +538,7 @@ def _coding_instructions(toolset: str | None) -> str:
     return name_ops_for_toolset(
         "**Loom: memory and code for this session.**"
         + f"\n\nFirst step of each task: call {tool['context.pack']} with "
-        + f"the task as `query` and `only_sections` {FIRST_STEP_SECTIONS}. "
+        + "the task as `query`. "
         + f"Skip it when {FIRST_STEP_HOOK}."
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
         + memory,
