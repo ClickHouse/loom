@@ -430,7 +430,8 @@ function indexStatus() {
     last_error: "",
   });
   const head = "4be19a0c7d2e5f13";
-  const base = codeRepo(CODE_NS, "main", head, 1284, 18342, 0.3);
+  // The status answers without the repository list's `indexed_at`.
+  const { indexed_at: _indexedAt, ...base } = codeRepo(CODE_NS, "main", head, 1284, 18342, 0.3);
   return {
     ...base,
     counts: {
@@ -467,6 +468,7 @@ function indexStatus() {
     state: {
       git_head: { value: head, detail: "", updated_at: agoCh(0.3) },
       pr_cursor: { value: "2026-09-28", detail: "", updated_at: agoCh(0.5) },
+      scip_commit_py: { value: head, detail: "", updated_at: agoCh(0.5) },
     },
     workers: {
       code_ingest: worker(2),
