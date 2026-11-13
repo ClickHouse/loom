@@ -92,7 +92,8 @@ LANGUAGES = (
         "このページは[英語の原文]({url})の機械翻訳です。内容は英語の原文が優先されます。",
         "Use Japanese punctuation (、。：（）) in prose, and join the lines of a paragraph "
         "into one line. Fixed terms: dashboard ダッシュボード, "
-        "compiler tier コンパイラティア, fast tier 高速ティア, token トークン, namespace "
+        "compiler tier コンパイラティア, fast tier 高速ティア, the NOTICE file NOTICE (a legal "
+        "notice; keep the name), token トークン, namespace "
         "名前空間, memory メモリ, agent エージェント.",
     ),
     Language(
@@ -101,6 +102,7 @@ LANGUAGES = (
         "Korean",
         "이 페이지는 [영어 원문]({url})을 기계 번역한 것이며, 영어 원문이 기준입니다.",
         "Fixed terms: dashboard 대시보드, compiler tier 컴파일러 티어, fast tier 빠른 티어, "
+        "recording (of conversations) 기록, "
         "token 토큰, namespace 네임스페이스, memory 메모리, agent 에이전트.",
     ),
     Language(
@@ -146,13 +148,14 @@ FENCE = re.compile(r"^(`{3,}|~{3,})")
 # A Markdown link or image target, an HTML href or src, or a reference definition.
 LINK = re.compile(r"(\]\(|(?:href|src)=\"|^\[(?!\^)[^\]\n]+\]:[ \t]+)([^)\"\s]+)", re.MULTILINE)
 # A Markdown link's text and target, an HTML link's text, and image alt texts.
-LINK_TEXT = re.compile(r"(?<!!)\[([^\[\]\n]+)\]\(([^)\s]+)")
-HTML_LINK_TEXT = re.compile(r"<a\s[^>]*>([^<]+)</a>")
+LINK_TEXT = re.compile(r"(?<!!)\[([^\[\]\n]+)\]\([^)\s]+")
+# An HTML link's inner text; tags inside it (`<b>`, `<code>`) are dropped before checking.
+HTML_LINK_TEXT = re.compile(r"<a\s[^>]*>(.*?)</a>", re.DOTALL)
+HTML_TAG = re.compile(r"<[^>]+>")
 IMAGE_ALT = re.compile(r"!\[([^\]\n]+)\]\(")
 HTML_ALT = re.compile(r'\balt="([^"]+)"')
-TABLE_RULE = re.compile(r"^\|[\s:|-]+\|$")
-# Words a heading or link text may keep in every language: names, and the two terms
-# some glossaries keep as they are.
+# Words a label (heading, link text, alt text, table cell) may keep in every language:
+# names, and the two terms some glossaries keep as they are.
 KEPT_WORDS = frozenset(
     """loom clickhouse postgres claude code codex cursor docker compose mcp sdk sdks python
     typescript node langgraph strands kubernetes helm github codespaces http https api cli
@@ -171,7 +174,8 @@ SYSTEM = """You translate a Markdown page of Loom's documentation, or one sectio
 Loom is an open-source memory, document search and code index server for AI agents.
 Rules:
 - Translate the prose, headings, table cells, list items, image alt text and every link
-  text, including links to English pages; only names stay in English.
+  text, including links to English pages; only names stay in English. A link to a heading
+  on the same page (`#anchor`) uses that heading's translation as its text.
 - Copy byte for byte: fenced code blocks, inline code spans, URLs and link targets, HTML
   tags and attributes, lines of the form <a id="..."></a>, and every number.
 - Keep product, company and project names, CLI commands, flags, file names and op names
@@ -359,14 +363,18 @@ def _words(label: str) -> list[str]:
 def labels(text: str) -> Counter[str]:
     """The labels of `text` that hold a word to translate: headings, link texts (Markdown and
     HTML), image alt texts, and table cells with at least two such words."""
-    prose_lines = [line for line, in_code in outside_fences(text) if not in_code]
-    prose = "\n".join(prose_lines)
+    # Code spans go first: a link or an alt attribute shown as code is not a label.
+    prose = CODE_SPAN.sub(
+        " ", "\n".join(line for line, in_code in outside_fences(text) if not in_code)
+    )
+    prose_lines = prose.split("\n")
     found = [m.group(2) for m in map(HEADING.match, prose_lines) if m]
-    found += [label for label, _ in LINK_TEXT.findall(prose)]
-    found += HTML_LINK_TEXT.findall(prose) + IMAGE_ALT.findall(prose) + HTML_ALT.findall(prose)
+    found += LINK_TEXT.findall(prose)
+    found += [HTML_TAG.sub(" ", inner).strip() for inner in HTML_LINK_TEXT.findall(prose)]
+    found += IMAGE_ALT.findall(prose) + HTML_ALT.findall(prose)
     out: Counter[str] = Counter(label for label in found if _words(label))
     for line in prose_lines:
-        if line.startswith("|") and not TABLE_RULE.match(line):
+        if line.startswith("|"):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             out.update(c for c in cells if len(_words(c)) >= 2)
     return out
@@ -680,9 +688,7 @@ def translate_page(source: str, lang: Language, key: str, spend: Spend) -> None:
     # whole page, so the page is held to the same rule before it is written.
     kept = labels("\n".join(requests)) & labels(body)
     if kept:
-        raise TranslationDiffers(
-            f"{target_path(lang.code, source)} keeps in English: {sorted(kept)[:4]}"
-        )
+        raise TranslationDiffers(f"keeps in English: {sorted(kept)[:4]}")
     path = ROOT / target_path(lang.code, source)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render(source, lang, body, line, spend.model))
@@ -752,7 +758,10 @@ def update(every: bool = False, codes: list[str] | None = None) -> int:
         key = os.environ.get("ANTHROPIC_API_KEY") or sys.exit("ANTHROPIC_API_KEY is not set")
         try:
             with ThreadPoolExecutor(WORKERS) as pool:
-                futures = [pool.submit(translate_page, s, lg, key, spend) for s, lg in work]
+                futures = {
+                    pool.submit(translate_page, s, lg, key, spend): target_path(lg.code, s)
+                    for s, lg in work
+                }
                 differ: list[str] = []
                 pending = set(futures)
                 while pending:
@@ -760,12 +769,13 @@ def update(every: bool = False, codes: list[str] | None = None) -> int:
                     for future in done:
                         error = future.exception()
                         if isinstance(error, TranslationDiffers):
-                            differ.append(str(error))
+                            differ.append(f"{futures[future]}: {error}")
                         elif error is not None:
                             # The cap, the API or a bug: stop every worker.
                             spend.stopped.set()
                             pool.shutdown(cancel_futures=True)
-                            raise SystemExit(f"{error} (pages finished so far are written)")
+                            also = "".join(f"\nnot written: {d}" for d in differ)
+                            raise SystemExit(f"{error} (pages finished so far are written){also}")
                 if differ:
                     raise SystemExit("pages not written:\n" + "\n".join(differ))
         finally:

@@ -212,9 +212,36 @@ def test_a_page_that_still_differs_lets_the_others_finish(
     monkeypatch.setattr(t, "translate_page", fake_page)
     monkeypatch.setattr(t, "write_language_lines", lambda: None)
     monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
-    with pytest.raises(SystemExit, match="pages not written:\nja: a translation still differs"):
+    with pytest.raises(
+        SystemExit, match="pages not written:\ni18n/ja/README.md: ja: a translation"
+    ):
         t.update(every=True, codes=["ja"])
     assert sorted(written) == sorted(t.SOURCES[1:])
+
+
+def test_a_fatal_error_after_a_differing_page_still_names_that_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_page(source: str, lang: t.Language, key: str, spend: t.Spend) -> None:
+        if source == t.SOURCES[0]:
+            raise t.TranslationDiffers("ja: a translation still differs after a retry")
+        time.sleep(0.05)
+        raise SystemExit("Messages API 500")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    monkeypatch.setattr(t, "translate_page", fake_page)
+    monkeypatch.setattr(t, "write_language_lines", lambda: None)
+    monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
+    with pytest.raises(SystemExit) as stopped:
+        t.update(every=True, codes=["ja"])
+    message = str(stopped.value)
+    assert "Messages API 500" in message and "not written: i18n/ja/README.md" in message
+
+
+def test_a_link_or_alt_text_shown_as_code_is_not_a_label() -> None:
+    source = 'Write `<img alt="Diagram of the flow">` or `[the guide](x.md)` in the page.\n'
+    assert t.labels(source) == {}
+    assert t.labels('<a href="#x"><b>Get started</b></a>\n') == {"Get started": 1}
 
 
 def test_the_first_failed_page_stops_the_others(
