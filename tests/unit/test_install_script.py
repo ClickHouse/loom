@@ -1952,7 +1952,7 @@ def test_the_local_preset_loads_with_the_verifier_and_resolver_off(monkeypatch) 
 
     for key, value in LOCAL_PRESET.items():
         monkeypatch.setenv(key, value)
-    loaded = Settings()
+    loaded = Settings(_env_file=None)  # type: ignore[call-arg]
     assert loaded.llm_provider == "local"
     assert loaded.memory_extract_verify_models == ""
     assert loaded.memory_conflict_resolver_enabled is False
@@ -1986,6 +1986,15 @@ def test_a_new_install_on_a_terminal_is_offered_a_running_ollama(installer_env) 
     assert b"Loom will run its model jobs on Ollama" in seen, seen
     assert b"ollama pull" not in seen
     assert _env(Path(installer_env["LOOM_INSTALL_DIR"]))["LOOM_LLM_PROVIDER"] == "local"
+
+
+def test_declining_the_ollama_offer_keeps_the_fake_models(installer_env) -> None:
+    _ollama_answers(installer_env)
+    seen = _on_terminal(installer_env, [], b"Use it for extraction", b"n\n")
+    assert b"Loom will run its model jobs on Ollama" not in seen, seen
+    env = _env(Path(installer_env["LOOM_INSTALL_DIR"]))
+    assert env["LOOM_LLM_PROVIDER"] == "fake"
+    assert "LOOM_LOCAL_LLM_BASE_URL" not in env
 
 
 def test_a_rerun_or_off_is_not_offered_ollama(install, installer_env) -> None:
