@@ -18,8 +18,8 @@ subscription credentials or API keys to Loom.
 ## What works without provider keys?
 
 The released Docker installation embeds with `local` (bge-small, 384 dimensions, on CPU
-from files the image carries) and selects the `fake-echo-1` LLM, unless the installer set a local
-model server ([a model server on your
+from files the image carries) and selects the `fake-echo-1` LLM, unless the installer
+set a local model server ([a model server on your
 machine](#a-model-server-on-your-machine-no-api-key)). It boots without provider keys or
 network: storage, the dashboard, structural code indexing and semantic search work,
 though a hosted embedder retrieves better on paraphrase-heavy questions. The fake LLM
@@ -260,10 +260,10 @@ not tuned for a local model: a pass (up to 10 sessions) longer than 900 s is cut
 again from the newest session.
 
 For llama.cpp, point `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root
-(`http://host.docker.internal:8080/v1`) and set `LOOM_LLM_MODEL` to the name it serves; for a
-local assistant, also set `LIBRECHAT_LOCAL_LLM_BASE_URL` to that root and
-`LOOM_ASSISTANT_MODEL` to that name. A server run from a checkout reaches the model at `localhost`, the setting's default
-(`http://localhost:11434/v1`).
+(`http://host.docker.internal:8080/v1`) and set `LOOM_LLM_MODEL` to the name it serves;
+for a local assistant, also set `LIBRECHAT_LOCAL_LLM_BASE_URL` to that root and
+`LOOM_ASSISTANT_MODEL` to that name. A server run from a checkout reaches the model at
+`localhost`, the setting's default (`http://localhost:11434/v1`).
 
 A per-job model whose name starts with `gpt`, `o1`, `o3`, `o4`, `chatgpt` or `claude` goes
 to that hosted provider whatever `LOOM_LLM_PROVIDER` says; a local model named that way
