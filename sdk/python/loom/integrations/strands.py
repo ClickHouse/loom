@@ -64,7 +64,8 @@ class LoomMemoryStore:
     metadata's short string values as tags. ``search`` runs ``memory.search``
     and returns entries newest-ranked first; when loom abstains (no hit
     above the calibrated threshold) the store returns nothing rather than a
-    low-similarity row, so the Memory Manager injects no context at all.
+    low-similarity row, so the Memory Manager injects no context at all, and
+    a hit below the threshold that rides along with a strong one is left out.
     """
 
     def __init__(
@@ -118,10 +119,15 @@ class LoomMemoryStore:
             tags=self._tags or None,
             memory_type=self._memory_type,
         )
-        if self._honour_abstain and getattr(result, "abstain", False):
-            return []
+        hits = list(result)[:top_k]
+        if self._honour_abstain:
+            if result.abstain:
+                return []
+            # Rows under the floor ride along with a strong first hit; honouring
+            # abstention drops them.
+            hits = [hit for hit in hits if not hit.below_threshold]
         entries: list[MemoryEntry] = []
-        for hit in list(result)[:top_k]:
+        for hit in hits:
             entries.append(
                 MemoryEntry(
                     content=hit.content_excerpt,

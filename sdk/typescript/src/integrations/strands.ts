@@ -44,7 +44,7 @@ export interface LoomMemoryStoreOptions {
   tags?: string[];
   /** Results per search when the caller does not say. Default 3. */
   maxSearchResults?: number;
-  /** Return nothing when loom abstains (no hit above its calibrated floor). Default true. */
+  /** Return nothing when loom abstains (no hit above its calibrated floor), and leave out hits below it. Default true. */
   honourAbstain?: boolean;
   /** Key prefix; the key is `<prefix>/<sha256(content) first 20 hex>`, as in the Python adapter. Default `strands`. */
   keyPrefix?: string;
@@ -108,7 +108,9 @@ export class LoomMemoryStore {
       ...(this.tags.length ? { tags: [...this.tags] } : {}),
     });
     if (this.honourAbstain && out.abstain) return [];
-    return (out.results ?? []).slice(0, topK).map((h) => ({
+    // Rows under the floor ride along with a strong first hit; honouring abstention drops them.
+    const hits = (out.results ?? []).slice(0, topK).filter((h) => !(this.honourAbstain && h.below_threshold));
+    return hits.map((h) => ({
       content: h.content_excerpt,
       storeName: this.name,
       metadata: {

@@ -65,6 +65,18 @@ describe("LoomMemoryStore (Strands adapter)", () => {
     ]);
   });
 
+  it("leaves out a hit below the floor, unless told to keep it", async () => {
+    const reply = {
+      results: [
+        { memory_key: "k1", memory_type: "semantic", content_excerpt: "aisle", similarity: 0.9 },
+        { memory_key: "k2", memory_type: "semantic", content_excerpt: "x", similarity: 0.2, below_threshold: true },
+      ],
+    };
+    const strict = await new LoomMemoryStore(harness(reply).agent).search("q");
+    expect(strict.map((e) => e.metadata?.memory_key)).toEqual(["k1"]);
+    expect(await new LoomMemoryStore(harness(reply).agent, { honourAbstain: false }).search("q")).toHaveLength(2);
+  });
+
   it("returns nothing when loom abstains, unless told to keep the hits", async () => {
     const reply = {
       abstain: true,

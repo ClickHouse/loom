@@ -141,7 +141,8 @@ class LoomMemoryRetriever(_LoomRetriever):
     ``memory_key``, ``memory_type``, ``similarity``, ``source`` and, when set,
     ``valid_at``. The documents carry no id: a memory key is unique per agent,
     user and session, and a search reads every agent's memories. When Loom abstains
-    (no memory above its calibrated floor) the retriever returns no documents
+    (no memory above its calibrated floor) the retriever returns no documents, and
+    a memory below the floor that rides along with a strong one is left out,
     unless ``honour_abstain`` is false.
     """
 
@@ -157,7 +158,7 @@ class LoomMemoryRetriever(_LoomRetriever):
     agent_id: str | None = None
     """Only this agent's memories."""
     honour_abstain: bool = True
-    """Return no documents when Loom abstains."""
+    """Leave out memories below Loom's floor; no documents when Loom abstains."""
 
     def _call_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"top_k": self.k}
@@ -169,10 +170,15 @@ class LoomMemoryRetriever(_LoomRetriever):
         return kwargs
 
     def _documents(self, result: Any) -> list[Document]:
-        if self.honour_abstain and result.abstain:
-            return []
+        hits = list(result)[: self.k]
+        if self.honour_abstain:
+            if result.abstain:
+                return []
+            # Rows under the floor ride along with a strong first hit; honouring
+            # abstention drops them.
+            hits = [hit for hit in hits if not hit.below_threshold]
         docs = []
-        for hit in list(result)[: self.k]:
+        for hit in hits:
             metadata: dict[str, Any] = {
                 # Named on a fan-out (the server's memory_search_default_namespace_scope).
                 "namespace": hit.namespace or self.agent.namespace,

@@ -123,6 +123,16 @@ describe("LoomMemoryRetriever (LangChain.js adapter)", () => {
     });
   });
 
+  it("leaves out a memory below the floor, unless told not to", async () => {
+    const reply = {
+      results: [memories.results[0], { ...memories.results[1], below_threshold: true }],
+    };
+    const strict = await new LoomMemoryRetriever(harness(reply).agent).invoke("q");
+    expect(strict.map((d) => d.metadata.memory_key)).toEqual(["prefs/seat"]);
+    const loose = await new LoomMemoryRetriever(harness(reply).agent, { honourAbstain: false }).invoke("q");
+    expect(loose.map((d) => d.metadata.memory_key)).toEqual(["prefs/seat", "prefs/meal"]);
+  });
+
   it("returns nothing when Loom abstains, unless told not to", async () => {
     const reply = { ...memories, abstain: true };
     expect(await new LoomMemoryRetriever(harness(reply).agent).invoke("q")).toEqual([]);

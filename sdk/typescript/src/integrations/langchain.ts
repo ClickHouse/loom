@@ -44,7 +44,7 @@ export interface LoomMemoryRetrieverOptions extends LoomRetrieverOptions {
   memoryType?: NonNullable<MemorySearchBody["memory_type"]>;
   /** Only this user's, session's, run's or agent's memories; without an `agentId`, every agent's. */
   scope?: Scope;
-  /** Return no documents when Loom abstains (no memory above its calibrated floor). Default true. */
+  /** Return no documents when Loom abstains (no memory above its calibrated floor), and leave out memories below it. Default true. */
   honourAbstain?: boolean;
 }
 
@@ -119,7 +119,9 @@ export class LoomMemoryRetriever extends BaseRetriever {
   async _getRelevantDocuments(query: string, _runManager?: CallbackManagerForRetrieverRun): Promise<Document[]> {
     const out = await this.agent.recall(query, this.body);
     if (this.honourAbstain && out.abstain) return [];
-    return (out.results ?? []).slice(0, this.k).map(
+    // Rows under the floor ride along with a strong first hit; honouring abstention drops them.
+    const hits = (out.results ?? []).slice(0, this.k).filter((h) => !(this.honourAbstain && h.below_threshold));
+    return hits.map(
       (h) =>
         new Document({
           pageContent: h.content_excerpt,
