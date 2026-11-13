@@ -3976,20 +3976,24 @@ async def test_a_copy_the_index_does_not_hold_is_still_another_definition(monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("indexed", [True, False], ids=["index-caught-up", "index-still-behind"])
-async def test_a_link_lost_while_the_index_lagged_comes_back_when_rechecked(
-    monkeypatch, indexed
+async def test_a_link_lost_while_the_index_lagged_comes_back_once_the_index_has_its_move(
+    monkeypatch,
 ) -> None:
     files = code_link_pass.RepoReads("o", "code-a")
-    row, searched = _moved_module_world(monkeypatch, files, indexed=indexed)
-    # as an older build wrote it: missing since c1, still holding c0, the commit it was
-    # last read at; rechecked over a later range, which `_lost` hands it only when that
-    # range touches a file the index places its name in
+    row, searched = _moved_module_world(monkeypatch, files, indexed=True)
+    # as an older build wrote it, while the index lacked b.py: missing since c1, still
+    # holding c0, the commit it was last read at
     lost = row | {"state": "missing", "changed_since": "c1"}
-    later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
+
+    async def lost_rows(org, cns, *, days):
+        return [lost]
+
+    monkeypatch.setattr(code_links.store, "lost", lost_rows)
+    # `_lost` hands it to a recheck once a range touches a file the index places it in
+    later = code_link_pass.Range("c1", {"pkg/b.py": "pkg/b.py", "pkg/c.py": "pkg/c.py"})
+    assert await code_link_recheck._lost("o", "code-a", set(later.paths)) == [lost]
     moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
     assert [(m.link.state, m.link.path) for m in moves] == [("moved", "pkg/b.py")]
-    assert searched == [("c2", "fetch_rows", "c0")]
 
 
 @pytest.mark.asyncio
@@ -4170,3 +4174,12 @@ async def test_a_grep_that_cannot_start_is_a_git_error(monkeypatch) -> None:
     monkeypatch.setattr(gitrepo.asyncio, "create_subprocess_exec", too_long)
     with pytest.raises(gitrepo.GitError):
         await gitrepo.grep_paths("/nowhere", "a" * 40, "f", ("x.py",))
+
+
+@pytest.mark.asyncio
+async def test_the_mirror_is_searched_for_a_name_without_its_ordinal(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False)
+    second = row | {"qualified_name": row["qualified_name"] + "#2"}  # the file's second one
+    await code_link_recheck._recheck("o", "code-a", [second], _MOVED, "c1", files)
+    assert searched == [("c1", "fetch_rows", "c0")]

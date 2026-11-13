@@ -166,14 +166,25 @@ async def containing(
 
 async def _indexed(cfg: RepoConfig, denied: Denylist, commit: str, path: str) -> bool:
     """The ingest would index `path` at `commit` by its content: not over the byte cap,
-    not binary, not generated when the entry refuses generated files."""
-    try:
-        data = await gitrepo.file_at(
-            cfg.git_dir, commit, path, max_bytes=settings.code_ingest_max_file_bytes
-        )
-    except gitrepo.BlobTooLarge:
-        return False
-    return data is not None and not denied.refusal(path, data)
+    not binary, not generated when the entry refuses generated files. Kept per commit
+    and path, as a commit's file never changes."""
+    key = (cfg, commit, path)
+    if key not in _VERDICTS:
+        try:
+            data = await gitrepo.file_at(
+                cfg.git_dir, commit, path, max_bytes=settings.code_ingest_max_file_bytes
+            )
+            _VERDICTS[key] = data is not None and not denied.refusal(path, data)
+        except gitrepo.BlobTooLarge:
+            _VERDICTS[key] = False
+        while len(_VERDICTS) > _VERDICTS_KEPT:
+            _VERDICTS.popitem(last=False)
+    return _VERDICTS[key]
+
+
+# the last files' content verdicts (`_indexed`)
+_VERDICTS: OrderedDict[tuple[RepoConfig, str, str], bool] = OrderedDict()
+_VERDICTS_KEPT = 4096
 
 
 # the last commits' denylists per entry (its ignore and attributes files read at the commit)
