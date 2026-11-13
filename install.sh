@@ -428,7 +428,8 @@ main() {
     set_env LOOM_ASSISTANT_MODEL "$local_model"
     # The jobs that name a hosted model by default take the local one too.
     set_env LOOM_MEMORY_EXTRACT_VERIFY_MODELS "$local_model"
-    set_env LOOM_CONFLICT_RESOLVER_MODEL "$local_model"
+    # The conflict resolver's thresholds retire rows on a hosted model's confidence: off.
+    set_env LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED false
     # A CPU reads a long prompt for minutes; the hosted default would cut it short.
     set_env LOOM_LLM_REQUEST_TIMEOUT_S 900
     for key in LOOM_SESSION_BRIEF_LLM_MODEL LOOM_CODE_BISECT_LLM_RERANK_MODEL \
@@ -436,6 +437,8 @@ main() {
       set_env "$key" ""
     done
     printf 'Loom will run its model jobs on Ollama (%s)\n' "$local_model"
+    [ -z "${had_env:-}" ] \
+      || printf 'A configuration saved in Models & keys wins over .env: choose Use environment configuration there after the restart\n'
     curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/tags 2>/dev/null \
       | grep -q "\"$local_model\"" \
       || printf 'Pull the model before the first extraction: ollama pull %s\n' "$local_model"

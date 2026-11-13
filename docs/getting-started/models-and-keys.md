@@ -215,13 +215,21 @@ LOOM_LOCAL_LLM_BASE_URL=http://host.docker.internal:11434/v1
 LOOM_ASSISTANT_PROVIDER=local
 LOOM_ASSISTANT_MODEL=qwen2.5:3b
 LOOM_MEMORY_EXTRACT_VERIFY_MODELS=qwen2.5:3b
-LOOM_CONFLICT_RESOLVER_MODEL=qwen2.5:3b
+LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=false
 LOOM_LLM_REQUEST_TIMEOUT_S=900
 LOOM_SESSION_BRIEF_LLM_MODEL=
 LOOM_CODE_BISECT_LLM_RERANK_MODEL=
 LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
 LOOM_RETRIEVAL_JUDGE_MODEL=
 ```
+
+The preset turns the background [conflict resolver](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)
+off: it retires an older row it judges replaced at a confidence set on a hosted model,
+so a small model's misjudgment would retire facts. Writes still flag conflicts for the
+Review queue; set `LOOM_CONFLICT_RESOLVER_MODEL` to a hosted model and
+`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=true` to judge them. On an existing install, a
+configuration saved in Models & keys wins over `.env`: after the restart, choose **Use
+environment configuration** there for the preset to apply.
 
 Pull the model first (`ollama pull qwen2.5:3b`, about 2 GB), and give Ollama a context
 window that holds Loom's prompts: extraction sends about 15,000 tokens, and Ollama cuts a
@@ -255,7 +263,7 @@ same model.
 - **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
   published benchmark covers a local one, so treat a small model as a way to try Loom
   with no key or to keep everything on the machine, not as an equal: expect extraction,
-  conflict judgments, `memory.ask` answers and the assistant's tool use to be weaker, by
+  `memory.ask` answers and the assistant's tool use to be weaker, by
   an amount nobody has measured. A small model on a CPU is slow on long prompts such as
   extraction, so a busy capture queue backs up; a GPU, or a larger model on a machine
   with the memory for it, helps. For a team server, a hosted model answers better.

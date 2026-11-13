@@ -1922,7 +1922,7 @@ LOCAL_PRESET = {
     "LOOM_ASSISTANT_PROVIDER": "local",
     "LOOM_ASSISTANT_MODEL": "qwen2.5:3b",
     "LOOM_MEMORY_EXTRACT_VERIFY_MODELS": "qwen2.5:3b",
-    "LOOM_CONFLICT_RESOLVER_MODEL": "qwen2.5:3b",
+    "LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED": "false",
     "LOOM_LLM_REQUEST_TIMEOUT_S": "900",
     "LOOM_SESSION_BRIEF_LLM_MODEL": "",
     "LOOM_CODE_BISECT_LLM_RERANK_MODEL": "",
@@ -1939,6 +1939,11 @@ def test_local_models_ollama_sets_every_model_job_on_it(install) -> None:
     # The stub curl answers nothing, so the model is not there yet.
     assert "ollama pull qwen2.5:3b" in out.stdout
     assert "OLLAMA_CONTEXT_LENGTH=32768" in out.stdout
+    assert "Models & keys wins over .env" not in out.stdout
+    # A rerun over that .env is told a dashboard configuration still wins.
+    again = run(LOOM_LOCAL_MODELS="ollama")
+    assert again.returncode == 0, again.stderr
+    assert "Models & keys wins over .env" in again.stdout
 
 
 def test_without_a_terminal_ollama_is_not_offered(install, installer_env) -> None:
