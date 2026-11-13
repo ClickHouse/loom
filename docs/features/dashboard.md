@@ -302,16 +302,16 @@ account's landing page and opens the assistant over it (expanded from 1024 px).
 
 **Chat not set up** (no assistant URL, or readiness says so) is one empty state: its icon,
 "Chat isn't set up", "An operator sets up the assistant service for this deployment.", and a
-link, **How to set up the assistant service**, to the
-[deployed assistant](integrations/librechat.md#the-deployed-assistant) in the docs. Loom's own
-reads are listed under it as starters, with no question field and no **Also ask the model**,
-and the starters stay under the last card, so one runs after another; those cards are not
-saved, and **New chat** empties the list. History shows only conversations saved before,
-opened read-only. An open puts the focus on the first starter. A setup that is failing has the
-same layout, headed "Chat's setup is failing", with **Try again** and, for a platform or
-namespace admin, a link to Admin › Health, where the failure is shown; anyone else reads that
-an admin of this deployment fixes it. The line that Loom can
-still answer from its own reads shows only while the starters do.
+link, **How to set up the assistant service**, to the [deployed
+assistant](integrations/librechat.md#the-deployed-assistant) in the docs. Loom's own reads are
+listed under it as starters, with no question field and no **Also ask the model**, and the
+starters stay under the last card, so one runs after another; those cards are not saved, and
+**New chat** empties the list. History shows only conversations saved before, opened
+read-only. An open puts the focus on the first starter. A setup that is failing has the same
+layout, headed "Chat's setup is failing", with **Try again**; a platform or namespace admin
+also gets a link to Admin › Health, where the failure is shown, and anyone but a platform
+admin reads that an admin of this deployment fixes it. The line that Loom can still answer
+from its own reads shows only while the starters do.
 
 **Why it cannot answer** is said for the person reading it, with a link only for someone who
 can open the page it names: the assistant not set up, setting up or failing its setup
@@ -332,28 +332,29 @@ the assistant sets up or fails.
 "<the text>"** option, with a visible **Ask**, under an **Ask AI** label; for text that reads
 as a question (three words or more, ending with "?" or opening with a question word such as
 what, how or is, or with explain, summarize, show me, tell me, list or compare), unless it
-holds a search filter (`tag:`, `namespace:`, `type:`), that option comes first instead. No
-option shows a key, and Tab leaves the field as it does anywhere. Typing never asks: choosing
-the option (a click, or Enter while it is highlighted) asks the question through the
-assistant as the panel's **Ask** does, in the conversation shown when it is about the
-header's namespace and otherwise in a new one, with the page's line (none once the panel's
+holds a search filter (`tag:`, `namespace:`, `type:`), that option comes first instead. After
+keywords it follows the results once the memory search answers, so an Enter before then asks
+nothing. No option shows a key, and Tab leaves the field as it does anywhere. Typing never
+asks: choosing the option (a click, or Enter while it is highlighted) asks the question
+through the assistant as the panel's **Ask** does, in the conversation shown when it is about
+the header's namespace and otherwise in a new one, with the page's line (none once the panel's
 page chip is removed) but without an item **Ask about this** set for the panel's field; what
-is typed in the panel's field stays. A card headed **Ask AI** then sits on top of the
-results, which stay listed under it: the answer's first lines as they stream, each citation
-in them drawn as its number that, once checked, links to its row under the card, its working
-line, and once checked the label and sources the panel shows (on a phone, 44 px rows with
-their text centred); its end is said once in the assistant's live region. Its one action,
-**Continue in chat**, the first option under it, opens the panel on that conversation, the
-question and answer its last turn. A question the card could not ask (another answer coming
-in, or another tab holding the conversation) waits in the panel's empty field. Closing the
-search while it answers leaves it answering: Ask AI shows the answer coming in, then ready.
-Where the chat is not set up, a reason keeps the assistant from answering (the token's own
-claims included, and a refusal the route gave earlier; the setup starting or failing keeps
-the option, and the card says a refusal it causes), the header's namespace is not a memory
-namespace (a code, tracker or collection one), or the question with its page line is longer than
-one request carries, the search offers no Ask AI option. Where it can be offered the empty
-field reads "Search or ask a question", and while it is offered, a search that matches
-nothing says no "No matches" and gives no filter tips.
+is typed in the panel's field stays. A card headed **Ask AI** then sits on top of the results,
+which stay listed under it: the answer's first lines as they stream, each citation in them
+drawn as its number that, once checked, links to its row under the card, its working line, and
+once checked the label and sources the panel shows (on a phone, 44 px rows with their text
+centred); its end is said once in the assistant's live region. Its one action, **Continue in
+chat**, the first option under it, opens the panel on that conversation, the question and
+answer its last turn. A question the card could not ask (another answer coming in, or another
+tab holding the conversation) waits in the panel's empty field. Closing the search while it
+answers leaves it answering: Ask AI shows the answer coming in, then ready. Where the chat is
+not set up, a reason keeps the assistant from answering (the token's own claims included, and
+a refusal the route gave earlier; the setup starting or failing keeps the option, and the card
+says a refusal it causes), the header's namespace is not a memory namespace (a code, tracker
+or collection one), or the question with its page line is longer than one request carries, the
+search offers no Ask AI option. Where it can be offered the empty field reads "Search or ask a
+question", and while it is offered, a search that matches nothing says no "No matches" and
+gives no filter tips.
 
 **Conversations are kept in this browser**, never on the server: 30 days from their last use,
 the newest 25 turns of each, up to 256 KB a conversation and 2 MB in all, and listed under

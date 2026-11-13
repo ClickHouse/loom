@@ -692,11 +692,11 @@ function SetupState({
   const whoami = useStore((s) => s.whoami);
   const mine = useStore((s) => s.myNamespaces);
   const namespace = useStore((s) => s.identity?.namespace ?? "");
-  const seesHealth = hasPlatformAdminClaim(whoami) || isNamespaceAdmin(whoami, mine, namespace);
+  const platform = hasPlatformAdminClaim(whoami);
+  const seesHealth = platform || isNamespaceAdmin(whoami, mine, namespace);
+  // Only a platform admin fixes the deployment's setup; a namespace admin sees why it fails.
   const first = failing
-    ? seesHealth
-      ? "Loom retries the setup on its own; Admin › Health says why it fails."
-      : "Loom retries the setup on its own. An admin of this deployment fixes it."
+    ? `Loom retries the setup on its own${seesHealth ? "; Admin › Health says why it fails" : ""}.${platform ? "" : " An admin of this deployment fixes it."}`
     : "An operator sets up the assistant service for this deployment.";
   const reads = starters
     ? failing

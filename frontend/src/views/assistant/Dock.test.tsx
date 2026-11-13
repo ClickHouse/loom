@@ -193,11 +193,13 @@ describe("reasons, worded per reader", () => {
     expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat's setup is failing");
     // Someone who can open Admin › Health is sent there; anyone else is told who fixes it.
     const admin = who !== "viewer";
-    expect(body).toHaveTextContent(
-      admin
-        ? "Loom retries the setup on its own; Admin › Health says why it fails. Until it works, Loom can still answer these from its own reads."
-        : "Loom retries the setup on its own. An admin of this deployment fixes it. Until it works, Loom can still answer these from its own reads.",
-    );
+    const line: Partial<Record<Who, string>> = {
+      platform: "Loom retries the setup on its own; Admin › Health says why it fails.",
+      nsAdmin:
+        "Loom retries the setup on its own; Admin › Health says why it fails. An admin of this deployment fixes it.",
+      viewer: "Loom retries the setup on its own. An admin of this deployment fixes it.",
+    };
+    expect(body).toHaveTextContent(`${line[who]} Until it works, Loom can still answer these from its own reads.`);
     expect(within(body).getByRole("button", { name: "Try again" })).toBeInTheDocument();
     const health = within(body).queryByRole("button", { name: "See Health" });
     if (admin) {
