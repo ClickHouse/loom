@@ -173,7 +173,8 @@ _CHANGES_ORG = (
 # A data step that sets a row's org: the migration session is marked, so no trigger
 # would refuse it. The SET list ends at WHERE or FROM, where an org may be compared.
 _SETS_ORG = re.compile(
-    r"\bUPDATE\s+[\w.\"]+(?:\s+(?:AS\s+)?\w+)?\s+SET\b(?:(?!\b(?:WHERE|FROM)\b)[^;])*?"
+    r"\b(?:UPDATE\s+(?:ONLY\s+)?[\w.\"]+(?:\s+(?:AS\s+)?(?!SET\b)\w+)?|DO\s+UPDATE)\s+SET\b"
+    r"(?:(?!\b(?:WHERE|FROM)\b)[^;])*?"
     r"(?<![\w.])\"?org\"?\s*=",
     re.I,
 )
@@ -215,6 +216,8 @@ def test_the_org_column_rules_catch_every_spelling(statement: str) -> None:
         "UPDATE loom.t SET org = 'x';",
         "UPDATE loom.t AS t SET seq = 1, org = lower(org) WHERE true;",
         "UPDATE loom.t SET \"org\"='x';",
+        "UPDATE ONLY loom.t SET org = 'x';",
+        "INSERT INTO loom.t (org) VALUES ('a') ON CONFLICT (org) DO UPDATE SET org = 'b';",
     ],
 )
 def test_the_set_org_rule_catches_a_data_step_that_moves_a_row(statement: str) -> None:
@@ -222,6 +225,7 @@ def test_the_set_org_rule_catches_a_data_step_that_moves_a_row(statement: str) -
     assert not _SETS_ORG.search("UPDATE loom.t SET seq = 1 WHERE org = 'x';")
     assert not _SETS_ORG.search("UPDATE loom.t SET seq = 1 FROM loom.u WHERE u.org = t.org;")
     assert not _SETS_ORG.search("UPDATE loom.t SET t.organisation = 1;")
+    assert not _SETS_ORG.search("INSERT INTO loom.t (org) VALUES ('a') ON CONFLICT DO NOTHING;")
 
 
 def _tables(sql: str) -> list[tuple[str, str]]:
