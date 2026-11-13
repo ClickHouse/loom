@@ -1014,7 +1014,7 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    reranker, these gates read the served rows in fused order (`gate_order`), not the
    reranker's order. A query naming an identifier absent from every hit abstains too
    (`LOOM_MEMORY_SEARCH_IDENTIFIER_GROUNDING`). Only then does a row whose linked code
-   changed or went move down within the served rows (`code_change.rank_down`), so it
+   changed or is gone moves down within the served rows (`code_change.rank_down`), so it
    never decides whether the search abstains.
 8. **Assemble and record** (`assemble.py`, `output.py`, `telemetry.py`). The window is
    cut to budget; with `paging=true` a larger pool is parked in `loom.context_blobs`.

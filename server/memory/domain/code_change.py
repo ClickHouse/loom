@@ -13,8 +13,8 @@ what reads do:
                             is re-anchored, a contradicted one gets a suggested
                             correction on its link
 
-Under every policy, search serves a memory whose code changed, was not found again or
-went lower than its match (`rank_down`). A memory a person pinned, locked or verified is
+Under every policy, search serves a memory whose code changed, was not found again or is
+gone lower than its match (`rank_down`). A memory a person pinned, locked or verified is
 only flagged.
 """
 
@@ -106,7 +106,8 @@ def spend_marks(hits: list[Any]) -> list[Any]:
 def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any]:
     """`hits` with each one marked `_code_ranked_down` moved below the next `places` rows
     that are neither marked nor placed by an identifier match or a tier, never past the
-    last nor below the similarity floor; a placed row keeps its slot. A moved hit scores
+    last nor below the similarity floor; a placed row is never counted as a place and
+    never moved down (one the move passes rises a slot). A moved hit scores
     between the rows around it (or ties the one above, when they tie), so a stable sort
     by score keeps the order; `score_components.code_changed_places` counts the rows it
     moved below (negative, as a reranker's `rerank_delta`). With `rescore` False a moved

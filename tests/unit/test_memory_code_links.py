@@ -3950,6 +3950,11 @@ def test_a_row_placed_by_an_identifier_or_a_tier_keeps_its_slot() -> None:
     out = code_change.rank_down(hits, 2)
     # the pinned stale row stays; the other moves past two rows its score places
     assert [h.memory_key for h in out] == ["t1", "pin", "b", "c", "stale", "d"]
+    # a placed row the move passes is never counted, and rises a slot
+    passed = _ranked("stale", "a", "pin", "b", "c", down=("stale",))
+    passed[2].score_components = {"identifier_match": 1.0}
+    out = code_change.rank_down(passed, 3)
+    assert [h.memory_key for h in out] == ["a", "pin", "b", "c", "stale"]
     # a tier row below is not one of the places a move counts
     tail = _ranked("stale", "b", "anchor", down=("stale",))
     tail[2].score_components = {"anchor_first": 1.0}
