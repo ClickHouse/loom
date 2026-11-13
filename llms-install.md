@@ -12,22 +12,24 @@ extractor and ClickHouse) and serves MCP over streamable HTTP. A coding agent co
 
 ## 1. Check for a running Loom
 
+On Windows, run every command in this file in a WSL 2 terminal where `docker` works.
+
 ```bash
 curl -sS http://localhost:7777/v1/health
 ```
 
 - A JSON reply with a `schema_version` field is a Loom server. If its `status` is `ok`, go
   to step 3. Otherwise stop and show the reply to the user.
-- If nothing answers but `~/.loom/compose.yaml` exists, stop and ask the user: an install
-  is there that is stopped or runs on another port (`LOOM_PORT` in `~/.loom/.env`), and
-  running the installer again would start or upgrade it.
+- If no Loom answers (no reply, or one without `schema_version`) but
+  `~/.loom/compose.yaml` exists, stop and ask the user: an install is there that is
+  stopped or runs on another port (`LOOM_PORT` in `~/.loom/.env`), and running the
+  installer again would start or upgrade it.
 
 ## 2. Install
 
 Docker with the Compose plugin, version 2.20 or later, must be installed
 (`docker compose version`). If that command fails or reports an older version, stop and
-tell the user; do not install or upgrade system packages. On Windows, run the commands in
-a WSL 2 terminal where `docker` works.
+tell the user; do not install or upgrade system packages.
 
 The installer reads `LOOM_*` environment variables, which can point it at another
 ClickHouse, port or directory. If `env | grep '^LOOM_'` prints any, stop and ask the user
@@ -62,7 +64,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:7777/mcp?tool
 ```
 
 `200` means no token is needed. `401` means sign-in is on: ask the user for a token from
-**Settings → Tokens** in the dashboard. Add it as a `headers`
+**Settings → Tokens** in the dashboard. A `401` on a later tool call means the same. Add it as a `headers`
 entry, `"Authorization": "Bearer <token>"`, beside `url` in the entry below, or with
 `--header "Authorization: Bearer <token>"` on the `cline mcp add` command.
 
