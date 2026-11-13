@@ -24,7 +24,8 @@ compare the new value with the active rows of the same `memory_type` in the name
   the new row and each peer get `status='conflicted'` and are cross-linked through
   `conflict_with`.
 - Under `newest_wins`, a value of the same shape with a different fill ("The office
-  lease ends in 2025" → "... 2027") is an update: the older row retires (`refines`).
+  lease ends in 2025" → "... 2027") is an update: the older row retires (`refines`),
+  unless the peer's `valid_at` is later than the new row's, which answers `conflict`.
 
 A `decision` row is identified by its key (category and scenario), not its text: in the
 write-time conflict check, a peer under another key is never a merge, a duplicate, a
@@ -54,7 +55,7 @@ first, at most five) and a `next` hint such as `memory.update(memory_key=<peer>,
 | `merge`     | The same fact after canonicalisation is already stored.                                         | No. The stored row is reinforced; `noop=true`, `merged_into_key`.  |
 | `duplicate` | Near-identical to a peer but not canonically equal.                                             | Yes, `status='duplicate'` with `duplicate_of`.                     |
 | `conflict`  | Close to a peer but different.                                                                  | Yes; both rows `conflicted` and cross-linked.                      |
-| `refines`   | Under `newest_wins`, the same statement with a different fill: an update of the peer.           | Yes; the replaced peer is superseded.                              |
+| `refines`   | Under `newest_wins`, the same statement with a different fill, the peer not later by `valid_at`. | Yes; the replaced peer is superseded.                              |
 | `rejected`  | Close to a pinned peer (a `decision` excepted, see above), or a changed value for a pinned key. | No. 409 `PINNED_CONFLICT` (a dry run returns the verdict instead). |
 
 - Every verdict is deterministic and settled in the response.
