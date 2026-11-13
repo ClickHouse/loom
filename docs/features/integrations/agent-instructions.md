@@ -73,8 +73,8 @@ rules and decisions live); for the trunk branch the two are the same. A branch i
 on its own carries its own row's `namespace` in its copy of the file. A repository with
 no row (not indexed, or `code.repos` answers that code intelligence is off), or whose
 row says `readable: false` (a repository this token cannot read, listed so you can join
-it or ask for access), takes the block without `extra_namespaces` and without its Code
-section.
+it or ask for access), takes the block without `extra_namespaces`, the team-rule line
+and the Code section.
 
 ## Where each client reads it
 
@@ -87,7 +87,7 @@ their own rule files keep the block apart from other instructions.
 | Codex, Zed, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root | none                                                                         |
 | Claude Code without the plugin                   | `CLAUDE.md` at the repository root | none                                                                         |
 | Cursor                                           | `.cursor/rules/loom.mdc`           | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
-| Devin Desktop                                    | `.devin/rules/loom.md`             | `---`, `trigger: always_on`, `---`                                           |
+| Devin Desktop (Windsurf)                         | `.devin/rules/loom.md`             | `---`, `trigger: always_on`, `---`                                           |
 | Cline                                            | `.clinerules/loom.md`              | none                                                                         |
 | VS Code (GitHub Copilot)                         | `.github/copilot-instructions.md`  | none                                                                         |
 
@@ -128,8 +128,8 @@ guide](../../guides/agent-integration.md#7-follow-the-memory-skills-review) unde
 block. The skills carry the detail the block leaves out: the receipt fields, documents
 versus memories, the stop rules. The `loom` and `loom-code` skills can be installed
 beside the block for that detail ([coding agents](index.md#coding-agents)); `loom`
-covers what `loom-memory` teaches. They have no hooks, so they do not replace the
-block's two calls.
+covers the memory loop, the write shapes, the receipts and the end-of-task review. They
+have no hooks, so they do not replace the block's two calls.
 
 ## Related
 
