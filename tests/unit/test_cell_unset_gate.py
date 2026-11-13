@@ -95,11 +95,9 @@ def test_partial_names_the_rows_present(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_a_view_never_read_is_open(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The workers child, a CLI and the ClickHouse authority read nothing: they are not
-    gated by this pair (the server itself fails its boot on a failed first read)."""
+    """The workers child and a CLI read nothing: the unset gate leaves them open (a server
+    process, which reads, is gated until its first read lands)."""
     monkeypatch.setattr(cell, "_view", cell._View())
-    assert cell.gate_reason() == ""
-    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
     assert cell.gate_reason() == ""
 
 

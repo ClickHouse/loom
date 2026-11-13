@@ -113,7 +113,7 @@ async def test_a_never_prepared_deployment_and_a_recording_first_cell_serve(
 
 async def _triggers_always(conn: Any) -> bool:
     found = await conn.fetch(
-        "SELECT tgname, tgenabled::text AS tgenabled FROM pg_trigger WHERE tgrelid = 'loom.cell_first'::regclass "
+        "SELECT tgenabled::text AS tgenabled FROM pg_trigger WHERE tgrelid = 'loom.cell_first'::regclass "
         "AND NOT tgisinternal"
     )
     return len(found) == 2 and all(r["tgenabled"] == "A" for r in found)
