@@ -38,7 +38,7 @@ class ArgumentsTooLong(GitError):
 
 
 class GrepTimedOut(GitError):
-    """A `git grep` that ran past its time: the paths it searched were too many."""
+    """A `git grep` that ran past its time."""
 
 
 # Git C-quotes a path holding non-ASCII bytes ("src/caf\303\251.py") unless told

@@ -146,7 +146,10 @@ class RepoReads:
             if scope is None:
                 return None
 
-            paths = sorted(p for p in touched if self._takes(scope, head, p))
+            async def taken() -> list[str]:
+                return sorted(p for p in touched if scope.takes(p))
+
+            paths = await self._once(("indexed paths", base, head), taken)
             found = await code.grep_words(scope, head, literal, paths, limit=limit)
             if found is None:
                 return None
@@ -155,14 +158,6 @@ class RepoReads:
             return [p for p in found if await self._indexed_names(scope, head, p) is not None]
 
         return await self._once(("containing", head, literal, base), read)
-
-    def _takes(self, scope: code.IngestScope, head: str, path: str) -> bool:
-        """`scope.takes(path)`, once per head and path: the denylist's patterns are
-        matched on the loop."""
-        key = ("takes", head, path)
-        if key not in self._read:
-            self._read[key] = scope.takes(path)
-        return bool(self._read[key])
 
     async def _indexed_names(
         self, scope: code.IngestScope, head: str, path: str
