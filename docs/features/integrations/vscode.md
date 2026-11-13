@@ -28,7 +28,7 @@ the same. Coding sessions that use the code index add `?toolset=coding` to `url`
 Write the entry with its token:
 
 ```bash
-loom install --client vscode --server-url https://loom.example.com --token "$LOOM_API_KEY"
+loom install --client vscode --server-url https://loom.example.com --token "$LOOM_API_KEY" --toolset coding
 ```
 
 This merges a `servers.loom` entry (`type: "http"`, `url` and an `Authorization` header)
@@ -40,7 +40,7 @@ of the file, write the entry by hand with an input VS Code prompts for once and 
   "servers": {
     "loom": {
       "type": "http",
-      "url": "https://loom.example.com/mcp",
+      "url": "https://loom.example.com/mcp?toolset=coding",
       "headers": { "Authorization": "Bearer ${input:loom-token}" }
     }
   },

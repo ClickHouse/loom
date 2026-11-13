@@ -8,8 +8,9 @@ code namespace, and commit it with the repository.
 The Claude Code and Codex plugins already teach this through their skills
 ([Claude Code](claude-code.md#skills), [Codex](codex.md#skills)); the block is for every
 other client, and for Claude Code or Codex connected without the plugin. It names the
-tools the `coding` toolset lists, so connect the client on `?toolset=coding`
-(`loom install --client <name> --toolset coding`, [MCP clients](mcp-clients.md)).
+tools the `coding` toolset lists, so connect the client on `?toolset=coding`:
+`loom install --client <name> --toolset coding` for the clients it covers, else
+`?toolset=coding` on the URL ([MCP clients](mcp-clients.md)).
 
 ## The block
 
@@ -22,8 +23,9 @@ listed runs through `loom_op` with its dotted name (`memory.history`).
 Memory
 
 - Before a non-trivial task, call `loom_search` once with the task's topic, files or
-  error. Use what it returns; say so when a result is marked stale or unverified, and
-  treat `abstain` as "nothing relevant".
+  error. Use what it returns, and treat `abstain` as "nothing relevant". A hit whose
+  `code_state` is `changed`, `unresolved` or `missing` is about code that moved since:
+  check the code before relying on it.
 - When the user states a decision, preference, constraint or correction, save it with
   `loom_memory_set` right away: one plain-text fact per call under a readable key
   (`<scope>/<kind>/<id>`), dates as calendar dates. Never save a guess, your reasoning or
@@ -52,16 +54,16 @@ Claude Code or Codex plugin, drop that line: the plugin sends the scope with eve
 
 The block is the same everywhere; only the file and its header differ.
 
-| Client                                    | File                               | Header before the block                                                      |
-| ----------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
-| Codex, and any agent that reads AGENTS.md | `AGENTS.md` at the repository root | none                                                                         |
-| Claude Code without the plugin            | `CLAUDE.md` at the repository root | none                                                                         |
-| Cursor                                    | `.cursor/rules/loom.mdc`           | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
-| Windsurf                                  | `.windsurf/rules/loom.md`          | `---`, `trigger: always_on`, `---`                                           |
-| Cline                                     | `.clinerules/loom.md`              | none                                                                         |
-| Roo Code                                  | `.roo/rules/loom.md`               | none                                                                         |
-| Continue                                  | `.continue/rules/loom.md`          | `---`, `name: Loom memory and code index`, `alwaysApply: true`, `---`        |
-| VS Code (GitHub Copilot)                  | `.github/copilot-instructions.md`  | none                                                                         |
+| Client                                      | File                               | Header before the block                                                      |
+| ------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
+| Codex, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root | none                                                                         |
+| Claude Code without the plugin              | `CLAUDE.md` at the repository root | none                                                                         |
+| Cursor                                      | `.cursor/rules/loom.mdc`           | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
+| Windsurf                                    | `.windsurf/rules/loom.md`          | `---`, `trigger: always_on`, `---`                                           |
+| Cline                                       | `.clinerules/loom.md`              | none                                                                         |
+| Roo Code                                    | `.roo/rules/loom.md`               | none                                                                         |
+| Continue                                    | `.continue/rules/loom.md`          | `---`, `name: Loom memory and code index`, `alwaysApply: true`, `---`        |
+| VS Code (GitHub Copilot)                    | `.github/copilot-instructions.md`  | none                                                                         |
 
 Each header line goes on its own line. The Cursor file, for example, starts:
 
@@ -79,16 +81,18 @@ a section of it.
 
 ## Why these rules
 
-Each line is the short form of a plugin skill, so an agent without the plugin acts the
-way one with it does:
+Each line is the short form of what the plugins teach:
 
-- recall once and save stated facts as they come: `loom-memory`
-  (`integrations/claude-code-plugin/skills/loom-memory/SKILL.md`);
-- the code index before grep, and grep where the index cannot answer: `loom-code`
-  (`integrations/claude-code-plugin/skills/loom-code/SKILL.md`).
+- recall once and save stated facts as they come: the
+  [`loom-memory`](https://github.com/ClickHouse/loom/blob/main/integrations/claude-code-plugin/skills/loom-memory/SKILL.md)
+  skill;
+- the code index before grep, and grep where the index cannot answer: the
+  [`loom-code`](https://github.com/ClickHouse/loom/blob/main/integrations/claude-code-plugin/skills/loom-code/SKILL.md)
+  skill, which the plugins' code shunt enforces.
 
 The skills carry the detail the block leaves out: the receipt fields, documents versus
-memories, the stop rules. An agent that needs more can read them from the repository.
+memories, the stop rules. To give an agent the skills themselves, install them alone
+([coding agents](index.md#coding-agents)).
 
 ## Related
 
