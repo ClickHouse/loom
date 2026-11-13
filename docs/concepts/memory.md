@@ -395,7 +395,9 @@ confidence and abstain checks have read them in relevance order;
   nothing keeps current (`memory_code_links_enabled` off);
 - a row placed by an identifier match or by an `anchor_first` or `recent_first` tier,
   which a move does not count as a place either;
-- every row of a query whose answer is a date order;
+- every row of a query whose answer is a date order, and every row of a reader block
+  (`render="reader"`, `loom_search`'s block) whose question carries a time word
+  (`when`, `after`, `since`, `latest`, …), which lists its rows by date;
 - the rows of a later page (`page=<handle>`), served in their parked order;
 - a chunk, record or summary hit, which carries no `code_state`.
 
