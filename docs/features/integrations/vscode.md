@@ -28,7 +28,7 @@ the same. Coding sessions that use the code index add `?toolset=coding` to `url`
 Write the entry with its token:
 
 ```bash
-loom install --client vscode --server-url https://loom.example.com --token "$LOOM_API_KEY"
+loom install --client vscode --server-url https://loom.example.com --token "$LOOM_API_KEY" --toolset coding
 ```
 
 This merges a `servers.loom` entry (`type: "http"`, `url` and an `Authorization` header)
@@ -40,7 +40,7 @@ of the file, write the entry by hand with an input VS Code prompts for once and 
   "servers": {
     "loom": {
       "type": "http",
-      "url": "https://loom.example.com/mcp",
+      "url": "https://loom.example.com/mcp?toolset=coding",
       "headers": { "Authorization": "Bearer ${input:loom-token}" }
     }
   },
@@ -52,6 +52,14 @@ of the file, write the entry by hand with an input VS Code prompts for once and 
 
 Open the agent mode chat and check that the `loom_*` tools are listed;
 [checking the connection](mcp-clients.md#checking-the-connection) covers a `401`.
+
+## Agent instructions
+
+Add the [agent instructions](agent-instructions.md) block to
+`.github/copilot-instructions.md` so the agent knows when to call the tools, unless the
+repository's `AGENTS.md` already carries it. The block names the `coding` toolset's
+tools: connect with `?toolset=coding` on `url`; otherwise the tools it names that the
+listing leaves out run through `loom_op`, as the block says.
 
 ## Related
 

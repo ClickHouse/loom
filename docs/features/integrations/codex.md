@@ -123,19 +123,12 @@ The plugin carries `loom-memory`, `loom-code`, `loom-mentor`, `loom-optimize`,
 [claude-code.md](claude-code.md#skills). Codex loads them from the plugin; invoke one by
 name (`$loom-status`) or let its description trigger it.
 
-## A short contract for AGENTS.md
+## AGENTS.md without the plugin
 
-Codex reads `AGENTS.md` at the repository root (and `~/.codex/AGENTS.md`). Keep the
-contract short; the skills carry the detail:
-
-```markdown
-## Memory (Loom)
-
-- Before a non-trivial task, search memory for prior decisions on the files or topic (`loom_search`).
-- When the user states a preference, decision or correction, record it (`memory.set`).
-- In this repository use `code.search` / `code.symbol` / `code.callers` for structure questions; grep for uncommitted files.
-- At the end of a task, review what should outlive the session (the `loom-memory` skill).
-```
+With the plugin, the skills above carry the contract and `AGENTS.md` needs none. Codex
+without the plugin reads the block in [agent instructions](agent-instructions.md) from
+`AGENTS.md` at the repository root: the block names that repository's namespaces, so
+it does not belong in the global `~/.codex/AGENTS.md`.
 
 ## Headless
 

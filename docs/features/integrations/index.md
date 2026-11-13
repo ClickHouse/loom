@@ -18,6 +18,7 @@ opt-in; one you leave unconfigured does nothing. They fall into three groups:
 | Codex                                                    | plugin: MCP tools, hooks, code shunt, skills            | `integrations/codex-plugin/`: [codex.md](codex.md)                                      |
 | Claude Desktop, Cursor, VS Code, Cline, Windsurf, Zed    | MCP client config                                       | `loom install --client …`: [mcp-clients.md](mcp-clients.md)                             |
 | VS Code agent mode                                       | MCP tools                                               | install links and `mcp.json`: [vscode.md](vscode.md)                                    |
+| Any MCP client without a plugin                          | an instruction block for the client's rule file         | [agent-instructions.md](agent-instructions.md)                                          |
 | Gemini CLI                                               | extension: MCP tools and the `loom`, `loom-code` skills | `gemini extensions install`: [mcp-clients.md](mcp-clients.md#other-editors-and-agents)  |
 | JetBrains, Visual Studio, Neovim, Emacs and other agents | MCP client config                                       | [other editors and agents](mcp-clients.md#other-editors-and-agents)                     |
 | Cursor                                                   | MCP tools + `sessionEnd` transcript hook                | `integrations/cursor/`: [cursor.md](cursor.md)                                          |
@@ -39,7 +40,8 @@ opt-in; one you leave unconfigured does nothing. They fall into three groups:
 
 - Plugins (MCP tools, session hooks, code shunt): [connect a coding agent](../../getting-started/connect-a-coding-agent.md),
   then [claude-code.md](claude-code.md) or [codex.md](codex.md).
-- Any other MCP client (`loom install --client …`): [mcp-clients.md](mcp-clients.md).
+- Any other MCP client (`loom install --client …`): [mcp-clients.md](mcp-clients.md), plus the
+  [agent instructions](agent-instructions.md) block in the client's rule file.
 - The `loom` and `loom-code` skills alone, no hooks: `npx skills add ClickHouse/loom --skill loom loom-code`,
   or `claude plugin install loom-code-skill@loom`. Install either the `loom` plugin or
   `loom-code-skill`, not both; the plugin already ships `loom-code`, and its other skills cover what `loom` says.

@@ -169,9 +169,13 @@ durable.
 
 ## 7. Follow the memory skill's review
 
-The plugins ship a `loom-memory` skill (`integrations/claude-code-plugin/skills/loom-memory/`,
-generated into the Codex plugin) that encodes this guide for a model. Copy its end-of-task
-review into any agent's instructions. Before reporting done, write only what earns a yes:
+The plugins ship a `loom-memory` skill
+(`integrations/claude-code-plugin/skills/loom-memory/`, generated into the Codex plugin)
+that encodes this guide for a model. A coding agent on plain MCP uses the [agent
+instructions](../features/integrations/agent-instructions.md) block, whose last memory
+line is a short form of this review; to run the full review, paste the questions below
+under the block. Any other agent copies the questions into its instructions. Before
+reporting done, write only what earns a yes:
 
 1. Did I make or learn a decision, constraint or owner a future session needs?
 2. Did an existing memory turn out wrong or outdated? Update it, same key.

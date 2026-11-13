@@ -32,6 +32,10 @@ This merges a `mcpServers.loom` entry (`url` plus an `Authorization` header) int
 `~/.cursor/mcp.json`. Restart Cursor afterwards. Toolsets, the agent label and the
 per-client file table are in [MCP clients](mcp-clients.md#wire-a-client-with-loom-install).
 
+Then add `.cursor/rules/loom.mdc` from [agent instructions](agent-instructions.md), so
+the agent knows when to recall, save and use the code index, unless the repository's
+`AGENTS.md` already carries the block.
+
 ## Transcript capture
 
 A hook you register yourself. `cursor-session-hook.sh` hands a finished conversation's
