@@ -11,8 +11,9 @@ namespace facts a rule needs (indexed repos, a tracker source, documents,
 records, writers, open conflicts, the row shapes the audit already grades)
 and evaluates a fixed
 rule table: each rule is a hint code, a condition on those counts, a
-sentence of at most `HINT_CHARS` naming the situation and the op, and the
-ops it recommends. The profile is cached per (org, namespace, agent) for
+sentence of at most `HINT_CHARS` naming the situation and the op (as stored;
+MCP renders each op for the listing afterwards), and the ops it recommends.
+The profile is cached per (org, namespace, agent) for
 `settings.mentor_ttl_seconds`; a failed read is None, held briefly, never
 raised.
 

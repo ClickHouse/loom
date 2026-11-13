@@ -94,12 +94,14 @@ def _routed(op: Operation, writes: bool) -> bool:
 TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
 # A dotted op name as prose spells it (`memory.set`, `knowledge.source.add`).
 OP_MENTION = r"[a-z_]+(?:\.[a-z_]+){1,2}"
+# What may follow a name before its marker: a closing backtick, a possessive.
+_MARK_TRAIL = r"`(?:'s?)?|(?:'s)?"
 # An op named in prose. The marker "(via loom_op)" goes after the trail.
 _NAMED_OP = re.compile(
     rf"""
     (?<!['"/])                      # not a quoted value or a /v1/ path
     \b(loom_[a-z_]+|{OP_MENTION})\b  # a tool name or a dotted op name
-    (`(?:'s?)?|(?:'s)?)             # trail: a closing backtick, a possessive
+    ({_MARK_TRAIL})                  # trail
     (?!\#|"|'(?![a-z]))             # not a citation tag or a closing quote
     """,
     re.VERBOSE,
@@ -137,7 +139,7 @@ def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool) -> str:
 
 
 # A marked mention as name_ops_for_listing writes it.
-_MARKED = re.compile(r"(?<![\w.])([a-z_]+(?:\.[a-z_]+){1,2})(`?(?:'s?)?) \(via loom_op\)")
+_MARKED = re.compile(rf"(?<![\w.])({OP_MENTION})({_MARK_TRAIL}) \(via loom_op\)")
 
 
 def keep_first_marks(text: str) -> str:
