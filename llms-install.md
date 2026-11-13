@@ -3,7 +3,8 @@
 This file is for a coding agent asked to set Loom up as an MCP server for its user.
 People can read the [README](README.md) and the
 [quickstart](docs/getting-started/quickstart.md). Claude Code and Codex have their own
-setup page: [agent-setup.md](docs/getting-started/agent-setup.md).
+setup contract:
+[agent-setup.txt](https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt).
 
 Loom runs on the user's machine as a Docker Compose stack (the Loom server, its document
 extractor and ClickHouse) and serves MCP over streamable HTTP. A coding agent connects on
@@ -12,10 +13,14 @@ extractor and ClickHouse) and serves MCP over streamable HTTP. A coding agent co
 ## 1. Check for a running Loom
 
 ```bash
-curl -fsS http://localhost:7777/v1/health
+curl -sS http://localhost:7777/v1/health
 ```
 
-A JSON reply with a `version` field means Loom already runs there: go to step 3.
+- A JSON reply with a `schema_version` field is a Loom server. If its `status` is `ok`, go
+  to step 3. Otherwise stop and show the reply to the user.
+- If nothing answers but `~/.loom` exists, stop and ask the user: that directory holds an
+  install that is stopped or runs on another port (`LOOM_PORT` in `~/.loom/.env`), and
+  running the installer again would start or upgrade it.
 
 ## 2. Install
 
@@ -38,18 +43,27 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
   MCP entry yourself in step 3.
 - The installer verifies the release bundle, pulls the images and waits until
   `/v1/health` answers. The first run takes a few minutes.
+- When it finishes, it prints `Dashboard: http://<host>:<port>/`. Use that port in the
+  steps below.
 - If it says port `7777` is in use, run the command again with `LOOM_PORT=7778` in front
-  of `sh`, and use that port below.
+  of `sh`.
 - The install lives in `~/.loom`; `LOOM_INSTALL_DIR` chooses another directory.
 
 ## 3. Add the MCP server
 
-The stock install is single-user: it has no sign-in and needs no token. On a deployment
-with sign-in on, ask the user for a token from **Settings → Tokens** in the dashboard and
-add it as a `headers` entry, `"Authorization": "Bearer <token>"`, beside `url` in the
-JSON below (`--header "Authorization: Bearer <token>"` on the `cline mcp add` command).
+Add a `loom` entry under `mcpServers` and keep every other entry in the file. If a `loom`
+entry is there already, ask the user before changing it.
 
-The Cline extension, in `cline_mcp_settings.json`:
+The stock install is single-user: it has no sign-in and needs no token. If the server has
+sign-in on (the installer says so, or a call in step 4 is refused as unauthenticated), ask
+the user for a token from **Settings → Tokens** in the dashboard. Add it as a `headers`
+entry, `"Authorization": "Bearer <token>"`, beside `url` in the entry below, or with
+`--header "Authorization: Bearer <token>"` on the `cline mcp add` command.
+
+The Cline extension: the file opens from **MCP Servers → Configure MCP Servers** in Cline
+(on Linux,
+`~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`).
+The entry:
 
 ```json
 {
@@ -62,9 +76,9 @@ The Cline extension, in `cline_mcp_settings.json`:
 }
 ```
 
-The Cline CLI, with
+The Cline CLI: run
 `cline mcp add loom 'http://localhost:7777/mcp?toolset=coding' --transport http --yes`, or
-in `~/.cline/data/settings/cline_mcp_settings.json`:
+add this entry to `~/.cline/data/settings/cline_mcp_settings.json`:
 
 ```json
 {
