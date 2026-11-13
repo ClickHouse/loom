@@ -41,7 +41,7 @@ def _agent(**clients: Any) -> SimpleNamespace:
 def _sync_agent(**clients: Any) -> SyncAgent:
     """A SyncAgent whose clients are fakes; no loop or transport behind it."""
     agent = object.__new__(SyncAgent)
-    agent._agent = SimpleNamespace(namespace="support")  # type: ignore[attr-defined]
+    agent._agent = SimpleNamespace(namespace="support")
     for name, client in clients.items():
         setattr(agent, name, client)
     return agent
@@ -179,9 +179,7 @@ def test_memory_abstain_returns_nothing_unless_disabled() -> None:
     weak = _memories([_memory("k", "a weak match", 0.2)], abstain=True)
     strict = LoomMemoryRetriever(agent=_agent(memory=_FakeSearch(weak)))
     assert asyncio.run(strict.ainvoke("anything")) == []
-    loose = LoomMemoryRetriever(
-        agent=_agent(memory=_FakeSearch(weak)), honour_abstain=False
-    )
+    loose = LoomMemoryRetriever(agent=_agent(memory=_FakeSearch(weak)), honour_abstain=False)
     assert [d.metadata["memory_key"] for d in asyncio.run(loose.ainvoke("anything"))] == ["k"]
 
 

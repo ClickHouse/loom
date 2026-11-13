@@ -87,8 +87,10 @@ def import_submodules() -> None:
         try:
             importlib.import_module(mod.name)
         except ImportError as e:
-            # A framework adapter needs its extra, and its error names it.
-            check("pip install 'clickhouse-loom[" in str(e), f"{mod.name}: {e}")
+            # A framework adapter needs its extra, and its error names it; no other
+            # module may fail to import.
+            adapter = mod.name.startswith("loom.integrations.")
+            check(adapter and "pip install 'clickhouse-loom[" in str(e), f"{mod.name}: {e}")
 
 
 def main(argv: list[str]) -> int:

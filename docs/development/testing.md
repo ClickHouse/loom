@@ -116,6 +116,16 @@ LOOM_BASE_URL=http://localhost:7777 make test-integration
   table with an `org` column and the residue is counted; residue fails the run.
   `LOOM_IT_KEEP_ROWS=1` keeps the rows for debugging.
 
+## Framework adapters
+
+The SDK adapters whose framework is an SDK extra keep their framework out of `uv.lock`, so
+`make test-sdk-adapters` installs it in `.venv-sdk-adapters` for their unit tests
+(`sdk/python/tests/`). Their integration tests (`tests/integration/test_sdk_<framework>_*.py`)
+skip without the framework; to run them, install the extra's requirements into `.venv`
+(`uv pip install --python .venv/bin/python -r <(python scripts/gates/sdk_extra_requirements.py langchain)`)
+and run them against a server as in [integration tests](#integration-tests). `uv sync`
+removes the framework again.
+
 ## How tests skip
 
 A test whose environment is missing skips with a reason; it never fails for a missing
