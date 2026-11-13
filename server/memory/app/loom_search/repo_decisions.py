@@ -147,10 +147,14 @@ async def memory_with_repo_decisions(
     hits, added = merge_memory_hits(base.results, decisions.results, mem_input.namespace)
     if not added:
         return base
+    home = base._settled_input or mem_input
+    # the decisions whose code changed move down among the merged rows, as the base's did
+    from server.memory.app.search.output import move_stale
+
+    hits = move_stale(hits, home)
     # Credited and elided as the base search credits and elides its own: for the hits
     # it hands on, before the section's floors and answer-first rules, in its window
     # (the settled top_k, not the decision pass's over-fetch).
-    home = base._settled_input or mem_input
     await credit_merged_hits(settled.model_copy(update={"top_k": home.top_k}), added)
     apply_explain_default(added, home)
     update: dict[str, Any] = {

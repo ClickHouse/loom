@@ -934,3 +934,20 @@ async def test_merged_decisions_follow_the_home_searchs_settled_top_k(monkeypatc
     out = await repo_decisions.memory_with_repo_decisions(inp, repo_namespace=TRUNK)
     (decision,) = [h for h in out.results if h.memory_key == "decision:evict"]
     assert not getattr(decision, "_elide", frozenset()) and credited == [10]
+
+
+@pytest.mark.asyncio
+async def test_a_decision_whose_code_changed_moves_down_after_the_merge_and_says_why(
+    monkeypatch,
+) -> None:
+    stale = _hit("decision:evict", 0.7, mtype="decision", rank=0.9)
+    stale._code_ranked_down = True  # its code changed: the search's code annotation marked it
+    stale.explanation = "fact hit from namespace code-kj; similarity=0.70; rank_score=0.90"
+    planes = {**PLANES, TRUNK: [stale]}
+    out = await _leg(monkeypatch, TRUNK, [], planes=planes)
+    assert [h.memory_key for h in out.results] == ["note-a", "note-b", "decision:evict"]
+    moved = out.results[2]
+    assert moved.score_components["code_changed_places"] == -2.0
+    # its explanation names the score it is served with, not the one it was found at
+    assert f"rank_score={moved.rank_score:.2f}" in moved.explanation
+    assert "rank_score=0.90" not in moved.explanation

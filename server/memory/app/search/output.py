@@ -214,6 +214,17 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
     return (named & set(mine)) | authorized
 
 
+def move_stale(hits: list[Any], input: Any) -> list[Any]:
+    """`hits` with each one whose linked code changed moved down (`code_change.rank_down`),
+    its explanation rewritten with the score it is served with."""
+    out = code_change.rank_down(hits, settings.memory_search_code_changed_places)
+    moved = [h for h in out if "code_changed_places" in h.score_components]
+    for h in moved:
+        h.explanation = ""  # a fact row's is the one `_decorate_hits` writes
+    _decorate_hits(moved, input=input)
+    return out
+
+
 async def _shape_final_hits(
     ctx: SearchContext, final_hits: list[_MemorySearchHit]
 ) -> tuple[list[_MemorySearchHit], tuple[int, int, int], list[str]]:
@@ -230,15 +241,12 @@ async def _shape_final_hits(
     anchored, stale_anchor = await _prepend_anchor(recent, input, ctx.stale_versions)
     ctx.stale_dropped += stale_recent + stale_anchor
     final_hits = _apply_min_body_chars(anchored, input)
+    _decorate_hits(similar, input=input)
     # After the verdict, which read relevance, and the tiers and body floor, which cut
     # rows: a memory whose code changed is served lower, never left out. A date order is
-    # the answer and stays as it is. A retry pass leaves the move, and the explanation
-    # that names the served score, to the search it joins.
-    if not getattr(input, "_merged_into_parent", False):
-        if not ctx.chronological_intent:
-            places = settings.memory_search_code_changed_positions
-            final_hits = code_change.rank_down(final_hits, places)
-        _decorate_hits(similar, input=input)
+    # the answer and stays as it is. A pass another search merges leaves the move to it.
+    if not (ctx.chronological_intent or getattr(input, "_merged_into_parent", False)):
+        final_hits = move_stale(final_hits, input)
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)
     )

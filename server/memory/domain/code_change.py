@@ -92,8 +92,11 @@ def rank_down(hits: list[Any], places: int) -> list[Any]:
     last nor below the similarity floor; a placed row keeps its slot. A moved hit scores
     between the rows around it (or ties the one above, when they tie), so a stable sort
     by score keeps the order; `score_components.code_changed_places` counts the rows it
-    moved below (negative, as a reranker's `rerank_delta`)."""
+    moved below (negative, as a reranker's `rerank_delta`). The marks are spent, so a
+    search that merges more rows in moves only those."""
     marked = [h for h in hits if getattr(h, "_code_ranked_down", False)]
+    for hit in marked:
+        hit._code_ranked_down = False
     moving = {id(h) for h in marked if not _placed(h)} if places > 0 else set()
     out = list(hits)
     # bottom-up: a stale row moves past the same rows whether or not one above it moves

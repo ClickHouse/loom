@@ -4495,7 +4495,7 @@
           "type": "number",
           "description": "Smallest window share verbatim chunks keep when the pool has them. 0.0 = off."
         },
-        "memory_search_code_changed_positions": {
+        "memory_search_code_changed_places": {
           "default": 3,
           "minimum": 0,
           "type": "integer",

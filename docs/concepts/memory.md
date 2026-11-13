@@ -384,7 +384,7 @@ Loom never writes the memory. The namespace's `code_change_policy`
 | `revise`                   | As `retire_removed`.                                                                                                                                                                                                                   | The claim is re-checked against the old and new code by the LLM: one that holds is re-anchored, a contradicted one gets a corrected claim as the link's `suggestion`. |
 
 Under every policy, search serves a memory whose worst link is `changed`, `unresolved`
-or `missing` lower: it moves below the next `memory_search_code_changed_positions` (3)
+or `missing` lower: it moves below the next `memory_search_code_changed_places` (3)
 rows that rank by score, never out of the results, after the confidence and abstain
 checks have read them in relevance order; `score_components.code_changed_places` says how
 far. These keep their place:

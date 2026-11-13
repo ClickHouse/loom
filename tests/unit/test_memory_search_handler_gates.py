@@ -985,10 +985,11 @@ async def test_a_memory_whose_code_changed_is_served_lower_after_the_verdict(
 
     joined = await handle_memory_search(child)
     assert [h.memory_key for h in joined.results][0] == "stale"
+    assert joined.results[0].explanation  # explained as any pass's rows are
     # 0 places moves nothing
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_search_code_changed_positions", 0)
+    monkeypatch.setattr(settings, "memory_search_code_changed_places", 0)
     search_env.hits = hits()
     off = await _run(search_env, top_k=5)
     assert [h.memory_key for h in off.results][0] == "stale"
@@ -1052,3 +1053,39 @@ async def test_a_move_counts_only_the_rows_the_body_floor_serves(
     out = await _run(search_env, top_k=6, min_body_chars=13)
     assert [h.memory_key for h in out.results] == ["ccc", "ddd", "eee", "stale", "fff"]
     assert out.results[3].score_components["code_changed_places"] == -3.0
+
+
+async def test_the_parent_moves_and_explains_a_stale_row_its_retry_merged(
+    search_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import server.memory.app.search as search_pkg
+    from server.memory.api.models_search import MemorySearchOutput, _MemorySearchHit
+
+    real = search_pkg.handle_memory_search
+
+    async def search(inp: Any) -> Any:
+        if not getattr(inp, "_merged_into_parent", False):
+            return await real(inp)
+        # the retry pass: its stale row unmoved, explained by the score it was found at
+        stale = _MemorySearchHit(
+            memory_key="stale",
+            memory_type="semantic",
+            content_excerpt="fact about stale",
+            distance=0.05,
+            similarity=0.95,
+            rank_score=0.95,
+            explanation="fact hit from namespace ns; similarity=0.95; rank_score=0.95",
+        )
+        stale._code_ranked_down = True
+        return MemorySearchOutput(results=[stale], embedding_model="fake")
+
+    monkeypatch.setattr(search_pkg, "handle_memory_search", search)
+    search_env.judge_result = (False, "where is the stale code")
+    search_env.hits = [_svc_hit(k, sim=s) for k, s in {"b": 0.6, "c": 0.5, "d": 0.4}.items()]
+    out = await search(_input(top_k=4, recipe="quality"))
+    assert len(search_env.judge_calls) == 1
+    assert [h.memory_key for h in out.results] == ["b", "c", "d", "stale"]
+    moved = out.results[3]
+    assert moved.score_components["code_changed_places"] == -3.0
+    assert f"rank_score={moved.rank_score:.2f}" in moved.explanation
+    assert "rank_score=0.95" not in moved.explanation

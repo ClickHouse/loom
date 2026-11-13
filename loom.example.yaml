@@ -3986,7 +3986,7 @@ settings:
 
   # Places a search hit moves down within the served results when its linked code
   # changed, was not found again or is gone (0 moves nothing). [live]
-  # memory_search_code_changed_positions: 3
+  # memory_search_code_changed_places: 3
 
   # Key-embedding axis on the fact leg: "on" scores least(value_dist, key_dist) and
   # reads both vector columns (measured 399 vs 203 MB/query on a 30k-row namespace);
