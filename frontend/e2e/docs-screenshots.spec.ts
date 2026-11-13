@@ -419,7 +419,7 @@ function coverage() {
     pr_history_enabled: true,
     pr_history_auth: "token",
     context_packs_last_at: agoCh(2),
-    summaries_last_at: agoCh(3),
+    summaries_last_at: agoCh(14),
   };
 }
 
@@ -1246,7 +1246,7 @@ const steps = {
     const checked = page.getByText("Checked against what Loom holds").first();
     await expect(checked).toBeVisible();
     // The clip ends on the checked sources, below the answer's last line.
-    if (clip) await page.getByRole("button", { name: "Retry" }).scrollIntoViewIfNeeded();
+    if (clip) await page.getByRole("button", { name: /^Ask again, answer/ }).scrollIntoViewIfNeeded();
   },
 };
 
