@@ -562,7 +562,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "run when the user has not seen the list."
     ),
     "memory.unlock": (
-        "Lift a memory.lock (admin). Returns the previous mode. Locking only "
+        "Lift a lock set by memory.lock (admin). Returns the previous mode. Locking only "
         "tightens; this is the one loosening path."
     ),
     "memory.sweep_expired": (
@@ -2186,8 +2186,8 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: A conclusion to keep alongside the current state without rewriting it."
     ),
     "run.begin": (
-        "WHAT: Open the run ledger entry for this task (goal, request, optional budget_seconds; "
-        "run.get reports `over_budget`). "
+        "WHAT: Open the run ledger entry for this task (goal, request, optional budget_seconds); "
+        "run.get reports `over_budget`. "
         "Returns run_id; pass it on writes (memory.set) so they join this run. Your reads "
         "are labelled with the session's own run, so credit what you relied on in "
         "run.complete memories_used.\n"

@@ -199,7 +199,7 @@ def catalog(
     hits: list[tuple[int, str, dict[str, Any]]] = []
     writes = routes_writes(toolset)
     for op in ALL_OPERATIONS:
-        if not _routed(op, writes):  # hidden ops included
+        if not _routed(op, writes):  # leaves out hidden ops, and writes on readonly
             continue
         purpose = _purpose(op)
         name_l, purpose_l = op.name.lower(), purpose.lower()

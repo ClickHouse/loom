@@ -46,7 +46,7 @@ from server.insights.app.mentor_rules import (
     SEARCHES,
     SETS,
     MentorProfile,
-    clip,
+    clip_keeping_note,
     evaluate_rules,
 )
 from server.insights.store.mentor import ProfileReads
@@ -511,7 +511,7 @@ def call_hint(
         st["count"] += 1
         if profile is not None and profile.hint(code) is not None:
             _profile_shown.setdefault(profile_key, set()).add(code)
-        return code, clip(text)
+        return code, clip_keeping_note(text)
     except Exception as exc:  # noqa: BLE001 — advice never fails a call
         log.debug("mentor call_hint failed for %s: %s", op_name, exc)
         return None

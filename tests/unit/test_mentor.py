@@ -1503,6 +1503,32 @@ def test_handshake_warms_the_profile_when_nothing_is_cached(
     assert "code_index_unused" in line and len(warmed) == 1
 
 
+@pytest.mark.parametrize(
+    "facts",
+    [{"repos": 1, "tracker_sources": ["qa"]}, {"repos": 1}, {"tracker_sources": ["qa"]}, {}],
+)
+def test_a_call_hint_is_clipped_with_its_note_whole(facts: dict[str, Any]) -> None:
+    """The clip cuts the body, never the note that says how to reach the op."""
+    rule = mentor_rules._rule_set_stack_trace("memory.set", {"value": _TRACE}, {}, facts, {})
+    assert rule is not None
+    clipped = mentor_rules.clip_keeping_note(rule[1])
+    assert len(clipped) <= mentor_rules.HINT_CHARS
+    if " via loom_op)" in rule[1]:
+        assert re.search(r" \(call [a-z_.]+ via loom_op\)$", clipped), clipped
+    assert mentor_rules.without_listing_note(clipped).count("(call ") == 0
+
+
+def test_a_call_hint_on_mcp_names_ops_for_its_listing() -> None:
+    from server.transport import mcp_outcome
+
+    args = {"org": "o", "namespace": "ns", "agent": "a", "memory_key": "k"}
+    core = mcp_outcome._mentor_hint("memory.get", args, {"found": False}, "s-core", "core")
+    coding = mcp_outcome._mentor_hint("memory.get", args, {"found": False}, "s-coding", "coding")
+    assert core is not None and coding is not None
+    assert "loom_search recalls by meaning" in core[1] and "memory.list (via loom_op)" in core[1]
+    assert "loom_search recalls by meaning" in coding[1] and "(call " not in coding[1]
+
+
 def test_no_hint_text_writes_an_op_as_a_call_or_names_a_hidden_op() -> None:
     """The handshake renders hint texts as it renders tool descriptions. A hidden
     op named in prose is one the user acts on, and its note says so (conflicts)."""

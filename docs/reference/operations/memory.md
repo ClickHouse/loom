@@ -2314,7 +2314,7 @@ Change only a memory's expiry: set a new TTL (`ttl_seconds`) or clear it (`clear
 
 ## `memory.unlock`
 
-Lift a memory.lock (admin).
+Lift a lock set by memory.lock (admin).
 
 `POST /v1/memory.unlock` · MCP `loom_memory_unlock` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 

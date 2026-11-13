@@ -323,6 +323,16 @@ def clip(text: str, limit: int = HINT_CHARS) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+def clip_keeping_note(text: str) -> str:
+    """``text`` clipped to HINT_CHARS with its _unlisted note whole: the body is cut,
+    never the note, as _Ctx.add does for a profile hint."""
+    m = _LOOM_OP_NOTE_RE.search(text)
+    if m is None:
+        return clip(text)
+    note = m.group(0)
+    return clip(text[: m.start()] + text[m.end() :], HINT_CHARS - len(note)) + note
+
+
 @dataclass
 class _Ctx:
     """One agent's counts, derived once for every rule."""
@@ -896,8 +906,8 @@ def _rule_get_miss(
     key = str(args.get("memory_key") or "")
     return (
         "get_miss",
-        f"no row at {key or 'that key'}: search.query recalls by meaning, memory.list prefix= "
-        "lists the siblings, and a moved key answers with canonical_key (follow=true).",
+        f"no row at {key or 'that key'}: search.query recalls by meaning, memory.list with a "
+        "key prefix lists the siblings, and a moved key answers with canonical_key (follow=true).",
     )
 
 
