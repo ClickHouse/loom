@@ -8,16 +8,16 @@
 A short page is sent to the Messages API in one call, a longer one a `## ` section at a
 time (`WHOLE_PAGE_CHARS`). A translation is kept only when its fenced code blocks (in
 order), inline code spans, link targets, URLs, heading anchors and numbers match the
-English; otherwise the call is retried once with the differences named, then the run
-fails. Relative links in the prose are rewritten before translation: a page of the set
-links to its translation, anything else to the English file on GitHub. Every heading gets
-an explicit `<a id>` with its English anchor, so `#anchor` links keep working on the
-translated page. The first line of each translation stamps the git blob of the English
-page it was made from; `check` compares that stamp with the file.
-A change to the model or a banner makes every page stale; a change to the prompt does not:
-regenerate with `--all`. The READMEs carry a generated language line that `update` rewrites
-without translating; adding a language changes the English README's line, so its blob, and
-every README is translated again.
+English; otherwise the call is retried once with the differences named, then the page is
+not written (below). Relative links in the prose are rewritten before translation: a page
+of the set links to its translation, anything else to the English file on GitHub. Every
+heading gets an explicit `<a id>` with its English anchor, so `#anchor` links keep working
+on the translated page. The first line of each translation stamps the git blob of the
+English page it was made from; `check` compares that stamp with the file. A change to the
+model or a banner makes every page stale; a change to the prompt does not: regenerate with
+`--all`. The READMEs carry a generated language line that `update` rewrites without
+translating; adding a language changes the English README's line, so its blob, and every
+README is translated again.
 
 The run estimates its cost before the first call and stops when the estimate, or the
 spend reported by the API, passes LOOM_I18N_MAX_USD (default 5). Every call checks the cap
@@ -147,11 +147,13 @@ STAMP = re.compile(r"\A<!-- i18n: source=(\S+) blob=([0-9a-f]{40}) model=(\S+) -
 FENCE = re.compile(r"^(`{3,}|~{3,})")
 # A Markdown link or image target, an HTML href or src, or a reference definition.
 LINK = re.compile(r"(\]\(|(?:href|src)=\"|^\[(?!\^)[^\]\n]+\]:[ \t]+)([^)\"\s]+)", re.MULTILINE)
-# A Markdown link's text and target, an HTML link's text, and image alt texts.
+# A Markdown link's text (not an image's).
 LINK_TEXT = re.compile(r"(?<!!)\[([^\[\]\n]+)\]\([^)\s]+")
-# An HTML link's inner text; tags inside it (`<b>`, `<code>`) are dropped before checking.
+# An HTML link's inner text; `<code>` inside it is dropped with its content, other tags
+# (`<b>`) without theirs, before checking.
 HTML_LINK_TEXT = re.compile(r"<a\s[^>]*>(.*?)</a>", re.DOTALL)
 HTML_TAG = re.compile(r"<[^>]+>")
+HTML_CODE = re.compile(r"<code>.*?</code>", re.DOTALL)
 IMAGE_ALT = re.compile(r"!\[([^\]\n]+)\]\(")
 HTML_ALT = re.compile(r'\balt="([^"]+)"')
 # Words a label (heading, link text, alt text, table cell) may keep in every language:
@@ -174,8 +176,7 @@ SYSTEM = """You translate a Markdown page of Loom's documentation, or one sectio
 Loom is an open-source memory, document search and code index server for AI agents.
 Rules:
 - Translate the prose, headings, table cells, list items, image alt text and every link
-  text, including links to English pages; only names stay in English. A link to a heading
-  on the same page (`#anchor`) uses that heading's translation as its text.
+  text, including links to English pages; only names stay in English.
 - Copy byte for byte: fenced code blocks, inline code spans, URLs and link targets, HTML
   tags and attributes, lines of the form <a id="..."></a>, and every number.
 - Keep product, company and project names, CLI commands, flags, file names and op names
@@ -355,8 +356,8 @@ def invariants(text: str) -> dict[str, Counter[str]]:
 
 
 def _words(label: str) -> list[str]:
-    """The words of `label` that are not names, outside code spans and link targets."""
-    words = re.findall(r"[A-Za-z][A-Za-z'-]*", CODE_SPAN.sub(" ", LINK.sub(" ", label)))
+    """The words of `label` that are not names, outside link targets."""
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", LINK.sub(" ", label))
     return [w for w in words if w.lower() not in KEPT_WORDS]
 
 
@@ -370,7 +371,10 @@ def labels(text: str) -> Counter[str]:
     prose_lines = prose.split("\n")
     found = [m.group(2) for m in map(HEADING.match, prose_lines) if m]
     found += LINK_TEXT.findall(prose)
-    found += [HTML_TAG.sub(" ", inner).strip() for inner in HTML_LINK_TEXT.findall(prose)]
+    found += [
+        HTML_TAG.sub(" ", HTML_CODE.sub(" ", inner)).strip()
+        for inner in HTML_LINK_TEXT.findall(prose)
+    ]
     found += IMAGE_ALT.findall(prose) + HTML_ALT.findall(prose)
     out: Counter[str] = Counter(label for label in found if _words(label))
     for line in prose_lines:
@@ -633,7 +637,7 @@ def translate_text(text: str, lang: Language, key: str, spend: Spend) -> str:
                 + "\n".join(problems),
             },
         ]
-    raise TranslationDiffers(f"{lang.code}: a translation still differs after a retry: {problems}")
+    raise TranslationDiffers(f"still differs after a retry: {problems}")
 
 
 def _same_edges(source: str, text: str) -> str:
@@ -766,16 +770,17 @@ def update(every: bool = False, codes: list[str] | None = None) -> int:
                 pending = set(futures)
                 while pending:
                     done, pending = wait(pending, return_when=FIRST_EXCEPTION)
-                    for future in done:
-                        error = future.exception()
-                        if isinstance(error, TranslationDiffers):
-                            differ.append(f"{futures[future]}: {error}")
-                        elif error is not None:
-                            # The cap, the API or a bug: stop every worker.
-                            spend.stopped.set()
-                            pool.shutdown(cancel_futures=True)
-                            also = "".join(f"\nnot written: {d}" for d in differ)
-                            raise SystemExit(f"{error} (pages finished so far are written){also}")
+                    errors = [(future, future.exception()) for future in done]
+                    differ += [
+                        f"{futures[f]}: {e}" for f, e in errors if isinstance(e, TranslationDiffers)
+                    ]
+                    fatal = [e for _, e in errors if e and not isinstance(e, TranslationDiffers)]
+                    if fatal:
+                        # The cap, the API or a bug: stop every worker.
+                        spend.stopped.set()
+                        pool.shutdown(cancel_futures=True)
+                        also = "".join(f"\nnot written: {d}" for d in differ)
+                        raise SystemExit(f"{fatal[0]} (pages finished so far are written){also}")
                 if differ:
                     raise SystemExit("pages not written:\n" + "\n".join(differ))
         finally:
