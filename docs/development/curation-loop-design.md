@@ -740,14 +740,14 @@ order, the first that matches deciding:
   creates the row first is never overwritten; a head past its `expires_at` or `valid_to`
   is no head here, since no read serves it;
 - a live row with no shared copy (a caller may write `definition` rows) refuses it; the
-  admin edits that row to the draft's text, with `clear_expiry`, and reviews again, which
-  the no-write case then promotes;
+  admin rewrites that row with `memory.set` to the draft's text, with `clear_expiry`, and
+  reviews again, which the no-write case then promotes;
 - any other head is a writer's edit, or a head the read-time check would not serve
   (`conflicted`, `duplicate`), and the review is refused rather than overwrite or promote
-  it; the admin edits the row to the draft's text, with `clear_expiry`, and reviews again,
-  which the no-write case then promotes (the edit clears a `conflicted` or `duplicate`
-  mark, as every revision does), or rejects the draft and writes and promotes the
-  definition directly.
+  it; the admin rewrites the row with `memory.set` to the draft's text, with
+  `clear_expiry`, and reviews again, which the no-write case then promotes (a `memory.set`
+  revision clears a `conflicted` or `duplicate` mark; `memory.update` without an embedder
+  keeps it), or rejects the draft and writes and promotes the definition directly.
 
 A retry so completes the promotion. Rejecting the draft instead leaves any row a writer
 wrote, which the admin restores from the row's history or promotes.
