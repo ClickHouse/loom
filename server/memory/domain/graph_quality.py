@@ -98,7 +98,7 @@ _SINGLE_VALUED_RELATIONS = {
 # Code-native edge relations. These ride the EXISTING entity_triples /
 # entity_edges tables — no new graph store. They make "what fixed this error",
 # "what touches this file", "what shipped in this commit" first-class multi-hop
-# queries over the same WITH RECURSIVE facts.traverse path. Closed-class on
+# queries over the same facts.traverse walk. Closed-class on
 # purpose: a coding agent's tool actions map onto exactly these verbs.
 CODE_EDGE_RELATIONS = frozenset(
     {"imports", "modifies", "fixes", "causes", "blocked_by", "references", "touches"}

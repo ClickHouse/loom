@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `erasure.export`
 
-GDPR Article 20 portability.
+Export the rows about a user or namespace, each section capped at `section_limit`.
 
 `POST /v1/erasure.export` · MCP `loom_erasure_export` · role `admin` · idempotent · audited
 
@@ -56,7 +56,7 @@ Audit-shaped roll-up of the org's erasures the caller may see: the org-wide view
 
 ## `erasure.request`
 
-GDPR Article 17 forgetting.
+Erase the rows about a user or namespace (the audit trail is kept).
 
 `POST /v1/erasure.request` · MCP `loom_erasure_request` · role `writer` · idempotent · audited
 

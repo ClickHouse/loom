@@ -92,18 +92,19 @@ class Operation:
     required_role: Role
     audit: bool = False
     # Skip the transport-level namespace-access check. Used by self-service
-    # ops where the caller is operating ON a namespace (join, leave,
-    # fresh register) rather than IN one — the handler enforces its own
-    # rules (membership, visibility, owner). Role check still runs.
+    # ops where the caller is operating ON a namespace (join, leave, fresh
+    # register) rather than IN one, and by ops whose target only the handler
+    # can resolve (memory.verify by id, erasure.request by scope, erasure.list
+    # by caller role); the handler enforces its own rules. Role check still runs.
     skip_namespace_authz: bool = False
     # The op reads facts about the DEPLOYMENT (its build, its op registry), not any
     # org's or namespace's data. A scoped token — whose authority is per-namespace and
     # which the transport would otherwise refuse with IDENTITY_INCOMPLETE for want of a
     # namespace — passes the role gate with its best per-namespace role.
     deployment_scoped: bool = False
-    # The op is addressed by an org-wide id (memory_id,
-    # erasure_id, pattern_id) and its handler authorizes the ROW's namespace
-    # (`row_in_scope`) once it has the row. A scoped token has
+    # The op is addressed only by an org-wide id (memory_id, erasure_id,
+    # pattern_id) and its handler authorizes the row's scope, before the read
+    # (`id_namespace.namespace_for_id`) or after it (`row_in_scope`). A scoped token has
     # no namespace to show the transport, so the gate only asks that it hold
     # the role somewhere in the org; the handler decides, and hides a foreign
     # row as not found.

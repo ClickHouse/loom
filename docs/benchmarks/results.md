@@ -148,8 +148,18 @@ evidence sessions is represented among the first 30 returned memories. It is not
 fraction of all supporting sessions retrieved.
 
 The same answers graded by two more judges with the official prompt: `gpt-6.1-sol` 97.8%,
-`claude-opus-5-5` 97.6%; the three judges agree on 98.8–99.8% of the questions. The
-`memory.ask` answers written during ingest scored 97.2%. The external reader runs at
+`claude-opus-5-5` 97.6%. The re-grade's three judges, these two and `gpt-4o-2024-08-06`,
+agree with each other on 98.8–99.8% of the questions.
+
+The table's `memory.ask` figures are the `ask` labels in `longmemeval_s.csv`. The re-grade in
+`longmemeval_s_judges.json` called `gpt-4o-2024-08-06` again on the same answers, and at
+least two of its labels differ from the table's: on net, one multi-session answer it
+counts correct (91.7% → 92.5%) and one preference answer it counts wrong (100% → 96.7%),
+the total staying at 483 of 500 (96.6%). The three re-grading judges agree on every
+label that differs from the table. The judge runs at temperature 0, which does not make
+a hosted model's replies repeatable.
+
+The `memory.ask` answers written during ingest scored 97.2%. The external reader runs at
 reasoning effort `medium`; at `minimal` the same hits scored 86.0% (in
 `longmemeval_s_ingest.csv`, arm `reader_gpt5_k200`). `memory.ask` answers are not the
 pinned-reader figure LongMemEval publications report; the reader arm is.
@@ -161,7 +171,7 @@ Extraction used about 1.5 M tokens per question; each question has its own histo
 
 - **Models:** the server's above (`memory.ask` strong `claude-opus-5-5`, cheap
   `gpt-6-luna`); external reader `gpt-5`; judge `gpt-4o-2024-08-06` with the official
-  prompt, re-graded by `gpt-6.1-sol` and `claude-opus-5-5`.
+  prompt, re-graded by `gpt-4o-2024-08-06`, `gpt-6.1-sol` and `claude-opus-5-5`.
 - **Retrieval:** the `bench/longmemeval.py` searches (Recall@30 and the reader's hits)
   ran with `rerank` `builtin:openai` and `include_top_n_unmatched` 120, the harness
   defaults (the CSVs' `rerank` and `pool_unmatched` columns, which record the harness's own
@@ -1134,7 +1144,7 @@ cap, and was not run.
 **Extrapolated, and the ceiling hit first.** Each figure grows linearly with what it
 reads:
 
-1. **A read scope's exact vector scan**, at about one million memories in one scope
+1. **A read scope's vector scan (no vector index)**, at about one million memories in one scope
    (org, namespace, agent, user). At 0.6 KB a row, a search and every write's conflict
    check read 0.6 GB at 1M rows, 6 GB at 10M and 60 GB at 100M, each call: seconds per
    call before 10M. The size of the largest scope sets it, not the total number of

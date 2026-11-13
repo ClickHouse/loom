@@ -251,7 +251,7 @@ writer's.
 
 A user erasure (`scope_type = user_id`) supersedes the documents and chunks that user
 wrote in any namespace of the org (an end-user token, or a token minted with
-`--read-user-id`, stamps its `user_id`), or, with `purge` (a GDPR deletion), deletes every
+`--read-user-id`, stamps its `user_id`), or, with `purge`, deletes every
 version of them from disk, after superseding another writer's versions that one of theirs
 replaced, so none reads as live again. It deletes their uploaded originals that no other
 writer's live document shares (each upload by an end user is recorded in

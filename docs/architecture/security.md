@@ -13,8 +13,8 @@ vulnerability, and for the deployment hardening checklist, see
 | An unauthenticated caller reads or writes data                        | Bearer token on every op; 401 before the body is read                                                                                                                                                                                                                                                                                                                                                    | `server/transport/http.py` (`_extract_auth`), `server/auth/jwt.py`                                                                |
 | A forged or tampered token                                            | Signature, algorithm allow-list, `kid`, issuer, audience, time claims                                                                                                                                                                                                                                                                                                                                    | `server/auth/jwt.py` (`verify_token`)                                                                                             |
 | A revoked token keeps working                                         | Per-process revocation snapshot, fail closed until loaded                                                                                                                                                                                                                                                                                                                                                | `server/auth/revocation.py`                                                                                                       |
-| Tenant A reads tenant B's rows                                        | Org + namespace check on every call; row-scoped ops check the row's namespace                                                                                                                                                                                                                                                                                                                            | `server/auth/authz.py` (`check_authorized`, `row_in_scope`)                                                                       |
-| A refusal confirms that an id or namespace exists                     | `found=False` or a generic "cannot access", never a 403 naming the target                                                                                                                                                                                                                                                                                                                                | Row-scoped handlers; the restricted gate                                                                                          |
+| Tenant A reads tenant B's rows                                        | Org + namespace check on every call; row-scoped ops check the row's scope                                                                                                                                                                                                                                                                                                                                | `server/auth/authz.py` (`check_authorized`, `row_reach`, `row_in_scope`)                                                          |
+| A refusal confirms that an id or namespace exists                     | An answer as for a missing row, or a generic "cannot access", never a 403 naming another tenant's target                                                                                                                                                                                                                                                                                                 | Row-scoped handlers; the restricted gate                                                                                          |
 | One caller exhausts shared capacity                                   | Token buckets per namespace, org and actor                                                                                                                                                                                                                                                                                                                                                               | `server/core/ratelimit.py`                                                                                                        |
 | An agent is induced to echo or enumerate memory                       | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing                                                                                                                                                                                                                                                                                                                                  | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py`              |
 | Stored text carries instructions into a later prompt                  | Recalled memory is fenced with a per-prompt nonce                                                                                                                                                                                                                                                                                                                                                        | `server/memory/domain/prompt_fence.py`                                                                                            |
@@ -260,18 +260,38 @@ authenticated call, from `gates.authorize` in both transports:
 7. A flat token's roles apply to every namespace its claims cover. Otherwise a live grant
    in `loom.namespace_grants` decides: unrevoked and `active` (`grant_sql.LIVE_GRANT`); a
    `pending` join request grants nothing. A service account with no grant reads its
-   creator's. A grant raises a flat token's role, never lowers it. A failed grant read
-   counts as no grant.
+   creator's. A grant raises a flat token's role, never lowers it. A failed read of
+   the grant map serves a cached entry younger than
+   `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s, [above](#tokens)) that no grant
+   change has superseded, and otherwise answers 503; the single grant lookup
+   (`authz.grant_role_for`) counts a failed read as no grant.
 
 The `all_mine` fan-out and the org-wide rollups use the same predicate, so they never
 exceed the gate.
 
 ### Row-scoped operations
 
-Ops addressed by an org-wide id (`memory.get_by_id`, `memory.update_by_id`,
-`memory.redact`) declare `row_scoped=True`. The transport only checks that the token
-holds the role somewhere in the org. The handler fetches the row, calls
-`authz.row_in_scope(org, row.namespace, role)`, and answers `found=False` on refusal.
+An op addressed by an org-wide id alone (a `memory_id`, `erasure_id` or blacklist
+`pattern_id`), such as `memory.get_by_id`, gets no namespace check from the transport.
+It declares `row_scoped=True` on its `Operation`, and the transport admits a flat token
+on its own role and a namespace-scoped token on its best namespace role in the org.
+`memory.verify`, which can also be addressed by namespace and key, declares
+`skip_namespace_authz=True` instead, which admits only a flat token (a scoped token gets
+400 `IDENTITY_INCOMPLETE`). The handler authorizes the caller on the scope that holds
+the row, on one of two paths:
+
+- **Before the read.** `memory.get_by_id`, `memory.update_by_id` and `memory.verify`
+  (by id) resolve the id to the namespaces that hold it (`id_namespace.namespace_for_id`),
+  keep the ones the caller reaches (`authz.row_reach`), and read the row only when
+  exactly one remains.
+- **After the read.** `memory.redact`, `erasure.status` and `blacklist.remove` fetch the
+  row and then check the caller on its scope: `authz.row_in_scope` for a row held in a
+  namespace. An erasure saga of a user needs the org-wide view, and a saga over several
+  namespaces needs flat membership of the org. An org blacklist pattern of the caller's
+  own org needs `ORG_ADMIN` and a global pattern needs `PLATFORM_ADMIN`.
+
+Every refusal on these two paths answers as a missing row does, except those two
+blacklist cases, which refuse with 403 since neither pattern belongs to another tenant.
 
 **Why not 403.** A 403 confirms the id exists in another tenant. "Not found" makes a
 foreign row and a missing row look the same.
@@ -1389,7 +1409,9 @@ the audit log outlives the source, the repository and every erasure.
 The `audit_verifier` worker recomputes row hashes and seals closed windows into
 `loom.audit_checkpoints`, chained by `prev_checkpoint_hash`, so a deleted row shows as a
 short recount. The chain is over windows because per-row chains fork under concurrent
-writers. An audit insert that fails is logged and never fails the write it records.
+writers. An audit insert that fails is logged and fails only the two ops that depend on
+their record (a `memory.restore` that undoes a retirement, and `namespace.restore`;
+[audit limits](../features/observability/audit.md#limits-and-failure-modes)).
 Settings, the verifier's reports and offline verification are in
 [audit](../features/observability/audit.md).
 
@@ -1537,7 +1559,9 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
 - A process refuses every token until its revocation snapshot has loaded once.
 - A spent refresh token, code or device code that comes back ends its whole session.
 - A namespace is never authorized without an org.
-- A row-scoped op answers `found=False` outside the caller's scope, never 403.
+- A row-scoped op answers as for a missing row when the caller lacks the op's role on the
+  row's namespace, never a 403 that confirms the id exists (the two blacklist 403s are in
+  [row-scoped operations](#row-scoped-operations)).
 - A restricted namespace admits only a literal, same-org, directly granted caller, and
   denies when its classification cannot be read.
 - A `high`-sensitivity value has no embedding row; a chunk, session digest or
@@ -1559,7 +1583,7 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
 | Token verification and mint | `server/auth/jwt.py` (`verify_token`, `mint_token`, `require_real_signing_secret`)                                          |
 | Bearer parsing              | `server/auth/bearer.py` (`verify_bearer`)                                                                                   |
 | Revocation                  | `server/auth/revocation.py` (`load_at_boot`, `is_revoked`)                                                                  |
-| Authorization               | `server/auth/authz.py` (`check_authorized`, `row_in_scope`); `server/core/grant_sql.py` (`LIVE_GRANT`)                      |
+| Authorization               | `server/auth/authz.py` (`check_authorized`, `row_reach`, `row_in_scope`); `server/core/grant_sql.py` (`LIVE_GRANT`)         |
 | Shared gate                 | `server/transport/gates.py` (`authorize`)                                                                                   |
 | Rate limiter                | `server/core/ratelimit.py` (`Limiter.check`, `op_class_for`), `server/core/ratelimit_shared.py`                             |
 | Blacklist                   | `server/memory/app/blacklist_guard.py` (`enforce_on_insert`), `server/memory/app/blacklist_sweep.py`                        |

@@ -22,7 +22,8 @@ shared volume.
 
 - **The identity tuple leads the sort keys.** `loom.memory` is ordered by
   `(org, namespace, agent, user_id, session_id, memory_key)`, so scoping a read to a
-  namespace, user or session is a primary-key range.
+  namespace is a primary-key range; a user narrows it fully only under a named agent,
+  a session only under a named agent and user.
   [Identities and namespaces](identities-and-namespaces.md) covers the tuple.
 - **One engine.** Under the default ClickHouse authority, vector search, lexical search,
   the graph walk, filters, audit and erasure are SQL over the same rows, with no second
@@ -50,8 +51,8 @@ flowchart LR
 
 1. **Write.** `memory.set` runs its checks ([below](#how-a-write-is-judged)), embeds the
    value inline, and inserts the memory row, its embedding row, verbatim chunks for long
-   values and a hash-only audit row. If the inline embed fails, a stub is written and the
-   `embedding_worker` fills it later; search does not see the row until then.
+   values and a hash-only audit row. If the inline embed fails, the call fails and nothing
+   is written.
    `memory.set_from_messages` has the LLM pick the durable facts in a transcript and
    writes through the same bulk path.
 2. **Derive.** Workers add what is too slow for the write path: entity tags
@@ -182,21 +183,24 @@ A searchable `memory.set` runs these checks in order:
 3. **Precondition.** `if_match_sha256` makes the write land only if the live row's hash
    still matches; otherwise 409 `PRECONDITION_FAILED`. The current hash rides every
    `memory.get`, `memory.get_by_id` and `memory.set` response (`content_sha256`).
-4. **Restatement.** A value byte-identical to the live row bumps `reinforcement_count`
-   instead of writing a version. The bulk path (`memory.bulk_set`, used by
-   `set_from_messages`) treats any live row with the same hash in
+4. **Restatement.** A value byte-identical to the live row writes a new version that
+   carries the live row's `reinforcement_count + 1`. The bulk path (`memory.bulk_set`,
+   used by `set_from_messages`) treats any live row with the same hash in
    `(org, namespace, agent, user_id)` as the fact (`LOOM_MEMORY_BULK_DEDUP_SCOPE=identity`).
 5. **Peer search and verdict.** Active rows of the same `memory_type` whose embedding is
    close to the new value are **peers**, compared closest first:
    - same canonical form (lowercased, punctuation stripped, whitespace collapsed) →
      `merge`: nothing written, the peer is reinforced, `merged_into_key` names it;
+   - a close pinned peer → `rejected`, 409 `PINNED_CONFLICT`;
+   - under `newest_wins`, a peer that states the same subject and predicate with a
+     different object → `refines`: the peer is retired, unless its `valid_at` is later
+     than the new row's, which answers `conflict`;
    - cosine at or above the duplicate threshold with the same content words and no
      differing value (a number, time, amount or unit; "27:10" / "26:30") →
      `duplicate`;
    - cosine at or above the conflict threshold but different → `conflict`, both rows
      `conflicted`;
-   - a close pinned peer → `rejected`, 409 `PINNED_CONFLICT`;
-   - otherwise `clear`.
+   - no close peer → `clear`.
 6. **Insert** into `loom.memory` and `loom.memory_embeddings`, supersession, entity
    projection and one hash-only row in `loom.audit_log`.
 

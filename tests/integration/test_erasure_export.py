@@ -1,4 +1,4 @@
-"""erasure.export — GDPR Article 20 right-to-portability.
+"""erasure.export — the rows about a user or namespace, as one dump.
 
 Verifies:
   - user_id scope returns the user's memory + conversation turns and saved

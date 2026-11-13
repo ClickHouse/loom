@@ -205,13 +205,19 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   - After turning auth on for the first time, every call needs a token: mint one as
     above.
 
-### A call answers found: false for an id you know exists
+### An id you know exists reads as missing
 
-- **Cause:** ops addressed by an org-wide id (`memory.get_by_id`, `update_by_id`,
-  `redact`) answer `found=False` when the caller cannot read the row's namespace, rather
-  than a 403 that would confirm the id exists.
-- **Fix:** use a token with a grant on the row's namespace
-  ([tokens and grants](../guides/tokens-and-grants.md)).
+- **Cause:** an op addressed only by an org-wide id, such as `memory.get_by_id`,
+  answers as for a missing row rather than a 403 that would confirm the id exists. The
+  usual cause is a token without the op's role on the row's namespace. The ops that
+  resolve the id before the read also answer so when the caller reaches more than one
+  namespace holding the id, as after a `namespace.restore`.
+  [Row-scoped operations](../architecture/security.md#row-scoped-operations) has the rule
+  and its exceptions.
+- **Fix:** use a token with the op's role on the row's namespace
+  ([tokens and grants](../guides/tokens-and-grants.md)); for an id in several
+  namespaces, address the row by key in its namespace (`memory.get`, or
+  `memory.update` for a write).
 
 ## Schema and upgrades
 

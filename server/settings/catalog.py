@@ -860,7 +860,7 @@ class CodeSettings(BaseModel):
     # passes no token_budget.
     code_ask_token_budget: int = 4000
     # The code.ask answer cache's hit cosine. 0 = the per-embedding-model table
-    # in code/app/answers.py; a value in (0, 1] pins one threshold for
+    # in code/app/answers_entry.py; a value in (0, 1] pins one threshold for
     # every model.
     code_ask_cache_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
     # A cached code.ask answer older than this many days is a miss (checked
@@ -5940,7 +5940,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # One frontier query per hop, at most max_hops of them.
     "facts.path": 250,
     "facts.related": 60,
-    # Recursive CTE — heavier than a single hop.
+    # One frontier query per hop, up to max_hops.
     "facts.traverse": 200,
     "grants.approve": 80,
     "grants.create": 50,

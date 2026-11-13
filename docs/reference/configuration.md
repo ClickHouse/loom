@@ -239,7 +239,7 @@ The code plane: ingest, indexes, search, ask, review.
 | `LOOM_CODE_INTEL_ENABLED` | `bool` | `True` |  | Master kill switch, checked at the top of every code.* handler but the retirement (code.repo.remove), which only deletes. |
 | `LOOM_CODE_TEST_GATE_RUN_TEMPLATES` | `str` | `''` |  | code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of {"pattern": <regex over the repo-relative test path>, "run": <template>}, tried before the built-ins. Templates may use {path} {dir} {stem} {name} {parent}. A path no recipe matches is reported run_unknown, never guessed. |
 | `LOOM_CODE_ASK_TOKEN_BUDGET` | `int` | `4000` |  | Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget. |
-| `LOOM_CODE_ASK_CACHE_THRESHOLD` | `float` | `0.0` |  | The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in code/app/answers.py; a value in (0, 1] pins one threshold for every model. |
+| `LOOM_CODE_ASK_CACHE_THRESHOLD` | `float` | `0.0` |  | The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in code/app/answers_entry.py; a value in (0, 1] pins one threshold for every model. |
 | `LOOM_CODE_ASK_CACHE_MAX_AGE_DAYS` | `int` | `14` |  | A cached code.ask answer older than this many days is a miss (checked and tombstoned at read time; no table TTL). 0 = no bound. |
 | `LOOM_CODE_ASK_NEGATIVE_CACHE_TTL_S` | `int` | `3600` |  | Seconds an abstain stays cached for its exact normalised question under the index head it abstained at. 0 = off. |
 | `LOOM_CODE_ASK_LLM_CACHE` | `bool` | `True` |  | code.ask's pre-synthesis LLM calls (identifier proposal, HyDE, concept legs) read the per-namespace exact-prompt response cache; no_cache or a traffic class with llm_cache off bypasses it. |

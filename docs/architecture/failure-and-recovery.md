@@ -127,7 +127,11 @@ deletion:
 
 - **Revocation.** Until a process has loaded the revoked-token set once, every token gets
   503 `AUTH_UNAVAILABLE`. After that, a ClickHouse outage keeps the last snapshot.
-- **Authorization.** A failed grant read refuses; a restricted namespace whose
+- **Authorization.** A failed read of the subject's grant map answers 503, unless the
+  process holds a cached entry younger than `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`
+  (600 s) that no grant change has superseded, which it serves
+  ([tokens](security.md#tokens)). The single grant lookup
+  (`authz.grant_role_for`) counts a failed read as no grant. A restricted namespace whose
   classification cannot be read is denied.
 - **Boot migrations.** A failed migration stops the process before any worker starts.
 - **Erasure.** A federated backend that cannot confirm deletion fails its step; residue
@@ -137,7 +141,8 @@ deletion:
 
 These fail open, counted or logged, because refusing would take the service down for an
 availability control: traffic classification, the rate limiter, the idempotency cache read,
-the audit insert, boot calibration, the embedding caches and every telemetry write. See
+the audit insert (except the two restores in [data-loss boundaries](#data-loss-boundaries)),
+boot calibration, the embedding caches and every telemetry write. See
 [security](security.md).
 
 ## When a dependency is down
@@ -202,8 +207,10 @@ transition until it resumes and drains, or an operator retires it.
 - **Telemetry and audit rows.** A crash loses the unflushed `agent_events` queue (flushed
   every 100 ms) and events-stream queue (every `LOOM_EVENTS_STREAM_FLUSH_INTERVAL_S`, 1 s).
   The events stream carries budget violations only. Audit, exposure and search-trace rows
-  are inserted directly; a failed audit insert is logged and never fails the write it
-  records. Retrieval reads none of them.
+  are inserted directly; a failed audit insert is logged and fails only the two ops that
+  depend on their record, a `memory.restore` that undoes a retirement and
+  `namespace.restore` ([audit limits](../features/observability/audit.md#limits-and-failure-modes)).
+  Retrieval reads none of them.
 - **After-response projections** lost in a crash are rebuilt by the repair workers.
 - **ClickHouse OSS single node.** No replication and no point-in-time recovery. ClickHouse
   Cloud, or a replicated OSS cluster, is the production path. Back up with ClickHouse
@@ -464,7 +471,8 @@ The metrics are described in [monitoring](../operations/monitoring.md).
   then runs as a plain miss).
 - **Events-stream telemetry** (budget violations) is drained on `SIGTERM`; a `SIGKILL` or
   OOM loses at most one flush interval of it, never audit or memory rows.
-- **Namespace size drives read latency**, because vector reads are exact scans.
+- **Namespace size drives read latency**, because vector reads scan the namespace's rows
+  with no vector index.
 - **Single-node ClickHouse OSS** has no replication and no failover.
 
 ## Knowledge restore

@@ -337,8 +337,8 @@ async def run_saga(
     with erasure_mutations.saga_scope(erasure_id):
         try:
             if input.scope_type == "user_id":
-                # A user's erasure purges when asked (a GDPR deletion): the rows
-                # leave the parts, not just the readable set.
+                # A user's erasure purges when asked: the rows leave the parts, not just
+                # the readable set.
                 with erasure_mutations.purge_scope(census_purge):
                     steps = await _saga_user_id(
                         input.org,

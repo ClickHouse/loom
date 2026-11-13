@@ -288,16 +288,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "WHEN: Explicit, unambiguous user request — 'delete the X "
         "doc', 'remove the lease from my library'.\n"
         "WHEN NOT: Never as cleanup, never on inferred intent. For "
-        "GDPR / right-to-erasure use erasure.request — that cascades "
+        "erasing a user's data, use erasure.request — that cascades "
         "across external systems too.\n"
         "ARGS: Just `source_uri`."
     ),
     "erasure.request": (
-        "GDPR Article 17 forgetting. DESTRUCTIVE — only call on an explicit, "
-        "unambiguous request to delete all data about a user/namespace."
+        "Erase the rows about a user or namespace (the audit trail is kept). "
+        "DESTRUCTIVE — only call on an explicit, unambiguous request to erase "
+        "a user's or namespace's data."
     ),
     "erasure.export": (
-        "GDPR Article 20 portability. Returns a complete dump of a user's or namespace's data."
+        "Export the rows about a user or namespace, each section capped at `section_limit`."
     ),
     # ---- Namespace lifecycle + membership ----
     "namespace.register": (

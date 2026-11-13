@@ -68,20 +68,21 @@ async def handle_calibration_get(input: CalibrationGetInput) -> CalibrationGetOu
 
 ### Ops addressed by an org-wide id
 
-An op that takes only `(org, memory_id)` (`memory.get_by_id`, `memory.update_by_id`, `memory.redact`) gets no namespace from the transport. Declare it `row_scoped=True`, fetch the row, check its namespace and **hide** a foreign row:
+An op that takes only `(org, memory_id)`, such as `memory.get_by_id` or `memory.update_by_id`, gets no namespace from the transport. Declare it `row_scoped=True`, resolve the namespace the caller reaches before the read, and **hide** a foreign row:
 
 ```python
 import server.memory.store as memory_repo
-from server.auth.authz import row_in_scope
+from server.memory.app.id_namespace import namespace_for_id
 
-row = await memory_repo.get_by_id(input.memory_id, org=input.org, ...)
-if row is None:
+namespace = await namespace_for_id(input.org, input.memory_id, strong=False)
+if namespace is None:
     return MemoryGetByIdOutput(found=False)
-if not await row_in_scope(input.org, row.namespace):
+row = await memory_repo.get_by_id(input.memory_id, org=input.org, namespace=namespace, ...)
+if row is None:
     return MemoryGetByIdOutput(found=False)
 ```
 
-Answer `found=False`, never 403: a 403 confirms the id exists in another tenant. Pass `required_role=Role.WRITER` to `row_in_scope` for a write.
+Answer as for a missing row, never 403: a 403 confirms the id exists in another tenant. Pass `Role.WRITER` and `strong=True` to `namespace_for_id` for a write, so the holders are read current. An op that must read the row first, such as `memory.redact`, checks it with `authz.row_in_scope` after the fetch ([row-scoped operations](../architecture/security.md#row-scoped-operations)).
 
 ## 3. Declare the operation
 
@@ -106,19 +107,19 @@ Its latency budget is one entry of `OP_BUDGETS_P99_MS` in `server/settings/catal
 
 The declaration lives in the group's ops module, `server/<domain>/api/ops_<group>.py`, which imports the models and the handler. Append it to the module's `OPERATIONS` list. A **new group module** is imported and appended to `_OPERATION_MODULES` in `server/operations/registry.py`.
 
-| Field                         | Required | Meaning                                                                                                                                                             |
-| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                        | yes      | Dotted `<group>.<verb>`. HTTP path `/v1/<name>`; MCP tool `loom_<name with . → _>`.                                                                                 |
-| `input_model`, `output_model` | yes      | Pydantic models.                                                                                                                                                    |
-| `handler`                     | yes      | Async callable: input model → output model.                                                                                                                         |
-| `idempotent`                  | yes      | Safe to retry on a transient failure. The SDKs and clients rely on it.                                                                                              |
-| `required_role`               | yes      | `Role.VIEWER`, `WRITER`, `ADMIN`, `ORG_ADMIN` or `PLATFORM_ADMIN`.                                                                                                  |
-| `audit`                       | no       | `True`: success writes one row to `loom.audit_log`. Set it for anything that changes memory, grants, policy or configuration.                                       |
-| `writes`                      | no       | The op changes stored state although a viewer may call it and a retry is safe (a feedback row, a seen-marker). A writer role or `audit=True` already says "writes". |
-| `maturity`                    | no       | `stable` (default) or `experimental`. See [step 5](#5-check-reach-and-maturity).                                                                                    |
-| `skip_namespace_authz`        | no       | Skip the transport's namespace check for ops that act **on** a namespace (join, leave, register); the handler enforces its own rules. The role check still runs.    |
-| `deployment_scoped`           | no       | The op reads facts about the deployment (its build, its registry), not any namespace's data; a scoped token passes with its best per-namespace role.                |
-| `row_scoped`                  | no       | Addressed by an org-wide id; the handler authorizes the row with `row_in_scope` and hides a foreign row as not found.                                               |
+| Field                         | Required | Meaning                                                                                                                                                                                                                                                                                          |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                        | yes      | Dotted `<group>.<verb>`. HTTP path `/v1/<name>`; MCP tool `loom_<name with . → _>`.                                                                                                                                                                                                              |
+| `input_model`, `output_model` | yes      | Pydantic models.                                                                                                                                                                                                                                                                                 |
+| `handler`                     | yes      | Async callable: input model → output model.                                                                                                                                                                                                                                                      |
+| `idempotent`                  | yes      | Safe to retry on a transient failure. The SDKs and clients rely on it.                                                                                                                                                                                                                           |
+| `required_role`               | yes      | `Role.VIEWER`, `WRITER`, `ADMIN`, `ORG_ADMIN` or `PLATFORM_ADMIN`.                                                                                                                                                                                                                               |
+| `audit`                       | no       | `True`: success writes one row to `loom.audit_log`. Set it for anything that changes memory, grants, policy or configuration.                                                                                                                                                                    |
+| `writes`                      | no       | The op changes stored state although a viewer may call it and a retry is safe (a feedback row, a seen-marker). A writer role or `audit=True` already says "writes".                                                                                                                              |
+| `maturity`                    | no       | `stable` (default) or `experimental`. See [step 5](#5-check-reach-and-maturity).                                                                                                                                                                                                                 |
+| `skip_namespace_authz`        | no       | Skip the transport's namespace check for ops that act **on** a namespace (join, leave, register) or whose target only the handler can resolve (`memory.verify` by id, `erasure.request` by scope, `erasure.list` by caller role); the handler enforces its own rules. The role check still runs. |
+| `deployment_scoped`           | no       | The op reads facts about the deployment (its build, its registry), not any namespace's data; a scoped token passes with its best per-namespace role.                                                                                                                                             |
+| `row_scoped`                  | no       | Addressed by an org-wide id; the handler authorizes the row's scope (`namespace_for_id` before the read, or `row_in_scope` after it) and hides a foreign row as not found.                                                                                                                       |
 
 The op is **read-only** (MCP `readOnlyHint`, the `readonly` toolset) exactly when it is `idempotent`, `required_role == Role.VIEWER`, not `audit` and not `writes` (`Operation.read_only`). Clients that auto-approve read-only tools trust these flags.
 
@@ -178,7 +179,7 @@ CI fails when a generated file is stale. The generated SDK files give every clie
 
 - [ ] Models, handler, declaration, `OPERATIONS` entry (and `_OPERATION_MODULES` for a new group).
 - [ ] `required_role`, `idempotent`, `audit`, `writes`, `maturity` chosen deliberately.
-- [ ] `row_scoped` ops answer `found=False` for a foreign row.
+- [ ] `row_scoped` ops answer a foreign row as a missing one.
 - [ ] Toolset placement and, if listed, a description.
 - [ ] Tests named above pass; generated files regenerated.
 - [ ] The feature page that owns the op links its anchor in the

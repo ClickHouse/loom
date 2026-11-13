@@ -245,7 +245,7 @@ async def test_insert_request_checkpoint_writes_to_erasure_requests() -> None:
 
 
 # ----------------------------------------------------------------------
-# GDPR cascade — shared rows promoted from an erased user
+# Erasure cascade — shared rows promoted from an erased user
 # ----------------------------------------------------------------------
 
 
