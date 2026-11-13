@@ -265,6 +265,21 @@ def test_an_anchor_into_a_stale_page_waits_for_that_page(
     monkeypatch.setattr(t, "ROOT", tmp_path)
     assert len(t.link_problems()) == 1
     assert t.link_problems(frozenset({"i18n/ja/b.md"})) == []
+    # The other way round: a's link is old, b is new.
+    assert t.link_problems(frozenset({"i18n/ja/a.md"})) == []
+
+
+def test_check_skips_anchors_of_stale_pages_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ja = t.LANGUAGES[1]
+    page = t.target_path(ja.code, t.SOURCES[1])
+    monkeypatch.setattr(t, "stale", lambda model=t.DEFAULT_MODEL: [(t.SOURCES[1], ja)])
+    seen: list[frozenset[str]] = []
+    monkeypatch.setattr(t, "link_problems", lambda waiting=frozenset(): seen.append(waiting) or [])
+    assert t.check(skip_stale=True) == 0
+    assert t.check() == 1 and page in capsys.readouterr().out
+    assert seen == [frozenset({page}), frozenset()]
 
 
 def test_the_committed_translations_pass_check() -> None:

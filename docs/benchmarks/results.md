@@ -463,8 +463,8 @@ verified at (history questions keep full history), so neither arm can read a fix
   (`claude-opus-5-5`) marks each key point of a reference answer verified in the code covered or
   not, and halves the score of a reply that contradicts it.
 - **Conceptual questions** (`bench/fixtures/code_intel_qa.jsonl`, 36 questions, 10 paired runs):
-  where a mechanism lives, scored by whether the right file is among the three files the agent
-  ends its reply with.
+  where a mechanism lives, scored by whether the right file is among the up to three files the
+  agent is asked to end its reply with.
 - **Multi-hop work** (`bench/fixtures/code_work_multihop.jsonl`, 24 questions, 3 paired runs): a
   bug report traced to its fix on a release branch whose fix was never backported (the branch
   checkout and the branch's own index), the tests that would catch a change, and setting- or

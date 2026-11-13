@@ -82,7 +82,8 @@ Both coding setups use Claude Code (`claude-sonnet-5`) on the ClickHouse codebas
 cost is the whole session's model bill, excluding Loom's server-side model calls, hosting
 and indexing. Answer quality
 measures coverage of a verified answer's key points, with a contradiction penalty.
-File localization counts the right file among three named files.
+File localization counts whether the right file is among the up to three files the agent is
+asked to name at the end of its answer.
 
 The memory row compares retrieved memories with full conversation history using
 the same `gpt-5` reader. Token savings exclude memory construction; the 94% vs 90%

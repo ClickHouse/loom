@@ -429,8 +429,9 @@ def prose_links(text: str) -> list[re.Match[str]]:
 
 
 def link_problems(stale_pages: frozenset[str] = frozenset()) -> list[str]:
-    """Relative links and `#anchors` in i18n/ that point at nothing. An anchor into one of
-    `stale_pages` is not checked: that page still carries its old English's anchors."""
+    """Relative links and `#anchors` in i18n/ that point at nothing. An anchor into or out of
+    one of `stale_pages` is not checked: that page still carries its old English's anchors
+    and links."""
     problems = []
     for file in sorted((ROOT / OUT_DIR).rglob("*.md")):
         path = file.relative_to(ROOT).as_posix()
@@ -443,7 +444,7 @@ def link_problems(stale_pages: frozenset[str] = frozenset()) -> list[str]:
             )
             if not (ROOT / target).is_file():
                 problems.append(f"{path} links to {match.group(2)}, which does not exist")
-            elif target in stale_pages:
+            elif target in stale_pages or path in stale_pages:
                 continue
             elif anchor and f'<a id="{anchor}"></a>' not in (ROOT / target).read_text():
                 problems.append(f"{path} links to {match.group(2)}, which has no such anchor")
@@ -515,8 +516,8 @@ def request_chars(source: str, lang: Language) -> int:
 
 def estimate_usd(model: str, chars: int) -> float:
     """About three characters per input token, and a reply of 1.2 times the input's tokens.
-    Measured runs came within about 10% of it either way (retries add input the estimate
-    does not see). `Spend` is the hard cap; this only refuses a run that cannot fit."""
+    Measured runs cost from about 20% under the estimate to 6% over it (retries add input
+    the estimate does not see). `Spend` is the hard cap; this only refuses a run that cannot fit."""
     price_in, price_out = PRICES[model]
     tokens = chars / 3
     return (tokens * price_in + 1.2 * tokens * price_out) / 1e6
@@ -689,17 +690,19 @@ def update(every: bool = False, codes: list[str] | None = None) -> int:
         )
     if work:
         key = os.environ.get("ANTHROPIC_API_KEY") or sys.exit("ANTHROPIC_API_KEY is not set")
-        with ThreadPoolExecutor(WORKERS) as pool:
-            futures = [pool.submit(translate_page, s, lg, key, spend) for s, lg in work]
-            done, _ = wait(futures, return_when=FIRST_EXCEPTION)
-            failed = [f for f in done if f.exception()]
-            if failed:
-                spend.stopped.set()
-                pool.shutdown(cancel_futures=True)
-                raise SystemExit(f"{failed[0].exception()} (pages finished so far are written)")
-    print(
-        f"done: {spend.input_tokens} input, {spend.output_tokens} output tokens, ${spend.usd:.2f}"
-    )
+        try:
+            with ThreadPoolExecutor(WORKERS) as pool:
+                futures = [pool.submit(translate_page, s, lg, key, spend) for s, lg in work]
+                done, _ = wait(futures, return_when=FIRST_EXCEPTION)
+                failed = [f for f in done if f.exception()]
+                if failed:
+                    spend.stopped.set()
+                    pool.shutdown(cancel_futures=True)
+                    raise SystemExit(f"{failed[0].exception()} (pages finished so far are written)")
+        finally:
+            # Printed on failure too, so a stopped run's spend is known.
+            tokens = f"{spend.input_tokens} input, {spend.output_tokens} output tokens"
+            print(f"spent: {tokens}, ${spend.usd:.2f}")
     return 0
 
 
