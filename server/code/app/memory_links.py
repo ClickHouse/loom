@@ -12,14 +12,13 @@ from dataclasses import dataclass
 
 from server.code.app.index import gitrepo, mirrors
 from server.code.app.index.bootstrap import holds
-from server.code.app.index.denylist import Denylist, indexes_symbols, load_denylist
+from server.code.app.index.denylist import Denylist, indexes_symbols, load_denylist, takes_path
 from server.code.domain.anchor import Definition
 from server.code.domain.declaration import edit_pattern
 from server.code.domain.definitions import definitions
 from server.code.domain.extract.treesitter import ParsedFile
 from server.code.domain.index.remote import repo_tag
 from server.code.domain.index.repos import (
-    WHOLE_TREE,
     RepoConfig,
     configured_repos,
     docs_namespaces,
@@ -144,8 +143,7 @@ class IngestScope:
 
     def takes(self, path: str) -> bool:
         """`path` is read by the ingest, its definitions indexed, by its name."""
-        prefixes = tuple(self.cfg.path_prefixes) or WHOLE_TREE
-        return path.startswith(prefixes) and indexes_symbols(self.denylist.reason(path))
+        return takes_path(self.cfg.path_prefixes, self.denylist, path, declared=True)
 
 
 async def ingest_scope(org: str, namespace: str, commit: str) -> IngestScope | None:

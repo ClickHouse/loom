@@ -171,6 +171,18 @@ def indexes_symbols(reason: str) -> bool:
     return not reason or reason.startswith(GENERATED_REFUSAL)
 
 
+def takes_path(
+    path_prefixes: tuple[str, ...], denylist: Denylist, path: str, *, declared: bool
+) -> bool:
+    """An entry's scope by a path's name: under its prefixes (none = the whole tree) and
+    not refused by its denylist, or, with `declared`, refused only as a generated file,
+    whose definitions the ingest still declares."""
+    if not path.startswith(tuple(path_prefixes) or ("",)):
+        return False
+    why = denylist.reason(path)
+    return indexes_symbols(why) if declared else not why
+
+
 @dataclass(frozen=True)
 class Denylist:
     builtin: bool = False
@@ -189,7 +201,7 @@ class Denylist:
         if self.exclude_generated:
             gen = is_generated(path, source)
             if gen:
-                return f"excluded: generated ({gen})"
+                return f"{GENERATED_REFUSAL} ({gen})"
         return ""
 
     # Directory prefixes under `contrib/` that ARE indexed although `include_contrib` is
@@ -220,7 +232,7 @@ class Denylist:
         base = posixpath.basename(lower)
         for infix in DEFAULT_INFIXES:
             if infix in base:
-                return f"excluded: generated ({infix})"
+                return f"{GENERATED_REFUSAL} ({infix})"
         segments = path.split("/")[:-1]
         for seg in segments:
             if seg in DEFAULT_DIRS:
