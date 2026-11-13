@@ -20,10 +20,12 @@ what it gives in each language is in [code index by language](code-intelligence-
   needs.
 - **Freshness you can see.** The index trails the branch by merged commits, and a stale
   answer says so. [Freshness](../features/code-index/freshness.md)
-- **Plugins.** The Claude Code plugin connects on the `coding` toolset and the Codex plugin
-  on `core,coding,tracker,tasks`; both list the code tools. Cursor and other MCP clients use
+- **Plugins and MCP clients.** The Claude Code plugin connects on the `coding` toolset and
+  the Codex plugin on `core,coding,tracker,tasks`; both list the code tools. Cursor, GitHub
+  Copilot, Gemini CLI, Cline, Kilo Code, OpenCode and other MCP clients use
   `?toolset=coding`.
-  [Connect a coding agent](../getting-started/connect-a-coding-agent.md)
+  [Connect a coding agent](../getting-started/connect-a-coding-agent.md) ·
+  [the config for each client](../features/integrations/mcp-clients.md#other-editors-and-agents)
 
 ## Measured
 
