@@ -15,7 +15,6 @@ import { canHold, collectionOrder, collectionTitle, distinctTitle, MAX_TITLE, ti
 import {
   collectionPath,
   cycleStart,
-  FIRST_SHOWN,
   MORE_SHOWN,
   placeLinks,
   isSharedWithMe,
@@ -312,7 +311,7 @@ export const LibraryTree = memo(function LibraryTree({
   );
 });
 
-/** A section's top-level places: the first FIRST_SHOWN, Show more adding MORE_SHOWN at a time,
+/** A section's top-level places: the first MORE_SHOWN, Show more adding MORE_SHOWN at a time,
  *  and the top of the place shown wherever it sits. */
 function PlaceSection({
   id,
@@ -327,7 +326,7 @@ function PlaceSection({
   shownTop: CollectionEntry | null;
   branch: (c: CollectionEntry, depth: number) => ReactNode;
 }) {
-  const [count, setCount] = useState(FIRST_SHOWN);
+  const [count, setCount] = useState(MORE_SHOWN);
   const list = useRef<HTMLUListElement | null>(null);
   const left = roots.length - count;
   // The last Show more removes its button: the focus goes to the first place it added.

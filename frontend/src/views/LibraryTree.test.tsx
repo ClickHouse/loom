@@ -108,21 +108,22 @@ describe("LibraryTree", () => {
     expect(places()).toContain("Engineering");
   });
 
-  it("lists the first six top-level collections, Show more adding fifty, and the one shown wherever it sits", async () => {
-    const many = Array.from({ length: 60 }, (_, i) =>
-      entry(`col-k${String(i).padStart(2, "0")}`, { title: `Kid ${String(i).padStart(2, "0")}` }),
-    );
-    tree({ rows: many, shelf: null, current: "col-k40" });
+  it("lists the first fifty top-level collections, Show more adding fifty, and the one shown wherever it sits", async () => {
+    const pad = (i: number) => String(i).padStart(3, "0");
+    const many = Array.from({ length: 120 }, (_, i) => entry(`col-k${pad(i)}`, { title: `Kid ${pad(i)}` }));
+    tree({ rows: many, shelf: null, current: "col-k080" });
     const mine = screen.getByRole("list", { name: "Collections" });
-    expect(
+    const names = () =>
       within(mine)
         .getAllByRole("link")
-        .map((a) => a.textContent),
-    ).toEqual(["Kid 00", "Kid 01", "Kid 02", "Kid 03", "Kid 04", "Kid 05", "Kid 40"]);
+        .map((a) => a.textContent);
+    expect(names()).toHaveLength(51);
+    expect(names().at(49)).toBe("Kid 049");
+    expect(names().at(-1)).toBe("Kid 080");
     await userEvent.click(screen.getByRole("button", { name: "Show 50 more" }));
-    expect(within(mine).getAllByRole("link")).toHaveLength(56);
-    await userEvent.click(screen.getByRole("button", { name: "Show 4 more" }));
-    expect(within(mine).getAllByRole("link")).toHaveLength(60);
+    expect(names()).toHaveLength(100);
+    await userEvent.click(screen.getByRole("button", { name: "Show 20 more" }));
+    expect(names()).toHaveLength(120);
   });
 
   it("names a show or hide button in a tooltip on focus", async () => {
