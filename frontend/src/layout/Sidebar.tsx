@@ -3,7 +3,7 @@ import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../components/IconButton";
 import { Tip } from "../components/ui/Tooltip";
-import { useStore, viewHref, type View } from "../lib/state";
+import { useStore, viewHref, type AdminBadges, type View } from "../lib/state";
 import { countConflicts, countNewAgents, type MyNamespaceEntry, type WhoAmI } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
 import { sharedBudgetStatus, sharedHasAutoResolved } from "../lib/sharedReads";
@@ -207,19 +207,6 @@ export function groupAdminItems(visible: NavItem[]): NavGroup[] {
   return out;
 }
 
-/** One namespace's badge answer: its open conflicts, whether Loom retired a memory on its
- *  own lately, whether it is over its LLM cap, and the agents new in the last 24 h. */
-export interface AdminBadges {
-  conflicts: number | null;
-  autoResolved?: boolean;
-  overCap: boolean;
-  newAgents: number;
-}
-
-export const badgeKeyOf = (i: { org: string; namespace: string } | null) => (i ? `badges:${i.org}/${i.namespace}` : "");
-/** The badge answer the sidebar last read for this tab's session, or null. */
-export const rememberedBadges = (key: string) => readSession<AdminBadges>(key, BADGE_SESSION_TTL_MS);
-
 /** The Admin entries a caller sees, in the drawer's order, with their badges. None unless
  *  the caller admins the namespace (an admin grant from list_mine, or an admin claim), so a
  *  viewer never sees an entry with a 403 behind it. Review queue leads while there is
@@ -260,10 +247,9 @@ export function Sidebar() {
   const collapsed = useStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useStore((s) => s.toggleSidebar);
   const [adminOpen, setAdminOpen] = useState(isDrawerView(view));
-  // Lean notification surface: badge admin items that have actionable state right now.
-  const [badges, setBadges] = useState<AdminBadges | null>(null);
-  const newAgentsRef = useRef(0);
-  newAgentsRef.current = badges?.newAgents ?? 0;
+  // Lean notification surface: badge admin items that have actionable state right now. The
+  // answer is kept in the store, where the phone's More sheet reads it too.
+  const badges = useStore((s) => s.adminBadges);
   const agentsTick = useRef(0);
 
   const whoami = useStore((s) => s.whoami);
@@ -291,14 +277,14 @@ export function Sidebar() {
   // first paint, on idle — a badge number is not what the person is waiting for — and the
   // last answer is remembered for the session, so a full reload shows the badges at once
   // from it and refreshes them behind.
-  const badgeKey = badgeKeyOf(identity);
+  const badgeKey = identity ? `badges:${identity.org}/${identity.namespace}` : "";
   // A badge belongs to one namespace: on a switch, show the new namespace's remembered
   // answer or nothing — never the previous namespace's numbers — and make its first read
   // ask agents.connected, so no tick carries the old count into the new cache key.
   useEffect(() => {
     if (!badgeKey) return;
     agentsTick.current = 0;
-    setBadges(rememberedBadges(badgeKey));
+    useStore.setState({ adminBadges: readSession<AdminBadges>(badgeKey, BADGE_SESSION_TTL_MS) });
   }, [badgeKey]);
   useAfterPaint(() => {
     if (!identity || !pollsBadges) return;
@@ -360,13 +346,13 @@ export function Sidebar() {
             }),
         );
       } else {
-        next.newAgents = newAgentsRef.current;
+        next.newAgents = useStore.getState().adminBadges?.newAgents ?? 0;
       }
       agentsTick.current += 1;
       // One answer once every read settles: a failed read hides its badge.
       await Promise.allSettled(tasks);
       if (cancelled) return;
-      setBadges(next);
+      useStore.setState({ adminBadges: next });
       writeSession(badgeKey, next);
     };
     void fetch_();

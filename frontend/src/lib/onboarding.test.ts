@@ -39,7 +39,7 @@ describe("shouldShowGettingStarted", () => {
     ).toBe(false);
   });
 
-  it("ignores repositories, wildcards and pending requests when counting other spaces", () => {
+  it("ignores repositories, wildcards and pending requests when counting other namespaces", () => {
     const mine = [
       row("personal-a"),
       row("repo-1", { kind: "code" }),

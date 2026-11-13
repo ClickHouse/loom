@@ -26,7 +26,7 @@ export const PLANE_PAGES: Record<string, PlanePage | null> = {
   conversations: { view: "sessions", page: "Conversations" },
   profile: { view: "profile", page: "Profile" },
   conflicts: { view: "admin:review_queue", page: "Review queue", admin: true },
-  // Erasures are a tab of Activity, which no link opens: Activity opens on its events.
+  // Erasures are a tab of the Audit log, which no link opens: it opens on its events.
   erasure: null,
   scratchpad: null,
   checkpoints: null,

@@ -383,8 +383,8 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
               </div>
               {name.trim() && (
                 <p className="rounded bg-surface-2 px-3 py-2 text-xs text-text-muted">
-                  You'll own <span className="font-mono text-text">{name.trim()}</span> — your private space. You can
-                  create more namespaces later from the dashboard.
+                  You'll own <span className="font-mono text-text">{name.trim()}</span> — your private namespace. You
+                  can create more namespaces later from the dashboard.
                 </p>
               )}
               <Button

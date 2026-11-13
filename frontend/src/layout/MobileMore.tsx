@@ -1,17 +1,8 @@
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Modal } from "../components/ui/Modal";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { useStore, viewHref } from "../lib/state";
-import {
-  adminItems,
-  badgeKeyOf,
-  NavBadge,
-  rememberedBadges,
-  RAIL_GROUPS,
-  SETTINGS_ITEM,
-  type AdminBadges,
-  type NavItem,
-} from "./Sidebar";
+import { useStore, viewHref, type AdminBadges } from "../lib/state";
+import { adminItems, NavBadge, RAIL_GROUPS, SETTINGS_ITEM, type NavItem } from "./Sidebar";
 import { ACTIVE, PRIMARY_IDS } from "./mobileTabs";
 
 // The sheet is generated from the sidebar's own nav arrays rather than a second hand-written
@@ -55,14 +46,10 @@ export default function MoreSheet({ onClose }: { onClose: () => void }) {
   const setView = useStore((s) => s.setView);
   const whoami = useStore((s) => s.whoami);
   const myNamespaces = useStore((s) => s.myNamespaces);
-  const identity = useStore((s) => s.identity);
-  // The sidebar stays mounted below md and reads the badges; the sheet shows its last answer.
-  const groups = mobileMoreItems(
-    whoami,
-    myNamespaces,
-    identity?.namespace ?? "",
-    rememberedBadges(badgeKeyOf(identity)),
-  );
+  const namespace = useStore((s) => s.identity?.namespace ?? "");
+  // The sidebar stays mounted below md and reads the badges; the sheet shows its latest answer.
+  const badges = useStore((s) => s.adminBadges);
+  const groups = mobileMoreItems(whoami, myNamespaces, namespace, badges);
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title="More" className="w-full max-w-[520px]">
       {groups.map((g) => (

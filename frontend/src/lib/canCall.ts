@@ -57,7 +57,7 @@ export const OP_MIN_ROLE = {
   "agents.connected": VIEWER,
   "audit.list": VIEWER,
   "erasure.list": VIEWER,
-  // Activity's Exposure tab reads on open; the Agents page's "Forget its memories".
+  // The Audit log's Exposure tab reads on open; the Agents page's "Forget its memories".
   "memory.exposure_summary": ADMIN,
   "memory.clear": ADMIN,
   "admin/workers.status": ADMIN_CLAIM,

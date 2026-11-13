@@ -1,5 +1,5 @@
 // The automatic retirements' wording and the restores read beside them, for the Review
-// queue and Activity. Kept out of audit.ts, which the sidebar badge pulls into the index
+// queue and the Audit log. Kept out of audit.ts, which the sidebar badge pulls into the index
 // chunk.
 import type { Identity, RequestOpts } from "../api";
 import { parseChTime } from "../lib/format";
@@ -8,7 +8,7 @@ import { listAuditLog, parseAuditSubject, type AutoResolveReason } from "./audit
 // ===== automatic retirements: wording =====
 
 /** Why Loom retired a memory, in plain words. No pronoun, so it reads for one row in the
- *  Review queue and for "Loom retired N memories automatically (…)" in Activity. */
+ *  Review queue and for "Loom retired N memories automatically (…)" in the Audit log. */
 export const AUTO_RESOLVE_REASON_TEXT: Record<AutoResolveReason, string> = {
   conflict_resolver: "Replaced by a later statement of the same attribute",
   same_key_newest_wins: "Replaced by a newer write (namespace policy)",

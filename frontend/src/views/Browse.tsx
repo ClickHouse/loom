@@ -79,7 +79,7 @@ const JOIN_ROLES: Array<{
  *
  * Surfaces `namespace.browse` (list public namespaces) and
  * `namespace.join` (claim a viewer grant on one) so users can discover
- * and opt into shared team workspaces without leaving the dashboard.
+ * and opt into shared team namespaces without leaving the dashboard.
  * Namespaces the caller already belongs to are shown as "Joined" with
  * no Join button.
  */
@@ -389,7 +389,7 @@ export function Browse() {
               kind="empty"
               icon="globe"
               title="No public namespaces yet"
-              description="Nobody in your org has opened a shared space yet. Use Create namespace and make it public, and it appears here for everyone in the org to join. Until then, your own private namespace is the only one you can use."
+              description="Nobody in your org has opened a public namespace yet. Use Create namespace and make it public, and it appears here for everyone in the org to join. Until then, your own private namespace is the only one you can use."
             />
           )}
 
@@ -507,7 +507,7 @@ export function Browse() {
 const matchesSpace = (r: { namespace: string; description?: string }, q: string) =>
   !q || r.namespace.toLowerCase().includes(q) || (r.description || "").toLowerCase().includes(q);
 
-/** Where the caller stands in a space: its row's open action, inline button and menu follow. */
+/** Where the caller stands in a namespace: its row's open action, inline button and menu follow. */
 type SpaceStanding = "none" | "pending" | "member" | "admin";
 
 interface SpaceActions {
@@ -619,7 +619,7 @@ const SpaceRow = memo(function SpaceRow({
       </Button>
     );
   return (
-    // Back to this page focuses the space that had the focus.
+    // Back to this page focuses the namespace that had the focus.
     <ListRow data-focus-key={`space:${namespace}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="min-w-0 flex-1 basis-60">

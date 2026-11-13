@@ -8,7 +8,7 @@ import { isReferenceKind, kindOf } from "../lib/namespace";
 /**
  * ScopeBadge — tells the user exactly what data they're looking at.
  *
- * Loom views mix scopes — most are namespace-scoped (Activity for the
+ * Loom views mix scopes — most are namespace-scoped (Audit log for the
  * selected namespace), one is Loom-wide (worker health), some are
  * derived from a primary key. Without an explicit indicator, users
  * see "page named Usage, namespace dropdown at the top, columns of

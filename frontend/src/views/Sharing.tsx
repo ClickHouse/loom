@@ -210,7 +210,7 @@ export function Sharing() {
 
       {/* WHAT YOU'RE SHARING — namespace membership with member count
           and your 7-day activity. Rows ordered by recent activity
-          (heat) so high-traffic spaces float to the top. */}
+          (heat) so high-traffic namespaces float to the top. */}
       <section className="mb-8">
         <Title type="h2" size="sm" className="mb-3">
           What you're sharing

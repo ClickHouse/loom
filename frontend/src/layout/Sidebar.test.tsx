@@ -250,6 +250,49 @@ describe("the admin list on every width", () => {
     expect(hrefs(admin)).toEqual(sidebar);
     expect(within(admin).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
   });
+
+  it("keeps the sheet's Review queue past the badge cache's minute: the sheet reads the store", async () => {
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    render(<Sidebar />);
+    await painted();
+    const later = Date.now() + 61_000;
+    vi.spyOn(Date, "now").mockReturnValue(later);
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    const sheet = await screen.findByRole("dialog", { name: "More" });
+    const admin = within(sheet).getByRole("navigation", { name: "Admin" });
+    expect(within(admin).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    vi.restoreAllMocks();
+  });
+
+  it("hides a badge whose read fails, though the session remembered one", async () => {
+    sessionStorage.setItem(
+      "loom_badge_v1:badges:dev/team-a",
+      JSON.stringify({ at: Date.now(), v: { conflicts: 3, overCap: false, newAgents: 0 } }),
+    );
+    vi.mocked(countConflicts).mockRejectedValueOnce(new Error("offline"));
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    expect(screen.getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    await painted();
+    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+  });
+
+  it("shows the reads' answers together, once the slowest settles", async () => {
+    let settle: (n: number) => void = () => {};
+    vi.mocked(countNewAgents).mockReturnValueOnce(new Promise<number>((r) => (settle = r)));
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+    await act(async () => settle(2));
+    expect(screen.getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    expect(screen.getByRole("link", { name: /Agents/ })).toHaveTextContent("2");
+  });
 });
 
 describe("Sidebar collapsed rail", () => {
