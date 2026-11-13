@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `tracker.answer`
 
-Answer a tracker question in prose — or from an artefact's anchors — by running the catalogue's templates: escalation / incident context, a customer across channels, incidents / escalations /…
+Answer a tracker question in prose — or from an artefact's anchors — by running the catalogue's templates: escalation / incident context, a customer across channels, incidents / escalations…
 
 `POST /v1/tracker.answer` · MCP `loom_tracker_answer` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -119,7 +119,7 @@ Does this draft already exist?
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `verdict` | `str` | duplicate_of \| related \| none — `none` carries no items (file it) |
-| `items` | `list[dict[str, Any]]` | [{kind, number, repo, url, title, state, state_reason, component, created_at, score, confidence (null when uncalibrated), relation: duplicate \| related, relation_recorded: duplicate_of \| related_to \| fixed_by \| none (the QA graph's edge… |
+| `items` | `list[dict[str, Any]]` | [{kind, number, repo, url, title, state, state_reason, component, created_at, score, confidence (null when uncalibrated), relation: duplicate \| related, relation_recorded: duplicate_of \| related_to \| fixed_by \| none (the QA graph's edge to… |
 | `undecided` | `bool` | the top candidate sits in [related, duplicate) AND shares the component: route the list to a human |
 | `epistemic` | `str` | calibrated (a stored fit scored the items) \| uncalibrated (no fit: `related` at most, confidence null) \| degraded (a leg, or one of several trackers, did not answer: a `none` is not clearance) \| unavailable (nobody read the record) |
 | `thresholds` | `dict[str, float]` | {duplicate, related} — the served thresholds on the probability scale |
@@ -230,7 +230,7 @@ Release readiness for one version (`26.3`): the blocker rows with their status a
 
 ## `tracker.similar`
 
-The reports that already say it: duplicate and related issues / PRs for a pasted report (`text`), an existing item (`issue_number` — its own title, body, component, versions and error code become…
+The reports that already say it: duplicate and related issues / PRs for a pasted report (`text`), an existing item (`issue_number` — its own title, body, component, versions and error code become the…
 
 `POST /v1/tracker.similar` · MCP `loom_tracker_similar` · role `viewer` · read · not listed under the MCP `all` toolset
 

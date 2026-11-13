@@ -137,8 +137,8 @@ Ask a question and get a grounded answer synthesized from the caller's recalled 
 | `personalize` | `bool \| None` | `None` | A recommendation-shaped question ("can you suggest…", "what should I…") is answered from the user's recorded preferences, tools and constraints first, then tailored. |
 | `window_rel_floor` | `float \| None` | `None` | LLM-free window cut: keep synthesis rows whose cosine is >= this fraction of the best row's (e.g. 0.75), never fewer than LOOM_MEMORY_ASK_RELEVANCE_GATE_MIN_KEEP rows. |
 | `decompose` | `Literal['', 'off', 'auto', 'always']` | `''` | Question decomposition: "" or "off" = none; "always" splits this question into 2-4 sub-questions (the cheap tier) and retrieves each; "auto" does so only on multi-hop or date-of-event cues. |
-| `world_knowledge` | `Literal['', 'forbid', 'allow']` | `''` | General-knowledge bridging: "" = the server setting (LOOM_MEMORY_ASK_WORLD_KNOWLEDGE, default forbid); "allow" lets the synthesizer combine a memory fact with public knowledge, marking the sentences that did (output `grounding` =… |
-| `consistency` | `Literal['', 'inline', 'deferred']` | `''` | When the answer-vs-citation judge runs. "" = the server setting (LOOM_MEMORY_ASK_CONSISTENCY_MODE, default inline); "inline" awaits it and rides the verdict on the wire; "deferred" answers first — the wire fields stay empty and the… |
+| `world_knowledge` | `Literal['', 'forbid', 'allow']` | `''` | General-knowledge bridging: "" = the server setting (LOOM_MEMORY_ASK_WORLD_KNOWLEDGE, default forbid); "allow" lets the synthesizer combine a memory fact with public knowledge, marking the sentences that did (output `grounding` = "mixed")… |
+| `consistency` | `Literal['', 'inline', 'deferred']` | `''` | When the answer-vs-citation judge runs. "" = the server setting (LOOM_MEMORY_ASK_CONSISTENCY_MODE, default inline); "inline" awaits it and rides the verdict on the wire; "deferred" answers first — the wire fields stay empty and the verdict… |
 | `route_prior` | `str` | `''` | The verdict prior for the cheap-vs-strong router. "" = the server setting (LOOM_MEMORY_ASK_SYNTH_ROUTE_PRIOR, default off); "off" forces the rule-only router; "measured" the shipped table; or a JSON object of route -> contradicted rate. |
 | `route_prior_max_cheap` | `float \| None` | `None` | Contradiction rate at or under which a strong-routed ask goes cheap; None = the deployment setting. |
 | `mid_model` | `str` | `''` | The mid synthesis tier, pinned per request. |
@@ -1345,7 +1345,7 @@ Apply one outcome to many recalled memories in a single call — the bulk form o
 
 ## `memory.outline`
 
-A namespace's table of contents, read from structure alone: row counts by type, the dated sessions with their digest's first line, the hub entities by degree, the communities when a pass has…
+A namespace's table of contents, read from structure alone: row counts by type, the dated sessions with their digest's first line, the hub entities by degree, the communities when a pass has computed…
 
 `POST /v1/memory.outline` · MCP `loom_memory_outline` · role `viewer` · read · not listed under the MCP `all` toolset
 

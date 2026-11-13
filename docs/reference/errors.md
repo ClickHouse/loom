@@ -239,7 +239,7 @@ HTTP 403, raised as `server.core.errors.AssistantSelfCallError`. An assistant an
 
 #### `ASSISTANT_UNAVAILABLE`
 
-HTTP 503, raised as `server.core.errors.AssistantUnavailableError`. The assistant cannot answer in this web process: no LibreChat is configured (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its caller's token), or this process's setup… Category `configuration`, retryable: no.
+HTTP 503, raised as `server.core.errors.AssistantUnavailableError`. The assistant cannot answer in this web process: no LibreChat is configured (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its caller's token), or this process's setup has… Category `configuration`, retryable: no.
 
 #### `ASSISTANT_UPSTREAM_FAILED`
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.codegen.page_summary import first_sentence, page_summary
+from scripts.codegen.page_summary import first_sentence, page_summary, shorten
 
 
 @pytest.mark.parametrize(
@@ -42,3 +42,15 @@ def test_a_long_link_target_does_not_push_the_cut_inside_the_link(tmp_path: Path
     _title, summary = page_summary(page)
     assert "[" not in summary and "](" not in summary
     assert len(summary) <= 240
+
+
+@pytest.mark.parametrize(
+    ("text", "limit", "cut"),
+    [
+        ("one two three", 20, "one two three"),  # it fits
+        ("one two three", 10, "one two…"),  # the slice ends inside "three"
+        ("one two three four", 14, "one two three…"),  # the slice ends on a whole word
+    ],
+)
+def test_shorten_keeps_whole_words_from_the_start(text, limit, cut) -> None:
+    assert shorten(text, limit) == cut

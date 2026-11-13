@@ -32,7 +32,7 @@ Create a collection: a namespace read and written only through grants.
 
 ## `collection.delete`
 
-Delete a collection with what it holds: a purging erasure of the namespace (documents, chunks, originals, memory leave the disk), then it leaves the directory and the tree, and its name is never…
+Delete a collection with what it holds: a purging erasure of the namespace (documents, chunks, originals, memory leave the disk), then it leaves the directory and the tree, and its name is never used…
 
 `POST /v1/collection.delete` · MCP `loom_collection_delete` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 

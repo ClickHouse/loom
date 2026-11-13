@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `inbox.list`
 
-Inboxes the caller may see: those owned by ``namespace`` (the authorized namespace) plus, with ``mine_everywhere``, every inbox in the org the caller may post to: one whose owner namespace the…
+Inboxes the caller may see: those owned by ``namespace`` (the authorized namespace) plus, with ``mine_everywhere``, every inbox in the org the caller may post to: one whose owner namespace the caller…
 
 `POST /v1/inbox.list` · MCP `loom_inbox_list` · role `viewer` · read · not listed under the MCP `all` toolset
 

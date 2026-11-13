@@ -580,7 +580,7 @@ Batched `path:line` -> enclosing function.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `results` | `list[dict[str, Any]]` | one entry per input location, input order preserved: {path, line, symbol, symbol_id, qualified_name, signature, tier, kind, start_line, end_line} kind is "function" / "method" / "fixture" for a line inside a function body; "class" /… |
+| `results` | `list[dict[str, Any]]` | one entry per input location, input order preserved: {path, line, symbol, symbol_id, qualified_name, signature, tier, kind, start_line, end_line} kind is "function" / "method" / "fixture" for a line inside a function body; "class"… |
 | `resolved` | `int` | Locations that landed inside a function, type, or document section. |
 | `paths_indexed` | `int` | distinct input paths that have any symbol rows |
 | `paths_total` | `int` | Distinct paths among the parseable input locations. |
@@ -732,7 +732,7 @@ Exact-match lookup over the indexed corpus.
 | `anchors_capped` | `bool` | more resolved functions than the 20 cap |
 | `neighbour_tokens` | `int` | Tokens of the neighbours block alone; 0 when it did not run. |
 | `note` | `str` | A caveat on the answer: the pattern was re-read as a regex or matched literally, the prefix is outside the index, or the embedding coverage is low; '' when none. |
-| `verdict` | `str` | mode=message only (dropped from the wire otherwise): raised_at \| no_template_match; the message's `{}` template; the ErrorCodes name for a `Code: N` prefix ("" when unmapped); the best statement's coverage (matched message characters /… |
+| `verdict` | `str` | mode=message only (dropped from the wire otherwise): raised_at \| no_template_match; the message's `{}` template; the ErrorCodes name for a `Code: N` prefix ("" when unmapped); the best statement's coverage (matched message characters… |
 | `template` | `str` | mode=message: the message with `{}` where arguments stood. |
 | `error_code` | `str` | mode=message: the ErrorCodes name for a `Code: N` prefix; '' when unmapped. |
 | `coverage` | `float` | mode=message: the best statement's matched share of the message characters (0..1). |
@@ -745,7 +745,7 @@ Exact-match lookup over the indexed corpus.
 
 ## `code.history`
 
-The merged PRs that most recently touched a symbol or path: number, title, author, labels, and what reviewers said about that file — up to `reviews_per_pr` (default 3, 0 = none) human review…
+The merged PRs that most recently touched a symbol or path: number, title, author, labels, and what reviewers said about that file — up to `reviews_per_pr` (default 3, 0 = none) human review comments…
 
 `POST /v1/code.history` · MCP `loom_code_history` · role `viewer` · read
 
@@ -806,7 +806,7 @@ Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius.
 | `blast_radius_score` | `float` | impacted/50 + tests/40, capped at 1. |
 | `touched_symbols` | `list[dict[str, Any]]` | Diff shape only: the symbols the change touches (hunk-overlap when a diff was given, else every function in the files), and the files that historically co-change with the touched set but are absent from it — the "did you forget to update… |
 | `co_change_missing` | `list[dict[str, Any]]` | Diff shape: co-change files absent from the change ({path, prs, of}, at most 5, support at least 4 PRs and 15%); empty for the symbol shape. |
-| `owners` | `list[dict[str, Any]]` | Who to ask: {author, share, prs, reviews, last_merged_at} from merged PRs over the seed paths — the PRs a person AUTHORED (`prs`) and the ones they REVIEWED (`reviews`, inline comments), recency-decayed (120-day half-life), share floor… |
+| `owners` | `list[dict[str, Any]]` | Who to ask: {author, share, prs, reviews, last_merged_at} from merged PRs over the seed paths — the PRs a person AUTHORED (`prs`) and the ones they REVIEWED (`reviews`, inline comments), recency-decayed (120-day half-life), share floor, at… |
 | `reverts` | `list[dict[str, Any]]` | Merged PRs over the seed paths that were REVERTS ({pr_number, title, merged_at}, newest first, <=5): the one kind of history that says what not to do, invisible to symbol lookups (the code is back) and to co-change (same files as the… |
 | `counts_floor` | `bool` | Same epistemic contract as code.callers: radius counts are floors. |
 | `unresolved_calls` | `int` | Symbol shape: call sites named like the seed(s) that the fast tier declined to bind — the size of the floor. |
@@ -1330,7 +1330,7 @@ A merged PR's review brief: the point read of what the ingest built at merge —
 | --- | --- | --- |
 | `pr_number` | `int` | The PR the brief is of (from the stored brief when the request named only `merge_sha`). |
 | `merge_sha` | `str` | The PR's merge commit; '' on an open brief or when no brief was found. |
-| `source` | `Literal['precomputed', 'built', 'built_from_mirror', 'missing']` | precomputed (the ingest built it) \| built (this call built it from the ledger's row) \| built_from_mirror (no ledger row; the merge commit, title and files came from the mirror's first-parent chain and the reviewers from the tracker… |
+| `source` | `Literal['precomputed', 'built', 'built_from_mirror', 'missing']` | precomputed (the ingest built it) \| built (this call built it from the ledger's row) \| built_from_mirror (no ledger row; the merge commit, title and files came from the mirror's first-parent chain and the reviewers from the tracker record)… |
 | `ledger` | `Literal['', 'present', 'absent']` | what the ledger said: present (this build read its row) \| absent (this or the stored build came from the mirror because the ledger had no row) \| "" (not consulted: the ingest built the row) |
 | `stored` | `bool` | True when this call built the brief and stored it |
 | `provenance` | `dict[str, Any]` | A mirror-built brief's disclosure — source, ledger, merge_commit, files, title (qa \| mirror), qa status, reviewers, author, has_test, is_backport_pr; {} for a ledger- or ingest-built brief |
@@ -1541,7 +1541,7 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | --- | --- | --- |
 | `definitions` | `list[CodeUnit]` | The resolved definitions (at most 10), fitted to `token_budget`; empty when nothing resolved (see `candidates`) or on a presence answer. |
 | `ambiguous` | `bool` | True when the served definitions carry more than one distinct name/signature pair. |
-| `hierarchy` | `dict[str, list[dict[str, Any]]]` | For a class / interface / enum definition, its type hierarchy from the `inherits` edges of both tiers, folded by qualified name: {"supertypes": [...], "subtypes": [...]} of {symbol, kind, via (extends \| implements), tier, confidence… |
+| `hierarchy` | `dict[str, list[dict[str, Any]]]` | For a class / interface / enum definition, its type hierarchy from the `inherits` edges of both tiers, folded by qualified name: {"supertypes": [...], "subtypes": [...]} of {symbol, kind, via (extends \| implements), tier, confidence, path… |
 | `candidates` | `list[dict[str, Any]]` | When nothing resolved: cheap fuzzy candidates (names + paths only). |
 | `tokens_returned` | `int` | Estimated tokens of the answer: definitions, uses, cited documents, neighbours and hierarchy blocks together. |
 | `trace_run_id` | `str` | Id of this call's trace row; pass it to `code.outcome`. |
@@ -1657,7 +1657,7 @@ Where does a new test case belong?
 
 ## `code.tests_for`
 
-Which stateless tests carry EVERY named facet: the tests that `SET` a setting, call a function, create an `ENGINE`, read a `system.*` table, use a `FORMAT`, carry a `-- Tags:` tag, or expect an…
+Which stateless tests carry EVERY named facet: the tests that `SET` a setting, call a function, create an `ENGINE`, read a `system.*` table, use a `FORMAT`, carry a `-- Tags:` tag, or expect an error…
 
 `POST /v1/code.tests_for` · MCP `loom_code_tests_for` · role `viewer` · read · not listed under the MCP `all` toolset
 
