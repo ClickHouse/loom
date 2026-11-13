@@ -144,15 +144,14 @@ class OpenAILLMClient:
     ) -> None:
         self.model = model
         self.reasoning_effort = reasoning_effort
-        if not self._needs_key:
-            self._api_key = ""
-        else:
+        self._api_key = ""
+        if self._needs_key:
             self._api_key = provider_key("openai") if api_key is None else api_key
-        if self._needs_key and not self._api_key and not gateway.keyless():
-            raise RuntimeError(
-                "OPENAI_API_KEY not set; OpenAILLMClient requires a key. "
-                "Use LOOM_LLM_PROVIDER=fake for local dev."
-            )
+            if not self._api_key and not gateway.keyless():
+                raise RuntimeError(
+                    "OPENAI_API_KEY not set; OpenAILLMClient requires a key. "
+                    "Use LOOM_LLM_PROVIDER=fake for local dev."
+                )
 
     def _root(self) -> str:
         from server.settings import settings

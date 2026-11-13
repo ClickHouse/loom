@@ -11,7 +11,8 @@ step, so a boot that stopped halfway leaves the row at a step the next one finis
    exist), delete any key a cut-short boot left, create the key;
 3. no agent id: keep the oldest agent of the definition's name and delete the rest, or
    create one;
-4. a stored definition older than this build's, or of its version with another model:
+4. a stored definition older than this build's, or of its version with another model or
+   provider:
    write it.
 """
 

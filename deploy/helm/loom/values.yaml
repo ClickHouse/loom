@@ -382,8 +382,9 @@ extractor:
 assistant:
   enabled: false
   # A Secret in the release namespace with CREDS_KEY (64 hex), CREDS_IV (32 hex),
-  # JWT_SECRET, JWT_REFRESH_SECRET and ANTHROPIC_API_KEY (optional LOCAL_LLM_BASE_URL, for
-  # LOOM_ASSISTANT_PROVIDER=local); required when enabled.
+  # JWT_SECRET, JWT_REFRESH_SECRET, and ANTHROPIC_API_KEY while the assistant runs on
+  # Anthropic (LOCAL_LLM_BASE_URL instead for LOOM_ASSISTANT_PROVIDER=local); required when
+  # enabled.
   existingSecret: ""
   image:
     repository: registry.librechat.ai/librechat-ai/librechat
