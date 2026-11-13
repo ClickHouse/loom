@@ -4137,8 +4137,15 @@ async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypat
     monkeypatch.setattr(code_links.code, "grep_words", grep)
     monkeypatch.setattr(code_links.code, "indexed_names", indexed_names)
     assert await files.containing("c1", "fetch_rows", "c0", limit=5) == ["pkg/b.py", "pkg/z.py"]
-    assert await files.names("c1", "pkg/z.py") == set()  # no definition read from it
     assert await files.names("c1", "pkg/b.py") == {"pkg.b::fetch_rows"}  # read once
+
+    async def unparsed(org, cns, commit, path):
+        raise code_links.code.ParseFailed(path, "parse: SyntaxError")
+
+    # what does not parse is no evidence for a later read in the pass: it still raises
+    monkeypatch.setattr(code_links.code, "names_at", unparsed)
+    with pytest.raises(code_links.code.ParseFailed):
+        await files.names("c1", "pkg/z.py")
 
 
 @pytest.mark.asyncio
@@ -4245,3 +4252,18 @@ async def test_a_file_over_the_ingest_byte_cap_adds_no_definition(monkeypatch, t
     assert await memory_links.indexed_names(scope, head, "pkg/big.py") is None
     monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 1 << 20)
     assert await memory_links.indexed_names(scope, head, "pkg/big.py") == {"pkg.big::fetch_rows"}
+
+
+@pytest.mark.asyncio
+async def test_a_missing_link_stays_missing_when_the_mirror_cannot_be_read(monkeypatch) -> None:
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False)
+
+    async def containing(head, literal, base, *, limit):
+        return None
+
+    monkeypatch.setattr(files, "containing", containing)
+    lost = row | {"state": "missing", "changed_since": "c1"}
+    later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
+    moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
+    assert moves == []  # never unresolved: a missing link is not made unsure

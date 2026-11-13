@@ -405,6 +405,7 @@ async def grep_paths(
     except OSError as e:  # an argument list past the system's limit, or no git to run
         if e.errno == errno.E2BIG:
             raise ArgumentsTooLong(f"git grep {literal[:40]}: {len(pathspecs)} paths") from None
+        logger.warning("git grep did not start: %s", e)  # the cause, for the operator
         raise GitError(f"git grep {literal[:40]} did not start") from None
     try:
         out, err = await communicate_or_kill(proc, timeout_s=timeout_s)

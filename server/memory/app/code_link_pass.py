@@ -162,17 +162,19 @@ class RepoReads:
     async def _indexed_names(
         self, scope: code.IngestScope, head: str, path: str
     ) -> set[str] | None:
-        """`code.indexed_names`, once per pass; the names it read serve `names` too, so a
-        file is read and parsed once."""
+        """`code.indexed_names`, once per pass: one read answers both the content refusal
+        and the names, which then serve `names` too. A file that does not parse reads as
+        defining nothing here, as the ingest indexes nothing of it, but `names` still
+        raises for it."""
 
-        async def read() -> set[str] | None:
+        async def read() -> tuple[set[str] | None, bool]:
             try:
-                return await code.indexed_names(scope, head, path)
+                return await code.indexed_names(scope, head, path), True
             except code.ParseFailed:
-                return set()  # no definition is read from it, as the ingest reads none
+                return set(), False
 
-        names = await self._once(("indexed", head, path), read)
-        if names is not None:
+        names, parsed = await self._once(("indexed", head, path), read)
+        if names is not None and parsed:
             self._read.setdefault(("names", head, path), names)
         return names
 
