@@ -64,7 +64,6 @@ import { TaskBoard } from "./tasks/TaskBoard";
 import { TaskPanel } from "./tasks/TaskPanel";
 import { copyTaskId } from "./tasks/TaskBits";
 import type { ReasonAction } from "../flows/TaskActionDialog";
-import { shortcutOff } from "../lib/shortcuts";
 import { useMedia } from "../lib/useMedia";
 
 // Dialogs load on the click that opens them.
@@ -94,8 +93,8 @@ const InboxSettingsDialog = lazy(() =>
  * visible. "All inboxes" reads one `task.list` per inbox (the op needs an inbox), on that
  * click only. The panel reads `task.get` + `task.history` when it opens.
  *
- * Keys: j / k move, Enter opens, a accepts, s starts, c marks done, x won't do, d defers,
- * / focuses the search, Esc closes the panel.
+ * Keys: the list is a grid (the arrows move, Enter opens), a board card opens on Enter or
+ * Space, Esc closes the panel; every move on a task is a button or a menu item.
  */
 type Mode = "list" | "board";
 
@@ -170,7 +169,7 @@ function neighbourOf(taskId: string): string | null {
   return i < 0 ? null : (ids[i + 1] ?? ids[i - 1] ?? null);
 }
 
-/** Where a move was made: a row (its button, its menu, a key) or the open panel. */
+/** Where a move was made: a row (its button or its menu) or the open panel. */
 type Origin = "list" | "panel";
 
 function inEditable(el: EventTarget | null): boolean {
@@ -197,7 +196,6 @@ function isFullTask(t: TaskListRow | TaskRow): t is TaskRow {
 export function Tasks() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  const openHelp = useStore((s) => s.openHelp);
   const roleRead = useNamespaceRoleRead(identity.namespace);
   const caller = useMemo(
     () => ({ org: identity.org, namespace: identity.namespace }),
@@ -462,7 +460,7 @@ export function Tasks() {
     setViewParam("task", null);
   }, []);
 
-  // Moving the selection (j / k here, the arrow keys in the list) follows with the open
+  // Moving the selection (the arrow keys in the list) follows with the open
   // panel and takes the focus to the row.
   const selectRow = useCallback(
     (r: TaskListRow) => {
@@ -563,67 +561,27 @@ export function Tasks() {
     setProgressNotes((m) => (m.get(taskId) === note ? m : new Map(m).set(taskId, note)));
   }, []);
 
-  // Keys: j / k over the rows on screen, Enter opens, a / s / c / x / d act on the
-  // selected row, / focuses the search, Esc closes the panel. Ignored while typing or
-  // while a dialog or a menu is open.
-  const rowsById = useMemo(() => new Map((rows ?? []).map((r) => [r.task_id, r])), [rows]);
-  const stateRef = useRef({ selectedId, openRow, onAction, openTask, closeTask, selectRow, rowsById });
-  stateRef.current = { selectedId, openRow, onAction, openTask, closeTask, selectRow, rowsById };
+  // Page keys: Enter opens the selected task when nothing has the focus, Esc closes the
+  // panel. Ignored while typing or while a dialog or a menu is open; the list's own keys are
+  // the grid's (tasks/TaskList.tsx).
+  const stateRef = useRef({ selectedId, openRow, openTask, closeTask, rows });
+  stateRef.current = { selectedId, openRow, openTask, closeTask, rows };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inEditable(e.target) || shortcutOff(e)) return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || inEditable(e.target)) return;
       if (document.querySelector('[role="dialog"], [role="menu"]')) return;
-      const { selectedId: sel, openRow: open, onAction: act, openTask: openT, closeTask: closeT } = stateRef.current;
-      const list = shownTaskIds()
-        .map((id) => stateRef.current.rowsById.get(id))
-        .filter((r): r is TaskListRow => !!r);
-      // A key pressed on a row or card acts on that one, and j / k move from it (focus and
-      // selection can part: a card Tabbed to, the row Show all focused).
-      const focusedId =
-        e.target instanceof Element ? e.target.closest<HTMLElement>("[data-task-id]")?.dataset.taskId : undefined;
-      const focused = focusedId ? stateRef.current.rowsById.get(focusedId) : undefined;
-      const i = list.findIndex((r) => r.task_id === (focused?.task_id ?? sel));
-      const move = (to: number) => {
-        const r = list[Math.max(0, Math.min(list.length - 1, to))];
-        if (r) stateRef.current.selectRow(r);
-      };
-      // Else the selected row as drawn, else the task open in the panel (a deep link past a
-      // lane's first rows); a selection a filter hid, with no panel open, takes no keys.
-      const row =
-        focused ??
-        (i >= 0 ? list[i] : open && open.task_id === sel ? (stateRef.current.rowsById.get(sel) ?? open) : null);
-      const origin: Origin = e.target instanceof Element && e.target.closest(".tq-panel") ? "panel" : "list";
-      const keyed: Record<string, TaskAction> = { a: "accept", s: "start", c: "complete", x: "wont_do", d: "defer" };
-      switch (e.key) {
-        case "j":
+      const { selectedId: sel, openRow: open, openTask: openT, closeTask: closeT } = stateRef.current;
+      if (e.key === "Enter" && e.target === document.body) {
+        const row = shownTaskIds().includes(sel ?? "")
+          ? stateRef.current.rows?.find((r) => r.task_id === sel)
+          : undefined;
+        if (row) {
           e.preventDefault();
-          move(i < 0 ? 0 : i + 1);
-          break;
-        case "k":
-          e.preventDefault();
-          move(i < 0 ? 0 : i - 1);
-          break;
-        case "Enter":
-          if (row && e.target === document.body) {
-            e.preventDefault();
-            openT(row);
-          }
-          break;
-        case "Escape":
-          if (open) {
-            e.preventDefault();
-            closeT();
-          }
-          break;
-        case "/":
-          e.preventDefault();
-          document.querySelector<HTMLElement>('.tq-main input[aria-label="Search tasks"]')?.focus();
-          break;
-        default:
-          if (row && keyed[e.key]) {
-            e.preventDefault();
-            void act(keyed[e.key], row, origin);
-          }
+          openT(row);
+        }
+      } else if (e.key === "Escape" && open) {
+        e.preventDefault();
+        closeT();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -794,7 +752,6 @@ export function Tasks() {
                 >
                   Register inbox…
                 </GatedItem>
-                <Dropdown.Item onSelect={() => openHelp(true)}>Keyboard shortcuts</Dropdown.Item>
                 {options.lines}
               </Dropdown.Content>
             </Dropdown>

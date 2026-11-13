@@ -173,11 +173,6 @@ describe("MemoryInspector lifecycle actions", () => {
     const add = screen.getByLabelText("Add a tag");
     expect(add).toBeDisabled();
     expect(add).toHaveAccessibleDescription(W);
-    // Nor do the shortcuts edit or delete.
-    screen.getByRole("dialog").focus();
-    await userEvent.keyboard("e");
-    await userEvent.keyboard("d");
-    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
     const list = await menu();
     const verify = within(list).getByRole("menuitem", { name: "Verify" });
     expect(verify).toHaveAttribute("aria-disabled", "true");
@@ -329,13 +324,24 @@ describe("MemoryInspector lifecycle actions", () => {
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Couldn't record that", "error"));
   });
 
-  it("leaves the drawer's shortcuts alone while a reason dialog is open", async () => {
+  // The dashboard has no keyboard shortcuts: Edit, Delete, Pin and Save are buttons, and
+  // Escape cancels an edit.
+  it("takes no e, d, p or Ctrl/⌘ Enter; Escape cancels the edit", async () => {
     await open("writer");
-    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Lock…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Lock memory" });
-    within(dialog).getByRole("button", { name: "Cancel" }).focus();
-    await userEvent.keyboard("d");
+    screen.getByRole("dialog").focus();
+    await userEvent.keyboard("edp");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
     expect(confirmAction).not.toHaveBeenCalled();
+    expect(api.deleteMemory).not.toHaveBeenCalled();
+    expect(api.setMemory).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await screen.findByRole("button", { name: "Save new version" });
+    await userEvent.keyboard("{Control>}{Enter}{/Control}{Meta>}{Enter}{/Meta}");
+    expect(api.setMemory).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("says a lock is gone when the unlock finds none", async () => {
@@ -482,14 +488,11 @@ describe("MemoryInspector lifecycle actions", () => {
     expect(screen.queryByRole("dialog", { name: "Lock memory" })).toBeNull();
   });
 
-  it("offers no Edit while a rename is open, by button or by key", async () => {
+  it("offers no Edit while a rename is open", async () => {
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Rename" }));
     await screen.findByTestId("rename-form");
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
-    screen.getByRole("dialog").focus();
-    await userEvent.keyboard("e");
-    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
   });
 
   it("drops an open edit when the drawer moves to another key, without a lock toast", async () => {

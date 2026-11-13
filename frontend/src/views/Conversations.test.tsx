@@ -515,21 +515,16 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(ringed[0]).toContain("ship the fix");
   });
 
-  it("ignores '/' pressed inside the thread dialog", async () => {
+  // The dashboard has no keyboard shortcuts: / does not focus the search.
+  it("leaves the focus where it is on '/'", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
-    getConversationThread.mockResolvedValue(detail("thread-a", "Title A"));
     listMemories.mockResolvedValue(noMemories);
 
     render(<Conversations />);
     const box = screen.getByLabelText("Search conversation transcripts");
+    await screen.findByText("Title A");
     fireEvent.keyDown(document.body, { key: "/" });
-    expect(box).toHaveFocus();
-
-    fireEvent.click(await screen.findByText("Title A"));
-    const dialog = await screen.findByRole("dialog");
-    await screen.findByText("body of thread-a");
-    fireEvent.keyDown(dialog, { key: "/" });
     expect(box).not.toHaveFocus();
   });
 });

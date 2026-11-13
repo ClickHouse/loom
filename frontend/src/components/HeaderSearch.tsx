@@ -24,9 +24,8 @@ import { sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
 import { useAbortableEffect } from "../lib/hooks";
 import { displayAgent, sentenceCase } from "../lib/format";
-import { Kbd, Loading, TagList } from "./ui";
+import { Loading, TagList } from "./ui";
 import { toast, toastError } from "./Toast";
-import { paletteShortcut } from "../lib/platform";
 import { openAssistantSoon, useDock } from "../lib/assistantDock";
 import { readsAsQuestion } from "../lib/readsAsQuestion";
 import { ASK_PLACEHOLDER, SEARCH_PLACEHOLDER, offersAsk } from "../lib/searchAsk";
@@ -202,19 +201,6 @@ export function HeaderSearch({
     inputRef.current?.focus();
     setOpen(true);
   }, [autoFocus]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        inputRef.current?.focus();
-        inputRef.current?.select();
-        setOpen(true);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
 
   // A view can ask the palette to open with a hint typed in ( the Setup checklist's "Find
   // it again" step). Honour it once, then clear.
@@ -621,7 +607,7 @@ export function HeaderSearch({
   return (
     <Popover open={popoverOpen} onOpenChange={setOpen}>
       <RadixPopover.Anchor asChild>
-        <div ref={anchorRef} className="group relative w-full">
+        <div ref={anchorRef} className="relative w-full">
           <SearchField
             ref={inputRef}
             value={q}
@@ -654,19 +640,7 @@ export function HeaderSearch({
             aria-expanded={listboxShown}
             aria-controls={listboxId}
             aria-activedescendant={listboxShown && activations[activeIdx] ? optionId(activeIdx) : undefined}
-            // On the Graph view the omnibox is the view's own input; this
-            // one leaves the tab order there (⌘K still opens it, and the
-            // hint beside it says so) so the first input Tab reaches is
-            // the entity box, not a look-alike search.
-            tabIndex={view === "graph" ? -1 : undefined}
           />
-          {/* Platform-correct (⌘K / Ctrl K); the hint leaves once the field has the focus or
-              any text, as on the placeholder field it replaces (layout/Header.tsx). */}
-          {!q && (
-            <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex sm:group-focus-within:hidden">
-              {paletteShortcut()}
-            </Kbd>
-          )}
         </div>
       </RadixPopover.Anchor>
       <Popover.Content

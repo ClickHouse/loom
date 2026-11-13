@@ -64,7 +64,7 @@ export function LibraryPassages({
   onOpen,
 }: {
   identity: Pick<Identity, "org" | "namespace">;
-  /** The arrows and j/k move through the hits (off while a dialog is open). */
+  /** The arrows move through the hits (off while a dialog is open). */
   navEnabled: boolean;
   /** Told whether hits show, so the list below hands its row keys over to them. */
   onHitsShown: (shown: boolean) => void;

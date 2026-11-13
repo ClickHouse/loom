@@ -324,13 +324,14 @@ describe("Tasks page", () => {
     expect(screen.getByLabelText("Search tasks")).toHaveValue("");
   });
 
-  it("/ focuses the search", async () => {
+  // The dashboard has no keyboard shortcuts: / is a key like any other.
+  it("/ does not focus the search", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
     render(<Tasks />);
     await screen.findByRole("row", { name: "Task urgent" });
     await user.keyboard("/");
-    expect(screen.getByLabelText("Search tasks")).toHaveFocus();
+    expect(screen.getByLabelText("Search tasks")).not.toHaveFocus();
   });
 
   it("a failed read says so with Retry, and the tiles show no zero", async () => {
@@ -671,8 +672,6 @@ describe("Tasks page", () => {
     await user.click(screen.getByRole("button", { name: /New task/ }));
     expect(screen.queryByRole("dialog")).toBeNull();
     unavailable(screen.getByRole("button", { name: "Accept Task urgent" }), writer);
-    // Its key does nothing here, so it is not announced.
-    expect(screen.getByRole("button", { name: "Accept Task urgent" })).not.toHaveAttribute("aria-keyshortcuts");
     await user.click(screen.getByRole("button", { name: "Page options" }));
     unavailable(screen.getByRole("menuitem", { name: "Inbox settings…" }), admin);
     unavailable(screen.getByRole("menuitem", { name: "Register inbox…" }), admin);
@@ -692,21 +691,6 @@ describe("Tasks page", () => {
     unavailable(await within(panel).findByRole("button", { name: "Accept" }), writer);
   });
 
-  it("a viewer pressing each action key sends nothing", async () => {
-    seed(viewer, [row("viewer")]);
-    const user = userEvent.setup();
-    render(<Tasks />);
-    await screen.findByRole("row", { name: "Task urgent" });
-    await user.keyboard("j");
-    expect(screen.getByRole("row", { name: "Task urgent" })).toHaveAttribute("aria-selected", "true");
-    for (const key of ["a", "s", "c", "x", "d"]) await user.keyboard(key);
-    await new Promise((r) => setTimeout(r, 20));
-    expect(acceptTask).not.toHaveBeenCalled();
-    expect(claimTask).not.toHaveBeenCalled();
-    expect(wontDoTask).not.toHaveBeenCalled();
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
   it("an admin gets New task, and Inbox settings and Register inbox under Page options", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
@@ -714,19 +698,14 @@ describe("Tasks page", () => {
     await screen.findByRole("row", { name: "Task urgent" });
     expect(screen.getAllByRole("button", { name: /New task/ })).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Page options" }));
-    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual([
-      "Inbox settings…",
-      "Register inbox…",
-      "Keyboard shortcuts",
-    ]);
+    expect(screen.getAllByRole("menuitem").map((m) => m.textContent)).toEqual(["Inbox settings…", "Register inbox…"]);
   });
 
   it("a namespace switch closes the task the old namespace had open", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
     render(<Tasks />);
-    await screen.findByRole("row", { name: "Task urgent" });
-    await user.keyboard("j{Enter}");
+    await user.click(await screen.findByRole("row", { name: "Task urgent" }));
     await screen.findByRole("complementary", { name: "Task detail" });
     act(() => useStore.getState().setIdentity({ org: "dev", namespace: "other", agent: "loom-ui" }));
     await waitFor(() => expect(screen.queryByRole("complementary", { name: "Task detail" })).toBeNull());
@@ -742,41 +721,39 @@ describe("Tasks page", () => {
     );
   });
 
-  it("keys: j/k move the selection, Enter opens, Esc closes, a accepts the selected triage row", async () => {
+  // The dashboard has no keyboard shortcuts: the one-letter keys neither move the
+  // selection nor act on a task; Esc still closes the panel.
+  it("j, k and the action letters do nothing; Esc closes the panel", async () => {
     seed(admin, [row("admin")]);
     const user = userEvent.setup();
     render(<Tasks />);
-    await screen.findByRole("row", { name: "Task urgent" });
-    await user.keyboard("j");
-    expect(screen.getByRole("row", { name: "Task urgent" })).toHaveAttribute("aria-selected", "true");
-    await user.keyboard("j");
-    expect(screen.getByRole("row", { name: "Task low-late" })).toHaveAttribute("aria-selected", "true");
-    await user.keyboard("k");
-    expect(screen.getByRole("row", { name: "Task urgent" })).toHaveAttribute("aria-selected", "true");
-    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("row", { name: "Task urgent" }));
     await screen.findByRole("complementary", { name: "Task detail" });
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("complementary", { name: "Task detail" })).not.toBeInTheDocument();
-    await user.keyboard("a");
-    await waitFor(() => expect(acceptTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "urgent"));
+    (document.activeElement as HTMLElement | null)?.blur();
+    for (const key of ["j", "j", "k", "a", "s", "c", "x", "d"]) await user.keyboard(key);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByRole("row", { name: "Task urgent" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("row", { name: "Task low-late" })).toHaveAttribute("aria-selected", "false");
+    expect(acceptTask).not.toHaveBeenCalled();
+    expect(claimTask).not.toHaveBeenCalled();
+    expect(wontDoTask).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  // The keys live in the help dialog and in each action's tooltip, not in a strip under the
-  // lanes; a lane's name is its state badge.
-  it("names the keys in the action tooltips and the help dialog, with no key strip", async () => {
+  // No action names a key: no key strip, no kbd chip, no aria-keyshortcuts, no shortcuts
+  // item; a lane's name is its state badge.
+  it("names no key anywhere on the page", async () => {
     seed(admin, [row("admin")]);
-    useStore.setState({ helpOpen: false });
     const user = userEvent.setup();
     const { container } = render(<Tasks />);
     await screen.findByRole("row", { name: "Task urgent" });
     expect(container.querySelector("kbd")).toBeNull();
-    const accept = screen.getByRole("button", { name: "Accept Task urgent" });
-    expect(accept).toHaveAttribute("aria-keyshortcuts", "a");
-    await user.hover(accept);
-    expect((await screen.findAllByText("Accept · A")).length).toBeGreaterThan(0);
+    expect(container.querySelector("[aria-keyshortcuts]")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Page options" }));
-    await user.click(screen.getByRole("menuitem", { name: "Keyboard shortcuts" }));
-    expect(useStore.getState().helpOpen).toBe(true);
+    expect(screen.queryByRole("menuitem", { name: "Keyboard shortcuts" })).toBeNull();
+    await user.keyboard("{Escape}");
     const triage = within(screen.getByRole("rowgroup", { name: /^Triage/ })).getByRole("button", { name: /^Triage/ });
     expect(triage.querySelector("[class*='badge']")).not.toBeNull();
   });
@@ -852,98 +829,6 @@ describe("Tasks page", () => {
     fireEvent.drop(running, { dataTransfer });
     await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "low-late"));
     expect(running).not.toHaveAttribute("data-drop");
-  });
-
-  it("keys: s starts the selected to-do row", async () => {
-    seed(admin, [row("admin")]);
-    const user = userEvent.setup();
-    render(<Tasks />);
-    await screen.findByRole("row", { name: "Task urgent" });
-    await user.keyboard("jj");
-    expect(screen.getByRole("row", { name: "Task low-late" })).toHaveAttribute("aria-selected", "true");
-    await user.keyboard("s");
-    await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "low-late"));
-  });
-
-  it("keys act on a deep-linked task past a lane's first rows", async () => {
-    const many = Array.from({ length: 25 }, (_, i) =>
-      task(`t${String(i).padStart(2, "0")}`, { created_at: iso(100 - i) }),
-    );
-    vi.mocked(listTasks).mockResolvedValue({ tasks: many, truncated: false });
-    window.history.replaceState(null, "", "/tasks?task=t24");
-    seed(admin, [row("admin")]);
-    const user = userEvent.setup();
-    render(<Tasks />);
-    await screen.findByRole("complementary", { name: "Task detail" });
-    // t24 is not drawn: the To do lane shows its first 20.
-    expect(screen.queryByRole("row", { name: "Task t24" })).toBeNull();
-    await user.keyboard("s");
-    await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "t24"));
-  });
-
-  it("on the board, a key acts on the card that has focus, not the one selected before", async () => {
-    vi.mocked(listTasks).mockResolvedValue({
-      tasks: [task("t-a", { created_at: iso(3) }), task("t-b", { created_at: iso(2) })],
-      truncated: false,
-    });
-    localStorage.setItem("loom_tasks_mode", "board");
-    try {
-      seed(admin, [row("admin")]);
-      const user = userEvent.setup();
-      render(<Tasks />);
-      await screen.findByRole("region", { name: "Tasks board" });
-      await user.click(document.querySelector<HTMLElement>('[data-task-id="t-a"]') as HTMLElement);
-      await screen.findByRole("complementary", { name: "Task detail" });
-      await user.keyboard("{Escape}");
-      document.querySelector<HTMLElement>('[data-task-id="t-b"]')?.focus();
-      await user.keyboard("s");
-      await waitFor(() => expect(claimTask).toHaveBeenCalledWith({ org: "dev", namespace: "team" }, "t-b"));
-      expect(claimTask).not.toHaveBeenCalledWith(expect.anything(), "t-a");
-    } finally {
-      localStorage.removeItem("loom_tasks_mode");
-    }
-  });
-
-  it("on the board, j moves from the card that has focus", async () => {
-    vi.mocked(listTasks).mockResolvedValue({
-      tasks: [
-        task("t-a", { created_at: iso(5) }),
-        task("t-b", { created_at: iso(4) }),
-        task("t-c", { created_at: iso(3) }),
-      ],
-      truncated: false,
-    });
-    localStorage.setItem("loom_tasks_mode", "board");
-    try {
-      seed(admin, [row("admin")]);
-      const user = userEvent.setup();
-      render(<Tasks />);
-      await screen.findByRole("region", { name: "Tasks board" });
-      await user.click(document.querySelector<HTMLElement>('[data-task-id="t-a"]') as HTMLElement);
-      await screen.findByRole("complementary", { name: "Task detail" });
-      await user.keyboard("{Escape}");
-      document.querySelector<HTMLElement>('[data-task-id="t-b"]')?.focus();
-      await user.keyboard("j");
-      await waitFor(() =>
-        expect(document.querySelector('[data-task-id="t-c"]')).toHaveAttribute("aria-current", "true"),
-      );
-    } finally {
-      localStorage.removeItem("loom_tasks_mode");
-    }
-  });
-
-  it("a selected row a filter hid, with no panel open, takes no keys", async () => {
-    seed(admin, [row("admin")]);
-    const user = userEvent.setup();
-    render(<Tasks />);
-    await screen.findByRole("row", { name: "Task urgent" });
-    await user.keyboard("jj");
-    expect(screen.getByRole("row", { name: "Task low-late" })).toHaveAttribute("aria-selected", "true");
-    await user.type(screen.getByLabelText("Search tasks"), "urgent");
-    await waitFor(() => expect(screen.queryByRole("row", { name: "Task low-late" })).toBeNull());
-    (document.activeElement as HTMLElement | null)?.blur();
-    await user.keyboard("s");
-    expect(claimTask).not.toHaveBeenCalled();
   });
 
   it("a failed first task.counts leaves the rail's counts unknown, never 'empty'", async () => {

@@ -133,7 +133,7 @@ export function Bar({
           {/* Below sm the field takes the whole row, so its placeholder is not cut. */}
           <div className="relative basis-full sm:basis-auto sm:flex-1 sm:max-w-[520px]">
             {/* An entity box, not a search box: a node glyph and an
-                entity placeholder, so it does not read as the header's ⌘K search. */}
+                entity placeholder, so it does not read as the header's search. */}
             <TextField
               id="graph-seed"
               role="combobox"

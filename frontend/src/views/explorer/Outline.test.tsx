@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 import { Outline, type OutlineProps } from "./Outline";
 import type { XNode } from "./model";
 
-// The walk's outline is a tree described by both lines above it: the visible counts
-// summary and the one line naming its keys. Each row's entity name is its primary line at
+// The walk's outline is a tree described by the counts summary above it; it keeps a tree's
+// standard keys and no letter keys. Each row's entity name is its primary line at
 // 14 px; under it, muted at 12 px, "hop 1 · co-mentioned 20×". A tree of more than 20 rows
 // shows the first 20 and "Show all N".
 
@@ -58,10 +58,26 @@ function mount(order: XNode[] = [], props: Partial<OutlineProps> = {}) {
 }
 
 describe("Outline", () => {
-  it("describes the tree by its counts summary and its keys", () => {
+  it("describes the tree by its counts summary", () => {
     mount();
     const tree = screen.getByRole("tree", { name: "Walk outline" });
-    expect(tree).toHaveAccessibleDescription(/^1 node · 0 edges Arrow keys move and fold/);
+    expect(tree).toHaveAccessibleDescription("1 node · 0 edges");
+  });
+
+  // The dashboard has no keyboard shortcuts: the row's actions are its buttons.
+  it("takes no w, p, e, r or x on a row", async () => {
+    const calls: string[] = [];
+    const user = userEvent.setup();
+    mount([node("mergetree")], {
+      onWalk: () => calls.push("walk"),
+      onPath: () => calls.push("path"),
+      onExpand: () => calls.push("expand"),
+      onPin: () => calls.push("pin"),
+      onSelect: () => calls.push("select"),
+    });
+    screen.getByRole("treeitem", { name: /^mergetree ·/ }).focus();
+    await user.keyboard("wperxWPERX");
+    expect(calls).toEqual([]);
   });
 
   it("a row: the entity name, then 'hop 1 · co-mentioned 20×' on a line of its own", () => {

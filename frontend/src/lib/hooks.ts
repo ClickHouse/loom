@@ -1,12 +1,11 @@
 import { useEffect, useRef, type DependencyList } from "react";
-import { shortcutOff } from "./shortcuts";
 
 const INTERACTIVE =
   'button, a[href], summary, select, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="option"], [role="checkbox"], [role="switch"]';
 const LAYER = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
 
-/** Bind keyboard shortcuts. Disabled while the user is typing in an
- *  input / textarea / contenteditable region.
+/** Bind page-level keys (a list's arrows, Escape closing a drawer). Disabled while the
+ *  user is typing in an input / textarea / contenteditable region.
  *
  * Two more cases are left alone: Enter and Space on a focused control — a button, link,
  *  menu item, tab, or anything else tabbable — keep their native activation, so a list
@@ -37,7 +36,7 @@ export function useKeyboard(bindings: Record<string, () => boolean | void>, enab
       return t instanceof Element && !!t.closest(LAYER);
     };
     const onKey = (e: KeyboardEvent): void => {
-      if (e.defaultPrevented || isTyping() || shortcutOff(e)) return;
+      if (e.defaultPrevented || isTyping()) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return; // skip when modifiers
       if (activatesFocusedControl(e) || insideLayer(e)) return;
       const handler = bindings[e.key];
