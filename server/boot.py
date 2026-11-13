@@ -629,10 +629,11 @@ async def start_cell_state() -> list[asyncio.Task[None]]:
 
 
 async def start_cell_gate() -> list[asyncio.Task[None]]:
-    """A server process reads the deployment's cell state right after its storage
-    authority opened and migrated, before its first heartbeat and its lease decision,
-    then on a timer (`cell.gated_by_state`). A failed first read refuses the boot,
-    as a failed Postgres open does; later failures keep the last view."""
+    """A server process under the Postgres authority (`cell.gated_by_state`) reads the
+    deployment's cell state right after its storage authority opened and migrated,
+    before its first heartbeat and its lease decision, then on a timer. A failed first
+    read refuses the boot, as a failed Postgres open does, unless Postgres migrations are
+    pending; later failures keep the last view."""
     from server.core import cell
 
     if not cell.gated_by_state():

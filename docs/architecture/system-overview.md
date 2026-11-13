@@ -280,7 +280,8 @@ The `lifespan` in `server/main.py` runs in every process, in this order (its ste
    migration, stops the boot. With `LOOM_BOOT_MIGRATE=false` the process logs pending files and
    reports them on `/v1/health`. Under the Postgres authority, read the deployment's cell
    state before the first heartbeat and the lease decision; a failed first read stops
-   the boot ([cells](cells.md#the-tenancy-check-and-placement)).
+   the boot (with Postgres migrations pending it boots gated and unready until a read
+   lands) ([cells](cells.md#the-tenancy-check-and-placement)).
 4. **Start the `agent_events` emitter.**
 5. **Default namespace.** With auth off, give the configured namespace its
    `loom.namespaces` row, unless the cell gate refuses this process.
