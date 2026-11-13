@@ -3,10 +3,8 @@
 The sandbox has no network. Its one way out is the egress proxy's unix socket,
 mounted in; this script bridges to it so ordinary clients can use it:
 
-  serve PORT SOCKET MAX -- ARGV...
-                                listen on 127.0.0.1:PORT (git, go and npm use
-                                it as their https proxy), then exec ARGV; at
-                                most MAX connections are bridged at a time
+  serve PORT SOCKET -- ARGV...  listen on 127.0.0.1:PORT (git, go and npm use
+                                it as their https proxy), then exec ARGV
   connect HOST PORT SOCKET      ssh's ProxyCommand: ask the proxy for HOST:PORT
                                 and pipe stdin/stdout through the tunnel
 
@@ -22,7 +20,11 @@ import threading
 import time
 from collections.abc import Callable
 
-# How long a client may stay silent once the proxy has ended its tunnel.
+# Connections bridged at a time: the proxy's MAX_TUNNELS, as no job holds more.
+# not a setting: the proxy's own cap
+MAX_BRIDGES = 32
+# How long a client may stay silent once the proxy's side of its tunnel has ended
+# (the server closed it, or the proxy did).
 # not a setting: a pause between a client's writes, far below any timeout to tune
 _LINGER_S = 1.0
 
@@ -41,19 +43,22 @@ def _to_client(src: socket.socket, dst: socket.socket, to_client_done: threading
 
 
 def _to_proxy(src: socket.socket, dst: socket.socket, to_client_done: threading.Event) -> None:
-    """Client to proxy, to the client's EOF, or to `_LINGER_S` without a byte once
-    the proxy-to-client direction has ended: a client may keep a finished connection
-    open."""
+    """Client to proxy, to the client's EOF, or to a full `_LINGER_S` without a byte
+    once the proxy-to-client direction has ended: a client may keep a finished
+    connection open."""
+    lingering = False
     try:
         while True:
             if not select.select([src], [], [], _LINGER_S)[0]:
-                if to_client_done.is_set():
+                if lingering:
                     return
+                lingering = to_client_done.is_set()  # a full wait from here on
                 continue
             data = src.recv(65536)
             if not data:
                 return
             dst.sendall(data)  # fails once the proxy has closed
+            lingering = False
     except OSError:
         pass
     finally:
@@ -106,7 +111,7 @@ def accept_loop(listener: socket.socket, path: str, slots: threading.Semaphore) 
         _start(_bridge, conn, path, slots)
 
 
-def serve(port: int, path: str, max_bridges: int, argv: list[str]) -> None:
+def serve(port: int, path: str, argv: list[str]) -> None:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", port))
@@ -116,7 +121,7 @@ def serve(port: int, path: str, max_bridges: int, argv: list[str]) -> None:
         # The relay is a grandchild handed to the sandbox's init, so ARGV has no
         # stray child; it dies with the sandbox's pid namespace.
         if os.fork() == 0:
-            accept_loop(listener, path, threading.BoundedSemaphore(max_bridges))
+            accept_loop(listener, path, threading.BoundedSemaphore(MAX_BRIDGES))
         os._exit(0)
     os.waitpid(child, 0)
     listener.close()
@@ -158,13 +163,11 @@ def _copy_stdin(dst: socket.socket) -> None:
 
 
 def main(args: list[str]) -> int:
-    if len(args) >= 6 and args[0] == "serve" and args[4] == "--":
-        serve(int(args[1]), args[2], int(args[3]), args[5:])
+    if len(args) >= 5 and args[0] == "serve" and args[3] == "--":
+        serve(int(args[1]), args[2], args[4:])
     if len(args) == 4 and args[0] == "connect":
         return connect(args[1], args[2], args[3])
-    sys.stderr.write(
-        "usage: egress_relay.py serve PORT SOCKET MAX -- ARGV | connect HOST PORT SOCK\n"
-    )
+    sys.stderr.write("usage: egress_relay.py serve PORT SOCKET -- ARGV | connect HOST PORT SOCK\n")
     return 2
 
 

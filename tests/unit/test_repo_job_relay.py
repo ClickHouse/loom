@@ -1,9 +1,5 @@
-"""The relay inside a repository-job sandbox bridges at most a fixed number of
-connections at a time. A thread it cannot start is retried while the job is at its
-task limit, and a socket it cannot open or a failed accept costs at most one
-connection, never the relay: a client opening hundreds at once (pnpm's metadata
-check) would otherwise reach the job's task limit and leave the job with no route
-out."""
+"""The relay inside a repository-job sandbox: a bounded number of bridges, and a
+failure that costs at most one connection, never the relay."""
 
 from __future__ import annotations
 
@@ -20,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from server.code.app.index import egress_relay
+from server.code.app.index import egress, egress_relay
 
 
 class _Upstream:
@@ -266,6 +262,5 @@ def test_an_accept_that_fails_is_retried(sock_dir: Path) -> None:
         client.close()
 
 
-def test_serve_without_the_bridge_cap_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
-    assert egress_relay.main(["serve", "3128", "/run/loom-egress/proxy.sock", "--", "true"]) == 2
-    assert "serve PORT SOCKET MAX -- ARGV" in capsys.readouterr().err
+def test_the_relay_bridges_as_many_connections_as_the_proxy_holds_tunnels() -> None:
+    assert egress_relay.MAX_BRIDGES == egress.MAX_TUNNELS
