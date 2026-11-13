@@ -14,7 +14,6 @@ from server.code.domain.anchor import (
     Definition,
     Link,
     bare_name,
-    language,
     local_name,
     locate,
     recheck,
@@ -342,8 +341,8 @@ async def _recheck(
             # the index's namesakes, and the mirror's: the index may not hold the files a
             # commit past the ingest's per-commit cap changed, or still hold their old text
             mirror = await _in_mirror(files, r, head)
-            # a mirror that cannot answer leaves the link unsure only where the index's
-            # namesakes do not settle it
+            # a mirror git cannot read leaves the link unsure where the index's namesakes
+            # do not settle it
             mirror_unsure = mirror is None and r.before.state != "missing"
             both = [*elsewhere.get(r.before.qualified_name, []), *(mirror or [])]
             candidates = list({(d.path, d.qualified_name): d for d in both}.values())
@@ -380,29 +379,31 @@ async def _recheck(
 
 
 async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[Definition] | None:
-    """The definitions of the lost link's name, inside their module, in the files changed
-    since it was last in place, read from the mirror at `head` as its own file is; None
-    when the mirror cannot answer: a range too wide, too many files naming it, a read
-    that failed, or no definition found while a file naming it did not parse."""
+    """The definitions of the lost link's name, inside their module, that the mirror holds
+    at `head` in the files changed since it was last in place: what the index may not
+    hold yet. Only adds to the index's namesakes: a search too wide to run, or one that
+    too many files answer, adds none and the index's verdict stands, as does a file the
+    parser fails on, of which the index holds no definition either. None when git could
+    not be read: then a live link is unsure."""
     qn = r.before.qualified_name
     # a link lost before is searched from its own check, as `_new_namesakes` does
     own = None if r.before.state in _LOST_STATES else r.range
     base = own.base if own is not None else str(r.row["checked_commit"])
     paths = await files.containing(head, bare_name(qn), base, limit=_MAX_NAMING)
-    if paths is None or len(paths) >= _MAX_NAMING:
+    if paths is None:
         return None
-    local, found, unread = local_name(qn, r.before.read_path), [], False
+    if len(paths) >= _MAX_NAMING:
+        return []  # callers as well as definitions name it: no telling which, nothing added
+    local, found = local_name(qn, r.before.read_path), []
     for path in paths:
-        if not language(path):
-            continue  # no parser reads it: nothing it holds is a definition
         try:
             names = await files.names(head, path)
             for name in names or ():
                 if local_name(name, path) == local:
                     found += await files.defs(head, path, name)
         except code.ParseFailed:
-            unread = True
-    return None if unread else found
+            continue  # no definition of it is read from a file that does not parse
+    return found
 
 
 async def _namesakes(

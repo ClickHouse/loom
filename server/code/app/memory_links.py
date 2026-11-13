@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from server.code.app.index import gitrepo, mirrors
 from server.code.app.index.bootstrap import holds
+from server.code.app.index.denylist import load_denylist
 from server.code.domain.anchor import Definition
 from server.code.domain.declaration import edit_pattern
 from server.code.domain.definitions import definitions
@@ -132,18 +133,20 @@ async def containing(
     org: str, namespace: str, commit: str, literal: str, paths: list[str], *, limit: int
 ) -> list[str] | None:
     """Up to `limit` of `paths` whose text at `commit` holds the word `literal`, read
-    from the mirror; None when git cannot tell."""
+    from the mirror, the paths the ingest refuses left out; None when git cannot tell."""
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:
         return None
     if not commit or not paths:
         return []
     try:
-        return await gitrepo.grep_paths(
+        denied = await load_denylist(cfg, commit, gitrepo.show_file)
+        found = await gitrepo.grep_paths(
             cfg.git_dir, commit, literal, tuple(paths), limit=limit, literal_paths=True, word=True
         )
     except gitrepo.GitError:
         return None
+    return [p for p in found if not denied.reason(p)]
 
 
 async def renamed_from(

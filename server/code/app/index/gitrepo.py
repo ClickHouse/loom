@@ -380,6 +380,7 @@ async def grep_paths(
         git_dir,
         "grep",
         "-l",
+        "-z",
         "-F",
         *(["-w"] if word else []),
         "-e",
@@ -400,9 +401,11 @@ async def grep_paths(
     if proc.returncode != 0:
         raise GitError(f"git grep rc={proc.returncode}: {err.decode('utf-8', 'replace')[:300]}")
     paths: list[str] = []
-    for ln in out.decode("utf-8", "replace").splitlines():
-        # `<rev>:<path>`
-        paths.append(ln.split(":", 1)[1] if ":" in ln else ln)
+    for rec in out.decode("utf-8", "replace").split("\0"):
+        if not rec:
+            continue
+        # `<rev>:<path>`, NUL-terminated: a path with a quote, tab or newline as written
+        paths.append(rec.split(":", 1)[1] if ":" in rec else rec)
         if len(paths) >= limit:
             break
     return paths

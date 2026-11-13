@@ -131,14 +131,13 @@ class RepoReads:
         self, head: str, literal: str, base: str, *, limit: int
     ) -> list[str] | None:
         """Up to `limit` of the files `base..head` added or changed whose text at `head`
-        holds `literal`; None when git cannot tell or more than `_MAX_SEARCHED_FILES`
-        changed."""
+        holds the word `literal`, those the ingest refuses left out; none when the range
+        cannot be read (a force-push) or more than `_MAX_SEARCHED_FILES` changed; None
+        when the mirror cannot be searched."""
 
         async def read() -> list[str] | None:
             touched = await self.touched(base, head) if base else None
-            if touched is None or len(touched) > _MAX_SEARCHED_FILES:
-                return None
-            if not touched:
+            if not touched or len(touched) > _MAX_SEARCHED_FILES:
                 return []
             return await code.containing(
                 self.org, self.cns, head, literal, sorted(touched), limit=limit

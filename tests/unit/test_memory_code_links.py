@@ -3989,22 +3989,27 @@ async def test_an_unresolved_link_is_searched_from_its_own_check_on_a_later_rang
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("why", ["mirror-cannot-tell", "too-many-files-name-it"])
-async def test_a_mirror_search_that_cannot_answer_leaves_a_lost_name_unresolved(
-    monkeypatch, why
-) -> None:
+async def test_a_mirror_git_cannot_read_leaves_a_lost_name_unresolved(monkeypatch) -> None:
     files = code_link_pass.RepoReads("o", "code-a")
     row, _ = _moved_module_world(monkeypatch, files, indexed=False)
-    if why == "mirror-cannot-tell":
 
-        async def containing(head, literal, base, *, limit):
-            return None
+    async def containing(head, literal, base, *, limit):
+        return None
 
-        monkeypatch.setattr(files, "containing", containing)
-    else:
-        monkeypatch.setattr(code_link_recheck, "_MAX_NAMING", 1)  # b.py fills the page
+    monkeypatch.setattr(files, "containing", containing)
     moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
     assert [(m.link.state, m.link.changed_since) for m in moves] == [("unresolved", "c1")]
+
+
+@pytest.mark.asyncio
+async def test_a_name_too_many_changed_files_hold_leaves_the_index_verdict(monkeypatch) -> None:
+    # `close` or `parse` in a wide commit: callers fill the page, so the mirror adds
+    # nothing and the link settles as the index says, never unresolved for good
+    files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False)
+    monkeypatch.setattr(code_link_recheck, "_MAX_NAMING", 1)  # b.py fills the page
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("missing", "pkg/a.py")]
 
 
 @pytest.mark.asyncio
@@ -4020,9 +4025,9 @@ async def test_the_mirror_is_not_searched_over_a_range_too_wide_or_unread(monkey
 
     monkeypatch.setattr(files, "touched", touched)
     monkeypatch.setattr(code_links.code, "containing", grep)
-    assert await files.containing("c1", "f", "c0", limit=5) is None  # git cannot tell
+    assert await files.containing("c1", "f", "c0", limit=5) == []  # the range is unread
     monkeypatch.setattr(code_link_pass, "_MAX_SEARCHED_FILES", 1)
-    assert await files.containing("c1", "f", "b0", limit=5) is None  # too wide
+    assert await files.containing("c1", "f", "b0", limit=5) == []  # too wide
 
 
 @pytest.mark.asyncio
@@ -4034,15 +4039,16 @@ async def test_a_mirror_grep_names_files_as_written(tmp_path) -> None:
         {
             "café.py": "fetch_rows()\n",
             "a[1].py": "fetch_rows()\n",
+            'q"uote.py': "fetch_rows()\n",
             "ab.py": "x\n",
             "pre.py": "prefetch_rows()\n",  # the name inside a longer word: not it
         }
     )
-    paths = ("café.py", "a[1].py", "ab.py", "pre.py")
+    paths = ("café.py", "a[1].py", 'q"uote.py', "ab.py", "pre.py")
     found = await gitrepo.grep_paths(
         str(tmp_path / ".git"), head, "fetch_rows", paths, literal_paths=True, word=True
     )
-    assert sorted(found) == ["a[1].py", "café.py"]
+    assert sorted(found) == ["a[1].py", "café.py", 'q"uote.py']
 
 
 @pytest.mark.asyncio
@@ -4053,7 +4059,7 @@ async def test_an_edited_move_the_index_settles_is_followed_when_the_mirror_cann
     row, _ = _moved_module_world(monkeypatch, files, indexed=True, edited=True)
 
     async def containing(head, literal, base, *, limit):
-        return None  # say a range too wide to search
+        return None  # git could not be read
 
     monkeypatch.setattr(files, "containing", containing)
     moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
@@ -4061,7 +4067,7 @@ async def test_an_edited_move_the_index_settles_is_followed_when_the_mirror_cann
 
 
 @pytest.mark.asyncio
-async def test_a_file_naming_it_that_does_not_parse_leaves_the_mirror_unsure(monkeypatch) -> None:
+async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypatch) -> None:
     files = code_link_pass.RepoReads("o", "code-a")
     row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
     names = files.names
@@ -4071,11 +4077,11 @@ async def test_a_file_naming_it_that_does_not_parse_leaves_the_mirror_unsure(mon
 
     async def unparsed(commit, path):
         if path == "pkg/z.py":
-            raise code_links.code.ParseFailed(path, "over the size cap")
+            raise code_links.code.ParseFailed(path, "over code_ingest_max_file_bytes")
         return await names(commit, path)
 
     monkeypatch.setattr(files, "containing", containing)
     monkeypatch.setattr(files, "names", unparsed)
     moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
-    # z.py may hold another definition of it: b.py's edited copy is not taken on trust
-    assert [m.link.state for m in moves] == ["unresolved"]
+    # the index holds no definition from z.py either: b.py's edited copy is followed
+    assert [(m.link.state, m.link.path) for m in moves] == [("changed", "pkg/b.py")]
