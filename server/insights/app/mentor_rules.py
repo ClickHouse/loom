@@ -260,7 +260,7 @@ _LISTED_VIA_ALIAS = frozenset({"memory.search", "knowledge.search", "conversatio
 # The note _unlisted adds for an op the core listing leaves out, and its pattern.
 _LOOM_OP_NOTE = " (call {} via loom_op)"
 # The note ends a hint: anchored, so an echoed value that spells one is not taken for it.
-_LOOM_OP_NOTE_RE = re.compile(r" \(call [a-z_.]+ via loom_op\)\Z")
+_LOOM_OP_NOTE_RE = re.compile(r" \(call ([a-z_.]+) via loom_op\)\Z")
 
 
 def without_listing_note(text: str) -> str:
@@ -310,8 +310,8 @@ def _duration(seconds: int) -> str:
 
 
 # Room the values a hint echoes take, together: short enough that the clip never
-# cuts a closing quote, and that the advice after them survives.
-ECHO_CHARS = 60
+# cuts a closing quote, and that a hint with typical values keeps all its advice.
+ECHO_CHARS = 40
 
 
 def _quoted(value: object, limit: int = ECHO_CHARS) -> str:
@@ -533,11 +533,9 @@ def _rules_planes(c: _Ctx) -> None:
             "code_index_unused",
             "warning",
             f"{repos} indexed {'repo' if repos == 1 else 'repos'} ({names}) and 0 code.* calls: "
-            # code.impact first: the note names it, and the clip must not cut it
-            "code.impact says what a change breaks, code.search answers a concept, "
-            "code.symbol a definition, code.callers who calls it, code.grep an exact "
-            "literal. code.repos lists them.",
-            ("code.search", "code.symbol", "code.callers", "code.grep", "code.impact"),
+            "code.search for a concept, code.symbol for a definition, code.callers for "
+            "callers, code.grep for a literal.",
+            ("code.search", "code.symbol", "code.callers", "code.grep"),
             repos=repos,
         )
     tracker_sources = c.facts.get("tracker_sources")
@@ -549,10 +547,9 @@ def _rules_planes(c: _Ctx) -> None:
         c.add(
             "tracker_unused",
             "warning",
-            f"{c.fact('tracker_tagged_sets')} writes tagged test/flaky/ci and 0 tracker.* "
-            f"calls: the tracker source ({_quoted_list(list(tracker_sources))}) answers "
-            f"tracker.similar, "
-            "tracker.duplicate_check, tracker.flaky, tracker.test_signal.",
+            f"{c.fact('tracker_tagged_sets')} test/flaky/ci writes and 0 tracker.* calls: "
+            f"the tracker source ({_quoted_list(list(tracker_sources))}) answers "
+            "tracker.similar, tracker.duplicate_check, tracker.flaky, tracker.test_signal.",
             ("tracker.similar", "tracker.duplicate_check", "tracker.flaky", "tracker.test_signal"),
             tracker_tagged_sets=c.fact("tracker_tagged_sets"),
             sources=list(tracker_sources),
@@ -675,16 +672,16 @@ def _coordination_sentence(c: _Ctx, hot_set: bool, hot_get: bool) -> tuple[str, 
     get_key = str(c.facts.get("hot_get_key") or "")
     if hot_set and hot_get and set_key == get_key:
         return (
-            f"one key, {_quoted(set_key)}, was written {ms}× and read {mg}× in a single session",
+            f"key {_quoted(set_key)} was written {ms}× and read {mg}× in one session",
             set_key,
         )
     parts: list[str] = []
     each = ECHO_CHARS // (2 if hot_set and hot_get else 1)  # the two keys share the budget
     if hot_set:
-        parts.append(f"one key, {_quoted(set_key, each)}, was written {ms}×")
+        parts.append(f"key {_quoted(set_key, each)} was written {ms}×")
     if hot_get:
-        parts.append(f"one key, {_quoted(get_key, each)}, was read {mg}×")
-    return " and ".join(parts) + " in a single session", set_key if hot_set else get_key
+        parts.append(f"key {_quoted(get_key, each)} was read {mg}×")
+    return " and ".join(parts) + " in one session", set_key if hot_set else get_key
 
 
 def _rules_coordination(c: _Ctx) -> None:
@@ -702,8 +699,8 @@ def _rules_coordination(c: _Ctx) -> None:
     c.add(
         "coordination_loop",
         "warning",
-        f"{what}: coordination state — working_memory.set / working_memory.get "
-        "holds it without a version row, an embedding or a conflict check per write.",
+        f"{what}: coordination state, for working_memory.set / working_memory.get "
+        "(no version rows).",
         ("working_memory.set", "working_memory.get"),
         max_sets_one_key=ms,
         max_gets_one_key=mg,

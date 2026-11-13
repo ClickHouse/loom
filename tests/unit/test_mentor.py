@@ -10,8 +10,12 @@ Everything here runs against a fake store: no ClickHouse.
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 import re
+import textwrap
+from collections.abc import Callable
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -224,7 +228,7 @@ def _assert_rendered_cleanly(text: str) -> None:
     from server.transport import mcp_tools
 
     # MCP strips the note, so the op it names must be in the text it leaves
-    if note := re.search(r"\(call ([a-z_.]+) via loom_op\)$", text):
+    if note := mentor_rules._LOOM_OP_NOTE_RE.search(text):
         assert note.group(1) in mentor_rules.without_listing_note(text), text
     for toolset in ("core", "coding", "tracker", "tasks", "atomic", "readonly"):
         rendered = mcp_tools.mentor_text_for_toolset(text, toolset)
@@ -291,7 +295,7 @@ def test_an_object_store_agent_is_told_to_recall_by_meaning_and_move_the_lease(
     assert loop is not None and "sre/lease" in loop.text and "working_memory" in loop.text
     # The sentence names the READ key with its read count and says nothing
     # about writes (the hottest written key is another row).
-    assert "'sre/lease', was read 116×" in loop.text and "written" not in loop.text
+    assert "key 'sre/lease' was read 116×" in loop.text and "written" not in loop.text
     key_only = p.hint("recall_by_key_only")
     assert key_only is not None and key_only.evidence == {"gets": 6606, "searches": 52}
     # memory.search is listed as loom_search; the note names the op that is not
@@ -1530,7 +1534,7 @@ def test_a_call_hint_is_clipped_with_its_note_whole(facts: dict[str, Any]) -> No
     clipped = mentor_rules.clip_keeping_note(rule[1])
     assert len(clipped) <= mentor_rules.HINT_CHARS
     if " via loom_op)" in rule[1]:
-        assert re.search(r" \(call [a-z_.]+ via loom_op\)$", clipped), clipped
+        assert mentor_rules._LOOM_OP_NOTE_RE.search(clipped), clipped
     assert mentor_rules.without_listing_note(clipped).count("(call ") == 0
 
 
@@ -1812,8 +1816,8 @@ def test_coordination_sentence_gives_each_key_its_own_count(
     assert p is not None
     loop = p.hint("coordination_loop")
     assert loop is not None
-    assert "one key, 'a/lease', was written 12×" in loop.text
-    assert "one key, 'b/pointer', was read 40×" in loop.text
+    assert "key 'a/lease' was written 12×" in loop.text
+    assert "key 'b/pointer' was read 40×" in loop.text
     assert loop.evidence["key"] == "a/lease" and loop.evidence["hot_get_key_chars"] == 20
     m.reset_cache()
     _wire(
@@ -1830,7 +1834,7 @@ def test_coordination_sentence_gives_each_key_its_own_count(
     p = _profile()
     assert p is not None
     loop = p.hint("coordination_loop")
-    assert loop is not None and "one key, 'a/lease', was written 12× and read 40×" in loop.text
+    assert loop is not None and "key 'a/lease' was written 12× and read 40×" in loop.text
 
 
 def _tiers(*specs: tuple[str, str, str]) -> list[SimpleNamespace]:
@@ -2039,29 +2043,124 @@ def test_a_long_hint_keeps_its_listing_note(monkeypatch: pytest.MonkeyPatch) -> 
     assert loop.text.endswith(" (call working_memory.set via loom_op)")
 
 
+def _note_and_its_text(rule: Callable[..., Any]) -> list[tuple[str, str]]:
+    """Each ``text + _unlisted((ops))`` in a call rule: the ops and the text before them."""
+    pairs = []
+    for node in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(rule)))):
+        right = node.right if isinstance(node, ast.BinOp) else None
+        if isinstance(right, ast.Call) and getattr(right.func, "id", "") == "_unlisted":
+            consts = [c.value for c in ast.walk(node.left) if isinstance(c, ast.Constant)]
+            text = "".join(v for v in consts if isinstance(v, str))
+            pairs += [
+                (op.value, text) for op in ast.walk(right.args[0]) if isinstance(op, ast.Constant)
+            ]
+    return pairs
+
+
 def test_a_call_rule_names_in_its_text_each_op_its_note_may_name() -> None:
     """MCP strips the note, so an op the note names must be in the hint already."""
-    import inspect
+    pairs = [pair for rule in mentor_rules.CALL_RULES for pair in _note_and_its_text(rule)]
+    assert len(pairs) >= 8
+    for op, text in pairs:
+        assert op in text, (op, text)
 
-    for rule in mentor_rules.CALL_RULES:
-        source = inspect.getsource(rule)
-        notes = re.findall(r"_unlisted\(\(([^)]*)\)\)", source)
-        text = re.sub(r"_unlisted\(\([^)]*\)\)", "", source)
-        for op in (o for n in notes for o in re.findall(r'"([a-z_.]+)"', n)):
-            assert op in text, (rule.__name__, op)
+
+_LONG = "k" * 70
+_REPOS = ["ClickHouse/ClickHouse", "ClickHouse/clickhouse-go", "acme/payments-service"]
+
+
+def _hints(usage: dict[str, int], sessions: int, facts: dict[str, Any]) -> list[Any]:
+    return mentor_rules.evaluate_rules(usage, sessions, facts, max_hints=32)
+
+
+_KEYED = {"memory.get": 6606, "memory.search": 52, "memory.set": 1687}
+
+
+def _echo_cases(value: str) -> list[tuple[dict[str, int], int, dict[str, Any]]]:
+    """Inputs that fire every rule echoing a caller value, each value ``value``-sized."""
+    return [
+        ({"memory.set": 40}, 1, {"repos": 16, "repo_names": [value + str(i) for i in range(3)]}),
+        (
+            _KEYED,
+            30,
+            {
+                "max_sets_one_key": 40,
+                "max_gets_one_key": 116,
+                "hot_set_key": value,
+                "hot_get_key": value + "x",
+            },
+        ),
+        (
+            _KEYED,
+            30,
+            {
+                "max_sets_one_key": 40,
+                "max_gets_one_key": 116,
+                "hot_set_key": value,
+                "hot_get_key": value,
+            },
+        ),
+        ({"memory.set": 40}, 5, {"tracker_tagged_sets": 12, "tracker_sources": [value] * 3}),
+    ]
+
+
+@pytest.mark.parametrize("case", _echo_cases(_LONG))
+def test_a_hint_with_long_echoed_values_keeps_its_quotes_and_its_note_op(
+    case: tuple[dict[str, int], int, dict[str, Any]],
+) -> None:
+    hints = _hints(*case)
+    assert hints
+    for h in hints:
+        assert len(h.text) <= mentor_rules.HINT_CHARS
+        # the clip lands after the last echoed value, never inside one
+        assert mentor_rules.without_listing_note(h.text).count("'") % 2 == 0, h.text
+        _assert_rendered_cleanly(h.text)
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [
+        {"repos": 1, "repo_names": ["acme/ch"]},
+        {"repos": 16, "repo_names": _REPOS},
+        {
+            "max_sets_one_key": 40,
+            "max_gets_one_key": 116,
+            "hot_get_key": "sre/lease",
+            "hot_set_key": "agents/planner/state",
+        },
+        {
+            "max_sets_one_key": 40,
+            "max_gets_one_key": 116,
+            "hot_get_key": "sre/lease",
+            "hot_set_key": "sre/lease",
+        },
+        {"tracker_tagged_sets": 12, "tracker_sources": ["qa", "ci-main"]},
+    ],
+)
+def test_a_hint_with_typical_echoed_values_keeps_all_its_advice(facts: dict[str, Any]) -> None:
+    hints = _hints(_KEYED, 30, facts) + _hints({"memory.set": 40}, 5, facts)
+    assert hints
+    for h in hints:
+        assert not mentor_rules.without_listing_note(h.text).endswith("…"), h.text
+
+
+def test_the_code_index_hint_keeps_all_its_advice_after_a_long_echo() -> None:
+    facts = {"repos": 16, "repo_names": [_LONG + str(i) for i in range(3)]}
+    hints = mentor_rules.evaluate_rules({"memory.set": 40}, 1, facts, max_hints=32)
+    hint = next(h for h in hints if h.code == "code_index_unused")
+    assert hint.text.endswith("code.grep for a literal.")
+    for op in hint.ops:
+        assert op in hint.text, op
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding", "readonly"])
 def test_a_rendered_hint_grows_only_by_one_name_change_per_op(toolset: str) -> None:
-    """HINT_CHARS bounds a stored hint; rendering renames or marks each op it names
-    and keeps the op the stripped note named, however long the echoed values."""
+    """HINT_CHARS bounds a stored hint; rendering renames or marks each op it names."""
     from server.transport import mcp_op, mcp_tools
 
-    facts = {"repos": 6, "repo_names": ["r" * 40 + str(i) for i in range(3)]}
+    facts = {"repos": 16, "repo_names": [_LONG + str(i) for i in range(3)]}
     hints = mentor_rules.evaluate_rules({"memory.set": 40}, 1, facts, max_hints=32)
-    hint = next(h for h in hints if h.code == "code_index_unused")
-    _assert_rendered_cleanly(hint.text)
-    body = mentor_rules.without_listing_note(hint.text)
-    names = re.findall(rf"\b{mcp_op.OP_MENTION}\b", body)
-    rendered = mcp_tools.mentor_text_for_toolset(hint.text, toolset)
+    text = next(h for h in hints if h.code == "code_index_unused").text
+    names = re.findall(rf"\b{mcp_op.OP_MENTION}\b", mentor_rules.without_listing_note(text))
+    rendered = mcp_tools.mentor_text_for_toolset(text, toolset)
     assert len(rendered) <= mentor_rules.HINT_CHARS + len(names) * len(" (via loom_op)")
