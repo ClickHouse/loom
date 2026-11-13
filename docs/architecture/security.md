@@ -272,11 +272,13 @@ exceed the gate.
 ### Row-scoped operations
 
 An op addressed by an org-wide id alone (a `memory_id`, `erasure_id` or blacklist
-`pattern_id`), such as `memory.get_by_id`, gets no namespace check from the transport:
-it declares `row_scoped=True` on its `Operation` (or, for `memory.verify`, which can
-also be addressed by namespace and key, `skip_namespace_authz=True`), and the transport
-only checks that the token holds the role somewhere in the org. The handler authorizes
-the caller on the scope that holds the row, on one of two paths:
+`pattern_id`), such as `memory.get_by_id`, gets no namespace check from the transport.
+It declares `row_scoped=True` on its `Operation`, and the transport admits a flat token
+on its own role and a namespace-scoped token on its best namespace role in the org.
+`memory.verify`, which can also be addressed by namespace and key, declares
+`skip_namespace_authz=True` instead, which admits only a flat token (a scoped token gets
+400 `IDENTITY_INCOMPLETE`). The handler authorizes the caller on the scope that holds
+the row, on one of two paths:
 
 - **Before the read.** `memory.get_by_id`, `memory.update_by_id` and `memory.verify`
   (by id) resolve the id to the namespaces that hold it (`id_namespace.namespace_for_id`),

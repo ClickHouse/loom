@@ -1483,9 +1483,10 @@ writes no outbox rows ([rule 22](rolling-upgrades.md#the-rules)).
 - Merge, duplicate and pinned rejection are decided before the insert; only the LLM
   judge may run after it.
 - The memory ops addressed by an org-wide id answer a row the caller cannot reach as a
-  missing row, never a 403: `memory.get_by_id` and `memory.update_by_id` resolve the
-  id's namespace through `authz.row_reach` before the read, `memory.redact` checks
-  `authz.row_in_scope` after it.
+  missing row, never a 403: `memory.get_by_id`, `memory.update_by_id` and
+  `memory.verify` (by id) resolve the id's namespace through `authz.row_reach` before the
+  read, `memory.redact` checks `authz.row_in_scope` after it
+  ([row-scoped operations](security.md#row-scoped-operations)).
 - A projection failure never fails the primary write.
 - Writes are not transactional across tables; bulk writes and cross-namespace promotion
   are not atomic.

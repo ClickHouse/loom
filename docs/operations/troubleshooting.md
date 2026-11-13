@@ -209,8 +209,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Cause:** an op addressed only by an org-wide id, such as `memory.get_by_id`,
   answers as for a missing row rather than a 403 that would confirm the id exists. The
-  usual cause is a token without the op's role on the row's namespace. `memory.get_by_id`
-  and `memory.update_by_id` also answer so when the caller reaches more than one
+  usual cause is a token without the op's role on the row's namespace. The ops that
+  resolve the id before the read also answer so when the caller reaches more than one
   namespace holding the id, as after a `namespace.restore`.
   [Row-scoped operations](../architecture/security.md#row-scoped-operations) has the rule
   and its exceptions.

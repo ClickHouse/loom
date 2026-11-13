@@ -148,8 +148,8 @@ evidence sessions is represented among the first 30 returned memories. It is not
 fraction of all supporting sessions retrieved.
 
 The same answers graded by two more judges with the official prompt: `gpt-6.1-sol` 97.8%,
-`claude-opus-5-5` 97.6%. The re-grade's three judges (these two and `gpt-4o-2024-08-06`
-called again) agree with each other on 98.8–99.8% of the questions.
+`claude-opus-5-5` 97.6%. The re-grade's three judges, these two and `gpt-4o-2024-08-06`,
+agree with each other on 98.8–99.8% of the questions.
 
 The table's per-type figures are the `ask` labels in `longmemeval_s.csv`. The re-grade in
 `longmemeval_s_judges.json` called `gpt-4o-2024-08-06` again on the same answers, and at
