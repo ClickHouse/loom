@@ -187,7 +187,7 @@ def _forbidden_result(
     if ar.is_plane_op(op.name) and ns:
         # One answer whether or not the check ran, as the namespace screen gives.
         subject = str(getattr(auth, "subject", "") or "")
-        return ar.mcp_result(ar.refusal(subject, org or "", ns, tracker=ar.is_tracker(op.name)))
+        return ar.mcp_result(ar.refusal(subject, org or "", ns))
     msg = f"role check failed for {op.name}: {err}"
     body = {
         "error": msg,

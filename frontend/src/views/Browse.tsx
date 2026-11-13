@@ -206,20 +206,14 @@ export function Browse() {
   );
   const managedCode = adminNs.filter((r) => isCodeKind(r.kind));
   const managedTracker = adminNs.filter((r) => isTrackerKind(r.kind));
-  const listsTracker = !!rows?.some((r) => isTrackerKind(r.kind));
-  const repoHint = (repoCount > 0 || listsTracker) && (
+  const repoHint = repoCount > 0 && (
     <div className="text-xs text-text-muted">
-      {repoCount > 0 && (
-        <>
-          Looking for a repository? Repositories are joined from the{" "}
-          <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
-            Repositories page
-          </Link>{" "}
-          — {repoCount} repositor{repoCount === 1 ? "y" : "ies"} available, each with its issues & PRs when a record
-          covers it, read-only.{" "}
-        </>
-      )}
-      {listsTracker && "A public tracker namespace is listed here and joined like any other."}
+      Repositories and tracker records are joined from the{" "}
+      <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
+        Repositories page
+      </Link>{" "}
+      — {repoCount} repositor{repoCount === 1 ? "y" : "ies"} available, each with its issues & PRs when a record covers
+      it, read-only.
     </div>
   );
   const managedProps = {
@@ -579,7 +573,7 @@ interface SpaceActions {
 }
 
 /**
- * One space: line 1 the namespace in mono and its visibility, line 2 its
+ * One namespace: line 1 the namespace in mono and its visibility, line 2 its
  * description, line 3 its guide's summary when it has one (a link to the guide for a
  * member, raised above the open button); at the right its member count, the one inline
  * action and the More menu. The name is the row's open button (`data-row-open`), stretched

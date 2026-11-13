@@ -151,7 +151,7 @@ describe("Namespaces in your org: the rows", () => {
     expect(screen.getByRole("dialog", { name: "Settings for team" })).toBeInTheDocument();
   });
 
-  it("a public space: its members at the right; Join, or Request upgrade for a member; Leave only for a member", async () => {
+  it("a public namespace: its members at the right; Join, or Request upgrade for a member; Leave only for a member", async () => {
     const user = userEvent.setup();
     render(<Browse />);
     await screen.findAllByText("alpha");

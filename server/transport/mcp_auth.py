@@ -54,6 +54,12 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
     return True, False
 
 
+# Where a person asks for a memory namespace's grant in the dashboard, in the namespace
+# refusals only (a code or tracker index's refusal points to Repositories).
+DASHBOARD_REQUEST = (
+    "(namespace picker → Find public namespaces to join; for a private namespace, "
+    "search its exact name on Namespaces in your org)"
+)
 # The next step for a namespace the token may not read. A namespace that does not exist
 # is refused alike, so the step is the same for both and confirms neither.
 NAMESPACE_NEXT = (
@@ -82,9 +88,7 @@ def _not_accessible_result(
         # One answer whether or not the check ran: a restricted code namespace is refused
         # before the grant read that fails.
         subject, org = str(getattr(auth, "subject", "") or ""), str(getattr(auth, "org", ""))
-        return ar.mcp_result(
-            ar.refusal(subject, org, ns, tracker=ar.is_tracker(str(tool_name or "")))
-        )
+        return ar.mcp_result(ar.refusal(subject, org, ns))
     from server.auth import sharing
 
     # Someone else's personal collection takes no grant: no advice could work. Any other
@@ -118,7 +122,7 @@ def _not_accessible_result(
             f" Ask the collection's admin for a grant on it or a collection above it.{creator}"
             if collection
             else " Omit the namespace argument to use your default namespace, or request a "
-            f"grant from the dashboard {ar.DASHBOARD_REQUEST}."
+            f"grant from the dashboard {DASHBOARD_REQUEST}."
         )
     elif collection:
         # Never "omit the namespace": a write meant for the collection would land in the
@@ -136,7 +140,7 @@ def _not_accessible_result(
         msg += (
             f" Next: {NAMESPACE_NEXT}. Omit the namespace argument to use your default "
             f"namespace (loom_search reads {reads}), or request a grant from the dashboard "
-            f"{ar.DASHBOARD_REQUEST}.{creator}"
+            f"{DASHBOARD_REQUEST}.{creator}"
         )
         return _refusal_body(msg, ns, next=NAMESPACE_NEXT)
     return _refusal_body(msg, ns)
