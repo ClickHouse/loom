@@ -90,7 +90,7 @@ class _Listener:
 
 @contextlib.contextmanager
 def _relay(
-    sock_dir: Path, slots: int, listener: _Listener | None = None
+    sock_dir: Path, slots: int, listener: _Listener | None = None, idle_s: float = 30.0
 ) -> Iterator[tuple[int, _Upstream]]:
     """Run the relay's accept loop to a stand-in proxy; yields the relay's port and
     the proxy. On the way out the proxy closes, which ends every bridge, and the loop
@@ -101,7 +101,7 @@ def _relay(
 
     def run() -> None:
         try:
-            egress_relay.accept_loop(listener, upstream.path, slots_left)
+            egress_relay.accept_loop(listener, upstream.path, slots_left, idle_s)
         except _Stopped:
             slots_left.release()  # the one it took for that accept
 
@@ -272,8 +272,7 @@ def test_a_client_still_uploading_to_a_half_closed_proxy_keeps_its_bridge(
 def test_a_client_that_never_reads_gives_its_slot_back(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(egress_relay, "_WRITE_TIMEOUT_S", 0.3)
-    with _relay(sock_dir, 1) as (port, upstream):
+    with _relay(sock_dir, 1, idle_s=0.3) as (port, upstream):
         first = socket.create_connection(("127.0.0.1", port))
         assert upstream.arrived.acquire(timeout=5)
 
@@ -315,3 +314,17 @@ def test_an_accept_that_fails_is_retried(sock_dir: Path) -> None:
 
 def test_the_relay_bridges_as_many_connections_as_the_proxy_holds_tunnels() -> None:
     assert egress_relay.MAX_BRIDGES == egress.MAX_TUNNELS
+
+
+def test_serve_takes_the_proxys_idle_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    served = []
+    monkeypatch.setattr(egress_relay, "serve", lambda *args: served.append(args))
+    egress_relay.main(["serve", "3128", "/run/loom-egress/proxy.sock", "300.0", "--", "true"])
+    assert served == [(3128, "/run/loom-egress/proxy.sock", 300.0, ["true"])]
+
+
+def test_serve_without_the_idle_timeout_is_a_usage_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert egress_relay.main(["serve", "3128", "/run/loom-egress/proxy.sock", "--", "true"]) == 2
+    assert "serve PORT SOCKET IDLE -- ARGV" in capsys.readouterr().err

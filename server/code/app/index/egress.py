@@ -176,8 +176,9 @@ class EgressProxy:
         server_side = asyncio.create_task(_splice(up_reader, writer, traffic))
         try:
             await _splice(reader, up_writer, traffic)
-            # the client side ended before any byte moved: nothing to wait for
-            if traffic.moved and await _wait_for_server(server_side, traffic, writer):
+            if not traffic.moved:  # the client gave up before any byte moved
+                return
+            if await _wait_for_server(server_side, traffic, writer):
                 writer.transport.abort()  # closing would wait for a client that never reads
         finally:
             up_writer.close()

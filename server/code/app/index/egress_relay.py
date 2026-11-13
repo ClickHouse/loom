@@ -3,8 +3,10 @@
 The sandbox has no network. Its one way out is the egress proxy's unix socket,
 mounted in; this script bridges to it so ordinary clients can use it:
 
-  serve PORT SOCKET -- ARGV...  listen on 127.0.0.1:PORT (git, go and npm use
-                                it as their https proxy), then exec ARGV
+  serve PORT SOCKET IDLE -- ARGV...
+                                listen on 127.0.0.1:PORT (git, go and npm use
+                                it as their https proxy), then exec ARGV; a write
+                                to a client waits at most IDLE seconds
   connect HOST PORT SOCKET      ssh's ProxyCommand: ask the proxy for HOST:PORT
                                 and pipe stdin/stdout through the tunnel
 
@@ -27,9 +29,6 @@ MAX_BRIDGES = 32
 _LINGER_S = 1.0
 # not a setting: a pause before trying again at a kernel limit
 _RETRY_PAUSE_S = 0.1
-# The longest a write to a client may wait for it to read.
-# not a setting: the proxy's idle timeout default, as the proxy drops such a client too
-_WRITE_TIMEOUT_S = 300.0
 
 
 def _to_client(src: socket.socket, dst: socket.socket, to_client_done: threading.Event) -> None:
@@ -81,9 +80,9 @@ def _start(target: Callable[..., None], *args: object) -> threading.Thread:
             time.sleep(_RETRY_PAUSE_S)
 
 
-def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
+def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore, idle_s: float) -> None:
     try:
-        conn.settimeout(_WRITE_TIMEOUT_S)  # a client that never reads ends its bridge
+        conn.settimeout(idle_s)  # a client that never reads ends its bridge
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
             upstream.connect(path)
             to_client_done = threading.Event()
@@ -101,7 +100,9 @@ def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
         slots.release()
 
 
-def accept_loop(listener: socket.socket, path: str, slots: threading.Semaphore) -> None:
+def accept_loop(
+    listener: socket.socket, path: str, slots: threading.Semaphore, idle_s: float
+) -> None:
     """Bridge each connection in two threads, as many at a time as `slots` allows;
     the rest wait in the listen backlog."""
     while True:
@@ -112,10 +113,10 @@ def accept_loop(listener: socket.socket, path: str, slots: threading.Semaphore) 
             slots.release()
             time.sleep(_RETRY_PAUSE_S)
             continue
-        _start(_bridge, conn, path, slots)
+        _start(_bridge, conn, path, slots, idle_s)
 
 
-def serve(port: int, path: str, argv: list[str]) -> None:
+def serve(port: int, path: str, idle_s: float, argv: list[str]) -> None:
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", port))
@@ -125,7 +126,7 @@ def serve(port: int, path: str, argv: list[str]) -> None:
         # The relay is a grandchild handed to the sandbox's init, so ARGV has no
         # stray child; it dies with the sandbox's pid namespace.
         if os.fork() == 0:
-            accept_loop(listener, path, threading.BoundedSemaphore(MAX_BRIDGES))
+            accept_loop(listener, path, threading.BoundedSemaphore(MAX_BRIDGES), idle_s)
         os._exit(0)
     os.waitpid(child, 0)
     listener.close()
@@ -167,11 +168,13 @@ def _copy_stdin(dst: socket.socket) -> None:
 
 
 def main(args: list[str]) -> int:
-    if len(args) >= 5 and args[0] == "serve" and args[3] == "--":
-        serve(int(args[1]), args[2], args[4:])
+    if len(args) >= 6 and args[0] == "serve" and args[4] == "--":
+        serve(int(args[1]), args[2], float(args[3]), args[5:])
     if len(args) == 4 and args[0] == "connect":
         return connect(args[1], args[2], args[3])
-    sys.stderr.write("usage: egress_relay.py serve PORT SOCKET -- ARGV | connect HOST PORT SOCK\n")
+    sys.stderr.write(
+        "usage: egress_relay.py serve PORT SOCKET IDLE -- ARGV | connect HOST PORT SOCK\n"
+    )
     return 2
 
 

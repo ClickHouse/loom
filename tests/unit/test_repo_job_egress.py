@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import socket
 import struct
 from collections.abc import Awaitable, Callable
@@ -194,6 +195,7 @@ async def test_a_connection_past_the_tunnel_cap_is_refused_after_a_short_wait(
 ) -> None:
     """Waiting without a bound would let a job park any number of connections
     (two fds each) in the workers process."""
+    caplog.set_level(logging.WARNING, logger="loom.code_index.egress")
     gate = asyncio.Event()
 
     async def slow_vet(host: str) -> tuple[str, str]:
@@ -513,6 +515,28 @@ async def test_a_client_that_gives_up_while_its_name_is_vetted_is_not_dialled(
         writer.close()
     finally:
         await proxy.close()
+
+
+async def test_a_client_that_resets_ends_the_tunnel(
+    sock_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upstream_eof = asyncio.Event()
+
+    async def waits(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read()
+        upstream_eof.set()
+        writer.close()
+
+    proxy, server, _reader, writer = await _tunnel_to(waits, sock_dir, monkeypatch)
+    try:
+        writer.write(b"request")
+        await writer.drain()
+        writer.transport.abort()  # a reset
+        await asyncio.wait_for(upstream_eof.wait(), timeout=5)
+    finally:
+        await asyncio.wait_for(proxy.close(), timeout=5)
+        server.close()
+        await asyncio.wait_for(server.wait_closed(), timeout=5)
 
 
 async def test_close_ends_an_open_tunnel_and_its_server_side(
