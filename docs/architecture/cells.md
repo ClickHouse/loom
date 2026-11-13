@@ -1033,7 +1033,7 @@ the directory row.
 | A SCIM token of another cell, or an application at the wrong cell's host | the process does not boot, or `/scim/v2` answers 401 and writes nothing                                                                                                                                                                                                                                                                                                                                                              |
 | A cell's Postgres or ClickHouse                                          | that cell fails as a single deployment does ([storage authority](storage-authority.md#failure)); other cells serve                                                                                                                                                                                                                                                                                                                   |
 | A cell's own rows or tenancy mode are unreadable                         | with `LOOM_CELL` set a process keeps its last rows and mode within the stale bound, then is gated, a server process whose first read fails does not boot (gated and unready with Postgres migrations pending), and a workers child that never read them is gated; with it unset a server process keeps its verdict with no bound, and a failed first read fails its boot (gated until a read lands with Postgres migrations pending) |
-| A `first` or mode row removed, or both beside a tenancy or own row       | triggers act as in `enforced` and every process is gated; `loom doctor` names it, a prepare rerun writes them back                                                                                                                                                                                                                                                                                                                   |
+| A `first` or mode row removed, or both beside a tenancy or own row       | the org triggers, where a cell has them, act as in `enforced` and every process is gated; `loom doctor` names it, a prepare rerun writes them back                                                                                                                                                                                                                                                                                   |
 | No state, tenancy or own row on a cell the directory registers           | open; `loom doctor` names it; `loom cell restore` closes it after a restore, a prepare rerun after a stopped prepare                                                                                                                                                                                                                                                                                                                 |
 | A cell's `first` value is not yet read                                   | every request but health probes and the probe route answers 503 (SCIM with `Retry-After`); the process is unready and runs no worker (a workers child, or a server process with Postgres migrations pending; any other server process fails its boot)                                                                                                                                                                                |
 | A request for another cell's org                                         | 409 `WRONG_CELL` after verification, nothing written                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -1275,34 +1275,34 @@ An integration test with two cells and a router in CI's Postgres job:
   it, and a prepare rerun writes the row back; a later cell whose mode row is set to
   `recording` records nothing, its trigger refuses an unheld org, a process with
   `LOOM_CELL` set there serves as in `enforced`, a pod with `LOOM_CELL` unset there is
-  unready and runs no worker, `loom doctor` names the row, a CLI command declaring an
-  org with `LOOM_CELL_ROUTER_TOKEN` set refuses, naming it, and the router refuses its
-  state read; a build N-1 process's `memory.set` and delivery pass on a never-prepared
-  deployment after N's migration succeed and write no tenancy row, and on the first cell
-  in `recording` a boot creates no org trigger, and one created by hand reads the state
-  and looks nothing up, a write under `session_replication_role = replica` for an unheld
-  org is skipped (origin triggers), an `INSERT ... ON CONFLICT DO UPDATE` that inserts a
-  row for an unheld org is refused and one that hits an existing row of it is not, a
-  marked session's every write passes, and the triggers on an `enforced` cell cover
-  every table erasure classifies with an `org` column but the three exclusions; and an
-  org-keyed write while attach holds the mode table's lock returns at once, with new-org
-  requests answering within their deadline and mode-cache reads returning at once
-  throughout; `loom cell restore` after a refusal at step 3's lock leaves the cell
-  `enforced`, and the resumed attach runs from step 3's wait; a `LOOM_CELL_ROUTER_TOKEN`
-  not of the `lcr_` form is refused at boot and named by `loom doctor`;
-  `loom cell credential new` prints a credential of that form and its SHA-256, with the
-  directory and the stores unreachable; prepare and `--next` refuse an argument that is
-  not 64 lowercase hex characters, the credential and its bare 128-character secret
-  included, storing nothing; orgs a first cell records in `recording` with no data are
-  listed by `loom doctor`; a placement flood with no quota set is held to the rate limit
-  at each router replica, `loom doctor` names the cell as one with no quota, and a call
-  refused past it at one replica answers 503 with a `Retry-After` of at most 60 s, after
-  which its retry at that replica, with no other call of the cell admitted between, is
-  admitted; a cell's first prepare, with no directory row yet, passes the deployment-id
-  check; a pod or CLI that lost `LOOM_PG_DSN` or `LOOM_STORAGE_AUTHORITY` on a cell is
-  refused by the authority check; the first cell's existing tokens, refresh tokens and
-  OAuth clients keep working through the cutover, a logout through the shared host
-  revokes its refresh token;
+  unready and runs no worker, `loom cell prepare` names the row, a CLI command declaring
+  an org with `LOOM_CELL_ROUTER_TOKEN` set refuses, naming it, and the router refuses
+  its state read; a build N-1 process's `memory.set` and delivery pass on a
+  never-prepared deployment after N's migration succeed and write no tenancy row, and on
+  the first cell in `recording` a boot creates no org trigger, and one created by hand
+  reads the state and looks nothing up, a write under
+  `session_replication_role = replica` for an unheld org is skipped (origin triggers),
+  an `INSERT ... ON CONFLICT DO UPDATE` that inserts a row for an unheld org is refused
+  and one that hits an existing row of it is not, a marked session's every write passes,
+  and the triggers on an `enforced` cell cover every table erasure classifies with an
+  `org` column but the three exclusions; and an org-keyed write while attach holds the
+  mode table's lock returns at once, with new-org requests answering within their
+  deadline and mode-cache reads returning at once throughout; `loom cell restore` after
+  a refusal at step 3's lock leaves the cell `enforced`, and the resumed attach runs
+  from step 3's wait; a `LOOM_CELL_ROUTER_TOKEN` not of the `lcr_` form is refused at
+  boot and named by `loom doctor`; `loom cell credential new` prints a credential of
+  that form and its SHA-256, with the directory and the stores unreachable; prepare and
+  `--next` refuse an argument that is not 64 lowercase hex characters, the credential
+  and its bare 128-character secret included, storing nothing; orgs a first cell records
+  in `recording` with no data are listed by `loom doctor`; a placement flood with no
+  quota set is held to the rate limit at each router replica, `loom doctor` names the
+  cell as one with no quota, and a call refused past it at one replica answers 503 with
+  a `Retry-After` of at most 60 s, after which its retry at that replica, with no other
+  call of the cell admitted between, is admitted; a cell's first prepare, with no
+  directory row yet, passes the deployment-id check; a pod or CLI that lost
+  `LOOM_PG_DSN` or `LOOM_STORAGE_AUTHORITY` on a cell is refused by the authority check;
+  the first cell's existing tokens, refresh tokens and OAuth clients keep working
+  through the cutover, a logout through the shared host revokes its refresh token;
 - attach refuses a shared issuer, root secret, Keeper path, nested bucket prefix or
   configured org, a second cell that holds data, and a second attach while one runs;
 - an OIDC sign-in, an MCP client's authorization and a device flow for an org in the
