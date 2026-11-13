@@ -10,5 +10,6 @@
   dump that writes `schemas/schema.sql`, the load benchmark, table rebuilds,
   the call-graph edge audit, the backup drill and the code-intel bootstrap.
 - `scip_harness/`: compiler-tier index producers; server workers call them by path.
-- `docs_site/`: the documentation site's MkDocs hook, theme override and pinned builder.
+- `docs_site/`: the documentation site's MkDocs hook, theme override, pinned builder and
+  IndexNow submission.
 """
