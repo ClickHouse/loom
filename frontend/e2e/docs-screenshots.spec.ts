@@ -845,7 +845,7 @@ const ASSISTANT_ANSWER = [
   "A refund over **$250** needs a second approver in the billing console before it is issued [doc:policies/refunds.md § Approvals].",
   "",
   "- The approver must not be the person who took the original payment [doc:policies/refunds.md § Approvals].",
-  "- A refund in another currency is rounded half to even, as the settlement bank does [memory:payments/fx/rounding@v1].",
+  "- FX conversion rounds half to even, as the settlement bank does [memory:payments/fx/rounding@v1].",
 ].join("\n");
 
 const ASSISTANT_CITATIONS = [
