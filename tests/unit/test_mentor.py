@@ -223,7 +223,7 @@ def _assert_rendered_cleanly(text: str) -> None:
     parenthesis."""
     from server.transport import mcp_tools
 
-    for toolset in ("core", "coding", "tracker"):
+    for toolset in ("core", "coding", "tracker", "tasks", "atomic", "readonly"):
         rendered = mcp_tools.mentor_text_for_toolset(text, toolset)
         assert_marked_once_outside_parentheses(rendered, toolset)
 
@@ -639,7 +639,8 @@ def test_the_dashboard_and_the_assistant_get_no_call_hint() -> None:
 
 def test_get_miss_fires_once_per_session() -> None:
     hint = _call("memory.get", {"memory_key": "deploy_window"}, {"found": False})
-    assert hint is not None and hint[0] == "get_miss" and "deploy_window" in hint[1]
+    # the hint points at the call's own key, never a copy the clip could change
+    assert hint is not None and hint[0] == "get_miss" and "no row at that key" in hint[1]
     assert "search.query" in hint[1]
     assert _call("memory.get", {"memory_key": "other"}, {"found": False}) is None
     assert _call("memory.get", {"memory_key": "other"}, {"found": False}, session="s2") is not None
@@ -652,7 +653,7 @@ def test_get_miss_fires_once_per_session() -> None:
 
 def test_set_rules_duplicate_large_value_and_churn() -> None:
     dup = _call("memory.set", {"memory_key": "k", "value": "v"}, {"duplicate_of": "k0"})
-    assert dup is not None and dup[0] == "set_duplicate" and "k0" in dup[1]
+    assert dup is not None and dup[0] == "set_duplicate" and "duplicate_of" in dup[1]
     big = _call("memory.set", {"memory_key": "k2", "value": "x" * 5000}, {"memory_id": "1"})
     assert big is not None and big[0] == "set_large_value" and "knowledge.upsert" in big[1]
     for i in range(4):
@@ -1538,6 +1539,11 @@ def test_several_echoed_names_keep_their_quotes_and_the_advice() -> None:
     assert text.endswith("advice.")
 
 
+def test_an_empty_echoed_list_is_only_its_count() -> None:
+    assert mentor_rules._quoted_list([], total=3) == "+3"
+    assert mentor_rules._quoted_list([]) == ""
+
+
 def test_a_long_echoed_list_is_counted_past_three() -> None:
     echo = mentor_rules._quoted_list([f"source-{i}" for i in range(12)])
     assert echo.count("'") == 6 and echo.endswith(", +9")
@@ -1630,10 +1636,6 @@ def test_a_call_hint_on_mcp_names_ops_for_its_listing() -> None:
     assert core is not None and coding is not None
     assert "loom_search recalls by meaning" in core[1] and "memory.list (via loom_op)" in core[1]
     assert "loom_search recalls by meaning" in coding[1] and "(call " not in coding[1]
-    # a value the caller sent keeps its op-like name: it is data, not a reference
-    args = {**args, "memory_key": "run.get"}
-    echo = mcp_outcome._mentor_hint("memory.get", args, {"found": False}, "s-echo", "core")
-    assert echo is not None and "no row at 'run.get':" in echo[1]
 
 
 def test_no_hint_text_writes_an_op_as_a_call_or_names_a_hidden_op() -> None:

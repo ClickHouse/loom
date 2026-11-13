@@ -210,7 +210,7 @@ def test_loom_op_text_is_built_for_its_listing(
     for op in named:
         assert OPERATIONS_BY_NAME[op].mcp_tool_name not in names, (toolset, op)
         assert mcp_op.reachable(OPERATIONS_BY_NAME[op], toolset), (toolset, op)
-    assert ("read ops only" in text) == (toolset == "readonly")
+    assert ("Run a Loom read op" in text) == (toolset == "readonly")
     # both examples are reads that `all` and `readonly` list as tools
     expected = {"all": set(), "readonly": set()}.get(toolset, {"memory.evidence", "memory.digests"})
     assert named - {"memory.related"} == expected, toolset

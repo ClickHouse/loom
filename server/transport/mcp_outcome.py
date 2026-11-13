@@ -307,8 +307,7 @@ def _mentor_hint(
         set_hint_context("")
         if hint is None:
             return None
-        # the code is ledgered only once the hint is rendered, so a render failure
-        # leaves no row claiming a hint the client never saw
+        # the ledger names a hint only once it is rendered
         text = mentor_text_for_toolset(hint[1], toolset)
         set_hint_context(hint[0])
         return hint[0], text

@@ -309,11 +309,6 @@ def _duration(seconds: int) -> str:
     return f"{minutes // 60}h {minutes % 60}m"
 
 
-def _byname(op: str) -> str:
-    """The op as written in a hint; the listing note rides the hint's tail."""
-    return op
-
-
 # Room the values a hint echoes take, together: short enough that the clip never
 # cuts a closing quote, and that the advice after them survives.
 ECHO_CHARS = 60
@@ -322,9 +317,9 @@ ECHO_CHARS = 60
 def _quoted(value: object, limit: int = ECHO_CHARS) -> str:
     """A caller's value as a hint echoes it: in single quotes with none inside and no
     newline, cut to ``limit``, so the MCP renderer leaves it as written."""
-    text = str(value).replace("'", "\u2019").replace("\n", " ")
+    text = str(value).replace("'", '"').replace("\n", " ")
     if len(text) > limit:
-        text = text[: limit - 1] + "…"
+        text = text[: limit - 3] + "..."
     return f"'{text}'"
 
 
@@ -338,7 +333,8 @@ def _quoted_list(values: list[Any], total: int | None = None) -> str:
     shown = values[:ECHO_VALUES]
     each = ECHO_CHARS // max(1, len(shown))
     more = (len(values) if total is None else total) - len(shown)
-    return ", ".join(_quoted(v, each) for v in shown) + (f", +{more}" if more > 0 else "")
+    parts = [_quoted(v, each) for v in shown] + ([f"+{more}"] if more > 0 else [])
+    return ", ".join(parts)
 
 
 def clip(text: str, limit: int = HINT_CHARS) -> str:
@@ -552,7 +548,7 @@ def _rules_planes(c: _Ctx) -> None:
             "warning",
             f"{c.fact('tracker_tagged_sets')} writes tagged test/flaky/ci and 0 tracker.* "
             f"calls: the tracker source ({_quoted_list(list(tracker_sources))}) answers "
-            f"{_byname('tracker.similar')}, "
+            f"tracker.similar, "
             "tracker.duplicate_check, tracker.flaky, tracker.test_signal.",
             ("tracker.similar", "tracker.duplicate_check", "tracker.flaky", "tracker.test_signal"),
             tracker_tagged_sets=c.fact("tracker_tagged_sets"),
@@ -563,7 +559,7 @@ def _rules_planes(c: _Ctx) -> None:
         c.add(
             "bisect_available",
             "info",
-            f"{hist} blame/history calls and no bisect: {_byname('code.bisect_candidates')} "
+            f"{hist} blame/history calls and no bisect: code.bisect_candidates "
             "names the PRs that first shipped in the failing release and touched the frames — "
             "start there.",
             ("code.bisect_candidates",),
@@ -579,7 +575,7 @@ def _rules_planes(c: _Ctx) -> None:
             "facts_graph_unused",
             "info",
             f"{ent} rows carry entities and the graph was never walked: facts.traverse from a "
-            f"seed entity, memory.related for a row's neighbours, {_byname('facts.path')} "
+            f"seed entity, memory.related for a row's neighbours, facts.path "
             "between two names.",
             ("facts.traverse", "memory.related", "facts.path"),
             entity_rows=ent,
@@ -588,7 +584,7 @@ def _rules_planes(c: _Ctx) -> None:
         c.add(
             "runs_unused",
             "info",
-            f"{c.sessions} sessions and no run ledger: {_byname('run.begin')} before the work "
+            f"{c.sessions} sessions and no run ledger: run.begin before the work "
             "and run.complete with memories_used after grade the memories by the outcomes they "
             "produced.",
             ("run.begin", "run.complete"),
@@ -606,7 +602,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "warning",
             f"{max(over, large)} rows this agent wrote are documents stored as memories "
             "(over ~2 KB or JSON past "
-            f"the embed clip): {_byname('knowledge.upsert')} the body and keep a one-paragraph "
+            f"the embed clip): knowledge.upsert the body and keep a one-paragraph "
             "pointer row under the same key.",
             ("knowledge.upsert", "memory.set"),
             oversized_rows=over,
@@ -618,7 +614,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "checkpoints_as_memory",
             "warning",
             f"{max(huge, blobs)} checkpoint-sized writes: park a run dump with "
-            f"{_byname('context.offload')} (summary + TTL) and keep one short episodic row "
+            f"context.offload (summary + TTL) and keep one short episodic row "
             "keyed by run id.",
             ("context.offload", "memory.set"),
             huge_sets=huge,
@@ -637,7 +633,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "info",
             f"{idk} writes keyed by a number, {c.fact('top_prefix_sets')} of them "
             f"under {prefix}: facts with identity — "
-            f"{_byname('memory_schema.register')} once, then memory.record.write{counts}.",
+            f"memory_schema.register once, then memory.record.write{counts}.",
             ("memory_schema.register", "memory.record.write", "memory.aggregate"),
             id_keyed_sets=idk,
             top_prefix=c.facts.get("top_prefix", ""),
@@ -660,7 +656,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "conflicts_pending",
             "info",
             f"{conflicted} facts in this namespace disagree with another and nobody has looked: "
-            f"{_byname('conflicts.list')} shows the pairs, conflicts.resolve settles one; "
+            f"conflicts.list shows the pairs, conflicts.resolve settles one; "
             "search penalises them until then.",
             ("conflicts.list", "conflicts.resolve"),
             conflicted_rows=conflicted,
@@ -703,7 +699,7 @@ def _rules_coordination(c: _Ctx) -> None:
     c.add(
         "coordination_loop",
         "warning",
-        f"{what}: coordination state — {_byname('working_memory.set')} / working_memory.get "
+        f"{what}: coordination state — working_memory.set / working_memory.get "
         "holds it without a version row, an embedding or a conflict check per write.",
         ("working_memory.set", "working_memory.get"),
         max_sets_one_key=ms,
@@ -938,11 +934,9 @@ def _rule_get_miss(
 ) -> _Call:
     if op != "memory.get" or not _get_missed(res):
         return None
-    key = str(args.get("memory_key") or "")
-    where = _quoted(key) if key else "that key"
     return (
         "get_miss",
-        f"no row at {where}: search.query recalls by meaning, memory.list with a "
+        "no row at that key: search.query recalls by meaning, memory.list with a "
         "key prefix lists the siblings, and a moved key answers with canonical_key (follow=true).",
     )
 
@@ -991,7 +985,7 @@ def _rule_set_duplicate(
         return None
     return (
         "set_duplicate",
-        f"this write duplicates {_quoted(res['duplicate_of'])}: revise that key instead "
+        "this write duplicates the row duplicate_of names: revise that key instead "
         "(same key = new version), or memory.link supersedes if this one replaces it.",
     )
 

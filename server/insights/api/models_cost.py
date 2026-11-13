@@ -51,7 +51,7 @@ class CostSummaryInput(BaseModel):
         description="Dimensions to GROUP BY. Defaults to operation-level rollup.",
     )
     agent: str | None = None
-    # Only this op name (for example `memory.ask`); None counts every op.
+    # Only this op name (for example 'memory.ask'); None counts every op.
     operation: str | None = None
     # One end user only (forces an events scan); None or "-" = every user.
     user_id: str | None = None

@@ -91,7 +91,7 @@ Cost rollup over a date window.
 | `to_date` | `date` | required | Inclusive upper bound |
 | `group_by` | `list[Literal['namespace', 'agent', 'day', 'operation', 'memory_key', 'user_id', 'model', 'traffic_class', 'instance_label', 'build_commit']]` | *(computed)* | Dimensions to GROUP BY. |
 | `agent` | `str \| None` | `None` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
-| `operation` | `str \| None` | `None` | Only this op name (for example `memory.ask`); None counts every op. |
+| `operation` | `str \| None` | `None` | Only this op name (for example 'memory.ask'); None counts every op. |
 | `user_id` | `str \| None` | `None` | One end user only (forces an events scan); None or "-" = every user. |
 | `traffic_class` | `str \| None` | `None` | One class only (production \| interactive \| bench); forces an events scan like `user_id`. |
 | `instance_label` | `str \| None` | `None` | One launcher's processes (`deploy:web:blue`, `iso:w6m1:7864`, …); forces an events scan like `user_id`. |

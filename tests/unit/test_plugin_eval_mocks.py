@@ -29,14 +29,11 @@ from pydantic import BaseModel, ValidationError
 
 from bench.skill_eval import parse_frontmatter
 from server.operations.registry import ALL_OPERATIONS
-from server.transport.mcp_tools import _synthetic_tool_descriptors, listed_tool_names
+from tests.unit.loom_op_marks import synthetic_descriptors
 
 MOCKS = Path(__file__).resolve().parents[2] / "integrations/claude-code-plugin/evals/mocks/loom"
 _OPS = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
-_SYNTHETIC = {
-    d["name"]: d.get("outputSchema") or {}
-    for d in _synthetic_tool_descriptors("core", listed_tool_names("core"), writes=True)
-}
+_SYNTHETIC = {d["name"]: d.get("outputSchema") or {} for d in synthetic_descriptors("core")}
 _PLACEHOLDER = re.compile(r"\{\{\s*input\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}")
 _JSON_TYPES: dict[str, type | tuple[type, ...]] = {
     "object": dict,

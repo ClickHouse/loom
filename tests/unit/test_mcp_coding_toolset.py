@@ -38,7 +38,10 @@ from server.transport.mcp_descriptions import (
     CODING_TOOL_DESCRIPTIONS,
     TOOL_DESCRIPTIONS,
 )
-from tests.unit.loom_op_marks import assert_marked_once_outside_parentheses
+from tests.unit.loom_op_marks import (
+    assert_marked_once_outside_parentheses,
+    synthetic_descriptors,
+)
 
 OPS = {op.name: op for op in ALL_OPERATIONS}
 TOOL_TO_OP = {op.mcp_tool_name: op.name for op in ALL_OPERATIONS}
@@ -66,11 +69,6 @@ def _listing(toolset: str, code: bool, *, requested: str | None = None) -> list[
 
 def _names(tools: list[dict]) -> set[str]:
     return {t["name"] for t in tools}
-
-
-def _synthetic(toolset: str) -> list[dict]:
-    """The synthetic descriptors a listing on ``toolset`` carries."""
-    return mt._synthetic_tool_descriptors(toolset, mt.listed_tool_names(toolset), writes=True)
 
 
 def _shown(listed: dict[str, dict], toolset: str, name: str, source: str) -> bool:
@@ -231,8 +229,8 @@ def test_coding_descriptions_derive_from_the_core_texts():
 
 
 def test_activation_triggers_are_one_list_on_both_tiers():
-    core_text = next(d for d in _synthetic("core") if d["name"] == "loom_activate")
-    coding_text = next(d for d in _synthetic("coding") if d["name"] == "loom_activate")
+    core_text = next(d for d in synthetic_descriptors("core") if d["name"] == "loom_activate")
+    coding_text = next(d for d in synthetic_descriptors("coding") if d["name"] == "loom_activate")
     assert coding_text["description"] == CODING_TOOL_DESCRIPTIONS["loom_activate"]
     for trigger in ACTIVATION_TRIGGERS:
         assert f"'{trigger}'" in core_text["description"], trigger
@@ -243,8 +241,8 @@ def test_activation_triggers_are_one_list_on_both_tiers():
     # parentheticals go, every call / paging / do-not-call sentence stays
     from server.transport.mcp_descriptions import coding_search_description
 
-    core_s = next(d for d in _synthetic("core") if d["name"] == "loom_search")
-    coding_s = next(d for d in _synthetic("coding") if d["name"] == "loom_search")
+    core_s = next(d for d in synthetic_descriptors("core") if d["name"] == "loom_search")
+    coding_s = next(d for d in synthetic_descriptors("coding") if d["name"] == "loom_search")
     assert coding_s["description"] == coding_search_description(core_s["description"])
     assert "profile, knowledge and past conversations" in coding_s["description"]
     assert "(uploaded documents)" in core_s["description"]

@@ -37,7 +37,7 @@ from server.transport.mcp_schemas import (
     apply_schema_profile,
     collapse_nullable,
 )
-from tests.unit.loom_op_marks import assert_marked_once_outside_parentheses
+from tests.unit.loom_op_marks import assert_marked_once_outside_parentheses, marked
 
 OPS = {op.name: op for op in ALL_OPERATIONS}
 TOOL_TO_OP = {op.mcp_tool_name: op.name for op in ALL_OPERATIONS}
@@ -242,8 +242,7 @@ def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(
                 assert not re.search(rf"\b{tool}\b", text), f"{toolset}: {t['name']} lists {op}"
                 if "loom_op" in names and reachable(OPS[op], toolset):
                     # the trail the renderer writes the marker after: a backtick, a possessive
-                    marked = rf"(?<![\w.]){re.escape(op)}(?:`(?:'s?)?|(?:'s)?) \(via loom_op\)"
-                    assert re.search(marked, text), (
+                    assert marked(op).search(text), (
                         f"{toolset}: {t['name']} names unlisted {op} without saying how to reach it"
                     )
 
@@ -378,12 +377,13 @@ def test_listed_tool_names_is_what_the_listing_shows(toolset: str, code: bool, m
     assert mt.listed_tool_names(None) == listing
 
 
-@pytest.mark.parametrize("toolset", ["core", "all"])
+@pytest.mark.parametrize("toolset", ["core", "all", "readonly"])
 def test_compact_loom_op_keeps_discovery_and_the_call(toolset: str):
     """compact keeps a description's first sentence; loom_op's must hold help and a call."""
     tools = {t["name"]: t for t in _listing(toolset, True, "compact")}
     text = tools["loom_op"]["description"]
     assert '"op": "help"' in text and '"op": "memory.related"' in text
+    assert ("Run a Loom read op" in text) == (toolset == "readonly")
 
 
 def test_the_compact_profile_keeps_the_tool_names():
