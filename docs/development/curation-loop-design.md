@@ -745,8 +745,9 @@ order, the first that matches deciding:
 - any other head is a writer's edit, or a head the read-time check would not serve
   (`conflicted`, `duplicate`), and the review is refused rather than overwrite or promote
   it; the admin edits the row to the draft's text, with `clear_expiry`, and reviews again,
-  which the no-write case then promotes (after `conflicts.resolve` or
-  `memory.dedup_resolve` for a marked row), or writes and promotes it directly.
+  which the no-write case then promotes (the edit clears a `conflicted` or `duplicate`
+  mark, as every revision does), or rejects the draft and writes and promotes the
+  definition directly.
 
 A retry so completes the promotion. Rejecting the draft instead leaves any row a writer
 wrote, which the admin restores from the row's history or promotes.
