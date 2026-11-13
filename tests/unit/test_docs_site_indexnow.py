@@ -46,6 +46,8 @@ def test_a_change_to_the_build_submits_every_page() -> None:
         "scripts/codegen/page_summary.py",
     ):
         assert indexnow.urls_for([path]) == every
+    # A page deleted in the same push is not in the tree; its URL is still announced.
+    assert SITE + "gone-page/" in indexnow.urls_for(["mkdocs.yml", "docs/gone-page.md"])
 
 
 def test_every_submitted_url_is_on_the_key_files_host_and_under_its_directory() -> None:

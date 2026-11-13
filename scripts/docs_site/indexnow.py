@@ -51,9 +51,11 @@ def every_page() -> list[str]:
 
 
 def urls_for(paths: list[str]) -> list[str]:
-    if any(p == i or p.startswith(i) for p in paths for i in BUILD_INPUTS):
-        return every_page()
-    return sorted({u for p in paths if (u := page_url(p))})
+    changed = {u for p in paths if (u := page_url(p))}
+    if any(p.startswith(i) for p in paths for i in BUILD_INPUTS):
+        # A deleted page is no longer in the tree, so keep the changed paths' URLs too.
+        return sorted(changed | set(every_page()))
+    return sorted(changed)
 
 
 def payload(urls: list[str], k: str) -> dict:
