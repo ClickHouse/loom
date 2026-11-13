@@ -832,9 +832,10 @@ const CODE_CALLEES: Record<string, Array<[string, string, number]>> = {
 
 /** `name`'s call edges as `code.callers` (others call it) or `code.callees` (it calls
  *  others) answers them. */
-function edges(table: Record<string, Array<[string, string, number]>>, name: string, direction: "callers" | "callees") {
+function edges(name: string, direction: "callers" | "callees") {
+  const table = direction === "callers" ? CODE_CALLERS : CODE_CALLEES;
   return (table[name] ?? []).map(([other, file, line]) => ({
-    edge_kind: "call",
+    edge_kind: "calls",
     from_symbol: direction === "callers" ? other : name,
     to_symbol: direction === "callers" ? name : other,
     from_symbol_id: "",
@@ -1097,14 +1098,14 @@ async function installDemoApi(page: Page): Promise<void> {
       }
       case "/v1/code.callers":
         return json({
-          edges: edges(CODE_CALLERS, String(body.name ?? ""), "callers"),
+          edges: edges(String(body.name ?? ""), "callers"),
           seed_symbols: [String(body.name ?? "")],
           epistemic: "exact",
           truncated: false,
         });
       case "/v1/code.callees":
         return json({
-          edges: edges(CODE_CALLEES, String(body.name ?? ""), "callees"),
+          edges: edges(String(body.name ?? ""), "callees"),
           seed_symbols: [String(body.name ?? "")],
           epistemic: "exact",
           truncated: false,
