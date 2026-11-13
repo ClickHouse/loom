@@ -383,7 +383,7 @@ def test_the_initialize_primer_names_only_tools_its_listing_carries(
     async def _defaults(*a: Any, **k: Any) -> dict[str, str]:
         return {"org": "o", "namespace": "ns", "agent": "claude-code"}
 
-    async def _ctx(auth: Any, defaults: Any = None) -> str:
+    async def _ctx(*_args: Any) -> str:
         return ""
 
     monkeypatch.setattr(mcp_primer, "_caller_defaults", _defaults)

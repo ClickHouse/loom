@@ -1500,6 +1500,26 @@ def test_handshake_warms_the_profile_when_nothing_is_cached(
     assert "code_index_unused" in line and len(warmed) == 1
 
 
+def test_the_handshake_mentor_line_names_ops_for_its_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hint's ops are named as the connection's listing names them, and the
+    core-listing note the stored text carries does not ride along."""
+    from server.transport import mcp_primer
+
+    async def _defaults(auth: Any, client_name: Any) -> dict[str, str]:
+        return {"org": "o", "namespace": "ns", "agent": "a"}
+
+    monkeypatch.setattr(mcp_primer, "_caller_defaults", _defaults)
+    text = "pin it with memory.pin (call memory.pin via loom_op)"
+    m._cache_put(("o", "ns", "a"), 10**12, _fake_profile(_h("pin_unused", text=text)))
+    core = asyncio.run(mcp_primer._mentor_line(None, None, "core"))
+    coding = asyncio.run(mcp_primer._mentor_line(None, None, "coding"))
+    assert "pin it with loom_memory_pin (" in core and "call memory.pin" not in core
+    assert "pin it with memory.pin (via loom_op)" in coding
+    assert "`mentor.brief` (via loom_op)" in core
+
+
 def test_brief_for_an_anonymous_caller_is_about_the_top_writer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

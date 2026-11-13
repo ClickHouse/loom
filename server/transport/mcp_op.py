@@ -202,8 +202,8 @@ def catalog(
     words = [w for w in re.split(r"[^\w.]+", query.lower()) if w]
     hits: list[tuple[int, str, dict[str, Any]]] = []
     writes = routes_writes(toolset)
-    for op in _ops():
-        if not _routed(op, writes):
+    for op in ALL_OPERATIONS:
+        if not _routed(op, writes):  # hidden ops included
             continue
         purpose = _purpose(op)
         name_l, purpose_l = op.name.lower(), purpose.lower()

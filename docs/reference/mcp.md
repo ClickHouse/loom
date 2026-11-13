@@ -33,8 +33,9 @@ Query parameters on the URL select what `tools/list` shows for that connection:
 An unknown value for either falls back to the deployment default, so a typo
 never widens or narrows a listing silently. The `?toolset=` value also shapes the
 session primer (`initialize` instructions, `server/discover`, the `loom` prompt,
-`loom://primer` and `loom_activate`): the primer names an op's own tool only when the
-toolset lists it, and `loom_op` with the op name otherwise.
+`loom://primer` and `loom_activate`): the primer names an op's own tool when the
+toolset lists it, else the op name marked "(via loom_op)", and leaves out an op
+`loom_op` does not route there.
 
 Methods served: `initialize`, `notifications/initialized`,
 `notifications/cancelled`, `ping`, `tools/list`, `tools/call`, `prompts/list`,

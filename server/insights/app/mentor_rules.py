@@ -256,6 +256,16 @@ _LISTED_VIA_ALIAS = frozenset(
 )
 
 
+# The note _unlisted adds for an op the core listing leaves out.
+_LOOM_OP_NOTE = re.compile(r" \(call [a-z_.]+ via loom_op\)")
+
+
+def without_listing_note(text: str) -> str:
+    """``text`` without _unlisted's core-listing note, for a caller that names
+    ops for its own listing instead."""
+    return _LOOM_OP_NOTE.sub("", text)
+
+
 def _unlisted(ops: tuple[str, ...]) -> str:
     """A trailing note for the first recommended op that is not on the core
     listing, so the agent knows not to look for it in its tool list (the

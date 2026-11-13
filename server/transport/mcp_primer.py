@@ -36,8 +36,14 @@ from server.transport.mcp_identity import (
     _caller_defaults,
     no_default_namespace_line,
 )
+from server.transport.mcp_op import name_ops_for_listing, routes_writes
 from server.transport.mcp_op import reachable as loom_op_reachable
-from server.transport.mcp_tools import _emit_mcp_event, assistant_connection, listed_ops
+from server.transport.mcp_tools import (
+    _emit_mcp_event,
+    assistant_connection,
+    listed_ops,
+    listed_tool_names,
+)
 
 log = logging.getLogger("server.transport.mcp")
 
@@ -486,7 +492,8 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
         else await _caller_default_context(auth, defaults)
     )
     profile = await _profile_section(auth, defaults) if auth is not None else ""
-    return rules + workspace + scope_line + await _mentor_line(auth, defaults) + profile
+    mentor = await _mentor_line(auth, defaults, toolset)
+    return rules + workspace + scope_line + mentor + profile
 
 
 def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
@@ -531,10 +538,12 @@ def _coding_instructions(toolset: str | None) -> str:
     )
 
 
-async def _mentor_line(auth: Any, defaults: dict[str, Any] | None = None) -> str:
-    """The top mentor hint for the caller's default workspace,
-    only when its profile is already cached — never a ledger read on the
-    handshake. "" otherwise, and on any failure."""
+async def _mentor_line(
+    auth: Any, defaults: dict[str, Any] | None = None, toolset: str | None = None
+) -> str:
+    """The top mentor hint for the caller's default workspace, naming ops as the
+    ``toolset`` listing does, only when its profile is already cached — never a
+    ledger read on the handshake. "" otherwise, and on any failure."""
     try:
         from server.insights.app import mentor as _mentor
 
@@ -545,7 +554,15 @@ async def _mentor_line(auth: Any, defaults: dict[str, Any] | None = None) -> str
         namespace = str(defaults.get("namespace") or "")
         agent = str(defaults.get("agent") or "-")
         line = _mentor.top_hint_line(org, namespace, agent)
-        if not line:
+        if line:
+            from server.insights.app.mentor_rules import without_listing_note
+
+            line = name_ops_for_listing(
+                without_listing_note(line),
+                listed_tool_names(toolset),
+                writes=routes_writes(toolset),
+            )
+        else:
             # Nothing cached: start the read now so the next handshake of
             # this agent carries the line. Never awaited here.
             _mentor.warm_profile(org, namespace, agent)
