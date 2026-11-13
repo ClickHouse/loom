@@ -833,13 +833,28 @@ async def test_a_local_model_that_times_out_spends_an_attempt(
 
 
 @pytest.mark.asyncio
+async def test_a_timeout_raised_without_its_request_spends_none_on_a_local_deployment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "llm_provider", "local")
+    ch = _replaying(monkeypatch, httpx.ReadTimeout("no reply"))
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
+    assert res.unreachable == 1 and res.failures == []
+    assert ch.inserts[-1][1][0]["last_error"].startswith("unreachable: ")
+
+
+@pytest.mark.asyncio
 async def test_a_hosted_models_timeout_on_a_local_deployment_spends_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.settings import settings
 
     monkeypatch.setattr(settings, "llm_provider", "local")
-    hosted = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    # One gateway host in front of both, told apart by path.
+    monkeypatch.setattr(settings, "local_llm_base_url", "https://gw.example/local/v1")
+    hosted = httpx.Request("POST", "https://gw.example/openai/v1/chat/completions")
     ch = _replaying(monkeypatch, httpx.ReadTimeout("no reply", request=hosted))
     res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
     assert res.unreachable == 1 and res.failures == []

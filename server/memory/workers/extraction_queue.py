@@ -136,8 +136,9 @@ def _local_server_timeout(e: BaseException) -> bool:
         url = e.request.url
     except RuntimeError:  # raised without its request: not known to be the local server
         return False
-    root = httpx.URL(settings.local_llm_base_url)
-    return (url.host, url.port) == (root.host, root.port)
+    # Under the root the local client posts to, so a hosted model behind the same
+    # gateway host is not taken for it.
+    return str(url).startswith(settings.local_llm_base_url.rstrip("/") + "/")
 
 
 def unreachable(e: BaseException) -> bool:

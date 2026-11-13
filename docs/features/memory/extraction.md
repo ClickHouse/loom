@@ -211,10 +211,11 @@ failed replay waits 15 seconds, then 1, 5 and 30 minutes between attempts, and a
 provider or gateway that cannot be reached (no connection, a timeout, 502, 503 or 504)
 spends no attempt, except a read timeout from a `local` model server, which answered too
 slowly for that request; on a `local` provider a replay cut short, at the pass deadline
-(`LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS`) or by a shutdown, spends one too. A replay whose model call is held (the org's model calls switched off,
-or the enqueuer's identity refused or asked to wait by the gateway) becomes `held` with the
-reason until the hold ends, also with no attempt spent; meanwhile the worker claims other
-work, none of that enqueuer's requests in the namespace. A request still waiting a day
+(`LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS`) or by a shutdown, spends one too. A replay
+whose model call is held (the org's model calls switched off, or the enqueuer's identity
+refused or asked to wait by the gateway) becomes `held` with the reason until the hold
+ends, also with no attempt spent; meanwhile the worker claims other work, none of that
+enqueuer's requests in the namespace. A request still waiting a day
 before the queue's 30-day TTL is dropped with a `loom.memory_drops` record.
 `memory.extraction_status` reports batches by `queue_id` or `status` (`pending`,
 `running`, `held`, `done`, `failed`); a token bounded to one user sees only that user's
