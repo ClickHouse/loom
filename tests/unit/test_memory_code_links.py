@@ -3885,8 +3885,9 @@ def _moved_module_world(
         ("c2", "pkg/b.py"): moved,
         ("c2", "pkg/c.py"): "c = 1\n",
     }
-    if copied_first:
+    if copied_first:  # there before, then edited elsewhere in the file: the mirror finds it
         commits[("c0", "pkg/b.py")] = _ROWS
+        commits[("c1", "pkg/b.py")] = commits[("c2", "pkg/b.py")] = _ROWS + "\n# touched\n"
     searched: list[tuple[str, str, str]] = []
 
     async def at(commit, path):
@@ -3971,8 +3972,9 @@ async def test_a_move_is_followed_while_the_index_still_holds_the_old_definition
 @pytest.mark.asyncio
 async def test_a_copy_the_index_does_not_hold_is_still_another_definition(monkeypatch) -> None:
     files = code_link_pass.RepoReads("o", "code-a")
-    row, _ = _moved_module_world(monkeypatch, files, indexed=False, copied_first=True)
+    row, searched = _moved_module_world(monkeypatch, files, indexed=False, copied_first=True)
     moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert searched == [("c1", "fetch_rows", "c0")]  # the mirror found b.py's copy
     assert [(m.link.state, m.link.path) for m in moves] == [("missing", "pkg/a.py")]
 
 
@@ -4113,13 +4115,13 @@ async def test_an_edited_move_the_index_settles_is_followed_when_the_mirror_cann
 
 @pytest.mark.asyncio
 async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypatch) -> None:
-    # through the real search: the file stays a match, and its names read as none
-    monkeypatch.setattr(code_link_pass.RepoReads, "containing", _REAL_CONTAINING)
+    # through the real search: z.py names it and does not parse, b.py holds the edited
+    # move; z.py adds nothing, so the move is followed
     files = code_link_pass.RepoReads("o", "code-a")
+    row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
+    monkeypatch.setattr(files, "containing", _REAL_CONTAINING.__get__(files))
     scope = SimpleNamespace(takes=lambda path: True)
-
-    async def changed(base, head):
-        return {"pkg/b.py", "pkg/z.py"}
+    names = files.names
 
     async def ingest_scope(org, cns, commit):
         return scope
@@ -4130,22 +4132,14 @@ async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypat
     async def indexed_names(scope, commit, path):
         if path == "pkg/z.py":
             raise code_links.code.ParseFailed(path, "parse: SyntaxError")
-        return {"pkg.b::fetch_rows"}
+        return await names(commit, path)
 
-    monkeypatch.setattr(files, "touched", changed)
     monkeypatch.setattr(code_links.code, "ingest_scope", ingest_scope)
     monkeypatch.setattr(code_links.code, "grep_words", grep)
     monkeypatch.setattr(code_links.code, "indexed_names", indexed_names)
-    assert await files.containing("c1", "fetch_rows", "c0", limit=5) == ["pkg/b.py", "pkg/z.py"]
-    assert await files.names("c1", "pkg/b.py") == {"pkg.b::fetch_rows"}  # read once
-
-    async def unparsed(org, cns, commit, path):
-        raise code_links.code.ParseFailed(path, "parse: SyntaxError")
-
-    # what does not parse is no evidence for a later read in the pass: it still raises
-    monkeypatch.setattr(code_links.code, "names_at", unparsed)
-    with pytest.raises(code_links.code.ParseFailed):
-        await files.names("c1", "pkg/z.py")
+    assert await files.containing("c1", "fetch_rows", "c0", limit=5) == ["pkg/b.py"]
+    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
+    assert [(m.link.state, m.link.path) for m in moves] == [("changed", "pkg/b.py")]
 
 
 @pytest.mark.asyncio
