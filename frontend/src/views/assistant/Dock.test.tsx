@@ -191,7 +191,8 @@ describe("reasons, worded per reader", () => {
     show();
     const body = await unavailable();
     expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat's setup is failing");
-    // Someone who can open Admin › Health is sent there; anyone but a platform admin is told who fixes it.
+    // Someone who can open Admin › Health is sent there; anyone but a platform admin is told
+    // who fixes it.
     const admin = who !== "viewer";
     const line: Partial<Record<Who, string>> = {
       platform: "Loom retries the setup on its own; Admin › Health says why it fails.",

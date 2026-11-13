@@ -674,11 +674,11 @@ function ReasonBody({
 /** Where the docs say how an operator sets up the assistant service. */
 export const SETUP_DOCS = { page: "features/integrations/librechat.md", anchor: "the-deployed-assistant" };
 
-/** Chat not set up (`failing`: its setup failing): the icon, a title and one sentence, then
- *  the docs on setting up the assistant service, or Try again while it fails, with Admin ›
- *  Health for someone who can open it (a platform or namespace admin), and who fixes it for
- *  anyone but a platform admin. The line about Loom's own reads shows only while the starters, which need no
- *  model, show under it. */
+/** Chat not set up (`failing`: its setup failing): the icon, a title and a line, then the
+ *  docs on setting up the assistant service, or Try again while it fails, with Admin › Health
+ *  for someone who can open it (a platform or namespace admin) and who fixes it for anyone
+ *  but a platform admin. The line about Loom's own reads shows only while the starters, which
+ *  need no model, show under it. */
 function SetupState({
   failing,
   starters,

@@ -210,9 +210,9 @@ refused, which the panel says instead).
 **Starters** list in an empty conversation, whether the assistant can answer or not, as
 full-width rows, the page's own first (documents on the Library, relationships on the Graph,
 a user's memories on Profile and Conversations): four, three on a phone, and the disclosure
-**More questions** shows the rest in place. They cover what the
-namespace holds and who appears in it (`namespace.inventory`), how it is used (the audit
-over the last 7 days, `namespace.audit`), what a user, agent or session remembers
+**More questions** shows the rest in place. They cover what the namespace holds and who
+appears in it (`namespace.inventory`), how it is used (the audit over the last 7 days,
+`namespace.audit`), what a user, agent or session remembers
 ([`memory.inspect`](namespaces-and-sharing.md#inspecting-one-user-agent-or-session), with a
 form for the id that suggests the users and agents an inventory card found), what its
 documents are ([`knowledge.inspect`](knowledge.md#inspecting-a-namespaces-documents)), what
@@ -290,9 +290,9 @@ One panel serves every window width:
   anchored at the right and full height, leaving a 24 px strip of the dimmed page at the
   left; its content keeps a reading width. The address, the history and the page under it do
   not change. **Collapse**, Esc or a click on the strip returns it to the mode the width
-  gives; **Close** closes it, and the next open is docked. A navigation from
-  it (a link in a card, Back, Forward) leaves the window first: beside the page the panel
-  stays open, over it the panel closes. A window narrower than 1024 px collapses it.
+  gives; **Close** closes it, and the next open is docked. A navigation from it (a link in a
+  card, Back, Forward) leaves the window first: beside the page the panel stays open, over
+  it the panel closes. A window narrower than 1024 px collapses it.
 
 Esc closes it from inside (after any menu or popover open in it), returning the focus to
 Ask AI (expanded, Esc collapses the window). A change of width moves the panel to another
@@ -356,16 +356,16 @@ search offers no Ask AI option. Where it can be offered the empty field reads "S
 question", and while it is offered, a search that matches nothing says no "No matches" and
 gives no filter tips.
 
-**Conversations are kept in this browser**, never on the server: 30 days from their last use,
-the newest 25 turns of each, up to 256 KB a conversation and 2 MB in all, and listed under
-**History** only for the person and token scope that asked them and the namespaces their token
-reads. History is the panel's own view: its header reads **History** after a **Back to the
-chat** button, the chat shown is marked, and choosing a row opens it. Each row's menu holds
-**Delete**; at the end the privacy line and **Delete all chats**, confirmed inside the panel.
-With no one to save chats for (auth off, or a session whose whoami names no subject),
-History shows "Chats aren't saved in this session."
-Signing out, or another person signing in, deletes them; a session that expired only hides
-them until the same person signs in again, and no other tab can write a deleted one back.
+**Conversations are kept in this browser**, never on the server: 30 days from their last
+use, the newest 25 turns of each, up to 256 KB a conversation and 2 MB in all, and listed
+under **History** only for the person and token scope that asked them and the namespaces
+their token reads. History is the panel's own view: its header reads **History** after a
+**Back to the chat** button, the chat shown is marked, and choosing a row opens it. Each
+row's menu holds **Delete**; at the end the privacy line and **Delete all chats**, confirmed
+inside the panel. With no one to save chats for (auth off, or a session whose whoami names
+no subject), History shows "Chats aren't saved in this session." Signing out, or another
+person signing in, deletes them; a session that expired only hides them until the same
+person signs in again, and no other tab can write a deleted one back.
 
 One answer runs in a conversation at a time, across the browser's tabs. Ask in a
 conversation another tab is answering in sends nothing, says so, and leaves the question in
