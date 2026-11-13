@@ -41,10 +41,10 @@ The installer reads `LOOM_*` environment variables, which can point it at anothe
 ClickHouse, port or directory. If `env | grep '^LOOM_'` prints any, stop and ask the user
 whether to keep them.
 
-Run from the user's home directory:
+The command runs the installer from the user's home directory:
 
 ```bash
-curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && LOOM_CONNECT=none sh loom-install.sh && rm loom-install.sh
+cd ~ && curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && LOOM_CONNECT=none sh loom-install.sh && rm loom-install.sh
 ```
 
 - `LOOM_CONNECT=none` stops the installer from setting up other agents, since you add the
@@ -75,8 +75,10 @@ curl -s --noproxy '*' --max-time 5 -o /dev/null -w '%{http_code}\n' -X POST 'htt
 `--header "Authorization: Bearer <token>"` on the `cline mcp add` command. A `401` on a
 later tool call, in step 4, means the same: ask for a token and add it.
 
-The Cline extension: open its settings file from **MCP Servers → Configure MCP Servers**
-in Cline. The entry:
+The Cline extension: its settings file opens from **MCP Servers → Configure MCP Servers**
+in Cline; on Linux it is
+`~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`.
+The entry:
 
 ```json
 {
