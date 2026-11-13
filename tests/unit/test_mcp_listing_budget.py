@@ -332,6 +332,7 @@ def test_no_rendered_text_splits_a_call_or_a_code_span(toolset: str, code: bool)
         for text in _texts(t):
             assert "(via loom_op)(" not in text, (toolset, t["name"], text)
             assert "(via loom_op) (via loom_op)" not in text, (toolset, t["name"], text)
+            assert "(via loom_op))" not in text, (toolset, t["name"], text)
             inside_spans = text.split("`")[1::2]
             assert not any("(via loom_op)" in span for span in inside_spans), (toolset, t["name"])
 

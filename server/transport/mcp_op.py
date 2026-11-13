@@ -235,8 +235,7 @@ _INSTEAD: dict[str, str] = {
     "run.list": "call run.get with a run id",
     "code.context_packs": "call code.context_pack with the pr_number you want",
     "memory.extraction_status": (
-        "call memory.extraction_status_mine with the queue_id "
-        "each deferred memory.set_from_messages returned"
+        "call memory.extraction_status_mine with the queue_id each deferred extraction returned"
     ),
     "erasure.status": "call erasure.list; each saga row carries its status",
     "memory.search_trace": (

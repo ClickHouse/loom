@@ -15,7 +15,8 @@ from server.transport._common import ledger_identity
 from server.transport.lean_results import mcp_op_result
 from server.transport.mcp_config import TOOL_EXEC_FAILED, _err, _ok
 from server.transport.mcp_identity import default_namespace_note
-from server.transport.mcp_tools import _emit_mcp_event
+from server.transport.mcp_op import name_ops_for_listing, routes_writes
+from server.transport.mcp_tools import _emit_mcp_event, listed_tool_names
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope
@@ -262,7 +263,7 @@ def _emit_success(
     request_id: str,
     result: Any,
     mcp_session_id: str,
-    toolset: str | None = None,
+    toolset: str | None,
 ) -> tuple[str, str] | None:
     """The success row of a tool call, with the mentor's hint computed first
     so the row carries `out_hint_code`. Returns the hint for the result."""
@@ -284,7 +285,7 @@ def _mentor_hint(
     arguments: dict[str, Any],
     result: Any,
     mcp_session_id: str,
-    toolset: str | None = None,
+    toolset: str | None,
 ) -> tuple[str, str] | None:
     """The mentor's one hint for this call, naming ops as the ``toolset`` listing
     does, or None; the code is published on the request context for the ledger
@@ -308,8 +309,6 @@ def _mentor_hint(
         if hint is None:
             return None
         from server.insights.app.mentor_rules import without_listing_note
-        from server.transport.mcp_op import name_ops_for_listing, routes_writes
-        from server.transport.mcp_tools import listed_tool_names
 
         text = name_ops_for_listing(
             without_listing_note(hint[1]),

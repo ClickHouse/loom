@@ -91,8 +91,7 @@ def test_a_readonly_refusal_sends_the_model_only_where_it_can_go(name: str) -> N
     listed = listed_tool_names("readonly")
     for m in mcp_op._NAMED_OP.finditer(instead):
         op = mcp_op._lookup(m.group(1))
-        # extraction_status names set_from_messages as where a queue_id came from
-        if op is not None and op.name != "memory.set_from_messages":
+        if op is not None:
             assert op.mcp_tool_name in listed or mcp_op.reachable(op, "readonly"), (name, op.name)
 
 

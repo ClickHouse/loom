@@ -265,7 +265,7 @@ _LISTED_VIA_ALIAS = frozenset(
 
 # The note _unlisted adds for an op the core listing leaves out, and its pattern.
 _LOOM_OP_NOTE = " (call {} via loom_op)"
-_LOOM_OP_NOTE_RE = re.compile(re.escape(_LOOM_OP_NOTE).replace(r"\{\}", r"[a-z_.]+"))
+_LOOM_OP_NOTE_RE = re.compile(r" \(call [a-z_.]+ via loom_op\)")
 
 
 def without_listing_note(text: str) -> str:
@@ -395,7 +395,7 @@ def _rules_reading(c: _Ctx) -> None:
             "recall_by_key_only",
             "warning",
             f"{gets} exact-key reads to {searches} searches this week: search.query recalls by "
-            "meaning; keep a value read in a loop in working memory (working_memory.set).",
+            "meaning; keep a value read in a loop with working_memory.set.",
             ("search.query", "memory.search", "working_memory.set"),
             gets=gets,
             searches=searches,
@@ -845,7 +845,7 @@ def _rule_set_stack_trace(
     elif repos:
         text = (
             "this value is a stack trace: code.trace resolves every frame to the indexed symbol "
-            "(then code.callers / code.history on the frame that matters); the memory row should "
+            "and code.callers / code.history follow the frame that matters; the memory row should "
             "be the one-line finding." + _unlisted(("code.trace",))
         )
     elif qa:

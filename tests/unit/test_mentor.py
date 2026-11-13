@@ -805,6 +805,7 @@ def test_mcp_helper_attaches_the_hint_and_publishes_the_code() -> None:
         {"org": "o", "namespace": "ns", "agent": "a", "memory_key": "k"},
         {"found": False},
         "mcp-session-1",
+        None,
     )
     assert hint is not None and hint[0] == "get_miss"
     assert ledger.current_hint_code() == "get_miss"
@@ -815,6 +816,7 @@ def test_mcp_helper_attaches_the_hint_and_publishes_the_code() -> None:
             {"org": "o", "namespace": "ns", "memory_key": "k2"},
             {"found": False},
             "mcp-session-1",
+            None,
         )
         is None
     )
