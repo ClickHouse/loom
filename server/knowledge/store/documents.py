@@ -384,9 +384,7 @@ async def list_with_chunk_counts(
 async def _live_chunk_counts(
     org: str, keys: list[tuple[str, str]], ch: _CHClient
 ) -> dict[tuple[str, str], int]:
-    """The live chunk count of each (namespace, source_uri) of a page: only these
-    sources' chunks are counted, so what it reads grows with the page, not with the
-    namespaces."""
+    """Live chunk count per (namespace, source_uri) of the page, reading only those sources."""
     if not keys:
         return {}
     rows = await ch.query_all(

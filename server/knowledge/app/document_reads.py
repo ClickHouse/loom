@@ -105,9 +105,7 @@ async def handle_knowledge_list(
 
 
 def _list_cursor(last: DocumentListRow, org: str, namespaces: list[str]) -> str:
-    """The position after `last`: one namespace's is `<ts>|<source_uri>`, as a build a
-    release behind writes it; several namespaces' is bound to them, so only that request
-    reads it back and a build without `namespaces` refuses it."""
+    """Position after `last`: `<ts>|<uri>` (as N-1 has it) for one namespace, else bound."""
     if len(namespaces) == 1:
         return encode_cursor(last["ingested_at"], last["source_uri"])
     return encode_bound_cursor(

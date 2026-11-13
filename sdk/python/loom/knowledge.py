@@ -360,15 +360,13 @@ class KnowledgeClient:
         limit: int = 50,
         cursor: str | None = None,
         namespaces: list[str] | None = None,
-        **extra: Any,
     ) -> dict[str, Any]:
         """Paginated listing of this namespace's documents, or several namespaces' as one.
 
         Returns {"rows": [...], "next_cursor": str | None}; each row names its
         namespace. Walk pages by threading next_cursor back in. `namespaces`
         lists those too (each must be readable). `tags` matches any one of them,
-        in any case; `tags_every=True` needs every one. `**extra` rides the body
-        as-is."""
+        in any case; `tags_every=True` needs every one."""
         payload = self._scope()
         payload.update(
             {
@@ -383,7 +381,6 @@ class KnowledgeClient:
             payload["cursor"] = cursor
         if namespaces:
             payload["namespaces"] = namespaces
-        payload.update(extra)
         return await self._agent.transport.post("/v1/knowledge.list", payload)
 
     async def delete(
