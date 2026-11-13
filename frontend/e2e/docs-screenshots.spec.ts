@@ -467,7 +467,7 @@ function indexStatus() {
     last_refresh_detail: "",
     path_prefixes: [""],
     provider: "github",
-    profile: "python",
+    profile: "generic",
     compiler_candidates: [],
     quality_warnings: [],
     state: {
@@ -479,8 +479,10 @@ function indexStatus() {
       code_ingest: worker(2),
       code_embed_recovery: worker(3),
       code_graph_stats: worker(9),
-      code_pr_history: worker(11),
+      code_pr_history: worker(1),
       code_summary: worker(14),
+      code_scip_py_delta: worker(4),
+      code_scip_apply: worker(4),
     },
   };
 }
@@ -817,10 +819,19 @@ const CODE_UNITS: Record<string, Record<string, unknown>> = {
 
 /** A definition as `code.symbol` answers it: a symbol unit, with the compiler tier and the
  *  signature, none of the ranking annotations (churn, amp, tested) a search result has, and
- *  no description, since the server takes that from a doc comment these bodies lack. */
+ *  an empty description, since the server takes that from a doc comment these bodies lack. */
 function symbolUnit(symbol: string) {
-  const { churn: _churn, amp: _amp, tested: _tested, description: _description, ...unit } = CODE_UNITS[symbol];
-  return { unit_id: `s-${symbol}`, symbol, tier: "scip", elided: false, score: 0, ...unit, kind: "symbol" };
+  const { churn: _churn, amp: _amp, tested: _tested, ...unit } = CODE_UNITS[symbol];
+  return {
+    unit_id: `s-${symbol}`,
+    symbol,
+    tier: "scip",
+    elided: false,
+    score: 0,
+    ...unit,
+    description: "",
+    kind: "symbol",
+  };
 }
 
 /** A hybrid search hit: a chunk unit, with an empty tier and signature, found by both
