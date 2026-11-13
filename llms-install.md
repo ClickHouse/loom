@@ -16,12 +16,12 @@ lines.
 
 ## 1. Check for a running Loom
 
-On Windows, run every shell command in steps 1 to 3 (`curl`, `docker`, the `~/.loom`
-check, `env` and the installer) in a WSL 2 terminal where `docker` works. Cline on Windows
-keeps its configuration on Windows: write the step 3 entry there, not inside WSL.
+On Windows, run the `curl`, `docker`, `~/.loom`, `env` and installer commands in a WSL 2
+terminal where `docker` works. Cline on Windows keeps its configuration on Windows: write
+the step 3 entry there, and run `cline mcp add` where Cline runs, not inside WSL.
 
 ```bash
-curl -sS --noproxy '*' http://localhost:7777/v1/health
+curl -sS --noproxy '*' --max-time 5 http://localhost:7777/v1/health
 ```
 
 - A JSON reply with a `schema_version` field is a Loom server. If its `status` is `ok`, go
@@ -50,8 +50,8 @@ curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.s
   MCP entry yourself in step 3.
 - The installer verifies the release bundle, pulls the images and waits until
   `/v1/health` answers. The first run takes a few minutes.
-- When it finishes, it prints `Dashboard: http://<host>:<port>/`. Use that port in the
-  steps below.
+- When it finishes, it prints `Dashboard: http://<host>:<port>/`. If that port is not
+  `7777`, replace `7777` with it in every command and entry below.
 - If it says port `7777` is in use, run the command again with the `LOOM_PORT=…` its
   message names in front of `sh`.
 - The install lives in `~/.loom`; `LOOM_INSTALL_DIR` chooses another directory.
@@ -65,7 +65,7 @@ The stock install is single-user: it has no sign-in and needs no token. To check
 tools without one:
 
 ```bash
-curl -s --noproxy '*' -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:7777/mcp?toolset=coding' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+curl -s --noproxy '*' --max-time 5 -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:7777/mcp?toolset=coding' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
 `200` means no token is needed. `401` means sign-in is on: ask the user for a token from
