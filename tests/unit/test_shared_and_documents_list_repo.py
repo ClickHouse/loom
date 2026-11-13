@@ -4,8 +4,8 @@ shared_repo backs memory.promote / memory.demote. Its insert + fetch
 shape is the loom.shared lifecycle contract; the embedding-side
 tombstone is what makes memory.search reflect a demote.
 
-list_with_chunk_counts is the JOIN under knowledge.list — the most
-complex documents-side query.
+list_with_chunk_counts reads a page of loom.documents FINAL, then the
+live chunk counts of that page's sources.
 """
 
 from __future__ import annotations
@@ -317,9 +317,7 @@ async def test_list_with_chunk_counts_include_superseded_drops_filter() -> None:
         ch=ch,
     )
     sql, _ = ch.query_all_calls[0]
-    # The documents filter is dropped; the chunk-count subquery still carries
-    # its own `doc_superseded_at IS NULL`, so match the doc filter precisely.
-    assert "AND superseded_at IS NULL" not in sql
+    assert "superseded_at IS NULL" not in sql
 
 
 @pytest.mark.asyncio
