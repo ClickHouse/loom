@@ -330,7 +330,7 @@ async def list_with_chunk_counts(
     extra_where = ""
     params: dict[str, Any] = {
         "org": org,
-        "nss": namespaces,
+        "ns": namespaces,
         "lim": int(limit),
     }
     if not include_superseded:
@@ -367,7 +367,7 @@ async def list_with_chunk_counts(
                toString(blob_content_type) AS blob_content_type,
                original_filename, content_preview
         FROM loom.documents FINAL
-        WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
+        WHERE org = {{org:String}} AND namespace IN {{ns:Array(String)}}
               {extra_where}
         ORDER BY ingested_at DESC, namespace DESC, source_uri DESC
         LIMIT {{lim:UInt32}}

@@ -280,7 +280,7 @@ async def test_list_with_chunk_counts_default_excludes_superseded() -> None:
     sql, params = ch.query_all_calls[0]
     assert "superseded_at IS NULL" in sql
     assert "ORDER BY ingested_at DESC, namespace DESC, source_uri DESC" in sql
-    assert params["lim"] == 50 and params["nss"] == ["ns"]
+    assert params["lim"] == 50 and params["ns"] == ["ns"]
     # An empty page reads no chunks.
     assert len(ch.query_all_calls) == 1
 
