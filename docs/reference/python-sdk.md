@@ -251,6 +251,9 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
 - `loom.integrations.autogen.LoomMemory(agent, user_id=...)` implements
   AutoGen's `Memory` protocol over `memory.set` and `memory.search`; install
   the `[autogen]` extra.
+- `loom.integrations.pydantic_ai.loom_toolset(agent, user_id=...)` returns
+  `AgentTools` as a Pydantic AI `FunctionToolset`; install the `[pydantic-ai]`
+  extra.
 - `loom.integrations.langgraph.LoomStore(agent, tags=...)` is a LangGraph
   `BaseStore`: `put` is `memory.set`, `search(query=...)` ranks with
   `memory.search` and reads values with `memory.bulk_get`, and namespace tuples
