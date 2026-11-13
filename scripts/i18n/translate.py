@@ -1,6 +1,7 @@
 """Machine translations of a fixed set of English pages into i18n/<lang>/.
 
-    python -m scripts.i18n.translate check    # exit 1: a translation is missing, stale or orphaned
+    python -m scripts.i18n.translate check    # exit 1: a page is stale, orphaned, or has a broken
+                                              # link or an English label
     python -m scripts.i18n.translate update   # translate the stale pages (needs ANTHROPIC_API_KEY)
     python -m scripts.i18n.translate update --all [--lang ja ...]   # after a prompt change
 
@@ -467,10 +468,21 @@ def untranslated_pages() -> list[str]:
     return problems
 
 
-def readme_language_line_differs() -> bool:
-    text = (ROOT / "README.md").read_text()
-    match = LANGUAGE_LINE.search(text)
-    return not match or match.group(0) != language_line("README.md")
+def readmes() -> list[str]:
+    """The README and every translated README that exists: the pages with a language line."""
+    paths = ["README.md"] + [target_path(lg.code, "README.md") for lg in LANGUAGES]
+    return [p for p in paths if (ROOT / p).is_file()]
+
+
+def language_lines_differ() -> list[str]:
+    """The READMEs whose language line is not the generated one, e.g. after a language is
+    added: `update` rewrites them without translating anything."""
+    out = []
+    for path in readmes():
+        match = LANGUAGE_LINE.search((ROOT / path).read_text())
+        if not match or match.group(0) != language_line(path):
+            out.append(path)
+    return out
 
 
 # ---- the API --------------------------------------------------------------------------
@@ -633,10 +645,13 @@ def translate_page(source: str, lang: Language, key: str, spend: Spend) -> None:
     print(f"{path.relative_to(ROOT)}  (${spend.usd:.2f} so far)", flush=True)
 
 
-def write_readme_language_line() -> None:
-    path = ROOT / "README.md"
-    text = path.read_text()
-    path.write_text(LANGUAGE_LINE.sub(lambda _: language_line("README.md"), text, count=1))
+def write_language_lines() -> None:
+    for path in language_lines_differ():
+        file = ROOT / path
+        text = file.read_text()
+        match = LANGUAGE_LINE.search(text)
+        if match:
+            file.write_text(text[: match.start()] + language_line(path) + text[match.end() :])
 
 
 # ---- commands -------------------------------------------------------------------------
@@ -659,8 +674,9 @@ def check(skip_stale: bool = False) -> int:
     )
     problems += link_problems(waiting)
     problems += untranslated_pages()
-    if readme_language_line_differs():
-        problems.append("README.md's language line differs from the generated one")
+    problems += [
+        f"{path}'s language line differs from the generated one" for path in language_lines_differ()
+    ]
     for problem in problems:
         print(problem)
     return 1 if problems else 0
@@ -679,8 +695,7 @@ def update(every: bool = False, codes: list[str] | None = None) -> int:
         )
     spend = Spend(model, float(os.environ.get("LOOM_I18N_MAX_USD", "5")))
     languages = tuple(lg for lg in LANGUAGES if not codes or lg.code in codes)
-    if readme_language_line_differs():
-        write_readme_language_line()
+    write_language_lines()
     work = [(s, lg) for s in SOURCES for lg in languages] if every else stale(languages, model)
     estimate = estimate_usd(model, sum(request_chars(s, lg) for s, lg in work))
     print(f"{len(work)} page(s) to translate with {model}, estimated at about ${estimate:.2f}")

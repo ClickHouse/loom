@@ -159,7 +159,7 @@ def test_the_first_failed_page_stops_the_others(
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
     monkeypatch.setattr(t, "translate_page", fake_page)
-    monkeypatch.setattr(t, "write_readme_language_line", lambda: None)
+    monkeypatch.setattr(t, "write_language_lines", lambda: None)
     monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
     with pytest.raises(SystemExit, match="boom"):
         t.update(every=True, codes=["ja"])
@@ -198,7 +198,7 @@ def test_an_unpriced_model_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_the_estimate_refuses_a_run_over_the_cap(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOOM_I18N_MAX_USD", "0.001")
-    monkeypatch.setattr(t, "write_readme_language_line", lambda: None)
+    monkeypatch.setattr(t, "write_language_lines", lambda: None)
     with pytest.raises(SystemExit, match="nothing translated"):
         t.update(every=True, codes=["ja"])
 
@@ -234,7 +234,23 @@ def test_a_cut_off_reply_is_refused() -> None:
 
 
 def test_the_readme_language_line_is_the_generated_one() -> None:
-    assert not t.readme_language_line_differs()
+    assert t.language_lines_differ() == []
+
+
+def test_a_new_language_is_linked_from_every_readme_without_translating(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    for path in t.readmes():
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text((ROOT / path).read_text())
+    monkeypatch.setattr(t, "ROOT", tmp_path)
+    ja = t.LANGUAGES[1]
+    extra = t.Language("xx", "Xx", "Xx", ja.banner, ja.style)
+    monkeypatch.setattr(t, "LANGUAGES", (*t.LANGUAGES, extra))
+    assert len(t.language_lines_differ()) == 1 + len(t.LANGUAGES) - 1
+    t.write_language_lines()
+    assert t.language_lines_differ() == []
+    assert '<a href="../xx/README.md">Xx</a>' in (tmp_path / "i18n/ja/README.md").read_text()
 
 
 def _translations() -> list[tuple[str, t.Language]]:
@@ -283,7 +299,7 @@ def test_check_skips_anchors_of_stale_pages_only_when_asked(
     monkeypatch.setattr(t, "require_sources", lambda: None)
     monkeypatch.setattr(t, "orphans", lambda: [])
     monkeypatch.setattr(t, "untranslated_pages", lambda: [])
-    monkeypatch.setattr(t, "readme_language_line_differs", lambda: False)
+    monkeypatch.setattr(t, "language_lines_differ", lambda: [])
     monkeypatch.setattr(t, "stale", lambda model=t.DEFAULT_MODEL: [("b.md", ja)])
     assert t.check(skip_stale=True) == 0
     assert t.check() == 1
