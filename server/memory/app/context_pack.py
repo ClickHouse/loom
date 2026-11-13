@@ -487,21 +487,23 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
         return {}
 
 
-def _code_note(hit: Any) -> str:
-    """The note a pack line carries when the hit's linked code changed or went, naming the
-    commit; '' otherwise."""
-    links = getattr(hit, "_code_links", None) or []
+def _code_change(hit: Any) -> tuple[str, str]:
+    """(state, commit) for a hit whose linked code changed, was not found again or went;
+    ('', '') otherwise."""
     state = str(getattr(hit, "code_state", "") or "")
-    return code_change.note(state, code_change.worst_commit(links))
+    if state not in code_change.DEMOTED:
+        return "", ""
+    return state, code_change.worst_commit(getattr(hit, "_code_links", None) or [])
+
+
+def _code_note(hit: Any) -> str:
+    """The note a pack line carries when the hit's linked code changed or went."""
+    return code_change.note(*_code_change(hit))
 
 
 def _code_label(hit: Any) -> str:
-    """`<state>@<commit>` for a hit whose linked code changed, was not found again or went
-    (the state alone when no commit is known); '' otherwise."""
-    state = str(getattr(hit, "code_state", "") or "")
-    if state not in code_change.DEMOTED:
-        return ""
-    commit = code_change.worst_commit(getattr(hit, "_code_links", None) or [])
+    """`<state>@<commit>` (the state alone when no commit is known), or ''."""
+    state, commit = _code_change(hit)
     return f"{state}@{commit[:12]}" if commit else state
 
 

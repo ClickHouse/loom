@@ -12,6 +12,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, NamedTuple, Protocol
 
+# the score components of the rows a search's anchor and recent tiers place
+TIER_COMPONENTS: tuple[str, ...] = ("anchor_first", "recent_first")
+
 
 class _CHClient(Protocol):
     async def query_all(

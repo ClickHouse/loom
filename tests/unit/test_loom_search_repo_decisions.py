@@ -960,3 +960,18 @@ def test_a_base_row_moved_for_stale_code_holds_no_slot_for_a_decision() -> None:
     fresh = _hit("decision:x", 0.85, TRUNK, mtype="decision")
     hits, added = repo_decisions.merge_memory_hits(base, [fresh], "me")
     assert [h.memory_key for h in hits] == ["decision:x", "b", "c", "d", "stale"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("moved", [False, True], ids=["current", "moved-for-stale-code"])
+async def test_loom_search_never_lifts_a_fact_the_search_moved_to_lead(monkeypatch, moved) -> None:
+    chunk = _hit("chunk:s1:0", 0.452, "me", rank=0.53)
+    chunk.source = "chunk"
+    fact = _hit("where_i_live", 0.47, "me", rank=0.49)  # within the lead margin of the chunk
+    if moved:
+        fact.score_components = {"code_changed_places": -1.0}
+    far = _hit("unrelated", 0.1, "me")  # a lead fact withholds it
+    out = MemorySearchOutput(results=[chunk, fact, far], embedding_model="fake")
+    payload = await _assemble(monkeypatch, out, namespace_scope="this")
+    lead = (payload.get("withheld") or {}).get("lead")
+    assert lead == (None if moved else "where_i_live")

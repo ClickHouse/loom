@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.scope import _SearchRun
-from server.memory.domain.code_change import TIER_COMPONENTS
+from server.memory.domain.search_types import TIER_COMPONENTS
 
 if TYPE_CHECKING:
     from server.memory.domain.retrieval_calibration import RetrievalCalibration

@@ -26,6 +26,7 @@ from types import SimpleNamespace
 from typing import Any, Literal, get_args
 
 from server.memory.domain.lock import effective_mode
+from server.memory.domain.search_types import TIER_COMPONENTS
 from server.memory.domain.trust import verification_state
 
 # a served link's states from best to worst: a memory shows its worst link's
@@ -47,16 +48,14 @@ def worst(states: Sequence[str]) -> CodeState | Literal[""]:
     return served[-1] if served else ""
 
 
-# the states whose memory ranks below its match in search
-DEMOTED = frozenset({"changed", "unresolved", "missing"})
-
-
 # what a read says of a memory in each state, and what the reader should do
 _NOTES = {
     "changed": ("its code changed since it was written", "check before relying on it"),
     "unresolved": ("its code was renamed or removed and could not be followed", "check it"),
     "missing": ("the code it is about is gone", "check before relying on it"),
 }
+# the states whose memory ranks below its match in search: those a read notes
+DEMOTED = frozenset(_NOTES)
 
 
 def note(state: str, commit: str = "") -> str:
@@ -80,8 +79,6 @@ def worst_commit(links: Sequence[Mapping[str, Any]]) -> str:
     return str(first.get("changed_since") or "")
 
 
-# the score components of the rows a search's anchor and recent tiers place
-TIER_COMPONENTS: tuple[str, ...] = ("anchor_first", "recent_first")
 # rows placed by something other than their score, which a move leaves where they are
 _PLACED = ("identifier_match", *TIER_COMPONENTS)
 
