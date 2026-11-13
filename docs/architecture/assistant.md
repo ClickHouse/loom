@@ -1236,7 +1236,9 @@ holds its spend to the same budget as its own model calls:
   `agent_events` row, where every model spend is counted. An answer cut before its final
   chunk (a disconnect, the stop button, a timeout), or on a model Loom has no rate for,
   is charged a per-answer ceiling (`LOOM_ASSISTANT_ANSWER_CEILING_USD`, default $0.10)
-  instead, so no answer spends for free.
+  instead; `0`, which the
+  [local-model preset](../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)
+  sets, charges nothing.
 
 At the default cap of $1 a day, half of it buys about 15 answers at the mean of $0.033
 per answer that the [qualification](../features/integrations/librechat.md#qualification)

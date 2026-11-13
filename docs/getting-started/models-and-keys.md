@@ -231,9 +231,9 @@ verifier model calls not durable, and the background
 which retires an older row it judges replaced. A small model's misjudgment there would
 lose facts. Writes still flag conflicts for the Review queue; set
 `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=true` with the key for
-`LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`, OpenAI) to judge them. On an existing install, a
-configuration saved in Models & keys wins over `.env`: after the restart, choose **Use
-environment configuration** there for the preset to apply.
+`LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`, OpenAI) to judge them. On an existing
+install, a configuration saved in Models & keys wins over `.env`: after the restart,
+choose **Use environment configuration** there for the preset to apply.
 
 Pull the model first (`ollama pull qwen2.5:3b`, about 2 GB), and give Ollama a context
 window that holds Loom's prompts: extraction sends about 15,000 tokens, and Ollama cuts a
@@ -263,10 +263,10 @@ same model.
   the namespace's daily model cost cap, as any unpriced model does: at the default cap
   and share, five answers a day. The preset sets the ceiling to `0`, so local answers
   cost nothing; it is also what an answer cut before its usage arrived costs, so keep it
-  at its default when a hosted model serves the assistant. Under the Helm chart, add `LOCAL_LLM_BASE_URL` to the assistant's
-  Secret; the chart's policy lets LibreChat reach only DNS, its database, Loom and TCP
-  443, so the model server needs a NetworkPolicy of your own that selects the
-  LibreChat pod.
+  at its default when a hosted model serves the assistant. Under the Helm chart, add
+  `LOCAL_LLM_BASE_URL` to the assistant's Secret; the chart's policy lets LibreChat reach
+  only DNS, its database, Loom and TCP 443, so the model server needs a NetworkPolicy of
+  your own that selects the LibreChat pod.
 - **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
   published benchmark covers a local one, so treat a small model as a way to try Loom
   with no key or to keep everything on the machine, not as an equal: expect extraction,
