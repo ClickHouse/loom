@@ -248,7 +248,7 @@ def test_a_link_or_alt_text_shown_as_code_is_not_a_label() -> None:
     assert t.labels('<a href="#x"><b>Get started</b></a>\n') == {"Get started": 1}
 
 
-def test_the_first_failed_page_stops_the_others(
+def test_a_fatal_error_stops_the_other_pages(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     calls: list[str] = []

@@ -770,11 +770,13 @@ def update(every: bool = False, codes: list[str] | None = None) -> int:
                 pending = set(futures)
                 while pending:
                     done, pending = wait(pending, return_when=FIRST_EXCEPTION)
-                    errors = [(future, future.exception()) for future in done]
+                    failures = [(f, f.exception()) for f in done if f.exception() is not None]
                     differ += [
-                        f"{futures[f]}: {e}" for f, e in errors if isinstance(e, TranslationDiffers)
+                        f"{futures[f]}: {e}"
+                        for f, e in failures
+                        if isinstance(e, TranslationDiffers)
                     ]
-                    fatal = [e for _, e in errors if e and not isinstance(e, TranslationDiffers)]
+                    fatal = [e for _, e in failures if not isinstance(e, TranslationDiffers)]
                     if fatal:
                         # The cap, the API or a bug: stop every worker.
                         spend.stopped.set()
