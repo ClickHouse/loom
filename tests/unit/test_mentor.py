@@ -223,6 +223,9 @@ def _assert_rendered_cleanly(text: str) -> None:
     parenthesis."""
     from server.transport import mcp_tools
 
+    # MCP strips the note, so the op it names must be in the text it leaves
+    if note := re.search(r"\(call ([a-z_.]+) via loom_op\)$", text):
+        assert note.group(1) in mentor_rules.without_listing_note(text), text
     for toolset in ("core", "coding", "tracker", "tasks", "atomic", "readonly"):
         rendered = mcp_tools.mentor_text_for_toolset(text, toolset)
         assert_marked_once_outside_parentheses(rendered, toolset)
@@ -2034,3 +2037,31 @@ def test_a_long_hint_keeps_its_listing_note(monkeypatch: pytest.MonkeyPatch) -> 
     loop = p.hint("coordination_loop")
     assert loop is not None and len(loop.text) <= mentor_rules.HINT_CHARS
     assert loop.text.endswith(" (call working_memory.set via loom_op)")
+
+
+def test_a_call_rule_names_in_its_text_each_op_its_note_may_name() -> None:
+    """MCP strips the note, so an op the note names must be in the hint already."""
+    import inspect
+
+    for rule in mentor_rules.CALL_RULES:
+        source = inspect.getsource(rule)
+        notes = re.findall(r"_unlisted\(\(([^)]*)\)\)", source)
+        text = re.sub(r"_unlisted\(\([^)]*\)\)", "", source)
+        for op in (o for n in notes for o in re.findall(r'"([a-z_.]+)"', n)):
+            assert op in text, (rule.__name__, op)
+
+
+@pytest.mark.parametrize("toolset", ["core", "coding", "readonly"])
+def test_a_rendered_hint_grows_only_by_one_name_change_per_op(toolset: str) -> None:
+    """HINT_CHARS bounds a stored hint; rendering renames or marks each op it names
+    and keeps the op the stripped note named, however long the echoed values."""
+    from server.transport import mcp_op, mcp_tools
+
+    facts = {"repos": 6, "repo_names": ["r" * 40 + str(i) for i in range(3)]}
+    hints = mentor_rules.evaluate_rules({"memory.set": 40}, 1, facts, max_hints=32)
+    hint = next(h for h in hints if h.code == "code_index_unused")
+    _assert_rendered_cleanly(hint.text)
+    body = mentor_rules.without_listing_note(hint.text)
+    names = re.findall(rf"\b{mcp_op.OP_MENTION}\b", body)
+    rendered = mcp_tools.mentor_text_for_toolset(hint.text, toolset)
+    assert len(rendered) <= mentor_rules.HINT_CHARS + len(names) * len(" (via loom_op)")

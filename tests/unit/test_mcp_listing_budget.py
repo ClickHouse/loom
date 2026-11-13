@@ -558,20 +558,3 @@ def test_marked_fields_are_unlisted_but_still_accepted():
     # memory.pin forces pinned on; memory.set (same model) still lists it
     assert "pinned" not in listed["loom_memory_pin"]["inputSchema"]["properties"]
     assert "pinned" in listed["loom_memory_set"]["inputSchema"]["properties"]
-
-
-@pytest.mark.parametrize("toolset", ["core", "coding", "readonly"])
-def test_a_rendered_hint_grows_only_by_one_name_change_per_op(toolset: str) -> None:
-    """HINT_CHARS bounds a stored hint; rendering renames or marks each op it names."""
-    from server.insights.app import mentor_rules
-
-    repos = mentor_rules._quoted_list(["r" * 40 + str(i) for i in range(3)], total=6)
-    stored = mentor_rules.clip_keeping_note(
-        f"6 indexed repos ({repos}) and 0 code.* calls: code.search answers a concept, "
-        "code.symbol a definition, code.callers who calls it, code.grep an exact literal. "
-        "code.repos lists them. (call code.impact via loom_op)"
-    )
-    assert len(stored) <= mentor_rules.HINT_CHARS
-    ops = len(re.findall(rf"\b{mcp_op.OP_MENTION}\b", mentor_rules.without_listing_note(stored)))
-    rendered = mt.mentor_text_for_toolset(stored, toolset)
-    assert len(rendered) <= mentor_rules.HINT_CHARS + ops * len(" (via loom_op)")

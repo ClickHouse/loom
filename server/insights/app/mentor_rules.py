@@ -533,8 +533,10 @@ def _rules_planes(c: _Ctx) -> None:
             "code_index_unused",
             "warning",
             f"{repos} indexed {'repo' if repos == 1 else 'repos'} ({names}) and 0 code.* calls: "
-            "code.search answers a concept, code.symbol a definition, code.callers who calls "
-            "it, code.grep an exact literal. code.repos lists them.",
+            # code.impact first: the note names it, and the clip must not cut it
+            "code.impact says what a change breaks, code.search answers a concept, "
+            "code.symbol a definition, code.callers who calls it, code.grep an exact "
+            "literal. code.repos lists them.",
             ("code.search", "code.symbol", "code.callers", "code.grep", "code.impact"),
             repos=repos,
         )
