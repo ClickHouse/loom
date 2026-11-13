@@ -488,7 +488,7 @@ export default function App() {
         setAuthed(true);
         setWhoami(w);
         // Saved pick → the user's own namespace → first real claim → none. Access comes
-        // from the JWT `namespaces` claim AND namespaces JOINed via Discover
+        // from the JWT `namespaces` claim AND namespaces joined from the namespaces page
         // (loom.namespace_grants, not in the JWT), so list_mine is consulted too — else a
         // refresh flips joined-namespace users back. The claim's ORDER is never a
         // preference, and `*` is never a namespace name. A link's `?namespace=` comes

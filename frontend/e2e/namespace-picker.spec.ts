@@ -216,3 +216,21 @@ test("a namespace that fits has no tooltip on focus", async ({ page }) => {
   await page.getByRole("button", { name: `Namespace: ${NAMESPACE}` }).focus();
   await expect(page.getByRole("tooltip")).toHaveCount(0);
 });
+
+// The footer's line says what a namespace holds in one line: a second would shrink the list.
+for (const width of [1280, 375]) {
+  test(`the picker footer's namespace line is one line high at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const dialog = await openPicker(page);
+    const hint = dialog.getByText("A namespace holds memories, code or tracker data.");
+    await expect(hint).toBeVisible();
+    const { content, line } = await hint.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return {
+        content: el.clientHeight - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom),
+        line: parseFloat(s.lineHeight),
+      };
+    });
+    expect(content).toBeCloseTo(line, 0);
+  });
+}

@@ -134,7 +134,10 @@ export function Browse() {
       // Repositories are surfaced in the Repositories section, not as joinable memory. The server
       // lists no collection here: one is shared in the Library, never joined.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
-      setRepoNames(browseRows.filter((r) => r.kind === "code").map((r) => r.namespace));
+      // Every repository's name, a restricted or granted one included, points to Repositories.
+      setRepoNames([
+        ...new Set([...browseRows, ...mineRead].filter((r) => isCodeKind(r.kind)).map((r) => r.namespace)),
+      ]);
       setMineRows(mineResult);
       setMine(new Set(mineRead.map((r) => r.namespace)));
       setMyRole(Object.fromEntries(mineRead.map((r) => [r.namespace, r.role])));
@@ -239,6 +242,8 @@ export function Browse() {
   // never joined: their names get a line pointing there instead. A personal collection is
   // no one else's to reach, so its name gets neither.
   const typedName = listQuery.toLowerCase();
+  // The role held on it: an active row only, since a pending request grants nothing yet.
+  const typedRole = mineRows?.find((r) => r.namespace === typedName && r.status !== "pending")?.role;
   const typedCollection = typedName.startsWith(COLLECTION_PREFIX);
   const elsewhere = repoNames.includes(typedName)
     ? "repository"
@@ -249,7 +254,7 @@ export function Browse() {
     NAMESPACE_NAME.test(typedName) &&
     !elsewhere &&
     !typedCollection &&
-    myRole[typedName] !== "admin" &&
+    typedRole !== "admin" &&
     !filtered.some((r) => r.namespace === typedName);
   const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
   const dialogOpen = !!(joinDialog || manageNs || settingsNs || createOpen);
@@ -447,14 +452,14 @@ export function Browse() {
               {/* One the caller already reads is opened there, not requested. */}
               {elsewhere === "repository" ? (
                 <>
-                  {myRole[typedName] ? "is a repository you read: open it in" : "is a repository: request it from"}{" "}
+                  {typedRole ? "is a repository you read: open it in" : "is a repository: request it from"}{" "}
                   <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
                     Repositories
                   </Link>
                 </>
               ) : (
                 <>
-                  {myRole[typedName]
+                  {typedRole
                     ? "is a collection you read: open it in the"
                     : "is a collection: ask its admin for a grant; the collections you can read are in the"}{" "}
                   <Link component="button" type="button" size="sm" onClick={() => setView("knowledge")}>
@@ -471,7 +476,7 @@ export function Browse() {
               <RequestAccessCard
                 org={identity.org}
                 typedName={typedName}
-                existingRole={myRole[typedName]}
+                existingRole={typedRole}
                 onSuccess={() => {
                   setQuery("");
                   load();

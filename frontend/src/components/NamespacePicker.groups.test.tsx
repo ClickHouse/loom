@@ -399,9 +399,10 @@ describe("NamespacePicker groups", () => {
     seed("team");
     render(<NamespacePicker />);
     const dialog = await openPicker();
-    expect(
-      within(dialog).getByText("A namespace holds memories, documents, a code index or tracker records."),
-    ).toHaveClass("text-xs", "text-text-muted");
+    expect(within(dialog).getByText("A namespace holds memories, code or tracker data.")).toHaveClass(
+      "text-xs",
+      "text-text-muted",
+    );
     fireEvent.click(group(dialog, /^Repositories/));
     expect(within(dialog).getByText("Code that Loom indexes, read-only.")).toBeInTheDocument();
   });

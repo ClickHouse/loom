@@ -475,6 +475,47 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     }
   });
 
+  it("counts no role from a pending request: a pending repository is requested, a pending private name gets the plain card", async () => {
+    const before = [...mine];
+    browse.push({ ...browse[1], namespace: "code-loom", kind: "code", guide_summary: "" });
+    mine.push(
+      { ...mine[1], namespace: "code-loom", kind: "code", status: "pending" },
+      { ...mine[1], namespace: "sup", status: "pending" },
+    );
+    try {
+      render(<Browse />);
+      await screen.findByText("Support team runbooks");
+      const box = screen.getByRole("textbox", { name: "Search namespaces" });
+      await userEvent.type(box, "code-loom");
+      expect(await screen.findByText(/is a repository/)).toHaveTextContent(
+        "code-loom is a repository: request it from Repositories.",
+      );
+      await userEvent.clear(box);
+      await userEvent.type(box, "sup");
+      expect(await screen.findByRole("button", { name: "Request access" })).toBeEnabled();
+      expect(screen.queryByText(/Pick a higher role/)).toBeNull();
+    } finally {
+      browse.pop();
+      mine.splice(0, mine.length, ...before);
+    }
+  });
+
+  it("points a granted repository the page does not list to Repositories", async () => {
+    const before = [...mine];
+    mine.push({ ...mine[1], namespace: "code-private", kind: "code" });
+    try {
+      render(<Browse />);
+      await screen.findByText("Support team runbooks");
+      await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "code-private");
+      expect(await screen.findByText(/is a repository/)).toHaveTextContent(
+        "code-private is a repository you read: open it in Repositories.",
+      );
+      expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+    } finally {
+      mine.splice(0, mine.length, ...before);
+    }
+  });
+
   it("points a repository's exact name to Repositories instead of a request", async () => {
     browse.push({ ...browse[1], namespace: "code-loom", kind: "code", guide_summary: "" });
     try {

@@ -54,7 +54,7 @@ interface Props {
  * Members dialog = "people in this namespace + their roles"
  * Settings dialog = "what is this namespace"
  *
- * Both open from Discover's "Namespaces you manage" section.
+ * Both open from Namespaces in your org's "Namespaces you manage" section.
  */
 export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, label }: Props) {
   const whoami = useStore((s) => s.whoami);

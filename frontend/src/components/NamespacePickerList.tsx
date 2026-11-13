@@ -430,9 +430,7 @@ export function NamespacePickerList({
         </Button>
         {/* One line: a taller footer shrinks the list and gives it a scrollbar. The button above
             says where collections are. */}
-        <p className="px-3 pt-1 text-xs text-text-muted">
-          A namespace holds memories, documents, a code index or tracker records.
-        </p>
+        <p className="px-3 pt-1 text-xs text-text-muted">A namespace holds memories, code or tracker data.</p>
       </div>
     </>
   );
