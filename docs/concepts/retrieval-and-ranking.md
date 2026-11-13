@@ -204,8 +204,8 @@ absence.
 ranking signals, the RRF score and weight when that mode ran, and after a reranker each
 row's move (`rerank_from`, `rerank_pos`, `rerank_delta`) and, when the reranker changed
 the order, its own fused score (`rank_score_pre_rerank`). A memory whose linked code
-changed carries the places it moved down (`code_changed_places`,
-[memories linked to code](memory.md#memories-linked-to-code)). `memory.search_trace` takes
+changed and that moved down carries how many places (`code_changed_places`; when it
+moves is in [memories linked to code](memory.md#memories-linked-to-code)). `memory.search_trace` takes
 the same request and scores the vector leg alone (no fusion, assembly or reranker):
 every candidate with its `similarity`, `entity_boost`, `rank_score`, `rank` and the
 plane it came from (`source`: `fact` or `chunk`). With

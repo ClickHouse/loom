@@ -638,15 +638,12 @@ async def listing_rows(
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
     rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only)
-    return [_listed(r, input) for r in rows], skipped
-
-
-def _listed(r: dict[str, Any], input: MemoryForFileInput) -> dict[str, Any]:
-    """A row as a reader renders it: its hit, its id and the commit its code changed at."""
-    return _hit(r, input).model_dump() | {
-        "memory_id": str(r["memory_id"]),
-        "code_changed_since": r.get("code_changed_since", ""),
-    }
+    listed = [
+        _hit(r, input).model_dump()
+        | {"memory_id": str(r["memory_id"]), "code_changed_since": r.get("code_changed_since", "")}
+        for r in rows
+    ]
+    return listed, skipped
 
 
 async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutput:

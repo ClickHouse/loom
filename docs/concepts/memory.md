@@ -384,13 +384,20 @@ Loom never writes the memory. The namespace's `code_change_policy`
 | `revise`                   | As `retire_removed`.                                                                                                                                                                                                                   | The claim is re-checked against the old and new code by the LLM: one that holds is re-anchored, a contradicted one gets a corrected claim as the link's `suggestion`. |
 
 Under every policy, search serves a memory whose worst link is `changed`, `unresolved`
-or `missing` lower: it moves down `memory_search_code_changed_positions` (3) places
-within the results, never out of them, after the confidence and abstain checks have read
-the results in relevance order, and `score_components.code_changed_places` says how far.
-A memory a person holds keeps its place, as do links into code the caller may not read
-and links nothing keeps current (`memory_code_links_enabled` off). `memory.ask`'s
-identifier lookups and a `context.pack` startup read with no query place their own rows
-and move none.
+or `missing` lower: it moves below the next `memory_search_code_changed_positions` (3)
+rows that rank by score, never out of the results, after the confidence and abstain
+checks have read them in relevance order; `score_components.code_changed_places` says how
+far. These keep their place:
+
+- a memory a person holds;
+- a memory whose only such links are into code the caller may not read, or are links
+  nothing keeps current (`memory_code_links_enabled` off);
+- a row placed by an identifier match or by an `anchor_first` or `recent_first` tier;
+- every row of a query whose answer is a date order.
+
+`memory.ask` re-sorts the search's rows by similarity and recency, and its identifier
+lookups place their own rows; a `context.pack` startup read with no query does not
+search. None of these moves a row.
 
 `revise` judges a changed link once per edit, within a per-pass budget
 (`memory_code_links_revise_per_pass`). A memory labelled `high` sensitivity is never sent
