@@ -175,7 +175,7 @@ _CHANGES_ORG = (
 _SETS_ORG = re.compile(
     r"\b(?:UPDATE\s+(?:ONLY\s+)?[\w.\"]+(?:\s+(?:AS\s+)?(?!SET\b)\w+)?|DO\s+UPDATE)\s+SET\b"
     r"(?:(?!\b(?:WHERE|FROM)\b)[^;])*?"
-    r"(?<![\w.])\"?org\"?\s*=",
+    r"(?:(?<![\w.])\"?org\"?\s*=|\(\s*(?:[\w\"]+\s*,\s*)*\"?org\"?\s*[,)])",
     re.I,
 )
 # An `org` column added to a table after it was created: its key is not checked here.
@@ -217,6 +217,7 @@ def test_the_org_column_rules_catch_every_spelling(statement: str) -> None:
         "UPDATE loom.t AS t SET seq = 1, org = lower(org) WHERE true;",
         "UPDATE loom.t SET \"org\"='x';",
         "UPDATE ONLY loom.t SET org = 'x';",
+        "UPDATE loom.t SET (seq, org) = (1, 'x');",
         "INSERT INTO loom.t (org) VALUES ('a') ON CONFLICT (org) DO UPDATE SET org = 'b';",
     ],
 )
@@ -231,7 +232,8 @@ def test_the_set_org_rule_catches_a_data_step_that_moves_a_row(statement: str) -
 def _tables(sql: str) -> list[tuple[str, str]]:
     """(name, body) of each CREATE TABLE in a file."""
     out = []
-    for m in re.finditer(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.]+)\s*\(", sql, re.I):
+    pattern = r"CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.\"]+)\s*\("
+    for m in re.finditer(pattern, sql, re.I):
         depth, i = 1, m.end()
         while depth:
             depth += {"(": 1, ")": -1}.get(sql[i], 0)
@@ -240,16 +242,33 @@ def _tables(sql: str) -> list[tuple[str, str]]:
     return out
 
 
-def test_an_org_keyed_table_leads_its_primary_key_with_org() -> None:
-    checked = 0
+_ORG_COLUMN = re.compile(r"(?:^|[(,])\s*\"?org\"?\s", re.I | re.M)
+
+
+def test_an_org_keyed_table_leads_its_primary_key_and_every_unique_key_with_org() -> None:
+    """An upsert matches on a key: one led by org only ever hits the same org's row,
+    which the update trigger may let through."""
+    checked, org_tables = 0, set()
     for path in _FILES:
-        for name, body in _tables(_sql(path)):
-            if not re.search(r"^\s*org\s", body, re.I | re.M):
+        sql = _sql(path)
+        for name, body in _tables(sql):
+            if not _ORG_COLUMN.search(body):
                 continue
             checked += 1
-            inline = re.search(r"^\s*org\s[^,\n]*PRIMARY KEY", body, re.I | re.M)
-            key = re.search(r"PRIMARY KEY\s*\(\s*(\w+)", body, re.I)
+            org_tables.add(name.replace('"', ""))
+            inline = re.search(r"(?:^|[(,])\s*\"?org\"?\s[^,\n]*PRIMARY KEY", body, re.I | re.M)
+            key = re.search(r"PRIMARY KEY\s*\(\s*\"?(\w+)", body, re.I)
             assert inline or (key and key.group(1) == "org"), f"{path.name}: {name}"
+            for unique in re.finditer(r"\bUNIQUE\s*\(\s*\"?(\w+)", body, re.I):
+                assert unique.group(1) == "org", f"{path.name}: {name}"
+    for path in _FILES:
+        for m in re.finditer(
+            r"CREATE\s+UNIQUE\s+INDEX\b[^;]*?\bON\s+(?:ONLY\s+)?([\w.\"]+)[^(;]*\(\s*\"?(\w+)",
+            _sql(path),
+            re.I,
+        ):
+            if m.group(1).replace('"', "") in org_tables:
+                assert m.group(2) == "org", f"{path.name}: {m.group(0)}"
     assert checked >= 10
 
 
