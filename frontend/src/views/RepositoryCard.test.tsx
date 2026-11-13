@@ -223,7 +223,7 @@ describe("branchHealth: one vocabulary for an index's health", () => {
       "worst branch",
     );
     expect(worst.text).toBe("Behind 412 commits");
-    expect(worst.detail).toMatch(/^25\.8: 412 merged commits not yet indexed/);
+    expect(worst.detail).toMatch(/^25\.8: 412 commits merged but not yet indexed/);
     expect(worst.detail).toContain("abc123def456");
     expect(worstHealth([])).toBeNull();
   });

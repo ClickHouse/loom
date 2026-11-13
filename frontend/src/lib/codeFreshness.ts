@@ -2,11 +2,11 @@ import { fmtInt, parseChTime } from "./format";
 export type FreshTone = "ok" | "warn" | "bad" | "muted";
 export type Fresh = { tone: FreshTone; label: string; detail: string };
 
-/** The words for an answer's index lag (Explore's badge): stale wins, so a stale index whose
- *  mirror has not fetched (lag 0) never reads "Up to date". */
 /** "1 commit", "1,200 commits": one wording for every lag count. */
 export const commits = (n: number) => `${fmtInt(n)} commit${n === 1 ? "" : "s"}`;
 
+/** The words for an answer's index lag (Explore's badge): stale wins, so a stale index whose
+ *  mirror has not fetched (lag 0) never reads "Up to date". */
 export function lagLabel(lag: number, stale: boolean): string {
   if (stale) return lag > 0 ? `Stale · behind ${commits(lag)}` : "Stale";
   if (lag < 0) return "Freshness unknown";
@@ -48,7 +48,7 @@ export function freshness(
     return {
       tone: r.fast_tier_lag > 20 ? "bad" : "warn",
       label: `Behind ${commits(r.fast_tier_lag)}`,
-      detail: `${fmtInt(r.fast_tier_lag)} merged commit${r.fast_tier_lag === 1 ? "" : "s"} not yet indexed`,
+      detail: `${commits(r.fast_tier_lag)} merged but not yet indexed`,
     };
   }
   if (r.fast_tier_lag === 0 && r.scip_lag > 0) {

@@ -446,7 +446,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
       return;
     }
     if (acts.length === 0) {
-      setErr("at least one action is required");
+      setErr("At least one action is required");
       return;
     }
     let cond: PolicyCondition;
@@ -576,7 +576,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
     setErr(null);
     const op = operation.trim();
     if (!op) {
-      setErr("operation is required");
+      setErr("Operation is required");
       return;
     }
     let parsed: Record<string, unknown>;

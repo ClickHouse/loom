@@ -1795,7 +1795,7 @@ const TIER_ICONS: Record<TierIcon, IconName> = {
 };
 
 function lagText(lag: number, watermark: string): { text: string; tone: Fresh["tone"] } {
-  if (!watermark) return { text: "unset", tone: "muted" };
+  if (!watermark) return { text: "Unset", tone: "muted" };
   const text = lagLabel(lag, false);
   if (lag < 0) return { text, tone: "muted" };
   if (lag === 0) return { text, tone: "ok" };
@@ -1809,15 +1809,15 @@ export function passFreshness(
   w: CodeWorkerStatus | undefined,
   now = Date.now(),
 ): { text: string; tone: Fresh["tone"] } {
-  if (!w) return { text: "not on this replica", tone: "muted" };
-  if (!w.enabled) return { text: "disabled", tone: "muted" };
-  if (w.consecutive_failures > 0) return { text: "failing", tone: "bad" };
+  if (!w) return { text: "Not on this replica", tone: "muted" };
+  if (!w.enabled) return { text: "Disabled", tone: "muted" };
+  if (w.consecutive_failures > 0) return { text: "Failing", tone: "bad" };
   const lastRun = parseChTime(w.last_run_at);
-  if (!lastRun) return { text: "pending", tone: "muted" };
+  if (!lastRun) return { text: "Pending", tone: "muted" };
   const age = (now - lastRun.getTime()) / 1000;
   return age <= 2 * w.interval_seconds + w.last_duration_ms / 1000
-    ? { text: "current", tone: "ok" }
-    : { text: "stale", tone: "warn" };
+    ? { text: "Current", tone: "ok" }
+    : { text: "Stale", tone: "warn" };
 }
 
 // A commit watermark shows as a short sha, a time watermark to the minute.
