@@ -1027,6 +1027,31 @@ jobs:
         working-directory: sdk/typescript
         run: npm run check:dist
 
+  sdk-python-adapters:
+    name: python sdk adapters (py ${{ matrix.python }}${{ matrix.lowest && ', lowest deps' || '' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The framework adapters' tests and types, with each framework the SDK's extras
+    # name, outside the server's environment: their dependencies are not in uv.lock.
+    # The lowest-deps leg installs every extra at its lower bound.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.12"
+          - python: "3.11"
+            lowest: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Adapter tests and mypy --strict
+        run: make test-sdk-adapters SDK_ADAPTERS_PYTHON="$(which python)" SDK_ADAPTERS_RESOLUTION="${{ matrix.lowest && 'lowest-direct' || 'highest' }}"
+
   sdk-python-package:
     name: python sdk wheel (py ${{ matrix.python }}${{ matrix.lowest && ', lowest deps' || '' }})
     runs-on: ubuntu-latest

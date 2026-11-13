@@ -33,6 +33,7 @@ frontend/e2e-screenshots/
 # Python
 # ============================================================
 .venv/
+.venv-sdk-adapters/
 venv/
 __pycache__/
 *.pyc

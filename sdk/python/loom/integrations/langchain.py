@@ -50,8 +50,8 @@ class _LoomRetriever(BaseRetriever):
     k: int = 4
     """Documents per query."""
     search_tags: list[str] | None = None
-    """Loom tags every returned row must carry. (``tags`` is LangChain's
-    callback tags field.)"""
+    """Only rows carrying at least one of these Loom tags. (``tags`` is
+    LangChain's callback tags field.)"""
 
     client_name: ClassVar[str]  # the agent's client the search runs on
 
@@ -168,7 +168,7 @@ class LoomMemoryRetriever(_LoomRetriever):
         return kwargs
 
     def _documents(self, result: Any) -> list[Document]:
-        if self.honour_abstain and getattr(result, "abstain", False):
+        if self.honour_abstain and result.abstain:
             return []
         docs = []
         for hit in list(result)[: self.k]:

@@ -5,6 +5,8 @@ returns, abstention, and which agent serves invoke and ainvoke."""
 from __future__ import annotations
 
 import asyncio
+import importlib
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -195,3 +197,10 @@ def test_invoke_on_an_async_agent_says_to_use_ainvoke() -> None:
     retriever = LoomMemoryRetriever(agent=SimpleNamespace(memory=_FakeSearch(_memories([]))))
     with pytest.raises(TypeError, match="ainvoke"):
         retriever.invoke("q")
+
+
+def test_without_langchain_core_the_import_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "langchain_core.retrievers", None)
+    monkeypatch.delitem(sys.modules, "loom.integrations.langchain")
+    with pytest.raises(ImportError, match=r"clickhouse-loom\[langchain\]"):
+        importlib.import_module("loom.integrations.langchain")

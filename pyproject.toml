@@ -97,9 +97,6 @@ dev = [
   "types-PyYAML>=6.0",
   "ruff==0.16.9",
   "build>=1.0",
-  # The SDK's framework adapters subclass the framework's own classes; their
-  # unit tests run against these (sdk/python/pyproject.toml's extras).
-  "langchain-core==1.8.0",
 ]
 # Operator CLI extra — needed only by `dev/loom_ingest.py` to fetch an S3
 # source. Not a server dep; the CLI lazy-imports it with an actionable error
@@ -245,11 +242,11 @@ ignore_missing_imports = true
 module = ["boto3", "boto3.*", "botocore", "botocore.*"]
 ignore_missing_imports = true
 
-# The SDK's framework adapters: langgraph and strands are optional, so each adapter
-# subclasses the real base class when it imports and a structural twin otherwise.
-# Without the framework the base is Any, which strict mode refuses to subclass.
+# The SDK's framework adapters: each framework is an SDK extra, absent from this
+# environment (`make test-sdk-adapters` type-checks the adapters with it). Without the
+# framework the base is Any, which strict mode refuses to subclass.
 [[tool.mypy.overrides]]
-module = ["langgraph", "langgraph.*", "strands", "strands.*"]
+module = ["langchain_core", "langchain_core.*", "langgraph", "langgraph.*", "strands", "strands.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

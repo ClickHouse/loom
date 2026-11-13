@@ -89,7 +89,11 @@ def main(argv: list[str]) -> int:
         for wheel in argv:
             check_wheel(wheel)
         for mod in pkgutil.walk_packages(loom.__path__, "loom."):
-            importlib.import_module(mod.name)
+            try:
+                importlib.import_module(mod.name)
+            except ImportError as e:
+                # A framework adapter needs its extra, and its error names it.
+                check("pip install 'clickhouse-loom[" in str(e), f"{mod.name}: {e}")
         asyncio.run(exercise())
     except SmokeFailure as e:
         print(f"sdk-wheel-smoke: FAIL — {e}", file=sys.stderr)

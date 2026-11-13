@@ -1,4 +1,4 @@
-.PHONY: bootstrap dev dev-cloud down down-all migrate migrate-status migrate-dry schema-dump schema-check bench-matrix server frontend-build frontend-dev init onboard test test-unit test-integration test-mixed-version test-unit-cov ingest bench bench-quick bench-algorithm-gate bench-quality-gate bench-code-intel-dry bench-code-portability-dry bench-code-intel bench-code-legs bench-clickgap-replay lint format format-check typecheck mypy-gate install clean bench-clickgap-golden
+.PHONY: bootstrap dev dev-cloud down down-all migrate migrate-status migrate-dry schema-dump schema-check bench-matrix server frontend-build frontend-dev init onboard test test-unit test-integration test-sdk-adapters test-mixed-version test-unit-cov ingest bench bench-quick bench-algorithm-gate bench-quality-gate bench-code-intel-dry bench-code-portability-dry bench-code-intel bench-code-legs bench-clickgap-replay lint format format-check typecheck mypy-gate install clean bench-clickgap-golden
 
 # Interpreter for the python-invoking targets: the local .venv, which CI also
 # builds from uv.lock (`uv sync --locked`).
@@ -141,6 +141,22 @@ test-unit:
 
 test-integration:
 	$(PYTHON) -m pytest tests/integration -v
+
+# The SDK's framework adapters (sdk/python/tests) and their types, against the
+# frameworks named by these SDK extras, in a venv of their own: the frameworks'
+# dependencies would otherwise constrain the server's uv.lock.
+# SDK_ADAPTERS_RESOLUTION=lowest-direct installs each extra at its lower bound.
+SDK_ADAPTER_EXTRAS := langchain
+SDK_ADAPTERS_VENV ?= .venv-sdk-adapters
+SDK_ADAPTERS_PYTHON ?= 3.12
+SDK_ADAPTERS_RESOLUTION ?= highest
+test-sdk-adapters:
+	uv venv --clear -q --python $(SDK_ADAPTERS_PYTHON) $(SDK_ADAPTERS_VENV)
+	python3 scripts/gates/sdk_extra_requirements.py $(SDK_ADAPTER_EXTRAS) > $(SDK_ADAPTERS_VENV)/adapters.txt
+	uv pip install -q --python $(SDK_ADAPTERS_VENV)/bin/python --resolution $(SDK_ADAPTERS_RESOLUTION) \
+	  -e ./sdk/python -r $(SDK_ADAPTERS_VENV)/adapters.txt "pytest>=8.0" mypy==2.3.1
+	cd sdk/python && ../../$(SDK_ADAPTERS_VENV)/bin/python -m pytest -q
+	$(SDK_ADAPTERS_VENV)/bin/python -m mypy --strict sdk/python/loom/integrations
 
 # Builds N-1 (BASE, default the merge base with origin/main) and N side by side
 # on one throwaway ClickHouse (docker); skips without docker (REQUIRE=1 fails

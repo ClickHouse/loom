@@ -94,7 +94,7 @@ describe("LoomMemoryRetriever (LangChain.js adapter)", () => {
     ],
   };
 
-  it("returns one Document per memory within k, keyed by the memory key", async () => {
+  it("returns one Document per memory within k, with its key in metadata", async () => {
     const { agent, calls } = harness(memories);
     const docs = await new LoomMemoryRetriever(agent, {
       k: 1,
@@ -110,6 +110,7 @@ describe("LoomMemoryRetriever (LangChain.js adapter)", () => {
       memory_type: "semantic",
       user_id: "alice",
     });
+    expect(calls[0].body.agent).toBe("*"); // every agent's memories unless the scope names one
     expect(docs.map((d) => d.metadata.memory_key)).toEqual(["prefs/seat"]);
     expect(docs[0].id).toBeUndefined();
     expect(docs[0].metadata).toEqual({

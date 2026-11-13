@@ -244,7 +244,7 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   Strands Agents memory-store protocol (`add` / `search`); `search` returns
   nothing when Loom abstains unless `honour_abstain=False`.
 
-The LangGraph and Strands adapters import their framework lazily. See
+The LangGraph and Strands adapters import without their framework installed. See
 [Frameworks](../features/integrations/frameworks.md).
 
 ## Errors

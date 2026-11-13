@@ -62,6 +62,11 @@ Documentation = "https://clickhouse.github.io/loom/reference/python-sdk/"
 Repository = "https://github.com/ClickHouse/loom"
 Issues = "https://github.com/ClickHouse/loom/issues"
 
+[tool.pytest.ini_options]
+# The framework adapters' tests: `make test-sdk-adapters` runs them in a venv with
+# the SDK and its adapter extras, apart from the server's environment.
+testpaths = ["tests"]
+
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"

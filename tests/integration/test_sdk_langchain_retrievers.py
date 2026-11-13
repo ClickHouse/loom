@@ -7,8 +7,16 @@ import asyncio
 import os
 import uuid
 
+import pytest
 from loom import SyncAgent
-from loom.integrations.langchain import LoomKnowledgeRetriever, LoomMemoryRetriever
+
+# An SDK extra, outside the server's environment: install langchain-core to run these.
+pytest.importorskip("langchain_core")
+
+from loom.integrations.langchain import (
+    LoomKnowledgeRetriever,
+    LoomMemoryRetriever,
+)
 
 
 async def test_knowledge_retriever_returns_the_ingested_chunk(agent) -> None:

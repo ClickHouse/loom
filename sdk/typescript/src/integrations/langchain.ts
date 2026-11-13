@@ -26,7 +26,7 @@ type MemorySearchBody = Body<"memory.search">;
 export interface LoomRetrieverOptions extends BaseRetrieverInput {
   /** Documents per query. Default 4. */
   k?: number;
-  /** Loom tags every returned row must carry. (`tags` is LangChain's callback tags.) */
+  /** Only rows carrying at least one of these Loom tags. (`tags` is LangChain's callback tags.) */
   searchTags?: string[];
 }
 
@@ -42,7 +42,7 @@ export interface LoomKnowledgeRetrieverOptions extends LoomRetrieverOptions {
 export interface LoomMemoryRetrieverOptions extends LoomRetrieverOptions {
   /** Only memories of this type. */
   memoryType?: NonNullable<MemorySearchBody["memory_type"]>;
-  /** The user, session or run whose memories to read. */
+  /** Only this user's, session's, run's or agent's memories; without an `agentId`, every agent's. */
   scope?: Scope;
   /** Return no documents when Loom abstains (no memory above its calibrated floor). Default true. */
   honourAbstain?: boolean;
