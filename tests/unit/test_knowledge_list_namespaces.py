@@ -18,7 +18,7 @@ def _row(namespace: str, uri: str) -> Any:
     return {"ingested_at": AT, "namespace": namespace, "source_uri": uri}
 
 
-def test_one_namespace_keeps_the_cursor_a_build_a_release_behind_reads() -> None:
+def test_a_one_namespace_cursor_keeps_its_wire_format() -> None:
     cursor = document_reads._list_cursor(_row("ns", "doc://a"), "acme", ["ns"])
     assert cursor == encode_cursor(AT, "doc://a")
     assert document_reads._list_position(cursor, "acme", ["ns"]) == (AT, "ns", "doc://a")

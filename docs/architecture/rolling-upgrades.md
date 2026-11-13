@@ -89,7 +89,8 @@ schema. These rules keep that safe. The operator procedure is in
    nothing else until an N replica leads.
 4. **Wire formats** (cursors, session and run ids, worker resume cursors, JSON stored in
    rows): N reads the old and the new format, and only N+1 writes the new one. A cursor
-   for a request N-1 cannot serve as asked is refused by N-1 instead (rule 12).
+   for a request N-1 cannot serve as asked is refused by either build when the other
+   wrote it (rule 12).
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
    refresh interval (the command refuses less), so no process signs with a kid an N-1
    replica cannot verify yet.
@@ -157,8 +158,9 @@ schema. These rules keep that safe. The operator procedure is in
     `memory.update_by_id` are dropped there, so that write graphs none of the facts it
     names. A `knowledge.list` naming `namespaces` lists `namespace` alone there, its rows
     carry no `namespace`, and each build refuses the cursor the other wrote for such a
-    list, so a client paging it starts again. `memory.get_by_id`'s `omit_high_value` does not hold there either: N-1 answers
-    a `high` row with its value and hash, and audits that read as a sensitive one. N's
+    list, so a client paging it starts again. `memory.get_by_id`'s `omit_high_value`
+    does not hold there either: N-1 answers a `high` row with its value and hash, and
+    audits that read as a sensitive one. N's
     conflict resolver does not read the `memory.unsupersede` record of an Undo
     made on an N-1 replica, or before the upgrade: it carries neither the restored hash
     nor the restore version. The restored row then reads as a statement made at the Undo,

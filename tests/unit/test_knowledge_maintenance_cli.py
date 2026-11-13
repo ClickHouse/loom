@@ -163,3 +163,22 @@ def test_rechunk_counts_a_committed_write_awaiting_publication(
     monkeypatch.setattr("server.knowledge.app.writes.handle_knowledge_upsert", _pending)
     out = asyncio.run(ops.rechunk_namespace("o", "ns", page_size=100))
     assert (out["rechunked"], out["failed"]) == (1, [])
+
+
+def test_rechunk_walks_the_pages_with_the_namespace_in_its_position(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.cli import ops
+    from server.knowledge.store import documents as documents_repo
+
+    at = datetime(2026, 1, 2, tzinfo=UTC)
+    pages = [[{"source_uri": "kb://a", "ingested_at": at}], []]
+    seen: list[Any] = []
+
+    async def _list(org: str, namespaces: list[str], *, cursor: Any, **kw: Any) -> list[Any]:
+        seen.append((namespaces, cursor))
+        return pages.pop(0)
+
+    monkeypatch.setattr(documents_repo, "list_with_chunk_counts", _list)
+    asyncio.run(ops.rechunk_namespace("o", "ns", page_size=1, dry_run=True))
+    assert seen == [(["ns"], None), (["ns"], (at, "ns", "kb://a"))]

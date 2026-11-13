@@ -105,7 +105,7 @@ async def handle_knowledge_list(
 
 
 def _list_cursor(last: DocumentListRow, org: str, namespaces: list[str]) -> str:
-    """Position after `last`: `<ts>|<uri>` (as N-1 has it) for one namespace, else bound."""
+    """Position after `last`: the plain `<ts>|<uri>` cursor for one namespace, else a bound one."""
     if len(namespaces) == 1:
         return encode_cursor(last["ingested_at"], last["source_uri"])
     return encode_bound_cursor(
