@@ -214,19 +214,23 @@ LOOM_LLM_MODEL=qwen2.5:3b
 LOOM_LOCAL_LLM_BASE_URL=http://host.docker.internal:11434/v1
 LOOM_ASSISTANT_PROVIDER=local
 LOOM_ASSISTANT_MODEL=qwen2.5:3b
-LOOM_MEMORY_EXTRACT_VERIFY_MODELS=qwen2.5:3b
+LOOM_ASSISTANT_ANSWER_CEILING_USD=0
 LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=false
 LOOM_LLM_REQUEST_TIMEOUT_S=900
+LOOM_MEMORY_EXTRACT_VERIFY_MODELS=
 LOOM_SESSION_BRIEF_LLM_MODEL=
 LOOM_CODE_BISECT_LLM_RERANK_MODEL=
 LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
 LOOM_RETRIEVAL_JUDGE_MODEL=
 ```
 
-The preset turns the background [conflict resolver](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)
-off: it retires an older row it judges replaced at a confidence set on a hosted model,
-so a small model's misjudgment would retire facts. Writes still flag conflicts for the
-Review queue; set `LOOM_CONFLICT_RESOLVER_MODEL` to a hosted model and
+The preset turns off the two jobs that remove facts on a model's judgment, whose
+thresholds were set on hosted models: the capture verifier, which drops a fact every
+verifier model calls not durable, and the background
+[conflict resolver](../features/memory/conflicts-and-refusal.md#the-conflict-resolver),
+which retires an older row it judges replaced. A small model's misjudgment there would
+lose facts. Writes still flag conflicts for the Review queue; set
+`LOOM_CONFLICT_RESOLVER_MODEL` to a hosted model and
 `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=true` to judge them. On an existing install, a
 configuration saved in Models & keys wins over `.env`: after the restart, choose **Use
 environment configuration** there for the preset to apply.
@@ -255,8 +259,11 @@ same model.
   `http://host.docker.internal:11434/v1`), and needs `LOOM_ASSISTANT_MODEL`. The assistant
   answers by calling Loom's tools, so pick a model the server runs with tool calls (Ollama
   marks them). A local model has no price, so each answer counts
-  `LOOM_ASSISTANT_ANSWER_CEILING_USD` against the namespace's daily model cost cap, as any
-  unpriced model does. Under the Helm chart, add `LOCAL_LLM_BASE_URL` to the assistant's
+  `LOOM_ASSISTANT_ANSWER_CEILING_USD` ($0.10 by default) against the assistant's share of
+  the namespace's daily model cost cap, as any unpriced model does: at the default cap
+  and share, five answers a day. The preset sets the ceiling to `0`, so local answers
+  cost nothing; it is also what an answer cut before its usage arrived costs, so keep it
+  at its default when a hosted model serves the assistant. Under the Helm chart, add `LOCAL_LLM_BASE_URL` to the assistant's
   Secret; the chart's policy lets LibreChat reach only DNS, its database, Loom and TCP
   443, so the model server needs a NetworkPolicy of your own that selects the
   LibreChat pod.

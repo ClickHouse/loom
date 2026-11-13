@@ -151,7 +151,7 @@ def test_the_deployments_model_named_again_runs_on_its_provider(
     monkeypatch.setattr(settings, "llm_model", "gpt-oss:20b")
     assert llm_client.get_llm_client_for_model("gpt-oss:20b") is llm_client.get_llm_client()
     assert llm_client.get_llm_client_without_fallback("gpt-oss:20b").provider == "local"
-    # The conflict resolver and the capture verifier, which the local preset puts on it.
+    # A job that names the main model stays on the main provider.
     monkeypatch.setattr(settings, "conflict_resolver_model", "gpt-oss:20b")
     assert settings.conflict_resolver_provider() == "local"
     assert settings.provider_of("gpt-6-luna") == "openai"
