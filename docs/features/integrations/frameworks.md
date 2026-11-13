@@ -6,10 +6,7 @@ Loom `Agent` the adapter wraps, and isolation is Loom's namespace authorization.
 Every adapter calls your Loom server through the SDK: the data is stored in your Loom
 deployment (ClickHouse, and Postgres for live memory under the
 [Postgres memory authority](../../architecture/storage-authority.md)), and no adapter adds
-or needs another database, vector store or cache. What leaves the deployment is what the
-server sends the [model providers](../../operations/deployment.md#providers) and telemetry
-backends it is configured with; [Langfuse](langfuse.md#what-text-leaves-loom) and
-[OTLP export](clickstack.md#choose-the-export-path) say what each one receives.
+or needs another database, vector store or cache.
 
 | Framework      | Adapter           | SDK                                                 | Framework interface             |
 | -------------- | ----------------- | --------------------------------------------------- | ------------------------------- |
