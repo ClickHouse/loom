@@ -17,10 +17,7 @@ class LocalLLMClient(OpenAILLMClient):
     # Ollama ignores max_completion_tokens without refusing it, so the cap goes as
     # max_tokens, which every chat-completions server reads.
     _cap_name = "max_tokens"
-
-    def __init__(self, model: str) -> None:
-        # A placeholder past the parent's key check; `_headers` never sends it.
-        super().__init__(model, api_key="local")
+    _needs_key = False
 
     def _root(self) -> str:
         from server.settings import settings

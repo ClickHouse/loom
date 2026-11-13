@@ -322,7 +322,11 @@ answers a day at the defaults. LibreChat reaches the server at
 `LIBRECHAT_LOCAL_LLM_BASE_URL` (default `http://host.docker.internal:11434/v1`, Ollama
 on the Docker host). See
 [a model server on your machine](../../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)
-for what a small model gives up and what an answer costs.
+for what a small model gives up and what an answer costs. An install that took the
+installer's Ollama preset already has these three settings, so its assistant answers on
+the local model and needs no `LIBRECHAT_ANTHROPIC_API_KEY`; to answer on Claude instead,
+remove `LOOM_ASSISTANT_PROVIDER` and `LOOM_ASSISTANT_MODEL` and set
+`LOOM_ASSISTANT_ANSWER_CEILING_USD` back to its default.
 
 An installed stack runs the profiles `COMPOSE_PROFILES` names (`bundled` with its own
 ClickHouse, none with yours), so add `assistant` there and start it:

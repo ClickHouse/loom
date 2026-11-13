@@ -134,6 +134,8 @@ class OpenAILLMClient:
     _source = "openai:chat"
     # The output cap's field. OpenAI's reasoning models take only the newer name.
     _cap_name = "max_completion_tokens"
+    # Whether the client refuses to start without OPENAI_API_KEY.
+    _needs_key = True
     # This client's own reasoning effort ('' = the pin, else the lowest the model takes).
     reasoning_effort = ""
 
@@ -142,8 +144,11 @@ class OpenAILLMClient:
     ) -> None:
         self.model = model
         self.reasoning_effort = reasoning_effort
-        self._api_key = provider_key("openai") if api_key is None else api_key
-        if not self._api_key and not gateway.keyless():
+        if not self._needs_key:
+            self._api_key = ""
+        else:
+            self._api_key = provider_key("openai") if api_key is None else api_key
+        if self._needs_key and not self._api_key and not gateway.keyless():
             raise RuntimeError(
                 "OPENAI_API_KEY not set; OpenAILLMClient requires a key. "
                 "Use LOOM_LLM_PROVIDER=fake for local dev."

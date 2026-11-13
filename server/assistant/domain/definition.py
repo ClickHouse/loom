@@ -3,8 +3,9 @@ and the rule for when a boot writes it into LibreChat.
 
 A boot writes the definition when its version is newer than the stored one, or the
 same with another model, so during a rolling upgrade a build N-1 never overwrites N's
-definition and a changed `LOOM_ASSISTANT_MODEL` or `LOOM_ASSISTANT_PROVIDER` takes effect at
-the next boot."""
+definition (except a build that predates `LOOM_ASSISTANT_PROVIDER`, which rewrites a
+definition that sets it), and a changed `LOOM_ASSISTANT_MODEL` or
+`LOOM_ASSISTANT_PROVIDER` takes effect at the next boot."""
 
 from __future__ import annotations
 
