@@ -172,8 +172,8 @@ durable.
 The plugins ship a `loom-memory` skill (`integrations/claude-code-plugin/skills/loom-memory/`,
 generated into the Codex plugin) that encodes this guide for a model. An agent without
 the plugin gets the [agent instructions](../features/integrations/agent-instructions.md)
-block; copy the end-of-task review below into its instructions too. Before reporting
-done, write only what earns a yes:
+block, whose last memory line is this review in short; to spell it out, copy the
+questions below under the block. Before reporting done, write only what earns a yes:
 
 1. Did I make or learn a decision, constraint or owner a future session needs?
 2. Did an existing memory turn out wrong or outdated? Update it, same key.

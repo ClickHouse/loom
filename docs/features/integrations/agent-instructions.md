@@ -23,7 +23,8 @@ listed runs through `loom_op` with the op's dotted name (`loom_code_symbol` is
 `code.symbol`, `loom_working_memory_set` is `working_memory.set`); `loom_op` with
 `{"op": "help", "query": "<words>"}` finds them.
 
-Every task (no hook loads Loom for you, so these two calls are not optional)
+Every task: make these two calls unless a Loom hook already put Loom's context in this
+session (the Claude Code and Codex plugins do). Without one they are not optional.
 
 - At the start of each task, before planning: `loom_context_pack` with the task as
   `query`. It returns the decisions, constraints and memories that bear on it.
@@ -41,6 +42,8 @@ Memory
   `loom_memory_set` right away: one plain-text fact per call under a readable key
   (`<scope>/<kind>/<id>`), dates as calendar dates. Never save a guess, your reasoning or
   the conversation.
+- A rule the user states for the whole team about a file: `loom_memory_set` with
+  `namespace` `<team-namespace>`, the file in `files` and the tag `constraint`.
 - A fact that changed: `loom_memory_update` on the same key, never a second copy.
 - Your plan and checklist for this task: `loom_working_memory_set`, not `loom_memory_set`.
 - Before reporting done, one pass over what should outlive the session.
@@ -68,9 +71,10 @@ Replace `<code-namespace>` with the `namespace` of the branch's row and
 `<team-namespace>` with its `primary_namespace` (the trunk branch's, where team file
 rules and decisions live); for the trunk branch the two are the same. A branch indexed
 on its own carries its own row's `namespace` in its copy of the file. A repository with
-no row (not indexed), or whose row says `readable: false` (a repository this token
-cannot read, listed so you can join it or ask for access), takes the block without
-`extra_namespaces` and without its Code section.
+no row (not indexed, or `code.repos` answers that code intelligence is off), or whose
+row says `readable: false` (a repository this token cannot read, listed so you can join
+it or ask for access), takes the block without `extra_namespaces` and without its Code
+section.
 
 ## Where each client reads it
 
