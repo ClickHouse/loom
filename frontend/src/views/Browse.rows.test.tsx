@@ -218,7 +218,7 @@ describe("Namespaces in your org: the rows", () => {
     const menu = await screen.findByRole("menu", { name: "Actions for team" });
     await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
     await user.click(await screen.findByRole("button", { name: "Write the guide" }));
-    // A first guide from the namespaces page starts on the same outline, which does not save unchanged.
+    // A first guide from Namespaces in your org starts on the same outline, which does not save unchanged.
     const editor = await screen.findByLabelText("Guide (Markdown)");
     expect((editor as HTMLTextAreaElement).value).toContain("## What this namespace holds");
     expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");
@@ -391,6 +391,17 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     expect(screen.getByRole("textbox", { name: "Search namespaces" })).toHaveValue("");
   });
 
+  it("offers no request to an admin by claim, who already reaches every namespace", async () => {
+    useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: ["ORG_ADMIN"] } });
+    render(<Browse />);
+    await screen.findByText("Support team runbooks");
+    await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "secret-ops");
+    expect(await screen.findByText(/No public namespaces match/)).toHaveTextContent(
+      "No public namespaces match secret-ops",
+    );
+    expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+  });
+
   it("offers no request for a namespace the caller admins", async () => {
     render(<Browse />);
     await screen.findByText("Support team runbooks");
@@ -488,7 +499,7 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
       const box = screen.getByRole("textbox", { name: "Search namespaces" });
       await userEvent.type(box, "code-loom");
       expect(await screen.findByText(/is a repository/)).toHaveTextContent(
-        "code-loom is a repository: request it from Repositories.",
+        "code-loom is a repository: join or request it from Repositories.",
       );
       await userEvent.clear(box);
       await userEvent.type(box, "sup");
@@ -522,8 +533,8 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
       render(<Browse />);
       await screen.findByText("Support team runbooks");
       await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "code-loom");
-      const line = await screen.findByText(/is a repository: request it from/);
-      expect(line).toHaveTextContent("code-loom is a repository: request it from Repositories.");
+      const line = await screen.findByText(/is a repository: join or request it from/);
+      expect(line).toHaveTextContent("code-loom is a repository: join or request it from Repositories.");
       expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
       await userEvent.click(within(line).getByRole("button", { name: "Repositories" }));
       expect(useStore.getState().view).toBe("code");

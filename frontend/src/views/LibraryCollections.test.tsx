@@ -919,7 +919,7 @@ describe("the Library on a collection", () => {
     useStore.setState({ myNamespaces: null });
   });
 
-  it("with no namespace and no collection, says so and points at the namespaces page", async () => {
+  it("with no namespace and no collection, says so and points at Namespaces in your org", async () => {
     api.listCollections.mockResolvedValue({ collections: [], next_cursor: null });
     useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
     render(<Documents />);

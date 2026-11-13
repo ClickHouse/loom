@@ -396,8 +396,8 @@ export function NamespacePickerList({
             Hide system namespaces
           </Button>
         )}
-        {/* Finding a public namespace to join is part of picking one, so the namespaces
-          page is reached from here, not from the rail. One call to action: the empty list
+        {/* Finding a public namespace to join is part of picking one, so Namespaces in your
+          org is reached from here, not from the rail. One call to action: the empty list
           above already carries it. */}
         {known != null && (hasJoined || !!query) && (
           <Button

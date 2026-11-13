@@ -244,6 +244,8 @@ export function Browse() {
   const typedName = listQuery.toLowerCase();
   // The role held on it: an active row only, since a pending request grants nothing yet.
   const typedRole = mineRows?.find((r) => r.namespace === typedName && r.status !== "pending")?.role;
+  // The role the server would act on: an admin claim (or auth off) admins every namespace.
+  const typedReach = roleOnNamespace(whoami, mineRows, typedName);
   const typedCollection = typedName.startsWith(COLLECTION_PREFIX);
   const elsewhere = repoNames.includes(typedName)
     ? "repository"
@@ -254,7 +256,7 @@ export function Browse() {
     NAMESPACE_NAME.test(typedName) &&
     !elsewhere &&
     !typedCollection &&
-    typedRole !== "admin" &&
+    typedReach !== "admin" &&
     !filtered.some((r) => r.namespace === typedName);
   const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
   const dialogOpen = !!(joinDialog || manageNs || settingsNs || createOpen);
@@ -452,14 +454,14 @@ export function Browse() {
               {/* One the caller already reads is opened there, not requested. */}
               {elsewhere === "repository" ? (
                 <>
-                  {typedRole ? "is a repository you read: open it in" : "is a repository: request it from"}{" "}
+                  {typedReach ? "is a repository you read: open it in" : "is a repository: join or request it from"}{" "}
                   <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
                     Repositories
                   </Link>
                 </>
               ) : (
                 <>
-                  {typedRole
+                  {typedReach
                     ? "is a collection you read: open it in the"
                     : "is a collection: ask its admin for a grant; the collections you can read are in the"}{" "}
                   <Link component="button" type="button" size="sm" onClick={() => setView("knowledge")}>
