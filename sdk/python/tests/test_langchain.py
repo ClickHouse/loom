@@ -141,7 +141,7 @@ def test_memory_documents_carry_the_key_and_score() -> None:
         )
     )
     retriever = LoomMemoryRetriever(
-        agent=SimpleNamespace(memory=memory),
+        agent=_agent(memory=memory),
         k=1,
         search_tags=["customer"],
         memory_type="preference",
@@ -166,6 +166,7 @@ def test_memory_documents_carry_the_key_and_score() -> None:
     assert [d.page_content for d in docs] == ["Alice prefers aisle seats"]
     assert docs[0].id is None  # a key is unique per agent, user and session only
     assert docs[0].metadata == {
+        "namespace": "support",
         "memory_key": "prefs/seat",
         "memory_type": "semantic",
         "similarity": 0.9,
@@ -176,10 +177,10 @@ def test_memory_documents_carry_the_key_and_score() -> None:
 
 def test_memory_abstain_returns_nothing_unless_disabled() -> None:
     weak = _memories([_memory("k", "a weak match", 0.2)], abstain=True)
-    strict = LoomMemoryRetriever(agent=SimpleNamespace(memory=_FakeSearch(weak)))
+    strict = LoomMemoryRetriever(agent=_agent(memory=_FakeSearch(weak)))
     assert asyncio.run(strict.ainvoke("anything")) == []
     loose = LoomMemoryRetriever(
-        agent=SimpleNamespace(memory=_FakeSearch(weak)), honour_abstain=False
+        agent=_agent(memory=_FakeSearch(weak)), honour_abstain=False
     )
     assert [d.metadata["memory_key"] for d in asyncio.run(loose.ainvoke("anything"))] == ["k"]
 
@@ -194,7 +195,7 @@ def test_invoke_runs_on_a_sync_agent() -> None:
 
 
 def test_invoke_on_an_async_agent_says_to_use_ainvoke() -> None:
-    retriever = LoomMemoryRetriever(agent=SimpleNamespace(memory=_FakeSearch(_memories([]))))
+    retriever = LoomMemoryRetriever(agent=_agent(memory=_FakeSearch(_memories([]))))
     with pytest.raises(TypeError, match="ainvoke"):
         retriever.invoke("q")
 

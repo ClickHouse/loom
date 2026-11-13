@@ -44,10 +44,10 @@ async with Agent(org="acme", namespace="support") as agent:
 
 `invoke` needs a `SyncAgent`; `ainvoke` takes an `Agent` or a `SyncAgent`.
 
-| Retriever                | `page_content`  | `id`                                                                                | `metadata`                                                                           |
-| ------------------------ | --------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `LoomKnowledgeRetriever` | the chunk       | `<namespace>/<source_uri>#<chunk_idx>`                                              | `source_uri`, `chunk_idx`, `similarity`, `section`, `namespace`, `tags`              |
-| `LoomMemoryRetriever`    | the memory text | none: a key is unique per agent, user and session, and a search reads every agent's | `memory_key`, `memory_type`, `similarity`, `source`, `valid_at` when the row has one |
+| Retriever                | `page_content`  | `id`                                                                                | `metadata`                                                                                        |
+| ------------------------ | --------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `LoomKnowledgeRetriever` | the chunk       | `<namespace>/<source_uri>#<chunk_idx>`                                              | `source_uri`, `chunk_idx`, `similarity`, `section`, `namespace`, `tags`                           |
+| `LoomMemoryRetriever`    | the memory text | none: a key is unique per agent, user and session, and a search reads every agent's | `namespace`, `memory_key`, `memory_type`, `similarity`, `source`, `valid_at` when the row has one |
 
 | Field                                         | Retriever | Default | Effect                                                                               |
 | --------------------------------------------- | --------- | ------- | ------------------------------------------------------------------------------------ |

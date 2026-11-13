@@ -137,7 +137,7 @@ class LoomKnowledgeRetriever(_LoomRetriever):
 class LoomMemoryRetriever(_LoomRetriever):
     """Memories from ``memory.search``, one ``Document`` per memory.
 
-    ``page_content`` is the memory's text; ``metadata`` carries
+    ``page_content`` is the memory's text; ``metadata`` carries ``namespace``,
     ``memory_key``, ``memory_type``, ``similarity``, ``source`` and, when set,
     ``valid_at``. The documents carry no id: a memory key is unique per agent,
     user and session, and a search reads every agent's memories. When Loom abstains
@@ -157,6 +157,7 @@ class LoomMemoryRetriever(_LoomRetriever):
     agent_id: str | None = None
     """Only this agent's memories."""
     honour_abstain: bool = True
+    """Return no documents when Loom abstains."""
 
     def _call_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"top_k": self.k}
@@ -173,6 +174,8 @@ class LoomMemoryRetriever(_LoomRetriever):
         docs = []
         for hit in list(result)[: self.k]:
             metadata: dict[str, Any] = {
+                # Named on a fan-out (the server's memory_search_default_namespace_scope).
+                "namespace": hit.namespace or self.agent.namespace,
                 "memory_key": hit.memory_key,
                 "memory_type": hit.memory_type,
                 "similarity": round(float(hit.similarity), 4),

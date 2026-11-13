@@ -114,6 +114,7 @@ describe("LoomMemoryRetriever (LangChain.js adapter)", () => {
     expect(docs.map((d) => d.metadata.memory_key)).toEqual(["prefs/seat"]);
     expect(docs[0].id).toBeUndefined();
     expect(docs[0].metadata).toEqual({
+      namespace: "n",
       memory_key: "prefs/seat",
       memory_type: "semantic",
       similarity: 0.9,

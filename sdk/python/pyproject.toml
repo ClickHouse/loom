@@ -53,7 +53,8 @@ dependencies = ["httpx[http2]>=0.27"]
 machine = ["pyjwt[crypto]>=2.8"]
 # The same, with the key read from AWS Secrets Manager (LOOM_CLIENT_KEY_SECRET).
 aws = ["pyjwt[crypto]>=2.8", "boto3>=1.28"]
-# Framework adapters (loom.integrations.*): the framework each one plugs into.
+# The framework an adapter in loom.integrations subclasses; the LangGraph and
+# Strands adapters need none (structural twins).
 langchain = ["langchain-core>=1.0,<2"]
 
 [project.urls]

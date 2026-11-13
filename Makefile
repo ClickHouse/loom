@@ -142,21 +142,24 @@ test-unit:
 test-integration:
 	$(PYTHON) -m pytest tests/integration -v
 
-# The SDK's framework adapters (sdk/python/tests) and their types, against the
-# frameworks named by these SDK extras, in a venv of their own: the frameworks'
-# dependencies would otherwise constrain the server's uv.lock.
-# SDK_ADAPTERS_RESOLUTION=lowest-direct installs each extra at its lower bound.
+# The adapters whose framework is an SDK extra (tests in sdk/python/tests) and the
+# types of every adapter, with the frameworks those extras name, in a venv of
+# their own: the frameworks' dependencies would otherwise constrain the server's
+# uv.lock. SDK_ADAPTERS_RESOLUTION=lowest-direct installs every direct requirement
+# (the SDK's own, each extra's, pytest) at its lower bound. mypy is the [dev] pin.
 SDK_ADAPTER_EXTRAS := langchain
 SDK_ADAPTERS_VENV ?= .venv-sdk-adapters
 SDK_ADAPTERS_PYTHON ?= 3.12
 SDK_ADAPTERS_RESOLUTION ?= highest
+SDK_ADAPTERS_PY = $(abspath $(SDK_ADAPTERS_VENV))/bin/python
 test-sdk-adapters:
 	uv venv --clear -q --python $(SDK_ADAPTERS_PYTHON) $(SDK_ADAPTERS_VENV)
-	python3 scripts/gates/sdk_extra_requirements.py $(SDK_ADAPTER_EXTRAS) > $(SDK_ADAPTERS_VENV)/adapters.txt
-	uv pip install -q --python $(SDK_ADAPTERS_VENV)/bin/python --resolution $(SDK_ADAPTERS_RESOLUTION) \
+	$(SDK_ADAPTERS_PY) scripts/gates/sdk_extra_requirements.py $(SDK_ADAPTER_EXTRAS) > $(SDK_ADAPTERS_VENV)/adapters.txt
+	uv pip install -q --python $(SDK_ADAPTERS_PY) --resolution $(SDK_ADAPTERS_RESOLUTION) \
 	  -e ./sdk/python -r $(SDK_ADAPTERS_VENV)/adapters.txt "pytest>=8.0" mypy==2.3.1
-	cd sdk/python && ../../$(SDK_ADAPTERS_VENV)/bin/python -m pytest -q
-	$(SDK_ADAPTERS_VENV)/bin/python -m mypy --strict sdk/python/loom/integrations
+	cd sdk/python && $(SDK_ADAPTERS_PY) -m pytest -q
+	$(SDK_ADAPTERS_PY) -m mypy --strict --python-version \
+	  "$$($(SDK_ADAPTERS_PY) -c 'import sys; print("%d.%d" % sys.version_info[:2])')" sdk/python/loom/integrations
 
 # Builds N-1 (BASE, default the merge base with origin/main) and N side by side
 # on one throwaway ClickHouse (docker); skips without docker (REQUIRE=1 fails

@@ -124,6 +124,8 @@ export class LoomMemoryRetriever extends BaseRetriever {
         new Document({
           pageContent: h.content_excerpt,
           metadata: {
+            // Named on a fan-out (the server's memory_search_default_namespace_scope).
+            namespace: h.namespace || this.agent.namespace,
             memory_key: h.memory_key,
             memory_type: h.memory_type,
             similarity: round4(h.similarity),
