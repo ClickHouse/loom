@@ -177,7 +177,8 @@ each break.
 - `memory.promote` refuses a `definition` promotion without the approved hash. Today no
   hash is asked for.
 - It refuses one from a row that is not namespace-wide, or whose target key is not the
-  source's key or lies outside `definition/`. Today any key is promoted.
+  source's key or lies outside `definition/`. Today any row but a `profile` row or one
+  labelled `high` is promoted, under any key.
 - It refuses one whose term or alias another live shared definition already holds. Today
   only an embedding-close shared row refuses it.
 - It refuses one whose value is labelled or graded `medium`. Today only a `high` label
@@ -202,15 +203,16 @@ rewrite of a shared row that is not a promotion, such as a scrub, does not count
 
 A caller may already write rows of type `definition`; they are governed only once an admin
 promotes them, but their write-time verdicts change with this design: `definition` joins
-`KEY_IDENTIFIED_TYPES`, as `decision` is, which only switches off the write-time verdicts
-across keys: two rows under different keys stay two rows however alike they read, and only
-the promotion's name check compares their names. Unlike a decision, a definition is never
-judged against a close definition under another key: the write-time check neither marks
-nor supersedes it (no merge, duplicate, refinement or pinned-peer refusal, and no
-supersession by the value-update pass of `memory.bulk_set`, and no fold of a
-`memory.bulk_set` entry into a byte-identical row under another key, which [conflicts and
-refusal](../features/memory/conflicts-and-refusal.md) applies to every other type), and
-the conflict resolver ([conflicts and
+`KEY_IDENTIFIED_TYPES`, as `decision` is, which switches off the merge, duplicate,
+refinement and pinned-peer verdicts across keys: two rows under different keys stay two
+rows however alike they read, and only the promotion's name check compares their names. A
+decision is still marked `conflicted` against a close peer under another key; unlike a
+decision, a definition is never judged against a close definition under another key: the
+write-time check neither marks nor supersedes it (no merge, duplicate, refinement or
+pinned-peer refusal, and no supersession by the value-update pass of `memory.bulk_set`,
+and no fold of a `memory.bulk_set` entry into a byte-identical row under another key,
+which [conflicts and refusal](../features/memory/conflicts-and-refusal.md) applies to
+every other type), and the conflict resolver ([conflicts and
 refusal](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)) neither flags
 nor retires it, and `memory.consolidate` leaves rows of type `definition` out of its
 clusters (today it clusters one identity's live, unpinned, unlocked rows of one type that
@@ -271,15 +273,14 @@ rule below. A term or alias matches where it appears in the query with no charac
 to it that continues its edge:
 
 - whatever the script, a combining mark (category M) after the term continues its edge, so
-  `कम` does not match inside "कमी" nor `ก` inside "กิ"; a mark before the term follows the
-  rule, below, of the script of the base character it follows (Unicode's rule for a mark
-  of the Inherited script, whatever its own script), and a mark with no base before it
-  continues nothing;
+  `कम` does not match inside "कमी" nor `ก` inside "กิ"; a mark before the term continues
+  its edge exactly when its base character would under the rules below, and a mark at the
+  start of the query, or after a space or punctuation, continues nothing;
 - next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
   those;
 - next to a letter of another script written with spaces (Cyrillic, Greek, Devanagari):
-  any letter or mark of a script other than Latin, or any decimal digit, so `मत` does not
-  match inside "कीमत";
+  any letter of a script other than Latin, or any decimal digit, so `मत` does not match
+  inside "कीमत";
 - before Hangul, a Hangul syllable, so `매출` does not match inside "판매출고"; after it,
   nothing, since Korean particles attach to the word before them;
 - next to a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar), a mark
@@ -682,9 +683,10 @@ written under the key its queue row carries (`memory_key`): `definition/` and a 
 drawn when the draft claims its candidate id, so every retry of one review uses one key,
 and a draft queued again after a rollback gets a new one. `learnings.list` shows that key;
 for a revision the review writes under the governed key instead, which the listed key does
-not name, and `memory.definitions.list` shows where it landed. A definition promotes to
-memory only; a `destination` of `knowledge` or `both` is refused for these candidates. A
-draft rejected before any promotion attempt leaves nothing behind but its queue row.
+not name; the admin finds it in `memory.definitions.list` by its term, and each entry
+there carries the `promoted_from_candidate_id` the shared row holds. A definition promotes
+to memory only; a `destination` of `knowledge` or `both` is refused for these candidates.
+A draft rejected before any promotion attempt leaves nothing behind but its queue row.
 Between the write and the promotion the row is an ordinary namespace-wide row, which the
 ordinary legs read for those moments. A `memory.set` answering `PUBLICATION_PENDING` has
 committed the write (the authority serves it), so the review carries on with the
