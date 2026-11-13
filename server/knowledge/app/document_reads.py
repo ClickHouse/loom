@@ -1,15 +1,16 @@
-"""knowledge.list / get / outline: reads of the documents of one namespace, and
-`document_chunks`, a document's served chunks in order (knowledge.synthesize and
-`loom decisions extract` read through it)."""
+"""knowledge.list / get / outline: reads of the documents of one namespace (a list, of
+several), and `document_chunks`, a document's served chunks in order (knowledge.synthesize
+and `loom decisions extract` read through it)."""
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from server.core.cursors import decode_cursor as _decode_list_cursor
 from server.core.cursors import encode_cursor as _encode_list_cursor
+from server.core.errors import ValidationError
 from server.core.tag_sql import list_tag_filter
 from server.embedding import get_embedder
 from server.knowledge.api.models_knowledge import (
@@ -30,7 +31,7 @@ from server.operations.read_projection import resolve as _resolve_projection
 if TYPE_CHECKING:
     from server.memory.domain.corpus_synthesis import CorpusChunk
 
-_LIST_ALWAYS = frozenset({"source_uri"})
+_LIST_ALWAYS = frozenset({"namespace", "source_uri"})
 
 
 async def document_tally(org: str, namespace: str) -> tuple[int, datetime | None]:
@@ -48,19 +49,21 @@ async def document_tally(org: str, namespace: str) -> tuple[int, datetime | None
 async def handle_knowledge_list(
     input: KnowledgeListInput,
 ) -> KnowledgeListOutput:
-    """Paginated source_uri listing scoped to one namespace.
+    """Paginated listing of one namespace's documents, or several namespaces' as one.
 
     Joins `loom.documents FINAL` with a chunk-count aggregation. Keyset
-    pagination on (ingested_at DESC, source_uri DESC) so the cursor is
-    stable across inserts."""
+    pagination on (ingested_at DESC, namespace DESC, source_uri DESC) so the
+    cursor is stable across inserts."""
     from server.core.ch import own_write_reads
+    from server.knowledge.app.knowledge_search import named_namespaces
     from server.knowledge.store import documents as documents_repo
 
-    cursor = _decode_list_cursor(input.cursor) if input.cursor else None
+    places = await named_namespaces(input.org, input.namespace, input.namespaces)
+    cursor = _list_position(input.cursor, places) if input.cursor else None
     with own_write_reads():  # a document added a call ago
         raw_rows = await documents_repo.list_with_chunk_counts(
             input.org,
-            input.namespace,
+            places,
             include_superseded=input.include_superseded,
             tag_filter=list_tag_filter(input.tags, every=input.tags_every),
             uri_prefixes=list(input.uri_prefix) if input.uri_prefix else None,
@@ -72,6 +75,7 @@ async def handle_knowledge_list(
 
     rows = [
         _KnowledgeListEntry(
+            namespace=r["namespace"],
             source_uri=r["source_uri"],
             title=r["title"] or "",
             description=r.get("description") or "",
@@ -87,17 +91,37 @@ async def handle_knowledge_list(
         )
         for r in page
     ]
-    next_cursor = (
-        _encode_list_cursor(page[-1]["ingested_at"], page[-1]["source_uri"])
-        if rows and has_more
-        else None
-    )
+    next_cursor = _list_cursor(page[-1], places) if rows and has_more else None
     # The caller's field whitelist, resolved once.
     keep = _resolve_projection(_KnowledgeListEntry, input.fields, always=_LIST_ALWAYS)
     if keep is not None:
         for e in rows:
             e._projection = keep
     return KnowledgeListOutput(rows=rows, next_cursor=next_cursor)
+
+
+def _list_cursor(last: Any, places: list[str]) -> str:
+    """The position after `last`. One namespace's is the source alone, as a build a
+    release behind writes and reads it; several namespaces' names the namespace too."""
+    if len(places) == 1:
+        return _encode_list_cursor(last["ingested_at"], last["source_uri"])
+    return _encode_list_cursor(
+        last["ingested_at"], json.dumps([last["namespace"], last["source_uri"]])
+    )
+
+
+def _list_position(cursor: str, places: list[str]) -> tuple[datetime, str, str]:
+    """`_list_cursor` read back, for the same places."""
+    at, extra = _decode_list_cursor(cursor)
+    if len(places) == 1:
+        return at, places[0], extra
+    try:
+        namespace, uri = json.loads(extra)
+    except (ValueError, TypeError):
+        raise ValidationError("cursor is not one this op issued for these namespaces") from None
+    if namespace not in places or not isinstance(uri, str):
+        raise ValidationError("cursor is not one this op issued for these namespaces")
+    return at, namespace, uri
 
 
 async def handle_knowledge_outline(input: KnowledgeOutlineInput) -> KnowledgeOutlineOutput:

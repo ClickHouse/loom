@@ -421,7 +421,7 @@ Fields for every `knowledge` op: [operations/knowledge.md](operations/knowledge.
 | [`knowledge.ingest_cancel`](operations/knowledge.md#knowledgeingest_cancel) | A pending job is cancelled at once; a running one stops before it publishes; a finished one stays as it ended. | writer | idempotent | no |  |
 | [`knowledge.ingest_status`](operations/knowledge.md#knowledgeingest_status) | A knowledge.ingest job's state, stage, coverage, failure and published revision. | viewer | read | no |  |
 | [`knowledge.inspect`](operations/knowledge.md#knowledgeinspect) | Report a namespace's documents, read-only. | viewer | read | no |  |
-| [`knowledge.list`](operations/knowledge.md#knowledgelist) | Paginated listing of documents in a namespace, for curation tools. | viewer | read | yes |  |
+| [`knowledge.list`](operations/knowledge.md#knowledgelist) | Paginated listing of documents in a namespace, or in several at once, for curation tools. | viewer | read | yes |  |
 | [`knowledge.outline`](operations/knowledge.md#knowledgeoutline) | A document's table of contents, as recorded on its chunks at ingest, and optionally one section's assembled text. | viewer | read | no |  |
 | [`knowledge.query`](operations/knowledge.md#knowledgequery) | Calculate over the live snapshots of ingested datasets with a typed plan: filters, inner joins, groups and aggregates, or the rows themselves. | viewer | read | no |  |
 | [`knowledge.reads`](operations/knowledge.md#knowledgereads) | How often agents opened each document over the last `days` (`knowledge.get` ledger rows; dashboard, assistant and bench traffic left out). | viewer | read | no |  |

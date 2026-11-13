@@ -524,10 +524,17 @@ class KnowledgeGetOutput(BaseModel):
 
 
 class KnowledgeListInput(BaseModel):
-    """Paginated listing of documents in a namespace, for curation tools."""
+    """Paginated listing of documents in a namespace, or in several at once, for
+    curation tools."""
 
     org: str
     namespace: str
+    # List these too, one list newest first: collections, `@me`, namespaces, each needing
+    # read access of its own (403 for the first that is refused). Each row names its
+    # namespace.
+    namespaces: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
+        default_factory=list, max_length=2000
+    )
     # Documents carrying any one of these tags, in any case.
     tags: list[str] = Field(default_factory=list)
     # Require every one of `tags` instead of any one; default off. Not in the MCP listing:
@@ -549,6 +556,8 @@ class KnowledgeListInput(BaseModel):
 
 
 class _KnowledgeListEntry(ProjectedRow):
+    # Where the document is: `namespace`, or one of `namespaces`.
+    namespace: str
     source_uri: str
     title: str
     description: str = ""

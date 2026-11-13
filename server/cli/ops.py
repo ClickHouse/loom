@@ -70,11 +70,11 @@ async def rechunk_namespace(
     from server.knowledge.store import documents as documents_repo
 
     docs: list[Mapping[str, Any]] = []
-    cursor: tuple[Any, str] | None = None
+    cursor: tuple[Any, str, str] | None = None
     while True:
         page = await documents_repo.list_with_chunk_counts(
             org,
-            namespace,
+            [namespace],
             include_superseded=False,
             # One source reads its own prefix of the namespace, not the whole of it.
             uri_prefixes=[source_uri] if source_uri else None,
@@ -85,7 +85,7 @@ async def rechunk_namespace(
             break
         docs.extend(page)
         last = page[-1]
-        cursor = (last["ingested_at"], last["source_uri"])
+        cursor = (last["ingested_at"], namespace, last["source_uri"])
         if len(page) < page_size:
             break
     if source_uri:

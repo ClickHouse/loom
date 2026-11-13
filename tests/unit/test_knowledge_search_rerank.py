@@ -134,7 +134,7 @@ def _stub_handler(
     async def _first(input: Any, namespaces: list[str], search: Any) -> Any:
         return await search(namespaces)
 
-    async def _named(input: Any) -> list[str]:
+    async def _named(org: str, namespace: str, names: list[str]) -> list[str]:
         return ["n"]
 
     async def _reversed(**kw: Any) -> list[Any]:
@@ -144,7 +144,7 @@ def _stub_handler(
     monkeypatch.setattr(ks, "get_embedder", _Embedder)
     monkeypatch.setattr(ks, "_namespaces_search", _search)
     monkeypatch.setattr(ks, "_search_private_first", _first)
-    monkeypatch.setattr(ks, "_named_namespaces", _named)
+    monkeypatch.setattr(ks, "named_namespaces", _named)
     monkeypatch.setattr(rerank_mod, "rerank", _reversed)
 
 
@@ -196,11 +196,11 @@ async def test_each_chunk_shows_its_own_namespaces_context(monkeypatch) -> None:
 
         return _run
 
-    async def _named(input: Any) -> list[str]:
+    async def _named(org: str, namespace: str, names: list[str]) -> list[str]:
         return ["n", "m"]
 
     monkeypatch.setattr(ks, "_namespaces_search", _search)
-    monkeypatch.setattr(ks, "_named_namespaces", _named)
+    monkeypatch.setattr(ks, "named_namespaces", _named)
     await ks.handle_knowledge_search(
         _input(rerank="builtin:openai", namespaces=["n", "m"], collapse_sections=False)
     )

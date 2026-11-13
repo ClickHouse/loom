@@ -276,20 +276,21 @@ async def test_list_with_chunk_counts_default_excludes_superseded() -> None:
     can opt-in via include_superseded=True."""
     ch = StubCH()
     ch.query_all_returns.append([])
-    await documents_repo.list_with_chunk_counts("clickhouse", "ns", ch=ch)
+    await documents_repo.list_with_chunk_counts("clickhouse", ["ns"], ch=ch)
     sql, params = ch.query_all_calls[0]
     # Predicates filter the inner FINAL subquery (bare, no d. prefix); the
     # outer query keeps the d. alias for the join + ordering.
     assert "superseded_at IS NULL" in sql
     assert "LEFT JOIN" in sql
-    assert "ORDER BY d.ingested_at DESC, d.source_uri DESC" in sql
+    assert "ORDER BY d.ingested_at DESC, d.namespace DESC, d.source_uri DESC" in sql
     assert params["lim"] == 50
-    # the chunk counts are read for this namespace only, not every tenant's
+    # the chunk counts are read for the listed namespaces only, not every tenant's
     counts = sql.split("LEFT JOIN", 1)[1]
     assert (
-        "FROM loom.chunks\n            WHERE org = {org:String} AND namespace = {ns:String}"
+        "FROM loom.chunks\n            WHERE org = {org:String} AND namespace IN {nss:Array(String)}"
         in counts
     )
+    assert params["nss"] == ["ns"]
 
 
 @pytest.mark.asyncio
@@ -298,7 +299,7 @@ async def test_list_with_chunk_counts_include_superseded_drops_filter() -> None:
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
         "clickhouse",
-        "ns",
+        ["ns"],
         include_superseded=True,
         ch=ch,
     )
@@ -315,18 +316,18 @@ async def test_list_with_chunk_counts_cursor_strips_tz_for_ch() -> None:
     to UTC-naive before it is bound."""
     ch = StubCH()
     ch.query_all_returns.append([])
-    cursor = (datetime(2026, 5, 17, 12, 0, tzinfo=UTC), "kb://policy.md")
+    cursor = (datetime(2026, 5, 17, 12, 0, tzinfo=UTC), "ns", "kb://policy.md")
     await documents_repo.list_with_chunk_counts(
         "clickhouse",
-        "ns",
+        ["ns"],
         cursor=cursor,
         ch=ch,
     )
     sql, params = ch.query_all_calls[0]
-    assert "(toDateTime({cur_ts:String}, 'UTC'), {cur_uri:String})" in sql
+    assert "(toDateTime({cur_ts:String}, 'UTC'), {cur_ns:String}, {cur_uri:String})" in sql
     # Both cursor values are bound parameters, never text in the statement.
     assert params["cur_ts"] == "2026-05-17 12:00:00" and "2026-05-17" not in sql
-    assert params["cur_uri"] == "kb://policy.md"
+    assert (params["cur_ns"], params["cur_uri"]) == ("ns", "kb://policy.md")
 
 
 @pytest.mark.asyncio
@@ -335,7 +336,7 @@ async def test_list_with_chunk_counts_matches_tags_in_any_case() -> None:
     ch = StubCH()
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
-        "clickhouse", "ns", tag_filter=TagFilter(("Specs",), "folded_any"), ch=ch
+        "clickhouse", ["ns"], tag_filter=TagFilter(("Specs",), "folded_any"), ch=ch
     )
     sql, params = ch.query_all_calls[0]
     assert _FOLDED_ANY in sql
@@ -349,7 +350,7 @@ async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
     ch = StubCH()
     ch.query_all_returns.append([])
     await documents_repo.list_with_chunk_counts(
-        "clickhouse", "ns", tag_filter=TagFilter(("Specs", "onboarding"), "folded_all"), ch=ch
+        "clickhouse", ["ns"], tag_filter=TagFilter(("Specs", "onboarding"), "folded_all"), ch=ch
     )
     sql, params = ch.query_all_calls[0]
     assert _FOLDED_ALL in sql

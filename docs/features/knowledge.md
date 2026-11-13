@@ -40,28 +40,28 @@ a section the unit of retrieval, and the breadcrumb tells a hit where it came fr
 All operations are in the [knowledge group](../reference/operations.md#knowledge) of
 the operations reference.
 
-| Operation                   | Role   | Does                                                                                   |
-| --------------------------- | ------ | -------------------------------------------------------------------------------------- |
-| `knowledge.add`             | writer | Store one document and its chunks.                                                     |
-| `knowledge.bulk_add`        | writer | Store up to 500 documents in one call; the same per-document behaviour as `add`.       |
-| `knowledge.upsert`          | writer | Add or replace the document at a `source_uri`; earlier chunks are superseded.          |
-| `knowledge.search`          | viewer | Hybrid passage search (vector, BM25 and exact keys fused).                             |
-| `knowledge.get`             | viewer | One document's full text and metadata by `source_uri`.                                 |
-| `knowledge.list`            | viewer | Documents of a namespace, paged by an opaque cursor, filterable by tag and URI prefix. |
-| `knowledge.outline`         | viewer | A document's table of contents, and optionally one section's assembled text.           |
-| `knowledge.synthesize`      | viewer | Complete a task over whole documents, or calculate over datasets, with the LLM.        |
-| `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` rewrites the chunks' context.    |
-| `knowledge.delete`          | writer | Supersede a document and its chunks.                                                   |
-| `knowledge.bulk_delete`     | writer | The same for up to 500 `source_uris`.                                                  |
-| `knowledge.restore`         | writer | Undo a delete: the document's last version and its chunks are live again.              |
-| `knowledge.reads`           | viewer | How often agents opened each document over the last `days` (1–30).                     |
-| `knowledge.inspect`         | viewer | A report on the namespace's documents ([below](#inspecting-a-namespaces-documents)).   |
-| `knowledge.dedup_list`      | admin  | Documents (and, optionally, chunks) of the namespace with identical content hashes.    |
-| `knowledge.dedup_resolve`   | admin  | Supersede one side of a duplicate pair.                                                |
-| `knowledge.ingest`          | writer | Extract an uploaded file and publish it as a document revision (a job).                |
-| `knowledge.ingest_status`   | viewer | A job's state, stage, coverage, warnings, failure and published revision.              |
-| `knowledge.ingest_cancel`   | writer | Stop a job before it publishes.                                                        |
-| `knowledge.formats`         | viewer | The formats an ingest reads, the names that select each, and the upload's limits.      |
+| Operation                   | Role   | Does                                                                                                                                                                                            |
+| --------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.add`             | writer | Store one document and its chunks.                                                                                                                                                              |
+| `knowledge.bulk_add`        | writer | Store up to 500 documents in one call; the same per-document behaviour as `add`.                                                                                                                |
+| `knowledge.upsert`          | writer | Add or replace the document at a `source_uri`; earlier chunks are superseded.                                                                                                                   |
+| `knowledge.search`          | viewer | Hybrid passage search (vector, BM25 and exact keys fused).                                                                                                                                      |
+| `knowledge.get`             | viewer | One document's full text and metadata by `source_uri`.                                                                                                                                          |
+| `knowledge.list`            | viewer | Documents of a namespace, or of several as one list (`namespaces`, each read-checked; each row names its namespace), newest first, paged by an opaque cursor, filterable by tag and URI prefix. |
+| `knowledge.outline`         | viewer | A document's table of contents, and optionally one section's assembled text.                                                                                                                    |
+| `knowledge.synthesize`      | viewer | Complete a task over whole documents, or calculate over datasets, with the LLM.                                                                                                                 |
+| `knowledge.update_metadata` | writer | Edit `title`, `description` or `tags`; `reindex=true` rewrites the chunks' context.                                                                                                             |
+| `knowledge.delete`          | writer | Supersede a document and its chunks.                                                                                                                                                            |
+| `knowledge.bulk_delete`     | writer | The same for up to 500 `source_uris`.                                                                                                                                                           |
+| `knowledge.restore`         | writer | Undo a delete: the document's last version and its chunks are live again.                                                                                                                       |
+| `knowledge.reads`           | viewer | How often agents opened each document over the last `days` (1–30).                                                                                                                              |
+| `knowledge.inspect`         | viewer | A report on the namespace's documents ([below](#inspecting-a-namespaces-documents)).                                                                                                            |
+| `knowledge.dedup_list`      | admin  | Documents (and, optionally, chunks) of the namespace with identical content hashes.                                                                                                             |
+| `knowledge.dedup_resolve`   | admin  | Supersede one side of a duplicate pair.                                                                                                                                                         |
+| `knowledge.ingest`          | writer | Extract an uploaded file and publish it as a document revision (a job).                                                                                                                         |
+| `knowledge.ingest_status`   | viewer | A job's state, stage, coverage, warnings, failure and published revision.                                                                                                                       |
+| `knowledge.ingest_cancel`   | writer | Stop a job before it publishes.                                                                                                                                                                 |
+| `knowledge.formats`         | viewer | The formats an ingest reads, the names that select each, and the upload's limits.                                                                                                               |
 
 `knowledge.search` and `knowledge.reads` are hidden from MCP: neither is listed, and
 `loom_op` refuses them too. An agent reaches the knowledge plane through

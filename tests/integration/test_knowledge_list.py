@@ -156,3 +156,59 @@ async def test_list_tags_match_in_any_case(control_plane_url: str) -> None:
         assert uris(summer) == {"doc://summer", "doc://plain"}
         every = await a.knowledge.list(tags=["été", "draft"], tags_every=True, limit=10)
         assert uris(every) == {"doc://summer"}
+
+
+@pytest.mark.asyncio
+async def test_list_reads_several_namespaces_as_one_newest_first(control_plane_url: str) -> None:
+    from loom import Agent
+
+    tag = uuid.uuid4().hex[:6]
+    places = [f"kl-a-{tag}", f"kl-b-{tag}", f"kl-c-{tag}"]
+    for ns in places:
+        async with Agent(org=ORG, namespace=ns, agent="w", base_url=control_plane_url) as a:
+            for i in range(2):
+                await a.knowledge.add(content=f"{ns} {i}", source_uri=f"doc://{i}", title=ns)
+    async with Agent(org=ORG, namespace=places[0], agent="w", base_url=control_plane_url) as a:
+        body = {"org": ORG, "namespace": places[0], "namespaces": places[1:] + [places[0]]}
+        seen: list[tuple[str, str]] = []
+        cursor = None
+        # Two a page: the cursor walks across namespaces with nothing repeated or skipped.
+        while True:
+            page = await a.transport.post(
+                "/v1/knowledge.list", {**body, "limit": 2, **({"cursor": cursor} if cursor else {})}
+            )
+            seen += [(r["namespace"], r["source_uri"]) for r in page["rows"]]
+            cursor = page["next_cursor"]
+            if not cursor:
+                break
+        one = await a.transport.post(
+            "/v1/knowledge.list", {"org": ORG, "namespace": places[1], "limit": 10}
+        )
+    assert sorted(seen) == sorted((ns, f"doc://{i}") for ns in places for i in range(2))
+    assert len(seen) == 6
+    assert {r["namespace"] for r in one["rows"]} == {places[1]}
+
+
+@pytest.mark.asyncio
+async def test_a_cursor_for_other_namespaces_is_refused(control_plane_url: str) -> None:
+    from loom import Agent
+    from loom.errors import LoomError
+
+    tag = uuid.uuid4().hex[:6]
+    a_ns, b_ns, c_ns = f"kl-x-{tag}", f"kl-y-{tag}", f"kl-z-{tag}"
+    async with Agent(org=ORG, namespace=a_ns, agent="w", base_url=control_plane_url) as a:
+        for i in range(3):
+            await a.knowledge.add(content=f"x {i}", source_uri=f"doc://{i}", title="x")
+        page = await a.transport.post(
+            "/v1/knowledge.list", {"org": ORG, "namespace": a_ns, "namespaces": [b_ns], "limit": 1}
+        )
+        with pytest.raises(LoomError):
+            await a.transport.post(
+                "/v1/knowledge.list",
+                {
+                    "org": ORG,
+                    "namespace": b_ns,
+                    "namespaces": [c_ns],
+                    "cursor": page["next_cursor"],
+                },
+            )

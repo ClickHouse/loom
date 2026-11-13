@@ -10911,10 +10911,11 @@ class MemoryFindingRef(TypedDict, total=False):
 
 
 class KnowledgeListInput(TypedDict, total=False):
-    "Paginated listing of documents in a namespace, for curation tools."
+    "Paginated listing of documents in a namespace, or in several at once, for"
 
     org: Required[str]
     namespace: Required[str]
+    namespaces: NotRequired[list[str]]
     tags: NotRequired[list[str]]
     tags_every: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
@@ -10925,10 +10926,11 @@ class KnowledgeListInput(TypedDict, total=False):
 
 
 class KnowledgeListBody(TypedDict, total=False):
-    "Paginated listing of documents in a namespace, for curation tools."
+    "Paginated listing of documents in a namespace, or in several at once, for"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
+    namespaces: NotRequired[list[str]]
     tags: NotRequired[list[str]]
     tags_every: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
@@ -10944,6 +10946,7 @@ class KnowledgeListOutput(TypedDict, total=False):
 
 
 class KnowledgeListEntry(TypedDict, total=False):
+    namespace: Required[str]
     source_uri: Required[str]
     title: Required[str]
     description: NotRequired[str]

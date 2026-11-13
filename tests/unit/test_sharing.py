@@ -1190,7 +1190,6 @@ def test_a_search_naming_its_namespaces_reads_those_alone_and_each_must_be_reada
 ) -> None:
     from server.auth import authz, context
     from server.core.errors import AuthInsufficientError
-    from server.knowledge.api.models_knowledge import KnowledgeSearchInput
     from server.knowledge.app import knowledge_search
 
     user = _user("alice")
@@ -1203,10 +1202,7 @@ def test_a_search_naming_its_namespaces_reads_those_alone_and_each_must_be_reada
     monkeypatch.setattr(authz, "check_authorized", _check)
 
     def _named(*names: str) -> list[str]:
-        query = KnowledgeSearchInput(
-            org=ORG, namespace="col-agent-helper", query="q", namespaces=list(names)
-        )
-        return asyncio.run(knowledge_search._named_namespaces(query))
+        return asyncio.run(knowledge_search.named_namespaces(ORG, "col-agent-helper", list(names)))
 
     context.set_current_auth(user)
     try:
