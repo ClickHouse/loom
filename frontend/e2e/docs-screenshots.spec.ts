@@ -705,7 +705,7 @@ const PASSAGES = [
     content:
       "If a refund stays pending for more than an hour, check the settlement queue first; a refund in a currency other than USD waits for the day's FX rate.",
     lexical_score: 5.1,
-    score: 0.032,
+    score: 0.0323,
     similarity: 0.74,
     distance: 0.26,
     tags: [],
@@ -721,7 +721,7 @@ const PASSAGES = [
     content:
       "Converted amounts round half to even, the rule the settlement bank applies, so a refund in EUR settles to the cent the bank reports.",
     lexical_score: 4.6,
-    score: 0.0161,
+    score: 0.0159,
     similarity: 0.61,
     distance: 0.39,
     tags: [],
@@ -766,8 +766,7 @@ const AUDIT_ROWS = [
   subject: JSON.stringify(subject),
 }));
 
-/** The acme/payments code the Explore tab reads: FX conversion, the refund that calls it, and
- *  the API handler that calls the refund. */
+/** The acme/payments code the Explore tab reads: FX conversion and the refund that calls it. */
 const CODE_UNITS: Record<string, Record<string, unknown>> = {
   "payments.fx.convert": {
     path: "payments/fx.py",
@@ -790,20 +789,8 @@ const CODE_UNITS: Record<string, Record<string, unknown>> = {
     description: "Reverses a captured charge and posts the balanced ledger entry.",
     body: 'def refund(charge_id: str, amount: Decimal, currency: str, settle_in: str = "USD") -> None:\n    settled = convert(amount, currency, settle_in)\n    post([Entry(f"customer:{charge_id}", settled, settle_in), Entry("revenue", -settled, settle_in)])',
     churn: 5,
-    amp: 1,
-    tested: true,
-  },
-  "payments.api.handle_refund": {
-    path: "payments/api.py",
-    start_line: 8,
-    end_line: 10,
-    kind: "function",
-    signature: "def handle_refund(body: dict) -> dict",
-    description: "The POST /refunds handler.",
-    body: 'def handle_refund(body: dict) -> dict:\n    refund(body["charge_id"], Decimal(body["amount"]), body["currency"])\n    return {"status": "refunded"}',
-    churn: 2,
     amp: 0,
-    tested: false,
+    tested: true,
   },
 };
 
@@ -836,24 +823,14 @@ const CODE_CALLERS: Record<string, Array<[string, string, number]>> = {
     ["payments.refunds.refund", "payments/refunds.py", 10],
     ["payments.ledger.settle_daily", "payments/ledger.py", 61],
   ],
-  "payments.refunds.refund": [["payments.api.handle_refund", "payments/api.py", 9]],
 };
 
-const CODE_CALLEES: Record<string, Array<[string, string, number]>> = {
-  "payments.refunds.refund": [
-    ["payments.fx.convert", "payments/refunds.py", 10],
-    ["payments.ledger.post", "payments/refunds.py", 11],
-  ],
-};
-
-/** `name`'s call edges as `code.callers` (others call it) or `code.callees` (it calls
- *  others) answers them. */
-function edges(name: string, direction: "callers" | "callees") {
-  const table = direction === "callers" ? CODE_CALLERS : CODE_CALLEES;
-  return (table[name] ?? []).map(([other, file, line]) => ({
+/** The edges `code.callers` answers for `name`: the functions that call it. */
+function callers(name: string) {
+  return (CODE_CALLERS[name] ?? []).map(([other, file, line]) => ({
     edge_kind: "calls",
-    from_symbol: direction === "callers" ? other : name,
-    to_symbol: direction === "callers" ? name : other,
+    from_symbol: other,
+    to_symbol: name,
     from_symbol_id: "",
     to_symbol_id: "",
     path: file,
@@ -868,7 +845,7 @@ const ASSISTANT_ANSWER = [
   "A refund over **$250** needs a second approver in the billing console before it is issued [doc:policies/refunds.md § Approvals].",
   "",
   "- The approver must not be the person who took the original payment [doc:policies/refunds.md § Approvals].",
-  "- A refund in another currency settles at the day's rate, rounded half to even [memory:payments/fx/rounding@v1].",
+  "- A refund in another currency is rounded half to even, as the settlement bank does [memory:payments/fx/rounding@v1].",
 ].join("\n");
 
 const ASSISTANT_CITATIONS = [
@@ -1116,14 +1093,14 @@ async function installDemoApi(page: Page): Promise<void> {
       }
       case "/v1/code.callers":
         return json({
-          edges: edges(String(body.name ?? ""), "callers"),
+          edges: callers(String(body.name ?? "")),
           seed_symbols: [String(body.name ?? "")],
           epistemic: "exact",
           truncated: false,
         });
       case "/v1/code.callees":
         return json({
-          edges: edges(String(body.name ?? ""), "callees"),
+          edges: [],
           seed_symbols: [String(body.name ?? "")],
           epistemic: "exact",
           truncated: false,
