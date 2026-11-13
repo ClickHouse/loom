@@ -7,9 +7,9 @@ Every adapter calls your Loom server through the SDK: the data is stored in your
 deployment (ClickHouse, and Postgres for live memory under the
 [Postgres memory authority](../../architecture/storage-authority.md)), and no adapter adds
 or needs another database, vector store or cache. What leaves the deployment is what the
-server sends its configured [model providers](../../operations/deployment.md#providers)
-and, where an operator turns on content capture, its
-[trace backend](langfuse.md#what-text-leaves-loom).
+server sends the [model providers](../../operations/deployment.md#providers) and telemetry
+backends it is configured with; [Langfuse](langfuse.md#what-text-leaves-loom) and
+[OTLP export](clickstack.md#choose-the-export-path) say what each one receives.
 
 | Framework      | Adapter           | SDK                                                 | Framework interface             |
 | -------------- | ----------------- | --------------------------------------------------- | ------------------------------- |
