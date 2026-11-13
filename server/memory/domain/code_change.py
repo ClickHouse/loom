@@ -110,7 +110,8 @@ def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any
     never moved down (one the move passes rises a slot). A moved hit scores
     between the rows around it (or ties the one above, when they tie), so a stable sort
     by score keeps the order; `score_components.code_changed_places` counts the rows it
-    moved below (negative, as a reranker's `rerank_delta`). With `rescore` False a moved
+    moved below (negative, as a reranker's `rerank_delta`; 0 for one with nothing below
+    it to pass, which a later step still must not lift). With `rescore` False a moved
     hit keeps its score: for a list placed by something other than score. The marks are
     spent, so a search that merges more rows in moves only those."""
     marked = spend_marks(hits)
@@ -126,6 +127,7 @@ def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any
             if id(out[i]) not in moving and not _placed(out[i]):
                 passed, to = passed + 1, i
         if not passed:
+            hit.score_components = {**hit.score_components, "code_changed_places": 0.0}
             continue
         out.insert(to, out.pop(at))
         moved = {"code_changed_places": float(-passed)}

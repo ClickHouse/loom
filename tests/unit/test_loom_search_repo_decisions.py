@@ -963,15 +963,17 @@ def test_a_base_row_moved_for_stale_code_holds_no_slot_for_a_decision() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("moved", [False, True], ids=["current", "moved-for-stale-code"])
+@pytest.mark.parametrize(
+    "moved", [None, -1.0, 0.0], ids=["current", "moved-for-stale-code", "nothing-to-pass"]
+)
 async def test_loom_search_never_lifts_a_fact_the_search_moved_to_lead(monkeypatch, moved) -> None:
     chunk = _hit("chunk:s1:0", 0.452, "me", rank=0.53)
     chunk.source = "chunk"
     fact = _hit("where_i_live", 0.47, "me", rank=0.49)  # within the lead margin of the chunk
-    if moved:
-        fact.score_components = {"code_changed_places": -1.0}
+    if moved is not None:
+        fact.score_components = {"code_changed_places": moved}
     far = _hit("unrelated", 0.1, "me")  # a lead fact withholds it
     out = MemorySearchOutput(results=[chunk, fact, far], embedding_model="fake")
     payload = await _assemble(monkeypatch, out, namespace_scope="this")
     lead = (payload.get("withheld") or {}).get("lead")
-    assert lead == (None if moved else "where_i_live")
+    assert lead == ("where_i_live" if moved is None else None)

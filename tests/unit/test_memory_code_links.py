@@ -3928,7 +3928,11 @@ def test_a_marked_hit_never_leaves_the_results_and_unmarked_ones_never_move() ->
         "c",
     ]
     last = code_change.rank_down(_ranked("a", "b", down=("b",)), 3)
-    assert [(h.memory_key, h.score_components) for h in last] == [("a", {}), ("b", {})]
+    # nothing below it to pass: it stays, and says it was to move, so nothing lifts it
+    assert [(h.memory_key, h.score_components) for h in last] == [
+        ("a", {}),
+        ("b", {"code_changed_places": 0.0}),
+    ]
     assert [h.memory_key for h in code_change.rank_down(_ranked("a", "b", down=("a",)), 0)] == [
         "a",
         "b",

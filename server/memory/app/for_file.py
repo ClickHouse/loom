@@ -19,7 +19,6 @@ from server.memory.api.models_for_file import (
     _MemoryForFileHit,
 )
 from server.memory.domain import code_change
-from server.memory.domain.code_change import STATE_RANK, worst
 from server.memory.domain.decision_schema import (
     CONSTRAINT_TAG,
     DECISION_TAG,
@@ -497,7 +496,7 @@ async def _rows_for(
             {
                 **r,
                 "namespace": namespace,
-                "code_state": worst([a["state"] for a in links]),
+                "code_state": code_change.worst([a["state"] for a in links]),
                 "code_changed_since": code_change.worst_commit(links),
             }
         )
@@ -521,7 +520,7 @@ async def _linked(
         if not trunks:
             return {}
         links = await code_links.for_paths(
-            input.org, trunks, [path], namespaces=nss, states=list(STATE_RANK)
+            input.org, trunks, [path], namespaces=nss, states=list(code_change.STATE_RANK)
         )
         links = await current_links(input.org, links)
         seen = await readable_namespaces(input.org, {a["code_namespace"] for a in links})
