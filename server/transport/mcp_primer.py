@@ -518,7 +518,8 @@ def _coding_instructions(toolset: str | None) -> str:
     """The memory rules `initialize` sends over the `coding` toolset, in a few lines. A
     coding agent re-reads them every turn and its plugin carries the code-index
     guidance; other listings get `_loom_rules`, and `loom_activate` the full primer."""
-    save = _tool_refs(toolset)["memory.set"]
+    tool = _tool_refs(toolset)
+    save = tool["memory.set"]
     memory = (
         "Recall before answering from memory: call `loom_search` once"
         + (
@@ -536,7 +537,7 @@ def _coding_instructions(toolset: str | None) -> str:
     # brings the team's memory in, unless a plugin's hooks load it for the session.
     return name_ops_for_toolset(
         "**Loom: memory and code for this session.**"
-        + f"\n\nFirst step of each task: call {_tool_refs(toolset)['context.pack']} with "
+        + f"\n\nFirst step of each task: call {tool['context.pack']} with "
         + "the task as `query`. "
         + f"Skip it when {FIRST_STEP_HOOK}."
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "

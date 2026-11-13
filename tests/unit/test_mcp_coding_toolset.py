@@ -17,7 +17,7 @@ import pytest
 import server.transport.mcp_call as mcp_call
 from server.operations.capabilities import capability_snapshot
 from server.operations.reach import catalogue_facets
-from server.operations.registry import ALL_OPERATIONS
+from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import (
     _MCP_ATOMIC_OPS,
     _MCP_CODE_CORE_OPS,
@@ -36,6 +36,7 @@ from server.transport import mcp_tools as mt
 from server.transport.mcp_descriptions import (
     ACTIVATION_TRIGGERS,
     CODING_TOOL_DESCRIPTIONS,
+    FIRST_STEP_HOOK,
     TOOL_DESCRIPTIONS,
 )
 from tests.unit.loom_op_marks import (
@@ -442,9 +443,7 @@ def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
     """The coding instructions, the full primer and context.pack's description name the
     first step and its one exception (`FIRST_STEP_HOOK`); the full primer keeps the
     one-fact search, and the generated reference's summary keeps the exception."""
-    from scripts.codegen.page_summary import first_sentence
-    from server.transport import mcp_primer
-    from server.transport.mcp_descriptions import FIRST_STEP_HOOK, TOOL_DESCRIPTIONS
+    from scripts.codegen.page_summary import first_sentence  # the docs generator, kept lazy
 
     coding = mcp_primer._coding_instructions("coding")
     assert "First step of each task: call `loom_context_pack` with the task as `query`" in coding
@@ -458,9 +457,8 @@ def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
     assert "For one fact, rule 2's search alone is enough." in rules
     summary = first_sentence(TOOL_DESCRIPTIONS["context.pack"])
     assert summary.startswith("A task's memories, decisions and procedures: call it first")
-    from server.operations.registry import OPERATIONS_BY_NAME
-    from server.transport.mcp_op import _purpose
-
     # loom_op's help catalog shows its own cut of the same sentence
-    assert _purpose(OPERATIONS_BY_NAME["context.pack"]).endswith(f"unless {FIRST_STEP_HOOK}.")
+    assert mcp_op._purpose(OPERATIONS_BY_NAME["context.pack"]).endswith(
+        f"unless {FIRST_STEP_HOOK}."
+    )
     assert summary.endswith(f"unless {FIRST_STEP_HOOK}.")
