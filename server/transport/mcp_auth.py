@@ -55,7 +55,7 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
 
 
 # Where a person asks for a memory namespace's grant in the dashboard, in the namespace
-# refusals only (a code or tracker index's refusal points to Repositories).
+# refusals only (access_refusal words a code or tracker index's refusal).
 DASHBOARD_REQUEST = (
     "(namespace picker → Find public namespaces to join; for a private namespace, "
     "search its exact name on the Namespaces in your org page)"

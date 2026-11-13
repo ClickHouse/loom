@@ -532,26 +532,18 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     }
   });
 
-  it("points a tracker namespace's name to Repositories, which joins and requests it", async () => {
+  it("offers the request card for a tracker namespace's exact name, and no Repositories line", async () => {
     const before = [...mine];
-    mine.push(
-      { ...mine[1], namespace: "tracker-loom", kind: "tracker" },
-      { ...mine[1], namespace: "tracker-docs", kind: "tracker", status: "pending" },
-    );
+    mine.push({ ...mine[1], namespace: "tracker-docs", kind: "tracker", status: "pending" });
     try {
       render(<Browse />);
       await screen.findByText("Support team runbooks");
-      const box = screen.getByRole("textbox", { name: "Search namespaces" });
-      await userEvent.type(box, "tracker-loom");
-      expect(await screen.findByText(/is a repository/)).toHaveTextContent(
-        "tracker-loom is a repository you read: open it in Repositories.",
+      await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "tracker-docs");
+      expect(await screen.findByText("No public namespace named", { exact: false })).toHaveTextContent(
+        "No public namespace named tracker-docs.",
       );
-      await userEvent.clear(box);
-      await userEvent.type(box, "tracker-docs");
-      expect(await screen.findByText(/is a repository/)).toHaveTextContent(
-        "tracker-docs is a repository: join or request it from Repositories.",
-      );
-      expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Request access" })).toBeEnabled();
+      expect(screen.queryByText(/is a repository/)).toBeNull();
     } finally {
       mine.splice(0, mine.length, ...before);
     }

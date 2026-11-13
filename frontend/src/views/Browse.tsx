@@ -108,8 +108,9 @@ export function Browse() {
   const [settingsNs, setSettingsNs] = useState<string | null>(null);
   const [guideNs, setGuideNs] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  // The code namespaces' names: counted in the Repositories hint, and a search naming one
-  // is pointed there rather than offered a memory request.
+  // The repositories' names, from the listed code rows and the caller's own: counted in the
+  // Repositories hint, and a search naming one is pointed there rather than offered a request.
+  // A tracker namespace is a namespace, requested here.
   const [repoNames, setRepoNames] = useState<string[]>([]);
   const repoCount = repoNames.length;
   const setView = useStore((s) => s.setView);
@@ -135,14 +136,9 @@ export function Browse() {
       // Repositories are surfaced in the Repositories section, not as joinable memory. The server
       // lists no collection here: one is shared in the Library, never joined.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
-      // Every repository's and tracker's name, a restricted or granted one included, points to
-      // Repositories, which joins and requests both.
+      // Every repository's name, a restricted or granted one included, points to Repositories.
       setRepoNames([
-        ...new Set(
-          [...browseRows, ...mineRead]
-            .filter((r) => isCodeKind(r.kind) || isTrackerKind(r.kind))
-            .map((r) => r.namespace),
-        ),
+        ...new Set([...browseRows, ...mineRead].filter((r) => isCodeKind(r.kind)).map((r) => r.namespace)),
       ]);
       setMineRows(mineResult);
       setMine(new Set(mineRead.map((r) => r.namespace)));
@@ -217,7 +213,7 @@ export function Browse() {
   const managedTracker = adminNs.filter((r) => isTrackerKind(r.kind));
   const repoHint = repoCount > 0 && (
     <div className="text-xs text-text-muted">
-      Repositories and tracker records are joined from the{" "}
+      Repositories are joined from the{" "}
       <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
         Repositories page
       </Link>{" "}

@@ -26,7 +26,7 @@ def test_a_person_is_told_to_request_the_grant() -> None:
     assert "dashboard's Repositories page" in body["error"] and "claim" not in body["error"]
 
 
-def test_a_tracker_refusal_points_to_the_repositories_page() -> None:
+def test_a_tracker_refusal_names_repositories_and_the_namespaces_page() -> None:
     auth = SimpleNamespace(subject="avery@example.com", org="clickhouse")
     by_op = mcp_call._forbidden_result(
         OPERATIONS_BY_NAME["tracker.item"],
@@ -40,6 +40,10 @@ def test_a_tracker_refusal_points_to_the_repositories_page() -> None:
     ]["error"]
     for text in (by_op, by_tool):
         assert "the dashboard's Repositories page" in text
+        assert (
+            "for a tracker namespace, search its exact name on the Namespaces in your org page"
+            in text
+        )
 
 
 def test_role_check_refusal_on_a_code_op_is_actionable() -> None:
