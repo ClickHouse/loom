@@ -5,6 +5,7 @@ the translations after it lands."""
 
 from __future__ import annotations
 
+import pathlib
 import re
 import time
 from collections import Counter
@@ -253,6 +254,17 @@ def test_every_translation_exists_with_its_stamp_and_banner() -> None:
         stamp = t.STAMP.match(text)
         assert stamp and stamp.group(1) == source, t.target_path(lang.code, source)
         assert "Machine-translated from the [English page]" in text.split("\n\n", 1)[0]
+
+
+def test_an_anchor_into_a_stale_page_waits_for_that_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    (tmp_path / "i18n/ja").mkdir(parents=True)
+    (tmp_path / "i18n/ja/a.md").write_text("[b](b.md#new-heading)\n")
+    (tmp_path / "i18n/ja/b.md").write_text('<a id="old-heading"></a>\n')
+    monkeypatch.setattr(t, "ROOT", tmp_path)
+    assert len(t.link_problems()) == 1
+    assert t.link_problems(frozenset({"i18n/ja/b.md"})) == []
 
 
 def test_the_committed_translations_pass_check() -> None:

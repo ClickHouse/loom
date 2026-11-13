@@ -26,9 +26,10 @@ built and kept fresh is in [the code index overview](../features/code-index/over
 
 ## Measured
 
-On the ClickHouse repository, Claude Code with Loom named the right file among its three for
-96.4% of 36 conceptual questions (10 paired runs) against 91.4% without it, at 21% lower
-model cost (the agent's model bill; Loom's own model calls excluded).
+On the ClickHouse repository, Claude Code ends each answer with three files; with Loom the right
+file was among them for 96.4% of 36 conceptual questions (10 paired runs), against 91.4%
+without Loom, at 21% lower model cost (the agent's model bill; Loom's own model calls
+excluded).
 On 200 SWE-bench Verified issues, `code.search` ranked a changed file in its first 10
 results for 82% (file localization, not issue resolution), against 57% for BM25 over every
 indexed file and 79% for BM25 over `.py` files only; the `.py`-only gap is within noise.

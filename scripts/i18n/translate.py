@@ -428,8 +428,9 @@ def prose_links(text: str) -> list[re.Match[str]]:
     return found
 
 
-def link_problems() -> list[str]:
-    """Relative links and `#anchors` in i18n/ that point at nothing."""
+def link_problems(stale_pages: frozenset[str] = frozenset()) -> list[str]:
+    """Relative links and `#anchors` in i18n/ that point at nothing. An anchor into one of
+    `stale_pages` is not checked: that page still carries its old English's anchors."""
     problems = []
     for file in sorted((ROOT / OUT_DIR).rglob("*.md")):
         path = file.relative_to(ROOT).as_posix()
@@ -442,6 +443,8 @@ def link_problems() -> list[str]:
             )
             if not (ROOT / target).is_file():
                 problems.append(f"{path} links to {match.group(2)}, which does not exist")
+            elif target in stale_pages:
+                continue
             elif anchor and f'<a id="{anchor}"></a>' not in (ROOT / target).read_text():
                 problems.append(f"{path} links to {match.group(2)}, which has no such anchor")
     return problems
@@ -511,9 +514,9 @@ def request_chars(source: str, lang: Language) -> int:
 
 
 def estimate_usd(model: str, chars: int) -> float:
-    """About three characters per input token, and a reply of 1.2 times the input's tokens:
-    full runs measured about 0.75, and the rest covers thinking and retries. `Spend` is the
-    hard cap; this only refuses a run that cannot fit."""
+    """About three characters per input token, and a reply of 1.2 times the input's tokens.
+    Measured runs came within about 10% of it either way (retries add input the estimate
+    does not see). `Spend` is the hard cap; this only refuses a run that cannot fit."""
     price_in, price_out = PRICES[model]
     tokens = chars / 3
     return (tokens * price_in + 1.2 * tokens * price_out) / 1e6
@@ -641,17 +644,19 @@ def write_readme_language_line() -> None:
 def check(skip_stale: bool = False) -> int:
     require_sources()
     model = os.environ.get("LOOM_I18N_MODEL", DEFAULT_MODEL)
-    problems = (
-        []
-        if skip_stale
-        else [
-            f"{target_path(lang.code, source)} is missing, or older than {source}, the model or "
-            "the banner"
-            for source, lang in stale(model=model)
-        ]
-    )
+    pending = stale(model=model)
+    problems = [
+        f"{target_path(lang.code, source)} is missing, or older than {source}, the model or "
+        "the banner"
+        for source, lang in pending
+        if not skip_stale
+    ]
     problems += [f"{path} is translated from no page in SOURCES" for path in orphans()]
-    problems += link_problems()
+    # After a partial run, a page that failed keeps its old anchors until it is translated.
+    waiting = (
+        frozenset(target_path(lang.code, s) for s, lang in pending) if skip_stale else frozenset()
+    )
+    problems += link_problems(waiting)
     problems += untranslated_pages()
     if readme_language_line_differs():
         problems.append("README.md's language line differs from the generated one")
