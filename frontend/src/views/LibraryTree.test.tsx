@@ -321,13 +321,13 @@ describe("LibraryTree", () => {
   it("saves only what the person opened, not what a move showed", () => {
     tree({ current: "col-ingest" });
     expect(places()).toContain("Ingest");
-    expect(JSON.parse(localStorage.getItem("loom.library.expanded.acme") ?? "[]")).toEqual([]);
+    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual([]);
   });
 
   it("keeps the folds of a collection a cut-off list does not name", () => {
-    localStorage.setItem("loom.library.expanded.acme", JSON.stringify(["col-past-the-cap"]));
+    localStorage.setItem("loom_library_expanded_acme_v1", JSON.stringify(["col-past-the-cap"]));
     tree({ truncated: true });
-    expect(JSON.parse(localStorage.getItem("loom.library.expanded.acme") ?? "[]")).toEqual(["col-past-the-cap"]);
+    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual(["col-past-the-cap"]);
   });
 
   it("keeps a collection the person closed closed when the list is read again", async () => {
@@ -342,19 +342,19 @@ describe("LibraryTree", () => {
     await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
     update({ rows: ROWS.filter((c) => c.namespace !== "col-eng") });
     // Saved as it was: a tab closed now opens it again next time.
-    expect(JSON.parse(localStorage.getItem("loom.library.expanded.acme") ?? "[]")).toEqual(["col-eng"]);
+    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual(["col-eng"]);
     update({ rows: [...ROWS] });
     expect(places()).toContain("Runbooks");
-    expect(JSON.parse(localStorage.getItem("loom.library.expanded.acme") ?? "[]")).toEqual(["col-eng"]);
+    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual(["col-eng"]);
   });
 
   it("forgets a collection opened here once the list no longer holds it", async () => {
     tree();
     await userEvent.click(screen.getByRole("button", { name: "Collections in Engineering" }));
-    expect(JSON.parse(localStorage.getItem("loom.library.expanded.acme") ?? "[]")).toEqual(["col-eng"]);
+    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual(["col-eng"]);
     cleanup();
     tree({ rows: ROWS.filter((c) => c.namespace !== "col-eng") });
-    expect(JSON.parse(localStorage.getItem("loom.library.expanded.acme") ?? "[]")).toEqual([]);
+    expect(JSON.parse(localStorage.getItem("loom_library_expanded_acme_v1") ?? "[]")).toEqual([]);
   });
 
   it("has no axe violations, with New collection's form open too", async () => {

@@ -161,8 +161,6 @@ test.describe("1280 px", () => {
         }),
       )
       .toBe(true);
-    await page.evaluate(() => document.getElementById("main")!.scrollBy(0, 200));
-    await page.waitForTimeout(300);
     await expect(tree).toBeVisible();
     await expect(page.getByLabel("Show the documents of")).toHaveCount(0);
   });

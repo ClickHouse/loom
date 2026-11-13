@@ -64,7 +64,7 @@ import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
 import { TopLevelPlaces } from "./LibraryHierarchy";
 import { LibraryTree, NEW_COLLECTION_FOCUS } from "./LibraryTree";
-import { usePageRoom } from "../lib/useMainSize";
+import { usePageRoom } from "../lib/usePageRoom";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
@@ -73,7 +73,7 @@ import { KnowledgeGaps } from "./KnowledgeGaps";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
 import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
-import { useMedia, PHONE_QUERY, TREE_QUERY } from "../lib/useMedia";
+import { useMedia, PHONE_QUERY } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowSelection } from "../lib/useRowSelection";
@@ -183,7 +183,7 @@ export function Documents() {
   };
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
-  const collections = useReadableCollections(picked.org);
+  const collections = useReadableCollections(picked.org, collection ?? "");
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -268,11 +268,10 @@ export function Documents() {
   // The gaps tile lists other people's questions: an admin of the place shown sees it.
   const seesGaps = shown ? shown.role === "admin" : canCall("knowledge.gaps.list", roleRead.role, whoami);
   const phone = useMedia(PHONE_QUERY);
-  // The places are a tree beside the documents where <main> has room for both; narrower, the
-  // select stands in.
+  // The places are a tree beside the documents where <main> has room for both; narrower, or
+  // not measured yet, the select stands in.
   const room = usePageRoom();
-  const wideWindow = useMedia(TREE_QUERY);
-  const wide = room ? room.wide : wideWindow;
+  const wide = !!room?.wide;
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);

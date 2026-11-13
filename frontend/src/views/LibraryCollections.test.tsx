@@ -4,7 +4,7 @@ import { useState, type ComponentProps } from "react";
 import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
-import { PHONE_QUERY, TREE_QUERY } from "../lib/useMedia";
+import { PHONE_QUERY } from "../lib/useMedia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionEntry } from "../api";
 import { useStore } from "../lib/state";
@@ -363,20 +363,38 @@ describe("useReadableCollections", () => {
   });
 });
 
-/** A window from 1280 px that can be narrowed. */
-function resizable() {
-  let wide = true;
-  const listeners = new Set<() => void>();
-  vi.stubGlobal("matchMedia", (q: string) => ({
-    get matches() {
-      return q === TREE_QUERY && wide;
+/** The <main> App draws, the page's container: made when missing. */
+function inMain(): HTMLElement {
+  const found = document.getElementById("main");
+  if (found) return found;
+  const main = Object.assign(document.createElement("main"), { id: "main" });
+  document.body.append(main);
+  return main;
+}
+
+/** <main>, measured `width` px wide (1100: room for the tree), where the page looks for it;
+ *  the function it returns narrows it. */
+function resizable(width = 1100) {
+  const observers: Array<() => void> = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(f: () => void) {
+        observers.push(f);
+      }
+      observe() {}
+      disconnect() {}
     },
-    addEventListener: (_: string, f: () => void) => listeners.add(f),
-    removeEventListener: (_: string, f: () => void) => listeners.delete(f),
-  }));
+  );
+  const rect = HTMLElement.prototype.getBoundingClientRect;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return this.id === "main" ? ({ width, height: 800 } as DOMRect) : rect.call(this);
+  });
+  if (!document.getElementById("main"))
+    document.body.append(Object.assign(document.createElement("main"), { id: "main" }));
   return () => {
-    wide = false;
-    for (const f of [...listeners]) f();
+    width = 900;
+    for (const f of observers) f();
   };
 }
 
@@ -385,12 +403,8 @@ async function startCreate() {
   api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
   api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
   history.replaceState(null, "", "/library?collection=col-q3");
-  // In a <main>, as App draws it: an arrival focuses the page's h1 there.
-  render(
-    <main id="main">
-      <Documents />
-    </main>,
-  );
+  // In <main>, as App draws it: an arrival focuses the page's h1 there.
+  render(<Documents />, { container: inMain() });
   const tree = await screen.findByRole("navigation", { name: "Library places" });
   await within(tree).findByRole("link", { name: "col-q3" });
   fireEvent.click(within(tree).getByRole("button", { name: "New collection" }));
@@ -412,9 +426,11 @@ describe("the Library on a collection", () => {
   });
   afterEach(() => {
     cleanup();
+    document.getElementById("main")?.remove();
     useStore.setState({ myNamespaces: null });
     localStorage.clear();
     vi.clearAllMocks();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     history.replaceState(null, "", "/");
   });
@@ -1017,7 +1033,7 @@ describe("the Library on a collection", () => {
   });
 
   it("beside the tree, on a code namespace names no place and asks only for a pick", async () => {
-    matchOnly(TREE_QUERY);
+    resizable();
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
     useStore.setState({
       identity: { org: "acme", namespace: "code-repo", agent: "loom-ui" },
@@ -1064,7 +1080,7 @@ describe("the Library on a collection", () => {
       const at = location.search;
       // App mounts a view afresh on each visit: leaving closes this page, coming back opens another.
       cleanup();
-      render(<Documents />);
+      render(<Documents />, { container: inMain() });
       await settle();
       api.listCollections.mockResolvedValue({
         collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
@@ -1097,24 +1113,14 @@ describe("the Library on a collection", () => {
   });
 
   describe("where <main> can be measured", () => {
-    afterEach(() => vi.restoreAllMocks());
-
     it.each([
       [1100, true],
       [900, false],
     ] as const)("at %i px of <main> draws the tree: %s", async (width, tree) => {
-      const rect = HTMLElement.prototype.getBoundingClientRect;
-      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-        return this.id === "main" ? ({ width, height: 800 } as DOMRect) : rect.call(this);
-      });
+      resizable(width);
       api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
       history.replaceState(null, "", "/library");
-      // The window query says narrow: <main>'s own width decides.
-      render(
-        <main id="main">
-          <Documents />
-        </main>,
-      );
+      render(<Documents />);
       await settle();
       expect(screen.queryAllByRole("navigation", { name: "Library places" })).toHaveLength(tree ? 1 : 0);
       expect(screen.queryAllByRole("button", { name: "Show the documents of" })).toHaveLength(tree ? 0 : 1);
@@ -1122,6 +1128,24 @@ describe("the Library on a collection", () => {
   });
 
   describe("refreshes", () => {
+    it("stays on the collection shown when a refresh's answer leaves it out", async () => {
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      const { container } = render(<Documents />);
+      await settle();
+      // A replica that lags answers once without it, then with it.
+      api.listCollections
+        .mockResolvedValueOnce({ collections: ROWS.filter((c) => c.namespace !== "col-q3"), next_cursor: null })
+        .mockResolvedValue({ collections: ROWS, next_cursor: null });
+      act(() => invalidateSharedCollections());
+      await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThanOrEqual(3), { timeout: 3000 });
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+      expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/not among the collections/), "info");
+      expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+    });
+
     it("waits for a created collection in its own org only", async () => {
       resizable();
       const answer = await startCreate();
@@ -1240,14 +1264,14 @@ describe("the Library on a collection", () => {
   });
 
   it("beside the tree, shows none of one org's collections after a switch to another", async () => {
-    matchOnly(TREE_QUERY);
+    resizable();
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
     history.replaceState(null, "", "/library");
     render(<Documents />);
     const tree = await screen.findByRole("navigation", { name: "Library places" });
     expect(await within(tree).findByRole("link", { name: "col-q3" })).toBeInTheDocument();
     fireEvent.click(within(tree).getByRole("button", { name: "Collections in col-q3" }));
-    expect(localStorage.getItem("loom.library.expanded.acme")).toBe('["col-q3"]');
+    expect(localStorage.getItem("loom_library_expanded_acme_v1")).toBe('["col-q3"]');
     api.listCollections.mockReturnValue(new Promise(() => {}));
     act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
     await settle();
@@ -1255,7 +1279,7 @@ describe("the Library on a collection", () => {
     expect(within(after).queryByRole("link", { name: "col-q3" })).toBeNull();
     expect(within(after).queryByRole("link", { name: "My files" })).toBeNull();
     // Acme's folds stay acme's; the other org's tree opens nothing.
-    expect(localStorage.getItem("loom.library.expanded.acme")).toBe('["col-q3"]');
+    expect(localStorage.getItem("loom_library_expanded_acme_v1")).toBe('["col-q3"]');
     expect(within(after).queryByRole("button", { expanded: true })).toBeNull();
   });
 

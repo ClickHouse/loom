@@ -301,9 +301,7 @@ export function BatchUpload({
   // The collections this dialog's uploads made: a later upload finds them, and closing waits
   // for the first to be listed.
   const madeHere = useRef<string[]>([]);
-  // A folder upload ran: the Library reads its collections again, in place, once the dialog
-  // closes, whatever it made, titled, or a Stop cut short (a replica may not have listed them
-  // during the run).
+  // A folder upload ran: closing has the Library read its collections again, whatever it made.
   const foldersSent = useRef(false);
   // What the check read of each collection, whole or cut at its limit, for the upload to start from.
   const checkedSources = useRef(new Map<string, Map<string, KeptFields>>());

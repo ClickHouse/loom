@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
 import type { CollectionEntry } from "../api";
+import { onCollectionsChanged } from "../lib/collectionPlaces";
 import { MoveCollectionDialog } from "./MoveCollectionDialog";
 
 vi.mock("../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
@@ -24,8 +25,10 @@ afterEach(() => {
 });
 
 describe("MoveCollectionDialog", () => {
-  it("moves a collection to the top level", async () => {
+  it("moves a collection to the top level, and the Library's lists read again", async () => {
     const onClose = vi.fn();
+    const changed = vi.fn();
+    const stop = onCollectionsChanged(changed);
     render(
       <MoveCollectionDialog
         org="acme"
@@ -51,6 +54,8 @@ describe("MoveCollectionDialog", () => {
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "q3", ""));
     expect(onClose).toHaveBeenCalled();
+    expect(changed).toHaveBeenCalled();
+    stop();
   });
 
   it("offers no collection inside its own subtree, and says who loses access", async () => {

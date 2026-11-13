@@ -93,13 +93,14 @@ export interface ReadableCollections {
   /** Read again; `rows` is null until the new answer lands. `expect`: a collection just
    *  created, asked for again a few times while a replica's list has not caught up. */
   reload: (expect?: string) => void;
-  /** The last collection a reload or refresh waited for; a plain reload clears it. */
+  /** The collection the last reload or refresh waited for, or "". */
   expected: string;
 }
 
 /** The collections the caller can read in `org` (`collection.list`), every page. `reload`
- *  clears `rows` until its answer; a write elsewhere keeps them. */
-export function useReadableCollections(org: string): ReadableCollections {
+ *  clears `rows` until its answer; a write elsewhere keeps them. `shown`: the collection the
+ *  page shows, which only a reload's answer may find gone. */
+export function useReadableCollections(org: string, shown = ""): ReadableCollections {
   const [read, setRead] = useState<{
     org: string;
     reloads: number;
@@ -108,32 +109,35 @@ export function useReadableCollections(org: string): ReadableCollections {
     truncated: boolean;
   } | null>(null);
   const [error, setError] = useState<unknown>(null);
-  // `expect` (a name in an org) is waited for only by the read that asked for it (`since`),
-  // not a later refresh, nor another org's read.
-  const [reads, setReads] = useState({ reloads: 0, expect: { org: "", name: "" }, refreshes: 0, since: 0 });
+  const keep = useRef("");
+  // Each read waits for `expect` (a name in an org), which the reload or refresh that asked
+  // for it sets: a later one clears it.
+  const [reads, setReads] = useState({ reloads: 0, refreshes: 0, expect: { org: "", name: "" } });
   const reload = useCallback(
     (name = "") => {
       // An old failure would read as "no collections" before the new answer lands.
       setError(null);
-      setReads((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name }, since: r.refreshes }));
+      // The page asked: its answer decides, the collection shown in it or not.
+      keep.current = "";
+      setReads((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name } }));
     },
     [org],
   );
-  // Any write to a collection (from a dialog that has since closed, too): read again in the
-  // background, keeping the rows shown until the new answer lands, and waiting for a
-  // collection it names.
+  // Any write to a collection, from a dialog since closed too: read again in the background.
   useEffect(
     () =>
       onCollectionsChanged((made) =>
-        setReads((r) =>
-          made
-            ? { ...r, refreshes: r.refreshes + 1, expect: { org, name: made }, since: r.refreshes + 1 }
-            : { ...r, refreshes: r.refreshes + 1 },
-        ),
+        setReads((r) => ({ ...r, refreshes: r.refreshes + 1, expect: { org, name: made } })),
       ),
     [org],
   );
   const expected = reads.expect.org === org ? reads.expect.name : "";
+  // The collection shown, when the last answer listed it: a refresh that leaves it out asks
+  // again, as for a lagging replica.
+  const listedShown = read?.org === org && read.rows.some((c) => c.namespace === shown) ? shown : "";
+  useEffect(() => {
+    keep.current = listedShown;
+  }, [listedShown, read]);
   useAbortableEffect(
     (signal, live) => {
       setError(null);
@@ -149,8 +153,7 @@ export function useReadableCollections(org: string): ReadableCollections {
             if (!cursor) break;
           }
           const rows = [...byName.values()];
-          const wait = reads.since === reads.refreshes ? expected : "";
-          const caughtUp = !wait || byName.has(wait);
+          const caughtUp = [expected, keep.current].every((name) => !name || byName.has(name));
           if (caughtUp || attempt >= 2) return { rows, truncated: !!cursor };
           await new Promise((r) => setTimeout(r, 1000));
         }
@@ -408,8 +411,7 @@ export function LibraryCollections({
       {!!error && (
         <p className="flex flex-wrap items-center gap-2 text-xs text-danger">
           <span>
-            {/* "Refresh" while the rows are still drawn: the tree keeps the last answer, the
-                select and the path only the current one. */}
+            {/* "Refresh" while the rows are drawn: the tree keeps the last answer, the select not. */}
             {(besideTree ? collections.kept : rows) ? "Couldn't refresh collections" : "Couldn't load collections"}:{" "}
             {humanizeError(error, { bare: true, read: true })}
           </span>

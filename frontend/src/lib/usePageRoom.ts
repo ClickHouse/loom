@@ -12,19 +12,16 @@ export interface PageRoom {
 }
 
 /** What <main> leaves the Library, kept current as the window, the sidebar or Ask AI change it;
- *  null until it can be measured. The width leaves a scrollbar out, so a list long enough to
- *  scroll never takes the tree away. */
+ *  null until it is measured. Measured with the scrollbar, so a list long enough to scroll
+ *  never takes the tree away. */
 export function usePageRoom(): PageRoom | null {
   const [room, setRoom] = useState<PageRoom | null>(null);
   // Before the first paint, so a cold load draws the right layout at once.
   useLayoutEffect(() => {
     const main = document.getElementById("main");
-    if (!main || typeof ResizeObserver === "undefined") return;
+    if (!main) return;
     const measure = () => {
-      const width = main.getBoundingClientRect().width;
-      // Not laid out (no layout engine, or a hidden tab): nothing measured yet.
-      if (!width) return;
-      const wide = width >= TREE_PAGE_MIN;
+      const wide = main.getBoundingClientRect().width >= TREE_PAGE_MIN;
       const height = main.clientHeight;
       setRoom((prev) => (prev && prev.wide === wide && prev.height === height ? prev : { wide, height }));
     };

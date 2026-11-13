@@ -1,15 +1,6 @@
 /** The Library's places as a tree beside the documents (disclosure buttons, plain Tab stops,
  *  no keys of their own), with New collection at its foot. */
-import {
-  type CSSProperties,
-  type FormEvent,
-  type ReactNode,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -33,7 +24,7 @@ export const NEW_COLLECTION_FOCUS = "library-new-collection";
 
 /** The collections a person opened in the tree, per org, for this browser. */
 function expandedKey(org: string): string {
-  return `loom.library.expanded.${org}`;
+  return `loom_library_expanded_${org}_v1`;
 }
 
 function loadExpanded(org: string): Set<string> {
@@ -152,7 +143,7 @@ export function LibraryTree({
   failed?: boolean;
   /** The list is read again: the tree shows the last answer until the new one lands. */
   busy?: boolean;
-  /** The height of <main>'s view, when measured. */
+  /** The height of <main>'s view, when measured (a banner above the page is not taken off). */
   viewHeight?: number;
   /** The header's namespace, when it holds documents; null when it does not. */
   shelf: string | null;
@@ -168,9 +159,7 @@ export function LibraryTree({
   const [open, setOpen] = useState<Set<string>>(() => loadExpanded(org));
   // What a move opened to show the place reached: for this visit only.
   const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
-  // The folds of collections the first whole list after mount does not hold are dropped,
-  // once: a later answer from a replica that lags drops none. A collection deleted during a
-  // visit loses its fold on the next visit's first whole list.
+  // Pruned once, against the first whole list after mount: a lagging replica's answer forgets no fold.
   const pruned = useRef(false);
   useEffect(() => {
     if (pruned.current || !rows || truncated) return;
@@ -201,14 +190,6 @@ export function LibraryTree({
     }
   };
   const tree = useMemo(() => placeTree(list), [list]);
-  // As tall as <main>'s view less what sits above the tree in it (a banner): New collection
-  // at the foot stays in reach.
-  const nav = useRef<HTMLElement | null>(null);
-  const [above, setAbove] = useState(0);
-  useLayoutEffect(() => {
-    const top = nav.current?.parentElement?.offsetTop ?? 0;
-    setAbove((prev) => (prev === top ? prev : top));
-  });
 
   // The form's target, fixed when New collection is pressed; null while closed.
   const [making, setMaking] = useState<CollectionEntry | "top" | null>(null);
@@ -258,11 +239,10 @@ export function LibraryTree({
 
   return (
     <nav
-      ref={nav}
       aria-label="Library places"
       aria-busy={busy || undefined}
       className="library-tree"
-      style={viewHeight ? { maxHeight: viewHeight - above } : undefined}
+      style={viewHeight ? { maxHeight: viewHeight } : undefined}
     >
       {(shelf !== null || tree.own) && (
         <ul>
