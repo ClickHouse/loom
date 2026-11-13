@@ -1928,7 +1928,6 @@ LOCAL_PRESET = {
     "LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS": "1",
     "LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS": "3600",
     "LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS": "2",
-    "LOOM_OBSERVE_EXTRACT_MAX_PASS_SECONDS": "3600",
     "LOOM_MEMORY_EXTRACT_VERIFY_MODELS": "",
     "LOOM_SESSION_BRIEF_LLM_MODEL": "",
     "LOOM_CODE_BISECT_LLM_RERANK_MODEL": "",
@@ -1962,12 +1961,11 @@ def test_the_local_preset_loads_with_the_verifier_and_resolver_off(monkeypatch) 
     assert loaded.memory_extract_verify_models == ""
     assert loaded.memory_conflict_resolver_enabled is False
     assert loaded.assistant_answer_ceiling_usd == 0
-    # A call with every retry fits in each extraction worker's pass (the queue's lease
-    # follows its pass: test_extraction_queue).
+    # A call with every retry fits in the extraction queue's pass (its lease follows the
+    # pass: test_extraction_queue).
     tries = loaded.llm_retry_attempts
     call = loaded.llm_request_timeout_s * tries + loaded.llm_retry_max_wait_s * (tries - 1)
     assert loaded.extraction_queue_max_pass_seconds > call
-    assert loaded.observe_extract_max_pass_seconds > call
 
 
 def test_without_a_terminal_ollama_is_not_offered(install, installer_env) -> None:
