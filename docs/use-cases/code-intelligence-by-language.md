@@ -70,8 +70,8 @@ indexed.
 
 ## Start
 
-1. [Index a repository](../features/code-index/repositories.md); the compiler tiers start
-   when the repository carries their build file.
+1. [Index a repository](../features/code-index/repositories.md). Which compiler tiers run
+   for it is in [code index operations](../operations/code-index-operations.md#compiler-tier).
 2. [Connect a coding agent](../getting-started/connect-a-coding-agent.md) on the `coding`
    toolset.
 3. Ask a structure question; check `code.coverage` for the languages you rely on.

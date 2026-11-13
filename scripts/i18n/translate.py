@@ -81,7 +81,8 @@ LANGUAGES = (
         "Simplified Chinese",
         "本页由机器从[英文原文]({url})翻译，内容以英文原文为准。",
         "Use full-width Chinese punctuation (，。：；（）) in prose, and join the lines of a "
-        "paragraph into one line. Fixed terms: dashboard 控制台, an access token 令牌 (model "
+        "paragraph into one line. Fixed terms: dashboard 控制台, "
+        "compiler tier 编译器层级, fast tier 快速层级, an access token 令牌 (model "
         "tokens stay token), namespace 命名空间, memory 记忆; keep agent as agent.",
     ),
     Language(
@@ -90,7 +91,8 @@ LANGUAGES = (
         "Japanese",
         "このページは[英語の原文]({url})の機械翻訳です。内容は英語の原文が優先されます。",
         "Use Japanese punctuation (、。：（）) in prose, and join the lines of a paragraph "
-        "into one line. Fixed terms: dashboard ダッシュボード, token トークン, namespace "
+        "into one line. Fixed terms: dashboard ダッシュボード, "
+        "compiler tier コンパイラティア, fast tier 高速ティア, token トークン, namespace "
         "名前空間, memory メモリ, agent エージェント.",
     ),
     Language(
@@ -98,24 +100,25 @@ LANGUAGES = (
         "한국어",
         "Korean",
         "이 페이지는 [영어 원문]({url})을 기계 번역한 것이며, 영어 원문이 기준입니다.",
-        "Fixed terms: dashboard 대시보드, token 토큰, namespace 네임스페이스, memory 메모리, "
-        "agent 에이전트.",
+        "Fixed terms: dashboard 대시보드, compiler tier 컴파일러 티어, fast tier 빠른 티어, "
+        "token 토큰, namespace 네임스페이스, memory 메모리, agent 에이전트.",
     ),
     Language(
         "pt-BR",
         "Português (Brasil)",
         "Brazilian Portuguese",
         "Esta página é uma tradução automática da [página em inglês]({url}), que prevalece.",
-        "Fixed terms: dashboard painel, token token, namespace namespace, memory memória, "
-        "agent agente.",
+        "Fixed terms: dashboard painel, compiler tier camada do compilador, fast tier camada "
+        "rápida, token token, namespace namespace, memory memória, agent agente.",
     ),
     Language(
         "es",
         "Español",
         "Spanish",
         "Esta página es una traducción automática de la [página en inglés]({url}), que prevalece.",
-        "Fixed terms: dashboard panel, token token, namespace espacio de nombres, "
-        "memory memoria, agent agente.",
+        "Fixed terms: dashboard panel, compiler tier nivel del compilador, fast tier nivel "
+        "rápido, override sobrescritura, token token, namespace espacio de nombres, memory "
+        "memoria, agent agente.",
     ),
     Language(
         "ru",
@@ -123,8 +126,9 @@ LANGUAGES = (
         "Russian",
         "Эта страница — машинный перевод [английской страницы]({url}); "
         "при расхождениях верна английская версия.",
-        "Fixed terms: dashboard панель управления, token токен, namespace пространство имён, "
-        "memory память, agent агент.",
+        "Fixed terms: dashboard панель управления, compiler tier уровень компилятора, fast "
+        "tier быстрый уровень, token токен, namespace пространство имён, memory память, "
+        "agent агент.",
     ),
 )
 
