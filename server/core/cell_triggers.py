@@ -133,7 +133,7 @@ async def expected_definitions(conn: Any) -> dict[str, str]:
 def expected_functions() -> list[tuple[str, list[str]]]:
     """The function's body and settings as each migration file that defines it writes
     them: a function changes only through a numbered file (rolling-upgrades rule 47), so
-    any other body is a hand edit. An earlier file's counts too: a cell this build has
+    any other body is a hand edit. An earlier file's body counts too: a cell this build has
     not migrated yet keeps it."""
     from server.core.schema import pg_migrate
 
