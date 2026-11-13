@@ -175,7 +175,7 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     expect(screen.queryByText(/namespace\.register/)).toBeNull();
     await typeHeld(screen.getByLabelText("Search namespaces"), "zzz");
     expect(screen.getByText("No public namespaces yet")).toBeInTheDocument();
-    expect(screen.queryByText("No public namespace named", { exact: false })).toBeNull();
+    expect(screen.queryByText("No listed public namespace named", { exact: false })).toBeNull();
   });
 
   it("Namespaces in your org: clearing a name that matched nothing keeps the request card on that name until the rows return", async () => {
@@ -183,7 +183,7 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     await screen.findByText("beta");
     const box = screen.getByLabelText("Search namespaces");
     await userEvent.type(box, "zzz");
-    await screen.findByText("No public namespace named", { exact: false });
+    await screen.findByText("No listed public namespace named", { exact: false });
     await clearHeld(box);
     expect(screen.getByLabelText("Namespaces")).toHaveTextContent("0 namespaces");
     expect(screen.getAllByText("zzz", { selector: ".font-mono" }).length).toBeGreaterThan(0);

@@ -100,10 +100,9 @@ The left rail groups pages into Memory, Activity and Sources. Every page has its
 Three views are reached from elsewhere rather than the rail: **Namespaces in your org**
 (`/spaces`, the namespaces you manage and the org's public namespaces to join, with each one's
 [guide](namespaces-and-sharing.md#a-namespaces-guide) summary, and the guide itself for
-a namespace you belong to, opened from the namespace picker; a search offers **Request
-access** when no listed public namespace has exactly that name, which is how a private
-namespace is asked for by name, except a name you admin, a repository's name, which points
-to Repositories, and a collection's, which points to the Library), **Graph**
+a namespace you belong to, opened from the namespace picker; a search that is a namespace name no listed public namespace carries offers **Request
+access**, which is how a private namespace is asked for by name; a repository's or
+collection's name points to Repositories or the Library instead), **Graph**
 (`/graph`, the entity graph explorer, opened from an entity; see
 [entity graph](entity-graph.md)) and **Help** (`/help?page=<page>#<section>`, a page of
 Loom's documentation as the running build ships it, read with `help.get` under the

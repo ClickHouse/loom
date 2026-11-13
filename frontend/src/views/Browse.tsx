@@ -233,19 +233,13 @@ export function Browse() {
     return (rows || []).filter((r) => matchesSpace(r, q));
   }, [rows, listQuery]);
   const managedShown = managedMemory.filter((r) => matchesSpace(r, listQuery.toLowerCase()));
-  // A search that is a namespace name no listed row carries may name a private namespace
-  // to request, even when other rows match it (a public `support-team` for `support`).
-  // Names are lowercase, so the search is compared lowercased. A name on which the caller
-  // holds a role below admin keeps the card: its alert offers the higher role. A
-  // repository is requested from Repositories, and a collection is shared in the Library,
-  // never joined: their names get a line pointing there instead. A personal collection is
-  // no one else's to reach, so its name gets neither.
+  // A namespace name no listed row carries may be a private one to request, even beside
+  // partial matches; a repository's or collection's name points to its page instead.
   const typedName = listQuery.toLowerCase();
-  // The role held on it: an active row only, since a pending request grants nothing yet.
+  // Active rows only (a pending request grants nothing); the "you read" lines use this,
+  // since an admin claim reaches no restricted repository and makes no collection exist.
   const typedRole = mineRows?.find((r) => r.namespace === typedName && r.status !== "pending")?.role;
-  // The role the server would act on, for the request card only: an admin claim admins every
-  // namespace. The "you read" lines need an active membership: a claim reaches no restricted
-  // repository and makes no collection exist.
+  // The role the server would act on, for the request card: an admin claim admins every namespace.
   const typedReach = roleOnNamespace(whoami, mineRows, typedName);
   const typedCollection = typedName.startsWith(COLLECTION_PREFIX);
   const elsewhere = repoNames.includes(typedName)
@@ -990,7 +984,7 @@ function RequestAccessCard({
         <Icon name="globe" size="md" aria-hidden="true" className="mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium">
-            No public namespace named <span className="font-mono">{typedName}</span>.
+            No listed public namespace named <span className="font-mono">{typedName}</span>.
           </div>
           <div className="text-xs text-text-muted mt-1">
             If <span className="font-mono">{typedName}</span> is a private namespace someone told you about, request

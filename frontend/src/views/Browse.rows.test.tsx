@@ -337,8 +337,8 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
       await screen.findByText("support-team");
       const box = screen.getByRole("textbox", { name: "Search namespaces" });
       await userEvent.type(box, "support");
-      expect(await screen.findByText("No public namespace named", { exact: false })).toHaveTextContent(
-        "No public namespace named support.",
+      expect(await screen.findByText("No listed public namespace named", { exact: false })).toHaveTextContent(
+        "No listed public namespace named support.",
       );
       expect(within(screen.getByTestId("browse-list")).getByText("support-team")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Request access" })).toBeInTheDocument();
@@ -374,8 +374,8 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     render(<Browse />);
     await screen.findByText("Support team runbooks");
     await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "Support");
-    expect(await screen.findByText("No public namespace named", { exact: false })).toHaveTextContent(
-      "No public namespace named support.",
+    expect(await screen.findByText("No listed public namespace named", { exact: false })).toHaveTextContent(
+      "No listed public namespace named support.",
     );
     await userEvent.click(screen.getByRole("button", { name: "Request access" }));
     expect(joinNamespace).toHaveBeenCalledWith("acme", "support", { role: "viewer" });
@@ -428,7 +428,7 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     await screen.findByText("Support team runbooks");
     await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "team");
     expect(await within(screen.getByTestId("browse-list")).findByText("alpha")).toBeInTheDocument();
-    expect(screen.queryByText("No public namespace named", { exact: false })).toBeNull();
+    expect(screen.queryByText("No listed public namespace named", { exact: false })).toBeNull();
     expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
   });
 
@@ -539,8 +539,8 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
       render(<Browse />);
       await screen.findByText("Support team runbooks");
       await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "tracker-docs");
-      expect(await screen.findByText("No public namespace named", { exact: false })).toHaveTextContent(
-        "No public namespace named tracker-docs.",
+      expect(await screen.findByText("No listed public namespace named", { exact: false })).toHaveTextContent(
+        "No listed public namespace named tracker-docs.",
       );
       expect(screen.getByRole("button", { name: "Request access" })).toBeEnabled();
       expect(screen.queryByText(/is a repository/)).toBeNull();
@@ -606,8 +606,8 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
       render(<Browse />);
       await screen.findByText("Support team runbooks");
       await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "sup");
-      expect(await screen.findByText("No public namespace named", { exact: false })).toHaveTextContent(
-        "No public namespace named sup.",
+      expect(await screen.findByText("No listed public namespace named", { exact: false })).toHaveTextContent(
+        "No listed public namespace named sup.",
       );
       expect(within(screen.getByTestId("browse-list")).getByText("alpha")).toBeInTheDocument();
       expect(screen.getByText(/Pick a higher role above to request an upgrade/)).toBeInTheDocument();
