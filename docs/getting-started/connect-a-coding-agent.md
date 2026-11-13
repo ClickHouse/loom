@@ -90,7 +90,8 @@ has and the others take from a [transcript template](../features/integrations/in
 [MCP clients](../features/integrations/mcp-clients.md) covers toolsets and the entry the
 command writes. Then add the [agent instructions](../features/integrations/agent-instructions.md)
 block to a coding client's rule file, so the agent knows when to call the tools; for a
-client other than Cursor, pass `--toolset coding` so the tools the block names are listed.
+client other than Cursor, add `?toolset=coding` to the entry's URL (`--toolset coding`
+with `loom install`) so the tools the block names are listed.
 
 ## Check that it works
 

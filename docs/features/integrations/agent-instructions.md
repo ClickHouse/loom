@@ -43,7 +43,8 @@ Memory
   the conversation.
 - A rule the user states for the whole team about a file: `loom_memory_set` with
   `namespace` `<team-namespace>`, the file in `files` and the tag `constraint`.
-- A fact that changed: `loom_memory_update` on the same key, never a second copy.
+- A fact that changed: `loom_memory_update` on the same key, in the namespace the row
+  lives in (`<team-namespace>` for a team rule), never a second copy.
 - Your plan and checklist for this task: `loom_working_memory_set`, not `loom_memory_set`.
 - Before reporting done, one pass over what should outlive the session.
 
