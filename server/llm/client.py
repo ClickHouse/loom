@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from server.core.llm_provider import KEY_ENV_BY_PROVIDER, provider_for_model
+from server.core.llm_provider import KEY_ENV_BY_PROVIDER
 
 
 @dataclass(frozen=True)
@@ -226,17 +226,16 @@ def _remember[K, V](cache: dict[K, V], key: K, value: V) -> V:
 def get_llm_client_for_model(model: str | None) -> LLMClient:
     """Return an LLM client for a stage-specific model override.
 
-    Empty/None `model` returns the default client. Otherwise returns a
-    separately-cached client bound to the override model, so two stages on
-    different models coexist without cache-replacing each other. The provider
-    is inferred from the model name (so an opus override routes to Anthropic
-    even when the global provider is OpenAI); key-fallback semantics match
-    `get_llm_client()`.
+    Empty/None `model`, or the deployment's own `llm_model`, returns the default
+    client. Otherwise returns a separately-cached client bound to the override
+    model, so two stages on different models coexist without cache-replacing each
+    other. The provider is inferred from the model name (so an opus override
+    routes to Anthropic even when the global provider is OpenAI;
+    `Settings.provider_of`); key-fallback semantics match `get_llm_client()`.
     """
     from server.settings import settings
 
-    # The deployment's own model runs on its resolved provider, not one inferred from the
-    # name: a local server may serve a model whose name looks hosted (`gpt-oss`).
+    # The deployment's own model is the default client (`Settings.provider_of`).
     if not model or model == settings.llm_model:
         return get_llm_client()
 
@@ -270,7 +269,7 @@ def _override_client(model: str) -> LLMClient:
     model), never wrapped. `get_llm_client_for_model` adds the fallback."""
     from server.settings import settings
 
-    provider = provider_for_model(model, settings.llm_provider)
+    provider = settings.provider_of(model)
     key = (provider, model)
     cached = _override_cache.get(key)
     if cached is not None:

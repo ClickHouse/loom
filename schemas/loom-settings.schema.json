@@ -3255,7 +3255,7 @@
         "llm_model": {
           "default": "",
           "type": "string",
-          "description": "The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1)."
+          "description": "The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1)."
         },
         "llm_openai_reasoning_effort": {
           "default": "",

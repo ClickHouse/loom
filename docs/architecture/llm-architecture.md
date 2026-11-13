@@ -193,7 +193,9 @@ The stock `.env` pins `LOOM_LLM_PROVIDER=fake`.
 
 Per-stage models (`LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_CODE_SUMMARY_MODEL` and the other
 `*_model` settings) build their own client with `get_llm_client_for_model`, inferring
-the provider from the name.
+the provider from the name; the deployment's own `LOOM_LLM_MODEL` named again runs on
+the resolved provider (`Settings.provider_of`), so a local model with a hosted-looking
+name stays local.
 
 ### Protocol
 

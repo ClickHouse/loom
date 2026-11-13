@@ -1466,7 +1466,7 @@ Models: which model does each job.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
+| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1). |
 | `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant agent's model, which Loom writes into the agent definition at boot. "" = the definition's own (integrations/librechat/agent.yaml), not llm_model. |
 | `LOOM_ASSISTANT_PROVIDER` | `'' \| 'anthropic' \| 'local'` | `''` |  | The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local" = LibreChat's local endpoint (a model server the operator runs; needs assistant_model). |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |

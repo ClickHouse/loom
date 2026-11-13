@@ -3800,7 +3800,7 @@ class ModelSettings(BaseModel):
     # --- defaults ---------------------------------------------------------------
     # The deployment's LLM: memory extraction, rerank and every job whose own model
     # setting (the other *_model settings) is left "". Empty takes the resolved
-    # provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
+    # provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1).
     llm_model: str = ""
     # The assistant agent's model, which Loom writes into the agent definition at boot.
     # "" = the definition's own (integrations/librechat/agent.yaml), not llm_model.
