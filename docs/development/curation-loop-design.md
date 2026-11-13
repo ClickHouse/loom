@@ -30,10 +30,9 @@ A definition is a memory row with `memory_type = 'definition'` under the key
 1. The term is folded: it loses its format characters (Unicode category Cf, such as a
    pasted byte-order mark), then goes through `canonical_document_text`
    (`server/core/hashing.py`: NFKC, trimmed, every run of whitespace made one space) and
-   is case-folded (`str.casefold`). A term that is not valid Unicode (a lone surrogate) is
-   refused. This folded form is the term's name wherever two names
-   are compared (the key, the promotion's name check); matching against a query keeps the
-   case rule below.
+   is case-folded (`str.casefold`). This folded form is the term's name wherever two
+   names are compared (the key, the promotion's name check); matching against a query
+   keeps the case rule below.
 2. Every run of characters other than letters, marks and numbers (Unicode categories L,
    M and N) becomes one `-`, and a `-` at either end is dropped.
 3. A `-` is appended.
@@ -42,11 +41,15 @@ A definition is a memory row with `memory_type = 'definition'` under the key
 
 One helper in `server/memory/domain/definitions.py` folds a name and computes the key,
 and nothing else computes it: the SDKs and the dashboard do not port it, since a port
-would follow another Unicode version. A caller learns the key from the server: a refused
-promotion names the key it expected, and `memory.definitions.list` lists each
-definition's key. Its
-value is a JSON object, which `memory.set` stores whole in `value` and in `value_json`
-(the embedding reads its excerpt, as for any row):
+would follow another Unicode version. Its unit tests pin each step with a table of terms
+and keys (NFKC, format characters, case fold, marks, invalid Unicode). A caller learns the
+key from the server without a stray write: `memory.set` of a row of type `definition`
+under a `definition/` key that is not its term's slug, or whose term or an alias is not
+valid Unicode (a lone surrogate), is refused with `VALIDATION_FAILED`, naming the expected
+key, and writes nothing.
+
+A definition's value is a JSON object, which `memory.set` stores whole in `value` and in
+`value_json` (the embedding reads its excerpt, as for any row):
 
 | Field      | Meaning                                                                     |
 | ---------- | --------------------------------------------------------------------------- |
@@ -92,16 +95,16 @@ or `high` only retire or scrub there, as the changes below say); no worker promo
 own. An admin read, `memory.definitions.list`, lists the namespace's shared definitions
 with the read-time check's verdict on each and the reason a lapsed one lapsed (its text
 changed, it is `medium` or `high`, gone, expired, past its `valid_to`, under a key that is
-not its term's slug, promoted from a row that is not the namespace-wide one, or no longer
-`active`), and lists a definition that passes the check but is not served because a later
-promotion holds one of its names as `shadowed`, naming the row that wins. A changed text
-is promoted again. On N no automatic verdict retires or marks a definition's source (the
-exemptions below, and the negative-outcome quarantine of `memory.outcome`, which skips a
-definition's namespace-wide row as it skips a locked one; `memory.outcome_run` records
-harm events and quarantines nothing), so a source that is no longer `active` was rejected
-by a writer, or left that way by N-1 or before this design. The sensitivity sweep can
-still relabel a source, which lapses it as a relabel does. The admin brings it back by the
-way it lapsed:
+not its term's slug, naming the key this build expects, promoted from a row that is not
+the namespace-wide one, or no longer `active`), and lists a definition that passes the
+check but is not served because a later promotion holds one of its names as `shadowed`,
+naming the row that wins. A changed text is promoted again. On N no automatic verdict
+retires or marks a definition's source (the exemptions below, and the negative-outcome
+quarantine of `memory.outcome`, which skips a definition's namespace-wide row as it skips
+a locked one; `memory.outcome_run` records harm events and quarantines nothing), so a
+source that is no longer `active` was rejected by a writer, or left that way by N-1 or
+before this design. The sensitivity sweep can still relabel a source, which lapses it as a
+relabel does. The admin brings it back by the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
@@ -179,9 +182,11 @@ reader:
   revision of a term always lands on the governed row's key. The read-time check above is
   what the term leg relies on; this refusal keeps such rows from being made.
 
-The changes break existing callers of two ops, and the implementing pull request names
+The changes break existing callers of three ops, and the implementing pull request names
 each break.
 
+- `memory.set` refuses a row of type `definition` under a `definition/` key that is not
+  its term's slug, or whose term or alias is not valid Unicode. Today any key is stored.
 - `memory.promote` refuses a `definition` promotion without the approved hash. Today no
   hash is asked for.
 - It refuses one from a row that is not namespace-wide, or under a key that is not its
@@ -276,6 +281,9 @@ matches a query that puts two spaces between the words; only case follows the pe
 rule below. A term or alias matches where it appears in the query with no character next
 to it that continues its edge:
 
+- whatever the script, a combining mark (category M) continues the character before it,
+  so `कम` does not match inside "कमी" nor `ก` inside "กิ"; this comes before the rules
+  below;
 - next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
   those;
 - next to a letter of another script written with spaces (Cyrillic, Greek): any letter of
@@ -283,9 +291,7 @@ to it that continues its edge:
 - before Hangul, a Hangul syllable, so `매출` does not match inside "판매출고"; after it,
   nothing, since Korean particles attach to the word before them;
 - next to a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or
-  punctuation: nothing;
-- a combining mark (category M) continues the character before it, so `कम` does not match
-  inside "कमी".
+  punctuation: nothing.
 
 So `рост` does not match inside "простой" and `café` not inside "cafés", while `MRR`
 matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". Case is decided per word of
@@ -338,7 +344,8 @@ which only boost rows. It drops any key in `exclude_keys`.
 **`term_leg`** says what the leg did: `complete`; `empty` when the namespace holds no
 definition; `capped` or `timed_out` past its bounds; `failed` when any of its reads failed
 (the definitions, or a source that then failed closed and withheld a definition); and
-`off` when a page handle or a field turned it off.
+`off` when a page handle or a field turned it off, or the query is not valid Unicode,
+which the leg skips rather than fail the search (such a query records no miss either).
 
 **Read scope.** Governed definitions are served through this leg under any read scope: an
 admin published them for every reader of the namespace, and a user-bounded reader who
@@ -866,24 +873,26 @@ side may disagree on one row until the older one stops; the build that changes t
 detector names this in its rollout notes. A build whose Python ships another Unicode
 version can change a term's fold, and so its key, and the read-time check then lapses that
 definition as under a key that is not its term's slug; that build's notes name the change,
-`memory.definitions.list` lists the lapsed definitions, and an admin writes and promotes
-each again under its new key. What N-1 does to them is caught by the read-time check: a
-promotion from another source, or an edit, relabel or tombstone of the source, leaves a
-row the term leg does not serve, and the term leg's last-promoted rule covers a promotion
-that skipped the term check. A promotion on N-1 also skips the approved-hash check and
-takes `promoted_by` from the body, which no read-time check can tell, and an N-1
-`memory.set` ignores `if_absent`, and an N-1 `memory.delete` ignores `if_match_sha256`,
-fields they do not know, so they write over or delete a live row; the review path that
-sends them answers 503 while N-1 serves, and a direct caller relies on them only once no
-N-1 replica serves. Once none does, an admin promotes again every definition promoted
-before then, through N-1 or before this design (`loom.shared` rows of type `definition` by
-promotion time), since none of those carried the hash check or a token-stamped
-`promoted_by`; that promotion on N also moves the write mark, which N-1's promotions and
-demotions never move, so a stored `memory.ask` answer from the rollout is not reused past
-it (until then such an answer lives at most `memory_ask_precedents_fast_max_age_hours`,
-with no bound when it is 0). N-1, which does not know `definition` as key-identified, can
-merge, supersede or retire one definition's source while writing another. Once N serves,
-each is recovered and promoted again:
+`memory.definitions.list` lists the lapsed definitions with the key each now expects. An
+admin demotes each old shared row and deletes its source, then writes and promotes the
+definition under the new key, since the name check would otherwise refuse the old row's
+term. What N-1 does to them is caught by the read-time check: a promotion from another
+source, or an edit, relabel or tombstone of the source, leaves a row the term leg does not
+serve, and the term leg's last-promoted rule covers a promotion that skipped the term
+check. A promotion on N-1 also skips the approved-hash check and takes `promoted_by` from
+the body, which no read-time check can tell, and an N-1 `memory.set` ignores `if_absent`,
+and an N-1 `memory.delete` ignores `if_match_sha256`, fields they do not know, so they
+write over or delete a live row; the review path that sends them answers 503 while N-1
+serves, and a direct caller relies on them only once no N-1 replica serves. Once none
+does, an admin promotes again every definition promoted before then, through N-1 or before
+this design (`loom.shared` rows of type `definition` by promotion time), since none of
+those carried the hash check or a token-stamped `promoted_by`; that promotion on N also
+moves the write mark, which N-1's promotions and demotions never move, so a stored
+`memory.ask` answer from the rollout is not reused past it (until then such an answer
+lives at most `memory_ask_precedents_fast_max_age_hours`, with no bound when it is 0).
+N-1, which does not know `definition` as key-identified, can merge, supersede or retire
+one definition's source while writing another. Once N serves, each is recovered and
+promoted again:
 
 - a source it retired (`memory.auto_retirements` reasons `conflict_resolver`,
   `newest_wins_contradiction`, `value_update` and `same_key_newest_wins`):
