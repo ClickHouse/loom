@@ -148,6 +148,8 @@ drawer's navigation.
 
 ### The assistant panel
 
+![The assistant panel answering a refunds question, its citations checked against what Loom holds](../assets/screenshots/assistant-answer.webp)
+
 The **Assistant** button at the window's right edge (a column from 768 px, its word set
 vertically under its icon), or the bottom navigation's **Assistant** item on narrower
 screens, opens the chat with the [assistant](../architecture/assistant.md#surfaces) on every

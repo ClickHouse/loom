@@ -5,6 +5,10 @@ with [Postgres](architecture/storage-authority.md#why-two-stores) as an option f
 memory and knowledge state. Agents and people reach it over MCP, HTTP, the Python and
 TypeScript SDKs, and the dashboard. This page lists every page in reading order.
 
+![The dashboard's Library: a search for a refund rule answered by cited passages](assets/screenshots/document-search.webp)
+
+<video src="assets/screenshots/clip-search-answer.webm" autoplay loop muted playsinline width="100%" aria-label="The assistant answering a question about refunds, with its sources checked against Loom"></video>
+
 ## Start here
 
 | Step                     | Read                                                                                                                                                                                      |

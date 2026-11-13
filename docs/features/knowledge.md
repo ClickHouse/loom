@@ -568,6 +568,8 @@ pages are paced half a second apart.
 
 ## Searching
 
+![Find a passage in the Library: three passages, each cited by its document, revision and lines](../assets/screenshots/document-search.webp)
+
 `knowledge.search` runs a vector leg and a BM25 leg per namespace, and in hybrid mode
 an exact-key leg, and fuses them by reciprocal rank:
 

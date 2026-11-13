@@ -159,6 +159,11 @@ trusting callers or impact for a language. Adding a language:
 
 ## How an agent uses it
 
+![A repository's Explore tab: payments.fx.convert with its definition, callers and callees](../../assets/screenshots/code-callers.webp)
+
+A person walks the same graph from the repository's **Explore** tab
+([clip](../../assets/screenshots/clip-code-callers.webm)).
+
 ```mermaid
 flowchart LR
   Q["question in words"] --> S["code.search / code.ask"]

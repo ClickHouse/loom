@@ -6,16 +6,21 @@
 //
 //   LOOM_DOCS_SCREENSHOTS=1 E2E_PORT=4271 npx playwright test e2e/docs-screenshots.spec.ts
 //
-// The clock is fixed, so relative times ("2h ago") read the same on every run.
+// The clock is fixed, so relative times ("2h ago") read the same on every run. The 1440 px
+// shots and the clips go to docs/assets/screenshots/, encoded as WebP by Chromium itself.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page } from "@playwright/test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isRecord, pickOption } from "./fixtures";
 
 const ENABLED = process.env.LOOM_DOCS_SCREENSHOTS === "1";
 const OUT = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/images");
+// The newer shots (WebP) and clips (WebM), at 1440 px; the PNGs above stay where the
+// translated READMEs link them.
+const OUT_ASSETS = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/assets/screenshots");
 const NOW = Date.parse("2026-09-28T15:00:00Z");
 
 const ORG = "acme";
@@ -44,6 +49,8 @@ interface DemoMemory {
   version?: number;
   status?: string;
   entities?: string[];
+  /** The code the memory is linked to (`memory.get`'s `code`). */
+  code?: Array<{ path: string; symbol: string; state: string; changed_since?: string }>;
 }
 
 const MEMORIES: DemoMemory[] = [
@@ -156,6 +163,27 @@ const MEMORIES: DemoMemory[] = [
     hours: 96,
   },
   {
+    id: "7b2e9c40-1313-4a1e-9a51-7b2e9c400013",
+    key: "payments/fx/rounding",
+    type: "semantic",
+    value:
+      "FX conversion rounds half to even, as the settlement bank does; never switch payments.fx.convert to ROUND_HALF_UP or refunds stop matching settlement.",
+    tags: ["payments", "constraint"],
+    agent: "claude-code",
+    hours: 50,
+    verified: true,
+    entities: ["fx", "settlement"],
+    code: [
+      { path: "payments/fx.py", symbol: "payments.fx.convert", state: "fresh" },
+      {
+        path: "payments/refunds.py",
+        symbol: "payments.refunds.refund",
+        state: "changed",
+        changed_since: "157c2473e9b04d1a",
+      },
+    ],
+  },
+  {
     id: "a85c1f6b-1010-4a1e-9a51-a85c1f6b0010",
     key: "support/tone/sign-off",
     type: "preference",
@@ -209,6 +237,7 @@ function detail(m: DemoMemory) {
     entities: m.entities ?? [],
     char_limit: null,
     verified_at: m.verified ? ago(m.hours - 1) : null,
+    code: (m.code ?? []).map((c) => ({ code_namespace: CODE_NS, changed_since: "", ...c })),
   };
 }
 
@@ -346,6 +375,87 @@ const CODE_REPOS = [
   codeRepo(CODE_NS, "main", "4be19a0c7d2e5f13", 1284, 18342, 0.3),
   codeRepo(CODE_NS_RELEASE, "release-2026.09", "9c02e7b1a4f86d25", 1261, 17990, 20),
 ];
+
+/** `code.coverage` for the main branch: Python and TypeScript, fully embedded. */
+function coverage() {
+  const lang = (name: string, files: number, symbols: number) => ({
+    lang: name,
+    files,
+    files_errored: 0,
+    files_first_at: agoCh(900),
+    files_last_at: agoCh(0.4),
+    chunks: files * 7,
+    chunks_embedded: files * 7,
+    chunks_described: files,
+    chunks_last_at: agoCh(0.4),
+    symbols_treesitter: symbols,
+    symbols_treesitter_last_at: agoCh(0.4),
+    symbols_scip: symbols,
+    symbols_scip_last_at: agoCh(0.4),
+  });
+  return {
+    org: ORG,
+    namespace: CODE_NS,
+    as_of_commit: "4be19a0c7d2e5f13",
+    languages: [lang("python", 1042, 15880), lang("typescript", 242, 2462)],
+    tiers: [{ tier: "scip", edges: 52110, edges_last_at: agoCh(0.4) }],
+    gaps: null,
+    pr_history_from: "2024-01-03",
+    pr_history_to: "2026-09-28",
+    pr_history_last_fetch_at: agoCh(0.5),
+    pr_history_enabled: true,
+    pr_history_auth: "token",
+    context_packs_last_at: agoCh(2),
+    summaries_last_at: agoCh(3),
+  };
+}
+
+/** `code.index_status` for the main branch: every stage at the tip, each worker healthy. */
+function indexStatus() {
+  const worker = (minutes: number) => ({
+    enabled: true,
+    interval_seconds: 60,
+    last_run_at: ago(minutes / 60),
+    last_duration_ms: 2400,
+    consecutive_failures: 0,
+    total_runs: 4120,
+    last_error: "",
+  });
+  const head = "4be19a0c7d2e5f13";
+  const base = codeRepo(CODE_NS, "main", head, 1284, 18342, 0.3);
+  return {
+    ...base,
+    counts: {
+      ...base.counts,
+      code_chunks: 8988,
+      code_edges: 52110,
+      code_summaries: 1284,
+      code_pr_history: 4210,
+      code_context_packs: 37,
+    },
+    scip_commit: head,
+    scip_commit_py: head,
+    compiler_tiers: [],
+    pr_cursor: "2026-09-28",
+    last_refresh_detail: "",
+    path_prefixes: [],
+    provider: "github",
+    profile: "python",
+    compiler_candidates: [],
+    quality_warnings: [],
+    state: {
+      git_head: { value: head, detail: "", updated_at: agoCh(0.3) },
+      pr_cursor: { value: "2026-09-28", detail: "", updated_at: agoCh(0.5) },
+    },
+    workers: {
+      code_ingest: worker(2),
+      code_embed_recovery: worker(3),
+      code_graph_stats: worker(9),
+      code_pr_history: worker(11),
+      code_summary: worker(14),
+    },
+  };
+}
 
 /** The team's issue tracker, read live; it covers the one repository. */
 const TRACKER_SOURCES = [
@@ -518,6 +628,229 @@ const CREATED_TOKEN = {
   mcp_url: "https://loom.acme.example/mcp",
 };
 
+/** The Library's documents: an on-call runbook, the refunds policy and the FX note. */
+const DOCUMENTS = [
+  {
+    source_uri: "runbooks/payments-on-call.md",
+    title: "Payments on-call runbook",
+    description: "What to check first when checkout or refunds page someone.",
+    tags: ["runbook", "payments"],
+    hours: 30,
+    chunks: 14,
+  },
+  {
+    source_uri: "policies/refunds.md",
+    title: "Refunds policy",
+    description: "Who may refund what, approvals, and how refunds settle.",
+    tags: ["policy", "billing"],
+    hours: 74,
+    chunks: 9,
+  },
+  {
+    source_uri: "architecture/fx-settlement.md",
+    title: "FX and settlement",
+    description: "How converted amounts are rounded and reconciled with the settlement bank.",
+    tags: ["architecture", "payments"],
+    hours: 160,
+    chunks: 6,
+  },
+];
+
+function documentRow(d: (typeof DOCUMENTS)[number]) {
+  return {
+    source_uri: d.source_uri,
+    title: d.title,
+    description: d.description,
+    tags: d.tags,
+    ingested_at: ago(d.hours),
+    chunk_count: d.chunks,
+    superseded: false,
+    has_blob: false,
+    content_preview: d.description,
+  };
+}
+
+/** `knowledge.search` passages for the refund question, best first, each with where it sits. */
+const PASSAGES = [
+  {
+    source_uri: "policies/refunds.md",
+    chunk_idx: 3,
+    section: "Approvals",
+    content:
+      "A refund over $250 needs a second approver in the billing console before it is issued. The approver must not be the person who took the original payment.",
+    score: 0.86,
+    revision: 4,
+    format: "markdown",
+    locator: { line_start: 41, line_end: 52 },
+  },
+  {
+    source_uri: "runbooks/payments-on-call.md",
+    chunk_idx: 7,
+    section: "Refund stuck in pending",
+    content:
+      "If a refund stays pending for more than an hour, check the settlement queue first; a refund in a currency other than USD waits for the day's FX rate.",
+    score: 0.74,
+    revision: 2,
+    format: "markdown",
+    locator: { line_start: 118, line_end: 131 },
+  },
+  {
+    source_uri: "architecture/fx-settlement.md",
+    chunk_idx: 1,
+    section: "Rounding",
+    content:
+      "Converted amounts round half to even, the rule the settlement bank applies, so a refund in EUR settles to the cent the bank reports.",
+    score: 0.61,
+    revision: 1,
+    format: "markdown",
+    locator: { line_start: 12, line_end: 20 },
+  },
+];
+
+/** The Audit log's events: writes, a resolved conflict, a grant and a document upload. */
+const AUDIT_ROWS = [
+  [0.3, "memory.set", "claude-code", { memory_key: "payments/fx/rounding" }],
+  [0.9, "conflicts.resolve", SUBJECT, { kept_memory_key: "billing/refunds/threshold" }],
+  [1.6, "knowledge.upsert", SUBJECT, { source_uri: "policies/refunds.md" }],
+  [2.2, "memory.pin", SUBJECT, { memory_key: "deploys/policy/windows" }],
+  [3.1, "grants.create", SUBJECT, { role: "writer", namespace: NS_SUPPORT, subject: "sa:support-bot-91c3" }],
+  [4.4, "memory.set", "support-bot", { memory_key: "support/refunds/approval" }],
+  [5.0, "memory.delete", "claude-code", { memory_key: "staging/db/legacy-host", reason: "host retired" }],
+  [6.7, "memory.promote", SUBJECT, { memory_key: "procedures/rollback-prod", target_status: "shared" }],
+  [8.2, "namespace.join", "dev2@acme.example", { namespace: NS, role: "viewer" }],
+  [9.5, "memory.set", "claude-code", { memory_key: "incidents/checkout-latency" }],
+  [12.0, "knowledge.upsert", SUBJECT, { source_uri: "runbooks/payments-on-call.md" }],
+  [20.0, "memory.redact", SUBJECT, { memory_key: "support/escalations/contact" }],
+].map(([h, event_type, actor, subject]) => ({
+  ts: ago(h as number),
+  event_type,
+  actor,
+  subject: JSON.stringify(subject),
+  request_id: `req-${String(h).replace(".", "")}a1`,
+}));
+
+/** The acme/payments code the Explore tab reads: FX conversion and the two places that call it. */
+const CODE_UNITS: Record<string, Record<string, unknown>> = {
+  "payments.fx.convert": {
+    path: "payments/fx.py",
+    start_line: 8,
+    end_line: 12,
+    kind: "function",
+    signature: "def convert(amount: Decimal, source: str, target: str) -> Decimal",
+    description: "Currency conversion at the rate of the settlement day, rounded half to even.",
+    body: 'def convert(amount: Decimal, source: str, target: str) -> Decimal:\n    if source == target:\n        return amount\n    rate = RATES[(source, target)]\n    return (amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)',
+    churn: 3,
+    amp: 2,
+    tested: true,
+  },
+  "payments.refunds.refund": {
+    path: "payments/refunds.py",
+    start_line: 9,
+    end_line: 16,
+    kind: "function",
+    signature: 'def refund(charge_id: str, amount: Decimal, currency: str, settle_in: str = "USD") -> None',
+    description: "Reverses a captured charge and posts the balanced ledger entry.",
+    body: "",
+    churn: 5,
+    amp: 1,
+    tested: true,
+  },
+  "payments.api.handle_refund": {
+    path: "payments/api.py",
+    start_line: 8,
+    end_line: 10,
+    kind: "function",
+    signature: "def handle_refund(body: dict) -> dict",
+    description: "The POST /refunds handler.",
+    body: "",
+    churn: 2,
+    amp: 0,
+    tested: false,
+  },
+};
+
+function codeUnit(symbol: string, score = 0) {
+  return {
+    unit_id: `u-${symbol}`,
+    symbol,
+    tier: "scip",
+    elided: false,
+    score,
+    churn: 0,
+    amp: 0,
+    tested: false,
+    ...CODE_UNITS[symbol],
+  };
+}
+
+const CODE_CALLERS: Record<string, Array<[string, string, number]>> = {
+  "payments.fx.convert": [
+    ["payments.refunds.refund", "payments/refunds.py", 10],
+    ["payments.ledger.settle_daily", "payments/ledger.py", 61],
+  ],
+  "payments.refunds.refund": [["payments.api.handle_refund", "payments/api.py", 9]],
+};
+
+const CODE_CALLEES: Record<string, Array<[string, string, number]>> = {
+  "payments.refunds.refund": [
+    ["payments.fx.convert", "payments/refunds.py", 10],
+    ["payments.ledger.post", "payments/refunds.py", 11],
+  ],
+};
+
+function edges(table: Record<string, Array<[string, string, number]>>, name: string, side: "from" | "to") {
+  return (table[name] ?? []).map(([other, file, line]) => ({
+    edge_kind: "call",
+    from_symbol: side === "from" ? other : name,
+    to_symbol: side === "from" ? name : other,
+    from_symbol_id: "",
+    to_symbol_id: "",
+    path: file,
+    line,
+  }));
+}
+
+/** The assistant's answer to the refund question, as the chat route streams it. */
+const ASSISTANT_ANSWER = [
+  "A refund over **$250** needs a second approver in the billing console before it is issued [doc:policies/refunds.md § Approvals].",
+  "",
+  "- The approver must not be the person who took the original payment [doc:policies/refunds.md § Approvals].",
+  "- A refund in another currency settles at the day's rate, rounded half to even [memory:payments/fx/rounding@v1].",
+].join("\n");
+
+const ASSISTANT_CITATIONS = [
+  {
+    kind: "doc",
+    text: "[doc:policies/refunds.md § Approvals]",
+    verified: true,
+    reason: "",
+    ref: "policies/refunds.md",
+  },
+  {
+    kind: "memory",
+    text: "[memory:payments/fx/rounding@v1]",
+    verified: true,
+    reason: "",
+    ref: "payments/fx/rounding",
+  },
+];
+
+/** The answer as server-sent chunks, its usage and checked citations, then the end. */
+function assistantStream(): string {
+  const pieces = ASSISTANT_ANSWER.match(/[\s\S]{1,24}/g) ?? [];
+  const events: unknown[] = pieces.map((p) => ({ id: "chatcmpl-1", choices: [{ index: 0, delta: { content: p } }] }));
+  events.push({ id: "chatcmpl-1", choices: [], usage: { prompt_tokens: 1800, completion_tokens: 140 } });
+  events.push({
+    object: "loom.citations",
+    id: "chatcmpl-1",
+    choices: [],
+    citations: ASSISTANT_CITATIONS,
+    support: "supported",
+    unknown_names: [],
+  });
+  return `${events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("")}data: [DONE]\n\n`;
+}
+
 const debugCalls: string[] = [];
 
 async function installDemoApi(page: Page): Promise<void> {
@@ -644,6 +977,69 @@ async function installDemoApi(page: Page): Promise<void> {
           pct_of_cap: null,
           namespaces_with_spend: 1,
         });
+      case "/v1/knowledge.source.list":
+        return json({ sources: [], enabled: false });
+      case "/v1/collection.list":
+        return json({ collections: [], next_cursor: null });
+      case "/v1/knowledge.list":
+        return json({ rows: DOCUMENTS.map(documentRow), next_cursor: null });
+      case "/v1/knowledge.search":
+        return json({ results: PASSAGES });
+      case "/v1/audit.list":
+        return json({ rows: AUDIT_ROWS, next_cursor: null });
+      case "/v1/code.index_status":
+        return json(indexStatus());
+      case "/v1/code.coverage":
+        return json(coverage());
+      case "/v1/code.index_errors":
+        return json({ rows: [], total: 0 });
+      case "/v1/code.recent_commits":
+        return json({
+          rows: [
+            ["4be19a0c7d2e5f13", "FX rounds half to even, as settlement does", 0.4, 2, 488],
+            ["2d71c9e0b5a3f846", "Refunds settle in the charge's currency first", 6, 3, 486],
+            ["a90f4c2e7b1d3e58", "Ledger rejects unbalanced entries per currency", 26, 1, 482],
+          ].map(([commit, subject, h, files, pr]) => ({
+            commit,
+            subject,
+            committed_at: agoCh(h as number),
+            ingested_at: agoCh((h as number) - 0.1),
+            files,
+            pr_number: pr,
+          })),
+        });
+      case "/v1/code.search":
+        return json({
+          results: [codeUnit("payments.fx.convert", 0.91), codeUnit("payments.refunds.refund", 0.74)],
+          route: "hybrid",
+          abstain: false,
+          abstain_reason: "",
+          retrieval_risk: "low",
+          retrieval_confidence: 0.88,
+          tokens_returned: 412,
+          as_of: { commit: "4be19a0c7d2e5f13", indexed_at: agoCh(0.3), lag_commits: 0, stale: false },
+        });
+      case "/v1/code.symbol": {
+        const name = String(body.name ?? "");
+        return json({
+          definitions: CODE_UNITS[name] ? [codeUnit(name)] : [],
+          ambiguous: false,
+          candidates: [],
+          tokens_returned: 380,
+        });
+      }
+      case "/v1/code.callers":
+        return json({
+          edges: edges(CODE_CALLERS, String(body.name ?? ""), "from"),
+          seed_symbols: [],
+          truncated: false,
+        });
+      case "/v1/code.callees":
+        return json({ edges: edges(CODE_CALLEES, String(body.name ?? ""), "to"), seed_symbols: [], truncated: false });
+      case "/v1/health/ready":
+        return json({ ready: true, checks: { assistant: { ok: true, required: false } } });
+      case "/v1/assistant/chat/completions":
+        return route.fulfill({ status: 200, contentType: "text/event-stream", body: assistantStream() });
       case "/v1/ui.vitals":
         return json({ recorded: true, route: body.route ?? "" });
       default:
@@ -662,6 +1058,82 @@ async function capture(page: Page, name: string): Promise<void> {
   await page.mouse.move(0, 0);
   await page.screenshot({ path: path.join(OUT, `${name}.png`) });
 }
+
+/** The page as WebP in docs/assets/screenshots/, encoded by Chromium on a blank page. */
+async function captureWebp(page: Page, name: string): Promise<void> {
+  fs.mkdirSync(OUT_ASSETS, { recursive: true });
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(400);
+  await page.mouse.move(0, 0);
+  const png = (await page.screenshot()).toString("base64");
+  const blank = await page.context().newPage();
+  const webp = await blank.evaluate(async (data) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${data}`;
+    await img.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext("2d")?.drawImage(img, 0, 0);
+    return canvas.toDataURL("image/webp", 0.85).split(",")[1] ?? "";
+  }, png);
+  await blank.close();
+  fs.writeFileSync(path.join(OUT_ASSETS, `${name}.webp`), Buffer.from(webp, "base64"));
+}
+
+/** A short pause, so a clip's viewer can follow each step. */
+const beat = (page: Page, ms = 900) => page.waitForTimeout(ms);
+
+/** The steps the shots and the clips share, each ending on what it shows. */
+const steps = {
+  async linkedCode(page: Page, pace = 0) {
+    await page.goto("/memories");
+    const row = page.getByText("payments/fx/rounding", { exact: true }).first();
+    if (pace) {
+      await row.scrollIntoViewIfNeeded();
+      await beat(page, pace);
+    }
+    await row.click();
+    const drawer = page.getByRole("dialog");
+    await expect(drawer.getByText("Linked code")).toBeVisible();
+    return drawer;
+  },
+  async documentSearch(page: Page, typing = 0) {
+    await page.goto("/library");
+    await expect(page.getByText("Refunds policy").first()).toBeVisible();
+    await page.getByRole("button", { name: "Find a passage" }).click();
+    const field = page.getByRole("textbox", { name: "Passage to find" });
+    await field.click();
+    await field.pressSequentially("Who approves a large refund?", { delay: typing });
+    await field.press("Enter");
+    await expect(page.getByText("Approvals").first()).toBeVisible();
+  },
+  async codeCallers(page: Page, typing = 0) {
+    await page.goto(`/repositories?repo=${CODE_NS}`);
+    await page.getByRole("tab", { name: "Explore" }).click();
+    const search = page.getByRole("textbox", { name: "Search code" });
+    await search.click();
+    await search.pressSequentially("where are refunds converted to USD", { delay: typing });
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(page.getByText("payments.fx.convert").first()).toBeVisible();
+    if (typing) await beat(page);
+    await page.getByRole("button", { name: "payments.fx.convert", exact: true }).first().click();
+    await expect(page.getByText(/^Callers \(\d+\)$/)).toBeVisible();
+  },
+  async assistant(page: Page, typing = 0) {
+    await page.goto("/memories");
+    const launcher = page.locator('[data-focus-key="assistant-launcher"]');
+    await expect(launcher).toBeVisible();
+    await launcher.click();
+    const question = page.getByRole("textbox", { name: "Question" });
+    await question.pressSequentially("What does a refund over $250 need?", { delay: typing });
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    const checked = page.getByText("Checked against what Loom holds").first();
+    await expect(checked).toBeVisible();
+    // The clip ends on the checked sources, below the answer's last line.
+    if (typing) await page.getByRole("button", { name: "Retry" }).scrollIntoViewIfNeeded();
+  },
+};
 
 test.describe("docs screenshots", () => {
   test.skip(!ENABLED, "set LOOM_DOCS_SCREENSHOTS=1 to regenerate docs/images");
@@ -699,13 +1171,6 @@ test.describe("docs screenshots", () => {
     await capture(page, "dashboard-memory-detail");
   });
 
-  test("review queue", async ({ page }) => {
-    await installDemoApi(page);
-    await page.goto("/admin/review_queue");
-    await expect(page.getByText("Conflict 1 of 2")).toBeVisible();
-    await capture(page, "dashboard-review-queue");
-  });
-
   test("recall", async ({ page }) => {
     await installDemoApi(page);
     await page.goto("/recall");
@@ -737,5 +1202,93 @@ test.describe("docs screenshots", () => {
     await pickOption(dialog, "Connect", "claude-code");
     await expect(dialog.getByTestId("claude-code-recommended")).toBeVisible();
     await capture(page, "dashboard-connect");
+  });
+});
+
+test.describe("docs screenshots at 1440 px", () => {
+  test.skip(!ENABLED, "set LOOM_DOCS_SCREENSHOTS=1 to regenerate docs/assets/screenshots");
+  test.use({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, colorScheme: "dark" });
+
+  test.afterEach(() => {
+    if (process.env.LOOM_DOCS_DEBUG) console.log(debugCalls.join("\n"));
+    debugCalls.length = 0;
+  });
+
+  test("memory linked files", async ({ page }) => {
+    await installDemoApi(page);
+    await steps.linkedCode(page);
+    await captureWebp(page, "memory-linked-files");
+  });
+
+  test("review queue 1440", async ({ page }) => {
+    await installDemoApi(page);
+    await page.goto("/admin/review_queue");
+    await expect(page.getByText("Conflict 1 of 2")).toBeVisible();
+    await captureWebp(page, "review-queue");
+  });
+
+  test("audit log", async ({ page }) => {
+    await installDemoApi(page);
+    await page.goto("/admin/activity");
+    await expect(page.getByText(/Resolved conflict/).first()).toBeVisible();
+    await captureWebp(page, "audit-log");
+  });
+
+  test("document search", async ({ page }) => {
+    await installDemoApi(page);
+    await steps.documentSearch(page);
+    await captureWebp(page, "document-search");
+  });
+
+  test("code callers", async ({ page }) => {
+    await installDemoApi(page);
+    await steps.codeCallers(page);
+    await captureWebp(page, "code-callers");
+  });
+
+  test("assistant answer", async ({ page }) => {
+    await installDemoApi(page);
+    await steps.assistant(page);
+    await captureWebp(page, "assistant-answer");
+  });
+});
+
+// The clips: the same steps, typed at a reading pace, recorded by Playwright as WebM (a
+// context of their own, since `video` cannot be set per describe) and copied to a stable
+// name once the page closes.
+test.describe("docs clips", () => {
+  test.skip(!ENABLED, "set LOOM_DOCS_SCREENSHOTS=1 to regenerate docs/assets/screenshots");
+  const SIZE = { width: 1280, height: 800 };
+
+  async function record(browser: Browser, name: string, run: (page: Page) => Promise<void>): Promise<void> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-clip-"));
+    const context = await browser.newContext({
+      viewport: SIZE,
+      deviceScaleFactor: 1,
+      colorScheme: "dark",
+      baseURL: test.info().project.use.baseURL,
+      recordVideo: { dir, size: SIZE },
+    });
+    const page = await context.newPage();
+    await installDemoApi(page);
+    await run(page);
+    await beat(page, 1600);
+    const video = page.video();
+    await context.close();
+    fs.mkdirSync(OUT_ASSETS, { recursive: true });
+    await video?.saveAs(path.join(OUT_ASSETS, `clip-${name}.webm`));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  test("clip memory surfacing", async ({ browser }) => {
+    await record(browser, "memory-surfacing", (page) => steps.linkedCode(page, 1200).then(() => undefined));
+  });
+
+  test("clip search answer", async ({ browser }) => {
+    await record(browser, "search-answer", (page) => steps.assistant(page, 45));
+  });
+
+  test("clip code callers", async ({ browser }) => {
+    await record(browser, "code-callers", (page) => steps.codeCallers(page, 45));
   });
 });

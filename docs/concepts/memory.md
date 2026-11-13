@@ -332,6 +332,11 @@ Each line:
 
 ## Memories linked to code
 
+![A memory's detail in the dashboard: its linked code, one definition current and one changed since a commit](../assets/screenshots/memory-linked-files.webp)
+
+The dashboard shows the same links when a memory opens
+([clip](../assets/screenshots/clip-memory-surfacing.webm)).
+
 A memory about code is linked to the definitions and files it names, and the links
 follow the code. The `memory_code_links` worker links each memory tagged `repo:<id>`
 (the coding plugins tag their sessions) or written in a repository's code namespace
