@@ -19,7 +19,8 @@ path as `POST /v1/<op>`. The protocol is in the [MCP reference](../../reference/
 A plain MCP entry gives the tools only: no session capture, primer or code shunt. Loom
 still records an implicit run per MCP session and names the agent after the client's
 `clientInfo.name` (`Cursor` becomes `cursor`). To teach the agent when to call the tools,
-add the [agent instructions](agent-instructions.md) block to a coding client's rule file.
+add the [agent instructions](agent-instructions.md) block to a coding client's rule file,
+and connect it on `--toolset coding` (the default only for Claude Code, Codex and Cursor).
 
 ## Wire a client with `loom install`
 

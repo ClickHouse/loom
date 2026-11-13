@@ -18,9 +18,9 @@ tools the `coding` toolset lists, so connect the client on `?toolset=coding`:
 ## Loom: memory and code index
 
 Loom is connected as an MCP server; its tools are named `loom_*`. A tool you do not see
-listed runs through `loom_op` with the op's dotted name (`loom_code_symbol` is
-`code.symbol`, `loom_working_memory_set` is `working_memory.set`); `loom_op` with
-`{"op": "help", "query": "<words>"}` finds them.
+listed runs through `loom_op` with the op's dotted name: on a connection without the
+coding toolset, `loom_code_symbol` is `code.symbol` and `loom_working_memory_set` is
+`working_memory.set`. `loom_op` with `{"op": "help", "query": "<words>"}` finds them.
 
 Every task: make these two calls unless a Loom hook already put Loom's context in this
 session (the Claude Code and Codex plugins do). Without one they are not optional.
