@@ -414,7 +414,9 @@ def test_a_gated_unset_process_answers_503_naming_the_state(
     app.assert_not_awaited()
     assert send.await_args_list[0].args[0]["status"] == 503
     body = send.await_args_list[1].args[0]["body"]
-    assert b"AUTH_UNAVAILABLE" in body and b"run with LOOM_CELL unset, serves nothing now" in body
+    assert (
+        b"AUTH_UNAVAILABLE" in body and b"This server serves nothing now: this deployment" in body
+    )
     assert b"as its cell" not in body
 
 
@@ -485,4 +487,4 @@ def test_an_unread_state_answers_503_while_postgres_migrations_are_pending(
     )
     app.assert_not_awaited()
     body = send.await_args_list[1].args[0]["body"]
-    assert b"cell state is not read yet (relation does not exist)" in body
+    assert b"cell state is not read yet: relation does not exist; see " in body

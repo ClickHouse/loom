@@ -278,10 +278,12 @@ The `lifespan` in `server/main.py` runs in every process, in this order (its ste
    deployment's migration lock before applying: a KeeperMap key in `loom._migration_lock`
    (`server/core/schema/migrate_lease.py`). A server without a Keeper, or a failed
    migration, stops the boot. With `LOOM_BOOT_MIGRATE=false` the process logs pending files and
-   reports them on `/v1/health`.
+   reports them on `/v1/health`. Under the Postgres authority, read the deployment's cell
+   state before the first heartbeat and the lease decision; a failed first read stops
+   the boot ([cells](cells.md#the-tenancy-check-and-placement)).
 4. **Start the `agent_events` emitter.**
 5. **Default namespace.** With auth off, give the configured namespace its
-   `loom.namespaces` row.
+   `loom.namespaces` row, unless the cell gate refuses this process.
 6. **Elect the worker leader.**
 7. **Leader duties.** Apply retention TTL overrides where they differ, and register the
    configured tracker namespaces.
@@ -292,7 +294,8 @@ The `lifespan` in `server/main.py` runs in every process, in this order (its ste
    `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS`; the workers child process adopts them too. A
    live setting's override is laid over the process's own `settings`, so code reads it as
    `settings.<field>` ([runtime settings](../operations/runtime-settings.md)).
-9. **Start the workers** in the leader, and the lease loop in `auto`.
+9. **Start the workers** in the leader, and the lease loop in `auto` (and in `on` under
+   the Postgres authority, where the cell gate starts and stops them).
 10. **Provider report.** Log the resolved LLM provider and probe the embedder's dimension.
 11. **Vector features.** Probe the quantized-codes read setting, patch parts and whether
     inserts can skip the vector-index build.

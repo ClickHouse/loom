@@ -225,7 +225,7 @@ _deployment_id = ""
 _awaiting_first_read = False
 
 
-def await_first_read() -> None:
+def expect_first_read() -> None:
     global _awaiting_first_read
     _awaiting_first_read = True
 
@@ -306,7 +306,9 @@ def gated_by_state() -> bool:
     """Whether this deployment's server processes read the state rows and are gated on
     them: under the Postgres authority, `LOOM_CELL` set or not (a cell needs that
     authority, `settings_problem`). Under the ClickHouse authority nothing is read."""
-    return settings.storage_authority == "postgres"
+    from server.core import pg
+
+    return pg.enabled()
 
 
 def _unset_reason(view: _View) -> str:
@@ -316,8 +318,8 @@ def _unset_reason(view: _View) -> str:
         # A failed read is never taken for an absent row.
         return (
             "the deployment's cell state is not read yet"
-            + (f" ({view.error})" if view.error else "")
-            + f" (see {TROUBLESHOOTING})"
+            + (f": {view.error}" if view.error else "")
+            + f"; see {TROUBLESHOOTING}"
         )
     found = view.state()
     if found in ("open", "recording"):

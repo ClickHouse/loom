@@ -637,7 +637,7 @@ async def start_cell_gate() -> list[asyncio.Task[None]]:
 
     if not cell.gated_by_state():
         return []
-    cell.await_first_read()
+    cell.expect_first_read()
     if not await cell.refresh() and not SKIPPED_PG_MIGRATIONS:
         raise RuntimeError(
             "refusing to start: the deployment's cell state could not be read "
