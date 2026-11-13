@@ -759,17 +759,18 @@ const PASSAGES = [
 const AGENT_SUBJECT = "sa:claude-code-laptop-4f2a";
 const AGENT_WRITER = `process:${AGENT_SUBJECT}`;
 const BOT_WRITER = "process:sa:support-bot-91c3";
-/** The Audit log's events, with the subject fields the Audit log's labels read. A memory
- *  write names its writer as `kind:subject`; any other audited op names the token's
- *  subject. Each memory write is as old as the memory it saved. */
+/** A sample of the namespace's audit events (every one within the first screen), with the
+ *  subject fields the Audit log's labels read. A memory write names its writer as
+ *  `kind:subject`; any other audited op names the token's subject. Each memory write is as
+ *  old as the memory it saved. */
 const AUDIT_ROWS = [
   { h: 1.5, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "api/rate-limit/public" } },
   { h: 2.0, event_type: "memory.set", actor: AGENT_WRITER, subject: { memory_key: "staging/db/read-only-window" } },
   { h: 3.5, event_type: "memory.set", actor: AGENT_WRITER, subject: { memory_key: "deploys/policy/windows" } },
   { h: 4.6, event_type: "memory.delete", actor: AGENT_SUBJECT, subject: { memory_key: "staging/db/legacy-host" } },
   { h: 5.0, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "support/refunds/approval" } },
+  { h: 8.0, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "billing/refunds/threshold" } },
   { h: 8.2, event_type: "namespace.join", actor: "dev2@acme.example", subject: { namespace: NS, role: "viewer" } },
-  // The support bot's writes above come after this grant of the namespace they land in.
   {
     h: 9.0,
     event_type: "grants.create",
