@@ -2,7 +2,7 @@
 // every spec here) with every `/v1/*` call answered from the invented demo data below, one
 // small team "acme" — never a live server. The spec is skipped unless
 // LOOM_DOCS_SCREENSHOTS=1, so the suite's own run never writes into docs/. Regenerate the
-// PNGs in docs/images/ from frontend/ with:
+// images in docs/images/ and docs/assets/screenshots/ from frontend/ with:
 //
 //   LOOM_DOCS_SCREENSHOTS=1 E2E_PORT=4271 npx playwright test e2e/docs-screenshots.spec.ts
 //
@@ -830,11 +830,13 @@ const CODE_CALLEES: Record<string, Array<[string, string, number]>> = {
   ],
 };
 
-function edges(table: Record<string, Array<[string, string, number]>>, name: string, side: "from" | "to") {
+/** `name`'s call edges as `code.callers` (others call it) or `code.callees` (it calls
+ *  others) answers them. */
+function edges(table: Record<string, Array<[string, string, number]>>, name: string, direction: "callers" | "callees") {
   return (table[name] ?? []).map(([other, file, line]) => ({
     edge_kind: "call",
-    from_symbol: side === "from" ? other : name,
-    to_symbol: side === "from" ? name : other,
+    from_symbol: direction === "callers" ? other : name,
+    to_symbol: direction === "callers" ? name : other,
     from_symbol_id: "",
     to_symbol_id: "",
     path: file,
@@ -1095,14 +1097,14 @@ async function installDemoApi(page: Page): Promise<void> {
       }
       case "/v1/code.callers":
         return json({
-          edges: edges(CODE_CALLERS, String(body.name ?? ""), "from"),
+          edges: edges(CODE_CALLERS, String(body.name ?? ""), "callers"),
           seed_symbols: [String(body.name ?? "")],
           epistemic: "exact",
           truncated: false,
         });
       case "/v1/code.callees":
         return json({
-          edges: edges(CODE_CALLEES, String(body.name ?? ""), "to"),
+          edges: edges(CODE_CALLEES, String(body.name ?? ""), "callees"),
           seed_symbols: [String(body.name ?? "")],
           epistemic: "exact",
           truncated: false,
