@@ -334,22 +334,23 @@ holds its state, cannot tell the two apart (ClickHouse carries no cell state: ad
 would make the write path read a second store for tenancy) and such a process never
 reads the directory; where every process has `LOOM_CELL` unset, `loom doctor`'s naming
 of it (which reads the directory, and ships with attach) is the only signal. A
-`(true, …)` row with `recording` and the own row: the first cell recording.
-Both present with the own row otherwise: `enforced`, a later cell's mode reading as
-`enforced` whatever its row says (its triggers, mode cache and CLI treat it so, and
-`loom doctor` names a row that is not). Either row alone, both without the own row, or
-both absent beside a tenancy or own row (the one-row states), which prepare never
-leaves: the org triggers act as in `enforced`, every process is gated as by an unread
-row, `loom doctor` names it, and a rerun of `loom cell prepare` writes the missing rows
-back from the directory while the cell runs. A unique index in the directory allows one
-first cell, and the value holds no memory content and is classified so. Attach rechecks
-the host and deployment id. A process reads the value with the mode, and "not yet read",
-"absent" and "false" are distinct: only a row that has been read makes a process ready,
-and a row whose cell is not `LOOM_CELL` gates it (below) and is reported by
-`scim_settings_problem`. Boot refuses on settings alone (`scim_settings_problem` with
-the row unread checks only the token's form against `LOOM_CELL`); the comparison with
-the `first` row runs per request once the row is read, and `loom doctor` reads the value
-from the cell's Postgres or reports it unknown.
+`(true, …)` row with `recording` and the own row: the first cell recording. Both present
+with the own row otherwise: `enforced`, a later cell's mode reading as `enforced`
+whatever its row says (its triggers, mode cache and CLI treat it so, and `loom doctor`
+names a row that is not). Either row alone, both without the own row, or both absent
+beside a tenancy or own row (the `partial` states: some state row present but not all of
+the `first`, mode and own rows), which prepare never leaves: the org triggers act as in
+`enforced`, every process is gated as by an unread row, `loom doctor` names it, and a
+rerun of `loom cell prepare` writes the missing rows back from the directory while the
+cell runs. A unique index in the directory allows one first cell, and the value holds no
+memory content and is classified so. Attach rechecks the host and deployment id. A
+process reads the value with the mode, and "not yet read", "absent" and "false" are
+distinct: only a row that has been read makes a process ready, and a row whose cell is
+not `LOOM_CELL` gates it (below) and is reported by `scim_settings_problem`. Boot
+refuses on settings alone (`scim_settings_problem` with the row unread checks only the
+token's form against `LOOM_CELL`); the comparison with the `first` row runs per request
+once the row is read, and `loom doctor` reads the value from the cell's Postgres or
+reports it unknown.
 
 ## The cell's own row
 
@@ -378,7 +379,7 @@ the `LOOM_CELL` it runs with, the mode it last read and its fingerprint), hold n
 content and are classified so for erasure. A process matches a value when every field
 both know is equal, a field the value lacks counting as equal only at its default, so
 builds N and N+1 with the same configuration match one row. With `LOOM_CELL` set, while
-its cell's own row, `first` row or mode row is unread, the state rows are in a one-row
+its cell's own row, `first` row or mode row is unread, the state rows are in a `partial`
 state (the `first` row's rule, above), the cell's own row is absent or matched by
 neither value, or the `first` row names another cell, every request it receives but its
 health probes and the probe route answers 503 `AuthUnavailable`: bearer requests (the
@@ -455,7 +456,7 @@ such as a token revocation, `loom migrate` or `loom doctor`, is not gated by the
 and runs as it does today, Postgres outage included. Both rows absent with no tenancy or
 own row, as on a deployment never prepared, or the first cell in `recording`, leave the
 process serving as a single deployment; every state the `first` row's rule (above)
-counts as `enforced`, or as a one-row state, gates it as `enforced` does. `enforced`
+counts as `enforced`, or as a `partial` state, gates it as `enforced` does. `enforced`
 (which attach sets on the first cell once every live process has `LOOM_CELL` set, and
 prepare on a later cell, whose processes run with it from their first boot) makes a
 server process unready, run no worker and answer nothing but its health probes and the
@@ -1047,7 +1048,7 @@ never by a cell's ops, so a cell's release does not wait on the router's.
 - A process with `LOOM_CELL` set answers nothing but its health probes and the probe
   route, and runs no worker, unless its configuration matches a value of its cell's own
   row, which the directory's overlap refusals have checked; a process with `LOOM_CELL`
-  unset on a cell whose state rows count as `enforced` or are in a one-row state (the
+  unset on a cell whose state rows count as `enforced` or are in a `partial` state (the
   `first` row's rule) answers nothing but its health probes and the probe route and runs
   no worker.
 - No bearer-token issuer, host, OIDC client, org pattern or bucket prefix is accepted by
@@ -1070,12 +1071,12 @@ never by a cell's ops, so a cell's release does not wait on the router's.
 - `server/core/cell_probe.py`: the probe route and the probe listener, which every web
   process accepts on and the workers child never opens;
 - `server/core/cell.py`: the cell's own state (`loom.cell_first`, `loom.tenancy_mode`,
-  `loom.cell_self`), the deployment's state rule (`state`, over the rows `refresh` reads,
-  whether `loom.tenancy` holds a row among them), its fingerprint and `gate_reason`, the gate on processes
-  with `LOOM_CELL` set or unset, which the request middleware
-  (`server/transport/model_maintenance.py`), `verify_token`, readiness, the workers'
-  lease and the heartbeat read; `server/boot.py`'s `start_cell_gate` is a server
-  process's boot read;
+  `loom.cell_self`), the deployment's state rule (`state`, over the rows `refresh`
+  reads, whether `loom.tenancy` holds a row among them), its fingerprint and
+  `gate_reason`, the gate on processes with `LOOM_CELL` set or unset, which the request
+  middleware (`server/transport/model_maintenance.py`), `verify_token`, readiness, the
+  workers' lease and the heartbeat read; `server/boot.py`'s `start_cell_gate` is a
+  server process's boot read;
 - `schemas/pg_migrations/008_cells.sql`, `schemas/pg_migrations/009_cell_probe.sql` and
   `schemas/migrations/094_cell_heartbeats.sql`: the cell's tables;
 - `server/auth/tenancy.py` (`ensure_held`): the tenancy check and the placement call,
@@ -1312,7 +1313,7 @@ An integration test with two cells and a router in CI's Postgres job:
   `loom doctor` naming the missing tenancy rows, and a pod with `LOOM_CELL` unset serves
   every org there until the rerun and is gated after it, while with `LOOM_CELL` set an
   org gets its tenancy row back through the placement call; a prepare rerun against
-  `LOOM_CELL`-unset pods in a one-row state reaches their probe route and writes the
+  `LOOM_CELL`-unset pods in a `partial` state reaches their probe route and writes the
   missing row back; prepare refuses a later cell's `probe_url` that reports an id other
   than its stores', attach refuses a cell whose host reports an id other than its
   `probe_url`'s, and prepare refuses a probe address argument for the first cell, and
