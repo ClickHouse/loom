@@ -256,6 +256,8 @@ module = [
   "agents.*",
   "crewai",
   "crewai.*",
+  "autogen_core",
+  "autogen_core.*",
   "langgraph",
   "langgraph.*",
   "strands",

@@ -248,6 +248,9 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
 - `loom.integrations.crewai.LoomCrewMemory(agent=...)` is a CrewAI `Memory`
   over a `SyncAgent`: `recall` is `memory.search`, a task's output goes to
   `memory.set_from_messages`; install the `[crewai]` extra.
+- `loom.integrations.autogen.LoomMemory(agent, user_id=...)` implements
+  AutoGen's `Memory` protocol over `memory.set` and `memory.search`; install
+  the `[autogen]` extra.
 - `loom.integrations.langgraph.LoomStore(agent, tags=...)` is a LangGraph
   `BaseStore`: `put` is `memory.set`, `search(query=...)` ranks with
   `memory.search` and reads values with `memory.bulk_get`, and namespace tuples

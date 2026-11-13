@@ -18,6 +18,7 @@ or needs another database, vector store or cache.
 | OpenAI Agents SDK              | `loom_tools`                                    | Python, `loom.integrations.openai_agents`                 | `FunctionTool`                         |
 | OpenAI Agents SDK (TypeScript) | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`         |
 | CrewAI                         | `LoomCrewMemory`                                | Python, `loom.integrations.crewai`                        | `crewai.memory.Memory`                 |
+| AutoGen                        | `LoomMemory`                                    | Python, `loom.integrations.autogen`                       | `autogen_core.memory.Memory`           |
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                            |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol             |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally        |
@@ -249,6 +250,40 @@ restores that, with a local store.
 | `honour_abstain` | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                               |
 | `defer`          | `True`   | queue the extraction on the server instead of waiting                                           |
 | `key_prefix`     | `crewai` | key prefix of `remember`'s saves                                                                |
+
+## AutoGen
+
+`LoomMemory` implements AutoGen's `Memory` protocol (`autogen_core.memory`), which an
+`AssistantAgent` takes as `memory=[...]`. Install with
+`pip install 'clickhouse-loom[autogen]'` (`autogen-core` 0.7; `AssistantAgent` comes from
+`autogen-agentchat`, installed with it).
+
+```python
+from autogen_agentchat.agents import AssistantAgent
+from autogen_core.memory import MemoryContent, MemoryMimeType
+from loom import Agent
+from loom.integrations.autogen import LoomMemory
+
+async with Agent(org="acme", namespace="support") as loom_agent:
+    memory = LoomMemory(loom_agent, user_id="alice")
+    await memory.add(
+        MemoryContent(content="Alice prefers aisle seats", mime_type=MemoryMimeType.TEXT)
+    )
+    assistant = AssistantAgent("assistant", model_client=model_client, memory=[memory])
+```
+
+| AutoGen          | Loom                                                                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `add`            | one `memory.set` under `autogen/<first 20 hex of sha256(text)>`; text and JSON content, not bytes or images                                                                                |
+| `query`          | `memory.search` of the namespace it writes to; leaves out memories below Loom's floor and returns nothing when Loom abstains; each result's metadata carries `memory_key` and `similarity` |
+| `update_context` | before each model call: `query` with the latest user message, the matches added as one system message                                                                                      |
+| `clear`          | deletes the memories this adapter wrote, the keys under its `key_prefix`, and nothing else                                                                                                 |
+
+`LoomMemory(agent, user_id=..., tags=[...], top_k=5, honour_abstain=True,
+key_prefix="autogen")`: `tags` are stamped on every `add` and keep a `query` to memories
+carrying any of them. `user_id` unset, a `query` reads every user's memories in the
+namespace. AutoGen awaits its memory, so the adapter takes a `loom.Agent` and refuses a
+`SyncAgent`.
 
 ## LangGraph
 
