@@ -1560,7 +1560,8 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
 - A spent refresh token, code or device code that comes back ends its whole session.
 - A namespace is never authorized without an org.
 - A row-scoped op answers as for a missing row when the caller lacks the op's role on the
-  row's namespace, never 403.
+  row's namespace, never a 403 that confirms the id exists (the two blacklist 403s are in
+  [row-scoped operations](#row-scoped-operations)).
 - A restricted namespace admits only a literal, same-org, directly granted caller, and
   denies when its classification cannot be read.
 - A `high`-sensitivity value has no embedding row; a chunk, session digest or
