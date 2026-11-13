@@ -384,9 +384,10 @@ const CODE_REPOS = [
   codeRepo(CODE_NS_RELEASE, "release-2026.09", "9c02e7b1a4f86d25", 1261, 17990, 20),
 ];
 
-/** `code.coverage` for the main branch: Python and TypeScript, fully embedded. */
+/** `code.coverage` for the main branch: Python and TypeScript, fully embedded; only Python
+ *  has a compiler tier (scip-python). */
 function coverage() {
-  const lang = (name: string, files: number, symbols: number) => ({
+  const lang = (name: string, files: number, symbols: number, scip: number) => ({
     lang: name,
     files,
     files_errored: 0,
@@ -398,14 +399,14 @@ function coverage() {
     chunks_last_at: agoCh(0.4),
     symbols_treesitter: symbols,
     symbols_treesitter_last_at: agoCh(0.4),
-    symbols_scip: symbols,
-    symbols_scip_last_at: agoCh(0.4),
+    symbols_scip: scip,
+    symbols_scip_last_at: scip ? agoCh(0.4) : "",
   });
   return {
     org: ORG,
     namespace: CODE_NS,
     as_of_commit: "4be19a0c7d2e5f13",
-    languages: [lang("python", 1042, 15880), lang("typescript", 242, 2462)],
+    languages: [lang("python", 1042, 15880, 15880), lang("typescript", 242, 2462, 0)],
     tiers: [{ tier: "scip", edges: 52110, edges_last_at: agoCh(0.4) }],
     gaps: null,
     pr_history_from: "2024-01-03",
