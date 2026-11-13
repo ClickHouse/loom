@@ -357,7 +357,7 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     if op is None or not _routed(op, writes):
         if op is not None:  # a write on a read-only connection
             emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP)
-        routed = [n for n, o in by_name.items() if o.read_only or writes]
+        routed = [n for n, o in by_name.items() if _routed(o, writes)]
         near = difflib.get_close_matches(name, routed, n=5, cutoff=0.6)
         body = {
             "error": f"no op {name!r} reachable here"

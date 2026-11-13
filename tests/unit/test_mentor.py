@@ -2059,98 +2059,104 @@ def _note_and_its_text(rule: Callable[..., Any]) -> list[tuple[str, str]]:
 
 def test_a_call_rule_names_in_its_text_each_op_its_note_may_name() -> None:
     """MCP strips the note, so an op the note names must be in the hint already."""
-    pairs = [pair for rule in mentor_rules.CALL_RULES for pair in _note_and_its_text(rule)]
-    assert len(pairs) >= 8
-    for op, text in pairs:
-        assert op in text, (op, text)
-
-
-_LONG = "k" * 70
-_REPOS = ["ClickHouse/ClickHouse", "ClickHouse/clickhouse-go", "acme/payments-service"]
-
-
-def _hints(usage: dict[str, int], sessions: int, facts: dict[str, Any]) -> list[Any]:
-    return mentor_rules.evaluate_rules(usage, sessions, facts, max_hints=32)
+    noted = {rule.__name__: _note_and_its_text(rule) for rule in mentor_rules.CALL_RULES}
+    assert {name for name, pairs in noted.items() if pairs} == {
+        "_rule_set_stack_trace",
+        "_rule_set_issue_reference",
+        "_rule_set_large_value",
+        "_rule_run_over_budget",
+    }
+    for name, pairs in noted.items():
+        for op, text in pairs:
+            assert op in text, (name, op, text)
 
 
 _KEYED = {"memory.get": 6606, "memory.search": 52, "memory.set": 1687}
 
 
-def _echo_cases(value: str) -> list[tuple[dict[str, int], int, dict[str, Any]]]:
-    """Inputs that fire every rule echoing a caller value, each value ``value``-sized."""
-    return [
-        ({"memory.set": 40}, 1, {"repos": 16, "repo_names": [value + str(i) for i in range(3)]}),
-        (
-            _KEYED,
-            30,
-            {
-                "max_sets_one_key": 40,
-                "max_gets_one_key": 116,
-                "hot_set_key": value,
-                "hot_get_key": value + "x",
-            },
-        ),
-        (
-            _KEYED,
-            30,
-            {
-                "max_sets_one_key": 40,
-                "max_gets_one_key": 116,
-                "hot_set_key": value,
-                "hot_get_key": value,
-            },
-        ),
-        ({"memory.set": 40}, 5, {"tracker_tagged_sets": 12, "tracker_sources": [value] * 3}),
-    ]
+def _profile_hint(code: str, usage: dict[str, int], sessions: int, facts: dict[str, Any]) -> str:
+    hints = mentor_rules.evaluate_rules(usage, sessions, facts, max_hints=32)
+    hint = next((h for h in hints if h.code == code), None)
+    assert hint is not None, code
+    return hint.text
 
 
-@pytest.mark.parametrize("case", _echo_cases(_LONG))
-def test_a_hint_with_long_echoed_values_keeps_its_quotes_and_its_note_op(
-    case: tuple[dict[str, int], int, dict[str, Any]],
-) -> None:
-    hints = _hints(*case)
-    assert hints
-    for h in hints:
-        assert len(h.text) <= mentor_rules.HINT_CHARS
-        # the clip lands after the last echoed value, never inside one
-        assert mentor_rules.without_listing_note(h.text).count("'") % 2 == 0, h.text
-        _assert_rendered_cleanly(h.text)
+def _call_rule_hint(rule: Callable[..., Any], op: str, args: dict[str, Any], **kw: Any) -> str:
+    out = rule(op, args, kw.get("res", {}), kw.get("facts", {}), kw.get("st", {}))
+    assert out is not None, rule.__name__
+    return mentor_rules.clip_keeping_note(out[1])
 
 
-@pytest.mark.parametrize(
-    "facts",
-    [
-        {"repos": 1, "repo_names": ["acme/ch"]},
-        {"repos": 16, "repo_names": _REPOS},
-        {
-            "max_sets_one_key": 40,
-            "max_gets_one_key": 116,
-            "hot_get_key": "sre/lease",
-            "hot_set_key": "agents/planner/state",
-        },
-        {
-            "max_sets_one_key": 40,
-            "max_gets_one_key": 116,
-            "hot_get_key": "sre/lease",
-            "hot_set_key": "sre/lease",
-        },
-        {"tracker_tagged_sets": 12, "tracker_sources": ["qa", "ci-main"]},
-    ],
-)
-def test_a_hint_with_typical_echoed_values_keeps_all_its_advice(facts: dict[str, Any]) -> None:
-    hints = _hints(_KEYED, 30, facts) + _hints({"memory.set": 40}, 5, facts)
-    assert hints
-    for h in hints:
-        assert not mentor_rules.without_listing_note(h.text).endswith("…"), h.text
+def _hot(set_key: str, get_key: str) -> dict[str, Any]:
+    return {
+        "max_sets_one_key": 40,
+        "max_gets_one_key": 116,
+        "hot_set_key": set_key,
+        "hot_get_key": get_key,
+    }
+
+
+# Each rule that echoes a caller value, as a hint for that value.
+_ECHOES: dict[str, Callable[[str], str]] = {
+    "code_index_unused": lambda v: _profile_hint(
+        "code_index_unused",
+        {"memory.set": 40},
+        1,
+        {"repos": 16, "repo_names": [v, v + "-go", v + "-js"]},
+    ),
+    "coordination_loop, two keys": lambda v: _profile_hint(
+        "coordination_loop", _KEYED, 30, _hot(v, v + "/next")
+    ),
+    "coordination_loop, one key": lambda v: _profile_hint(
+        "coordination_loop", _KEYED, 30, _hot(v, v)
+    ),
+    "tracker_unused": lambda v: _profile_hint(
+        "tracker_unused",
+        {"memory.set": 40},
+        5,
+        {"tracker_tagged_sets": 12, "tracker_sources": [v, v + "-ci", v + "-qa"]},
+    ),
+    "records_for_identities": lambda v: _profile_hint(
+        "records_for_identities",
+        {"memory.set": 40},
+        5,
+        {"id_keyed_sets": 40, "top_prefix_sets": 30, "top_prefix": v},
+    ),
+    "set_churn": lambda v: _call_rule_hint(
+        mentor_rules._rule_set_churn, "memory.set", {"memory_key": v}, st={"set_keys": {v: 9}}
+    ),
+    "search_identifier_query": lambda v: _call_rule_hint(
+        mentor_rules._rule_search_identifier,
+        "memory.search",
+        {"query": v + "::merge"},
+        res={"abstain": True},
+        facts={"repos": 1},
+    ),
+}
+_LONG = "Storage" + "k" * 63
+
+
+# A typical value per rule: a tracker source is a short configured name
+_TYPICAL = {"tracker_unused": "qa"}
+
+
+@pytest.mark.parametrize("rule", sorted(_ECHOES))
+def test_a_hint_with_a_typical_echoed_value_keeps_all_its_advice(rule: str) -> None:
+    text = _ECHOES[rule](_TYPICAL.get(rule, "StorageShared"))
+    assert not mentor_rules.without_listing_note(text).endswith("…"), text
+
+
+@pytest.mark.parametrize("rule", sorted(_ECHOES))
+def test_a_hint_with_a_long_echoed_value_keeps_its_quotes_and_its_note_op(rule: str) -> None:
+    text = _ECHOES[rule](_LONG)
+    assert len(text) <= mentor_rules.HINT_CHARS
+    # the clip lands after the last echoed value, never inside one
+    assert mentor_rules.without_listing_note(text).count("'") % 2 == 0, text
+    _assert_rendered_cleanly(text)
 
 
 def test_the_code_index_hint_keeps_all_its_advice_after_a_long_echo() -> None:
-    facts = {"repos": 16, "repo_names": [_LONG + str(i) for i in range(3)]}
-    hints = mentor_rules.evaluate_rules({"memory.set": 40}, 1, facts, max_hints=32)
-    hint = next(h for h in hints if h.code == "code_index_unused")
-    assert hint.text.endswith("code.grep for a literal.")
-    for op in hint.ops:
-        assert op in hint.text, op
+    assert _ECHOES["code_index_unused"](_LONG).endswith("code.grep for a literal.")
 
 
 @pytest.mark.parametrize("toolset", ["core", "coding", "readonly"])
@@ -2158,9 +2164,7 @@ def test_a_rendered_hint_grows_only_by_one_name_change_per_op(toolset: str) -> N
     """HINT_CHARS bounds a stored hint; rendering renames or marks each op it names."""
     from server.transport import mcp_op, mcp_tools
 
-    facts = {"repos": 16, "repo_names": [_LONG + str(i) for i in range(3)]}
-    hints = mentor_rules.evaluate_rules({"memory.set": 40}, 1, facts, max_hints=32)
-    text = next(h for h in hints if h.code == "code_index_unused").text
+    text = _ECHOES["code_index_unused"](_LONG)
     names = re.findall(rf"\b{mcp_op.OP_MENTION}\b", mentor_rules.without_listing_note(text))
     rendered = mcp_tools.mentor_text_for_toolset(text, toolset)
     assert len(rendered) <= mentor_rules.HINT_CHARS + len(names) * len(" (via loom_op)")

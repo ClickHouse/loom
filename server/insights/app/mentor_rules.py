@@ -547,8 +547,8 @@ def _rules_planes(c: _Ctx) -> None:
         c.add(
             "tracker_unused",
             "warning",
-            f"{c.fact('tracker_tagged_sets')} test/flaky/ci writes and 0 tracker.* calls: "
-            f"the tracker source ({_quoted_list(list(tracker_sources))}) answers "
+            f"{c.fact('tracker_tagged_sets')} test/flaky/ci writes, 0 tracker.* calls: "
+            f"tracker sources ({_quoted_list(list(tracker_sources))}) answer "
             "tracker.similar, tracker.duplicate_check, tracker.flaky, tracker.test_signal.",
             ("tracker.similar", "tracker.duplicate_check", "tracker.flaky", "tracker.test_signal"),
             tracker_tagged_sets=c.fact("tracker_tagged_sets"),
@@ -699,7 +699,7 @@ def _rules_coordination(c: _Ctx) -> None:
     c.add(
         "coordination_loop",
         "warning",
-        f"{what}: coordination state, for working_memory.set / working_memory.get "
+        f"{what}: coordination state; use working_memory.set / working_memory.get "
         "(no version rows).",
         ("working_memory.set", "working_memory.get"),
         max_sets_one_key=ms,
@@ -952,9 +952,9 @@ def _rule_search_identifier(
         return None
     return (
         "search_identifier_query",
-        f"{_quoted(q)} is an identifier, not a question: code.symbol gives its definition, "
-        "code.callers who calls it, code.grep the exact literal, code.search the concept — "
-        "memory holds what was said about it, the index holds what it is.",
+        f"{_quoted(q)} is an identifier: code.symbol gives its definition, code.callers its "
+        "callers, code.grep the literal, code.search the concept; memory holds only what was "
+        "said about it.",
     )
 
 
