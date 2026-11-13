@@ -246,24 +246,28 @@ longer prompt to its window without an error, so run it with
 read a prompt that long, so the preset waits `LOOM_LLM_REQUEST_TIMEOUT_S=900` seconds for
 a reply rather than the hosted default of 300, and tries it once
 (`LOOM_LLM_RETRY_ATTEMPTS=1`): a server that timed out answers no faster a second time.
+
 The worker that replays the captures the coding plugins send gives a pass a deadline, so
 the preset lets a deferred-extraction pass run an hour on one batch
 (`LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS`, by default four of its intervals, at least 60 s
-and at most 900; a batch's lease is kept at least a minute longer). On a `local` provider a capture cut short (at that deadline, or by Loom shutting down) or
-whose call ran out its timeout spends one of its `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2`
-attempts, so a session too long for the machine ends `failed` (`memory.extraction_status`
-says why) instead of holding the queue: a long session can need several calls in a row,
-each up to the timeout. The observe-extraction worker (`LOOM_OBSERVE_EXTRACT_ENABLED`, off
-by default) is not tuned for a local model: a session longer than its 900 s pass is tried
-again every pass.
-For llama.cpp, point
-`LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root (`http://host.docker.internal:8080/v1`) and
-set `LOOM_LLM_MODEL` to the name it serves. A server run from a checkout reaches the
-model at `localhost`, the setting's default (`http://localhost:11434/v1`). A per-job model
-whose name starts with `gpt`, `o1`, `o3`, `o4`, `chatgpt` or `claude` goes to that hosted
-provider whatever `LOOM_LLM_PROVIDER` says; a local model named that way (`gpt-oss`) runs
-locally as `LOOM_LLM_MODEL`, and in a per-job setting only when that setting names the
-same model.
+and at most 900; a batch's lease is kept at least a minute longer). On a `local` provider
+a capture cut short (at that deadline, or by Loom shutting down) or whose call ran out its
+timeout spends one of its `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2` attempts, so a session
+too long for the machine ends `failed` (`memory.extraction_status` says why) instead of
+holding the queue: a long session can need several calls in a row, each up to the
+timeout. The observe-extraction worker (`LOOM_OBSERVE_EXTRACT_ENABLED`, off by default) is
+not tuned for a local model: a session longer than its 900 s pass is tried again every
+pass.
+
+For llama.cpp, point `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root
+(`http://host.docker.internal:8080/v1`) and set `LOOM_LLM_MODEL` to the name it serves. A
+server run from a checkout reaches the model at `localhost`, the setting's default
+(`http://localhost:11434/v1`).
+
+A per-job model whose name starts with `gpt`, `o1`, `o3`, `o4`, `chatgpt` or `claude` goes
+to that hosted provider whatever `LOOM_LLM_PROVIDER` says; a local model named that way
+(`gpt-oss`) runs locally as `LOOM_LLM_MODEL`, and in a per-job setting only when that
+setting names the same model.
 
 - **Reaching the host.** The containers reach the machine as `host.docker.internal`. Docker
   Desktop forwards that to services on loopback; with Docker Engine on Linux, Ollama must
