@@ -623,7 +623,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "checkpoints_as_memory",
             "warning",
             f"{max(huge, blobs)} checkpoint-sized writes: park a run dump with "
-            "context.offload, with a summary and a TTL, and keep one short episodic row "
+            "context.offload, giving it a summary and a TTL, and keep one short episodic row "
             "keyed by run id.",
             ("context.offload", "memory.set"),
             huge_sets=huge,
@@ -708,7 +708,8 @@ def _rules_coordination(c: _Ctx) -> None:
     c.add(
         "coordination_loop",
         "warning",
-        f"{what}: coordination state; working_memory.set / working_memory.get keep it unversioned.",
+        f"{what}: coordination state; keep it in working_memory.set / working_memory.get, "
+        "unversioned.",
         ("working_memory.set", "working_memory.get"),
         max_sets_one_key=ms,
         max_gets_one_key=mg,
@@ -905,8 +906,8 @@ def _rule_set_stack_trace(
         )
     else:
         text = (
-            "this value is a stack trace: park the dump with context.offload, with a summary and a "
-            "TTL, and keep the memory row as the one-line finding."
+            "this value is a stack trace: park the dump with context.offload, giving it a summary "
+            "and a TTL, and keep the memory row as the one-line finding."
             + _unlisted(("context.offload",))
         )
     return ("set_stack_trace", text)

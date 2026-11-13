@@ -158,8 +158,9 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   the one `loom_op` takes, with "(via loom_op)" after its first mention when
   `loom_op` routes it on that connection; it does not route a hidden op, a
   write on `readonly` or anything on `assistant`. Input field descriptions, and
-  the output schema the `full` profile keeps, are rendered the same way, and so is a hidden op's `instead` text; `loom_op`'s
-  own text, which is about op names, is built per listing instead. Mentor text
+  the output schema the `full` profile keeps, are rendered the same way, and so
+  is a hidden op's `instead` text; `loom_op`'s own text, which is about op
+  names, is built per listing instead. Mentor text
   is rendered for the caller's listing over MCP too (a tool result's `hint`,
   `context.pack`'s `mentor` section, and `mentor.brief`'s hints and plane
   `when`); over HTTP it reads as stored.

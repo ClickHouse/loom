@@ -28,6 +28,8 @@ from server.insights.app import mentor_brief as handler
 from server.insights.app import mentor_rules
 from server.observability import ledger
 from server.settings import settings
+from server.transport import mcp_call, mcp_op, mcp_outcome, mcp_primer, mcp_tools
+from server.transport.mcp_op import OP_MENTION
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 from tests.unit.loom_op_marks import assert_marked_once_outside_parentheses
 
@@ -226,8 +228,6 @@ def _profile(**kw: Any) -> mentor_rules.MentorProfile | None:
 def _assert_rendered_cleanly(text: str) -> None:
     """A hint as MCP renders it: each unlisted op marked once, no marker inside a
     parenthesis."""
-    from server.transport import mcp_tools
-
     # MCP strips the note, so the op it names must be in the text it leaves
     if note := mentor_rules._LOOM_OP_NOTE_RE.search(text):
         assert note.group(1) in mentor_rules.without_listing_note(text), text
@@ -625,8 +625,6 @@ def test_pack_section_renders_three_hints_within_the_cap_and_nothing_when_quiet(
 
 
 def test_the_pack_section_names_ops_for_the_mcp_listing_rendered_whole() -> None:
-    from server.transport import mcp_tools
-
     note = " (call working_memory.set via loom_op)"
     p = _fake_profile(
         _h("a", text="search.query recalls by meaning; keep it with working_memory.set." + note),
@@ -842,8 +840,6 @@ def test_emit_agent_event_carries_the_current_hint_code(monkeypatch: pytest.Monk
 
 
 def test_mcp_helper_attaches_the_hint_and_publishes_the_code() -> None:
-    from server.transport import mcp_outcome, mcp_tools
-
     hint = mcp_outcome._mentor_hint(
         "memory.get",
         {"org": "o", "namespace": "ns", "agent": "a", "memory_key": "k"},
@@ -950,7 +946,6 @@ def test_pack_renders_the_mentor_section_and_stays_silent_otherwise(
 
 def test_mentor_brief_over_mcp_names_ops_for_the_listing(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.insights.api.models_mentor import MentorBriefInput
-    from server.transport import mcp_tools
 
     note = " (call working_memory.set via loom_op)"
     hint = _h("a", text="search.query recalls by meaning; keep it with working_memory.set." + note)
@@ -1556,8 +1551,6 @@ def test_the_dashboards_own_traffic_is_never_mentored() -> None:
 def test_handshake_warms_the_profile_when_nothing_is_cached(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.transport import mcp_call, mcp_primer
-
     warmed: list[tuple[str, str, str]] = []
     monkeypatch.setattr(m, "warm_profile", lambda o, n, a: warmed.append((o, n, a)))
 
@@ -1579,8 +1572,6 @@ def test_handshake_warms_the_profile_when_nothing_is_cached(
 )
 def test_a_fixed_text_call_hint_fits_whole_with_its_note(facts: dict[str, Any]) -> None:
     """MCP strips the note, so a clip would leave the agent cut advice: these fit."""
-    from server.transport import mcp_op, mcp_tools
-
     # the longest issue number the reference pattern takes
     args = {"memory_key": "bugs/9", "value": _TRACE + "\nsee #1234567"}
     for rule in (mentor_rules._rule_set_stack_trace, mentor_rules._rule_set_issue_reference):
@@ -1625,7 +1616,6 @@ def test_the_initialize_instructions_mark_each_op_once_with_a_mentor_line(
 ) -> None:
     """The rules and the cached mentor line are rendered apart; joined, each op is
     still marked on its first mention only."""
-    from server.transport import mcp_primer
 
     async def _defaults(*_args: Any) -> dict[str, str]:
         return {"org": "o", "namespace": "ns", "agent": "a"}
@@ -1659,8 +1649,6 @@ def test_two_long_hot_keys_leave_the_coordination_advice_whole() -> None:
 
 
 def test_an_echoed_value_that_spells_a_note_is_not_taken_for_one() -> None:
-    from server.transport import mcp_tools
-
     fake = "x (call memory.clear via loom_op)"
     text = mentor_rules.clip_keeping_note(
         f"this write duplicates {mentor_rules._quoted(fake)}: revise."
@@ -1689,8 +1677,6 @@ def test_following_the_reading_hint_through_search_query_clears_it() -> None:
     ],
 )
 def test_an_echoed_key_comes_through_rendering_as_written(key: str) -> None:
-    from server.transport import mcp_tools
-
     # a hint the length budget clips keeps the value's closing quote
     text = mentor_rules.clip_keeping_note(mentor_rules._quoted(key) + " was set 5 times")
     rendered = mcp_tools.mentor_text_for_toolset(text, "core")
@@ -1698,8 +1684,6 @@ def test_an_echoed_key_comes_through_rendering_as_written(key: str) -> None:
 
 
 def test_a_call_hint_on_mcp_names_ops_for_its_listing() -> None:
-    from server.transport import mcp_outcome, mcp_tools
-
     args = {"org": "o", "namespace": "ns", "agent": "a", "memory_key": "k"}
     core = mcp_outcome._mentor_hint(
         "memory.get", args, {"found": False}, "s-core", mcp_tools.mentor_namer("core")
@@ -1717,7 +1701,6 @@ def test_no_hint_text_writes_an_op_as_a_call_or_names_a_hidden_op() -> None:
     op named in prose is one the user acts on, and its note says so (conflicts)."""
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.operations.toolsets import _MCP_HIDDEN_OPS
-    from server.transport.mcp_op import OP_MENTION
 
     tree = ast.parse(Path(mentor_rules.__file__).read_text())
     prose = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and " " in str(n.value)]
@@ -1737,7 +1720,6 @@ def test_the_handshake_mentor_line_names_ops_for_its_listing(
 ) -> None:
     """A hint's ops are named as the connection's listing names them, and the
     core-listing note the stored text carries does not ride along."""
-    from server.transport import mcp_primer
 
     async def _defaults(auth: Any, client_name: Any) -> dict[str, str]:
         return {"org": "o", "namespace": "ns", "agent": "a"}
@@ -2233,8 +2215,6 @@ def test_the_code_index_hint_keeps_all_its_advice_after_a_long_echo() -> None:
 @pytest.mark.parametrize("toolset", ["core", "coding", "readonly"])
 def test_a_rendered_hint_grows_only_by_one_name_change_per_op(toolset: str) -> None:
     """HINT_CHARS bounds a stored hint; rendering renames or marks each op it names."""
-    from server.transport import mcp_op, mcp_tools
-
     text = _ECHOES["code_index_unused"](_LONG)
     names = re.findall(rf"\b{mcp_op.OP_MENTION}\b", mentor_rules.without_listing_note(text))
     rendered = mcp_tools.mentor_text_for_toolset(text, toolset)

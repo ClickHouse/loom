@@ -170,7 +170,7 @@ _TOOLSETS = [
 def test_no_listed_text_names_a_hidden_op(toolset: str, code: bool):
     """A hidden op is refused by tools/call — naming it as a fallback sends
     the model down a dead path. `assistant` lists two hidden searches."""
-    tools = _listing(toolset, code)
+    tools = _listing(toolset, code, "full")  # full: output schemas too
     listed = {TOOL_TO_OP.get(t["name"], t["name"]) for t in tools}
     for t in tools:
         for text in _texts(t):
@@ -212,7 +212,7 @@ def _texts(tool: dict) -> list[str]:
 def test_a_listed_op_is_named_by_its_tool(toolset: str, code: bool):
     """A client calls the tool name it was listed; a dotted op name for a listed
     tool reads as a different tool. loom_op's own text is about dotted names."""
-    tools = _listing(toolset, code)
+    tools = _listing(toolset, code, "full")  # full: output schemas too
     listed = {TOOL_TO_OP[t["name"]] for t in tools if t["name"] in TOOL_TO_OP}
     for t in tools:
         if t["name"] == "loom_op":

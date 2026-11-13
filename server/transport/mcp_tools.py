@@ -492,7 +492,7 @@ async def _tools_descriptor(
 
     Description is `_TOOL_DESCRIPTIONS[op.name]` if present, else a metadata
     fallback, with the ops it names rendered for this listing
-    (`name_ops_for_listing`, input field descriptions too). The caller's
+    (`name_ops_for_listing`, every schema field description the profile sends too). The caller's
     default-workspace context is delivered once via the `initialize`
     `instructions` field, not duplicated per tool; descriptors are
     caller-independent. ``toolset`` is the per-request ``?toolset=`` override.
@@ -543,13 +543,6 @@ async def _tools_descriptor(
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
-    for d in descriptors:
-        if d["name"] == LOOM_OP_TOOL_NAME:  # built for this listing already
-            continue
-        d["description"] = name_ops_for_listing(d["description"], listed, writes=writes)
-        for schema in ("inputSchema", "outputSchema"):
-            if schema in d:
-                d[schema] = _name_ops_in_fields(d[schema], listed, writes=writes)
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,
@@ -562,6 +555,15 @@ async def _tools_descriptor(
     profile = str(schema_profile or default).lower()
     if profile not in SCHEMA_PROFILES:
         profile = default  # an unknown request value never widens or narrows silently
+    # only the full profile sends output schemas
+    schemas = ("inputSchema", "outputSchema") if profile == "full" else ("inputSchema",)
+    for d in descriptors:
+        if d["name"] == LOOM_OP_TOOL_NAME:  # built for this listing already
+            continue
+        d["description"] = name_ops_for_listing(d["description"], listed, writes=writes)
+        for schema in schemas:
+            if schema in d:
+                d[schema] = _name_ops_in_fields(d[schema], listed, writes=writes)
     return apply_schema_profile(descriptors, profile)
 
 
