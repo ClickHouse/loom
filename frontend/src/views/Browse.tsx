@@ -75,13 +75,9 @@ const JOIN_ROLES: Array<{
 ];
 
 /**
- * Browse — public namespaces in the caller's org.
- *
- * Surfaces `namespace.browse` (list public namespaces) and
- * `namespace.join` (claim a viewer grant on one) so users can discover
- * and opt into shared team namespaces without leaving the dashboard.
- * Namespaces the caller already belongs to are shown as "Joined" with
- * no Join button.
+ * Namespaces in your org: the public namespaces to join (`namespace.browse`,
+ * `namespace.join`), the ones the caller manages, and, for a search that names
+ * an unlisted namespace, a request card or a pointer to where it is joined.
  */
 export function Browse() {
   const identity = useIdentity();
