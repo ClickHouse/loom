@@ -84,15 +84,15 @@ The block is the same everywhere; only the file and its header differ. Cursor, C
 Devin Desktop, VS Code and Zed also read `AGENTS.md`, so one file can serve them all;
 put the block in one file a client reads, not in both.
 
-| Client                                                         | File                                                                   | Header before the block                                                      |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Codex without the plugin, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root                                     | none                                                                         |
-| Zed                                                            | the first instruction file it finds (below)                            | none                                                                         |
-| Claude Code without the plugin                                 | `CLAUDE.md` at the repository root                                     | none                                                                         |
-| Cursor                                                         | `.cursor/rules/loom.mdc`                                               | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
-| Devin Desktop (Windsurf)                                       | `.devin/rules/loom.md` (`.windsurf/rules/loom.md` on a Windsurf build) | `---`, `trigger: always_on`, `---`                                           |
-| Cline                                                          | `.clinerules/loom.md`                                                  | none                                                                         |
-| VS Code (GitHub Copilot)                                       | `.github/copilot-instructions.md`                                      | none                                                                         |
+| Client                                                         | File                                                                                                                                  | Header before the block                                                      |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Codex without the plugin, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root                                                                                                    | none                                                                         |
+| Zed                                                            | the first instruction file it finds (below)                                                                                           | none                                                                         |
+| Claude Code without the plugin                                 | `CLAUDE.md` at the repository root; with an `AGENTS.md` beside it, keep the block there and have `CLAUDE.md` import it (`@AGENTS.md`) | none                                                                         |
+| Cursor                                                         | `.cursor/rules/loom.mdc`                                                                                                              | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
+| Devin Desktop (Windsurf)                                       | `.devin/rules/loom.md` (`.windsurf/rules/loom.md` on a Windsurf build)                                                                | `---`, `trigger: always_on`, `---`                                           |
+| Cline                                                          | `.clinerules/loom.md`                                                                                                                 | none                                                                         |
+| VS Code (GitHub Copilot)                                       | `.github/copilot-instructions.md`                                                                                                     | none                                                                         |
 
 Zed reads only the first instruction file it finds (`.rules`, `.cursorrules` and others
 before `AGENTS.md`), so the block goes in that one, or in `AGENTS.md` when the repository
