@@ -3,9 +3,8 @@ name: scorecard
 # OpenSSF Scorecard: checks the repository's security practices (pinned actions,
 # token permissions, branch protection, signed releases and more), publishes the
 # result that the README badge shows, and adds the findings to code scanning.
-# The action publishes only from the default branch: it runs on pushes to main and
-# weekly, and a run started by hand on another branch uploads to code scanning but
-# publishes nothing.
+# The action publishes only from the default branch, so the workflow runs on pushes
+# to main, weekly and on demand.
 on:
   push:
     branches: [main]
@@ -14,7 +13,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -26,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      contents: read
       # code scanning upload
       security-events: write
       # the OIDC token that publishing the result needs
