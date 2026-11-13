@@ -27,8 +27,6 @@
   <a href="https://clickhouse.github.io/loom/">Documentation</a>
 </p>
 
-### What it looks like
-
 <p>
   <img src="./docs/images/dashboard-memories.png" width="32%" alt="Loom dashboard showing shared agent memories, a pinned fact and flagged conflicts">
   <img src="./docs/assets/screenshots/document-search.webp" width="32%" alt="Library search: passages from a refunds policy and an on-call runbook, each cited by document, revision and lines">

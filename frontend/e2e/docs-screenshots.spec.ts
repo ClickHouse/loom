@@ -9,7 +9,7 @@
 // The clock is fixed, so relative times ("2h ago") read the same on every run. The 1440 px
 // shots and the clips go to docs/assets/screenshots/, encoded as WebP by Chromium itself.
 
-import { expect, test, type Browser, type Page, type Video } from "@playwright/test";
+import { expect, test, type Browser, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -49,8 +49,8 @@ interface DemoMemory {
   version?: number;
   status?: string;
   entities?: string[];
-  /** The code the memory is linked to (`memory.get`'s `code`). */
-  // Each link's state takes CodeLink's values (frontend/src/api.ts).
+  /** The code the memory is linked to (`memory.get`'s `code`); `state` takes CodeLink's
+   *  values (frontend/src/api.ts). */
   code?: Array<{
     path: string;
     symbol: string;
@@ -173,7 +173,7 @@ const MEMORIES: DemoMemory[] = [
     key: "payments/fx/rounding",
     type: "semantic",
     value:
-      "FX conversion rounds half to even, as the settlement bank does; never switch payments.fx.convert to ROUND_HALF_UP or refunds stop matching settlement.",
+      "FX conversion rounds half to even, as the settlement bank does; never switch `payments.fx.convert` to ROUND_HALF_UP, or `payments.refunds.refund` stops matching settlement.",
     // The repository tag the coding plugins put on a session's memories, which the code-link
     // worker links from.
     tags: ["payments", "constraint", "repo:5e1a9c03d2"],
@@ -715,10 +715,11 @@ const PASSAGES = [
   },
 ];
 
-/** The Audit log's events: writes, a resolved conflict, a grant and a document upload. An
- *  agent's write names its token's subject (`process:sa:…`), a person's `human:…`. */
-const AGENT_ACTOR = "process:sa:claude-code-7f2a";
-const BOT_ACTOR = "process:sa:support-bot-91c3";
+/** The Audit log's events: writes, a resolved conflict, a grant and a document upload. A
+ *  memory write names its writer as `kind:subject`; any other audited op names the token's
+ *  subject. */
+const AGENT_SUBJECT = "sa:claude-code-7f2a";
+const BOT_WRITER = "process:sa:support-bot-91c3";
 const AUDIT_ROWS = [
   {
     h: 0.9,
@@ -726,7 +727,7 @@ const AUDIT_ROWS = [
     actor: SUBJECT,
     subject: { kept_memory_key: "billing/refunds/threshold" },
   },
-  { h: 1.5, event_type: "memory.set", actor: BOT_ACTOR, subject: { memory_key: "api/rate-limit/public" } },
+  { h: 1.5, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "api/rate-limit/public" } },
   { h: 1.6, event_type: "knowledge.upsert", actor: SUBJECT, subject: { source_uri: "policies/refunds.md" } },
   { h: 2.2, event_type: "memory.pin", actor: SUBJECT, subject: { memory_key: "deploys/policy/windows" } },
   {
@@ -735,11 +736,11 @@ const AUDIT_ROWS = [
     actor: SUBJECT,
     subject: { role: "writer", namespace: NS_SUPPORT, subject: "sa:support-bot-91c3" },
   },
-  { h: 4.4, event_type: "memory.set", actor: BOT_ACTOR, subject: { memory_key: "support/refunds/approval" } },
+  { h: 4.4, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "support/refunds/approval" } },
   {
     h: 5.0,
     event_type: "memory.delete",
-    actor: AGENT_ACTOR,
+    actor: AGENT_SUBJECT,
     subject: { memory_key: "staging/db/legacy-host", reason: "host retired" },
   },
   {
@@ -751,7 +752,12 @@ const AUDIT_ROWS = [
   { h: 8.2, event_type: "namespace.join", actor: "dev2@acme.example", subject: { namespace: NS, role: "viewer" } },
   { h: 12.0, event_type: "knowledge.upsert", actor: SUBJECT, subject: { source_uri: "runbooks/payments-on-call.md" } },
   { h: 20.0, event_type: "memory.redact", actor: SUBJECT, subject: { memory_key: "support/escalations/contact" } },
-  { h: 30.0, event_type: "memory.set", actor: AGENT_ACTOR, subject: { memory_key: "incidents/checkout-latency" } },
+  {
+    h: 30.0,
+    event_type: "memory.set",
+    actor: `process:${AGENT_SUBJECT}`,
+    subject: { memory_key: "incidents/checkout-latency" },
+  },
 ].map(({ h, event_type, actor, subject }) => ({
   ts: ago(h),
   event_type,
@@ -834,6 +840,8 @@ function edges(table: Record<string, Array<[string, string, number]>>, name: str
     to_symbol_id: "",
     path: file,
     line,
+    tier: "scip",
+    confidence: 1,
   }));
 }
 
@@ -1023,14 +1031,32 @@ async function installDemoApi(page: Page): Promise<void> {
       case "/v1/code.recent_commits":
         return json({
           rows: [
-            ["4be19a0c7d2e5f13", "FX rounds half to even, as settlement does", 0.4, 2, 488],
-            ["2d71c9e0b5a3f846", "Refunds settle in the charge's currency first", 6, 3, 486],
-            ["a90f4c2e7b1d3e58", "Ledger rejects unbalanced entries per currency", 26, 1, 482],
-          ].map(([commit, subject, h, files, pr]) => ({
+            {
+              commit: "4be19a0c7d2e5f13",
+              subject: "The refund API returns the settled amount",
+              h: 0.4,
+              files: 2,
+              pr: 488,
+            },
+            {
+              commit: "2d71c9e0b5a3f846",
+              subject: "Refunds settle in the charge's currency first",
+              h: 6,
+              files: 3,
+              pr: 486,
+            },
+            {
+              commit: "a90f4c2e7b1d3e58",
+              subject: "Ledger rejects unbalanced entries per currency",
+              h: 26,
+              files: 1,
+              pr: 482,
+            },
+          ].map(({ commit, subject, h, files, pr }) => ({
             commit,
             subject,
-            committed_at: agoCh(h as number),
-            ingested_at: agoCh((h as number) - 0.1),
+            committed_at: agoCh(h),
+            ingested_at: agoCh(h - 0.1),
             files,
             pr_number: pr,
           })),
@@ -1058,11 +1084,17 @@ async function installDemoApi(page: Page): Promise<void> {
       case "/v1/code.callers":
         return json({
           edges: edges(CODE_CALLERS, String(body.name ?? ""), "from"),
-          seed_symbols: [],
+          seed_symbols: [String(body.name ?? "")],
+          epistemic: "exact",
           truncated: false,
         });
       case "/v1/code.callees":
-        return json({ edges: edges(CODE_CALLEES, String(body.name ?? ""), "to"), seed_symbols: [], truncated: false });
+        return json({
+          edges: edges(CODE_CALLEES, String(body.name ?? ""), "to"),
+          seed_symbols: [String(body.name ?? "")],
+          epistemic: "exact",
+          truncated: false,
+        });
       case "/v1/health/ready":
         return json({ ready: true, checks: { assistant: { ok: true, required: false } } });
       case "/v1/assistant/chat/completions":
@@ -1101,11 +1133,15 @@ async function captureWebp(page: Page, name: string): Promise<void> {
     const canvas = document.createElement("canvas");
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
-    canvas.getContext("2d")?.drawImage(img, 0, 0);
-    return canvas.toDataURL("image/webp", 0.85).split(",")[1] ?? "";
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("no 2d canvas");
+    context.drawImage(img, 0, 0);
+    return canvas.toDataURL("image/webp", 0.85);
   }, png);
   await blank.close();
-  fs.writeFileSync(path.join(OUT_ASSETS, `${name}.webp`), Buffer.from(webp, "base64"));
+  // A browser without a WebP encoder answers PNG instead, which must not be saved as WebP.
+  if (!webp.startsWith("data:image/webp;base64,")) throw new Error(`${name}: no WebP encoder`);
+  fs.writeFileSync(path.join(OUT_ASSETS, `${name}.webp`), Buffer.from(webp.split(",", 2)[1], "base64"));
 }
 
 /** A short pause, so a clip's viewer can follow each step. */
@@ -1297,19 +1333,19 @@ test.describe("docs clips", () => {
         baseURL: test.info().project.use.baseURL,
         recordVideo: { dir, size: SIZE },
       });
-      let video: Video | null = null;
+      const page = await context.newPage();
+      const video = page.video();
+      if (!video) throw new Error("the context records no video");
       try {
-        const page = await context.newPage();
         await installDemoApi(page);
         await run(page);
         await beat(page, 1600);
-        video = page.video();
       } finally {
         // The recording is written out when its context closes.
         await context.close();
       }
       fs.mkdirSync(OUT_ASSETS, { recursive: true });
-      await video?.saveAs(path.join(OUT_ASSETS, `clip-${name}.webm`));
+      await video.saveAs(path.join(OUT_ASSETS, `clip-${name}.webm`));
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

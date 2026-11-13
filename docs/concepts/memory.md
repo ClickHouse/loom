@@ -344,13 +344,13 @@ against that repository's trunk:
   `files`;
 - each file the memory names that holds none of those definitions.
 
+A qualified name trunk does not define yet waits for `memory_code_links_pending_days`
+(14), so a memory about unmerged code links once it merges.
+
 ![A memory's detail in the dashboard: its linked code, one definition current and one changed since a commit](../assets/screenshots/memory-linked-files.webp)
 
 A memory's detail in the dashboard lists these links with their state
 ([clip](../assets/screenshots/clip-memory-linked-code.webm)).
-
-A qualified name trunk does not define yet waits for `memory_code_links_pending_days`
-(14), so a memory about unmerged code links once it merges.
 
 A link records the definition's fingerprint: all its overloads and the conditions that
 select them, as tokens, so whitespace, comments (not a Go `//go:` directive or a Python

@@ -182,11 +182,6 @@ flowchart LR
 5. **Check for a duplicate.** `code.pr_check`: `verdict` is `duplicate_of`, `related`
    or `none` ([history-and-prs.md](history-and-prs.md)).
 
-![A repository's Explore tab: payments.fx.convert with its definition and callers](../../assets/screenshots/code-callers.webp)
-
-A person walks the same graph from the repository's **Explore** tab
-([clip](../../assets/screenshots/clip-code-callers.webm)).
-
 These are the ops the `coding` toolset lists. `code.callees` and `code.test_gate` are
 callable by name or through `loom_op`. Report what you did with the hits through
 `code.outcome` (every result carries a `trace_run_id`).
@@ -207,6 +202,11 @@ Clients:
 If you expose `code.grep` to your own model, pass `as_of`, `abstain_code`, `note` and
 `coverage_floor` with the hits. A model that sees only matches cannot tell an empty
 index from an empty repository.
+
+![A repository's Explore tab: payments.fx.convert with its definition and callers](../../assets/screenshots/code-callers.webp)
+
+A person walks the same graph from the repository's **Explore** tab
+([clip](../../assets/screenshots/clip-code-callers.webm)).
 
 ## Reading an answer
 
