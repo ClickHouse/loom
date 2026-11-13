@@ -324,7 +324,7 @@ def _unset_reason(view: _View) -> str:
         return (
             "the deployment's cell state is not read yet"
             + (f": {view.error}" if view.error else "")
-            + f"; see {TROUBLESHOOTING}"
+            + f" (see {TROUBLESHOOTING})"
         )
     found = view.state()
     if found in ("open", "recording"):

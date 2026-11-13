@@ -491,7 +491,7 @@ def test_an_unread_state_answers_503_while_postgres_migrations_are_pending(
     )
     app.assert_not_awaited()
     body = send.await_args_list[1].args[0]["body"]
-    assert b"cell state is not read yet: relation does not exist; see " in body
+    assert b"cell state is not read yet: relation does not exist (see " in body
 
 
 def test_a_cell_process_with_postgres_migrations_pending_boots_gated(
