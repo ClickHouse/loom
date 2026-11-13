@@ -12,13 +12,15 @@ Usage::
 
     from llama_index.core.memory import Memory
     from loom import SyncAgent
-    from loom.integrations.llamaindex import LoomMemoryBlock, LoomRetriever
+    from loom.integrations.llamaindex import LoomMemoryBlock, LoomRetriever, flush
 
     with SyncAgent(org="acme", namespace="support") as agent:
         nodes = LoomRetriever(agent).retrieve("refund policy")
         memory = Memory.from_defaults(
             session_id="s-42", memory_blocks=[LoomMemoryBlock(agent=agent)]
         )
+        ...  # the session's turns go through memory.put / memory.get
+        flush(memory)  # at the session's end
 
 Identity and isolation come from the Loom agent: the retriever and the block
 read only what its token may read. Install with

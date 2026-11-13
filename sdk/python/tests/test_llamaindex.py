@@ -50,7 +50,7 @@ class _ListStore(AsyncDBChatStore):
     async def count_messages(
         self, key: str, status: MessageStatus | None = MessageStatus.ACTIVE
     ) -> int:
-        return len(self._of(key, status))
+        raise NotImplementedError  # Memory does not call it
 
     async def add_message(
         self, key: str, message: ChatMessage, status: MessageStatus = MessageStatus.ACTIVE
@@ -91,7 +91,7 @@ class _ListStore(AsyncDBChatStore):
         return archived
 
     async def get_keys(self) -> list[str]:
-        return list(self.rows)
+        raise NotImplementedError  # Memory does not call it
 
 
 def _new_memory(**kw: Any) -> Memory:

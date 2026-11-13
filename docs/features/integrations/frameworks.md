@@ -90,13 +90,15 @@ is a long-term memory block for LlamaIndex's `Memory`. Install with
 ```python
 from llama_index.core.memory import Memory
 from loom import SyncAgent
-from loom.integrations.llamaindex import LoomMemoryBlock, LoomRetriever
+from loom.integrations.llamaindex import LoomMemoryBlock, LoomRetriever, flush
 
 with SyncAgent(org="acme", namespace="support") as agent:
     nodes = LoomRetriever(agent, similarity_top_k=3).retrieve("refund policy")
     memory = Memory.from_defaults(
         session_id="s-42", memory_blocks=[LoomMemoryBlock(agent=agent, user_id="alice")]
     )
+    ...  # the session's turns go through memory.put / memory.get
+    flush(memory)  # at the session's end: hand the rest of the window to the blocks
 ```
 
 `retrieve` (and a sync query engine) needs a `SyncAgent`; `aretrieve` takes an `Agent` or
