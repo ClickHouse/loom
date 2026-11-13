@@ -6,24 +6,24 @@
 
 # マルチエージェントワークフローのための共有コンテキスト
 
-Loom は、マルチエージェントワークフローのエージェントがコンテキストを共有する場所を一か所にまとめます。具体的には、名前空間内のすべてのエージェントが読み取れるメモリ、エージェント間で作業を受け渡すためのタスクインボックス、そして意思決定の記録です。ワークフローを実行するのはエージェントとオーケストレーターであり、Loom はそれらが学んだことと引き継いだ内容を保持します。
+Loom は、マルチエージェントワークフローのエージェントがコンテキストを共有する場所を一つ提供します。名前空間内のすべてのエージェントが読むメモリ、エージェント間で作業を引き渡すためのタスクインボックス、そして意思決定の記録です。ワークフローを実行するのはエージェントとオーケストレーターで、Loom はそれらが学んだことと引き継いだ内容を保持します。
 
 <a id="what-you-get"></a>
 
-## 提供する機能
+## 提供される機能
 
-- **来歴付きの共有メモリ。** すべての行に、どのエージェントが書き込んだかが記録されます。デフォルトの `auto_reinforce` ポリシーでは、2つのエージェント間の矛盾は黙って上書きされず、レビュー対象としてフラグが立てられます。[名前空間と共有](https://github.com/ClickHouse/loom/blob/main/docs/features/namespaces-and-sharing.md) ·
-  [名前空間の競合ポリシー](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/conflicts-and-refusal.md#namespace-conflict-policy)
-- **タスク受信箱。** 各エージェントは、リース、リトライ、レビュールールを備えた永続キューを持ちます。取得されたタスクの所有者は、常に1つのエージェントだけです。[タスク、決定、ポリシー](https://github.com/ClickHouse/loom/blob/main/docs/features/tasks-and-decisions.md)
-- **決定。** 似たケースで何を決めたか、その理由、そしてうまくいったかどうかを記録します。[決定](https://github.com/ClickHouse/loom/blob/main/docs/features/tasks-and-decisions.md#decisions)
-- **ワーキングメモリ。** 検索で探し出すのではなく、エージェントに毎回渡されるテキストです。長期メモリとは別に管理されます。[ワーキングメモリとプロファイル](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/working-memory-and-profiles.md)
-- **コンテキストパック。** `context.pack` は、エージェントがタスクの開始時に読み込む、サイズに上限のあるバンドルを作成します。[統合検索とコンテキストパック](https://github.com/ClickHouse/loom/blob/main/docs/features/unified-search.md)
-- **フレームワークアダプタ。** SDK は、エージェントフレームワーク独自のメモリインターフェースを通じて Loom を利用できるようにします。[エージェントフレームワーク](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md)
+- **出所情報付きの共有メモリ。** すべての行にどのエージェントが書き込んだかが記録されます。デフォルトの `auto_reinforce` ポリシーでは、2 つのエージェント間の矛盾は黙って上書きされず、レビュー対象としてフラグが付けられます。[Namespaces and sharing](https://github.com/ClickHouse/loom/blob/main/docs/features/namespaces-and-sharing.md) ·
+  [Namespace conflict policy](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/conflicts-and-refusal.md#namespace-conflict-policy)
+- **タスクインボックス。** 各エージェントは、リース、リトライ、レビュールールを備えた永続キューを持ちます。取得されたタスクの所有者は、常に一つです。[Tasks, decisions and policies](https://github.com/ClickHouse/loom/blob/main/docs/features/tasks-and-decisions.md)
+- **意思決定。** このようなケースで何が決定されたか、その理由、そしてうまくいったかどうかを記録します。[Decisions](https://github.com/ClickHouse/loom/blob/main/docs/features/tasks-and-decisions.md#decisions)
+- **ワーキングメモリ。** 検索で見つけさせるのではなく、毎回エージェントに渡されるテキストです。長期メモリとは別に管理されます。[Working memory and profiles](https://github.com/ClickHouse/loom/blob/main/docs/features/memory/working-memory-and-profiles.md)
+- **コンテキストパック。** `context.pack` は、エージェントがタスクの開始時に読み込む、サイズに上限のあるバンドルを構築します。[Unified search and context packs](https://github.com/ClickHouse/loom/blob/main/docs/features/unified-search.md)
+- **フレームワークアダプター。** SDK は、各エージェントフレームワーク独自のメモリインターフェースを通じて Loom を利用できるようにします。[Agent frameworks](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md)
 
 <a id="start"></a>
 
 ## はじめに
 
-[Loom をエージェントに組み込む](https://github.com/ClickHouse/loom/blob/main/docs/guides/agent-integration.md)では、各エージェントが送信する ID と、書き込むべき内容を説明しています。[トークンとグラント](https://github.com/ClickHouse/loom/blob/main/docs/guides/tokens-and-grants.md)では、各エージェントに専用のトークンを割り当てます。
+[Integrate Loom into an agent](https://github.com/ClickHouse/loom/blob/main/docs/guides/agent-integration.md) では、各エージェントが送信する ID と書き込むべき内容を説明します。[tokens and grants](https://github.com/ClickHouse/loom/blob/main/docs/guides/tokens-and-grants.md) では、各エージェントに固有のトークンを割り当てます。
 
-このページの一部の op は、[ステータスページ](https://github.com/ClickHouse/loom/blob/main/docs/reference/status.md)で experimental と記載されています。
+このページの一部の op は、[status page](https://github.com/ClickHouse/loom/blob/main/docs/reference/status.md) で experimental と記載されています。

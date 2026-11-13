@@ -24,6 +24,16 @@ def test_a_page_cuts_into_sections_that_join_back_to_it(source: str) -> None:
     assert "\n".join(t.sections(text)) == text
 
 
+def test_a_short_page_goes_in_one_request_and_a_long_one_by_section() -> None:
+    short = "# T\n\nintro\n\n## One\n\nx\n\n## Two\n\ny\n"
+    assert len(t.english_requests(short)) == 1
+    long = short + ("## More\n\n" + "z " * 5000 + "\n") * 2
+    assert len(t.english_requests(long)) == 5
+    # Anchors stay page-wide across the requests: the second "More" is numbered.
+    joined = "\n".join(t.english_requests(long))
+    assert '<a id="more"></a>' in joined and '<a id="more-1"></a>' in joined
+
+
 def test_sections_start_at_level_two_headings_outside_code() -> None:
     page = "# Title\n\nintro\n\n## One\n\n```md\n## not a heading\n```\n\n## Two\n"
     assert [s.split("\n")[0] for s in t.sections(page)] == ["# Title", "## One", "## Two"]
@@ -124,6 +134,10 @@ def test_a_heading_or_link_text_handed_back_in_english_is_a_difference() -> None
     assert t.differences(source, done) == []
 
 
+def test_a_language_name_heading_may_stay_as_it_is() -> None:
+    assert t.differences("## Go\n\nText.\n", "## Go\n\nTexto.\n") == []
+
+
 def test_a_link_to_an_english_only_page_may_keep_its_title() -> None:
     url = f"{t.REPO_URL}/blob/main/docs/operations/deployment.md"
     source = f"See [Deployment → Providers]({url}).\n"
@@ -216,7 +230,7 @@ def test_a_section_that_differs_is_retried_once_with_the_differences(
         return {"stop_reason": "end_turn", "content": [{"type": "text", "text": text}], "usage": {}}
 
     monkeypatch.setattr(t, "call", fake_call)
-    out = t.translate_section(section, t.LANGUAGES[4], "key", t.Spend("claude-sonnet-5-5", 1.0))
+    out = t.translate_text(section, t.LANGUAGES[4], "key", t.Spend("claude-sonnet-5-5", 1.0))
     assert out == "## Lancez\n\nLancez `loom up` deux fois.\n"
     assert len(sent) == 2 and "inline code" in sent[1][-1]["content"]
 
@@ -269,6 +283,11 @@ def _translations() -> list[tuple[str, t.Language]]:
         for lang in t.LANGUAGES
         if (ROOT / t.target_path(lang.code, s)).is_file()
     ]
+
+
+def test_every_use_case_page_is_translated() -> None:
+    pages = {p.relative_to(ROOT).as_posix() for p in (ROOT / "docs/use-cases").glob("*.md")}
+    assert pages <= set(t.SOURCES)
 
 
 def test_no_translation_is_orphaned() -> None:

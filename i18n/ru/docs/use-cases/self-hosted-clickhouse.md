@@ -4,12 +4,12 @@
 
 <a id="self-hosted-agent-memory-on-clickhouse"></a>
 
-# Self-hosted память агентов на ClickHouse
+# Самостоятельно размещаемая память агентов на ClickHouse
 
-Loom работает на вашей собственной инфраструктуре, в Docker или в Kubernetes с помощью Helm chart, и
-хранит память агентов, документы, диалоги и индексы кода в виде таблиц в ClickHouse. При первом запуске
-развёртывание может выбрать Postgres для хранения актуального состояния памяти и знаний. Данные
-хранятся только в ваших хранилищах (подключённые вами облачные провайдеры моделей и получатели трассировок
+Loom работает на вашей собственной инфраструктуре, в Docker или в Kubernetes с помощью Helm-чарта, и
+хранит память агентов, документы, разговоры и индексы кода в виде таблиц в ClickHouse. При первом запуске
+для живой памяти и состояния знаний можно выбрать Postgres. Данные
+хранятся только в ваших хранилищах (размещённые модели и приёмники трассировок, которые вы настроили,
 получают то, что они обрабатывают), а то, что знают ваши агенты, можно запрашивать с помощью SQL.
 
 <a id="what-you-get"></a>
@@ -17,33 +17,33 @@ Loom работает на вашей собственной инфрастру�
 ## Что вы получаете
 
 - **Docker или Kubernetes.** Установщик в одну строку запускает локальный стек; Helm-чарт
-  разворачивает N одинаковых реплик за одним URL. [Развёртывание](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md) ·
+  запускает N одинаковых реплик за одним URL. [Развёртывание](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md) ·
   [Kubernetes](https://github.com/ClickHouse/loom/blob/main/docs/operations/kubernetes.md) · [Запуск N реплик](https://github.com/ClickHouse/loom/blob/main/docs/operations/replicas.md)
 - **ClickHouse OSS или ClickHouse Cloud.** [Выбор ClickHouse](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md#choosing-the-clickhouse) ·
   [ClickHouse Cloud и Managed Postgres](https://github.com/ClickHouse/loom/blob/main/docs/operations/clickhouse-cloud.md)
-- **Одно хранилище для векторов, текста и аудита.** При ClickHouse в роли основного хранилища по умолчанию
-  векторный, лексический и графовый поиск, фильтры, аудит и удаление данных выполняются как SQL в одной базе данных.
-  [Основное хранилище](https://github.com/ClickHouse/loom/blob/main/docs/architecture/storage-authority.md)
-- **Многопользовательский режим.** Организации, пространства имён, роли, токены и единый вход (SSO).
-  [Идентификаторы и пространства имён](https://github.com/ClickHouse/loom/blob/main/docs/concepts/identities-and-namespaces.md) ·
+- **Одно хранилище для векторов, текста и аудита.** При ClickHouse в роли источника истины по умолчанию
+  векторный, лексический и графовый поиск, фильтры, аудит и удаление данных выполняются средствами SQL в одной базе данных.
+  [Источник истины для хранения](https://github.com/ClickHouse/loom/blob/main/docs/architecture/storage-authority.md)
+- **Многопользовательский режим.** Организации, пространства имён, роли, токены и единый вход.
+  [Идентичности и пространства имён](https://github.com/ClickHouse/loom/blob/main/docs/concepts/identities-and-namespaces.md) ·
   [Единый вход](https://github.com/ClickHouse/loom/blob/main/docs/operations/sso.md)
-- **Локальные модели.** Выпущенный стек строит эмбеддинги на CPU с помощью встроенной локальной модели, а
-  провайдер эмбеддингов принимает OpenAI-совместимую конечную точку, которую вы запускаете сами.
-  [Модели и ключи API](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/models-and-keys.md)
+- **Локальные модели.** Выпущенный стек строит эмбеддинги на CPU со встроенной локальной моделью, а
+  провайдер эмбеддингов принимает совместимую с OpenAI конечную точку, которую вы запускаете сами.
+  [Модели и API-ключи](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/models-and-keys.md)
 
 <a id="measured"></a>
 
-## Замеры
+## Измерения
 
 Синтетическая нагрузка из записей памяти с 2.4 версии на ключ и эмбеддингами размерности 3072 (два
-вектора на строку) заняла в ClickHouse около 13.6 КБ на ключ, почти все из которых приходится на строку
-с эмбеддингом; эмбеддер меньшего размера занимает меньше, а куски с малым числом строк занимают чуть больше места на строку,
+вектора на строку) заняла в ClickHouse около 13.6 КБ на ключ, почти всё из них приходится на строку
+эмбеддинга; меньший эмбеддер занимает меньше, а куски данных с малым числом строк несут чуть больше на строку,
 пока не будут слиты.
-[Память при масштабировании](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#memory-at-scale)
+[Память в масштабе](https://github.com/ClickHouse/loom/blob/main/docs/benchmarks/results.md#memory-at-scale)
 
 <a id="start"></a>
 
 ## Начало работы
 
-[Быстрый старт](../getting-started/quickstart.md) · [Требования](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites) ·
+[Быстрый старт](../getting-started/quickstart.md) · [Предварительные требования](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/overview.md#prerequisites) ·
 [Обновления](https://github.com/ClickHouse/loom/blob/main/docs/operations/upgrades.md) · [Резервное копирование и восстановление](https://github.com/ClickHouse/loom/blob/main/docs/operations/backup-and-recovery.md)

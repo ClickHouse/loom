@@ -5,15 +5,15 @@
     python -m scripts.i18n.translate update   # translate the stale pages (needs ANTHROPIC_API_KEY)
     python -m scripts.i18n.translate update --all [--lang ja ...]   # after a prompt change
 
-Each page is sent to the Messages API one `## ` section at a time. A section's
-translation is kept only when its fenced code blocks (in order), inline code spans, link
-targets, URLs, heading anchors and numbers match the English section; otherwise the call is
-retried once with the differences named, then the run fails. Relative links in the prose
-are rewritten before translation: a page of the set links to its translation, anything
-else to the English file on GitHub. Every heading gets an explicit `<a id>` with its
-English anchor, so `#anchor` links keep working on the translated page. The first line of
-each translation stamps the git blob of the English page it was made from; `check`
-compares that stamp with the file.
+A short page is sent to the Messages API in one call, a longer one a `## ` section at a
+time (`WHOLE_PAGE_CHARS`). A translation is kept only when its fenced code blocks (in
+order), inline code spans, link targets, URLs, heading anchors and numbers match the
+English; otherwise the call is retried once with the differences named, then the run
+fails. Relative links in the prose are rewritten before translation: a page of the set
+links to its translation, anything else to the English file on GitHub. Every heading gets
+an explicit `<a id>` with its English anchor, so `#anchor` links keep working on the
+translated page. The first line of each translation stamps the git blob of the English
+page it was made from; `check` compares that stamp with the file.
 A change to the model or a banner makes every page stale; a change to the prompt does not:
 regenerate with `--all`. The READMEs carry a generated language line that `update` rewrites
 without translating; adding a language changes the English README's line, so its blob, and
@@ -56,6 +56,7 @@ SOURCES = (
     "docs/use-cases/agent-memory.md",
     "docs/use-cases/autonomous-agents.md",
     "docs/use-cases/code-intelligence.md",
+    "docs/use-cases/code-intelligence-by-language.md",
     "docs/use-cases/coding-agent-cost.md",
     "docs/use-cases/document-search.md",
     "docs/use-cases/multi-agent.md",
@@ -80,7 +81,8 @@ LANGUAGES = (
         "Simplified Chinese",
         "本页由机器从[英文原文]({url})翻译，内容以英文原文为准。",
         "Use full-width Chinese punctuation (，。：；（）) in prose, and join the lines of a "
-        "paragraph into one line. Fixed terms: dashboard 控制台, an access token 令牌 (model "
+        "paragraph into one line. Fixed terms: dashboard 控制台, "
+        "compiler tier 编译器层级, fast tier 快速层级, an access token 令牌 (model "
         "tokens stay token), namespace 命名空间, memory 记忆; keep agent as agent.",
     ),
     Language(
@@ -89,7 +91,8 @@ LANGUAGES = (
         "Japanese",
         "このページは[英語の原文]({url})の機械翻訳です。内容は英語の原文が優先されます。",
         "Use Japanese punctuation (、。：（）) in prose, and join the lines of a paragraph "
-        "into one line. Fixed terms: dashboard ダッシュボード, token トークン, namespace "
+        "into one line. Fixed terms: dashboard ダッシュボード, "
+        "compiler tier コンパイラティア, fast tier 高速ティア, token トークン, namespace "
         "名前空間, memory メモリ, agent エージェント.",
     ),
     Language(
@@ -97,24 +100,25 @@ LANGUAGES = (
         "한국어",
         "Korean",
         "이 페이지는 [영어 원문]({url})을 기계 번역한 것이며, 영어 원문이 기준입니다.",
-        "Fixed terms: dashboard 대시보드, token 토큰, namespace 네임스페이스, memory 메모리, "
-        "agent 에이전트.",
+        "Fixed terms: dashboard 대시보드, compiler tier 컴파일러 티어, fast tier 빠른 티어, "
+        "token 토큰, namespace 네임스페이스, memory 메모리, agent 에이전트.",
     ),
     Language(
         "pt-BR",
         "Português (Brasil)",
         "Brazilian Portuguese",
         "Esta página é uma tradução automática da [página em inglês]({url}), que prevalece.",
-        "Fixed terms: dashboard painel, token token, namespace namespace, memory memória, "
-        "agent agente.",
+        "Fixed terms: dashboard painel, compiler tier camada do compilador, fast tier camada "
+        "rápida, token token, namespace namespace, memory memória, agent agente.",
     ),
     Language(
         "es",
         "Español",
         "Spanish",
         "Esta página es una traducción automática de la [página en inglés]({url}), que prevalece.",
-        "Fixed terms: dashboard panel, token token, namespace espacio de nombres, "
-        "memory memoria, agent agente.",
+        "Fixed terms: dashboard panel, compiler tier nivel del compilador, fast tier nivel "
+        "rápido, override sobrescritura, token token, namespace espacio de nombres, memory "
+        "memoria, agent agente.",
     ),
     Language(
         "ru",
@@ -122,8 +126,9 @@ LANGUAGES = (
         "Russian",
         "Эта страница — машинный перевод [английской страницы]({url}); "
         "при расхождениях верна английская версия.",
-        "Fixed terms: dashboard панель управления, token токен, namespace пространство имён, "
-        "memory память, agent агент.",
+        "Fixed terms: dashboard панель управления, compiler tier уровень компилятора, fast "
+        "tier быстрый уровень, token токен, namespace пространство имён, memory память, "
+        "agent агент.",
     ),
 )
 
@@ -148,7 +153,7 @@ KEPT_WORDS = frozenset(
     """loom clickhouse postgres claude code codex cursor docker compose mcp sdk sdks python
     typescript node langgraph strands kubernetes helm github codespaces http https api cli
     okf rag llm json yaml sql oidc scim tls otel clickstack langfuse gemini vs windsurf zed
-    cline pypi npm apache ci url id token namespace""".split()
+    cline pypi npm apache ci url id token namespace go rust java javascript c""".split()
 )
 URL = re.compile(r"https?://[^\s<>()\"'`*\]]+")
 # A code span may wrap across lines; Markdown renders the break as a space.
@@ -157,7 +162,8 @@ HEADING = re.compile(r"^(#{1,6}) +(.+?) *$")
 ANCHOR = re.compile(r'^<a id="([^"]+)"></a>$')
 NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 
-SYSTEM = """You translate one section of a Markdown page of Loom's documentation into {language}.
+SYSTEM = """You translate a Markdown page of Loom's documentation, or one section of it, into
+{language}.
 Loom is an open-source memory, document search and code index server for AI agents.
 Rules:
 - Translate the prose, headings, table cells, list items, alt text and link text.
@@ -169,7 +175,7 @@ Rules:
   table layout, the same blank lines between blocks.
 - Write the plain, technical register of developer documentation in {language}.
 - {style}
-Reply with the translated section only, with no preamble and no code fence around it."""
+Reply with the translated text only, with no preamble and no code fence around it."""
 
 
 # ---- page structure -------------------------------------------------------------------
@@ -462,7 +468,7 @@ def untranslated_pages() -> list[str]:
             path = ROOT / target_path(lang.code, source)
             if not path.is_file():
                 continue
-            english = "\n".join(english_sections(prepare(source, lang)[0]))
+            english = "\n".join(english_requests(prepare(source, lang)[0]))
             kept = labels(english) & labels(path.read_text())
             if kept:
                 rel = path.relative_to(ROOT).as_posix()
@@ -522,10 +528,10 @@ class Spend:
 
 
 def request_chars(source: str, lang: Language) -> int:
-    """The characters one translation of `source` sends: each section with the system prompt."""
+    """The characters one translation of `source` sends: each request with the system prompt."""
     text, _ = prepare(source, lang)
     system = len(SYSTEM.format(language=lang.english, style=lang.style))
-    return sum(len(s) + system for s in english_sections(text))
+    return sum(len(s) + system for s in english_requests(text))
 
 
 def estimate_usd(model: str, chars: int) -> float:
@@ -578,28 +584,28 @@ def reply_text(data: dict) -> str:
     return "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
 
 
-def translate_section(section: str, lang: Language, key: str, spend: Spend) -> str:
-    if not section.strip():
-        return section
+def translate_text(text: str, lang: Language, key: str, spend: Spend) -> str:
+    if not text.strip():
+        return text
     system = SYSTEM.format(language=lang.english, style=lang.style)
-    messages = [{"role": "user", "content": section}]
+    messages = [{"role": "user", "content": text}]
     for _ in range(2):
         spend.before_call()
         data = call(key, spend.model, system, messages)
         spend.add(data.get("usage", {}))
-        text = reply_text(data)
-        problems = differences(section, text)
+        reply = reply_text(data)
+        problems = differences(text, reply)
         if not problems:
-            return _same_edges(section, text)
+            return _same_edges(text, reply)
         messages += [
-            {"role": "assistant", "content": text},
+            {"role": "assistant", "content": reply},
             {
                 "role": "user",
-                "content": "Fix these differences and reply with the whole section:\n"
+                "content": "Fix these differences and reply with the whole text again:\n"
                 + "\n".join(problems),
             },
         ]
-    raise SystemExit(f"{lang.code}: a section still differs after a retry: {problems}")
+    raise SystemExit(f"{lang.code}: a translation still differs after a retry: {problems}")
 
 
 def _same_edges(source: str, text: str) -> str:
@@ -632,15 +638,23 @@ def render(source: str, lang: Language, body: str, line: str, model: str) -> str
     return header(source, lang, model, blob(source)) + body
 
 
-def english_sections(text: str) -> list[str]:
-    """The page's sections as sent, each heading with its page-wide anchor."""
+# A page up to this size goes in one call, so its terms stay the same from section to
+# section; a longer one goes a section at a time, within what one reply holds.
+WHOLE_PAGE_CHARS = 8000
+
+
+def english_requests(text: str) -> list[str]:
+    """The page's requests as sent, each heading with its page-wide anchor: the whole page
+    when it is short, else one `## ` section each."""
     seen: Counter[str] = Counter()
-    return [anchor_headings(s, seen) for s in sections(text)]
+    parts = [anchor_headings(s, seen) for s in sections(text)]
+    whole = "\n".join(parts)
+    return [whole] if len(whole) <= WHOLE_PAGE_CHARS else parts
 
 
 def translate_page(source: str, lang: Language, key: str, spend: Spend) -> None:
     text, line = prepare(source, lang)
-    body = "\n".join(translate_section(s, lang, key, spend) for s in english_sections(text))
+    body = "\n".join(translate_text(s, lang, key, spend) for s in english_requests(text))
     path = ROOT / target_path(lang.code, source)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render(source, lang, body, line, spend.model))
@@ -685,7 +699,7 @@ def check(skip_stale: bool = False) -> int:
     return 1 if problems else 0
 
 
-# Pages translated at once; each page's sections still go one after another.
+# Pages translated at once; each page's requests still go one after another.
 WORKERS = 6
 
 
