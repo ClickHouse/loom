@@ -82,8 +82,8 @@ The memory section has one paragraph per hit, `[date] [key] (type) excerpt`, in 
 them. A decision from the scoped repository names its namespace beside its type, `(decision, <namespace>)`, and is
 placed among the current home hits by similarity, then moved down like a home hit when its code changed. A home
 hit ranked down for stale code (moved, or left in place with nothing below it to pass) holds no place for a
-decision: a decision lands after it only when a current hit below it is at least as similar, and the hit's
-`code_changed_places` counts only the home rows.
+decision: a decision lands after it only when a hit below it that the search did not rank down is at least as
+similar, and the hit's `code_changed_places` counts only the home rows.
 
 The reading rule rides ahead of the block once per MCP session, then as a one-line pointer (every time for a client
 that sends no session id).
