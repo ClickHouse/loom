@@ -247,7 +247,7 @@ async def _shape_final_hits(
     # rows: a memory whose code changed is served lower, never left out. A pass another
     # search merges leaves the move, marks and all, to that search, whatever it reads the
     # query as. A date order is the answer and stays as it is, its marks spent so no
-    # merge moves its rows.
+    # merge moves its rows (rows merged in from another search are its own to move).
     if not getattr(input, "_merged_into_parent", False):
         if ctx.chronological_intent:
             code_change.spend_marks(final_hits)
