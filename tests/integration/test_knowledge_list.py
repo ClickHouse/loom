@@ -173,7 +173,7 @@ async def test_list_reads_several_namespaces_as_one_newest_first(control_plane_u
     ) as a:
         keys: list[tuple[str, str, str]] = []
         cursor = None
-        # Three a page, through the SDK: a page holds one source from two namespaces, and
+        # Three rows a page, through the SDK: a page holds one source from two namespaces, and
         # the cursor resumes inside a namespace.
         while True:
             # In another order, and naming its own namespace again: neither changes the list.
