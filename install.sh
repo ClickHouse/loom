@@ -602,16 +602,12 @@ main() {
     [ "$cmd_status" != 143 ] || printf '%s did not finish within %s seconds\n' "$1" "$bound_s" >&2
     return "$cmd_status"
   }
-  # wants CLIENT NAME: whether to connect CLIENT. LOOM_CONNECT (a comma list of
-  # clients, `all` or `none`) decides; otherwise a terminal asks, and a run
-  # without one, such as CI, changes no agent's settings.
+  # wants NAME: whether to connect a client `considered` let through: yes when
+  # LOOM_CONNECT named it, otherwise the terminal is asked (a run without one, such
+  # as CI, skipped the agents altogether).
   wants() {
-    case ",${LOOM_CONNECT:-}," in
-      *,none,*) return 1 ;;
-      *,all,* | *",$1,"*) return 0 ;;
-    esac
-    [ -z "${LOOM_CONNECT:-}" ] && [ -t 0 ] && [ -t 1 ] || return 1
-    printf 'Connect %s to Loom? [Y/n] ' "$2"
+    [ -z "${LOOM_CONNECT:-}" ] || return 0
+    printf 'Connect %s to Loom? [Y/n] ' "$1"
     read -r answer || return 1
     case $answer in '' | [Yy]*) return 0 ;; *) return 1 ;; esac
   }
@@ -659,7 +655,7 @@ main() {
       elif ! node_ok; then
         # Its hooks and MCP header helper run the `node` on PATH, with no search.
         printf 'Claude Code: the Loom plugin runs the Node.js 18 or later on PATH, which is not there; install it and run this again, or add the MCP server alone: claude mcp add --transport http loom "%s/mcp?toolset=coding" -s user\n' "$server_url"
-      elif wants claude-code "Claude Code"; then
+      elif wants "Claude Code"; then
         # A marketplace added before is no error: the install below says what fails.
         # It clones the repository: the slowest call, so it gets 5 minutes.
         bounded 300 claude plugin marketplace add ClickHouse/loom >/dev/null || true
@@ -668,7 +664,7 @@ main() {
           printf 'Claude Code: connected to %s (the plugin'"'"'s other settings are optional)\n' "$server_url"
           agents="$agents, Claude Code"
         else
-          printf 'Claude Code: could not install the plugin (above); to try again: claude plugin marketplace add ClickHouse/loom && claude plugin install loom@loom --config server_url=%s\n' "$server_url"
+          printf 'Claude Code: could not install the plugin (above); to try again: claude plugin marketplace add ClickHouse/loom; claude plugin install loom@loom --config server_url=%s\n' "$server_url"
         fi
       fi
     fi
@@ -692,14 +688,14 @@ main() {
       elif [ "$server_url" != "$default_url" ]; then
         # Codex plugins take no install options: the URL is fixed in the plugin.
         printf 'Codex: its Loom plugin always uses %s; to reach %s, see https://github.com/%s/blob/main/docs/features/integrations/codex.md\n' "$default_url" "$server_url" "$REPOSITORY"
-      elif wants codex Codex; then
+      elif wants Codex; then
         bounded 300 codex plugin marketplace add ClickHouse/loom >/dev/null || true
         if bounded 60 codex plugin add loom@loom >/dev/null; then
           printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
           agents="$agents, Codex"
           node_ok || printf 'Codex: the plugin runs on Node.js 18 or later, which is not on PATH here; without one its launcher finds, use the MCP server alone instead: codex plugin remove loom@loom && codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
         else
-          printf 'Codex: could not add the plugin (above); to try again: codex plugin marketplace add ClickHouse/loom && codex plugin add loom@loom\n'
+          printf 'Codex: could not add the plugin (above); to try again: codex plugin marketplace add ClickHouse/loom; codex plugin add loom@loom\n'
         fi
       fi
     fi
@@ -718,7 +714,7 @@ main() {
       if grep -q '"loom"[[:space:]]*:' "$vscode_mcp" 2>/dev/null; then
         printf 'VS Code: a loom MCP server is set up already (%s)\n' "$vscode_mcp"
         kept=1
-      elif wants vscode "VS Code"; then
+      elif wants "VS Code"; then
         if bounded 60 code --add-mcp "{\"name\":\"loom\",\"type\":\"http\",\"url\":\"$server_url/mcp?toolset=coding\"}" >/dev/null; then
           printf 'VS Code: added the loom MCP server\n'
           agents="$agents, VS Code"

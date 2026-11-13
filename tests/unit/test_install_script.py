@@ -1405,11 +1405,14 @@ def _desktop(installer_env: dict[str, str]) -> tuple[dict[str, str], Path]:
     and an `xdg-open` that logs the URL it gets. Returns (env, xdg-open log)."""
     bin_dir = Path(installer_env["PATH"].split(":")[0])
     log = bin_dir / "xdg-open.log"
-    for name, body in (("uname", "echo Linux"), ("xdg-open", f'echo "$*" >> "{log}"')):
+    # The installer starts xdg-open in the background and exits: on the test's
+    # pseudo-terminal its exit hangs up the terminal, which must not kill the stub.
+    opener = f'trap \'\' HUP\necho "$*" >> "{log}"'
+    for name, body in (("uname", "echo Linux"), ("xdg-open", opener)):
         stub = bin_dir / name
         stub.write_text(f"#!/bin/sh\n{body}\n")
         stub.chmod(0o755)
-    env = {k: v for k, v in installer_env.items() if k not in ("LOOM_NO_OPEN", "SSH_CONNECTION")}
+    env = {k: v for k, v in installer_env.items() if k != "LOOM_NO_OPEN"}
     return {**env, "LOOM_SKIP_START": "0", "DISPLAY": ":0"}, log
 
 
@@ -1445,6 +1448,44 @@ def test_the_dashboard_is_not_opened_when_asked_not_to_or_over_ssh(
     env, log = _desktop(installer_env)
     _on_terminal({**env, **extra}, [], None)
     assert _opened(log) == []
+
+
+def test_a_linux_terminal_with_no_display_opens_no_dashboard(
+    install, installer_env: dict[str, str]
+) -> None:
+    _start_stubs(installer_env)
+    env, log = _desktop(installer_env)
+    _on_terminal({k: v for k, v in env.items() if k != "DISPLAY"}, [], None)
+    assert _opened(log) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "client", "retry"),
+    [
+        (
+            "claude",
+            "claude-code",
+            "claude plugin marketplace add ClickHouse/loom; claude plugin install loom@loom"
+            " --config server_url=http://localhost:7777",
+        ),
+        (
+            "codex",
+            "codex",
+            "codex plugin marketplace add ClickHouse/loom; codex plugin add loom@loom",
+        ),
+    ],
+)
+def test_a_failed_plugin_install_prints_the_commands_to_try_again(
+    install, installer_env: dict[str, str], name: str, client: str, retry: str
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    cli = Path(installer_env["PATH"].split(":")[0]) / name
+    cli.write_text('#!/bin/sh\ncase "$*" in "plugin list") exit 0 ;; esac\nexit 1\n')
+    cli.chmod(0o755)
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT=client)
+    assert result.returncode == 0, result.stderr
+    assert f"to try again: {retry}\n" in result.stdout
 
 
 def _answer_connect_prompts(env: dict[str, str], answer: bytes) -> bytes:
