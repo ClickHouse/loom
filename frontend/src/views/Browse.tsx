@@ -108,7 +108,10 @@ export function Browse() {
   const [settingsNs, setSettingsNs] = useState<string | null>(null);
   const [guideNs, setGuideNs] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [repoCount, setRepoCount] = useState(0);
+  // The code namespaces' names: counted in the Repositories hint, and a search naming one
+  // is pointed there rather than offered a memory request.
+  const [repoNames, setRepoNames] = useState<string[]>([]);
+  const repoCount = repoNames.length;
   const setView = useStore((s) => s.setView);
   const whoami = useStore((s) => s.whoami);
 
@@ -131,7 +134,7 @@ export function Browse() {
       // Repositories are surfaced in the Repositories section, not as joinable memory. The server
       // lists no collection here: one is shared in the Library, never joined.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
-      setRepoCount(browseRows.filter((r) => r.kind === "code").length);
+      setRepoNames(browseRows.filter((r) => r.kind === "code").map((r) => r.namespace));
       setMineRows(mineResult);
       setMine(new Set(mineRead.map((r) => r.namespace)));
       setMyRole(Object.fromEntries(mineRead.map((r) => [r.namespace, r.role])));
@@ -231,9 +234,15 @@ export function Browse() {
   // A search that is a namespace name no listed row carries may name a private namespace
   // to request, even when other rows match it (a public `support-team` for `support`).
   // Names are lowercase, so the search is compared lowercased. A name the caller already
-  // holds a role on keeps the card: its alert offers the higher role.
+  // holds a role below admin keeps the card: its alert offers the higher role. A
+  // repository's name is requested from Repositories.
   const typedName = listQuery.toLowerCase();
-  const offersRequest = NAMESPACE_NAME.test(typedName) && !filtered.some((r) => r.namespace === typedName);
+  const typedRepo = repoNames.includes(typedName);
+  const offersRequest =
+    NAMESPACE_NAME.test(typedName) &&
+    !typedRepo &&
+    myRole[typedName] !== "admin" &&
+    !filtered.some((r) => r.namespace === typedName);
   const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
   const dialogOpen = !!(joinDialog || manageNs || settingsNs || createOpen);
   // The rows of both sections are one tab stop; the arrows move through them.
@@ -399,6 +408,10 @@ export function Browse() {
             />
           )}
 
+          {rows !== null && filtered.length === 0 && listQuery && !offersRequest && !typedRepo && (
+            <ListState kind="filtered" things="namespaces" filter={listQuery} onClear={() => setQuery("")} />
+          )}
+
           {rows !== null && filtered.length > 0 && (
             <div className="space-y-2" data-testid="browse-list" aria-busy={refreshing || undefined}>
               {filtered.map((r) => (
@@ -418,6 +431,16 @@ export function Browse() {
                 />
               ))}
             </div>
+          )}
+
+          {rows !== null && typedRepo && (
+            <p className={`text-sm text-text-muted ${filtered.length > 0 ? "mt-3" : ""}`}>
+              <span className="font-mono">{typedName}</span> is a repository: request it from{" "}
+              <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
+                Repositories
+              </Link>
+              .
+            </p>
           )}
 
           {rows !== null && offersRequest && (

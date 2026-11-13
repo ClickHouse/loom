@@ -6,7 +6,7 @@ import { useStore } from "../lib/state";
 import { axeViolations } from "../test/axe";
 import { Browse } from "./Browse";
 
-// A space is one list row: the namespace in mono and its visibility badge
+// A namespace is one list row: the namespace in mono and its visibility badge
 // on line 1, its description on line 2, its guide's summary on line 3 when it has one (a
 // link to the guide for a member); at the right its member count, the one inline action
 // (Invite where you manage it, else Join, Pending or Request upgrade) and a More menu
@@ -365,6 +365,39 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
       await userEvent.type(box, "support team");
       expect(await within(screen.getByTestId("browse-list")).findByText("alpha")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+    } finally {
+      browse.pop();
+    }
+  });
+
+  it("says nothing matches a search that is no namespace name, and offers no request", async () => {
+    render(<Browse />);
+    await screen.findByText("Support team runbooks");
+    await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "my_ns");
+    expect(await screen.findByText(/No namespaces match/)).toHaveTextContent("No namespaces match my_ns");
+    expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+  });
+
+  it("offers no request for a namespace the caller admins", async () => {
+    render(<Browse />);
+    await screen.findByText("Support team runbooks");
+    await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "team");
+    expect(await within(screen.getByTestId("browse-list")).findByText("alpha")).toBeInTheDocument();
+    expect(screen.queryByText("No public namespace named", { exact: false })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+  });
+
+  it("points a repository's exact name to Repositories instead of a request", async () => {
+    browse.push({ ...browse[1], namespace: "code-loom", kind: "code", guide_summary: "" });
+    try {
+      render(<Browse />);
+      await screen.findByText("Support team runbooks");
+      await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "code-loom");
+      const line = await screen.findByText(/is a repository: request it from/);
+      expect(line).toHaveTextContent("code-loom is a repository: request it from Repositories.");
+      expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+      await userEvent.click(within(line).getByRole("button", { name: "Repositories" }));
+      expect(useStore.getState().view).toBe("code");
     } finally {
       browse.pop();
     }
