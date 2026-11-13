@@ -47,14 +47,13 @@ def leading_home_fact(
     what the question asked for. For example, a lookup chunk at sim 0.452 /
     rank 0.532 must not outrank `where_i_live` at sim 0.470 / rank 0.486.
     None when no home fact leads or is within the margin. A fact the search ranked
-    down for its stale code (`moved`: the ids of those dicts) is never the lead: it is
-    served where the search put it, and withholds nothing."""
+    down for its stale code (`moved`: the ids of those dicts) is never the lead, at the
+    top or below it: it is served where the search put it, and another home fact within
+    the margin of the top row may lead instead."""
     if not home_ns or not mem_hits:
         return None
     first = mem_hits[0]
-    if id(first) in moved:
-        return None
-    if _is_home_fact(first, home_ns):
+    if id(first) not in moved and _is_home_fact(first, home_ns):
         return first
     if not isinstance(first, dict):
         return None
@@ -155,11 +154,14 @@ def apply_precision_floor(
 MAX_CHUNKS_BEHIND_FACT = 1
 
 
-def cap_chunks_behind_fact(payload: dict[str, Any], home_ns: str) -> int:
+def cap_chunks_behind_fact(
+    payload: dict[str, Any], home_ns: str, moved: frozenset[int] = frozenset()
+) -> int:
     """When a fact from the home namespace is in the memory section, keep at
     most MAX_CHUNKS_BEHIND_FACT transcript chunks after it (the best ranked):
     the fact is the answer, one chunk is its evidence, the rest repeat the
-    same session. Returns the number withheld."""
+    same session. A fact the search ranked down for its stale code (`moved`)
+    is not taken as the answer. Returns the number withheld."""
     mem = payload.get("memory")
     if not isinstance(mem, dict) or not isinstance(mem.get("results"), list):
         return 0
@@ -168,6 +170,7 @@ def cap_chunks_behind_fact(payload: dict[str, Any], home_ns: str) -> int:
         isinstance(h, dict)
         and str(h.get("source") or "fact") == "fact"
         and str(h.get("namespace") or home_ns) == home_ns
+        and id(h) not in moved
         for h in rows
     )
     if not has_fact:
@@ -211,7 +214,7 @@ def answer_first(
     mem = payload.get("memory")
     if not isinstance(mem, dict):
         return payload
-    _below += cap_chunks_behind_fact(payload, home_ns)
+    _below += cap_chunks_behind_fact(payload, home_ns, moved)
     hits = [h for h in (mem.get("results") or []) if isinstance(h, dict)]
     lead = leading_home_fact(hits, home_ns, moved=moved)
     if lead is None:
