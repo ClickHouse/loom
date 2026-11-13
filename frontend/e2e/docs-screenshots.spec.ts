@@ -749,7 +749,6 @@ const AUDIT_ROWS = [
   { h: 3.5, event_type: "memory.set", actor: AGENT_WRITER, subject: { memory_key: "deploys/policy/windows" } },
   { h: 4.6, event_type: "memory.delete", actor: AGENT_SUBJECT, subject: { memory_key: "staging/db/legacy-host" } },
   { h: 5.0, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "support/refunds/approval" } },
-  { h: 6.7, event_type: "memory.promote", actor: SUBJECT, subject: { memory_key: "procedures/rollback-prod" } },
   { h: 8.2, event_type: "namespace.join", actor: "dev2@acme.example", subject: { namespace: NS, role: "viewer" } },
   { h: 12.0, event_type: "knowledge.delete", actor: SUBJECT, subject: { source_uri: "runbooks/old-pager-rota.md" } },
   {
