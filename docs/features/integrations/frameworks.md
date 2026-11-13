@@ -128,8 +128,9 @@ messages over again. The block's two calls:
   `Memory`'s session id; Loom extracts the facts worth keeping and resolves duplicates and
   conflicts with what it already holds. With `defer` (the default) the server queues the
   extraction, so a flush is one request and an extraction failure does not fail the turn.
-- **`aget`** searches with the latest user message and returns the matching memories, one
-  line each, which `Memory` places in the system message. It leaves out memories below
+- **`aget`** searches the block's namespace, across every agent writing to it, with the
+  latest user message and returns the matching memories, one line each, which `Memory`
+  places in the system message. It leaves out memories below
   Loom's floor, and returns nothing when Loom **abstains**.
 
 | `LoomMemoryBlock` field | Default           | Effect                                                                                              |

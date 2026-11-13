@@ -180,7 +180,8 @@ class LoomMemoryBlock(BaseMemoryBlock[str]):
         )
         if not query:
             return ""
-        # Read the namespace the block writes to, whatever the deployment's default.
+        # Read the namespace the block writes to, whatever the deployment's default;
+        # with no agent_id the search reads every agent's memories there.
         kwargs: dict[str, Any] = {"top_k": self.top_k, "namespace_scope": "this"}
         if self.tags:
             kwargs["tags"] = list(self.tags)
