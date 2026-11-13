@@ -1,10 +1,12 @@
 # What's included
 
-Loom's capabilities, one table per area, each linked to the page that covers it. All of
-them are in the Apache-2.0 repository and run on your own infrastructure. The server's LLM
-and embedding model are your choice, hosted or an OpenAI-compatible endpoint you run
-([models and API keys](models-and-keys.md)); extraction and cited answers need a real LLM.
-The switches that are off by default are listed in [status](../reference/status.md).
+Loom's capabilities, one table per area, each linked to the page that covers it. Each runs
+on your own infrastructure from the Apache-2.0 repository; Ask AI also needs a separate chat
+server deployed beside Loom. The server's LLM and embedding model are your choice, hosted
+or an OpenAI-compatible endpoint you run ([models and API keys](models-and-keys.md));
+extraction and cited answers need a real LLM. Each linked page opens with whether its
+capability must be turned on; the boolean switches that load false are also listed in
+[status](../reference/status.md).
 
 ## Memory
 
@@ -15,6 +17,8 @@ The switches that are off by default are listed in [status](../reference/status.
 | Conflicts and refusal       | A close but different value is flagged and the namespace owner decides which fact stands; a registered pattern refuses matching writes | [Conflicts and refusal](../features/memory/conflicts-and-refusal.md)             |
 | History and provenance      | Every write is a new version, with who wrote it and how it entered memory                                                              | [History and provenance](../features/memory/history-and-provenance.md)           |
 | Extraction from transcripts | The server decides what in a transcript is durable                                                                                     | [Extraction](../features/memory/extraction.md)                                   |
+| Import                      | Facts another memory system already distilled, written with the same checks as any write                                               | [Importing](../features/memory/writing.md#importing-from-another-memory-system)  |
+| Change webhooks             | One signed event per memory change, posted to a URL a namespace admin registers                                                        | [Change webhooks](../features/memory/writing.md#change-webhooks)                 |
 | Working memory and profiles | Small named blocks and profile text an agent is given every time                                                                       | [Working memory and profiles](../features/memory/working-memory-and-profiles.md) |
 | Procedures and learnings    | Steps learned from reported runs, reflections and a review queue of candidate facts                                                    | [Procedures and learnings](../features/memory/procedures-and-learnings.md)       |
 | Memories linked to code     | A memory about code follows the definitions it names as they move or change                                                            | [Memory](../concepts/memory.md#memories-linked-to-code)                          |
@@ -22,18 +26,18 @@ The switches that are off by default are listed in [status](../reference/status.
 
 ## Documents, code and work records
 
-| Capability                    | What it does                                                                                                   | Page                                                                                                                          |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Document search               | Documents split into sections, embedded, searched and cited by passage                                         | [Knowledge documents](../features/knowledge.md)                                                                               |
-| Files and document sources    | PDF, DOCX, PPTX, XLSX, CSV and more parsed by an extractor service; registered sources synced into a namespace | [Document extraction](../architecture/document-extraction.md) · [Document sources](../features/knowledge.md#document-sources) |
-| Unified search                | Memory, profile, documents and past conversations in one call, and a context pack for a task                   | [Unified search](../features/unified-search.md)                                                                               |
-| Ask AI                        | An assistant in the dashboard that answers about what a namespace holds, with a citation for every claim       | [Assistant](../architecture/assistant.md) · [Dashboard](../features/dashboard.md#ask-ai)                                      |
-| Code index                    | Definitions, callers, impact and search by meaning over your git repositories                                  | [Code index](../features/code-index/overview.md)                                                                              |
-| PR and release history        | Merged pull requests joined against today's symbols, callers and tests                                         | [History, PRs and releases](../features/code-index/history-and-prs.md)                                                        |
-| Tracker                       | Issues, pull requests, incidents and CI runs read live from your own ClickHouse                                | [Tracker plane](../features/tracker/overview.md)                                                                              |
-| Conversations and sessions    | Searchable verbatim transcripts, and session briefs an agent resumes from                                      | [Conversations and sessions](../features/conversations-and-sessions.md)                                                       |
-| Runs                          | One record per task execution, with the memories it relied on                                                  | [Runs](../features/runs.md)                                                                                                   |
-| Tasks, decisions and policies | Task inboxes, a decision record and policies for coordination between agents                                   | [Tasks, decisions and policies](../features/tasks-and-decisions.md)                                                           |
+| Capability                    | What it does                                                                                                                                          | Page                                                                                                                          |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Document search               | Documents split into sections, embedded, searched and cited by passage; searches that found nothing are grouped into knowledge gaps                   | [Knowledge documents](../features/knowledge.md) · [Knowledge gaps](../features/knowledge.md#knowledge-gaps)                   |
+| Files and document sources    | PDF, DOCX, PPTX, XLSX, CSV and more parsed by an extractor service; registered sources synced into a namespace                                        | [Document extraction](../architecture/document-extraction.md) · [Document sources](../features/knowledge.md#document-sources) |
+| Unified search                | Memory, profile, documents and past conversations in one call, and a context pack for a task                                                          | [Unified search](../features/unified-search.md)                                                                               |
+| Ask AI                        | An assistant in the dashboard that answers about what a namespace holds, with a citation for every claim; it needs a chat server deployed beside Loom | [Dashboard](../features/dashboard.md#ask-ai) · [Assistant](../architecture/assistant.md)                                      |
+| Code index                    | Definitions, callers, impact and search by meaning over your git repositories                                                                         | [Code index](../features/code-index/overview.md)                                                                              |
+| PR and release history        | Merged pull requests joined against today's symbols, callers and tests                                                                                | [History, PRs and releases](../features/code-index/history-and-prs.md)                                                        |
+| Tracker                       | Issues, pull requests, incidents and CI runs read live from your own ClickHouse                                                                       | [Tracker plane](../features/tracker/overview.md)                                                                              |
+| Conversations and sessions    | Searchable verbatim transcripts, and session briefs an agent resumes from                                                                             | [Conversations and sessions](../features/conversations-and-sessions.md)                                                       |
+| Runs                          | One record per task execution, with the memories it relied on                                                                                         | [Runs](../features/runs.md)                                                                                                   |
+| Tasks, decisions and policies | Task inboxes, a decision record and policies for coordination between agents                                                                          | [Tasks, decisions and policies](../features/tasks-and-decisions.md)                                                           |
 
 ## Access, governance and operations
 
