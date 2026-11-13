@@ -99,6 +99,24 @@ def test_a_blank_or_sentinel_identity_is_filled_too(seen: Seen, blank: str) -> N
     assert seen == [("MemoryGetInput", "dev", "local", "a")]
 
 
+def test_an_agent_of_dash_is_kept(seen: Seen) -> None:
+    """`-` names no agent: the agents views leave it out, where `http` would show.
+    A list and a key history keep it too, so they read only the rows with no agent."""
+    _post("memory.set", {"agent": "-", "memory_key": "k", "value": "v"})
+    _post("memory.get", {"agent": "-", "memory_key": "k"})
+    _post("memory.delete", {"agent": "-", "memory_key": "k"})
+    _post("memory.list", {"agent": "-"})
+    _post("memory.history", {"agent": "-", "memory_key": "k"})
+    assert [row[1:] for row in seen] == [("dev", "local", "-")] * 5
+
+
+def test_an_agent_of_dash_beside_a_misspelled_one_runs_as_no_agent(seen: Seen) -> None:
+    """Named, so neither filled nor dropped: the read runs as agent `-`, as on a
+    server with a token."""
+    _post("memory.get", {"agent": "-", "agnet": "bot", "memory_key": "k"})
+    assert len(seen) == 1 and seen[0][3] == "-"
+
+
 def test_an_identity_the_call_names_is_kept(seen: Seen) -> None:
     _post(
         "memory.set",
