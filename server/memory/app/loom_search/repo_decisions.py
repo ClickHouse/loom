@@ -98,12 +98,18 @@ def merge_memory_hits(
     """One memory list and the `extra` hits added to it. `base` keeps its
     own order (rank order, not always falling similarity); each `extra` hit
     goes after the last base hit whose similarity is at least its own (the
-    rank scores of two searches do not compare). An `extra` hit whose
+    rank scores of two searches do not compare). A base row its search moved
+    down for stale code counts at most the similarity of the row above it, as a
+    home row placed there would. An `extra` hit whose
     (namespace, memory_key) the base or an earlier extra hit holds is left
     out. Nothing is cut: the extra hits are bounded by the caller's
     `top_k` (`search_repo_decisions` keeps one per key), and a base hit pushed
     out would be served on no page."""
     seen = {(h.namespace or home_ns, h.memory_key) for h in base}
+    held: list[float] = []  # the similarity each base row holds its slot at
+    for b in base:
+        moved = code_change.moved_for_stale_code(b) and held
+        held.append(min(b.similarity, held[-1]) if moved else b.similarity)
     # slots[i]: the extra hits that go after the first i base hits
     slots: list[list[_MemorySearchHit]] = [[] for _ in range(len(base) + 1)]
     added: list[_MemorySearchHit] = []
@@ -112,15 +118,7 @@ def merge_memory_hits(
         if key in seen:
             continue
         seen.add(key)
-        # a base row its search moved down for stale code holds no slot for others
-        after = max(
-            (
-                i + 1
-                for i, b in enumerate(base)
-                if b.similarity >= h.similarity and not code_change.moved_for_stale_code(b)
-            ),
-            default=0,
-        )
+        after = max((i + 1 for i, s in enumerate(held) if s >= h.similarity), default=0)
         slots[after].append(h)
         added.append(h)
     out = list(slots[0])

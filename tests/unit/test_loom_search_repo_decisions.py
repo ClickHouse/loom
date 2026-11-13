@@ -954,13 +954,22 @@ async def test_a_decision_whose_code_changed_moves_down_after_the_merge_and_says
     assert moved.explanation == stale_explanation
 
 
-def test_a_base_row_moved_for_stale_code_holds_no_slot_for_a_decision() -> None:
+@pytest.mark.parametrize(
+    ("similarity", "order"),
+    [
+        (0.85, ["decision:x", "b", "c", "d", "stale"]),  # its own 0.9 holds no slot
+        (0.5, ["b", "c", "d", "stale", "decision:x"]),  # as a home row at 0.5 would go
+    ],
+)
+def test_a_base_row_moved_for_stale_code_holds_the_slot_of_the_row_above_it(
+    similarity, order
+) -> None:
     stale = _hit("stale", 0.9, "me")
     stale.score_components = {"code_changed_places": -3.0}
     base = [_hit("b", 0.8, "me"), _hit("c", 0.7, "me"), _hit("d", 0.6, "me"), stale]
-    fresh = _hit("decision:x", 0.85, TRUNK, mtype="decision")
+    fresh = _hit("decision:x", similarity, TRUNK, mtype="decision")
     hits, added = repo_decisions.merge_memory_hits(base, [fresh], "me")
-    assert [h.memory_key for h in hits] == ["decision:x", "b", "c", "d", "stale"]
+    assert [h.memory_key for h in hits] == order
 
 
 @pytest.mark.asyncio
