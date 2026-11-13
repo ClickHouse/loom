@@ -55,8 +55,8 @@ machine = ["pyjwt[crypto]>=2.8"]
 aws = ["pyjwt[crypto]>=2.8", "boto3>=1.28"]
 
 [project.urls]
-Homepage = "https://github.com/ClickHouse/loom"
-Documentation = "https://github.com/ClickHouse/loom/blob/main/docs/reference/python-sdk.md"
+Homepage = "https://clickhouse.github.io/loom/"
+Documentation = "https://clickhouse.github.io/loom/reference/python-sdk/"
 Repository = "https://github.com/ClickHouse/loom"
 Issues = "https://github.com/ClickHouse/loom/issues"
 

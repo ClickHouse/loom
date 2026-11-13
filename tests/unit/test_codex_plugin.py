@@ -307,6 +307,15 @@ def test_codex_default_prompts_fit_the_directory() -> None:
     assert all(len(p) <= 128 for p in prompts)
 
 
+SITE = "https://clickhouse.github.io/loom/"
+
+
+def _site_page(url: str) -> Path:
+    """The docs/ source of a documentation-site URL: `<site>/a/b/` is `docs/a/b.md`."""
+    path = url.removeprefix(SITE).partition("#")[0].strip("/")
+    return ROOT / "docs" / (f"{path}.md" if path else "index.md")
+
+
 def test_both_plugins_link_the_data_handling_section() -> None:
     """The privacy link of both listings is an absolute URL, which the doc-link check does
     not follow; renaming the section would leave both listings pointing at nothing."""
@@ -314,15 +323,14 @@ def test_both_plugins_link_the_data_handling_section() -> None:
     codex = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())
     url = claude["privacyPolicyUrl"]
     assert url == codex["interface"]["privacyPolicyURL"]
-    page, _, anchor = url.removeprefix("https://github.com/ClickHouse/loom/blob/main/").partition(
-        "#"
-    )
-    assert anchor == "data-handling" and "\n## Data handling\n" in (ROOT / page).read_text()
+    assert url.startswith(SITE) and url.endswith("#data-handling")
+    assert "\n## Data handling\n" in _site_page(url).read_text()
 
 
 def test_listing_links_into_the_repository_resolve() -> None:
     """The registry listing and both plugin manifests publish absolute links into this
-    repository, which the doc-link check does not follow; a renamed file breaks them."""
+    repository and the documentation site, which the doc-link check does not follow; a
+    renamed file breaks them."""
     text = "".join(
         (ROOT / f).read_text()
         for f in (
@@ -335,9 +343,12 @@ def test_listing_links_into_the_repository_resolve() -> None:
         r"https://(?:github\.com/ClickHouse/loom/blob/main|raw\.githubusercontent\.com/ClickHouse/loom/main)/([^\"#]+)",
         text,
     )
-    assert links
+    site_links = re.findall(re.escape(SITE) + r"[^\"]*", text)
+    assert links or site_links
     for path in links:
         assert (ROOT / path).is_file(), path
+    for url in site_links:
+        assert _site_page(url).is_file(), url
 
 
 def test_skills_find_the_codex_plugin_root_under_the_loom_marketplace() -> None:

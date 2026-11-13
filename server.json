@@ -4,7 +4,7 @@
   "title": "ClickHouse Loom",
   "description": "Shared long-term memory, document search and a code index for AI agents, self-hosted on ClickHouse.",
   "version": "1.2.0",
-  "websiteUrl": "https://github.com/ClickHouse/loom",
+  "websiteUrl": "https://clickhouse.github.io/loom/",
   "repository": {
     "url": "https://github.com/ClickHouse/loom",
     "source": "github"
@@ -47,7 +47,7 @@
   ],
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
-      "documentation": "https://github.com/ClickHouse/loom/blob/main/docs/getting-started/connect-a-coding-agent.md",
+      "documentation": "https://clickhouse.github.io/loom/getting-started/connect-a-coding-agent/",
       "keywords": [
         "agent-memory",
         "long-term-memory",
