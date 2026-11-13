@@ -237,6 +237,15 @@ def test_the_readme_language_line_is_the_generated_one() -> None:
     assert t.language_lines_differ() == []
 
 
+def test_a_readme_without_the_markers_stops_update(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    (tmp_path / "README.md").write_text("# Loom\n\nno language line here\n")
+    monkeypatch.setattr(t, "ROOT", tmp_path)
+    with pytest.raises(SystemExit, match="no <!-- languages --> markers"):
+        t.write_language_lines()
+
+
 def test_a_new_language_is_linked_from_every_readme_without_translating(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
