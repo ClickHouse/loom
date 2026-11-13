@@ -948,6 +948,16 @@ async def test_a_decision_whose_code_changed_moves_down_after_the_merge_and_says
     assert [h.memory_key for h in out.results] == ["note-a", "note-b", "decision:evict"]
     moved = out.results[2]
     assert moved.score_components["code_changed_places"] == -2.0
-    # its explanation names the score it is served with, not the one it was found at
-    assert f"rank_score={moved.rank_score:.2f}" in moved.explanation
-    assert "rank_score=0.90" not in moved.explanation
+    # the two searches' scores do not compare: it keeps its own
+    assert moved.rank_score == 0.9
+    assert "rank_score=0.90" in moved.explanation
+
+
+@pytest.mark.asyncio
+async def test_a_spent_mark_moves_nothing_in_the_merge(monkeypatch) -> None:
+    # the base search spent its marks (a date order moves nothing): the merge leaves it
+    spent = _hit("note-a", 0.6, "me", rank=0.03)
+    planes = {**PLANES, "me": [spent, _hit("note-b", 0.2, "me", rank=0.01)]}
+    out = await _leg(monkeypatch, TRUNK, [], planes=planes)
+    assert [h.memory_key for h in out.results] == ["note-a", "decision:evict", "note-b"]
+    assert all("code_changed_places" not in h.score_components for h in out.results)

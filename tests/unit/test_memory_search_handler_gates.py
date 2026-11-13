@@ -1035,6 +1035,8 @@ async def test_a_moved_memory_is_never_cut_by_a_tier_and_a_date_order_stays(
     out = await _run(search_env, top_k=5)
     assert "code_changed_places" not in out.results[2].score_components
     assert [h.memory_key for h in out.results][:3] == ["r1", "r2", "stale"]
+    # its mark is spent, so a search that merges these rows moves nothing either
+    assert not out.results[2]._code_ranked_down
 
 
 async def test_a_move_counts_only_the_rows_the_body_floor_serves(

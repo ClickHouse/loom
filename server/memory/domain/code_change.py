@@ -86,14 +86,15 @@ def _placed(hit: Any) -> bool:
     return any(k in hit.score_components for k in _PLACED)
 
 
-def rank_down(hits: list[Any], places: int) -> list[Any]:
+def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any]:
     """`hits` with each one marked `_code_ranked_down` moved below the next `places` rows
     that are neither marked nor placed by an identifier match or a tier, never past the
     last nor below the similarity floor; a placed row keeps its slot. A moved hit scores
     between the rows around it (or ties the one above, when they tie), so a stable sort
     by score keeps the order; `score_components.code_changed_places` counts the rows it
-    moved below (negative, as a reranker's `rerank_delta`). The marks are spent, so a
-    search that merges more rows in moves only those."""
+    moved below (negative, as a reranker's `rerank_delta`). With `rescore` False a moved
+    hit keeps its score: for a list placed by something other than score. The marks are
+    spent, so a search that merges more rows in moves only those."""
     marked = [h for h in hits if getattr(h, "_code_ranked_down", False)]
     for hit in marked:
         hit._code_ranked_down = False
@@ -111,18 +112,16 @@ def rank_down(hits: list[Any], places: int) -> list[Any]:
         if not passed:
             continue
         out.insert(to, out.pop(at))
-        above = float(out[to - 1].rank_score)
-        below = float(out[to + 1].rank_score) if to + 1 < len(out) else None
-        if below is None or below > above:
-            score = math.nextafter(above, -math.inf)
-        else:
-            score = (above + below) / 2  # `above` itself when they tie
-        hit.rank_score = score
-        hit.score_components = {
-            **hit.score_components,
-            "code_changed_places": float(-passed),
-            "rank_score": score,
-        }
+        moved = {"code_changed_places": float(-passed)}
+        if rescore:
+            above = float(out[to - 1].rank_score)
+            below = float(out[to + 1].rank_score) if to + 1 < len(out) else None
+            if below is None or below > above:
+                hit.rank_score = math.nextafter(above, -math.inf)
+            else:
+                hit.rank_score = (above + below) / 2  # `above` itself when they tie
+            moved["rank_score"] = hit.rank_score
+        hit.score_components = {**hit.score_components, **moved}
     return out
 
 

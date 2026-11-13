@@ -148,10 +148,11 @@ async def memory_with_repo_decisions(
     if not added:
         return base
     home = base._settled_input or mem_input
-    # the decisions whose code changed move down among the merged rows, as the base's did
+    # the decisions whose code changed move down among the merged rows, as the base's
+    # did; the two searches' scores do not compare, so each keeps its own
     from server.memory.app.search.output import move_stale
 
-    hits = move_stale(hits, home)
+    hits = move_stale(hits, home, rescore=False)
     # Credited and elided as the base search credits and elides its own: for the hits
     # it hands on, before the section's floors and answer-first rules, in its window
     # (the settled top_k, not the decision pass's over-fetch).

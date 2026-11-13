@@ -214,10 +214,12 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
     return (named & set(mine)) | authorized
 
 
-def move_stale(hits: list[Any], input: Any) -> list[Any]:
-    """`hits` with each one whose linked code changed moved down (`code_change.rank_down`),
-    its explanation rewritten with the score it is served with."""
-    out = code_change.rank_down(hits, settings.memory_search_code_changed_places)
+def move_stale(hits: list[Any], input: Any, *, rescore: bool = True) -> list[Any]:
+    """`hits` with each one whose linked code changed moved down (`code_change.rank_down`;
+    `rescore` False keeps its score, for a list whose scores do not compare), its
+    explanation rewritten with the score it is served with."""
+    places = settings.memory_search_code_changed_places
+    out = code_change.rank_down(hits, places, rescore=rescore)
     moved = [h for h in out if "code_changed_places" in h.score_components]
     for h in moved:
         h.explanation = ""  # a fact row's is the one `_decorate_hits` writes
@@ -228,24 +230,26 @@ def move_stale(hits: list[Any], input: Any) -> list[Any]:
 async def _shape_final_hits(
     ctx: SearchContext, final_hits: list[_MemorySearchHit]
 ) -> tuple[list[_MemorySearchHit], tuple[int, int, int], list[str]]:
-    """Phase 22: shape the served hits — prepend recent/anchor rows, body floor, move
-    down those whose code changed, decorate, unit and source bodies, relative-date
+    """Phase 22: shape the served hits — decorate, prepend recent/anchor rows, body
+    floor, move down those whose code changed, unit and source bodies, relative-date
     wording, foreign namespace marks, grounded excerpts, optional fields. Returns the
     hits, the unit-body counts and the namespaces searched."""
     input = ctx.input
     namespaces = ctx.namespaces
     actual_work = ctx.actual_work
     _clock = ctx.clock
-    similar = final_hits
+    _decorate_hits(final_hits, input=input)
     recent, stale_recent = await _prepend_recent(final_hits, input, ctx.stale_versions)
     anchored, stale_anchor = await _prepend_anchor(recent, input, ctx.stale_versions)
     ctx.stale_dropped += stale_recent + stale_anchor
     final_hits = _apply_min_body_chars(anchored, input)
-    _decorate_hits(similar, input=input)
     # After the verdict, which read relevance, and the tiers and body floor, which cut
     # rows: a memory whose code changed is served lower, never left out. A date order is
-    # the answer and stays as it is. A pass another search merges leaves the move to it.
-    if not (ctx.chronological_intent or getattr(input, "_merged_into_parent", False)):
+    # the answer and stays as it is, its marks spent so no merge moves its rows; a pass
+    # another search merges leaves the move to it.
+    if ctx.chronological_intent:
+        code_change.rank_down(final_hits, 0)
+    elif not getattr(input, "_merged_into_parent", False):
         final_hits = move_stale(final_hits, input)
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)
