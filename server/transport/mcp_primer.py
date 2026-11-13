@@ -233,12 +233,6 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
     return out
 
 
-# Marks where the caller's default workspace goes once the rules are rendered: the
-# workspace is the caller's data, not prose that names ops. Rendering the text whole
-# keeps "first mention only" across rule 5; a NUL never occurs in the prose.
-_DEFAULTS_SLOT = "\x00defaults\x00"
-
-
 def _write_rules(tool: dict[str, str | None]) -> str:
     """Rules 3 and 4 (save, shape) when the connection reaches memory.set;
     otherwise one line saying writes are not available here."""
@@ -336,7 +330,7 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     the tools the connection's ``toolset`` listing carries."""
     tool = _tool_refs(toolset)
     collections = knowledge_search_reads_collections()
-    text = (
+    head = (
         "**Loom-first mode active for this conversation.**\n\n"
         "**1. Session context.** At the start of a substantial task, "
         f"call {tool['context.pack']} once if you need a bounded bundle of "
@@ -358,12 +352,10 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
         + "\n"
         "   b. If it returns nothing relevant, fall through to "
         "native memory / past-conversation context — don't surface "
-        "'not in Loom' as a final answer.\n\n"
-        + _write_rules(tool)
-        + "**5. Defaults.** "
-        + _DEFAULTS_SLOT
-        + "\n\n"
-        "**6. Native memory.** Use as fallback when Loom returns "
+        "'not in Loom' as a final answer.\n\n" + _write_rules(tool) + "**5. Defaults.** "
+    )
+    tail = (
+        "\n\n**6. Native memory.** Use as fallback when Loom returns "
         "nothing, or as primary store for Claude-only ephemeral "
         "scratchpad."
         + (
@@ -375,7 +367,12 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
         "where each kind of state goes and how to read what comes back "
         '(`part: "reference"` lists every plane).'
     )
-    return name_ops_for_toolset(text, toolset).replace(_DEFAULTS_SLOT, _defaults_clause(defaults))
+    # the defaults clause is the caller's data, so it goes in unrendered
+    return keep_first_marks(
+        name_ops_for_toolset(head, toolset)
+        + _defaults_clause(defaults)
+        + name_ops_for_toolset(tail, toolset)
+    )
 
 
 def _assistant_primer(defaults: dict[str, Any] | None) -> str:
