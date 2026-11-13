@@ -91,7 +91,7 @@ atespace to its own agents' tokens.
 
 The token expires after `--ttl-days`: mint a new one before then and update the Secret.
 
-## 3. Point the agent's MCP client at Loom
+## 3. Configure the agent and create its actor
 
 Substrate's documentation describes no MCP configuration for actors: configure the agent's
 MCP client in its image or as literal environment values in the actor template. The server
