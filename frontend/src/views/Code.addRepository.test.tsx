@@ -196,6 +196,53 @@ describe("Add repository — fetching versus reading are two questions", () => {
     expect(screen.getByRole("button", { name: /^master/ })).toHaveAttribute("aria-pressed", "true");
   });
 
+  // A remote search answers one query in full (truncated=false); a new term that misses
+  // that page still offers the remote's full list.
+  it("after one remote search, a new term that misses offers Search the remote again", async () => {
+    const big = { ...REMOTE, total: 15898, matched: 15898, truncated: true };
+    vi.mocked(remoteBranches)
+      .mockResolvedValueOnce(big)
+      .mockResolvedValueOnce({
+        ...REMOTE,
+        branches: [
+          { name: "master", sha: "a" },
+          { name: "22.3", sha: "z" },
+        ],
+        total: 15898,
+        matched: 1,
+        truncated: false,
+        query: "22.3",
+      })
+      .mockResolvedValueOnce({
+        ...REMOTE,
+        branches: [
+          { name: "master", sha: "a" },
+          { name: "Release-24", sha: "y" },
+        ],
+        total: 15898,
+        matched: 1,
+        truncated: false,
+        query: "Release-24",
+      });
+    mount();
+    await fillRepo();
+    fireEvent.click(screen.getByRole("button", { name: /Find branches/ }));
+    const search = await screen.findByLabelText("Search branches");
+    fireEvent.change(search, { target: { value: "22.3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search the remote" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^22\.3/ })).toBeTruthy());
+    // The page answers "22.3" in full: no button while the text is that query.
+    expect(screen.queryByRole("button", { name: "Search the remote" })).toBeNull();
+    fireEvent.change(search, { target: { value: "Release-24" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search the remote" }));
+    await waitFor(() => expect(remoteBranches).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(remoteBranches).mock.calls[2]).toEqual(["dev", "acme/app", "", "Release-24"]);
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Release-24/ })).toBeTruthy());
+    // The server's echo matches the text in another case: still no button.
+    fireEvent.change(search, { target: { value: "release-24" } });
+    expect(screen.queryByRole("button", { name: "Search the remote" })).toBeNull();
+  });
+
   it("a refused branch listing becomes the token step, and the typed branch still works without a listing", async () => {
     mount();
     await fillRepo("acme/private");

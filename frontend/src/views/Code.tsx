@@ -1218,6 +1218,13 @@ export function AddRepositoryDialog({
       .map((n) => remote.branches.find((b) => b.name === n) ?? { name: n, sha: "" });
     return [...filtered, ...kept];
   })();
+  // The text matches no branch shown, and the shown page is not all the remote holds for it:
+  // the list was cut, or it answered an earlier query. The remote's full list may hold it.
+  const askRemote =
+    !!remote &&
+    !!q &&
+    (remote.truncated || (!!remote.query && q !== remote.query.toLowerCase())) &&
+    !shownBranches.some((b) => b.name.toLowerCase().includes(q));
   const visibleSuggested = remote
     ? shownBranches.map((b) => b.name).filter((n) => remote.suggested.includes(n) && !picked.has(n))
     : [];
@@ -1353,8 +1360,9 @@ export function AddRepositoryDialog({
                   )}
                 </div>
                 {(remote.total > remote.branches.length || remote.query) && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="flex-1">
+                  // Below sm the field takes the whole row; the count and the button wrap under it.
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <div className="basis-full sm:basis-auto sm:flex-1">
                       <SearchField
                         aria-label="Search branches"
                         value={search}
@@ -1371,8 +1379,7 @@ export function AddRepositoryDialog({
                     <span className="text-xs text-text-muted whitespace-nowrap tabular">
                       showing {shownBranches.length} of {fmtInt(remote.total)}
                     </span>
-                    {/* Not in the page: the remote's full list holds the rest. */}
-                    {remote.truncated && q && !shownBranches.some((b) => b.name.toLowerCase().includes(q)) && (
+                    {askRemote && (
                       <Button
                         type="secondary"
                         htmlType="button"
