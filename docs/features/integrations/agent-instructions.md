@@ -59,21 +59,23 @@ Code
 `code.repos` (through `loom_op`) lists the repositories the token can read. Replace
 `<code-namespace>` with the row's `namespace` (the indexed branch) and `<team-namespace>`
 with its `primary_namespace` (the trunk branch's, where team file rules and decisions
-live); for the trunk branch the two are the same.
+live); for the trunk branch the two are the same. A repository with no row (not indexed,
+or not readable with this token) takes the block without `extra_namespaces` and without
+its Code section.
 
 ## Where each client reads it
 
-The block is the same everywhere; only the file and its header differ.
+The block is the same everywhere; only the file and its header differ. Cursor, Cline,
+Devin Desktop, Zed and VS Code also read `AGENTS.md`, so one file can serve them all;
+their own rule files keep the block apart from other instructions.
 
 | Client                                           | File                               | Header before the block                                                      |
 | ------------------------------------------------ | ---------------------------------- | ---------------------------------------------------------------------------- |
 | Codex, Zed, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root | none                                                                         |
 | Claude Code without the plugin                   | `CLAUDE.md` at the repository root | none                                                                         |
 | Cursor                                           | `.cursor/rules/loom.mdc`           | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
-| Windsurf                                         | `.windsurf/rules/loom.md`          | `---`, `trigger: always_on`, `---`                                           |
+| Devin Desktop (formerly Windsurf)                | `.devin/rules/loom.md`             | `---`, `trigger: always_on`, `---`                                           |
 | Cline                                            | `.clinerules/loom.md`              | none                                                                         |
-| Roo Code                                         | `.roo/rules/loom.md`               | none                                                                         |
-| Continue                                         | `.continue/rules/loom.md`          | `---`, `name: Loom memory and code index`, `alwaysApply: true`, `---`        |
 | VS Code (GitHub Copilot)                         | `.github/copilot-instructions.md`  | none                                                                         |
 
 Each header line goes on its own line. The Cursor file, for example, starts:
@@ -110,8 +112,8 @@ Each line is the short form of what the plugins teach:
 The block's last memory line stands for the end-of-task review; to spell it out, copy
 its questions from the
 [agent-integration guide](../../guides/agent-integration.md#7-follow-the-memory-skills-review)
-under the block. The skills carry the detail the block leaves out: the receipt fields, documents versus
-memories, the stop rules. To give an agent skills instead of the block, install the
+under the block. The skills carry the detail the block leaves out: the receipt fields,
+documents versus memories, the stop rules. To give an agent skills instead of the block, install the
 `loom` and `loom-code` skills alone ([coding agents](index.md#coding-agents)); `loom`
 covers what `loom-memory` teaches.
 
