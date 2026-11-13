@@ -297,12 +297,10 @@ def _on_terminal(
     args: list[str],
     prompt: bytes | None,
     answer: bytes = b"",
-    *,
-    every: bool = False,
 ) -> bytes:
-    """Run the installer on a pseudo-terminal, type `answer` at the first `prompt`
-    (at each one, with `every`; none without a prompt) and wait for it to finish,
-    within a deadline; the run must exit 0. Returns what the terminal showed."""
+    """Run the installer on a pseudo-terminal, type `answer` at each `prompt` (none
+    without a prompt) and wait for it to finish, within a deadline; the run must
+    exit 0. Returns what the terminal showed."""
     import pty
     import select
     import signal
@@ -319,7 +317,7 @@ def _on_terminal(
                     seen += os.read(fd, 1024)
                 except OSError:  # the child closed the terminal
                     pass
-            if prompt and seen.count(prompt) > answered and (every or not answered):
+            if prompt and seen.count(prompt) > answered:
                 os.write(fd, answer)
                 answered += 1
             done, code = os.waitpid(pid, os.WNOHANG)
@@ -1534,7 +1532,7 @@ def test_a_terminal_is_asked_before_an_agent_is_connected(
     _start_stubs(installer_env)
     claude = _agent_cli(installer_env, "claude")
     env = {k: v for k, v in installer_env.items() if k != "LOOM_CONNECT"}
-    seen = _on_terminal({**env, "LOOM_SKIP_START": "0"}, [], b"[Y/n]", answer, every=True)
+    seen = _on_terminal({**env, "LOOM_SKIP_START": "0"}, [], b"[Y/n]", answer)
     assert b"Connect Claude Code to Loom? [Y/n]" in seen
     installed = "plugin install loom@loom --config server_url=http://localhost:7777"
     assert (installed in claude.read_text().splitlines()) == installs
