@@ -951,7 +951,6 @@ def _start_stubs(
     connect_time: str = "0.000000",
     health: str = '{"status":"ok"}',
     memory_status: int = 200,
-    found: bool = False,
     set_saves: bool = True,
     delete_status: int = 200,
     set_status: int | None = None,
@@ -959,15 +958,13 @@ def _start_stubs(
 ) -> tuple[Path, Path]:
     """Stubs for a started install: a curl whose port probe prints `connect_time` and
     exits `probe_exit`, whose /v1/health calls print `health`, and whose memory calls
-    answer `memory_status`: memory.get finds the memory when `found`, or once a
+    answer `memory_status`: memory.get finds the memory once a
     memory.set saved it (`set_saves`), the body to its -o file; a docker that runs
     `docker_body`. Both log their arguments; returns (curl log, docker log)."""
     bin_dir = Path(installer_env["PATH"].split(":")[0])
     curl_log, docker_log = bin_dir / "curl.log", bin_dir / "docker.log"
     saved = bin_dir / "memory.saved"
     saved.unlink(missing_ok=True)
-    if found:
-        saved.touch()
     # `misses` reads after the save answer not found, as a replica that lags would.
     lag = bin_dir / "memory.lag"
     lag.write_text("x" * misses)
@@ -1223,7 +1220,7 @@ def test_a_rerun_writes_no_memory_again(install, installer_env: dict[str, str]) 
     curl_log, _ = _start_stubs(installer_env)
     assert run(LOOM_SKIP_START="0").returncode == 0
     curl_log.write_text("")
-    _start_stubs(installer_env, found=False)
+    _start_stubs(installer_env)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 0, result.stderr
     assert "test memory" not in result.stdout
@@ -1424,9 +1421,7 @@ def _opened(log: Path) -> list[str]:
     return log.read_text().splitlines() if log.exists() else []
 
 
-def test_a_new_install_on_a_desktop_opens_the_dashboard_once(
-    install, installer_env: dict[str, str]
-) -> None:
+def test_a_new_install_on_a_desktop_opens_the_dashboard_once(installer_env: dict[str, str]) -> None:
     _start_stubs(installer_env)
     env, log = _desktop(installer_env)
     _on_terminal(env, [], None)
@@ -1440,7 +1435,7 @@ def test_a_new_install_on_a_desktop_opens_the_dashboard_once(
     "extra", [{"LOOM_NO_OPEN": "1"}, {"SSH_CONNECTION": "10.0.0.1 2 10.0.0.2 22"}]
 )
 def test_the_dashboard_is_not_opened_when_asked_not_to_or_over_ssh(
-    install, installer_env: dict[str, str], extra: dict[str, str]
+    installer_env: dict[str, str], extra: dict[str, str]
 ) -> None:
     _start_stubs(installer_env)
     env, log = _desktop(installer_env)
@@ -1448,9 +1443,7 @@ def test_the_dashboard_is_not_opened_when_asked_not_to_or_over_ssh(
     assert _opened(log) == []
 
 
-def test_a_linux_terminal_with_no_display_opens_no_dashboard(
-    install, installer_env: dict[str, str]
-) -> None:
+def test_a_linux_terminal_with_no_display_opens_no_dashboard(installer_env: dict[str, str]) -> None:
     _start_stubs(installer_env)
     env, log = _desktop(installer_env)
     _on_terminal({k: v for k, v in env.items() if k != "DISPLAY"}, [], None)
@@ -1488,7 +1481,7 @@ def test_a_failed_plugin_install_prints_the_commands_to_try_again(
 
 @pytest.mark.parametrize(("answer", "installs"), [(b"\n", True), (b"n\n", False)])
 def test_a_terminal_is_asked_before_an_agent_is_connected(
-    install, installer_env: dict[str, str], answer: bytes, installs: bool
+    installer_env: dict[str, str], answer: bytes, installs: bool
 ) -> None:
     """Enter means yes; anything starting with n means no."""
     _start_stubs(installer_env)
