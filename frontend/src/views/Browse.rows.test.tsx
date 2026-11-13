@@ -125,7 +125,7 @@ describe("Public namespaces: the rows", () => {
     expect(await axeViolations(container)).toEqual([]);
   });
 
-  it("a space you manage: mono name, visibility, description; Invite inline; Settings, Guide, Copy name and Leave in its menu", async () => {
+  it("a namespace you manage: mono name, visibility, description; Invite inline; Settings, Guide, Copy name and Leave in its menu", async () => {
     const user = userEvent.setup();
     render(<Browse />);
     const managed = (await screen.findByRole("heading", { name: /Namespaces you manage/ })).closest(

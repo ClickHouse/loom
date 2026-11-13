@@ -351,10 +351,9 @@ shows the same namespace.
   you is badged **New** until you pick it there (`namespace.mark_seen`). A collection is
   never listed there, nor in header search, Public namespaces or the copy dialog's
   targets: it is known by its reserved `col-` name, and the picker's footer links to the
-  Library, where collections are. Once the list is read, **Public namespaces** is linked
-  from one place: the end of the list (**Find public namespaces to join**) while you have
-  joined no namespace you do not admin, the footer (**Browse public namespaces**) once you
-  have or while you search. The footer also says in one line what a namespace is: one
+  Library, where collections are. The end of the list offers **Find public namespaces to
+  join** until you have joined one; afterwards, and while you search, the footer has
+  **Browse public namespaces**. The footer also says in one line what a namespace is: one
   shared store of memories and documents, a code index, or tracker records.
 
 ### The admin drawer

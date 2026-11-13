@@ -218,7 +218,8 @@ describe("the admin list on every width", () => {
     vi.clearAllMocks();
   });
   afterEach(() => {
-    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+    vi.restoreAllMocks();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null, adminBadges: null });
   });
 
   it("names the audit feed Audit log, apart from the rail's Activity group", () => {
@@ -263,7 +264,31 @@ describe("the admin list on every width", () => {
     const sheet = await screen.findByRole("dialog", { name: "More" });
     const admin = within(sheet).getByRole("navigation", { name: "Admin" });
     expect(within(admin).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
-    vi.restoreAllMocks();
+  });
+
+  it("redraws the open sheet when a new badge answer lands", async () => {
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ adminBadges: { conflicts: 3, overCap: false, newAgents: 0 } });
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    const sheet = await screen.findByRole("dialog", { name: "More" });
+    const review = () => within(sheet).getByRole("link", { name: /Review queue/ });
+    expect(review()).toHaveTextContent("3");
+    act(() => useStore.setState({ adminBadges: { conflicts: 5, overCap: false, newAgents: 0 } }));
+    expect(review()).toHaveTextContent("5");
+  });
+
+  it("writes nothing once unmounted while a read is out", async () => {
+    let settle: (n: number) => void = () => {};
+    vi.mocked(countConflicts).mockReturnValueOnce(new Promise<number>((r) => (settle = r)));
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    const { unmount } = render(<Sidebar />);
+    await painted();
+    expect(countConflicts).toHaveBeenCalledTimes(1);
+    unmount();
+    await act(async () => settle(3));
+    expect(useStore.getState().adminBadges).toBeNull();
+    expect(sessionStorage.getItem("loom_badge_v1:badges:dev/team-a")).toBeNull();
   });
 
   it("hides a badge whose read fails, though the session remembered one", async () => {

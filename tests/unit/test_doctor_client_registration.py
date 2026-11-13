@@ -80,6 +80,7 @@ def test_code_access_names_every_blind_credential_and_the_fix() -> None:
     assert none[0][:2] == ("client:code-access", "WARN")
     assert "no credential on this machine reads an index" in none[0][2]
     assert "claim-*.txt" in none[0][2] and "loom mint-token --save" in none[0][2]
+    assert "request access from the dashboard's Public namespaces page" in none[0][2]
     one = dc.code_access_check("ClickHouse/loom", "https://loom.test", creds, _repos({"sa-tok"}))
     assert one[0][1] == "WARN" and "NOT by user-scope 'loom'" in one[0][2]
     both = dc.code_access_check(

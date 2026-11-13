@@ -20,7 +20,7 @@ export function NamespaceNoAccess({ namespace }: { namespace: string }) {
     ? "Loom could not read your memberships just now."
     : pending
       ? "It opens once one of its admins approves your request."
-      : "Ask one of its admins for a grant, or join a public namespace.";
+      : "Ask one of its admins for a grant, or join a public namespace from the namespace picker.";
   return (
     <PageContainer>
       <PageHeader title={unchecked ? `Couldn't check your access to ${namespace}` : `No access to ${namespace}`} />

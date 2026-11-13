@@ -220,13 +220,11 @@ export function adminItems(
 ): NavItem[] {
   if (!isNamespaceAdmin(whoami, mine, namespace)) return [];
   // Over cap on Usage is a warning dot; Agents counts the clients new in the last 24 h.
-  const items = [...ADMIN_BASE, ...operatorItems(whoami)].map((item) =>
-    item.id === "admin:usage" && b?.overCap
-      ? { ...item, badge: 999, badgeTone: "warn" as const }
-      : item.id === "admin:agents" && b?.newAgents
-        ? { ...item, badge: b.newAgents, badgeTone: "accent" as const }
-        : item,
-  );
+  const items = [...ADMIN_BASE, ...operatorItems(whoami)].map((item): NavItem => {
+    if (item.id === "admin:usage" && b?.overCap) return { ...item, badge: 999, badgeTone: "warn" };
+    if (item.id === "admin:agents" && b?.newAgents) return { ...item, badge: b.newAgents, badgeTone: "accent" };
+    return item;
+  });
   const open = !!b?.conflicts;
   if (!open && !b?.autoResolved) return items;
   // Open conflicts warn with their count; recent auto-resolutions alone use the
