@@ -646,12 +646,12 @@ def check(skip_stale: bool = False) -> int:
     require_sources()
     model = os.environ.get("LOOM_I18N_MODEL", DEFAULT_MODEL)
     pending = stale(model=model)
-    problems = [
+    stale_lines = [
         f"{target_path(lang.code, source)} is missing, or older than {source}, the model or "
         "the banner"
         for source, lang in pending
-        if not skip_stale
     ]
+    problems = [] if skip_stale else stale_lines
     problems += [f"{path} is translated from no page in SOURCES" for path in orphans()]
     # After a partial run, a page that failed keeps its old anchors until it is translated.
     waiting = (
