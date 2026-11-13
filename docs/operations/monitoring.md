@@ -101,6 +101,10 @@ status.
 `clickhouse_reachable`, `otel_erasure_index`, `llm_provider`), then prints the
 `problems` list as `problem:<code>` lines. Every check is reported before it exits; the
 exit code is 1 when any line is `FAIL`. `--json` prints `{ok, checks, problems}`. With
+`LOOM_CELL` set and ClickHouse reachable it also runs the [cell](../architecture/cells.md) checks
+(`cell_state`, `cell_marker`, `cell_marker_everywhere`, `cell_triggers`), graded `WARN`
+at most, and `cell_deployment`, `FAIL` when the deployment check refuses (no
+`LOOM_PG_DSN`, another recorded authority or deployment, or ClickHouse access denied). With
 code intelligence on and ClickHouse reachable it also reads the failing code-index
 tiers, and grades with the deployment's runtime overrides; `problem:code_tier_failing`
 is at most `WARN`, as it never degrades `status`.
