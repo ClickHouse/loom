@@ -17,7 +17,8 @@ pytest.importorskip("llama_index.core")
 
 from llama_index.core.base.llms.types import ChatMessage
 from llama_index.core.memory import Memory
-from loom.integrations.llamaindex import LoomMemoryBlock, LoomRetriever
+from llama_index.core.storage.chat_store.base_db import MessageStatus
+from loom.integrations.llamaindex import LoomMemoryBlock, LoomRetriever, flush
 
 
 async def test_retriever_returns_the_added_chunk(agent) -> None:
@@ -96,6 +97,9 @@ def test_memory_sync_methods_with_a_sync_agent(control_plane_url: str) -> None:
             if history[0].role == "system":
                 break
             time.sleep(0.25)
+        flush(memory)  # LlamaIndex's own chat store: the window is archived after the flush
+        still_active = memory.get_all(status=MessageStatus.ACTIVE)
     assert history[0].role == "system"
     assert "<LoomMemories>" in history[0].content
     assert "aisle" in history[0].content.lower()
+    assert still_active == []

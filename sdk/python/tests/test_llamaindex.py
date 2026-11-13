@@ -32,11 +32,10 @@ class _ListStore(AsyncDBChatStore):
 
     rows: dict[str, list[tuple[ChatMessage, MessageStatus]]] = {}
 
-    def model_post_init(self, __context: Any) -> None:
-        self.rows = {}
-
     def _of(self, key: str, status: MessageStatus | None) -> list[ChatMessage]:
-        return [m for m, st in self.rows.get(key, []) if status is None or st == status]
+        # Copies, as a database store rebuilds each message on every read.
+        rows = self.rows.get(key, [])
+        return [m.model_copy(deep=True) for m, st in rows if status is None or st == status]
 
     async def get_messages(
         self,
@@ -70,7 +69,7 @@ class _ListStore(AsyncDBChatStore):
         self.rows[key] = [(m, status) for m in messages]
 
     async def delete_message(self, key: str, idx: int) -> ChatMessage | None:
-        return self.rows.get(key, []).pop(idx)[0] if idx < len(self.rows.get(key, [])) else None
+        raise NotImplementedError  # Memory does not call it
 
     async def delete_messages(self, key: str, status: MessageStatus | None = None) -> None:
         self.rows[key] = [
@@ -78,9 +77,7 @@ class _ListStore(AsyncDBChatStore):
         ]
 
     async def delete_oldest_messages(self, key: str, n: int) -> list[ChatMessage]:
-        rows = self.rows.get(key, [])
-        removed, self.rows[key] = rows[:n], rows[n:]
-        return [m for m, _ in removed]
+        raise NotImplementedError  # Memory does not call it
 
     async def archive_oldest_messages(self, key: str, n: int) -> list[ChatMessage]:
         archived: list[ChatMessage] = []
@@ -593,7 +590,7 @@ class _Recorder(BaseMemoryBlock[str]):
 def test_flush_hands_the_window_to_every_block_then_empties_it() -> None:
     memory = _FakeMemory()
     loom_block = LoomMemoryBlock(agent=SimpleNamespace(memory=memory))
-    other = _Recorder(seen=[])
+    other = _Recorder()
 
     async def run() -> list[ChatMessage]:
         mem = _new_memory(session_id="s-6", memory_blocks=[loom_block, other])
@@ -623,10 +620,10 @@ class _Slow(_Recorder):
 
 
 def test_a_failed_flush_raises_only_after_every_block_finished() -> None:
-    slow = _Slow(name="slow", seen=[])
+    slow = _Slow(name="slow")
 
     async def run() -> None:
-        mem = _new_memory(session_id="s-2", memory_blocks=[_Failing(name="failing", seen=[]), slow])
+        mem = _new_memory(session_id="s-2", memory_blocks=[_Failing(name="failing"), slow])
         await mem.aput(ChatMessage(role="user", content="I always take an aisle seat"))
         with pytest.raises(RuntimeError):
             await aflush(mem)
@@ -638,7 +635,7 @@ def test_a_failed_flush_raises_only_after_every_block_finished() -> None:
 def test_a_failed_flush_archives_nothing_and_the_next_one_hands_the_window_over_again() -> None:
     memory = _FakeMemory()
     loom_block = LoomMemoryBlock(agent=SimpleNamespace(memory=memory))
-    failing = _Failing(name="failing", seen=[])
+    failing = _Failing(name="failing")
 
     async def run() -> tuple[int, int]:
         mem = _new_memory(session_id="s-5", memory_blocks=[loom_block, failing])
