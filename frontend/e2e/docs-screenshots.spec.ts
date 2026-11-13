@@ -759,8 +759,8 @@ const PASSAGES = [
 const AGENT_SUBJECT = "sa:claude-code-laptop-4f2a";
 const AGENT_WRITER = `process:${AGENT_SUBJECT}`;
 const BOT_WRITER = "process:sa:support-bot-91c3";
-/** A sample of the namespace's audit events, with the subject fields the Audit log's
- *  labels read. A memory write names its writer as
+/** A sample of the org's audit events (a platform admin's Audit log reads the whole org),
+ *  with the subject fields the Audit log's labels read. A memory write names its writer as
  *  `kind:subject`; any other audited op names the token's subject. Each memory write is as
  *  old as the memory it saved. */
 const AUDIT_ROWS = [
