@@ -25,6 +25,15 @@ from loom.knowledge import SearchHit
 from loom.memory import MemorySearchHit, MemorySearchResult
 from loom.sync import SyncAgent
 
+# One loop for the whole module, left open: Memory's in-memory chat store keeps
+# connections bound to the loop that made them, and a loop closed under them
+# makes the interpreter fail at exit.
+_LOOP = asyncio.new_event_loop()
+
+
+def _run(coro: Any) -> Any:
+    return _LOOP.run_until_complete(coro)
+
 
 class _FakeKnowledge:
     def __init__(self, hits: list[SearchHit]) -> None:
@@ -90,7 +99,7 @@ def test_retriever_nodes_carry_the_chunk_score_and_source() -> None:
     retriever = LoomRetriever(
         SimpleNamespace(namespace="support", knowledge=knowledge), similarity_top_k=3
     )
-    nodes = asyncio.run(retriever.aretrieve("refund policy"))
+    nodes = _run(retriever.aretrieve("refund policy"))
     # namespace_scope is always sent: the server's own default is all_mine
     assert knowledge.calls == [{"query": "refund policy", "top_k": 3, "namespace_scope": "this"}]
     assert len(nodes) == 1
@@ -113,7 +122,7 @@ def test_a_fanned_out_hit_is_named_by_its_own_namespace() -> None:
         SimpleNamespace(namespace="support", knowledge=_FakeKnowledge([hit])),
         namespace_scope="all_mine",
     )
-    (node,) = asyncio.run(retriever.aretrieve("refunds"))
+    (node,) = _run(retriever.aretrieve("refunds"))
     assert node.node_id == "billing/doc://refunds#0"
     assert node.node.metadata["namespace"] == "billing"
 
@@ -127,7 +136,7 @@ def test_retriever_sends_its_filters_and_top_k_wins() -> None:
         namespace_scope="all_mine",
         search_kwargs={"search_mode": "lexical", "top_k": 99},
     )
-    asyncio.run(retriever.aretrieve("refunds"))
+    _run(retriever.aretrieve("refunds"))
     assert knowledge.calls == [
         {
             "query": "refunds",
@@ -146,7 +155,7 @@ def test_retrieve_runs_on_a_sync_agent_and_refuses_an_async_one() -> None:
     agent.knowledge = _SyncKnowledge([_chunk("doc://a", 0, "text")])  # type: ignore[assignment]
     retriever = LoomRetriever(agent)
     assert [n.node_id for n in retriever.retrieve("q")] == ["support/doc://a#0"]
-    assert [n.node_id for n in asyncio.run(retriever.aretrieve("q"))] == ["support/doc://a#0"]
+    assert [n.node_id for n in _run(retriever.aretrieve("q"))] == ["support/doc://a#0"]
     with pytest.raises(TypeError, match="aretrieve"):
         LoomRetriever(SimpleNamespace(knowledge=_FakeKnowledge([]))).retrieve("q")
 
@@ -158,7 +167,7 @@ def test_memory_block_reads_with_the_latest_user_message() -> None:
     block = LoomMemoryBlock(
         agent=SimpleNamespace(memory=memory), top_k=1, tags=["customer"], user_id="alice"
     )
-    text = asyncio.run(
+    text = _run(
         block.aget(
             [
                 ChatMessage(role="user", content="Book me a flight"),
@@ -183,12 +192,12 @@ def test_memory_block_reads_with_the_latest_user_message() -> None:
 def test_memory_block_reads_nothing_without_a_user_message_or_when_loom_abstains() -> None:
     memory = _FakeMemory([_memory("k", "weak")], abstain=True)
     block = LoomMemoryBlock(agent=SimpleNamespace(memory=memory))
-    assert asyncio.run(block.aget([ChatMessage(role="assistant", content="hi")])) == ""
-    assert asyncio.run(block.aget(None)) == ""
+    assert _run(block.aget([ChatMessage(role="assistant", content="hi")])) == ""
+    assert _run(block.aget(None)) == ""
     assert memory.searches == []
-    assert asyncio.run(block.aget([ChatMessage(role="user", content="seat?")])) == ""
+    assert _run(block.aget([ChatMessage(role="user", content="seat?")])) == ""
     loose = LoomMemoryBlock(agent=SimpleNamespace(memory=memory), honour_abstain=False)
-    assert asyncio.run(loose.aget([ChatMessage(role="user", content="seat?")])) == "- weak"
+    assert _run(loose.aget([ChatMessage(role="user", content="seat?")])) == "- weak"
 
 
 def test_memory_block_sends_the_conversation_turns_for_extraction() -> None:
@@ -196,7 +205,7 @@ def test_memory_block_sends_the_conversation_turns_for_extraction() -> None:
     block = LoomMemoryBlock(
         agent=SimpleNamespace(memory=memory), tags=["customer"], user_id="alice"
     )
-    asyncio.run(
+    _run(
         block.aput(
             [
                 ChatMessage(role="system", content="You are a travel agent"),
@@ -207,7 +216,7 @@ def test_memory_block_sends_the_conversation_turns_for_extraction() -> None:
             session_id="s-42",
         )
     )
-    asyncio.run(block.aput([ChatMessage(role="system", content="only a system message")]))
+    _run(block.aput([ChatMessage(role="system", content="only a system message")]))
     assert memory.extractions == [
         (
             [
@@ -238,7 +247,7 @@ def test_memory_waterfalls_flushed_messages_into_the_block() -> None:
             await mem.aput(ChatMessage(role="assistant", content=f"reply {i}"))
         return await mem.aget()
 
-    history = asyncio.run(run())
+    history = _run(run())
     assert memory.extractions, "Memory flushed nothing to the block"
     assert all(kw["session_id"] == "s-1" for _, kw in memory.extractions)
     assert "Alice prefers aisle seats" in history[0].content
@@ -248,10 +257,10 @@ class _SyncMemory(_FakeMemory):
     """A SyncAgent's memory client: blocking calls."""
 
     def search(self, query: str, **kw: Any) -> MemorySearchResult:  # type: ignore[override]
-        return asyncio.run(super().search(query, **kw))
+        return _run(super().search(query, **kw))
 
     def set_from_messages(self, messages: list[dict[str, Any]], **kw: Any) -> dict[str, Any]:  # type: ignore[override]
-        return asyncio.run(super().set_from_messages(messages, **kw))
+        return _run(super().set_from_messages(messages, **kw))
 
 
 def test_memory_sync_methods_run_the_block_on_a_sync_agent() -> None:
@@ -314,7 +323,7 @@ def test_the_retriever_posts_knowledge_search_through_the_sdk() -> None:
     }
     wire = _Wire({"results": [chunk], "embedding_model": "m"})
     retriever = LoomRetriever(_real_agent(wire), similarity_top_k=2, tags=["policy"])
-    (node,) = asyncio.run(retriever.aretrieve("refunds"))
+    (node,) = _run(retriever.aretrieve("refunds"))
     ((path, body),) = wire.posts
     assert path == "/v1/knowledge.search"
     assert {k: body[k] for k in ("query", "top_k", "tags", "namespace_scope")} == {
@@ -336,10 +345,8 @@ def test_the_block_posts_memory_search_and_extraction_through_the_sdk() -> None:
     }
     wire = _Wire({"results": [hit]})
     block = LoomMemoryBlock(agent=_real_agent(wire), top_k=2, tags=["customer"], user_id="alice")
-    text = asyncio.run(block.aget([ChatMessage(role="user", content="seat?")]))
-    asyncio.run(
-        block.aput([ChatMessage(role="user", content="I like aisle seats")], session_id="s-1")
-    )
+    text = _run(block.aget([ChatMessage(role="user", content="seat?")]))
+    _run(block.aput([ChatMessage(role="user", content="I like aisle seats")], session_id="s-1"))
     (search, extract) = wire.posts
     assert search[0] == "/v1/memory.search"
     assert {k: search[1][k] for k in ("query", "top_k", "namespace_scope", "tags", "user_id")} == {
@@ -357,7 +364,7 @@ def test_the_block_posts_memory_search_and_extraction_through_the_sdk() -> None:
     assert extract[1]["defer"] is True
     assert extract[1]["extra_tags"] == ["customer"]
     inline = LoomMemoryBlock(agent=_real_agent(wire), defer=False)
-    asyncio.run(inline.aput([ChatMessage(role="user", content="I like aisle seats")]))
+    _run(inline.aput([ChatMessage(role="user", content="I like aisle seats")]))
     assert wire.posts[-1][1]["defer"] is False  # sent, so the operator's allowlist cannot queue it
 
 
@@ -376,17 +383,17 @@ def test_the_block_leaves_out_rows_below_the_floor_then_caps_at_top_k() -> None:
     hits = [_memory("k1", "Alice prefers aisle seats"), weak, _memory("k3", "Alice is vegetarian")]
     asked = [ChatMessage(role="user", content="seat?")]
     strict = LoomMemoryBlock(agent=SimpleNamespace(memory=_Overfull(hits)), top_k=2)
-    assert asyncio.run(strict.aget(asked)) == "- Alice prefers aisle seats\n- Alice is vegetarian"
+    assert _run(strict.aget(asked)) == "- Alice prefers aisle seats\n- Alice is vegetarian"
     loose = LoomMemoryBlock(
         agent=SimpleNamespace(memory=_Overfull(hits)), top_k=2, honour_abstain=False
     )
-    assert asyncio.run(loose.aget(asked)) == "- Alice prefers aisle seats\n- a weak match"
+    assert _run(loose.aget(asked)) == "- Alice prefers aisle seats\n- a weak match"
 
 
 def test_a_synthesizer_sees_the_chunk_and_its_source_not_the_bookkeeping() -> None:
     knowledge = _FakeKnowledge([_chunk("doc://refunds", 2, "Annual plans refund pro rata.")])
     agent = SimpleNamespace(namespace="support", knowledge=knowledge)
-    (node,) = asyncio.run(LoomRetriever(agent).aretrieve("refunds"))
+    (node,) = _run(LoomRetriever(agent).aretrieve("refunds"))
     text = node.node.get_content(metadata_mode=MetadataMode.LLM)
     assert "Annual plans refund pro rata." in text
     assert "doc://refunds" in text
@@ -398,7 +405,7 @@ def test_a_synthesizer_sees_the_chunk_and_its_source_not_the_bookkeeping() -> No
 def test_a_chunk_without_a_section_sends_no_section_line() -> None:
     hit = dataclasses.replace(_chunk("doc://notes", 0, "Plain text."), section="")
     agent = SimpleNamespace(namespace="support", knowledge=_FakeKnowledge([hit]))
-    (node,) = asyncio.run(LoomRetriever(agent).aretrieve("notes"))
+    (node,) = _run(LoomRetriever(agent).aretrieve("notes"))
     assert "section" not in node.node.metadata
     assert "section" not in node.node.get_content(metadata_mode=MetadataMode.LLM)
 
@@ -414,7 +421,7 @@ def test_flush_sends_what_is_still_in_the_window() -> None:
         assert memory.extractions == []  # well under the window: nothing flushed yet
         await aflush(mem)
 
-    asyncio.run(run())
+    _run(run())
     ((turns, kw),) = memory.extractions
     assert [t["content"] for t in turns] == ["I always take an aisle seat", "Noted"]
     assert kw["session_id"] == "s-9"
@@ -482,7 +489,7 @@ def test_a_flushed_turn_is_not_sent_again() -> None:
             await mem.aput(ChatMessage(role="user", content=f"later turn {i} about seats"))
         await aflush(mem)
 
-    asyncio.run(run())
+    _run(run())
     sent = [t["content"] for turns, _ in memory.extractions for t in turns]
     assert sent.count("first turn") == 1
     assert sorted(set(sent)) == sorted(sent)  # every turn once
@@ -518,7 +525,7 @@ def test_flush_hands_the_window_to_every_block_then_empties_it() -> None:
         await aflush(mem)
         return await mem.aget_all(status=MessageStatus.ACTIVE)
 
-    assert asyncio.run(run()) == []
+    assert _run(run()) == []
     assert other.seen == ["I always take an aisle seat"]
     assert [t["content"] for turns, _ in memory.extractions for t in turns] == [
         "I always take an aisle seat"
@@ -551,7 +558,7 @@ def test_a_failed_flush_raises_only_after_every_block_finished() -> None:
             await aflush(mem)
         assert slow.seen == ["I always take an aisle seat"]  # finished before the raise
 
-    asyncio.run(run())
+    _run(run())
 
 
 def test_a_failed_flush_archives_nothing_and_the_next_one_hands_the_window_over_again() -> None:
@@ -569,7 +576,7 @@ def test_a_failed_flush_archives_nothing_and_the_next_one_hands_the_window_over_
         await aflush(mem)
         return still_active, len(await mem.aget_all(status=MessageStatus.ACTIVE))
 
-    assert asyncio.run(run()) == (1, 0)
+    assert _run(run()) == (1, 0)
     sent = [t["content"] for turns, _ in memory.extractions for t in turns]
     assert sent == ["I always take an aisle seat", "I always take an aisle seat"]  # at least once
 
