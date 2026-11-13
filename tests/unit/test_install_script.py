@@ -886,7 +886,8 @@ def _documented_installs() -> list[tuple[str, str]]:
     joined and a `<placeholder>` filled."""
     found = []
     for name in tracked():
-        if not name.endswith(".md"):
+        # i18n/ copies the English pages' code byte for byte (scripts/i18n/translate.py).
+        if not name.endswith(".md") or name.startswith("i18n/"):
             continue
         for block, span in _CODE.findall((ROOT / name).read_text(encoding="utf-8")):
             lines = [
