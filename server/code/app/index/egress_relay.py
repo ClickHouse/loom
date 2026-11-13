@@ -34,14 +34,15 @@ _RETRY_PAUSE_S = 0.1
 
 def _to_client(src: socket.socket, dst: socket.socket, to_client_done: threading.Event) -> None:
     """Proxy to client, to the proxy's EOF or a failed write to the client. A write
-    that timed out resets the client: a clean end would pass a cut stream as whole."""
+    that timed out resets the client, which a clean end would leave unaware of the cut;
+    the proxy's own EOF, even after the server reset, reaches it as an end."""
     how = socket.SHUT_WR
     try:
         while data := src.recv(65536):
             dst.sendall(data)
     except TimeoutError:
         dst.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
-        how = socket.SHUT_RD  # no FIN: the close that follows sends the reset
+        how = socket.SHUT_RD  # wakes _to_proxy and sends no FIN; the close then resets
     except OSError:
         pass
     finally:
@@ -88,8 +89,8 @@ def _start(target: Callable[..., None], *args: object) -> threading.Thread:
 
 def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore, idle_s: float) -> None:
     try:
-        with contextlib.suppress(OverflowError):  # past time_t: no timeout, as the proxy
-            conn.settimeout(idle_s)  # a client that never reads ends its bridge
+        with contextlib.suppress(OverflowError):  # too large for a socket (inf): none
+            conn.settimeout(idle_s)
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
             upstream.connect(path)
             to_client_done = threading.Event()
