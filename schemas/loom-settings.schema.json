@@ -939,7 +939,7 @@
           "default": 10.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a repository job's egress tunnel may move no byte, once its client has sent EOF, before it is closed (up to the idle timeout while bytes wait for the client)."
+          "description": "Seconds a repository job's egress tunnel may move no byte after its client's EOF before it is closed; while bytes still wait for the client, the idle timeout applies."
         },
         "code_egress_idle_timeout_s": {
           "default": 300.0,

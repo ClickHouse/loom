@@ -364,6 +364,12 @@ async def test_a_slow_client_after_its_eof_still_gets_the_whole_response(
         await asyncio.wait_for(server.wait_closed(), timeout=5)
 
 
+async def _connect_answer(sock: str) -> tuple[bytes, asyncio.StreamWriter]:
+    reader, writer = await asyncio.open_unix_connection(sock)
+    writer.write(b"CONNECT public.example:443 HTTP/1.1\r\n\r\n")
+    return await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5), writer
+
+
 async def test_a_client_that_never_reads_frees_its_slot_at_the_idle_timeout(
     sock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -377,19 +383,23 @@ async def test_a_client_that_never_reads_frees_its_slot_at_the_idle_timeout(
         await done.wait()
         writer.close()
 
+    monkeypatch.setattr(egress, "MAX_TUNNELS", 1)
+    monkeypatch.setattr(settings, "code_egress_slot_wait_s", 0.2)
     monkeypatch.setattr(settings, "code_egress_half_close_timeout_s", 0.2)
     monkeypatch.setattr(settings, "code_egress_idle_timeout_s", 1.5)
     proxy, server, _reader, writer = await _tunnel_to(sends_a_lot, sock_dir, monkeypatch)
+    sock = str(sock_dir / "p.sock")
     try:
         writer.write(b"request")
-        writer.write_eof()
+        writer.write_eof()  # and never reads
         await asyncio.sleep(0.6)
-        assert proxy._tunnels  # past the half-close timeout, bytes still wait
-        for _ in range(50):  # the client never reads
-            if not proxy._tunnels:
-                break
-            await asyncio.sleep(0.1)
-        assert not proxy._tunnels
+        head, refused = await _connect_answer(sock)
+        refused.close()
+        assert head.startswith(b"HTTP/1.1 503")  # past the half-close timeout, bytes wait
+        await asyncio.sleep(1.2)
+        head, second = await _connect_answer(sock)
+        second.close()
+        assert head.startswith(b"HTTP/1.1 200")  # the idle timeout freed the slot
     finally:
         writer.close()  # the proxy's close waits for its connections to close
         done.set()

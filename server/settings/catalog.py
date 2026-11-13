@@ -1852,8 +1852,8 @@ class CodeSettings(BaseModel):
     # tests corpus measurable from here — holds for a namespace across a brief, so it is
     # kept, in this process only.
     code_coverage_control_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
-    # Seconds a repository job's egress tunnel may move no byte, once its client has sent
-    # EOF, before it is closed (up to the idle timeout while bytes wait for the client).
+    # Seconds a repository job's egress tunnel may move no byte after its client's EOF
+    # before it is closed; while bytes still wait for the client, the idle timeout applies.
     code_egress_half_close_timeout_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Seconds a repository job's egress tunnel may move no byte before it is closed.
     code_egress_idle_timeout_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)

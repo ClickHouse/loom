@@ -535,14 +535,15 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   (its HTTPS proxy), which bridges at most 32 connections; one more waits until a bridge
   ends. Any other connection over the cap at the proxy is refused after 5 seconds, and
   so is a relay connection while ssh tunnels hold some of the slots. The proxy logs the
-  first refusal, and the total when the job ends if there was more than one. A tunnel
-  idle for 5 minutes is closed; once its client has finished, it is closed after
-  `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` (10 s by default) without a byte either way,
-  or, while bytes still wait for a slow client, after the idle timeout, and at once
-  if no byte moved before the client's EOF (a connection it gave up on). Once the proxy
-  has ended a tunnel, the relay ends its connection after a second without a byte from
-  the client. A client that never reads what it was sent keeps its relay connection,
-  and so its relay slot.
+  first refusal, and the total when the job ends if there was more than one.
+
+  A tunnel idle for 5 minutes is closed. Once its client has sent EOF, it is closed
+  after `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` (10 s by default) without a byte either
+  way; while bytes still wait for a slow client, the idle timeout applies instead. A
+  tunnel whose client sent EOF before any byte moved (a connection it gave up on) is
+  closed at once. Once the proxy has ended a tunnel, the relay ends its connection after
+  a second without a byte from the client. A client that never reads what it was sent
+  keeps its relay connection, and so its relay slot.
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are

@@ -27,7 +27,7 @@ from collections.abc import Callable
 _LINGER_S = 1.0
 
 
-def _to_client(src: socket.socket, dst: socket.socket, proxy_done: threading.Event) -> None:
+def _to_client(src: socket.socket, dst: socket.socket, to_client_done: threading.Event) -> None:
     """Proxy to client, to the proxy's EOF or a failed write to the client."""
     try:
         while data := src.recv(65536):
@@ -35,18 +35,19 @@ def _to_client(src: socket.socket, dst: socket.socket, proxy_done: threading.Eve
     except OSError:
         pass
     finally:
-        proxy_done.set()
+        to_client_done.set()
         with contextlib.suppress(OSError):
             dst.shutdown(socket.SHUT_WR)
 
 
-def _to_proxy(src: socket.socket, dst: socket.socket, proxy_done: threading.Event) -> None:
+def _to_proxy(src: socket.socket, dst: socket.socket, to_client_done: threading.Event) -> None:
     """Client to proxy, to the client's EOF, or to `_LINGER_S` without a byte once
-    the proxy's side has ended: a client may keep a finished connection open."""
+    the proxy-to-client direction has ended: a client may keep a finished connection
+    open."""
     try:
         while True:
             if not select.select([src], [], [], _LINGER_S)[0]:
-                if proxy_done.is_set():
+                if to_client_done.is_set():
                     return
                 continue
             data = src.recv(65536)
@@ -76,9 +77,9 @@ def _bridge(conn: socket.socket, path: str, slots: threading.Semaphore) -> None:
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
             upstream.connect(path)
-            proxy_done = threading.Event()
-            back = _start(_to_client, upstream, conn, proxy_done)
-            _to_proxy(conn, upstream, proxy_done)
+            to_client_done = threading.Event()
+            back = _start(_to_client, upstream, conn, to_client_done)
+            _to_proxy(conn, upstream, to_client_done)
             back.join()
             # A client that reset leaves the proxy's side open: wait for its EOF, so the
             # slot is not freed while the proxy holds its own (the rest is dropped).
