@@ -17,9 +17,9 @@ pytest.importorskip("crewai")
 from loom.integrations.crewai import LoomCrewMemory
 
 
-def _recall(memory: LoomCrewMemory, query: str, word: str) -> bool:
-    # A write is searchable once its embedding lands.
-    return wait_until(
+def _recall(memory: LoomCrewMemory, query: str, word: str) -> None:
+    # A write is searchable once its embedding lands; wait_until raises on timeout.
+    wait_until(
         lambda: any(word in m.record.content.lower() for m in memory.recall(query, limit=5)),
         description=f"{word!r} recalled",
     )
@@ -37,8 +37,8 @@ def test_remember_and_extract_then_recall(control_plane_url: str) -> None:
         memory = LoomCrewMemory(agent=agent, honour_abstain=False, defer=False)
         record = memory.remember("Alice prefers aisle seats on long flights")
         assert record is not None and record.id.startswith("crewai/")
-        assert _recall(memory, "Alice aisle seat", "aisle")
+        _recall(memory, "Alice aisle seat", "aisle")
         memory.remember_many(
             ["Task: book Alice's trip. Result: Alice flies to Lisbon every month."]
         )
-        assert _recall(memory, "Where does Alice fly every month?", "lisbon")
+        _recall(memory, "Where does Alice fly every month?", "lisbon")

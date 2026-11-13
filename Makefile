@@ -152,6 +152,8 @@ SDK_ADAPTER_EXTRAS := langchain llamaindex openai-agents crewai
 SDK_ADAPTERS_VENV ?= .venv-sdk-adapters
 SDK_ADAPTERS_PYTHON ?= 3.12
 SDK_ADAPTERS_RESOLUTION ?= highest
+# The adapters typed through structural twins need no extra: every venv checks them too.
+SDK_ADAPTERS_NO_EXTRA = $(addprefix sdk/python/loom/integrations/,__init__.py langgraph.py strands.py)
 test-sdk-adapters: $(addprefix test-sdk-adapter-,$(SDK_ADAPTER_EXTRAS))
 test-sdk-adapter-%: PY = $(abspath $(SDK_ADAPTERS_VENV))/$*/bin/python
 test-sdk-adapter-%: MODULE = $(subst -,_,$*)
@@ -163,7 +165,8 @@ test-sdk-adapter-%:
 	uv pip list --python $(PY)
 	cd sdk/python && $(PY) -m pytest -q tests/test_$(MODULE).py
 	$(PY) -m mypy --strict --cache-dir $(SDK_ADAPTERS_VENV)/$*/.mypy_cache --python-version \
-	  "$$($(PY) -c 'import sys; print("%d.%d" % sys.version_info[:2])')" sdk/python/loom/integrations/$(MODULE).py
+	  "$$($(PY) -c 'import sys; print("%d.%d" % sys.version_info[:2])')" sdk/python/loom/integrations/$(MODULE).py \
+	  $(SDK_ADAPTERS_NO_EXTRA)
 
 # Builds N-1 (BASE, default the merge base with origin/main) and N side by side
 # on one throwaway ClickHouse (docker); skips without docker (REQUIRE=1 fails
