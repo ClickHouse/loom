@@ -254,9 +254,12 @@ the preset lets a deferred-extraction pass run an hour on one batch
 and at most 900; a batch's lease is kept at least a minute longer). On a `local` provider
 a capture cut short (at that deadline, or by Loom shutting down) or whose call ran out its
 timeout spends one of its `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2` attempts, so a session
-too long for the machine ends `failed` (`memory.extraction_status` says why) instead of
-holding the queue: a long session can need several calls in a row, each up to the
-timeout. Entity tagging (`LOOM_ENTITY_EXTRACT_ENABLED`) is off: it would queue behind
+too long for the machine ends `failed` (`memory.extraction_status` shows `cancelled` or
+the timeout) instead of holding the queue: a long session can need several calls in a
+row, each up to the timeout. On a server that answers one request at a time the timeout
+also counts the wait behind other calls, and the assistant and `memory.ask` share the
+server, so heavy use of them during a capture can fail it too; raise
+`LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` if it does. Entity tagging (`LOOM_ENTITY_EXTRACT_ENABLED`) is off: it would queue behind
 extraction on a server that answers one request at a time, and its pass, cut at its
 deadline, writes nothing, so search does without entity matches. The other workers that
 call a model are not tuned for a local one: observe extraction (off by default), whose
