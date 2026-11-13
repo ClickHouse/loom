@@ -200,7 +200,7 @@ async def with_single_user_identity(
     op. A field is filled when missing, null, or a string the gates read as absent."""
     from server.identity.app.caller_home import caller_org, default_namespace
     from server.settings import settings
-    from server.transport.arg_check import did_you_mean
+    from server.transport.arg_check import did_you_mean, unknown_args
 
     if auth is not None or settings.effective_identity_provider() != "single-user":
         return args
@@ -221,7 +221,7 @@ async def with_single_user_identity(
     # A key that misspells a field this would fill (`namepsace`) means the call
     # named one: it is not filled, so validation names it instead of the call
     # running in the install's namespace.
-    meant = set(did_you_mean(op.input_model, [k for k in args if k not in fields]).values())
+    meant = set(did_you_mean(op.input_model, unknown_args(op.input_model, args)).values())
     update = {
         name: value
         for name, value in fill.items()

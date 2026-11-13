@@ -302,3 +302,9 @@ def test_a_blank_namespace_beside_a_misspelled_one_is_refused(seen: Seen) -> Non
     body = {"namespace": "", "namepsace": "team", "query": "q"}
     assert "namespace" in _missing(_post("memory.search", body))
     assert seen == []
+
+
+def test_a_padded_namespace_is_kept_and_stripped(seen: Seen) -> None:
+    """A name with spaces round it names a namespace: it is not filled."""
+    _post("memory.get", {"namespace": " team ", "memory_key": "k"})
+    assert len(seen) == 1 and seen[0][2] == "team"
