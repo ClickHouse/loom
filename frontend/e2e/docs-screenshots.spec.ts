@@ -187,7 +187,7 @@ const MEMORIES: DemoMemory[] = [
         path: "payments/refunds.py",
         symbol: "payments.refunds.refund",
         state: "changed",
-        changed_since: "157c2473e9b04d1a",
+        changed_since: "2d71c9e0b5a3f846",
       },
     ],
   },
@@ -890,6 +890,12 @@ function assistantStream(): string {
 
 const debugCalls: string[] = [];
 
+// The unmocked calls each test made, printed with LOOM_DOCS_DEBUG=1.
+test.afterEach(() => {
+  if (process.env.LOOM_DOCS_DEBUG) console.log(debugCalls.join("\n"));
+  debugCalls.length = 0;
+});
+
 async function installDemoApi(page: Page): Promise<void> {
   await page.clock.setFixedTime(NOW);
   await page.addInitScript(() => {
@@ -1052,7 +1058,7 @@ async function installDemoApi(page: Page): Promise<void> {
               subject: "Ledger rejects unbalanced entries per currency",
               h: 26,
               files: 1,
-              pr: 482,
+              pr: 479,
             },
           ].map(({ commit, subject, h, files, pr }) => ({
             commit,
@@ -1117,12 +1123,6 @@ async function settle(page: Page): Promise<void> {
   await page.waitForTimeout(400);
   await page.mouse.move(0, 0);
 }
-
-// The unmocked calls each test made, printed with LOOM_DOCS_DEBUG=1.
-test.afterEach(() => {
-  if (process.env.LOOM_DOCS_DEBUG) console.log(debugCalls.join("\n"));
-  debugCalls.length = 0;
-});
 
 async function capture(page: Page, name: string): Promise<void> {
   fs.mkdirSync(OUT, { recursive: true });
