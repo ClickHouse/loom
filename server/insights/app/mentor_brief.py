@@ -114,7 +114,7 @@ def _planes(profile: mentor_rules.MentorProfile) -> list[MentorPlane]:
                 plane=plane,
                 calls=calls.get(plane, 0),
                 available=avail.get(plane, True),
-                when=when,
+                when=svc.named_for_caller(when),
                 mentored=mentor_rules.plane_mentored(plane),
             )
         )

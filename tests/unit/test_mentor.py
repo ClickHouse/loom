@@ -637,7 +637,9 @@ def test_the_pack_section_names_ops_for_the_mcp_listing_hint_by_hint() -> None:
     finally:
         m.hint_namer.reset(token)
     assert "loom_search recalls" in body and "search.query" not in body
-    assert "(call " not in body and "working_memory.set (via loom_op)" in body
+    # rendered whole: each op marked once, the tail named for the listing too
+    assert "(call " not in body and body.count("working_memory.set (via loom_op)") == 1
+    assert body.endswith("mentor.brief (via loom_op) has the evidence")
 
 
 def test_top_hint_line_reads_only_the_cache() -> None:
@@ -942,6 +944,32 @@ def test_pack_renders_the_mentor_section_and_stays_silent_otherwise(
 
 
 # --- mentor.brief ---------------------------------------------------------------------
+
+
+def test_mentor_brief_over_mcp_names_ops_for_the_listing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.insights.api.models_mentor import MentorBriefInput
+    from server.transport import mcp_tools
+
+    note = " (call working_memory.set via loom_op)"
+    hint = _h("a", text="search.query recalls by meaning; keep it with working_memory.set." + note)
+
+    async def _p(*a: Any, **k: Any) -> Any:
+        return _fake_profile(hint)
+
+    monkeypatch.setattr(m, "mentor_profile", _p)
+    monkeypatch.setattr(handler, "get_client", lambda: _CH())
+    token = m.hint_namer.set(mcp_tools.mentor_namer("core"))
+    try:
+        out = asyncio.run(
+            handler.handle_mentor_brief(MentorBriefInput(org="o", namespace="ns", agent="a"))
+        )
+    finally:
+        m.hint_namer.reset(token)
+    text = out.hints[0].text
+    assert "loom_search recalls" in text and "(call " not in text
+    assert "working_memory.set (via loom_op)" in text
+    whens = " ".join(plane.when for plane in out.planes)
+    assert "search.query" not in whens and "loom_search" in whens
 
 
 def test_mentor_brief_returns_the_profile_planes_and_adoption(

@@ -10,7 +10,7 @@ summary plus the lean sections), and writes a call's ledger row
 from __future__ import annotations
 
 import logging
-from collections.abc import Set
+from collections.abc import Callable, Set
 from typing import Any, get_args
 
 from server.memory.api.models_loom_search import SearchInput
@@ -395,12 +395,25 @@ def name_ops_for_toolset(text: str, toolset: str | None) -> str:
     return name_ops_for_listing(text, listed_tool_names(toolset), writes=routes_writes(toolset))
 
 
-def mentor_text_for_toolset(text: str, toolset: str | None) -> str:
-    """A stored mentor hint as ``toolset``'s listing names ops: its core-listing note
-    goes, since the listing marks an op it leaves out itself."""
+def mentor_namer(toolset: str | None) -> Callable[[str], str]:
+    """Names a stored mentor hint as ``toolset``'s listing does, working the listing
+    out on first use. The core-listing note goes: the listing marks an op it leaves
+    out itself."""
     from server.insights.app.mentor_rules import without_listing_note
 
-    return name_ops_for_toolset(without_listing_note(text), toolset)
+    listing: tuple[set[str], bool] | None = None
+
+    def name(text: str) -> str:
+        nonlocal listing
+        if listing is None:
+            listing = (listed_tool_names(toolset), routes_writes(toolset))
+        return name_ops_for_listing(without_listing_note(text), listing[0], writes=listing[1])
+
+    return name
+
+
+def mentor_text_for_toolset(text: str, toolset: str | None) -> str:
+    return mentor_namer(toolset)(text)
 
 
 def _tool_names(ops: list[Operation], resolved: str) -> set[str]:

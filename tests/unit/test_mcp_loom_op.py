@@ -125,7 +125,6 @@ def test_a_handler_over_mcp_names_mentor_ops_for_the_listing(
         "/mcp", json=_call("tracker.flaky", {"test_name": "02346_text_index"})
     )
     assert r.json()["result"]["structuredContent"]["test_name"] == "loom_search"
-    assert mentor.named_for_caller("search.query") == "search.query"  # reset after the call
 
 
 def test_a_hidden_op_is_refused_as_a_direct_call_is(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -49,6 +49,7 @@ from server.insights.app.mentor_rules import (
     MentorProfile,
     clip_keeping_note,
     evaluate_rules,
+    without_listing_note,
 )
 from server.insights.store.mentor import ProfileReads
 from server.memory.domain.excerpt import EXCERPT_LIMIT
@@ -429,12 +430,20 @@ def render_pack_section(
     capped; "" when nothing fires. The tail names the op and the skill."""
     if profile is None or not profile.hints:
         return ""
-    items = [f"{h.code}: {named_for_caller(h.text)}" for h in profile.hints[:max_hints]]
+    # Over MCP the section is rendered whole, so an op is marked once; each hint's
+    # note sits mid-section, so it goes first.
+    namer = hint_namer.get()
+    items = [
+        f"{h.code}: {without_listing_note(h.text) if namer else h.text}"
+        for h in profile.hints[:max_hints]
+    ]
     # Each hint already names its op; pointing at the skill makes agents open
     # the skill file even in sessions whose results carry no hint.
     tail = "mentor.brief has the evidence"
     while True:
-        body = "Loom mentor — " + " · ".join(items) + f" ({tail})" if items else ""
+        body = "Loom mentor — " + " · ".join([*items, tail])
+        if namer:
+            body = namer(body)
         if len(body) <= cap or len(items) <= 1:
             break
         items.pop()

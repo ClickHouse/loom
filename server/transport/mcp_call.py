@@ -62,7 +62,7 @@ from server.transport.mcp_refusals import refusal_result
 from server.transport.mcp_tools import (
     _emit_mcp_event,
     assistant_connection,
-    mentor_text_for_toolset,
+    mentor_namer,
 )
 
 if TYPE_CHECKING:
@@ -320,7 +320,7 @@ async def _call_tool(
     from server.insights.app.mentor import hint_namer
 
     start = time.perf_counter()
-    namer = hint_namer.set(lambda text: mentor_text_for_toolset(text, toolset))
+    namer = hint_namer.set(mentor_namer(toolset))
     try:
         with gates.tenant_slot(auth, target), llm_free.serving(op):
             result = await op.handler(input_obj)
