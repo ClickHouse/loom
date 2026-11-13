@@ -628,7 +628,7 @@ def test_the_dashboard_and_the_assistant_get_no_call_hint() -> None:
 def test_get_miss_fires_once_per_session() -> None:
     hint = _call("memory.get", {"memory_key": "deploy_window"}, {"found": False})
     assert hint is not None and hint[0] == "get_miss" and "deploy_window" in hint[1]
-    assert "loom_search" in hint[1]
+    assert "search.query" in hint[1]
     assert _call("memory.get", {"memory_key": "other"}, {"found": False}) is None
     assert _call("memory.get", {"memory_key": "other"}, {"found": False}, session="s2") is not None
     # A found row says nothing.
@@ -836,7 +836,7 @@ def test_http_helper_rides_the_hint_as_headers() -> None:
         resp,
     )
     assert resp.headers["X-Loom-Hint-Code"] == "get_miss"
-    assert "loom_search" in resp.headers["X-Loom-Hint"]
+    assert "search.query" in resp.headers["X-Loom-Hint"]
     assert ledger.current_hint_code() == "get_miss"
     ledger.set_hint_context("")
 
@@ -1532,12 +1532,15 @@ def test_the_handshake_mentor_line_names_ops_for_its_listing(
         return {"org": "o", "namespace": "ns", "agent": "a"}
 
     monkeypatch.setattr(mcp_primer, "_caller_defaults", _defaults)
-    text = "pin it with memory.pin (call memory.pin via loom_op)"
-    m._cache_put(("o", "ns", "a"), 10**12, _fake_profile(_h("pin_unused", text=text)))
+    # the stored text carries the note _unlisted writes for an op core leaves out
+    note = mentor_rules._unlisted(("working_memory.set",))
+    assert note
+    text = "keep it with working_memory.set" + note
+    m._cache_put(("o", "ns", "a"), 10**12, _fake_profile(_h("scratch_unused", text=text)))
     core = asyncio.run(mcp_primer._mentor_line(None, None, "core"))
     coding = asyncio.run(mcp_primer._mentor_line(None, None, "coding"))
-    assert "pin it with loom_memory_pin (" in core and "call memory.pin" not in core
-    assert "pin it with memory.pin (via loom_op)" in coding
+    assert "keep it with working_memory.set (via loom_op)" in core and "(call " not in core
+    assert "keep it with loom_working_memory_set" in coding and "(call " not in coding
     assert "`mentor.brief` (via loom_op)" in core
 
 

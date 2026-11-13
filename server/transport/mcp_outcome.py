@@ -262,10 +262,11 @@ def _emit_success(
     request_id: str,
     result: Any,
     mcp_session_id: str,
+    toolset: str | None = None,
 ) -> tuple[str, str] | None:
     """The success row of a tool call, with the mentor's hint computed first
     so the row carries `out_hint_code`. Returns the hint for the result."""
-    hint = _mentor_hint(op.name, arguments, result, mcp_session_id)
+    hint = _mentor_hint(op.name, arguments, result, mcp_session_id, toolset)
     _emit_mcp_event(
         op.name,
         arguments,
@@ -279,11 +280,15 @@ def _emit_success(
 
 
 def _mentor_hint(
-    op_name: str, arguments: dict[str, Any], result: Any, mcp_session_id: str
+    op_name: str,
+    arguments: dict[str, Any],
+    result: Any,
+    mcp_session_id: str,
+    toolset: str | None = None,
 ) -> tuple[str, str] | None:
-    """The mentor's one hint for this call, or None; the
-    code is published on the request context for the ledger row. Never
-    raises and never reads the store."""
+    """The mentor's one hint for this call, naming ops as the ``toolset`` listing
+    does, or None; the code is published on the request context for the ledger
+    row. Never raises and never reads the store."""
     try:
         from server.insights.app import mentor as _mentor
         from server.observability.ledger import set_hint_context
@@ -300,7 +305,18 @@ def _mentor_hint(
             agent=str(arguments.get("agent") or "-"),
         )
         set_hint_context(hint[0] if hint else "")
-        return hint
+        if hint is None:
+            return None
+        from server.insights.app.mentor_rules import without_listing_note
+        from server.transport.mcp_op import name_ops_for_listing, routes_writes
+        from server.transport.mcp_tools import listed_tool_names
+
+        text = name_ops_for_listing(
+            without_listing_note(hint[1]),
+            listed_tool_names(toolset),
+            writes=routes_writes(toolset),
+        )
+        return hint[0], text
     except Exception:  # noqa: BLE001 — advice never fails a tool call
         return None
 

@@ -93,7 +93,7 @@ PLANES: tuple[tuple[str, str, str, bool], ...] = (
     (
         "memory",
         "claims",
-        "one plain-text claim per readable key; recall by meaning with loom_search",
+        "one plain-text claim per readable key; recall by meaning with search.query",
         True,
     ),
     (
@@ -199,7 +199,7 @@ def known_plane(op: str) -> str | None:
 
 def hint_plane(ops: list[str] | tuple[str, ...]) -> str | None:
     """The plane a hint names: that of the first of its ops that has one, or None (a hint
-    may lead with a coding-agent tool of no plane, `loom_search`, before the ops it is about)."""
+    may lead with an op of no plane, `search.query`, before the ops it is about)."""
     return next((p for op in ops if (p := known_plane(op))), None)
 
 
@@ -252,18 +252,26 @@ def _prefix_count(usage: dict[str, int], prefix: str) -> int:
 # Ops an MCP agent reaches through a listed synthetic tool or a core alias:
 # no listing note for these.
 _LISTED_VIA_ALIAS = frozenset(
-    {"loom_search", "loom_activate", "memory.search", "knowledge.search", "conversation.search"}
+    {
+        "loom_search",
+        "loom_activate",
+        "search.query",
+        "memory.search",
+        "knowledge.search",
+        "conversation.search",
+    }
 )
 
 
-# The note _unlisted adds for an op the core listing leaves out.
-_LOOM_OP_NOTE = re.compile(r" \(call [a-z_.]+ via loom_op\)")
+# The note _unlisted adds for an op the core listing leaves out, and its pattern.
+_LOOM_OP_NOTE = " (call {} via loom_op)"
+_LOOM_OP_NOTE_RE = re.compile(re.escape(_LOOM_OP_NOTE).replace(r"\{\}", r"[a-z_.]+"))
 
 
 def without_listing_note(text: str) -> str:
     """``text`` without _unlisted's core-listing note, for a caller that names
     ops for its own listing instead."""
-    return _LOOM_OP_NOTE.sub("", text)
+    return _LOOM_OP_NOTE_RE.sub("", text)
 
 
 def _unlisted(ops: tuple[str, ...]) -> str:
@@ -287,7 +295,7 @@ def _unlisted(ops: tuple[str, ...]) -> str:
                 return " (the user resolves conflicts in the dashboard's Review queue)"
             return f" ({op} is not an agent tool; skip it over MCP)"
         if "core" not in sets:
-            return f" (call {op} via loom_op)"
+            return _LOOM_OP_NOTE.format(op)
     return ""
 
 
@@ -386,9 +394,9 @@ def _rules_reading(c: _Ctx) -> None:
         c.add(
             "recall_by_key_only",
             "warning",
-            f"{gets} exact-key reads to {searches} searches this week: loom_search recalls by "
-            "meaning; a key read in a loop belongs in working_memory.set.",
-            ("loom_search", "working_memory.set"),
+            f"{gets} exact-key reads to {searches} searches this week: search.query recalls by "
+            "meaning; keep a value read in a loop in working memory (working_memory.set).",
+            ("search.query", "memory.search", "working_memory.set"),
             gets=gets,
             searches=searches,
         )
@@ -403,8 +411,8 @@ def _rules_reading(c: _Ctx) -> None:
             "warning",
             f"{sets} writes and {reads} reads over {c.sessions} sessions: "
             "nothing written here is read back. Open a session with context.pack; "
-            "recall with loom_search before deciding.",
-            ("context.pack", "loom_search"),
+            "recall with search.query before deciding.",
+            ("context.pack", "search.query", "memory.search"),
             sets=sets,
             reads=reads,
             sessions=c.sessions,
@@ -425,9 +433,9 @@ def _rules_reading(c: _Ctx) -> None:
             "search_abstains",
             "warning",
             f"{abst} of {searches} searches abstained: write the claim first in the value, use "
-            "loom_search to fan out to documents and conversations, and namespace.audit when "
+            "search.query to fan out to documents and conversations, and namespace.audit when "
             "recall misses what you wrote.",
-            ("loom_search", "namespace.audit", "memory.set"),
+            ("search.query", "namespace.audit", "memory.set"),
             abstains=abst,
             searches=searches,
         )
@@ -468,8 +476,8 @@ def _rules_reliance(c: _Ctx) -> None:
             "warning",
             f"{missed} of {asked} keys asked of memory.get / bulk_get this week were not there: "
             "a key from a search result that misses is a chunk or a moved key — follow "
-            "canonical_key, or recall by meaning with loom_search.",
-            ("memory.get", "loom_search"),
+            "canonical_key, or recall by meaning with search.query.",
+            ("memory.get", "search.query", "memory.search"),
             asked=asked,
             missed=missed,
         )
@@ -888,7 +896,7 @@ def _rule_get_miss(
     key = str(args.get("memory_key") or "")
     return (
         "get_miss",
-        f"no row at {key or 'that key'}: loom_search recalls by meaning, memory.list prefix= "
+        f"no row at {key or 'that key'}: search.query recalls by meaning, memory.list prefix= "
         "lists the siblings, and a moved key answers with canonical_key (follow=true).",
     )
 
@@ -925,7 +933,7 @@ def _rule_search_abstain(
         return (
             "search_abstain_knowledge",
             f"memory abstained and this namespace holds {facts['documents']} documents: "
-            "loom_search fans out to knowledge and conversations in one call.",
+            "search.query fans out to knowledge and conversations in one call.",
         )
     return None
 
@@ -995,7 +1003,7 @@ CALL_RULES: tuple[Callable[..., _Call], ...] = (
 # Per-call hint codes and the ops that count as following them (the profile
 # codes carry their own `ops`); read by mentor.brief's adoption.
 CALL_HINT_OPS: dict[str, tuple[str, ...]] = {
-    "get_miss": ("memory.search", "memory.list", "loom_search"),
+    "get_miss": ("memory.search", "memory.list", "search.query"),
     "search_identifier_query": ("code.symbol", "code.callers", "code.grep", "code.search"),
     "search_abstain_code": (
         "code.search",
@@ -1004,7 +1012,7 @@ CALL_HINT_OPS: dict[str, tuple[str, ...]] = {
         "code.grep",
         "code.repos",
     ),
-    "search_abstain_knowledge": ("loom_search", "knowledge.search", "knowledge.get"),
+    "search_abstain_knowledge": ("search.query", "knowledge.search", "knowledge.get"),
     "set_duplicate": ("memory.update", "memory.link", "memory.get", "memory.related"),
     "set_large_value": ("knowledge.upsert", "knowledge.add"),
     "run_over_budget": ("run.complete",),

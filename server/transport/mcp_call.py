@@ -333,7 +333,9 @@ async def _call_tool(
             elapsed_ms=int((time.perf_counter() - start) * 1000),
         )
     elapsed_ms = int((time.perf_counter() - start) * 1000)
-    mentor_hint = _emit_success(op, arguments, elapsed_ms, request_id, result, mcp_session_id)
+    mentor_hint = _emit_success(
+        op, arguments, elapsed_ms, request_id, result, mcp_session_id, toolset
+    )
 
     _record_success_telemetry(call, result, elapsed_ms)
 
