@@ -14,6 +14,7 @@ from server.code.domain.anchor import (
     Definition,
     Link,
     bare_name,
+    language,
     local_name,
     locate,
     recheck,
@@ -332,15 +333,19 @@ async def _recheck(
                 lost[before.qualified_name] = before.read_path
         found.append(_Read(a, own, before, now, defs, renamed, gone))
     elsewhere = await _elsewhere(org, cns, lost)
-    unindexed, unsure = await _unindexed(files, found, set(elsewhere), head)
-    for qn, defs in unindexed.items():
-        elsewhere[qn] += defs
     moves: list[Move] = []
     for r in found:
         renamed, far = r.renamed, []
-        if r.lost and r.before.qualified_name in unsure and r.before.state != "missing":
-            renamed = Successor(None, uncertain=True)  # the mirror could not be searched
-        if r.lost and (candidates := elsewhere.get(r.before.qualified_name)):
+        candidates: list[Definition] = []
+        if r.lost:
+            # the index's namesakes, and the mirror's: the index may not hold the files a
+            # commit past the ingest's per-commit cap changed, or still hold their old text
+            mirror = await _in_mirror(files, r, head)
+            if mirror is None and r.before.state != "missing":
+                renamed = Successor(None, uncertain=True)  # the mirror could not answer
+            both = [*elsewhere.get(r.before.qualified_name, []), *(mirror or [])]
+            candidates = list({(d.path, d.qualified_name): d for d in both}.values())
+        if candidates:
             new = await _namesakes(files, r.before, r.row, candidates, r.range, head)
             if new is None and r.before.state != "missing":
                 renamed = Successor(None, uncertain=True)  # cannot tell: a live link is unsure
@@ -372,39 +377,30 @@ async def _recheck(
     return moves
 
 
-async def _unindexed(
-    files: link_pass.RepoReads, reads: list[_Read], placed: set[str], head: str
-) -> tuple[dict[str, list[Definition]], set[str]]:
-    """The namesakes of each lost name the code index places nowhere (not in `placed`),
-    read from the mirror among the files changed since the link was last in place: its
-    own file is read there, and a commit past the ingest's per-commit cap moves the head
-    before the rest of its files are indexed. Also the names the mirror could not answer
-    for: a range too wide, too many files naming it, or a read that failed."""
-    found: dict[str, list[Definition]] = defaultdict(list)
-    unsure: set[str] = set()
-    for r in reads:
-        qn = r.before.qualified_name
-        if not r.lost or qn in placed:
-            continue
-        # a link lost before is searched from its own check, as `_new_namesakes` does
-        own = None if r.before.state in _LOST_STATES else r.range
-        base = own.base if own is not None else str(r.row["checked_commit"])
-        local = local_name(qn, r.before.read_path)
+async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[Definition] | None:
+    """The definitions of the lost link's name, inside their module, in the files changed
+    since it was last in place, read from the mirror at `head` as its own file is; None
+    when the mirror cannot answer: a range too wide, too many files naming it, a read
+    that failed, or no definition found while a file naming it did not parse."""
+    qn = r.before.qualified_name
+    # a link lost before is searched from its own check, as `_new_namesakes` does
+    own = None if r.before.state in _LOST_STATES else r.range
+    base = own.base if own is not None else str(r.row["checked_commit"])
+    paths = await files.containing(head, bare_name(qn), base, limit=_MAX_NAMING)
+    if paths is None or len(paths) >= _MAX_NAMING:
+        return None
+    local, found, unread = local_name(qn, r.before.read_path), [], False
+    for path in paths:
+        if not language(path):
+            continue  # no parser reads it: nothing it holds is a definition
         try:
-            paths = await files.containing(head, bare_name(qn), base, limit=_MAX_NAMING)
-            if paths is None or len(paths) >= _MAX_NAMING:
-                unsure.add(qn)
-                continue
-            for path in paths:
-                f = await files.at(head, path)
-                found[qn] += [
-                    d
-                    for d in (f.defs if f else [])
-                    if local_name(d.qualified_name, d.path) == local
-                ]
+            names = await files.names(head, path)
+            for name in names or ():
+                if local_name(name, path) == local:
+                    found += await files.defs(head, path, name)
         except code.ParseFailed:
-            unsure.add(qn)
-    return found, unsure
+            unread = True
+    return None if unread and not found else found
 
 
 async def _namesakes(
