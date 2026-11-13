@@ -55,10 +55,11 @@ class LoomRetriever(BaseRetriever):
 
     The node's text is the chunk, its id ``<namespace>/<source_uri>#<chunk_idx>``,
     its score the similarity, and its metadata ``source_uri``, ``chunk_idx``,
-    ``section``, ``namespace`` and ``tags``. ``namespace_scope="this"`` searches
-    the agent's namespace; ``all_mine`` adds the caller's other namespaces, up to
-    the server's fan-out cap. ``retrieve`` needs a ``loom.SyncAgent``;
-    ``aretrieve`` takes a ``loom.Agent`` or a ``SyncAgent``.
+    ``section`` (when the chunk has one), ``namespace`` and ``tags``.
+    ``namespace_scope="this"`` searches the agent's namespace; ``all_mine`` adds
+    the caller's other namespaces, up to the server's fan-out cap. ``retrieve``
+    needs a ``loom.SyncAgent``; ``aretrieve`` takes a ``loom.Agent`` or a
+    ``SyncAgent``.
     """
 
     def __init__(
@@ -140,9 +141,9 @@ class LoomMemoryBlock(BaseMemoryBlock[str]):
     and returns an empty string when Loom abstains.
 
     Pass a ``loom.SyncAgent`` when ``Memory`` is used through its sync methods
-    (``get``, ``put``), which may run a call on another event loop than the one
-    a ``loom.Agent`` was opened on; an ``Agent`` serves ``aget`` / ``aput`` on
-    its own loop.
+    (``get``, ``put``) or with this module's ``flush``, which may run a call on
+    another event loop than the one a ``loom.Agent`` was opened on; an
+    ``Agent`` serves ``aget`` / ``aput`` and ``aflush`` on its own loop.
     """
 
     name: str = Field(default="LoomMemories", description="The name of the memory block.")
