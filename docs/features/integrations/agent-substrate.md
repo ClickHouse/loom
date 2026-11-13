@@ -22,8 +22,9 @@ not been run end to end on a live cluster, so check them against your Substrate 
 
 Every request leaves the actor through Substrate's egress gateway (`atenet-egress` in
 `ate-system`), which denies all egress an actor's policy does not allow. Loom therefore sees
-connections from the gateway pods, not from the actors, and tells agents apart by their
-tokens.
+connections from the gateway pods, not from the actors. Each row records the token's
+subject, which tells the actors apart; the row's `agent` is the MCP client's name, which
+actors running the same client share.
 
 ## 1. Install Loom in the cluster
 
@@ -63,7 +64,8 @@ TOKEN=$(kubectl -n loom exec deploy/loom -- \
   loom mint-token --subject sa:research.research-agent --org acme \
     --namespaces research --roles writer --ttl-days 30)
 kubectl create namespace loom-tokens-research
-kubectl -n loom-tokens-research create secret generic research-agent --from-literal=token="$TOKEN"
+kubectl -n loom-tokens-research create secret generic research-agent \
+  --from-literal=token="$TOKEN"
 ```
 
 Substrate's Kubernetes credential provider reads a Secret only from namespaces the
@@ -91,8 +93,14 @@ The provider grants an atespace whole namespaces, not single Secrets, so an ates
 granted a namespace can use every token in it: one namespace per atespace keeps each
 atespace to its own agents' tokens.
 
-The token expires after `--ttl-days`: before then, mint a new one, update the Secret and
-restart the credential provider as above.
+The token expires after `--ttl-days`: before then, mint a new one and replace the Secret.
+The credential provider reads the Secret on each request, so the next call carries the new
+token:
+
+```bash
+kubectl -n loom-tokens-research create secret generic research-agent \
+  --from-literal=token="$TOKEN" --dry-run=client -o yaml | kubectl apply -f -
+```
 
 ## 3. Configure the agent and create its actor
 
@@ -120,7 +128,7 @@ Then create the atespace, the actor template that carries the agent's image, and
 from that template. Substrate's [API guide](https://ate.dev/docs/reference/api-guide/)
 describes the template's fields; here its `metadata` names it `research-agent` in atespace
 `research`. The template's `workerSelector` must match a WorkerPool in the cluster, and its
-image is pinned by digest. The egress policy comes next:
+image must be pinned by digest. Create the three:
 
 ```bash
 kubectl ate create atespace research
