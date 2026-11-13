@@ -3,8 +3,8 @@
  * documents (the parent a link, the ones above it folded; on a phone, one button back to the
  * parent), the collections inside the one shown as folder chips on that line, and on "My
  * files" and on a namespace the caller's own top-level collections and those shared with
- * them, listed below the documents. The tree is the server's (`collection.list` gives each
- * collection's parent); in the path, a parent the caller cannot read is a dots button, never
+ * them, listed below the documents where the tree is not shown. The hierarchy is the
+ * server's (`collection.list` gives each collection's parent); in the path, a parent the caller cannot read is a dots button, never
  * a link, and gives its address when tapped.
  */
 import {

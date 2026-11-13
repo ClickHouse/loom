@@ -78,7 +78,8 @@ export function treeOrder(rows: CollectionEntry[]): { c: CollectionEntry; depth:
 }
 
 export interface ReadableCollections {
-  /** Every collection the caller can read, or null while the read is in flight. */
+  /** Every collection the caller can read, or null while a reload is in flight; a refresh
+   *  keeps them. */
   rows: CollectionEntry[] | null;
   /** More pages than the select reads. */
   truncated: boolean;
@@ -92,7 +93,7 @@ export interface ReadableCollections {
   /** Read again; `rows` is null until the new answer lands. `expect`: a collection just
    *  created, asked for again a few times while a replica's list has not caught up. */
   reload: (expect?: string) => void;
-  /** The collection the last reload or refresh asked for, or "". */
+  /** The last collection a reload or refresh waited for; a plain reload clears it. */
   expected: string;
 }
 
@@ -107,13 +108,17 @@ export function useReadableCollections(org: string): ReadableCollections {
     truncated: boolean;
   } | null>(null);
   const [error, setError] = useState<unknown>(null);
-  // `expect` is waited for only by the read that asked for it (`since`), not a later refresh.
-  const [reads, setReads] = useState({ reloads: 0, expect: "", refreshes: 0, since: 0 });
-  const reload = useCallback((expect = "") => {
-    // An old failure would read as "no collections" before the new answer lands.
-    setError(null);
-    setReads((r) => ({ ...r, reloads: r.reloads + 1, expect, since: r.refreshes }));
-  }, []);
+  // `expect` (a name in an org) is waited for only by the read that asked for it (`since`),
+  // not a later refresh, nor another org's read.
+  const [reads, setReads] = useState({ reloads: 0, expect: { org: "", name: "" }, refreshes: 0, since: 0 });
+  const reload = useCallback(
+    (name = "") => {
+      // An old failure would read as "no collections" before the new answer lands.
+      setError(null);
+      setReads((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name }, since: r.refreshes }));
+    },
+    [org],
+  );
   // Any write to a collection (from a dialog that has since closed, too): read again in the
   // background, keeping the rows shown until the new answer lands, and waiting for a
   // collection it names.
@@ -122,12 +127,13 @@ export function useReadableCollections(org: string): ReadableCollections {
       onCollectionsChanged((made) =>
         setReads((r) =>
           made
-            ? { ...r, refreshes: r.refreshes + 1, expect: made, since: r.refreshes + 1 }
+            ? { ...r, refreshes: r.refreshes + 1, expect: { org, name: made }, since: r.refreshes + 1 }
             : { ...r, refreshes: r.refreshes + 1 },
         ),
       ),
-    [],
+    [org],
   );
+  const expected = reads.expect.org === org ? reads.expect.name : "";
   useAbortableEffect(
     (signal, live) => {
       setError(null);
@@ -143,7 +149,7 @@ export function useReadableCollections(org: string): ReadableCollections {
             if (!cursor) break;
           }
           const rows = [...byName.values()];
-          const wait = reads.since === reads.refreshes ? reads.expect : "";
+          const wait = reads.since === reads.refreshes ? expected : "";
           const caughtUp = !wait || byName.has(wait);
           if (caughtUp || attempt >= 2) return { rows, truncated: !!cursor };
           await new Promise((r) => setTimeout(r, 1000));
@@ -156,7 +162,7 @@ export function useReadableCollections(org: string): ReadableCollections {
           if (live()) setError(e);
         });
     },
-    [org, reads],
+    [org, reads, expected],
   );
   const kept = read && read.org === org ? read : null;
   const current = kept && kept.reloads === reads.reloads ? kept : null;
@@ -167,7 +173,7 @@ export function useReadableCollections(org: string): ReadableCollections {
     refreshing: !!kept && !error && (!current || current.refreshes !== reads.refreshes),
     error,
     reload,
-    expected: reads.expect,
+    expected,
   };
 }
 

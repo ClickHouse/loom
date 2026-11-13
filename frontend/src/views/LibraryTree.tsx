@@ -19,6 +19,29 @@ import {
   topLevelCollections,
 } from "./LibraryHierarchy";
 
+/** <main>'s width the Library's tree needs: <main> at 1280 px with the sidebar open and Ask AI
+ *  closed, where the search beside the tree keeps 265 px. Ask AI beside the page narrows it. */
+export const TREE_PAGE_MIN = 1036;
+/** <main>'s size, kept current as the window, the sidebar or Ask AI beside the page change it;
+ *  null where it cannot be measured (no #main, or no ResizeObserver). */
+export function useMainSize(): { width: number; height: number } | null {
+  const [size, setSize] = useState(measureMain);
+  useEffect(() => {
+    const main = document.getElementById("main");
+    if (!main || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setSize(measureMain()));
+    ro.observe(main);
+    return () => ro.disconnect();
+  }, []);
+  return size;
+}
+
+function measureMain(): { width: number; height: number } | null {
+  if (typeof document === "undefined" || typeof ResizeObserver === "undefined") return null;
+  const main = document.getElementById("main");
+  return main ? { width: main.clientWidth, height: main.clientHeight } : null;
+}
+
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
 
@@ -189,14 +212,7 @@ export function LibraryTree({
   const tree = useMemo(() => placeTree(list), [list]);
   // As tall as <main>'s view, which a bar above the header (a new build to reload) shortens:
   // New collection at the foot stays in reach.
-  const [room, setRoom] = useState<number | null>(null);
-  useEffect(() => {
-    const main = document.getElementById("main");
-    if (!main || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setRoom(main.clientHeight));
-    ro.observe(main);
-    return () => ro.disconnect();
-  }, []);
+  const main = useMainSize();
 
   // The form's target, fixed when New collection is pressed; null while closed.
   const [making, setMaking] = useState<CollectionEntry | "top" | null>(null);
@@ -249,7 +265,7 @@ export function LibraryTree({
       aria-label="Library places"
       aria-busy={busy || undefined}
       className="library-tree"
-      style={room ? { maxHeight: room } : undefined}
+      style={main ? { maxHeight: main.height } : undefined}
     >
       {(shelf !== null || tree.own) && (
         <ul>

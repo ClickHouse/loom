@@ -2,9 +2,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { installApi } from "./fixtures";
 import { violations } from "./axe";
 
-// The Library's tree of places beside the documents, from 1280 px: it opens a place, shows
-// and hides the collections inside one, makes one inline, and the collections inside the
-// one shown are folder chips on its path's line.
+// The Library's tree of places beside the documents, where the page has room: it opens a
+// place, shows and hides the collections inside one, makes one inline, and the collections
+// inside the one shown are folder chips on its path's line.
 
 const COLLECTIONS = [
   { namespace: "col-me-1a2b", parent: "", personal: true, role: "admin", description: "", title: "" },
@@ -135,6 +135,34 @@ test.describe("1440 px under a reload bar", () => {
     await expect(tree.getByRole("button", { name: "New collection" })).toBeInViewport({ ratio: 1 });
   });
 });
+
+// Ask AI beside the page narrows <main>: the tree shows only where the page keeps the width
+// it has at 1280 px without the panel.
+for (const [width, tree] of [
+  [1280, false],
+  [1440, false],
+  [1700, true],
+] as const) {
+  test.describe(`${width} px with Ask AI beside the page`, () => {
+    test.use({ viewport: { width, height: 900 } });
+
+    test(`the tree is ${tree ? "" : "not "}drawn, and the search keeps its room`, async ({ page }) => {
+      await page.addInitScript(() =>
+        localStorage.setItem("loom_assistant_panel", JSON.stringify({ open: true, width: 420 })),
+      );
+      await open(page, "/library?collection=col-eng");
+      await expect(page.locator("[data-assistant-panel][data-open]")).toBeVisible();
+      await expect(page.getByRole("navigation", { name: "Library places" })).toHaveCount(tree ? 1 : 0);
+      await expect(page.getByLabel("Show the documents of")).toHaveCount(tree ? 0 : 1);
+      // The documents' toolbar spans the page, less the tree's column where it shows.
+      const toolbar = page.getByRole("search", { name: "Search and filters" });
+      const room = await page.evaluate(() => document.getElementById("main")?.clientWidth ?? 0);
+      await expect
+        .poll(async () => (await toolbar.boundingBox())?.width ?? 0)
+        .toBeGreaterThanOrEqual(room - (tree ? 264 : 0) - 120);
+    });
+  });
+}
 
 test.describe("1100 px", () => {
   test.use({ viewport: { width: 1100, height: 800 } });

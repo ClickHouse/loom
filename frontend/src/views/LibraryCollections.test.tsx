@@ -1097,6 +1097,25 @@ describe("the Library on a collection", () => {
   });
 
   describe("refreshes", () => {
+    it("waits for a created collection in its own org only", async () => {
+      resizable();
+      const answer = await startCreate();
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      await answer(q4);
+      await settle();
+      api.listCollections.mockClear();
+      api.listCollections.mockResolvedValue({ collections: [entry("col-b", { title: "B" })], next_cursor: null });
+      act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
+      // The other org's first answer is the answer: nothing there is waited for.
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(await within(tree).findByRole("link", { name: "B" }, { timeout: 500 })).toBeInTheDocument();
+      expect(api.listCollections.mock.calls.filter(([o]) => o === "other")).toHaveLength(1);
+      expect(tree).not.toHaveAttribute("aria-busy");
+    });
+
     it("reads once for a delete after a create, not waiting again for what was made", async () => {
       resizable();
       const answer = await startCreate();

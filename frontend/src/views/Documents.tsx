@@ -63,7 +63,7 @@ import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
 import { TopLevelPlaces } from "./LibraryHierarchy";
-import { LibraryTree, NEW_COLLECTION_FOCUS } from "./LibraryTree";
+import { LibraryTree, NEW_COLLECTION_FOCUS, TREE_PAGE_MIN, useMainSize } from "./LibraryTree";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
@@ -267,8 +267,11 @@ export function Documents() {
   // The gaps tile lists other people's questions: an admin of the place shown sees it.
   const seesGaps = shown ? shown.role === "admin" : canCall("knowledge.gaps.list", roleRead.role, whoami);
   const phone = useMedia(PHONE_QUERY);
-  // From 1280 px the places are a tree beside the documents; narrower, the select stands in.
-  const wide = useMedia(TREE_QUERY);
+  // The places are a tree beside the documents where <main> has room for both; narrower, the
+  // select stands in.
+  const main = useMainSize();
+  const wideWindow = useMedia(TREE_QUERY);
+  const wide = main ? main.width >= TREE_PAGE_MIN : wideWindow;
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
@@ -996,7 +999,7 @@ export function Documents() {
   // place in React's tree whichever page shows, so React keeps it.
   const libraryPage = (page: ReactNode) => (
     <>
-      <div className="library-layout">
+      <div className={wide ? "library-layout" : undefined}>
         {tree}
         {page}
       </div>
@@ -1167,7 +1170,7 @@ export function Documents() {
             value={query}
             onChange={(value) => setQuery(value)}
             // The short form on a phone and beside the tree, whose column leaves the field
-            // narrow (217 px at 1280 px).
+            // narrow.
             placeholder={phone || wide ? "Search, or tag:specs" : "Search title, filename, description, or tag:specs"}
             aria-label="Search library"
           />

@@ -1682,15 +1682,12 @@ textarea[aria-invalid="true"]:focus-visible {
   [data-testid="select-trigger"] .collection-depth {
     padding-inline-start: 0;
   }
-  /* The Library beside its places (views/LibraryTree.tsx): from 1280 px (`TREE_QUERY`) the
-     tree is a column of its own left of the page; narrower, the page's select stands in. The
-     column's 16.5rem fits "Shared with you" and three levels of a 20-character title. */
-  @media (min-width: 1280px) {
-    .library-layout {
-      display: grid;
-      grid-template-columns: 16.5rem minmax(0, 1fr);
-      align-items: start;
-    }
+  /* The Library beside its places (views/LibraryTree.tsx), where <main> has room
+     (`TREE_PAGE_MIN`): 16.5rem fits "Shared with you" and three levels of a 20-character title. */
+  .library-layout {
+    display: grid;
+    grid-template-columns: 16.5rem minmax(0, 1fr);
+    align-items: start;
   }
   /* Click UI's sidebar navigation has no nesting: rows take its item's padding, radius and
      text (30 px) and the Table row tints; a level indents 1rem, as `.collection-depth`. */
