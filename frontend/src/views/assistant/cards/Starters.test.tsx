@@ -245,10 +245,12 @@ describe("a starter that asks the assistant", () => {
     const { container } = render(<Panel />);
     const box = screen.getByRole("checkbox", { name: "Also ask the model" });
     expect(box).toBeChecked();
-    expect(box).toHaveAccessibleDescription("Uses this namespace's model budget.");
-    // Off, a starter reads only Loom.
+    // The note says what both settings do, so it reads the same either way.
+    const note = "Off: answers from what Loom holds, with no model call. On: uses this namespace's model budget.";
+    expect(box).toHaveAccessibleDescription(note);
     await userEvent.click(box);
-    expect(box).toHaveAccessibleDescription("A starter reads only Loom: no model is called.");
+    expect(box).not.toBeChecked();
+    expect(box).toHaveAccessibleDescription(note);
     await userEvent.click(box);
     await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
     await waitFor(() => expect(sent).toHaveLength(1));

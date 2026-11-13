@@ -130,6 +130,15 @@ describe("the header", () => {
     ).toEqual(["New chat", "History", "Expand", "Close"]);
   });
 
+  // The "+" sits near the top bar's New, so each icon says its action in a visible tooltip.
+  it.each(["New chat", "History", "Expand", "Close"])("%s shows its name in a tooltip", async (name) => {
+    render(<AssistantPanel />);
+    act(() => openAssistant());
+    const user = userEvent.setup();
+    await user.hover(screen.getByRole("button", { name }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(new RegExp(`^${name}$`));
+  });
+
   it("History toggles the panel's History view, pressed while it shows, with Back and its title", async () => {
     render(<AssistantPanel />);
     act(() => openAssistant());

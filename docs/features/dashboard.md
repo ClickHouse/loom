@@ -222,7 +222,7 @@ mentor's agent and window as selects that read again, and **Open in <page>** for
 owns it. A mentor hint links to the page that owns its plane, an admin page only for a
 namespace admin. One line per card goes to the assistant's live region; the focus stays where
 it is. With **Also ask the model** on (the default, kept per browser; its line under it says
-it uses the namespace's model budget) the starter also asks its question, naming the card's
+that off answers from what Loom holds and on uses the namespace's model budget) the starter also asks its question, naming the card's
 arguments, as the person's turn, which spends a model answer; the answer's label is the one
 every answer gets. With it off the card stands alone, and while the assistant cannot answer
 the box is not shown and the card says why. Each user and agent on an inventory card is a

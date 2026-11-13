@@ -52,10 +52,10 @@ beforeEach(() => {
 });
 
 describe("HeaderSearch", () => {
-  // The group heading names the type, so a row leads with the type's icon
-  // instead of a coloured "memory" badge; line 1 is the key with the memory type at its
-  // end, line 2 the excerpt.
-  it("leads each memory row with its type icon, not a badge, and puts the type at the end", async () => {
+  // The group heading names the type, so a row leads with the type's icon instead of a
+  // coloured "memory" badge and carries no memory-type label (the inspector shows it);
+  // line 1 is the key, line 2 the excerpt.
+  it("leads each memory row with its type icon, with no badge or memory-type label", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "coffee");
@@ -65,9 +65,8 @@ describe("HeaderSearch", () => {
     expect(first.querySelector('[class*="badge"]')).toBeNull();
     expect(first.querySelector("svg")).not.toBeNull();
     expect(first).toHaveTextContent("coffee/order");
-    expect(first).toHaveTextContent("semantic");
+    expect(first).not.toHaveTextContent("semantic");
     expect(first).toHaveTextContent("flat white");
-    expect(first.textContent?.indexOf("coffee/order")).toBeLessThan(first.textContent?.indexOf("semantic") ?? 0);
   });
 
   // A Library result draws its tags as the outlined chips a row draws, and "Best matches"

@@ -20,6 +20,9 @@ const SUBJECT_OPTIONS = (Object.keys(SUBJECT_COPY) as InspectSubject[]).map((val
   label: SUBJECT_COPY[value].label,
 }));
 
+// One line that says what each setting does, so the box reads the same either way.
+const ALSO_ASK_NOTE = "Off: answers from what Loom holds, with no model call. On: uses this namespace's model budget.";
+
 /**
  * The starters: one full-width row per question Loom's own reads answer, the page's own
  * first (cards/starters.ts startersFor). Choosing one reads its card with the person's token
@@ -140,7 +143,7 @@ export function Starters({
             aria-describedby={costId}
           />
           <p id={costId} className="pl-6 text-xs text-text-muted">
-            {asks ? "Uses this namespace's model budget." : "A starter reads only Loom: no model is called."}
+            {ALSO_ASK_NOTE}
           </p>
         </div>
       )}
