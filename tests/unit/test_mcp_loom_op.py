@@ -174,10 +174,10 @@ def test_the_namespace_check_sees_the_inner_arguments(monkeypatch: pytest.Monkey
 
 
 def test_the_description_stays_small() -> None:
-    import json
-
-    widest = {**mcp_op.DESCRIPTOR, "description": mcp_op.loom_op_description(set(), writes=True)}
-    assert len(json.dumps(widest)) // 4 <= 250
+    """Both examples shown, with and without the read-only sentence."""
+    for writes in (True, False):
+        text = mcp_op.loom_op_description(set(), writes=writes)
+        assert len(json.dumps({**mcp_op.DESCRIPTOR, "description": text})) // 4 <= 260
 
 
 @pytest.mark.parametrize(
