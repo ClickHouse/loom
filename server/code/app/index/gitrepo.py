@@ -401,9 +401,7 @@ async def grep_paths(
     if proc.returncode != 0:
         raise GitError(f"git grep rc={proc.returncode}: {err.decode('utf-8', 'replace')[:300]}")
     paths: list[str] = []
-    for rec in out.decode("utf-8", "replace").split("\0"):
-        if not rec:
-            continue
+    for rec in nul_fields(out.decode("utf-8", "replace")):
         # `<rev>:<path>`, NUL-terminated: a path with a quote, tab or newline as written
         paths.append(rec.split(":", 1)[1] if ":" in rec else rec)
         if len(paths) >= limit:

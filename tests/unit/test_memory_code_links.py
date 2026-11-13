@@ -31,6 +31,8 @@ from server.settings import settings
 
 # the policy's own texts and judge, which the `world` fixture stubs
 _TEXTS, _JUDGE = code_link_policy._texts, code_link_policy._judge
+# the mirror search, which an autouse fixture stubs
+_REAL_CONTAINING = code_links.code.containing
 
 
 @pytest.fixture(autouse=True)
@@ -3897,9 +3899,11 @@ def _moved_module_world(
         )
 
     async def containing(head, literal, base, *, limit):
+        # as `RepoReads.containing`: the changed files naming it, none from `limit` on
         searched.append((head, literal, base))
         changed = {p for c, p in commits if c == head and commits[(c, p)] != commits.get((base, p))}
-        return sorted(p for p in changed if literal in commits[(head, p)])[:limit]
+        hits = sorted(p for p in changed if literal in commits[(head, p)])
+        return [] if len(hits) >= limit else hits
 
     _reads(monkeypatch, files, at)
     _history(monkeypatch, files, commits)
@@ -4085,3 +4089,35 @@ async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypat
     moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
     # the index holds no definition from z.py either: b.py's edited copy is followed
     assert [(m.link.state, m.link.path) for m in moves] == [("changed", "pkg/b.py")]
+
+
+@pytest.mark.asyncio
+async def test_the_mirror_search_leaves_out_refused_files_and_counts_before_it_does(
+    monkeypatch, tmp_path
+) -> None:
+    from server.code.app import memory_links
+
+    git, commit = _repo(tmp_path)
+    head = commit(
+        {
+            ".loomignore": "gen/\n",
+            "pkg/b.py": "def fetch_rows():\n    return 1\n",
+            "gen/rows.py": "def fetch_rows():\n    return 2\n",  # the ingest refuses it
+        }
+    )
+    cfg = SimpleNamespace(
+        git_dir=str(tmp_path / ".git"),
+        label="t",
+        ignore_file=".loomignore",
+        exclude=[],
+        include_contrib=False,
+        include_contrib_paths=[],
+        exclude_generated=False,
+    )
+    monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: cfg)
+    monkeypatch.setattr(memory_links, "_DENYLISTS", type(memory_links._DENYLISTS)())
+    paths = ["gen/rows.py", "pkg/b.py"]
+    found = await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=3)
+    assert found == ["pkg/b.py"]
+    # two files name it at a limit of two: a full page, counted before the refusal, adds none
+    assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=2) == []

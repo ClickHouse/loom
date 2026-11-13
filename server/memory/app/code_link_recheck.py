@@ -149,7 +149,7 @@ _LOST_SEARCHED_DAYS = 30
 # files of namesakes a lost link is weighed against: past it, the answer is unsure
 _MAX_ELSEWHERE = 32
 # files naming a lost name (callers as well as the definition) a mirror search reads;
-# past it, unsure
+# from it on, the mirror adds nothing and the index decides
 _MAX_NAMING = 200
 
 
@@ -386,14 +386,10 @@ async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[De
     parser fails on, of which the index holds no definition either. None when git could
     not be read: then a live link is unsure."""
     qn = r.before.qualified_name
-    # a link lost before is searched from its own check, as `_new_namesakes` does
-    own = None if r.before.state in _LOST_STATES else r.range
-    base = own.base if own is not None else str(r.row["checked_commit"])
+    base = _searched_from(r.before, r.row, r.range)
     paths = await files.containing(head, bare_name(qn), base, limit=_MAX_NAMING)
     if paths is None:
         return None
-    if len(paths) >= _MAX_NAMING:
-        return []  # callers as well as definitions name it: no telling which, nothing added
     local, found = local_name(qn, r.before.read_path), []
     for path in paths:
         try:
@@ -423,6 +419,13 @@ async def _namesakes(
         return None
 
 
+def _searched_from(before: Link, a: LinkRow, changed: link_pass.Range | None) -> str:
+    """The commit a lost link's new place is looked for from: the range's start for a
+    live link, the link's own check for one lost before."""
+    live = changed is not None and before.state not in _LOST_STATES
+    return changed.base if changed is not None and live else str(a["checked_commit"])
+
+
 async def _new_namesakes(
     files: link_pass.RepoReads,
     before: Link,
@@ -431,8 +434,7 @@ async def _new_namesakes(
     changed: link_pass.Range | None,
     head: str,
 ) -> list[Definition] | None:
-    live = changed is not None and before.state not in _LOST_STATES
-    start = changed.base if changed is not None and live else a["checked_commit"]
+    start = _searched_from(before, a, changed)
     local = local_name(before.qualified_name, before.read_path)
     anchor = await _last_in_place(files, before, start, head, local)
     touched = await files.touched(anchor, head) if anchor else None

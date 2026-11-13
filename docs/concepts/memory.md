@@ -373,7 +373,7 @@ since its last check as the mirror holds them, beside the index, so a definition
 a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
 followed when the link is rechecked. When 200 or more of those files name it, or more
 than 5,000 changed, the mirror adds nothing and the index decides; when the mirror cannot
-be read, the link is `unresolved`.
+be read, a live link the index's namesakes do not settle is `unresolved`.
 A file the parser fails on keeps its links as they were until it parses.
 When the fingerprint rules change, every link is re-hashed from the commits its
 hashes were taken at. When its old text is gone from git, a link that matched it takes the

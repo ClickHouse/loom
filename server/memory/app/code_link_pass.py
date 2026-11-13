@@ -131,9 +131,9 @@ class RepoReads:
         self, head: str, literal: str, base: str, *, limit: int
     ) -> list[str] | None:
         """Up to `limit` of the files `base..head` added or changed whose text at `head`
-        holds the word `literal`, those the ingest refuses left out; none when the range
-        cannot be read (a force-push) or more than `_MAX_SEARCHED_FILES` changed; None
-        when the mirror cannot be searched."""
+        holds the word `literal`, those the ingest refuses left out; an empty list when
+        the range cannot be read (a force-push), more than `_MAX_SEARCHED_FILES` changed
+        or `limit` or more hold it; None when the mirror cannot be searched."""
 
         async def read() -> list[str] | None:
             touched = await self.touched(base, head) if base else None
