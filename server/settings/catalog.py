@@ -2930,10 +2930,6 @@ class MemorySettings(BaseModel):
     memory_code_links_pending_days: int = Field(default=14, ge=1)
     # Changed claims one pass re-checks with the LLM under the `revise` policy.
     memory_code_links_revise_per_pass: int = Field(default=20, ge=0)
-    # Places a search hit moves down within the served results when its linked code
-    # changed, was not found again or is partly gone (0 moves nothing). It never leaves
-    # the results, and a memory a person holds keeps its place.
-    memory_search_code_changed_positions: Annotated[int, LIVE] = Field(default=3, ge=0)
 
     # ---- memory chunks ----
     # Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈
@@ -3384,6 +3380,10 @@ class MemorySearchSettings(BaseModel):
     # or builtin:cohere) may take to answer; past it the search keeps its input order and
     # says so in `degraded`. builtin:openai is an LLM call and waits llm_request_timeout_s.
     memory_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
+    # Places a search hit moves down within the served results when its linked code
+    # changed, was not found again or is partly gone (0 moves nothing). It never leaves
+    # the results, and a memory a person holds keeps its place.
+    memory_search_code_changed_positions: Annotated[int, LIVE] = Field(default=3, ge=0)
     # Key-embedding axis on the fact leg: "on" scores least(value_dist,
     # key_dist) and reads both vector columns (measured 399 vs 203 MB/query on
     # a 30k-row namespace); "off" reads the value vector only; "auto" turns it

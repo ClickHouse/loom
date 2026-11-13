@@ -982,3 +982,45 @@ async def test_a_memory_whose_code_changed_is_served_lower_after_the_verdict(
     search_env.hits = hits()
     off = await _run(search_env, top_k=5)
     assert [h.memory_key for h in off.results][0] == "stale"
+
+
+async def test_a_moved_memory_is_never_cut_by_a_tier_and_a_date_order_stays(
+    search_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import code_link_reads
+    from server.memory.app.search import handler, output
+
+    async def annotate(input: Any, pool: list[Any]) -> None:
+        for h in pool:
+            h._code_ranked_down = h.memory_key == "stale"
+
+    async def recent(hits: list[Any], input: Any, counted: Any) -> tuple[list[Any], int]:
+        # two tier rows ahead of the similarity hits, cut to top_k as the tier window does
+        tier = []
+        for key in ("r1", "r2"):
+            row = hits[0].model_copy()
+            row.memory_key, row.score_components, row.rank_score = key, {"recent_first": 1.0}, 0.0
+            tier.append(row)
+        return (tier + hits)[: input.top_k], 0
+
+    def hits() -> list[SearchHit]:
+        sims = {"stale": 0.9, "b": 0.6, "c": 0.5, "d": 0.4, "e": 0.35}
+        return [_svc_hit(k, sim=s) for k, s in sims.items()]
+
+    monkeypatch.setattr(code_link_reads, "annotate_hits", annotate)
+    monkeypatch.setattr(output, "_prepend_recent", recent)
+    search_env.hits = hits()
+    out = await _run(search_env, top_k=5)
+    assert [h.memory_key for h in out.results] == ["r1", "r2", "b", "c", "stale"]
+
+    enrich = handler._resolve_query_enrichment
+
+    async def dated(input: Any, work: Any) -> Any:
+        obs, parsed, (dates, _intent, *rest) = await enrich(input, work)
+        return obs, parsed, (dates, "asc", *rest)
+
+    monkeypatch.setattr(handler, "_resolve_query_enrichment", dated)
+    search_env.hits = hits()
+    out = await _run(search_env, top_k=5)
+    assert "code_changed_places" not in out.results[2].score_components
+    assert [h.memory_key for h in out.results][:3] == ["r1", "r2", "stale"]

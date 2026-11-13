@@ -18,6 +18,7 @@ A memory a person pinned, locked or verified is only flagged.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any, Literal, get_args
@@ -77,21 +78,32 @@ def worst_commit(links: Sequence[Mapping[str, Any]]) -> str:
     return str(first.get("changed_since") or "")
 
 
+# rows placed by something other than their score, which a move leaves where they are
+_PLACED = ("identifier_match", "anchor_first", "recent_first")
+
+
 def rank_down(hits: list[Any], places: int) -> list[Any]:
-    """`hits` with each one marked `_code_ranked_down` moved `places` down, never past the
-    last. It takes the rank score of the hit it lands under, so a stable sort by score
-    keeps the order, and `score_components.code_changed_places` says how far it moved
-    (negative, in places, as a reranker's `rerank_delta`)."""
+    """`hits` with each one marked `_code_ranked_down` moved `places` down among the rows
+    their score places, never past the last; a row pinned by an identifier match or a
+    tier keeps its slot. A moved hit scores just below the hit it lands under, so a sort
+    by score keeps the order; `score_components.code_changed_places` says how far it
+    moved (negative, in places, as a reranker's `rerank_delta`), and the mark is spent."""
     out = list(hits)
-    if places <= 0:
-        return out
     for hit in [h for h in hits if getattr(h, "_code_ranked_down", False)]:
-        at = next(i for i, h in enumerate(out) if h is hit)  # by identity: hits compare by value
-        to = min(at + places, len(out) - 1)
-        if to == at:
+        hit._code_ranked_down = False
+        if places <= 0 or any(k in hit.score_components for k in _PLACED):
             continue
+        at = next(i for i, h in enumerate(out) if h is hit)  # by identity: hits compare by value
+        free = [
+            i
+            for i, h in enumerate(out)
+            if i > at and not any(k in h.score_components for k in _PLACED)
+        ]
+        if not free:
+            continue
+        to = free[min(places, len(free)) - 1]
         out.insert(to, out.pop(at))
-        score = min(float(hit.rank_score), float(out[to - 1].rank_score))
+        score = math.nextafter(min(float(hit.rank_score), float(out[to - 1].rank_score)), -math.inf)
         hit.rank_score = score
         hit.score_components = {
             **hit.score_components,

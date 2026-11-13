@@ -3896,7 +3896,7 @@ async def test_held_unreadable_or_unkept_code_is_not_ranked_down(served, monkeyp
     assert [(h.code_state, h._code_ranked_down) for h in unkept] == [("changed", False)]
 
 
-def _ranked(*keys: str, down: str = "") -> list[Any]:
+def _ranked(*keys: str, down: tuple[str, ...] = ()) -> list[Any]:
     hits = []
     for i, key in enumerate(keys):
         hit = _hit(key)
@@ -3907,33 +3907,50 @@ def _ranked(*keys: str, down: str = "") -> list[Any]:
 
 
 def test_a_marked_hit_moves_down_within_the_served_results() -> None:
-    out = code_change.rank_down(_ranked("a", "b", "c", "d", "e", down="a"), 3)
+    out = code_change.rank_down(_ranked("a", "b", "c", "d", "e", down=("a",)), 3)
     assert [h.memory_key for h in out] == ["b", "c", "d", "a", "e"]
     moved = out[3]
-    assert moved.rank_score == pytest.approx(0.02)  # the score of the hit above it
+    assert moved.rank_score < out[2].rank_score == pytest.approx(0.02)  # just below the hit above
+    assert moved.rank_score > out[4].rank_score
     assert moved.score_components == {"code_changed_places": -3.0, "rank_score": moved.rank_score}
-    # a stable sort by score keeps the order, as context.pack's evidence sort does
+    # a sort by score keeps the order, as context.pack's evidence sort does
     assert sorted(out, key=lambda h: -h.rank_score) == out
+    # the mark is spent: a second pass (an iterative retry's merge) moves nothing
+    assert [h.memory_key for h in code_change.rank_down(out, 3)] == ["b", "c", "d", "a", "e"]
 
 
 def test_a_marked_hit_never_leaves_the_results_and_unmarked_ones_never_move() -> None:
-    out = code_change.rank_down(_ranked("a", "b", "c", down="ab"), 3)
+    out = code_change.rank_down(_ranked("a", "b", "c", down=("a", "b")), 3)
     assert [h.memory_key for h in out] == ["c", "a", "b"]  # in their own order, last
     assert [h.memory_key for h in code_change.rank_down(_ranked("a", "b", "c"), 3)] == [
         "a",
         "b",
         "c",
     ]
-    last = code_change.rank_down(_ranked("a", "b", down="b"), 3)
+    last = code_change.rank_down(_ranked("a", "b", down=("b",)), 3)
     assert [(h.memory_key, h.score_components) for h in last] == [("a", {}), ("b", {})]
-    assert [h.memory_key for h in code_change.rank_down(_ranked("a", "b", down="a"), 0)] == [
+    assert [h.memory_key for h in code_change.rank_down(_ranked("a", "b", down=("a",)), 0)] == [
         "a",
         "b",
     ]
 
 
 def test_a_move_keeps_a_negative_score_in_order() -> None:
-    hits = _ranked("a", "b", down="a")
+    hits = _ranked("a", "b", down=("a",))
     hits[0].rank_score, hits[1].rank_score = -1.0, -2.0
     out = code_change.rank_down(hits, 1)
-    assert [(h.memory_key, h.rank_score) for h in out] == [("b", -2.0), ("a", -2.0)]
+    assert [h.memory_key for h in out] == ["b", "a"]
+    assert out[1].rank_score < out[0].rank_score == -2.0
+
+
+def test_a_row_placed_by_an_identifier_or_a_tier_keeps_its_slot() -> None:
+    hits = _ranked("t1", "pin", "stale", "b", "c", "d", down=("pin", "stale"))
+    hits[0].score_components = {"recent_first": 1.0}
+    hits[1].score_components = {"identifier_match": 1.0}
+    out = code_change.rank_down(hits, 2)
+    # the pinned stale row stays; the other moves past two rows its score places
+    assert [h.memory_key for h in out] == ["t1", "pin", "b", "c", "stale", "d"]
+    # a tier row below is not one of the places a move counts
+    tail = _ranked("stale", "b", "anchor", down=("stale",))
+    tail[2].score_components = {"anchor_first": 1.0}
+    assert [h.memory_key for h in code_change.rank_down(tail, 3)] == ["b", "stale", "anchor"]
