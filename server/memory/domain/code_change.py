@@ -13,8 +13,8 @@ what reads do:
                             is re-anchored, a contradicted one gets a suggested
                             correction on its link
 
-Under every policy, search serves a memory whose code changed, was not found again or is
-gone lower than its match (`rank_down`) on its first page. A memory a person pinned,
+Under every policy, a memory search still serves whose worst link is changed, unresolved
+or missing ranks lower than its match (`rank_down`) on its first page. A memory a person pinned,
 locked or verified is only flagged.
 """
 

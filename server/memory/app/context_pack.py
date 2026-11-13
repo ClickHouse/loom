@@ -645,7 +645,7 @@ async def _pack_memories(st: _PackState) -> None:
                     conflict=getattr(h, "status", "") == "conflicted",
                     author=_hit_author(actors, input, h),
                     derived_from=tuple(getattr(h, "derived_from", None) or ()),
-                    code=code_change.label(*_code_state_and_commit(h)),
+                    code_state=code_change.label(*_code_state_and_commit(h)),
                 )
             )
         packed = pack_evidence(
