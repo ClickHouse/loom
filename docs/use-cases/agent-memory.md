@@ -19,9 +19,13 @@ agent, or by a person at the dashboard. This page shows how that works and where
 - **Search that abstains.** When nothing clears the similarity floor, `memory.search`
   answers `abstain=true` with a reason code and labels each weak hit `below_threshold`;
   `loom_search` drops them. [Search and ask](../features/memory/search-and-ask.md)
-- **Memory across coding agents.** The Claude Code and Codex plugins load relevant
-  context at session start and capture the session as it runs; Cursor and other MCP
-  clients connect to the same server. [Connect a coding agent](../getting-started/connect-a-coding-agent.md)
+- **Long-term memory for your coding agent, shared across agents.** The Claude Code and
+  Codex plugins load relevant context at session start and capture the session as it
+  runs. Cursor, GitHub Copilot, Gemini CLI, Cline, Kilo Code, OpenCode, goose, Zed and other
+  MCP clients connect to the same server, and an agent on a namespace finds the facts
+  other agents saved there.
+  [Connect a coding agent](../getting-started/connect-a-coding-agent.md) ·
+  [MCP clients](../features/integrations/mcp-clients.md)
 - **Per-user memory for your own agent.** The Python and TypeScript SDKs write and read
   memory per end user. [Your first agent](../getting-started/first-agent.md)
 
