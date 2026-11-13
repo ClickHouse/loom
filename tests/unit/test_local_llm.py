@@ -78,6 +78,19 @@ def test_the_openai_client_still_calls_openai(
     assert headers["Authorization"] == "Bearer k"
 
 
+def test_a_hosted_deployments_own_model_keeps_its_default_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setattr(settings, "llm_provider", "openai")
+    monkeypatch.setattr(settings, "llm_model", "gpt-6-luna")
+    client = llm_client.get_llm_client_for_model("gpt-6-luna")
+    assert client is llm_client.get_llm_client()
+    assert client.provider == "openai"
+
+
 def test_local_needs_no_key_so_it_never_falls_back_to_the_fake() -> None:
     assert not llm_client.provider_key_missing("local")
     built = llm_client._build_llm_client("local", "qwen2.5:3b", fake_label="f", warn="w")

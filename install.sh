@@ -86,8 +86,8 @@ main() {
       || fail "LOOM_PORT must be between 1 and 65535: $LOOM_PORT" ;;
   esac
 
-  # LOOM_LOCAL_MODELS: ollama sets extraction and the assistant on the Ollama of this
-  # machine without asking, off never offers it.
+  # LOOM_LOCAL_MODELS: ollama sets Loom's model jobs on the Ollama of this machine
+  # without asking, off never offers it.
   case ${LOOM_LOCAL_MODELS:-} in
     '' | ollama | off) ;;
     *) fail "LOOM_LOCAL_MODELS takes ollama or off: $LOOM_LOCAL_MODELS" ;;
@@ -405,7 +405,7 @@ main() {
   for key in $KEPT_SETTINGS; do
     [ -z "$(given "$key")" ] || set_env "$key" "$(given "$key")"
   done
-  # A model server on this machine (Ollama) for extraction and the assistant, no key:
+  # A model server on this machine (Ollama) for Loom's model jobs, no key:
   # offered on a new install when Ollama answers here. An install already set up keeps
   # its models (the dashboard's Models & keys does not show in .env).
   local_model=qwen2.5:3b
@@ -415,7 +415,7 @@ main() {
   elif [ -z "${LOOM_LOCAL_MODELS:-}" ] && [ -z "${had_env:-}" ] \
     && [ -t 0 ] && [ -t 1 ] \
     && curl -fsS --noproxy '*' --max-time 3 http://localhost:11434/api/version >/dev/null 2>&1; then
-    printf 'Ollama answers on this machine. Use it for extraction and the assistant (%s, no API key)? [Y/n] ' "$local_model"
+    printf 'Ollama answers on this machine. Use it for extraction and the other model jobs (%s, no API key)? [Y/n] ' "$local_model"
     read -r answer || answer=n
     case $answer in '' | [Yy]*) use_local=1 ;; esac
   fi

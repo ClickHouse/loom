@@ -218,10 +218,25 @@ def test_a_client_effort_replaces_the_pin_but_not_the_models_floor(monkeypatch) 
     from server.settings import settings
 
     monkeypatch.setattr(settings, "llm_openai_reasoning_effort", "none")
-    assert oa._payload("gpt-x", "s", "u", 10, None, 0.0, "low")["reasoning_effort"] == "low"
-    assert oa._payload("gpt-x", "s", "u", 10, None, 0.0)["reasoning_effort"] == "none"
+    assert (
+        oa._payload("gpt-x", "s", "u", 10, None, 0.0, "low", "max_completion_tokens")[
+            "reasoning_effort"
+        ]
+        == "low"
+    )
+    assert (
+        oa._payload("gpt-x", "s", "u", 10, None, 0.0, "", "max_completion_tokens")[
+            "reasoning_effort"
+        ]
+        == "none"
+    )
     traits.traits("gpt-x").effort = "medium"
-    assert oa._payload("gpt-x", "s", "u", 10, None, 0.0, "low")["reasoning_effort"] == "medium"
+    assert (
+        oa._payload("gpt-x", "s", "u", 10, None, 0.0, "low", "max_completion_tokens")[
+            "reasoning_effort"
+        ]
+        == "medium"
+    )
 
 
 def test_the_resolver_client_asks_an_openai_model_for_its_effort(monkeypatch) -> None:

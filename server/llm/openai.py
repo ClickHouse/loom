@@ -44,8 +44,8 @@ def _payload(
     max_tokens: int,
     response_format: dict[str, str] | None,
     temperature: float | None,
-    effort: str = "",
-    cap_name: str = "max_completion_tokens",
+    effort: str,
+    cap_name: str,
 ) -> dict[str, Any]:
     """The request this call would like to send, minus what the model refused.
     `cap_name` is the output cap's field the server reads first."""
