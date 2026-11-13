@@ -1,5 +1,4 @@
-"""The typed kwargs the docs send writers to reach the wire, each with the
-value the caller gave (or none when unset)."""
+"""SDK write kwargs reach the wire as the docs describe."""
 
 from __future__ import annotations
 

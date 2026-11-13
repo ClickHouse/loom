@@ -199,11 +199,11 @@ last `--days` are left alone. It never deletes.
 
 ## Inline or deferred
 
-| Mode                 | Call                                         | Returns                                      | Use when                                                                                                                                      |
-| -------------------- | -------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Inline               | `defer` unset (the default) or `defer=false` | `written[]` with each row's key and verdict  | You need the keys back: typed-record extraction, tests, polling backfills.                                                                    |
-| Deferred             | `defer=true`                                 | `deferred=true`, `queue_id`, empty `written` | The agent's hot path. Stored in `loom.memory_extraction_queue`.                                                                               |
-| Deferred by operator | `LOOM_EXTRACTION_DEFER_AGENTS`               | as deferred, `deferred_by="allowlist"`       | Force named agents (or `*` = every service account) that do not send `defer` onto the queue; an explicit `defer=false` still extracts inline. |
+| Mode                 | Call                                         | Returns                                      | Use when                                                                                                                                       |
+| -------------------- | -------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inline               | `defer` unset (the default) or `defer=false` | `written[]` with each row's key and verdict  | You need the keys back: send `defer=false`, which an operator's defer list cannot override. Typed-record extraction, tests, polling backfills. |
+| Deferred             | `defer=true`                                 | `deferred=true`, `queue_id`, empty `written` | The agent's hot path. Stored in `loom.memory_extraction_queue`.                                                                                |
+| Deferred by operator | `LOOM_EXTRACTION_DEFER_AGENTS`               | as deferred, `deferred_by="allowlist"`       | Force named agents (or `*` = every service account) that do not send `defer` onto the queue; an explicit `defer=false` still extracts inline.  |
 
 The `extraction_queue` worker replays a deferred request through the same handler. A
 failed replay waits 15 seconds, then 1, 5 and 30 minutes between attempts, and after
@@ -378,7 +378,7 @@ Field lists: [operations reference](../../reference/operations.md#memory),
 | `record_schema` + `memory_key` | Extract one typed record ([typed records](./writing.md#typed-records)). Never deferred by the allowlist.                                    |
 | `valid_at`                     | Fallback validity time for facts the extractor did not anchor.                                                                              |
 | `recalled_keys`                | Keys the session was served ([echoes](#echoes-recalled_keys-and-session_values)).                                                           |
-| `defer`                        | Queue instead of extracting inline.                                                                                                         |
+| `defer`                        | `true` queues instead of extracting inline; `false` extracts inline even for an agent on `LOOM_EXTRACTION_DEFER_AGENTS`.                    |
 | `agent_learnings`              | `false` stops filing the assistant's rules for this call ([above](#rules-the-assistant-states-about-itself)); only the setting turns it on. |
 
 ### Response fields
