@@ -345,7 +345,7 @@ export function SyncNowDialog({
       const out = await syncKnowledgeSourceNow({ org, namespace }, name, full);
       toast(
         out.enabled
-          ? `Sync requested: the worker starts its next pass with ${name}`
+          ? `Sync requested: ${name} is synced next`
           : `Sync requested; sync is off on this deployment, so it waits until it is on`,
         "ok",
       );
@@ -363,7 +363,7 @@ export function SyncNowDialog({
       onOpenChange={onOpenChange}
       width={460}
       title={`Sync ${name} now`}
-      description="Records a request: the sync worker starts its next pass with this source. Nothing is fetched while you wait."
+      description="Records a request: this source is the next one Loom syncs. Nothing is fetched while you wait."
       footer={
         <>
           <CancelButton />
@@ -374,7 +374,7 @@ export function SyncNowDialog({
       }
     >
       <Checkbox
-        label="List every document, not only those changed since the last pass"
+        label="List every document, not only those changed since the last sync"
         checked={full}
         onCheckedChange={(v) => setFull(v === true)}
       />

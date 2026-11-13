@@ -40,7 +40,7 @@ import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { BusyButton } from "../components/ui/BusyButton";
-import { stageFlips } from "../lib/codeStage";
+import { stageFlips, stageLabel } from "../lib/codeStage";
 import { confirmAction } from "../components/ConfirmDialog";
 import {
   listCodeRepos,
@@ -93,7 +93,7 @@ import { invalidateShared, sharedHealth, sharedIndexStatus } from "../lib/shared
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { CodeReindexDialog } from "../flows/CodeReindexDialog";
 import { joinTarget, withdrawTarget, leaveTarget, type JoinTarget } from "../lib/joinActions";
-import { freshness, type Fresh } from "../lib/codeFreshness";
+import { freshness, type Fresh, lagLabel } from "../lib/codeFreshness";
 import { tierCards, type TierIcon } from "../lib/compilerTiers";
 import { branchState, branchOrder, buildCards, type CodeFacet } from "../lib/repositoryCard";
 import { RepositoryCard, BranchChip, FRESH_STATE, type CodeActions, type RecordActionProps } from "./RepositoryCard";
@@ -844,7 +844,7 @@ function OnboardingSteps() {
   const steps = [
     ["Add a Git remote and a branch", "You become the repository's maintainer."],
     ["Loom indexes it in the background", "Minutes for about 10,000 files; the row says how far it is."],
-    ["Agents search it with code.search", "Join the repository, then mint a token for your agents."],
+    ["Agents search it", "Join the repository, then mint a token for your agents."],
   ];
   return (
     <div className="mt-6 w-full max-w-md text-left">
@@ -1567,8 +1567,8 @@ export function AddRepositoryDialog({
                   ))}
                 </Select>
                 <div className="text-xs text-text-muted mt-1">
-                  Exact cross-file calls on top of the parser tier; detected from go.mod, tsconfig, CMakeLists or
-                  pyproject when left to the tree.
+                  A parser indexes the repository's files; a compiler tier adds exact cross-file calls on top. Left to
+                  the tree, the tier is detected from go.mod, tsconfig, CMakeLists or pyproject.
                 </div>
               </div>
             </div>
@@ -1691,7 +1691,7 @@ function RepoDetail({
   onJoined: () => void;
 }) {
   const id: CodeId = { org: repo.org, namespace: repo.namespace };
-  const f = freshness(repo);
+  const f = freshness(repo, stageLabel(repo)?.title);
   const actions = useJoinActions(onJoined);
   const [joinTarget, setJoinTarget] = useState<{ repo: CodeRepoSummary; role: RepoRole } | null>(null);
   const others = siblings.filter((s) => s.namespace !== repo.namespace).sort(branchOrder);
@@ -2066,9 +2066,7 @@ export function HealthTab({ id, repo }: { id: CodeId; repo: CodeRepoSummary }) {
         <Stat
           label="Spend · 7d"
           value={spend === undefined ? "…" : spend === null ? "—" : `$${spend.usd.toFixed(2)}`}
-          hint={
-            spend ? `${fmtInt(spend.ops)} metered ops (embeddings, describes, code.ask)` : "cost rollup unavailable"
-          }
+          hint={spend ? `${fmtInt(spend.ops)} operations recorded in the last 7 days` : "cost rollup unavailable"}
         />
       </div>
 
@@ -2119,8 +2117,8 @@ export function HealthTab({ id, repo }: { id: CodeId; repo: CodeRepoSummary }) {
             note={
               cov
                 ? cov.pr_history_enabled
-                  ? `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)} · last fetch ${cov.pr_history_last_fetch_at ? listTime(cov.pr_history_last_fetch_at) : "pending"}${cov.pr_history_auth === "anonymous" ? " · anonymous GitHub API (60 req/h; set LOOM_CODE_GITHUB_TOKEN for headroom)" : ""}`
-                  : `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)}, then stopped: worker disabled — set LOOM_CODE_PR_HISTORY_ENABLED=true (a token is optional for public repos). New packs show no PR titles until then.`
+                  ? `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)} · last fetch ${cov.pr_history_last_fetch_at ? listTime(cov.pr_history_last_fetch_at) : "pending"}${cov.pr_history_auth === "anonymous" ? " · anonymous GitHub API (60 req/h; an operator can set LOOM_CODE_GITHUB_TOKEN for headroom)" : ""}`
+                  : `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)}, then stopped: PR history is off on this deployment — an operator sets LOOM_CODE_PR_HISTORY_ENABLED=true (a token is optional for public repos). New packs show no PR titles until then.`
                 : st.state.pr_backfill_date
                   ? `backfilled to ${st.state.pr_backfill_date.value}`
                   : undefined
@@ -2339,7 +2337,7 @@ export function HealthTab({ id, repo }: { id: CodeId; repo: CodeRepoSummary }) {
           <div className="mt-1 text-xs text-text-muted">
             {st.last_refresh_at ? (
               <>
-                Last <Mono>code.refresh</Mono> received {relativeTime(st.last_refresh_at)}
+                Last refresh request received {relativeTime(st.last_refresh_at)}
                 {refreshDetail(st.last_refresh_detail) && (
                   <>
                     {" "}
@@ -2637,8 +2635,8 @@ function ExploreTab({ id }: { id: CodeId }) {
         </BusyButton>
       </form>
       <p className="text-xs text-text-muted">
-        Runs the same <span className="font-mono">code.search</span> / <span className="font-mono">code.symbol</span> /{" "}
-        <span className="font-mono">code.callers</span> ops agents call. Click a symbol to see its definition and graph.
+        Runs the same code search, symbol lookup and caller lookup your agents use. Click a symbol to see its definition
+        and graph.
       </p>
 
       {error && <div className="text-sm text-danger">{error}</div>}
@@ -2682,7 +2680,7 @@ function ExploreTab({ id }: { id: CodeId }) {
         <div className="space-y-2" aria-busy={busy || undefined}>
           <div className="flex items-center gap-3 text-xs text-text-muted tabular flex-wrap">
             <span>
-              route <Mono>{res.route}</Mono>
+              search used <Mono>{res.route}</Mono>
             </span>
             <span>confidence {res.retrieval_confidence.toFixed(2)}</span>
             <Badge
@@ -2699,17 +2697,9 @@ function ExploreTab({ id }: { id: CodeId }) {
               </TipTarget>
             )}
             {res.as_of && typeof res.as_of.lag_commits === "number" && (
-              <TipTarget tip="as_of.stale is what an agent gates on before trusting a hit for HEAD-accurate work">
+              <TipTarget tip="An agent checks whether the index is stale before trusting a hit for work that needs the latest commit">
                 <Badge
-                  text={
-                    res.as_of.lag_commits < 0
-                      ? "lag unknown"
-                      : res.as_of.stale
-                        ? `stale · ${res.as_of.lag_commits} behind`
-                        : res.as_of.lag_commits === 0
-                          ? "at tip"
-                          : `${res.as_of.lag_commits} behind`
-                  }
+                  text={lagLabel(res.as_of.lag_commits, Boolean(res.as_of.stale))}
                   state={res.as_of.stale ? "warning" : res.as_of.lag_commits === 0 ? "success" : "neutral"}
                   size="sm"
                 />
@@ -2718,7 +2708,7 @@ function ExploreTab({ id }: { id: CodeId }) {
           </div>
           {res.note && (
             <div className="text-xs text-warn">
-              <TipTarget tip="The vector leg covers less than the ready share of this repository's chunks; results come from the lexical leg alone until it does.">
+              <TipTarget tip="Not all of this repository is indexed for meaning-based search yet; until it is, results match words only.">
                 {res.note}
               </TipTarget>
             </div>
@@ -2728,8 +2718,8 @@ function ExploreTab({ id }: { id: CodeId }) {
               state="danger"
               text={
                 <>
-                  <strong className="font-medium">Not covered.</strong> {res.abstain_reason} An agent receives{" "}
-                  <Mono>abstain_code = not_covered</Mono> here, distinct from a genuine miss.
+                  <strong className="font-medium">Not covered.</strong> {res.abstain_reason} An agent is told this part
+                  of the repository is not covered, which it can tell apart from a genuine miss.
                 </>
               }
             />
@@ -2757,8 +2747,7 @@ function ExploreTab({ id }: { id: CodeId }) {
         <div className="p-4 rounded-xl border border-dashed border-border">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm text-text-muted">
-              Not sure where to start? Load the repo orientation map agents get from{" "}
-              <span className="font-mono">code.map</span>.
+              Not sure where to start? Load the orientation map agents get for this repository.
             </div>
             <BusyButton type="secondary" htmlType="button" onClick={loadMap} busy={mapBusy}>
               Show map
@@ -2864,8 +2853,8 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-text-muted max-w-2xl">
-          One precomputed briefing per merged PR, built by the fast tier as the merge lands. A review bot fetches it
-          with <span className="font-mono">code.context_pack</span> at analysis start instead of exploring cold.
+          One precomputed briefing per merged PR, built as the merge is indexed. A review bot fetches it when it starts
+          a review instead of exploring cold.
         </p>
         <div className="w-28 shrink-0">
           <TextField

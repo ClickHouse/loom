@@ -136,17 +136,17 @@ export interface SyncBadge {
 export function syncBadge(sync: KnowledgeSourceSync): SyncBadge {
   switch (sync.status) {
     case "":
-      return { text: "Never synced", tone: "muted", tip: "The sync worker has not run a turn on this source yet." };
+      return { text: "Never synced", tone: "muted", tip: "Loom has not synced this source yet." };
     case "ok":
       return sync.error
         ? {
             text: "Incomplete",
             tone: "warn",
-            tip: `The last turn stopped early (${sync.error}); the next one goes on.`,
+            tip: `The last sync stopped early (${sync.error}); the next one goes on.`,
           }
-        : { text: "Synced", tone: "ok", tip: "The last turn read every changed document." };
+        : { text: "Synced", tone: "ok", tip: "The last sync read every changed document." };
     case "rate_limited":
-      return { text: "Rate limited", tone: "warn", tip: "The source limited the last turn; the next one retries." };
+      return { text: "Rate limited", tone: "warn", tip: "The source limited the last sync; the next one retries." };
     case "credential_invalid":
       return {
         text: "Credential refused",
@@ -157,7 +157,7 @@ export function syncBadge(sync: KnowledgeSourceSync): SyncBadge {
       return {
         text: "Sync failed",
         tone: "danger",
-        tip: sync.error ? `The last turn failed: ${sync.error}.` : "The last turn failed.",
+        tip: sync.error ? `The last sync failed: ${sync.error}.` : "The last sync failed.",
       };
     default:
       return { text: sync.status, tone: "warn", tip: sync.error || sync.status };
@@ -178,12 +178,12 @@ export function syncCounts(sync: KnowledgeSourceSync): string {
 
 const REASON_LABEL: Record<string, string> = {
   no_address: "no https link",
-  no_extractor: "no extractor for the format",
+  no_extractor: "file type not readable",
   too_large: "over the size limit",
-  extractor_unavailable: "extractor unavailable",
+  extractor_unavailable: "file reading unavailable",
 };
 
-/** Why documents were not converted, most first: "no extractor for the format: 2; http_404: 1".
+/** Why documents were not converted, most first: "file type not readable: 2; http_404: 1".
  *  A reason the card has no words for is shown as the server wrote it. */
 export function unconvertedDetail(reasons: Record<string, number>): string {
   return Object.entries(reasons)

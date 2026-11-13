@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../../api";
 import type { AuditEntry } from "../../api";
 import { useStore } from "../../lib/state";
-import { Audit } from "./Audit";
+import { Audit, eventLabel, summarize } from "./Audit";
 import { ApiError } from "../../lib/errors";
 
 vi.mock("../../api", async (importOriginal) => {
@@ -53,7 +53,46 @@ describe("Audit rows", () => {
     expect(await screen.findAllByText("Created namespace (private)")).toHaveLength(3);
     const table = screen.getByRole("table", { name: "Audit events" });
     for (const actor of ["alice", "bob", "carol"]) expect(within(table).getByText(actor)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Details/ })).toBeNull();
+    // Details holds the event type alone: no subject to print.
+    fireEvent.click(screen.getAllByRole("button", { name: /Details/ })[0]);
+    expect(screen.getByText("namespace.register")).toBeTruthy();
+    expect(table.querySelector("pre")).toBeNull();
+  });
+
+  it("labels an event type it has no sentence for from the type, the type itself in Details", async () => {
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({
+      rows: [row("alice", '{"namespace":"team"}', "webhook.rotate")],
+    });
+    render(<Audit />);
+    expect(await screen.findByText("Webhook rotate — team")).toBeTruthy();
+    expect(screen.queryByText(/webhook\.rotate/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Details/ }));
+    expect(screen.getByText("webhook.rotate")).toBeTruthy();
+  });
+
+  it("builds a plain label from the type, with the group's dashboard name", () => {
+    expect(eventLabel("memory.restore")).toBe("Memory restore");
+    expect(eventLabel("grants.revoke")).toBe("Access revoke");
+    expect(eventLabel("knowledge.source_add")).toBe("Library source add");
+    expect(eventLabel("code.repo.add")).toBe("Repository add");
+    expect(summarize("blacklist.add", {})).toBe("Added a guardrail pattern");
+    expect(summarize("code.scip_ingest", { namespace: "code-acme", seq: 0, total_parts: 3 })).toBe(
+      "Received part 1 of 3 of exact cross-file calls for code-acme",
+    );
+    expect(summarize("code.scip_ingest", {})).toBe("Received exact cross-file calls");
+    expect(eventLabel("blacklist.custom")).toBe("Guardrail custom");
+    expect(eventLabel("custom")).toBe("Other event");
+  });
+
+  it("shows the summary, not the raw event type, until Details opens", async () => {
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({
+      rows: [row("alice", '{"namespace":"team","visibility":"org"}')],
+    });
+    render(<Audit />);
+    expect(await screen.findByText("Created namespace team (org)")).toBeTruthy();
+    expect(screen.queryByText("namespace.register")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Details/ }));
+    expect(screen.getByText("namespace.register")).toBeTruthy();
   });
 
   it("reads a hashed text value as no value", async () => {
@@ -139,6 +178,28 @@ describe("Audit filter", () => {
     await userEvent.setup().type(screen.getByRole("textbox", { name: "Filter audit events" }), "alice");
     expect(live()).toBe(region);
     expect(region).toHaveTextContent("1 event");
+  });
+
+  it("matches a word of the summary a row shows", async () => {
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({
+      rows: [row("alice", '{"namespace":"team"}'), row("bob", '{"namespace":"ops"}', "namespace.leave")],
+    });
+    render(<Audit />);
+    await screen.findByText("Created namespace team (private)");
+    await userEvent.setup().type(screen.getByRole("textbox", { name: "Filter audit events" }), "created");
+    expect(screen.getByText("Created namespace team (private)")).toBeInTheDocument();
+    expect(screen.queryByText("Left ops")).toBeNull();
+  });
+
+  it("still matches the event type, which only Details shows", async () => {
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({
+      rows: [row("alice", '{"namespace":"team"}'), row("bob", '{"namespace":"ops"}', "namespace.leave")],
+    });
+    render(<Audit />);
+    await screen.findByText("Left ops");
+    await userEvent.setup().type(screen.getByRole("textbox", { name: "Filter audit events" }), "namespace.leave");
+    expect(screen.getByText("Left ops")).toBeInTheDocument();
+    expect(screen.queryByText("Created namespace team (private)")).toBeNull();
   });
 
   it("counts the events at the end of the toolbar, and nowhere else", async () => {

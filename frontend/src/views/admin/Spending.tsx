@@ -35,6 +35,7 @@ import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { AgentSpend } from "./AgentSpend";
 import { Alert, LoadingSkeleton, PageHeader, Stat, Unavailable } from "../../components/ui";
+import { COST_CAP_EFFECT } from "../../lib/costCap";
 
 /**
  * Usage — LLM operations / cost rollup view.
@@ -254,7 +255,7 @@ export function Spending() {
       {orgBudget && orgBudget.spent_24h_usd > 0 && (
         <div className="mb-4 rounded-xl border border-border bg-surface p-4 flex items-baseline justify-between gap-3">
           <div>
-            <div className="text-xs text-text-muted mb-1">Org-wide 24h LLM spend</div>
+            <div className="text-xs text-text-muted mb-1">Org-wide 24h spend</div>
             <div className="text-xl font-semibold tabular">${orgBudget.spent_24h_usd.toFixed(4)}</div>
           </div>
           <div className="text-right text-xs text-text-muted">
@@ -273,11 +274,11 @@ export function Spending() {
               state="warning"
               size="small"
               showIcon
-              text="Daily LLM cap reached — extraction paused for this namespace"
+              text="Daily cost cap reached for this namespace"
             />
           )}
           <div className="flex items-baseline justify-between gap-3 mb-2">
-            <div className="text-sm font-medium">Daily LLM budget</div>
+            <div className="text-sm font-medium">Daily cost cap</div>
             <div className="text-xs tabular text-text-muted">
               ${budget.spent_24h_usd.toFixed(4)} / ${budget.cap_usd.toFixed(2)} ({budget.cap_source})
             </div>
@@ -288,7 +289,7 @@ export function Spending() {
             type="small"
             progress={Math.min(100, pct)}
             role="progressbar"
-            aria-label="Daily LLM budget used"
+            aria-label="Daily cost cap used"
             aria-valuenow={Math.min(100, pct)}
             aria-valuemin={0}
             aria-valuemax={100}
@@ -296,9 +297,7 @@ export function Spending() {
           />
           <div className="mt-2 flex items-baseline justify-between gap-3">
             <div className="text-xs text-text-muted leading-relaxed">
-              Rolling 24h sum of upstream LLM cost on this namespace. When the cap is hit,{" "}
-              <code className="code-inline text-xs">entity_extractor</code> skip writes here until usage drops below the
-              cap.
+              Rolling 24h sum of upstream model and embedding cost on this namespace. {COST_CAP_EFFECT}
             </div>
             <BudgetCapEditor
               org={identity.org}
@@ -333,8 +332,9 @@ export function Spending() {
           text={
             <>
               <strong>$0 in this window.</strong> The {totalOps.toLocaleString()} operations counted are all read-only
-              API calls (memory listing, audit reads, etc.) that don't hit a paid provider. Cost shows up here once your
-              agent writes memories (embedder fires), or once the entity_extractor worker is enabled.
+              API calls (memory listing, audit reads, etc.) that don't hit a paid provider. Cost shows up here once Loom
+              makes a model or embedding call for this namespace (indexing memories, extracting entities, answering
+              questions, summarising code).
             </>
           }
         />
@@ -347,10 +347,9 @@ export function Spending() {
           showIcon
           text={
             <>
-              <strong>{fmt(totalEmbedTokens)} embed tokens but $0 cost.</strong> Your embedder fired but its
-              upstream-cost field isn't yet attributed in the rollup — known gap, applies to every Loom deployment
-              today. Once the attribution wiring lands, the number under Total cost will include embedder usage.
-              (LLM-extraction worker costs are tracked correctly.)
+              <strong>{fmt(totalEmbedTokens)} embed tokens but $0 cost.</strong> Embedding calls here were recorded at
+              $0: the model has no price in Loom's table, or each operation's embedding cost was below the $0.000001 a
+              row records.
             </>
           }
         />
@@ -363,7 +362,7 @@ export function Spending() {
             <Stat
               label="Total cost"
               value={`$${totalCost.toFixed(4)}`}
-              hint="LLM extraction + embedder (attribution coming)"
+              hint="upstream model and embedding calls, on priced models"
             />
             <Stat label="LLM tokens" value={fmt(totalTokens)} hint="extraction / classify / rerank" />
             <Stat label="Embed tokens" value={fmt(totalEmbedTokens)} hint="memory + knowledge writes" />
@@ -532,7 +531,7 @@ function BudgetCapEditor({
 
   if (!editing || unavailable) {
     return (
-      <Unavailable reason={unavailable} tip="Edit this namespace's daily LLM budget">
+      <Unavailable reason={unavailable} tip="Edit this namespace's daily cost cap">
         <Button
           type="empty"
           htmlType="button"
@@ -583,7 +582,7 @@ function BudgetCapEditor({
     <div className="inline-flex items-center gap-1.5 shrink-0">
       <div className="w-32">
         <NumberField
-          aria-label="Daily LLM budget cap in dollars"
+          aria-label="Daily cost cap in dollars"
           startContent="$"
           step="0.01"
           min="0"

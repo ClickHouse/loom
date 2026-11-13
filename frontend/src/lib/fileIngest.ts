@@ -79,7 +79,7 @@ export function fileVerdict(
   return {
     format: entry.format,
     available: entry.available,
-    refusal: entry.available === false ? `No extractor on this deployment reads ${entry.format} files.` : "",
+    refusal: entry.available === false ? `This deployment cannot read ${entry.format} files.` : "",
     listed: !!named,
   };
 }

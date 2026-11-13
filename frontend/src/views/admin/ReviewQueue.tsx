@@ -745,7 +745,7 @@ const agentLabel = (r: LearningEntry) =>
 // agent * and knowledge.search, which are not filtered by agent.
 const promoteNote = (r: LearningEntry) =>
   r.agent && r.agent !== "-"
-    ? `Promote publishes this rule to the namespace's knowledge for ${r.agent}, for every user; reads under agent * and knowledge.search also find it.`
+    ? `Promote publishes this rule to the namespace's knowledge for ${r.agent}, for every user; reads across every agent and knowledge searches also find it.`
     : "Promote publishes this rule to the namespace's knowledge for every agent and every user.";
 
 // A bot's rule is backed by distinct users, its sessions and writers beside them

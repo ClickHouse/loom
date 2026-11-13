@@ -203,7 +203,7 @@ export function Facets({
         <Section
           label="Communities"
           count={communities.length}
-          hint="Colour is the entity's community from the namespace taxonomy (label propagation over the strongest co-mention edges, recomputed every 6 hours for namespaces walked in the last 14 days); click one to walk from its label."
+          hint="Colour is the entity's community, a group of entities often mentioned together, recomputed every 6 hours for namespaces explored in the last 14 days; click one to walk from its label."
         >
           {commCopy.kind === "some" && (
             <p className="caption mb-1.5 break-words" data-testid="communities-computed">
@@ -240,7 +240,7 @@ export function Facets({
         <Section
           label="Colour"
           caption="by hop"
-          hint="Communities are computed by the entity-communities worker (label propagation over the strongest co-mention edges, LOOM_ENTITY_COMMUNITIES_ENABLED) every 6 hours for namespaces walked in the last 14 days; until it has run here, each ring is coloured by its hop."
+          hint="Communities, groups of entities often mentioned together, are found every 6 hours for namespaces explored in the last 14 days, when an operator of this deployment has turned them on; until a pass has run here, each ring is coloured by its hop."
         >
           <ul className="space-y-1 text-text-muted">
             <li className="flex items-center gap-2">
@@ -277,7 +277,7 @@ export function Facets({
         {relations.length === 0 ? (
           <p className="text-text-muted">
             {seed
-              ? "This walk has no typed edges; tick “typed edges only” to walk the triples."
+              ? "This walk has no typed edges; tick “typed edges only” to walk the typed facts."
               : "Chips appear once a walk has typed edges; a chip set now rides the next walk."}
           </p>
         ) : (

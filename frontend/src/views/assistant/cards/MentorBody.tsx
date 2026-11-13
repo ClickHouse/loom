@@ -146,7 +146,7 @@ export function MentorBody({ result, namespace }: { result: MentorBriefResult; n
         </p>
       )}
       <p className="text-xs text-text-muted leading-relaxed">
-        The same hints reach the agent unasked — up to three in <code>context.pack</code> at session start and one per
+        The same hints reach the agent unasked — up to three in the context the agent gets at session start and one per
         call when a rule fires. The <code>loom-mentor</code> skill has the table; <code>loom-optimize</code> reworks the
         rows a data-shape hint names, with your approval. The dashboard shows; it does not rewrite.
       </p>

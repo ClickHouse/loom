@@ -57,7 +57,7 @@ function subjectRecord(raw: unknown): Record<string, unknown> {
  *
  * Unknown event types fall through to a generic, readable fallback.
  */
-function summarize(event_type: string, subject: Record<string, unknown>): string {
+export function summarize(event_type: string, subject: Record<string, unknown>): string {
   // A hashed text value is `{sha256, chars}`: it reads as no value, never "[object Object]".
   const s = (k: string) => {
     const v = subject[k];
@@ -166,10 +166,20 @@ function summarize(event_type: string, subject: Record<string, unknown>): string
       }
       return `Rejected ${subject}'s request on ${ns}`;
     }
-    case "blacklist.upsert":
-      return `Added blacklist pattern`;
-    case "blacklist.delete":
-      return `Removed blacklist pattern`;
+    case "blacklist.add":
+      return "Added a guardrail pattern";
+    case "blacklist.remove":
+      return "Removed a guardrail pattern";
+    case "blacklist.sweep":
+      return "Swept memories matching a guardrail pattern";
+    case "code.scip_ingest": {
+      // One audited call is one part of an upload; a worker applies the whole batch later.
+      const seq = Number(s("seq"));
+      const total = Number(s("total_parts"));
+      const part = s("seq") && total > 0 ? `part ${seq + 1} of ${total} of ` : "";
+      const ns = s("namespace");
+      return `Received ${part}exact cross-file calls${ns ? ` for ${ns}` : ""}`;
+    }
     case "erasure.request":
       return `Erasure request for ${s("subject_id") || s("user_id")}`;
     case "claim_release":
@@ -178,17 +188,41 @@ function summarize(event_type: string, subject: Record<string, unknown>): string
       return `Signed up as ${s("namespace")}`;
     case "auth.login":
       return `Signed in`;
-    case "budget.violated":
-      return `Budget violated: ${s("op_name")} took ${s("elapsed_ms")}ms`;
+    case "budget.violated": {
+      // The operation stays in Details; the row says what happened.
+      const over = Number(s("elapsed_ms")) - Number(s("budget_ms"));
+      return over > 0 ? `Budget exceeded (${Math.round(over)}ms over)` : "Budget exceeded";
+    }
     case "ratelimit.exceeded":
-      return `Rate limit hit on ${s("op_name") || "op"}`;
+      return "Rate limit hit";
     case "worker.failed":
-      return `Worker ${s("worker") || "unknown"} failed: ${s("error") || "see logs"}`;
+      return "A background job failed";
     default: {
       const hint = s("memory_key") || s("namespace") || s("source_uri") || s("subject");
-      return hint ? `${event_type} — ${hint}` : event_type;
+      const label = eventLabel(event_type);
+      return hint ? `${label} — ${hint}` : label;
     }
   }
+}
+
+/** The words an event type's group reads as, where the dashboard calls it something else. */
+const GROUP_NOUN: Record<string, string> = {
+  knowledge: "Library",
+  grants: "Access",
+  blacklist: "Guardrail",
+  code: "Repository",
+};
+
+/** A plain label for an event type the summary has no sentence for: "memory.restore" reads
+ *  "Memory restore", "knowledge.restore" "Library restore"; a type with no group is "Other event". */
+export function eventLabel(eventType: string): string {
+  const dot = eventType.indexOf(".");
+  if (dot <= 0) return "Other event";
+  const group = eventType.slice(0, dot);
+  const noun = GROUP_NOUN[group] ?? group.charAt(0).toUpperCase() + group.slice(1).replace(/_/g, " ");
+  // "code.repo.add" reads "Repository add", not "Repository repo add".
+  const method = eventType.slice(dot + 1).replace(/^repo\./, "");
+  return `${noun} ${method.replace(/[_.]/g, " ")}`;
 }
 
 /** The Audit log page shows the last seven days. */
@@ -217,8 +251,8 @@ export function Audit() {
   const [showSystem, setShowSystem] = useState(false);
   const phone = useMedia(PHONE_QUERY);
   const [onlyMe, setOnlyMe] = useState(false);
-  // Free-text filter — matches against actor (email / agent name)
-  // and event_type. Done client-side over the loaded window since
+  // Free-text filter — matches against the actor (email / agent name),
+  // the row's summary and the event type. Done client-side over the loaded window since
   // the API's filtering is event_type-exact only and the typical
   // audit question is partial-match: "who touched anything for
   // alice@" / "any redaction events recently".
@@ -334,7 +368,8 @@ export function Audit() {
         if (!showSystem && SYSTEM_EVENT_TYPES.has(r.event_type)) return false;
         if (onlyMe && r.actor !== me) return false;
         if (q) {
-          const haystack = `${r.actor} ${r.event_type}`.toLowerCase();
+          const haystack =
+            `${r.actor} ${summarize(r.event_type, subjectRecord(r.subject))} ${r.event_type}`.toLowerCase();
           if (!haystack.includes(q)) return false;
         }
         return true;
@@ -412,7 +447,7 @@ export function Audit() {
               <SearchField
                 value={filterQuery}
                 onChange={(value) => setFilterQuery(value)}
-                placeholder="Filter by actor or event type — e.g. alice@, redact, promote…"
+                placeholder="Filter by actor or event — e.g. alice@, redact, promote…"
                 aria-label="Filter audit events"
               />
             </div>
@@ -516,35 +551,33 @@ function eventRow(row: AuditEntry, i: number): TableRowType {
   };
 }
 
-/** One event's summary and type, and its parsed subject behind "Details". */
+/** One event's summary; its type and parsed subject behind "Details". */
 function AuditEvent({ row }: { row: AuditEntry }) {
   const [expanded, setExpanded] = useState(false);
   // Parsed once, so the summary and the "Details" expansion read the same structured data.
   const parsed = subjectRecord(row.subject);
   const summary = summarize(row.event_type, parsed);
-  const hasDetails = Object.keys(parsed).length > 0;
+  const hasSubject = Object.keys(parsed).length > 0;
 
   return (
     <div className="min-w-0">
       <div className="text-sm text-text">{summary}</div>
-      <div className="flex items-center gap-2 text-xs text-text-muted">
-        <span className="font-mono">{row.event_type}</span>
-        {hasDetails && (
-          <Button
-            type="empty"
-            htmlType="button"
-            iconLeft={expanded ? "chevron-down" : "chevron-right"}
-            onClick={() => setExpanded((v) => !v)}
-            aria-expanded={expanded}
-          >
-            Details
-          </Button>
-        )}
-      </div>
-      {expanded && hasDetails && (
-        <pre className="mt-2 max-w-full p-2 text-xs font-mono text-text-muted bg-surface-2 rounded overflow-x-auto leading-relaxed">
-          {JSON.stringify(parsed, null, 2)}
-        </pre>
+      <Button
+        type="empty"
+        htmlType="button"
+        iconLeft={expanded ? "chevron-down" : "chevron-right"}
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+      >
+        Details
+      </Button>
+      {expanded && (
+        <div className="mt-2 max-w-full p-2 text-xs text-text-muted bg-surface-2 rounded overflow-x-auto leading-relaxed">
+          <div>
+            Event type <span className="font-mono">{row.event_type}</span>
+          </div>
+          {hasSubject && <pre className="mt-1 font-mono">{JSON.stringify(parsed, null, 2)}</pre>}
+        </div>
       )}
     </div>
   );

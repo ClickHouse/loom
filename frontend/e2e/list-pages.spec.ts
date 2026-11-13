@@ -337,6 +337,8 @@ test.describe("a touch pointer at 375 px", () => {
     await page.goto("/spaces");
     const link = page.locator("[data-guide-link]");
     await expect(link).toBeVisible();
+    // Clear of the phone's bottom tab bar, which would take the lower tap.
+    await link.evaluate((e) => e.scrollIntoView({ block: "center" }));
     const box = await link.boundingBox();
     if (!box) throw new Error("the guide link has no box");
     expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);

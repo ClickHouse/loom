@@ -73,7 +73,7 @@ export function expandFailure(entity: string, message: string): ExpandNotice {
 export const COMMUNITIES_SHOWN = 12;
 
 export const NO_COMMUNITIES_COPY =
-  "No communities yet. They are computed every 6 hours for namespaces walked in the last 14 days; this walk counts.";
+  "No communities yet. When an operator of this deployment has turned them on, they are computed every 6 hours for namespaces explored in the last 14 days; exploring this one counts.";
 
 export type CommunitiesCopy =
   | { kind: "none"; line: string }

@@ -36,6 +36,14 @@ export function pairKeysWithScores(keys: string[], scores: number[]): { key: str
   return keys.map((key, i) => ({ key, score: i < scores.length ? scores[i] : null }));
 }
 
+/** The badge's words for the operation that ran a recorded search; its tooltip keeps the name. */
+const SEARCH_VIA: Record<string, string> = {
+  "memory.search": "search",
+  "memory.ask": "question",
+  "context.pack": "session context",
+  "search.query": "agent search tool",
+};
+
 function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
   const [allKeys, setAllKeys] = useState(false);
   const [fullQuery, setFullQuery] = useState(false);
@@ -88,8 +96,10 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
           )
         )}
         {r.operation !== "" && (
-          <TipTarget tip="The operation that ran this search. memory.ask and the MCP search tool carry the wording a person gave; a direct memory.search carries whatever the calling program composed.">
-            <Badge text={`via ${r.operation}`} state="neutral" size="sm" />
+          <TipTarget
+            tip={`How this search was asked (${r.operation}). A question and the agents' search tool carry the wording a person gave; a direct search carries whatever the calling program composed.`}
+          >
+            <Badge text={`via ${SEARCH_VIA[r.operation] ?? "another call"}`} state="neutral" size="sm" />
           </TipTarget>
         )}
         <span>{displayAgent(r.agent)}</span>
@@ -225,8 +235,8 @@ function RecallHistory() {
           title={runFilter ? "No recorded searches under this run" : "No recorded searches"}
           description={
             runFilter
-              ? "A search is listed under a run when the agent tags it with the run, as the Claude Code plugin and the SDK's run scope do; this run's searches, if any, were not tagged."
-              : "Either nothing has been searched in this window, or per-query recall telemetry is switched off for this deployment."
+              ? "A search is listed under a run when the agent tags it with the run, as the coding-agent plugins and the SDK's run scope do; this run's searches, if any, were not tagged."
+              : "Either nothing has been searched in this window, or this deployment does not record searches; an operator can turn that on."
           }
         />
       )}

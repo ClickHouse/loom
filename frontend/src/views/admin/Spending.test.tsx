@@ -10,6 +10,7 @@ import { ApiError } from "../../lib/errors";
 import { useStore } from "../../lib/state";
 import { invalidateShared } from "../../lib/sharedReads";
 import { Spending } from "./Spending";
+import { COST_CAP_EFFECT } from "../../lib/costCap";
 
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
@@ -60,7 +61,7 @@ const setNamespace = (namespace: string) =>
 
 async function saveCap(value: string) {
   fireEvent.click(await screen.findByRole("button", { name: /Edit cap/ }));
-  fireEvent.change(screen.getByLabelText("Daily LLM budget cap in dollars"), { target: { value } });
+  fireEvent.change(screen.getByLabelText("Daily cost cap in dollars"), { target: { value } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
 }
 
@@ -354,7 +355,7 @@ describe("Spending cap editor on a restricted namespace", () => {
     vi.mocked(api.getNamespace).mockResolvedValue({ ...nsRow("team-a"), classification: "standard" });
     render(<Spending />);
     fireEvent.click(await screen.findByRole("button", { name: /Edit cap/ }));
-    expect(screen.getByLabelText("Daily LLM budget cap in dollars")).toBeInTheDocument();
+    expect(screen.getByLabelText("Daily cost cap in dollars")).toBeInTheDocument();
     act(() =>
       useStore.setState({
         whoami: {
@@ -367,7 +368,7 @@ describe("Spending cap editor on a restricted namespace", () => {
         myNamespaces: [viewerGrant],
       }),
     );
-    await waitFor(() => expect(screen.queryByLabelText("Daily LLM budget cap in dollars")).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText("Daily cost cap in dollars")).toBeNull());
     expect(screen.getByRole("button", { name: /Edit cap/ })).toHaveAccessibleDescription(
       "Needs admin on team-a. An admin of it can grant that.",
     );
@@ -398,7 +399,7 @@ describe("Spending daily budget meter", () => {
   it("is named once, clamps its value at the cap and speaks the real figure", async () => {
     vi.mocked(api.getBudgetStatus).mockResolvedValue({ ...budget("team-a", 1.3, 1, "namespace"), over_cap: true });
     render(<Spending />);
-    const meter = await screen.findByRole("progressbar", { name: "Daily LLM budget used" });
+    const meter = await screen.findByRole("progressbar", { name: "Daily cost cap used" });
     expect(meter).toHaveAttribute("aria-valuenow", "100");
     expect(meter).toHaveAttribute("aria-valuetext", "130% — $1.3000 of the $1.00 cap");
   });
@@ -460,5 +461,31 @@ describe("Spending table count and failure", () => {
     vi.mocked(api.listCostRollup).mockResolvedValueOnce({ rows: [cost("memory.set", 0.01)] });
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("memory.set")).toBeInTheDocument();
+  });
+});
+
+describe("Spending totals", () => {
+  it("says Total cost sums the upstream model and embedding calls on priced models", async () => {
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.25, 5, "namespace"));
+    vi.mocked(api.listCostRollup).mockResolvedValueOnce({ rows: [cost("memory.ask", 0.25)] });
+    render(<Spending />);
+    expect(await screen.findByText("upstream model and embedding calls, on priced models")).toBeInTheDocument();
+  });
+
+  it("says embed tokens at $0 mean the embedding model has no price", async () => {
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0, 5, "namespace"));
+    vi.mocked(api.listCostRollup).mockResolvedValueOnce({
+      rows: [{ ...cost("memory.set", 0), tokens: 0, embed_tokens: 1200 }],
+    });
+    render(<Spending />);
+    expect(
+      await screen.findByText(/Embedding calls here were recorded at \$0: the model has no price in Loom's table/),
+    ).toBeInTheDocument();
+  });
+
+  it("says what the cost cap stops, in the same words as the namespace settings", async () => {
+    vi.mocked(api.getBudgetStatus).mockResolvedValue(budget("team-a", 0.25, 5, "namespace"));
+    render(<Spending />);
+    expect(await screen.findByText(COST_CAP_EFFECT, { exact: false })).toHaveTextContent(COST_CAP_EFFECT);
   });
 });

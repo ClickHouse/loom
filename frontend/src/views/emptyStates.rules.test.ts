@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OP_MIN_ROLE } from "../lib/canCall";
+import { escapeRegExp as escape, opNames } from "../test/opNames";
 
 // An empty list says, in plain words, what will appear there and what fills it
 // (docs/features/dashboard.md): no operation name, wire field, header, environment variable
@@ -8,30 +8,13 @@ import { OP_MIN_ROLE } from "../lib/canCall";
 // the tag's close at the same indentation, as literal text. Text a page builds in a variable
 // outside the tag, or a tag sharing its line with other code, is outside it.
 //
-// The operation names are every op the registry serves: the SDK's generated table
-// (`sdk/typescript/src/generated/ops.ts`, written by `scripts/codegen/sdk_ts_gen.py` from
-// `server.operations.registry`), read as `lib/canCall.test.ts` reads it, together with the
-// ops the dashboard gates on (`OP_MIN_ROLE`), which is all a frontend-only checkout has.
+// The operation names are every op the registry serves (`test/opNames.ts`).
 
 const SOURCES = import.meta.glob<string>(["../views/**/*.tsx", "../components/**/*.tsx", "!../**/*.test.tsx"], {
   query: "?raw",
   import: "default",
   eager: true,
 });
-
-const GENERATED_OPS = new URL("../../../sdk/typescript/src/generated/ops.ts", import.meta.url).pathname;
-
-async function opNames(): Promise<{ names: Set<string>; fromRegistry: boolean }> {
-  const names = new Set(Object.keys(OP_MIN_ROLE).filter((op) => op.includes(".")));
-  // vitest runs on node; the frontend tsconfig carries no node types (see canCall.test.ts).
-  type Fs = { existsSync(p: string): boolean; readFileSync(p: string, enc: "utf8"): string };
-  const fs = (await import(/* @vite-ignore */ "node:" + "fs")) as Fs;
-  if (!fs.existsSync(GENERATED_OPS)) return { names, fromRegistry: false };
-  for (const m of fs.readFileSync(GENERATED_OPS, "utf8").matchAll(/\{ name: "([a-z0-9_.]+)",/g)) names.add(m[1]);
-  return { names, fromRegistry: true };
-}
-
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Lines an empty state may still say, by file and exact text: the Repositories page's line
  *  for whoever runs the deployment (and no one else), naming the variable that lists

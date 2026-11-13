@@ -66,7 +66,8 @@ const MODE_META: Record<PolicyMode, { state: BadgeState; blurb: string }> = {
   },
   enforce: {
     state: "danger",
-    blurb: "A deny blocks the call with 403 POLICY_FORBIDDEN. Rule errors on write-shaped calls also deny.",
+    blurb:
+      "A deny blocks the call, and the caller is told a policy refused it. A rule that errors on a call that writes also denies it.",
   },
 };
 
@@ -290,8 +291,8 @@ export function Policies() {
       </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-[80ch]">
         Rules over an agent's own recent history: forbid or require an action based on what the same caller did in the
-        last minutes or hours. {meta && <span className="text-text">{meta.blurb}</span>} The mode is the server's{" "}
-        <code className="code-inline text-xs">LOOM_POLICY_MODE</code>; it cannot be changed here.
+        last minutes or hours. {meta && <span className="text-text">{meta.blurb}</span>} An operator of this deployment
+        sets the mode; it cannot be changed here.
       </p>
 
       <div className="space-y-4">
@@ -605,7 +606,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
     <Card title="Dry run">
       <div className="text-xs text-text-muted mb-3">
         Evaluate the stored rules against a hypothetical call, using the same evaluator and trace the gate reads.
-        Nothing is blocked; <span className="font-mono">would_enforce</span> says what enforce mode would do.
+        Nothing is blocked; Would block says what enforce mode would do.
       </div>
       <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_2fr] gap-3 items-start">
         <TextField
@@ -643,13 +644,13 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
           <div className="flex items-center gap-2 flex-wrap text-xs text-text-muted">
             <DecisionChip decision={result.decision} />
             <span>
-              would_enforce <Bool v={result.would_enforce} />
+              Would block <Bool v={result.would_enforce} />
             </span>
             <span>·</span>
             <span>mode {result.mode}</span>
             <span>·</span>
             <span>
-              write-shaped <Bool v={result.write_shaped} />
+              Counts as a write <Bool v={result.write_shaped} />
             </span>
             <span>·</span>
             <span className="tabular-nums">{result.latency_ms} ms</span>

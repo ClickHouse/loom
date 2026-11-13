@@ -197,7 +197,7 @@ function ErasuresTable({ rows, onDetails }: { rows: ErasureListRow[] | null; onD
                 <Badge text={r.status} state={ERASURE_STATE[r.status] ?? "neutral"} size="sm" />
                 {r.reversals_count > 0 && (
                   <TipTarget
-                    tip={`${r.reversals_count} memor${r.reversals_count === 1 ? "y" : "ies"} restored via memory.restore — the "completed" status overstates what's actually erased.`}
+                    tip={`${r.reversals_count} memor${r.reversals_count === 1 ? "y" : "ies"} restored after the erasure — the "completed" status overstates what's actually erased.`}
                   >
                     <Badge text={`${r.reversals_count} reversed`} state="warning" size="sm" />
                   </TipTarget>

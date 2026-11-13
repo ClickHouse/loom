@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProfileActivityEntry } from "../api";
 import { useStore } from "../lib/state";
@@ -36,12 +36,13 @@ async function open() {
 }
 
 describe("readPathLabel", () => {
-  it("names each read path in the page's words and passes an unknown op through", () => {
-    expect(readPathLabel("context.pack")).toBe("plugin session start");
+  it("names each read path in the page's words, and has no words for an unknown op", () => {
+    expect(readPathLabel("context.pack")).toBe("session context");
     expect(readPathLabel("mcp.initialize")).toBe("MCP connect");
     expect(readPathLabel("profile.render")).toBe("SDK");
     expect(readPathLabel("loom_activate")).toBe("“use loom”");
-    expect(readPathLabel("something.new")).toBe("something.new");
+    expect(readPathLabel("profile.structured")).toBe("structured profile");
+    expect(readPathLabel("something.new")).toBeNull();
   });
 });
 
@@ -96,8 +97,19 @@ describe("Profile: where the profile goes", () => {
     });
     await open();
     fireEvent.click(await screen.findByRole("button", { name: /Read by 2 clients/ }));
-    expect(screen.getByText("via plugin session start")).toBeInTheDocument();
+    expect(screen.getByText("via session context")).toBeInTheDocument();
     expect(screen.getByText("via MCP connect, “use loom”")).toBeInTheDocument();
+  });
+
+  it("shows an op it has no words for as another call, the op in the tooltip", async () => {
+    getProfileActivity.mockResolvedValue({ entries: [entry({ operations: ["context.pack", "profile.newer_read"] })] });
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: /Read by/ }));
+    // The line names the path in words; the op is only the tooltip's.
+    expect(screen.getByText(/via session context/)).toHaveTextContent("via session context, another call");
+    const other = screen.getByText("another call");
+    act(() => other.focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("profile.newer_read");
   });
 
   it("an empty profile says its readers found nothing, not that they read it", async () => {

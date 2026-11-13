@@ -632,7 +632,7 @@ export function Canvas({
             <EmptyState
               icon="share-network"
               title="No entities yet"
-              description="The graph fills as memories with entities are written (and, with the chunk extractor on, as documents are ingested)."
+              description="The graph fills as memories with entities are written (and, where this deployment reads entities from documents, as documents are added)."
             />
           ) : (
             <div className="flex flex-col items-center text-center px-6 py-8">
@@ -682,7 +682,7 @@ export function Canvas({
               model.nodes.size > 0
                 ? "The relation or provenance chips on the left hide every edge of this walk. Clear a chip, or pin a node to keep it through the filter."
                 : typed
-                  ? "No typed triple has this entity as subject or object. Untick “typed edges only” to walk co-mentions, or pick one of the matches above."
+                  ? "No typed fact has this entity as subject or object. Untick “typed edges only” to walk co-mentions, or pick one of the matches above."
                   : asOf
                     ? `No edge touching this entity was valid on ${asOf}. Clear the date, or pick one of the matches above.`
                     : "No memory mentions this entity together with another. Pick one of the matches above, or a most-mentioned entity on the left."

@@ -678,7 +678,7 @@ function Categories({ addReason }: { addReason: Reason }) {
     try {
       const r = await registerCategory(identity, name.trim(), description.trim());
       if (r.embedded) toast(`Added ${name.trim()}`, "ok");
-      else toast(`Added ${name.trim()}, but category search cannot find it: the embedder failed`, "info");
+      else toast(`Added ${name.trim()}, but category search cannot find it: it could not be indexed`, "info");
       setName("");
       setDescription("");
       refresh();
