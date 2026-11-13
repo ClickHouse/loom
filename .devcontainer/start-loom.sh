@@ -39,8 +39,9 @@ if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOM
     || printf 'LOOM_PUBLIC_BASE_URL=%s\n' "$codespace_url" >>"$LOOM_INSTALL_DIR/.env"
 fi
 
-# The install again keeps .env, then starts the stack and waits for it.
-sh "$installer"
+# The install again keeps .env, then starts the stack and waits for it; Claude Code
+# is connected below, so the installer connects no agent.
+LOOM_CONNECT=none sh "$installer"
 
 npm install --global --silent @anthropic-ai/claude-code
 claude plugin marketplace list 2>/dev/null | grep -Eq '[[:space:]]loom$' \

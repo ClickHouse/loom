@@ -975,7 +975,7 @@ def _start_stubs(
         f'#!/bin/sh\necho "$*" >> {curl_log}\n'
         'out=; prev=\nfor a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; done\n'
         f"case \"$*\" in *v1/health*) echo '{health}'; exit 0 ;;\n"
-        f"  *v1/memory.get*) if [ -f {saved} ] && [ -s {saved} -o ! -s {lag} ]; then "
+        f"  *v1/memory.get*) if [ -f {saved} ] && [ ! -s {lag} ]; then "
         f"echo '{{\"found\":true}}'; elif [ -f {saved} ]; then "
         f'l=$(cat {lag}); printf %s "${{l#x}}" > {lag}; echo \'{{"found":false}}\'; '
         f'else echo \'{{"found":false}}\'; fi > "$out"; printf {memory_status}; exit 0 ;;\n'
