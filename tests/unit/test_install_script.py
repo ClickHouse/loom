@@ -7,11 +7,15 @@ from __future__ import annotations
 import json
 import os
 import platform
+import pty
 import re
+import select
 import shutil
+import signal
 import stat
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -297,14 +301,13 @@ def _on_terminal(
     args: list[str],
     prompt: bytes | None,
     answer: bytes = b"",
+    *,
+    ready: Callable[[], bool] | None = None,
+    exit_code: int = 0,
 ) -> bytes:
-    """Run the installer on a pseudo-terminal, type `answer` at each `prompt` (none
-    without a prompt) and wait for it to finish, within a deadline; the run must
-    exit 0. Returns what the terminal showed."""
-    import pty
-    import select
-    import signal
-
+    """Run the installer on a pseudo-terminal and wait for it to finish, within a
+    deadline, with `exit_code`. `answer` is typed at each `prompt`, or once when
+    `ready()` turns true. Returns what the terminal showed."""
     pid, fd = pty.fork()
     if pid == 0:
         os.execvpe("sh", ["sh", str(ROOT / "install.sh"), *args], env)
@@ -317,7 +320,12 @@ def _on_terminal(
                     seen += os.read(fd, 1024)
                 except OSError:  # the child closed the terminal
                     pass
-            if prompt and seen.count(prompt) > answered:
+            due = (
+                seen.count(prompt) > answered
+                if prompt
+                else bool(ready and not answered and ready())
+            )
+            if due:
                 os.write(fd, answer)
                 answered += 1
             done, code = os.waitpid(pid, os.WNOHANG)
@@ -328,8 +336,8 @@ def _on_terminal(
             os.kill(pid, signal.SIGKILL)
             os.waitpid(pid, 0)
         os.close(fd)
-    assert answered or prompt is None, seen
-    assert status is not None and os.waitstatus_to_exitcode(status) == 0, seen
+    assert answered or (prompt is None and ready is None), seen
+    assert status is not None and os.waitstatus_to_exitcode(status) == exit_code, seen
     return seen
 
 
@@ -338,10 +346,6 @@ def test_ctrl_c_stops_the_agent_cli_and_cleans_up(
 ) -> None:
     """^C while a client CLI runs under `bounded`: the CLI is stopped, the run exits
     130 and its temporary directory is removed."""
-    import pty
-    import select
-    import signal
-
     _start_stubs(installer_env)
     bin_dir = Path(installer_env["PATH"].split(":")[0])
     pids = bin_dir / "claude.pid"
@@ -351,45 +355,38 @@ def test_ctrl_c_stops_the_agent_cli_and_cleans_up(
     claude.chmod(0o755)
     tmp = tmp_path / "tmp"
     tmp.mkdir()
-    env = {**installer_env, "LOOM_SKIP_START": "0", "LOOM_CONNECT": "claude-code"}
-    env["TMPDIR"] = str(tmp)
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.execvpe("sh", ["sh", str(ROOT / "install.sh")], env)
-    deadline = time.monotonic() + 180  # a loaded machine runs the installer slowly
-    sent, status = False, None
-    try:
-        while status is None and time.monotonic() < deadline:
-            if select.select([fd], [], [], 0.2)[0]:
-                try:
-                    os.read(fd, 1024)
-                except OSError:  # the child closed the terminal
-                    pass
-            if not sent and pids.exists() and pids.read_text().strip():
-                os.write(fd, b"\x03")
-                sent = True
-            done, code = os.waitpid(pid, os.WNOHANG)
-            if done:
-                status = code
-    finally:
-        if status is None:
-            os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
-        os.close(fd)
-    assert sent and status is not None
-    assert os.waitstatus_to_exitcode(status) == 130
+    env = {
+        **installer_env,
+        "LOOM_SKIP_START": "0",
+        "LOOM_CONNECT": "claude-code",
+        "TMPDIR": str(tmp),
+    }
+    _on_terminal(
+        env,
+        [],
+        None,
+        b"\x03",
+        ready=lambda: pids.exists() and bool(pids.read_text().strip()),
+        exit_code=130,
+    )
     cli = int(pids.read_text())
     gone = time.monotonic() + 10
-    while time.monotonic() < gone:
-        try:
-            os.kill(cli, 0)
-        except ProcessLookupError:
-            break
+    while _running(cli) and time.monotonic() < gone:
         time.sleep(0.05)
-    else:
+    if _running(cli):
         os.kill(cli, signal.SIGKILL)
         raise AssertionError(f"claude ({cli}) still runs")
     assert list(tmp.iterdir()) == []
+
+
+def _running(pid: int) -> bool:
+    """Alive and not a zombie an init that does not reap has kept."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    stat_file = Path(f"/proc/{pid}/stat")
+    return not (stat_file.exists() and stat_file.read_text().rsplit(")", 1)[1].split()[0] == "Z")
 
 
 def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
