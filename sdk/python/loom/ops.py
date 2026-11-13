@@ -10911,7 +10911,7 @@ class MemoryFindingRef(TypedDict, total=False):
 
 
 class KnowledgeListInput(TypedDict, total=False):
-    "Paginated listing of documents in a namespace, or in several at once, for"
+    "Paginated listing of the documents of one namespace or several, for curation tools."
 
     org: Required[str]
     namespace: Required[str]
@@ -10926,7 +10926,7 @@ class KnowledgeListInput(TypedDict, total=False):
 
 
 class KnowledgeListBody(TypedDict, total=False):
-    "Paginated listing of documents in a namespace, or in several at once, for"
+    "Paginated listing of the documents of one namespace or several, for curation tools."
 
     org: NotRequired[str]
     namespace: NotRequired[str]

@@ -606,11 +606,11 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     await D.get_one(ORG, NS, "doc://a", include_superseded=f, ch=ch)
     await D.list_with_chunk_counts(
         ORG,
-        NS,
+        [NS],
         include_superseded=f,
         tag_filter=TagFilter(("t",), "folded_any") if f else None,
         uri_prefixes=["doc://"] if f else None,
-        cursor=(_DT, "doc://a") if f else None,
+        cursor=(_DT, NS, "doc://a") if f else None,
         ch=ch,
     )
 

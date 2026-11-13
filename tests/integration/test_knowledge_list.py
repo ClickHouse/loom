@@ -184,15 +184,15 @@ async def test_list_reads_several_namespaces_as_one_newest_first(control_plane_u
         one = await a.transport.post(
             "/v1/knowledge.list", {"org": ORG, "namespace": places[1], "limit": 10}
         )
-    assert sorted(seen) == sorted((ns, f"doc://{i}") for ns in places for i in range(2))
-    assert len(seen) == 6
+    # Newest first: each namespace's two documents were added in order, one after the other.
+    assert seen == [(ns, f"doc://{i}") for ns in reversed(places) for i in (1, 0)]
     assert {r["namespace"] for r in one["rows"]} == {places[1]}
 
 
 @pytest.mark.asyncio
 async def test_a_cursor_for_other_namespaces_is_refused(control_plane_url: str) -> None:
     from loom import Agent
-    from loom.errors import LoomError
+    from loom.errors import ValidationError
 
     tag = uuid.uuid4().hex[:6]
     a_ns, b_ns, c_ns = f"kl-x-{tag}", f"kl-y-{tag}", f"kl-z-{tag}"
@@ -202,7 +202,7 @@ async def test_a_cursor_for_other_namespaces_is_refused(control_plane_url: str) 
         page = await a.transport.post(
             "/v1/knowledge.list", {"org": ORG, "namespace": a_ns, "namespaces": [b_ns], "limit": 1}
         )
-        with pytest.raises(LoomError):
+        with pytest.raises(ValidationError):
             await a.transport.post(
                 "/v1/knowledge.list",
                 {

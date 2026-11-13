@@ -524,16 +524,14 @@ class KnowledgeGetOutput(BaseModel):
 
 
 class KnowledgeListInput(BaseModel):
-    """Paginated listing of documents in a namespace, or in several at once, for
-    curation tools."""
+    """Paginated listing of the documents of one namespace or several, for curation tools."""
 
     org: str
     namespace: str
-    # List these too, one list newest first: collections, `@me`, namespaces, each needing
-    # read access of its own (403 for the first that is refused). Each row names its
-    # namespace.
+    # Also list these namespaces (or `@me`) in the same list, each read-checked (403 for the
+    # first refused); empty = `namespace` alone.
     namespaces: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
-        default_factory=list, max_length=2000
+        default_factory=list, max_length=100
     )
     # Documents carrying any one of these tags, in any case.
     tags: list[str] = Field(default_factory=list)
@@ -550,7 +548,7 @@ class KnowledgeListInput(BaseModel):
     cursor: str | None = None  # opaque keyset cursor
     # The output fields the caller reads (a whitelist
     # resolved against the row model, as memory.list's is); unset,
-    # every field. `source_uri` always rides. The Library page names the
+    # every field. `namespace` and `source_uri` always ride. The Library page names the
     # eleven fields its rows render and drops the 24 kB of content_preview.
     fields: list[str] | None = None
 

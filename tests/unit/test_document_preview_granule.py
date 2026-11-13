@@ -32,7 +32,7 @@ class _CH:
 async def test_the_listing_reads_the_stored_preview_and_never_the_content() -> None:
     ch = _CH()
     await documents_repo.list_with_chunk_counts(
-        "o", "n", tag_filter=TagFilter(("a",), "folded_any"), ch=ch
+        "o", ["n"], tag_filter=TagFilter(("a",), "folded_any"), ch=ch
     )
     (sql,) = ch.sqls
     assert "d.content_preview" in sql and "AS content_preview" in sql

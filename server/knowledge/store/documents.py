@@ -311,7 +311,7 @@ class DocumentListRow(TypedDict):
 
 async def list_with_chunk_counts(
     org: str,
-    namespaces: Sequence[str],
+    namespaces: list[str],
     *,
     include_superseded: bool = False,
     tag_filter: TagFilter | None = None,
@@ -330,7 +330,7 @@ async def list_with_chunk_counts(
     extra_where = ""
     params: dict[str, Any] = {
         "org": org,
-        "nss": list(namespaces),
+        "nss": namespaces,
         "lim": int(limit),
     }
     # Predicates are bare (no `d.` prefix) because they filter the inner
