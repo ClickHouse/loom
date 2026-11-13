@@ -17,7 +17,7 @@ not been run end to end on a live cluster, so check them against your Substrate 
 | ------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Loom          | `helm install loom` in namespace `loom`                                | the memory server; its Service is `loom.loom.svc.cluster.local:7777`         |
 | Agent         | a Substrate actor in an atespace                                       | calls Loom's MCP endpoint, `/mcp`, with a placeholder `Authorization` header |
-| Egress policy | Substrate's control plane, enforced by `atenet-egress` (`kubectl ate`) | allows the actor to reach Loom, and nothing else unless you add rules        |
+| Egress policy | Substrate's control plane (`kubectl ate`), enforced by `atenet-egress` | allows the actor to reach Loom, and nothing else unless you add rules        |
 | Loom token    | a Kubernetes Secret                                                    | one per agent; the egress gateway puts it in the `Authorization` header      |
 
 Every request leaves the actor through Substrate's egress gateway (`atenet-egress` in
@@ -155,7 +155,9 @@ EOF
   front of Loom whose certificate is publicly trusted, such as the chart's Ingress host,
   and allow that host with an `https` rule. The gateway then intercepts the agent's TLS, so
   the actor mounts Substrate's
-  [egress trust bundle](https://ate.dev/docs/guides/egress-trust-bundle/), and Loom sees
+  [egress trust bundle](https://ate.dev/docs/guides/egress-trust-bundle/) and points its MCP
+  client at it (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` or `REQUESTS_CA_BUNDLE`, by the
+  client's runtime), and Loom sees
   connections from the ingress controller rather than from `atenet-egress`.
 
 Rules for whatever else the agent needs, such as its model provider, go in the same
