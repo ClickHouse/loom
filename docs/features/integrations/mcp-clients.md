@@ -199,8 +199,9 @@ client afterwards.
 `{…}` is `{"Authorization": "Bearer <JWT>"}`; leave it out for a single-user server.
 In **Checked**, `connected` means the client's own status command reported the server
 connected (a local Loom with a token, no model call; OpenCode 2.3.0, Kilo CLI 7.8.27,
-Gemini CLI), and `accepted` that the client wrote or accepted the entry but has no status
-command (Cline CLI 3.0.74, GitHub Copilot CLI); a blank one was not run.
+Gemini CLI 0.68.0), and `accepted` that the client wrote or accepted the entry but has no
+command that checks the connection (Cline CLI 3.0.74, GitHub Copilot CLI 1.0.110); a blank
+one was not run.
 
 Gemini CLI also installs Loom as an extension, which asks for the MCP URL and, for a team
 server, a token (leave it empty for a single-user server):
