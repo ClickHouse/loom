@@ -217,8 +217,8 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
 async def _shape_final_hits(
     ctx: SearchContext, final_hits: list[_MemorySearchHit]
 ) -> tuple[list[_MemorySearchHit], tuple[int, int, int], list[str]]:
-    """Phase 22: shape the served hits — prepend recent/anchor rows, move down those
-    whose code changed, decorate, body floor, unit and source bodies, relative-date
+    """Phase 22: shape the served hits — prepend recent/anchor rows, body floor, move
+    down those whose code changed, decorate, unit and source bodies, relative-date
     wording, foreign namespace marks, grounded excerpts, optional fields. Returns the
     hits, the unit-body counts and the namespaces searched."""
     input = ctx.input

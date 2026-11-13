@@ -395,9 +395,10 @@ far. These keep their place:
 - a row placed by an identifier match or by an `anchor_first` or `recent_first` tier;
 - every row of a query whose answer is a date order.
 
-`memory.ask` re-sorts the search's rows by similarity and recency, and its identifier
+`memory.ask` re-sorts the search's rows by similarity and recency while
+`memory_ask_recency_weight` is above 0 (0.2 by default), and its identifier
 lookups place their own rows; a `context.pack` startup read with no query does not
-search. None of these moves a row.
+search. A move does not show in any of these.
 
 `revise` judges a changed link once per edit, within a per-pass budget
 (`memory_code_links_revise_per_pass`). A memory labelled `high` sensitivity is never sent

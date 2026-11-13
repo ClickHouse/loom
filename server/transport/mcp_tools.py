@@ -618,14 +618,15 @@ _WHY_LABELS: dict[str, str] = {
     "set_expansion": "set_expansion",
     "foreign": "foreign",
 }
-# Base scores, not reasons (a reranked row's own fused score among them).
-_WHY_SKIP = {"rank_score_raw", "rank_score", "rank_score_pre_rerank"}
+# Base scores, not reasons (a reranked row's own fused score among them), and a move
+# printed in places.
+_WHY_SKIP = {"rank_score_raw", "rank_score", "rank_score_pre_rerank", "code_changed_places"}
 
 
 def why_note(hit: dict[str, Any]) -> str:
-    """`key_match, reranked+3, date+0.12` — the server's provenance note first, then a
-    reranker's move in places, then every non-zero score component by magnitude, signed.
-    "" when nothing explains."""
+    """`key_match, reranked+3, code_changed-3, date+0.12` — the server's provenance note
+    first, then a reranker's move and a stale memory's move in places, then every non-zero
+    score component by magnitude, signed. "" when nothing explains."""
     parts: list[str] = []
     expl = str(hit.get("explanation") or "").replace("\n", " ").strip()
     if expl:
@@ -647,8 +648,6 @@ def why_note(hit: dict[str, Any]) -> str:
         )
         for name, v in ranked:
             if name in _WHY_SKIP or name.startswith("rerank_") or abs(v) < 0.005:
-                continue
-            if name == "code_changed_places":  # printed above, in places
                 continue
             parts.append(f"{_WHY_LABELS.get(name, name)}{v:+.2f}")
     return ", ".join(parts)

@@ -1034,3 +1034,21 @@ async def test_a_moved_memory_is_never_cut_by_a_tier_and_a_date_order_stays(
     out = await _run(search_env, top_k=5)
     assert "code_changed_places" not in out.results[2].score_components
     assert [h.memory_key for h in out.results][:3] == ["r1", "r2", "stale"]
+
+
+async def test_a_move_counts_only_the_rows_the_body_floor_serves(
+    search_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import code_link_reads
+
+    async def annotate(input: Any, pool: list[Any]) -> None:
+        for h in pool:
+            h._code_ranked_down = h.memory_key == "stale"
+
+    monkeypatch.setattr(code_link_reads, "annotate_hits", annotate)
+    # "fact about b" is 12 characters: under a floor of 13 it is not served
+    sims = {"stale": 0.9, "b": 0.7, "ccc": 0.6, "ddd": 0.5, "eee": 0.4, "fff": 0.35}
+    search_env.hits = [_svc_hit(k, sim=s) for k, s in sims.items()]
+    out = await _run(search_env, top_k=6, min_body_chars=13)
+    assert [h.memory_key for h in out.results] == ["ccc", "ddd", "eee", "stale", "fff"]
+    assert out.results[3].score_components["code_changed_places"] == -3.0
