@@ -348,7 +348,7 @@ Paginated listing of the documents of one namespace or several, for curation too
 | `namespaces` | `list[str]` | *(computed)* | Also list the documents of these namespaces (or `@me`), each read-checked (403 for the first refused); empty = `namespace` alone. |
 | `tags` | `list[str]` | *(computed)* | Documents carrying any one of these tags, in any case. |
 | `tags_every` | `bool` | `False` | Require every one of `tags` instead of any one; default off. |
-| `uri_prefix` | `list[str]` | *(computed)* | Directory scope: documents whose source_uri starts with one of these prefixes; empty = whole namespace. |
+| `uri_prefix` | `list[str]` | *(computed)* | Directory scope: documents whose source_uri starts with one of these prefixes; empty = every document listed. |
 | `include_superseded` | `bool` | `False` | Also list soft-deleted and superseded documents (their `superseded` is True). |
 | `limit` | `int` | `50` | At most this many rows per page (1-500); `next_cursor` fetches the next page. |
 | `cursor` | `str \| None` | `None` | opaque keyset cursor |

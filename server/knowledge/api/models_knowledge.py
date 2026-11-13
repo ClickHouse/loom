@@ -539,7 +539,7 @@ class KnowledgeListInput(BaseModel):
     # the dashboard's stacked tag chips set it.
     tags_every: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Directory scope: documents whose source_uri starts
-    # with one of these prefixes; empty = whole namespace.
+    # with one of these prefixes; empty = every document listed.
     uri_prefix: list[str] = Field(default_factory=list, max_length=8)
     # Also list soft-deleted and superseded documents (their `superseded` is True).
     include_superseded: bool = False
