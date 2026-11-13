@@ -368,3 +368,12 @@ def test_the_lead_margin_does_not_promote_a_fact_far_below_a_leading_chunk() -> 
         "no home fact within 0.03 of the lead: nothing withheld"
     )
     assert leading_home_fact(p["memory"]["results"], "jdoe") is None
+
+
+def test_a_fact_whose_code_changed_is_never_lifted_to_lead() -> None:
+    p = _where_do_i_live_pool()
+    assert leading_home_fact(p["memory"]["results"], "jdoe")["memory_key"] == "where_i_live"
+    # the search moved it down for stale code: it stays where the search put it
+    p["memory"]["results"][1]["code_state"] = "changed"
+    lead = leading_home_fact(p["memory"]["results"], "jdoe")
+    assert lead is not None and lead["memory_key"] == "user_favorite_place"  # the next one

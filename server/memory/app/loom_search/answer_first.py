@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.memory.domain import code_change
+
 
 def _is_home_fact(h: Any, home_ns: str) -> bool:
     return (
@@ -52,6 +54,9 @@ def leading_home_fact(
         return None
     floor = float(first.get("similarity") or 0.0) - lead_margin
     for h in mem_hits[1:]:
+        # a fact whose linked code changed is served where the search put it, never lifted
+        if h.get("code_state") in code_change.DEMOTED:
+            continue
         if _is_home_fact(h, home_ns) and float(h.get("similarity") or 0.0) >= floor:
             return h
     return None

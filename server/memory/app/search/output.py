@@ -215,15 +215,16 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
 
 
 def move_stale(hits: list[Any], input: Any, *, rescore: bool = True) -> list[Any]:
-    """`hits` with each one whose linked code changed moved down (`code_change.rank_down`;
-    `rescore` False keeps its score, for a list whose scores do not compare), its
-    explanation rewritten with the score it is served with."""
+    """`hits` with each one whose linked code changed moved down (`code_change.rank_down`),
+    its explanation rewritten with the score it is served with; `rescore` False keeps
+    its score and explanation, for a list whose scores do not compare."""
     places = settings.memory_search_code_changed_places
     out = code_change.rank_down(hits, places, rescore=rescore)
-    moved = [h for h in out if "code_changed_places" in h.score_components]
-    for h in moved:
-        h.explanation = ""  # a fact row's is the one `_decorate_hits` writes
-    _decorate_hits(moved, input=input)
+    if rescore:
+        moved = [h for h in out if "code_changed_places" in h.score_components]
+        for h in moved:
+            h.explanation = ""  # a fact row's is the one `_decorate_hits` writes
+        _decorate_hits(moved, input=input)
     return out
 
 

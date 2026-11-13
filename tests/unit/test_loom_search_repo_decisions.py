@@ -961,3 +961,12 @@ async def test_a_spent_mark_moves_nothing_in_the_merge(monkeypatch) -> None:
     out = await _leg(monkeypatch, TRUNK, [], planes=planes)
     assert [h.memory_key for h in out.results] == ["note-a", "decision:evict", "note-b"]
     assert all("code_changed_places" not in h.score_components for h in out.results)
+
+
+def test_a_base_row_moved_for_stale_code_holds_no_slot_for_a_decision() -> None:
+    stale = _hit("stale", 0.9, "me")
+    stale.score_components = {"code_changed_places": -3.0}
+    base = [_hit("b", 0.8, "me"), _hit("c", 0.7, "me"), _hit("d", 0.6, "me"), stale]
+    fresh = _hit("decision:x", 0.85, TRUNK, mtype="decision")
+    hits, added = repo_decisions.merge_memory_hits(base, [fresh], "me")
+    assert [h.memory_key for h in hits] == ["decision:x", "b", "c", "d", "stale"]

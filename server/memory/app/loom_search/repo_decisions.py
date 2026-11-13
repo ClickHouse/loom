@@ -111,7 +111,15 @@ def merge_memory_hits(
         if key in seen:
             continue
         seen.add(key)
-        after = max((i + 1 for i, b in enumerate(base) if b.similarity >= h.similarity), default=0)
+        # a base row its search moved down for stale code holds no slot for others
+        after = max(
+            (
+                i + 1
+                for i, b in enumerate(base)
+                if b.similarity >= h.similarity and "code_changed_places" not in b.score_components
+            ),
+            default=0,
+        )
         slots[after].append(h)
         added.append(h)
     out = list(slots[0])
