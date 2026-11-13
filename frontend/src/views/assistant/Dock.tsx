@@ -676,8 +676,8 @@ export const SETUP_DOCS = { page: "features/integrations/librechat.md", anchor: 
 
 /** Chat not set up (`failing`: its setup failing): the icon, a title and one sentence, then
  *  the docs on setting up the assistant service, or Try again while it fails, with Admin ›
- *  Health for someone who can open it (a platform or namespace admin) and who fixes it for
- *  anyone else. The line about Loom's own reads shows only while the starters, which need no
+ *  Health for someone who can open it (a platform or namespace admin), and who fixes it for
+ *  anyone but a platform admin. The line about Loom's own reads shows only while the starters, which need no
  *  model, show under it. */
 function SetupState({
   failing,
@@ -695,8 +695,13 @@ function SetupState({
   const platform = hasPlatformAdminClaim(whoami);
   const seesHealth = platform || isNamespaceAdmin(whoami, mine, namespace);
   // Only a platform admin fixes the deployment's setup; a namespace admin sees why it fails.
+  const why = seesHealth
+    ? "Loom retries the setup on its own; Admin › Health says why it fails."
+    : "Loom retries the setup on its own.";
   const first = failing
-    ? `Loom retries the setup on its own${seesHealth ? "; Admin › Health says why it fails" : ""}.${platform ? "" : " An admin of this deployment fixes it."}`
+    ? platform
+      ? why
+      : `${why} An admin of this deployment fixes it.`
     : "An operator sets up the assistant service for this deployment.";
   const reads = starters
     ? failing

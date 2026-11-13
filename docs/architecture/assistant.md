@@ -337,29 +337,28 @@ The rule reads no wording beyond the abstention sentence, and accepts these resi
   answer read it; the instructions ask for a document to be read again before it is
   cited on a later turn.
 
-**Rendering.** The answer is model output that stored text can steer, so the
-dashboard renders it as text with Markdown emphasis, lists, tables and code only: no
-HTML, no images and no links in the answer's text but its citations, each drawn as a
-number by where it first appears (`citationNumbers` in
-`frontend/src/views/assistant/AnswerText.tsx`), which links to the citation's Sources row
-once the check ends; the panel and the header search's card, a preview of the answer,
-number an answer alike. The dashboard's `img-src 'self' data: blob:` already stops a
-remote image that would carry rows away in its URL. Under a finished answer its Sources
-(`frontend/src/views/assistant/Sources.tsx`) list each citation as the server
+**Rendering.** The answer is model output that stored text can steer, so the dashboard
+renders it as text with Markdown emphasis, lists, tables and code only: no HTML, no
+images and no links in the answer's text but its citations, each drawn as a number by
+where it first appears (`citationNumbers` in
+`frontend/src/views/assistant/AnswerText.tsx`), which links to the citation's Sources
+row once the check ends; the panel and the header search's card, a preview of the
+answer, number an answer alike. The dashboard's `img-src 'self' data: blob:` already
+stops a remote image that would carry rows away in its URL. Under a finished answer its
+Sources (`frontend/src/views/assistant/Sources.tsx`) list each citation as the server
 checked it, under one Sources label, each led by its number and named as the reader
-knows it (a memory by its key, its kind and version in the row's tooltip): one found in Loom opens, a
-memory in the memory drawer, a document in the Library and a help citation on the
-Help page at its section, by the citation's `ref`; any other reads "not confirmed"
-with its reason. A label above them says the answer's support in words, leading with
-how many sources were found when some were not: "Checked against what Loom holds",
-"Partly confirmed: n of m sources found in Loom", "Couldn't confirm: 0 of m sources
-found in Loom", "Couldn't confirm: it names …" (an op or setting this Loom does not
-have), "Couldn't confirm: it gives no sources", "Sources not checked" or "Not
-checked: it cites nothing Loom holds"; an answer whose `loom.citations` never came
-(the connection was lost after its text, or the page was left) reads "Check didn't
-finish". Each label's "Why this label" note says why it reads as it does; an answer
-whose support is `none` has no label. A value the dashboard does not know reads as
-`unchecked`.
+knows it (a memory by its key, its kind and version in the row's tooltip): one found in
+Loom opens, a memory in the memory drawer, a document in the Library and a help citation
+on the Help page at its section, by the citation's `ref`; any other reads "not
+confirmed" with its reason. A label above them says the answer's support in words,
+leading with how many sources were found when some were not: "Checked against what Loom
+holds", "Partly confirmed: n of m sources found in Loom", "Couldn't confirm: 0 of m
+sources found in Loom", "Couldn't confirm: it names …" (an op or setting this Loom does
+not have), "Couldn't confirm: it gives no sources", "Sources not checked" or "Not
+checked: it cites nothing Loom holds"; an answer whose `loom.citations` never came (the
+connection was lost after its text, or the page was left) reads "Check didn't finish".
+Each label's "Why this label" note says why it reads as it does; an answer whose support
+is `none` has no label. A value the dashboard does not know reads as `unchecked`.
 
 ### Steps
 
