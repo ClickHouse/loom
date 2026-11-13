@@ -51,15 +51,17 @@ networkPolicy:
 ## 2. A token per agent
 
 Give each agent its own token, with a service-account subject named for the atespace and
-the actor. Each row it writes records that subject as its writer (`actor`), and the token's
+the Substrate actor. Loom records that subject on each row the agent writes, and the token's
 namespaces and roles decide what it reads and writes
 ([tokens and grants](../../guides/tokens-and-grants.md)).
-Mint it in a Loom pod, which holds the signing key, and store it in a Secret in a namespace
-that holds only that atespace's tokens:
+
+Mint the token in a Loom pod, which holds the signing key, and store it in a Secret in a
+namespace that holds only that atespace's tokens:
 
 ```bash
 TOKEN=$(kubectl -n loom exec deploy/loom -- \
-  loom mint-token --subject sa:research.research-agent --org acme --namespaces research --roles writer --ttl-days 30)
+  loom mint-token --subject sa:research.research-agent --org acme \
+    --namespaces research --roles writer --ttl-days 30)
 kubectl create namespace loom-tokens-research
 kubectl -n loom-tokens-research create secret generic research-agent --from-literal=token="$TOKEN"
 ```
@@ -89,7 +91,8 @@ The provider grants an atespace whole namespaces, not single Secrets, so an ates
 granted a namespace can use every token in it: one namespace per atespace keeps each
 atespace to its own agents' tokens.
 
-The token expires after `--ttl-days`: mint a new one before then and update the Secret.
+The token expires after `--ttl-days`: before then, mint a new one, update the Secret and
+restart the credential provider as above.
 
 ## 3. Configure the agent and create its actor
 
@@ -116,7 +119,8 @@ container environment takes literal values only.
 Then create the atespace, the actor template that carries the agent's image, and the actor
 from that template. Substrate's [API guide](https://ate.dev/docs/reference/api-guide/)
 describes the template's fields; here its `metadata` names it `research-agent` in atespace
-`research`. The egress policy comes next:
+`research`. The template's `workerSelector` must match a WorkerPool in the cluster, and its
+image is pinned by digest. The egress policy comes next:
 
 ```bash
 kubectl ate create atespace research
