@@ -1042,14 +1042,14 @@ async function installDemoApi(page: Page): Promise<void> {
           rows: [
             {
               commit: "4be19a0c7d2e5f13",
-              subject: "The refund API returns the settled amount",
+              subject: "The refund handler reports its status",
               h: 0.4,
               files: 2,
               pr: 488,
             },
             {
               commit: "2d71c9e0b5a3f846",
-              subject: "Refunds settle in the charge's currency first",
+              subject: "Refunds convert to the settlement currency before posting",
               h: 6,
               files: 3,
               pr: 486,
@@ -1180,13 +1180,13 @@ const steps = {
     await row.click();
     await expect(page.getByRole("dialog").getByText("Linked code")).toBeVisible();
   },
-  async documentSearch(page: Page, pace = SHOT) {
+  async documentSearch(page: Page) {
     await page.goto("/library");
     await expect(page.getByText("Refunds policy").first()).toBeVisible();
     await page.getByRole("button", { name: "Find a passage" }).click();
     const field = page.getByRole("textbox", { name: "Passage to find" });
     await field.click();
-    await field.pressSequentially("Who approves a large refund?", { delay: pace.typing });
+    await field.fill("Who approves a large refund?");
     await field.press("Enter");
     await expect(page.getByText("Approvals").first()).toBeVisible();
   },
