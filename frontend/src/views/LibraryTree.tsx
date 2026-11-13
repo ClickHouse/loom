@@ -143,8 +143,8 @@ export function LibraryTree({
   failed?: boolean;
   /** The list is read again: the tree shows the last answer until the new one lands. */
   busy?: boolean;
-  /** The height of <main>'s view, when measured (a banner above the page is not taken off). */
-  viewHeight?: number;
+  /** The height of <main>'s view (a banner above the page is not taken off). */
+  viewHeight: number;
   /** The header's namespace, when it holds documents; null when it does not. */
   shelf: string | null;
   /** The collection shown, or null for the header's namespace. */
@@ -159,7 +159,8 @@ export function LibraryTree({
   const [open, setOpen] = useState<Set<string>>(() => loadExpanded(org));
   // What a move opened to show the place reached: for this visit only.
   const [revealed, setRevealed] = useState<Set<string>>(() => new Set());
-  // Pruned once, against the first whole list after mount: a lagging replica's answer forgets no fold.
+  // Pruned once, against the first whole list after mount; later answers, from a lagging
+  // replica too, forget no fold.
   const pruned = useRef(false);
   useEffect(() => {
     if (pruned.current || !rows || truncated) return;
@@ -242,7 +243,7 @@ export function LibraryTree({
       aria-label="Library places"
       aria-busy={busy || undefined}
       className="library-tree"
-      style={viewHeight ? { maxHeight: viewHeight } : undefined}
+      style={{ maxHeight: viewHeight }}
     >
       {(shelf !== null || tree.own) && (
         <ul>

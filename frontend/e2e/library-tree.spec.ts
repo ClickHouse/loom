@@ -141,7 +141,7 @@ test.describe("1280 px", () => {
 
   test("the tree is drawn, a classic scrollbar on a long list or not", async ({ page }) => {
     await installApi(page, { knowledgeRows: 40, collections: COLLECTIONS });
-    // Chromium draws a classic scrollbar, which takes width from <main>, for this rule.
+    // A classic 16 px scrollbar on #main, which takes width from it.
     await page.addInitScript(() => {
       document.addEventListener("DOMContentLoaded", () => {
         const style = document.createElement("style");
@@ -187,9 +187,12 @@ for (const [width, tree] of [
       // The documents' toolbar spans the page, less the tree's column where it shows.
       const toolbar = page.getByRole("search", { name: "Search and filters" });
       const room = await page.evaluate(() => document.getElementById("main")?.clientWidth ?? 0);
+      const treeWidth = tree
+        ? ((await page.getByRole("navigation", { name: "Library places" }).boundingBox())?.width ?? 0)
+        : 0;
       await expect
         .poll(async () => (await toolbar.boundingBox())?.width ?? 0)
-        .toBeGreaterThanOrEqual(room - (tree ? 264 : 0) - 120);
+        .toBeGreaterThanOrEqual(room - treeWidth - 120);
     });
   });
 }

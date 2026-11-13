@@ -951,7 +951,7 @@ export function Documents() {
       besideTree={wide}
     />
   );
-  const tree = wide && (
+  const tree = room?.wide && (
     <LibraryTree
       // One per org: nothing read or opened in one org shows in, or is saved for, another.
       key={picked.org}
@@ -960,7 +960,7 @@ export function Documents() {
       repeated={repeated}
       byName={byName}
       truncated={collections.kept?.truncated}
-      viewHeight={room?.height}
+      viewHeight={room.height}
       failed={!!collections.error}
       busy={collections.refreshing}
       shelf={ownShelf ? picked.namespace : null}

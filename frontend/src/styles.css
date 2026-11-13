@@ -1697,8 +1697,6 @@ textarea[aria-invalid="true"]:focus-visible {
     top: 0;
     flex-direction: column;
     gap: var(--spaces-2);
-    /* Below the header (`min-h-14`) until Documents measures <main> and the tree takes its height. */
-    max-height: calc(100vh - 3.5rem);
     overflow-y: auto;
     padding: var(--spaces-5) var(--spaces-2) var(--spaces-4) var(--spaces-4);
     border-inline-end: 1px solid var(--click-global-color-stroke-default);

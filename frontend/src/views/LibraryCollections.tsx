@@ -109,17 +109,19 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
     truncated: boolean;
   } | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const keep = useRef("");
   // Each read waits for `expect` (a name in an org), which the reload or refresh that asked
-  // for it sets: a later one clears it.
-  const [reads, setReads] = useState({ reloads: 0, refreshes: 0, expect: { org: "", name: "" } });
+  // for it sets: a later one clears it. `kind`: who asked for the last read.
+  const [reads, setReads] = useState({
+    reloads: 0,
+    refreshes: 0,
+    expect: { org: "", name: "" },
+    kind: "reload" as "reload" | "refresh",
+  });
   const reload = useCallback(
     (name = "") => {
       // An old failure would read as "no collections" before the new answer lands.
       setError(null);
-      // The page asked: its answer decides, the collection shown in it or not.
-      keep.current = "";
-      setReads((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name } }));
+      setReads((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name }, kind: "reload" }));
     },
     [org],
   );
@@ -127,17 +129,15 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
   useEffect(
     () =>
       onCollectionsChanged((made) =>
-        setReads((r) => ({ ...r, refreshes: r.refreshes + 1, expect: { org, name: made } })),
+        setReads((r) => ({ ...r, refreshes: r.refreshes + 1, expect: { org, name: made }, kind: "refresh" })),
       ),
     [org],
   );
   const expected = reads.expect.org === org ? reads.expect.name : "";
   // The collection shown, when the last answer listed it: a refresh that leaves it out asks
-  // again, as for a lagging replica.
-  const listedShown = read?.org === org && read.rows.some((c) => c.namespace === shown) ? shown : "";
-  useEffect(() => {
-    keep.current = listedShown;
-  }, [listedShown, read]);
+  // again, as for a lagging replica; a reload's answer decides.
+  const listedShown = useRef("");
+  listedShown.current = read?.org === org && read.rows.some((c) => c.namespace === shown) ? shown : "";
   useAbortableEffect(
     (signal, live) => {
       setError(null);
@@ -153,9 +153,11 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
             if (!cursor) break;
           }
           const rows = [...byName.values()];
-          const caughtUp = [expected, keep.current].every((name) => !name || byName.has(name));
+          const hold = reads.kind === "refresh" ? listedShown.current : "";
+          const caughtUp = [expected, hold].every((name) => !name || byName.has(name));
           if (caughtUp || attempt >= 2) return { rows, truncated: !!cursor };
           await new Promise((r) => setTimeout(r, 1000));
+          if (signal.aborted) throw signal.reason;
         }
       })()
         .then(({ rows, truncated }) => {
@@ -165,7 +167,7 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
           if (live()) setError(e);
         });
     },
-    [org, reads, expected],
+    [org, reads],
   );
   const kept = read && read.org === org ? read : null;
   const current = kept && kept.reloads === reads.reloads ? kept : null;

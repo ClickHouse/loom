@@ -5,6 +5,7 @@ import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { PHONE_QUERY } from "../lib/useMedia";
+import { TREE_PAGE_MIN } from "../lib/usePageRoom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionEntry } from "../api";
 import { useStore } from "../lib/state";
@@ -372,9 +373,9 @@ function inMain(): HTMLElement {
   return main;
 }
 
-/** <main>, measured `width` px wide (1100: room for the tree), where the page looks for it;
- *  the function it returns narrows it. */
-function resizable(width = 1100) {
+/** <main>, measured `width` px wide (room for the tree by default), where the page looks for
+ *  it; the function it returns narrows it. */
+function resizable(width = TREE_PAGE_MIN + 64) {
   const observers: Array<() => void> = [];
   vi.stubGlobal(
     "ResizeObserver",
@@ -390,10 +391,9 @@ function resizable(width = 1100) {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     return this.id === "main" ? ({ width, height: 800 } as DOMRect) : rect.call(this);
   });
-  if (!document.getElementById("main"))
-    document.body.append(Object.assign(document.createElement("main"), { id: "main" }));
+  inMain();
   return () => {
-    width = 900;
+    width = TREE_PAGE_MIN - 136;
     for (const f of observers) f();
   };
 }
@@ -703,9 +703,16 @@ describe("the Library on a collection", () => {
       .mockResolvedValueOnce({ collections: ROWS, next_cursor: null })
       .mockResolvedValue({ collections: [...ROWS, q4], next_cursor: null });
     const docReads = api.listKnowledge.mock.calls.length;
-    await user.click(done);
-    const chips = await screen.findByRole("navigation", { name: "Collections in col-q3" }, { timeout: 3000 });
-    expect(await within(chips).findByRole("link", { name: "Q4" }, { timeout: 3000 })).toBeInTheDocument();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await user.click(done);
+      // Past the retry's wait.
+      await act(() => vi.advanceTimersByTimeAsync(1100));
+      const chips = await screen.findByRole("navigation", { name: "Collections in col-q3" });
+      expect(await within(chips).findByRole("link", { name: "Q4" })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
     expect(container.querySelector("[data-doc-row]")).not.toBeNull();
     expect(api.listKnowledge.mock.calls.length).toBe(docReads);
   });
@@ -1114,8 +1121,8 @@ describe("the Library on a collection", () => {
 
   describe("where <main> can be measured", () => {
     it.each([
-      [1100, true],
-      [900, false],
+      [TREE_PAGE_MIN + 64, true],
+      [TREE_PAGE_MIN - 136, false],
     ] as const)("at %i px of <main> draws the tree: %s", async (width, tree) => {
       resizable(width);
       api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
@@ -1138,12 +1145,46 @@ describe("the Library on a collection", () => {
       api.listCollections
         .mockResolvedValueOnce({ collections: ROWS.filter((c) => c.namespace !== "col-q3"), next_cursor: null })
         .mockResolvedValue({ collections: ROWS, next_cursor: null });
-      act(() => invalidateSharedCollections());
-      await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThanOrEqual(3), { timeout: 3000 });
-      await settle();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        act(() => invalidateSharedCollections());
+        // Past the retry's wait.
+        await act(() => vi.advanceTimersByTimeAsync(1100));
+        await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThanOrEqual(3));
+        await act(() => vi.advanceTimersByTimeAsync(100));
+      } finally {
+        vi.useRealTimers();
+      }
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
       expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/not among the collections/), "info");
       expect(container.querySelector("[data-doc-row]")).not.toBeNull();
+    });
+
+    it("leaves the collection shown once three refresh answers in a row leave it out", async () => {
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      const reads = api.listCollections.mock.calls.length;
+      api.listCollections.mockResolvedValue({
+        collections: ROWS.filter((c) => c.namespace !== "col-q3"),
+        next_cursor: null,
+      });
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        act(() => invalidateSharedCollections());
+        // Past both retries' waits.
+        await act(() => vi.advanceTimersByTimeAsync(2100));
+        await act(() => vi.advanceTimersByTimeAsync(100));
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(api.listCollections.mock.calls.length).toBe(reads + 3);
+      expect(toast).toHaveBeenCalledWith(
+        expect.stringMatching(/col-q3 is not among the collections you can read now/),
+        "info",
+      );
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
     });
 
     it("waits for a created collection in its own org only", async () => {

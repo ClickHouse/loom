@@ -19,16 +19,20 @@ const entry = (namespace: string, parent = ""): CollectionEntry => ({
   role: "admin",
 });
 
+let unsubscribe = () => {};
+
 afterEach(() => {
+  unsubscribe();
+  unsubscribe = () => {};
   cleanup();
   vi.clearAllMocks();
 });
 
 describe("MoveCollectionDialog", () => {
-  it("moves a collection to the top level, and the Library's lists read again", async () => {
+  it("moves a collection to the top level, and tells the Library's lists the collections changed", async () => {
     const onClose = vi.fn();
     const changed = vi.fn();
-    const stop = onCollectionsChanged(changed);
+    unsubscribe = onCollectionsChanged(changed);
     render(
       <MoveCollectionDialog
         org="acme"
@@ -55,7 +59,6 @@ describe("MoveCollectionDialog", () => {
     await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "q3", ""));
     expect(onClose).toHaveBeenCalled();
     expect(changed).toHaveBeenCalled();
-    stop();
   });
 
   it("offers no collection inside its own subtree, and says who loses access", async () => {

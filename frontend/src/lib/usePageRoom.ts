@@ -4,7 +4,7 @@ import { useLayoutEffect, useState } from "react";
  *  and Ask AI closed. Ask AI beside the page narrows it. */
 export const TREE_PAGE_MIN = 1036;
 
-export interface PageRoom {
+interface PageRoom {
   /** <main> has room for the tree beside the page. */
   wide: boolean;
   /** The height of <main>'s view. */
