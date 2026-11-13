@@ -66,9 +66,7 @@ async def achat(
         headers = {"Authorization": f"Bearer {key}"}
 
         def build() -> dict[str, Any]:
-            return _openai._payload(
-                model, system, prompt, max_tokens, None, 0.0, "", "max_completion_tokens"
-            )
+            return _openai._payload(model, system, prompt, max_tokens, None, 0.0)
 
         learn, starved = _openai._learn_from_refusal, _openai._starved
         hidden, cap_field = _openai._reasoning_tokens, ""

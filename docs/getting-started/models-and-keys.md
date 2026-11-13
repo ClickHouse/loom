@@ -259,9 +259,10 @@ the timeout) instead of holding the queue: a long session can need several calls
 row, each up to the timeout. On a server that answers one request at a time the timeout
 also counts the wait behind other calls, and the assistant and `memory.ask` share the
 server, so heavy use of them during a capture can fail it too; raise
-`LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` if it does. Entity tagging (`LOOM_ENTITY_EXTRACT_ENABLED`) is off: it would queue behind
-extraction on a server that answers one request at a time, and its pass, cut at its
-deadline, writes nothing, so search does without entity matches. The other workers that
+`LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` if it does. Entity tagging
+(`LOOM_ENTITY_EXTRACT_ENABLED`) is off: it would queue behind extraction on a server that
+answers one request at a time, and its pass, cut at its deadline, writes nothing, so
+search does without entity matches. The other workers that
 call a model are not tuned for a local one: observe extraction (off by default), whose
 pass of up to 10 sessions is cut at 900 s and starts again from the newest session, and
 conversation titles and structured profiles, which run once conversation logging or a

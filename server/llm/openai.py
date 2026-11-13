@@ -37,6 +37,10 @@ def _reasoning_effort(model: str, wanted: str = "") -> str:
     return pinned or floor
 
 
+# The output cap's field OpenAI reads first.
+CAP_FIELD = "max_completion_tokens"
+
+
 def _payload(
     model: str,
     system: str,
@@ -44,8 +48,8 @@ def _payload(
     max_tokens: int,
     response_format: dict[str, str] | None,
     temperature: float | None,
-    effort: str,
-    cap_name: str,
+    effort: str = "",
+    cap_name: str = CAP_FIELD,
 ) -> dict[str, Any]:
     """The request this call would like to send, minus what the model refused.
     `cap_name` is the output cap's field the server reads first."""
@@ -133,7 +137,7 @@ class OpenAILLMClient:
     # What /v1/health and an error's detail call this client's calls.
     _source = "openai:chat"
     # The output cap's field. OpenAI's reasoning models take only the newer name.
-    _cap_name = "max_completion_tokens"
+    _cap_name = CAP_FIELD
     # Whether the client refuses to start without OPENAI_API_KEY.
     _needs_key = True
     # This client's own reasoning effort ('' = the pin, else the lowest the model takes).

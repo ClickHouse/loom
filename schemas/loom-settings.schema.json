@@ -2742,7 +2742,7 @@
           "default": 0.0,
           "minimum": 0,
           "type": "number",
-          "description": "Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass` replays) may run before the supervisor abandons it; 0 = four intervals, 60 to 900 s."
+          "description": "Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass` replays) may run before the supervisor cancels it; 0 = four intervals, 60 to 900 s."
         },
         "extraction_queue_namespace_concurrency": {
           "default": 4,
