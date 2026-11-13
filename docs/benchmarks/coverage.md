@@ -56,7 +56,7 @@ measured; it does not prove that Loom performs well.
 
 ## Publication backlog
 
-Close gaps in this order because each answers a distinct evaluation question:
+Close gaps in this order; each item answers evaluation questions from the matrix above:
 
 1. **Write integrity and corrections:** extraction precision, false-memory rate,
    supersession and stale-answer rate on one public conversational corpus.
