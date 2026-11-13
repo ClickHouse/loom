@@ -19,8 +19,9 @@ tools the `coding` toolset lists, so connect the client on `?toolset=coding`:
 ## Loom: memory and code index
 
 Loom is connected as an MCP server; its tools are named `loom_*`. A tool you do not see
-listed runs through `loom_op` with the op's dotted name: drop `loom_` and write the dots
-(`loom_code_symbol` is `code.symbol`, `loom_working_memory_set` is `working_memory.set`).
+listed runs through `loom_op` with the op's dotted name (`loom_code_symbol` is
+`code.symbol`, `loom_working_memory_set` is `working_memory.set`); `loom_op` with
+`{"op": "help"}` lists them.
 
 Every task (no hook loads Loom for you, so these two calls are not optional)
 
@@ -56,17 +57,24 @@ Code
   tool answers `abstain: true`, grep instead of retrying with synonyms.
 ```
 
-`code.repos` (through `loom_op`) lists the repositories the token can read. Replace
-`<code-namespace>` with the row's `namespace` (the indexed branch) and `<team-namespace>`
+`code.repos` lists the repositories the token can read, one row per indexed branch:
+
+```bash
+curl -s -X POST https://loom.example.com/v1/code.repos -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' -d '{"repo": "<owner>/<name>"}'
+```
+
+Replace `<code-namespace>` with the `namespace` of the branch's row and `<team-namespace>`
 with its `primary_namespace` (the trunk branch's, where team file rules and decisions
-live); for the trunk branch the two are the same. A repository with no row (not indexed,
+live); for the trunk branch the two are the same. A branch indexed on its own carries its
+own row's `namespace` in its copy of the file. A repository with no row (not indexed,
 or not readable with this token) takes the block without `extra_namespaces` and without
 its Code section.
 
 ## Where each client reads it
 
 The block is the same everywhere; only the file and its header differ. Cursor, Cline,
-Devin Desktop, Zed and VS Code also read `AGENTS.md`, so one file can serve them all;
+Devin Desktop and VS Code also read `AGENTS.md`, so one file can serve them all;
 their own rule files keep the block apart from other instructions.
 
 | Client                                           | File                               | Header before the block                                                      |
@@ -74,7 +82,7 @@ their own rule files keep the block apart from other instructions.
 | Codex, Zed, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root | none                                                                         |
 | Claude Code without the plugin                   | `CLAUDE.md` at the repository root | none                                                                         |
 | Cursor                                           | `.cursor/rules/loom.mdc`           | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
-| Devin Desktop (formerly Windsurf)                | `.devin/rules/loom.md`             | `---`, `trigger: always_on`, `---`                                           |
+| Devin Desktop (`loom install --client windsurf`) | `.devin/rules/loom.md`             | `---`, `trigger: always_on`, `---`                                           |
 | Cline                                            | `.clinerules/loom.md`              | none                                                                         |
 | VS Code (GitHub Copilot)                         | `.github/copilot-instructions.md`  | none                                                                         |
 
@@ -113,9 +121,9 @@ The block's last memory line stands for the end-of-task review; to spell it out,
 its questions from the
 [agent-integration guide](../../guides/agent-integration.md#7-follow-the-memory-skills-review)
 under the block. The skills carry the detail the block leaves out: the receipt fields,
-documents versus memories, the stop rules. To give an agent skills instead of the block, install the
-`loom` and `loom-code` skills alone ([coding agents](index.md#coding-agents)); `loom`
-covers what `loom-memory` teaches.
+documents versus memories, the stop rules. The `loom` and `loom-code` skills can be installed beside the
+block for that detail ([coding agents](index.md#coding-agents)); `loom` covers what
+`loom-memory` teaches. They have no hooks, so they do not replace the block's two calls.
 
 ## Related
 
