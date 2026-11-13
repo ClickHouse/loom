@@ -774,8 +774,8 @@ def start_lease_loop(lease: Any, supervisor: Any, ch: Any) -> asyncio.Task[None]
     def _on_acquired() -> None:
         # The leader's boot duties follow the lease.
         supervisor.start_all()
-        # As at boot: only the deployment's leader registers them (a cell's `on`
-        # process outside LOOM_DEPLOYMENT is not one).
+        # As at boot: only the deployment's leader registers them (an `on` process
+        # outside LOOM_DEPLOYMENT is not one).
         if _leader.leads_deployment():
             _spawn_boot_task(register_tracker_namespaces(ch), name="loom-tracker-namespaces")
         _spawn_boot_task(_apply_retention_overrides(ch), name="loom-retention-overrides")

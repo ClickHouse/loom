@@ -1070,9 +1070,12 @@ never by a cell's ops, so a cell's release does not wait on the router's.
 - `server/core/cell_probe.py`: the probe route and the probe listener, which every web
   process accepts on and the workers child never opens;
 - `server/core/cell.py`: the cell's own state (`loom.cell_first`, `loom.tenancy_mode`,
-  `loom.cell_self`), its fingerprint and `gate_reason`, which the request middleware
+  `loom.cell_self`), the deployment's state rule (`state`, which also reads whether
+  `loom.tenancy` holds a row), its fingerprint and `gate_reason`, the gate on processes
+  with `LOOM_CELL` set or unset, which the request middleware
   (`server/transport/model_maintenance.py`), `verify_token`, readiness, the workers'
-  lease and the heartbeat read;
+  lease and the heartbeat read; `server/boot.py`'s `start_cell_gate` is a server
+  process's boot read;
 - `schemas/pg_migrations/008_cells.sql`, `schemas/pg_migrations/009_cell_probe.sql` and
   `schemas/migrations/094_cell_heartbeats.sql`: the cell's tables;
 - `server/auth/tenancy.py` (`ensure_held`): the tenancy check and the placement call,
