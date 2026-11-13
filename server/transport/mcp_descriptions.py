@@ -6,9 +6,7 @@ builds the tools/list descriptors.
 
 from __future__ import annotations
 
-# When an agent skips the first-step context.pack, in the agent-instructions page's words
-# and the same wherever the step is named (context.pack's description here, the MCP
-# instructions in mcp_primer): a plugin's hooks load the context for its whole session.
+# The first step's one exception, in agent-instructions.md's words; every text naming it.
 FIRST_STEP_SKIP = "Skip it when a Loom hook already put Loom's context in this session"
 
 # The one revision policy. Descriptions that each state their own revision
@@ -1183,11 +1181,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "conversation.delete": (
         "Soft-delete (tombstone) one conversation thread. Only call on explicit delete request."
     ),
-    # ---- Context pack (session startup bundle) ----
+    # ---- Context pack (the first step of each task) ----
     "context.pack": (
-        "The memories, decisions and procedures for a task, and the profile, optionally "
-        "docs/conversations, in one prompt-sized bundle: call it first at the start of "
-        f"each task, with the task as `query`. {FIRST_STEP_SKIP}. "
+        "A task's memories, decisions and procedures in one bundle: call it first in each "
+        "task, unless a Loom hook already put Loom's context in this session. Pass the task "
+        "as `query`; it adds the profile and, optionally, docs and conversations. "
         "`include_runs=true` adds a manifest of your recent sessions and runs "
         "(goal, outcome, tool calls, files) — shortlist there "
         "before opening one with memory.evidence or memory.digests. For one "

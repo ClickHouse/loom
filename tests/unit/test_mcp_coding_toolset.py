@@ -452,7 +452,8 @@ def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
     assert "**1. Session context.** First step of each task: call `loom_context_pack`" in rules
     assert FIRST_STEP_SKIP in rules
     assert "For one fact, rule 2's search alone is enough." in rules
-    desc = TOOL_DESCRIPTIONS["context.pack"]
-    assert desc.startswith("The memories, decisions and procedures for a task")
-    assert "call it first at the start of each task" in desc
-    assert FIRST_STEP_SKIP in desc
+    # the generated reference keeps the first sentence: the exception is in it
+    first = TOOL_DESCRIPTIONS["context.pack"].split(". ")[0]
+    assert first.startswith("A task's memories, decisions and procedures in one bundle")
+    assert "call it first in each task" in first
+    assert "unless a Loom hook already put Loom's context in this session" in first
