@@ -17,8 +17,10 @@ A change to the model or a banner makes every page stale; a change to the prompt
 regenerate with `--all`.
 
 The run estimates its cost before the first call and stops when the estimate, or the
-spend reported by the API, passes LOOM_I18N_MAX_USD (default 5); the spend can pass the cap
-by at most the call that crosses it.
+spend reported by the API, passes LOOM_I18N_MAX_USD (default 5). Every call checks the cap
+first, so the spend passes it by at most the calls already in flight, one per worker. The
+first page that fails stops the others before their next call; the pages finished by then
+are written.
 """
 
 from __future__ import annotations
@@ -36,8 +38,8 @@ import urllib.error
 import urllib.request
 from collections import Counter
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -335,8 +337,8 @@ def invariants(text: str) -> dict[str, Counter[str]]:
 
 
 def labels(text: str) -> Counter[str]:
-    """The headings, and the texts of links within the translated pages, that hold a word
-    to translate."""
+    """The headings, and the texts of Markdown links within the translated pages, that hold
+    a word to translate. HTML link texts (the README's navigation row) are not checked."""
     prose = "\n".join(line for line, in_code in outside_fences(text) if not in_code)
     found = [m.group(2) for m in map(HEADING.match, prose.split("\n")) if m]
     found += [label for label, target in LINK_TEXT.findall(prose) if not URL.match(target)]
@@ -414,12 +416,24 @@ def orphans() -> list[str]:
     return sorted(found - expected)
 
 
+def prose_links(text: str) -> list[re.Match[str]]:
+    """The link matches of `text` outside fenced code and code spans."""
+    found: list[re.Match[str]] = []
+
+    def collect(prose: str) -> str:
+        found.extend(LINK.finditer(prose))
+        return prose
+
+    in_prose(text, collect)
+    return found
+
+
 def link_problems() -> list[str]:
     """Relative links and `#anchors` in i18n/ that point at nothing."""
     problems = []
     for file in sorted((ROOT / OUT_DIR).rglob("*.md")):
         path = file.relative_to(ROOT).as_posix()
-        for match in LINK.finditer(file.read_text()):
+        for match in prose_links(file.read_text()):
             link, _, anchor = match.group(2).partition("#")
             if re.match(r"[a-z]+:", link):
                 continue
@@ -458,30 +472,35 @@ def readme_language_line_differs() -> bool:
 # ---- the API --------------------------------------------------------------------------
 
 
-_SPEND_LOCK = threading.Lock()
-
-
 @dataclass
 class Spend:
+    """What a run has spent, shared by its workers; `stopped` tells them to make no more calls."""
+
     model: str
     cap_usd: float
     input_tokens: int = 0
     output_tokens: int = 0
+    stopped: threading.Event = field(default_factory=threading.Event, repr=False)
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def usd(self) -> float:
         price_in, price_out = PRICES[self.model]
         return (self.input_tokens * price_in + self.output_tokens * price_out) / 1e6
 
+    def before_call(self) -> None:
+        if self.stopped.is_set():
+            raise SystemExit("stopped: another page failed or the cap was reached")
+        with self.lock:
+            spent = self.usd
+        if spent > self.cap_usd:
+            self.stopped.set()
+            raise SystemExit(f"spent ${spent:.2f}, over LOOM_I18N_MAX_USD=${self.cap_usd:.2f}")
+
     def add(self, usage: dict[str, int]) -> None:
-        with _SPEND_LOCK:
+        with self.lock:
             self.input_tokens += usage.get("input_tokens", 0)
             self.output_tokens += usage.get("output_tokens", 0)
-            over = self.usd > self.cap_usd
-        if over:
-            raise SystemExit(
-                f"spent ${self.usd:.2f}, over LOOM_I18N_MAX_USD=${self.cap_usd:.2f}; stopping"
-            )
 
 
 def request_chars(source: str, lang: Language) -> int:
@@ -492,12 +511,12 @@ def request_chars(source: str, lang: Language) -> int:
 
 
 def estimate_usd(model: str, chars: int) -> float:
-    """About three characters per input token, and a reply of 1.5 times the input's tokens:
-    a full run measured replies at about 0.8 times, and the rest covers thinking and a
-    retry. `Spend` is the hard cap; this only refuses a run that cannot fit."""
+    """About three characters per input token, and a reply of 1.2 times the input's tokens:
+    full runs measured about 0.75, and the rest covers thinking and retries. `Spend` is the
+    hard cap; this only refuses a run that cannot fit."""
     price_in, price_out = PRICES[model]
     tokens = chars / 3
-    return (tokens * price_in + 1.5 * tokens * price_out) / 1e6
+    return (tokens * price_in + 1.2 * tokens * price_out) / 1e6
 
 
 def call(key: str, model: str, system: str, messages: list[dict[str, str]]) -> dict:
@@ -547,6 +566,7 @@ def translate_section(section: str, lang: Language, key: str, spend: Spend) -> s
     system = SYSTEM.format(language=lang.english, style=lang.style)
     messages = [{"role": "user", "content": section}]
     for _ in range(2):
+        spend.before_call()
         data = call(key, spend.model, system, messages)
         spend.add(data.get("usage", {}))
         text = reply_text(data)
@@ -618,14 +638,18 @@ def write_readme_language_line() -> None:
 # ---- commands -------------------------------------------------------------------------
 
 
-def check() -> int:
+def check(skip_stale: bool = False) -> int:
     require_sources()
     model = os.environ.get("LOOM_I18N_MODEL", DEFAULT_MODEL)
-    problems = [
-        f"{target_path(lang.code, source)} is missing, or older than {source}, the model or "
-        "the banner"
-        for source, lang in stale(model=model)
-    ]
+    problems = (
+        []
+        if skip_stale
+        else [
+            f"{target_path(lang.code, source)} is missing, or older than {source}, the model or "
+            "the banner"
+            for source, lang in stale(model=model)
+        ]
+    )
     problems += [f"{path} is translated from no page in SOURCES" for path in orphans()]
     problems += link_problems()
     problems += untranslated_pages()
@@ -662,12 +686,12 @@ def update(every: bool = False, codes: list[str] | None = None) -> int:
         key = os.environ.get("ANTHROPIC_API_KEY") or sys.exit("ANTHROPIC_API_KEY is not set")
         with ThreadPoolExecutor(WORKERS) as pool:
             futures = [pool.submit(translate_page, s, lg, key, spend) for s, lg in work]
-            try:
-                for future in futures:
-                    future.result()
-            except BaseException:
+            done, _ = wait(futures, return_when=FIRST_EXCEPTION)
+            failed = [f for f in done if f.exception()]
+            if failed:
+                spend.stopped.set()
                 pool.shutdown(cancel_futures=True)
-                raise
+                raise SystemExit(f"{failed[0].exception()} (pages finished so far are written)")
     print(
         f"done: {spend.input_tokens} input, {spend.output_tokens} output tokens, ${spend.usd:.2f}"
     )
@@ -679,11 +703,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=("check", "update"))
     parser.add_argument("--all", action="store_true", help="translate every page, stale or not")
     parser.add_argument("--lang", action="append", choices=[lg.code for lg in LANGUAGES])
+    parser.add_argument("--skip-stale", action="store_true", help="check: everything but freshness")
     args = parser.parse_args(argv)
     if args.command == "check":
         if args.all or args.lang:
             parser.error("--all and --lang go with update")
-        return check()
+        return check(args.skip_stale)
+    if args.skip_stale:
+        parser.error("--skip-stale goes with check")
     return update(args.all, args.lang)
 
 

@@ -6,6 +6,7 @@ the translations after it lands."""
 from __future__ import annotations
 
 import re
+import time
 from collections import Counter
 
 import pytest
@@ -132,11 +133,35 @@ def test_a_translation_may_write_a_spelled_number_as_digits() -> None:
     assert t.differences("two steps", "2 Schritte") == []
 
 
-def test_the_cost_cap_stops_the_run() -> None:
+def test_the_cost_cap_is_checked_before_the_next_call() -> None:
     spend = t.Spend("claude-sonnet-5-5", cap_usd=0.01)
     spend.add({"input_tokens": 1000, "output_tokens": 100})
+    spend.before_call()
+    spend.add({"input_tokens": 0, "output_tokens": 1000})
     with pytest.raises(SystemExit, match="LOOM_I18N_MAX_USD"):
-        spend.add({"input_tokens": 0, "output_tokens": 1000})
+        spend.before_call()
+    assert spend.stopped.is_set()
+
+
+def test_the_first_failed_page_stops_the_others(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def fake_page(source: str, lang: t.Language, key: str, spend: t.Spend) -> None:
+        if source == t.SOURCES[0]:
+            raise SystemExit("boom")
+        for _ in range(200):
+            spend.before_call()
+            calls.append(source)
+            time.sleep(0.005)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    monkeypatch.setattr(t, "translate_page", fake_page)
+    monkeypatch.setattr(t, "write_readme_language_line", lambda: None)
+    monkeypatch.setattr(t, "request_chars", lambda source, lang: 1)
+    with pytest.raises(SystemExit, match="boom"):
+        t.update(every=True, codes=["ja"])
+    # Pages already running stop at their next call, and no more than one per worker started.
+    assert len(set(calls)) <= t.WORKERS and t.SOURCES[-1] not in calls and len(calls) < 200
 
 
 def test_a_missing_source_stops_check_and_update(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -146,12 +171,15 @@ def test_a_missing_source_stops_check_and_update(monkeypatch: pytest.MonkeyPatch
             command()
 
 
-def test_check_takes_no_update_flags() -> None:
+@pytest.mark.parametrize(
+    "args", [["check", "--all"], ["check", "--lang", "ja"], ["update", "--skip-stale"]]
+)
+def test_each_command_refuses_the_other_ones_flags(args: list[str]) -> None:
     with pytest.raises(SystemExit):
-        t.main(["check", "--all"])
+        t.main(args)
 
 
-def test_another_model_or_banner_makes_every_page_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_another_model_or_banner_makes_every_page_stale() -> None:
     ja = t.LANGUAGES[1]
     assert t.stale((ja,), model="claude-opus-5-5") == [(s, ja) for s in t.SOURCES]
     edited = t.Language(ja.code, ja.name, ja.english, ja.banner + "!", ja.style)

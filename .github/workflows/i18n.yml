@@ -61,6 +61,7 @@ jobs:
             echo "stale=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Translate
+        id: translate
         if: steps.check.outputs.stale == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -70,10 +71,14 @@ jobs:
         run: |
           args=($ALL)
           for code in $LANGUAGES; do args+=(--lang "$code"); done
-          python -m scripts.i18n.translate update "${args[@]}" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
-          # Stale pages left outside the chosen languages still fail this; links and
-          # anchors that point at nothing fail it before anything is pushed.
-          python -m scripts.i18n.translate check
+          if python -m scripts.i18n.translate update "${args[@]}" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+          # The pages written passed the verifier; links, anchors and labels across i18n/
+          # must hold before anything is pushed.
+          python -m scripts.i18n.translate check --skip-stale
       - name: Open or update the pull request
         if: steps.check.outputs.stale == 'true'
         env:
@@ -84,6 +89,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -C i18n/update
           git add README.md i18n
+          if git diff --cached --quiet; then
+            echo "no page was translated"
+            exit 0
+          fi
           git commit -s -q -m "Translations follow ${SOURCE_SHA::9}"
           git push --force origin i18n/update
           title="Translations follow ${SOURCE_SHA::9}"
@@ -93,3 +102,8 @@ jobs:
           else
             gh pr edit i18n/update --title "$title" --body "$body"
           fi
+      - name: Fail when a page was not translated
+        if: steps.translate.outputs.ok == 'false'
+        run: |
+          echo "some pages failed; the pull request carries the ones that passed"
+          exit 1
