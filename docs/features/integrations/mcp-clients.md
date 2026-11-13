@@ -181,15 +181,19 @@ client afterwards.
 `{…}` is `{"Authorization": "Bearer <JWT>"}`; leave it out for a single-user server.
 
 Gemini CLI also installs Loom as an extension, which asks for the MCP URL and, for a team
-server, `Bearer <JWT>` (leave it empty for a single-user server):
+server, a token (leave it empty for a single-user server):
 
 ```bash
 gemini extensions install https://github.com/ClickHouse/loom
 ```
 
+Gemini installs an extension from the repository's latest release, and the release after
+1.2.0 is the first that carries `gemini-extension.json`; until then, add `--ref main`. The
+extension also installs Loom's two agent skills, `loom` and `loom-code`.
 `gemini extensions config clickhouse-loom` changes the two values later; a scripted install
 passes `--skip-settings` and sets them that way. `gemini mcp list` shows the `loom` server as
 connected once the URL and token are right.
+
 Claude Desktop's custom connectors (Settings → Connectors) reach the server from the
 provider's cloud, so they need a Loom on a public HTTPS address; on the same machine,
 `loom install --client claude-desktop` writes the `mcp-remote` bridge entry.

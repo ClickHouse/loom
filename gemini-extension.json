@@ -5,7 +5,9 @@
   "mcpServers": {
     "loom": {
       "httpUrl": "${LOOM_MCP_URL}",
-      "headers": { "Authorization": "${LOOM_AUTHORIZATION}" }
+      "headers": {
+        "Authorization": "Bearer ${LOOM_TOKEN}"
+      }
     }
   },
   "settings": [
@@ -15,9 +17,9 @@
       "envVar": "LOOM_MCP_URL"
     },
     {
-      "name": "Loom authorization",
-      "description": "Bearer <token> for a team server (a token from Settings, Tokens); leave empty for a single-user server",
-      "envVar": "LOOM_AUTHORIZATION",
+      "name": "Loom token",
+      "description": "A Loom token from Settings, Tokens, for a team server; leave empty for a single-user server on this machine",
+      "envVar": "LOOM_TOKEN",
       "sensitive": true
     }
   ]

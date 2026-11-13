@@ -17,10 +17,11 @@ def test_every_variable_the_server_entry_uses_is_a_setting() -> None:
     assert used and used == declared
 
 
-def test_the_header_is_one_setting_so_an_empty_token_sends_no_bearer() -> None:
-    # Loom refuses "Bearer " with nothing after it, even with auth off; a blank header is none.
-    assert MANIFEST["mcpServers"]["loom"]["headers"] == {"Authorization": "${LOOM_AUTHORIZATION}"}
-    token = next(s for s in MANIFEST["settings"] if s["envVar"] == "LOOM_AUTHORIZATION")
+def test_the_token_is_a_sensitive_setting_sent_as_a_bearer() -> None:
+    # An empty token sends "Bearer ", which an MCP connection to a single-user (open) server
+    # ignores (server/transport/mcp.py), so one entry serves both kinds of server.
+    assert MANIFEST["mcpServers"]["loom"]["headers"] == {"Authorization": "Bearer ${LOOM_TOKEN}"}
+    token = next(s for s in MANIFEST["settings"] if s["envVar"] == "LOOM_TOKEN")
     assert token["sensitive"] is True
 
 
