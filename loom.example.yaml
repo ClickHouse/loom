@@ -3457,6 +3457,11 @@ settings:
   # Changed claims one pass re-checks with the LLM under the `revise` policy. [restart]
   # memory_code_links_revise_per_pass: 20
 
+  # Places a search hit moves down within the served results when its linked code
+  # changed, was not found again or is partly gone (0 moves nothing). It never leaves
+  # the results, and a memory a person holds keeps its place. [live]
+  # memory_search_code_changed_positions: 3
+
   # --- memory chunks ---
 
   # Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈ 400K chars;

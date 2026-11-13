@@ -3843,3 +3843,97 @@ async def test_elsewhere_finds_the_same_name_and_the_same_name_in_another_module
     monkeypatch.setattr(code_link_recheck.code, "candidates", candidates)
     found = await code_link_recheck._elsewhere("o", "code-a", {"pkg.a::fn": "pkg/a.py"})
     assert dict(found) == {"pkg.a::fn": [same, moved]}
+
+
+# ---- a memory whose code changed ranks below its match ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_memory_whose_code_changed_or_went_is_marked_to_rank_down(served) -> None:
+    states = {"c": "changed", "u": "unresolved", "p": "missing", "m": "moved", "f": "fresh"}
+    for mid, state in states.items():
+        served.heads.append(_row(mid, memory_key=mid))
+        served.links[mid] = [_link(mid, state)] + ([_link(mid, "fresh")] if mid == "p" else [])
+    hits = [_hit(k) for k in states]
+    await code_link_reads.annotate_hits(_search(), hits)
+    assert [(h.code_state, h._code_ranked_down) for h in hits] == [
+        ("changed", True),
+        ("unresolved", True),
+        ("missing", True),
+        ("moved", False),
+        ("fresh", False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_held_unreadable_or_unkept_code_is_not_ranked_down(served, monkeypatch) -> None:
+    served.heads += [
+        _row("pinned", memory_key="pinned", pinned=1),
+        _row("hidden", memory_key="hidden"),
+        _row("plain", memory_key="plain"),
+    ]
+    served.links.update(
+        pinned=[_link("pinned", "changed")],
+        hidden=[{**_link("hidden", "changed"), "code_namespace": "code-secret"}],
+        plain=[_link("plain", "changed")],
+    )
+
+    async def readable(org, nss):
+        return set(nss) - {"code-secret"}
+
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", readable)
+    hits = [_hit("pinned"), _hit("hidden"), _hit("plain")]
+    await code_link_reads.annotate_hits(_search(), hits)
+    assert [(h.code_state, h._code_ranked_down) for h in hits] == [
+        ("changed", False),
+        ("", False),
+        ("changed", True),
+    ]
+    # links nothing keeps current rank nothing down
+    monkeypatch.setattr(settings, "memory_code_links_enabled", False)
+    unkept = [_hit("plain")]
+    await code_link_reads.annotate_hits(_search(), unkept)
+    assert [(h.code_state, h._code_ranked_down) for h in unkept] == [("changed", False)]
+
+
+def _ranked(*keys: str, down: str = "") -> list[Any]:
+    hits = []
+    for i, key in enumerate(keys):
+        hit = _hit(key)
+        hit.rank_score = 0.05 - 0.01 * i
+        hit._code_ranked_down = key in down
+        hits.append(hit)
+    return hits
+
+
+def test_a_marked_hit_moves_down_within_the_served_results() -> None:
+    out = code_change.rank_down(_ranked("a", "b", "c", "d", "e", down="a"), 3)
+    assert [h.memory_key for h in out] == ["b", "c", "d", "a", "e"]
+    moved = out[3]
+    assert moved.rank_score == pytest.approx(0.02)  # the score of the hit above it
+    assert moved.score_components == {"code_changed_places": -3.0, "rank_score": moved.rank_score}
+    # a stable sort by score keeps the order, as context.pack's evidence sort does
+    assert sorted(out, key=lambda h: -h.rank_score) == out
+
+
+def test_a_marked_hit_never_leaves_the_results_and_unmarked_ones_never_move() -> None:
+    out = code_change.rank_down(_ranked("a", "b", "c", down="ab"), 3)
+    assert [h.memory_key for h in out] == ["c", "a", "b"]  # in their own order, last
+    assert [h.memory_key for h in code_change.rank_down(_ranked("a", "b", "c"), 3)] == [
+        "a",
+        "b",
+        "c",
+    ]
+    last = code_change.rank_down(_ranked("a", "b", down="b"), 3)
+    assert [(h.memory_key, h.score_components) for h in last] == [("a", {}), ("b", {})]
+    assert [h.memory_key for h in code_change.rank_down(_ranked("a", "b", down="a"), 0)] == [
+        "a",
+        "b",
+    ]
+
+
+def test_a_move_keeps_a_negative_score_in_order() -> None:
+    hits = _ranked("a", "b", down="a")
+    hits[0].rank_score, hits[1].rank_score = -1.0, -2.0
+    out = code_change.rank_down(hits, 1)
+    assert [(h.memory_key, h.rank_score) for h in out] == [("b", -2.0), ("a", -2.0)]

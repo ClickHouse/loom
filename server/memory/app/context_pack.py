@@ -23,6 +23,7 @@ from server.memory.api.models_profile import ProfileRenderInput
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.api.models_working_memory import WorkingMemoryRenderInput
 from server.memory.app.agent_rules import request_rule_agent, served_hits
+from server.memory.domain import code_change
 from server.memory.domain.context_layout import (
     _BLOCK_LABELS,
     _DEFAULT_SECTION_ORDER,
@@ -486,6 +487,24 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
         return {}
 
 
+def _code_note(hit: Any) -> str:
+    """The note a pack line carries when the hit's linked code changed or went, naming the
+    commit; '' otherwise."""
+    links = getattr(hit, "_code_links", None) or []
+    state = str(getattr(hit, "code_state", "") or "")
+    return code_change.note(state, code_change.worst_commit(links))
+
+
+def _code_label(hit: Any) -> str:
+    """`<state>@<commit>` for a hit whose linked code changed, was not found again or went
+    (the state alone when no commit is known); '' otherwise."""
+    state = str(getattr(hit, "code_state", "") or "")
+    if state not in code_change.DEMOTED:
+        return ""
+    commit = code_change.worst_commit(getattr(hit, "_code_links", None) or [])
+    return f"{state}@{commit[:12]}" if commit else state
+
+
 async def _pack_decisions_from_hits(
     st: _PackState, decision_hits: list[Any], actors: _KeyWriters, *, abstained: bool
 ) -> None:
@@ -526,7 +545,7 @@ async def _pack_decisions_from_hits(
         made = str(rec.get("made_at") or "")[:10]
         author = _hit_author(actors, input, h)
         line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
-        line += (f" {made}" if made else "") + f" {scenario}"
+        line += (f" {made}" if made else "") + _code_note(h) + f" {scenario}"
         if outcome:
             line += f" → {rec['stage']}: {outcome}"
         if states_reason(rec):
@@ -636,6 +655,7 @@ async def _pack_memories(st: _PackState) -> None:
                     conflict=getattr(h, "status", "") == "conflicted",
                     author=_hit_author(actors, input, h),
                     derived_from=tuple(getattr(h, "derived_from", None) or ()),
+                    code=_code_label(h),
                 )
             )
         packed = pack_evidence(

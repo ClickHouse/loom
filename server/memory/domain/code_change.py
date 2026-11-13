@@ -44,6 +44,63 @@ def worst(states: Sequence[str]) -> CodeState | Literal[""]:
     return served[-1] if served else ""
 
 
+# the states whose memory ranks below its match in search
+DEMOTED = frozenset({"changed", "unresolved", "missing"})
+
+
+# what a read says of a memory in each state, and what the reader should do
+_NOTES = {
+    "changed": ("its code changed since it was written", "check before relying on it"),
+    "unresolved": ("its code was renamed or removed and could not be followed", "check it"),
+    "missing": ("the code it is about is gone", "check before relying on it"),
+}
+
+
+def note(state: str, commit: str = "") -> str:
+    """The note a read line carries for a memory whose worst link is in `state`, naming
+    the commit that put it there; '' for a state that needs none."""
+    if state not in _NOTES:
+        return ""
+    what, ask = _NOTES[state]
+    at = f", commit {commit[:12]}" if commit else ""
+    return f" ({what}{at}: {ask})"
+
+
+def worst_commit(links: Sequence[Mapping[str, Any]]) -> str:
+    """The commit that put a memory in its worst state, when that state is one a read
+    notes: of its links in that state, the first by path and name."""
+    state = worst([str(a.get("state") or "") for a in links])
+    if state not in DEMOTED:
+        return ""
+    at = [a for a in links if a.get("state") == state]
+    first = min(at, key=lambda a: (str(a.get("path") or ""), str(a.get("qualified_name") or "")))
+    return str(first.get("changed_since") or "")
+
+
+def rank_down(hits: list[Any], places: int) -> list[Any]:
+    """`hits` with each one marked `_code_ranked_down` moved `places` down, never past the
+    last. It takes the rank score of the hit it lands under, so a stable sort by score
+    keeps the order, and `score_components.code_changed_places` says how far it moved
+    (negative, in places, as a reranker's `rerank_delta`)."""
+    out = list(hits)
+    if places <= 0:
+        return out
+    for hit in [h for h in hits if getattr(h, "_code_ranked_down", False)]:
+        at = next(i for i, h in enumerate(out) if h is hit)  # by identity: hits compare by value
+        to = min(at + places, len(out) - 1)
+        if to == at:
+            continue
+        out.insert(to, out.pop(at))
+        score = min(float(hit.rank_score), float(out[to - 1].rank_score))
+        hit.rank_score = score
+        hit.score_components = {
+            **hit.score_components,
+            "code_changed_places": float(at - to),
+            "rank_score": score,
+        }
+    return out
+
+
 def code_removed(states: Sequence[str]) -> bool:
     """Every code link of a memory is missing: the code it is about is gone."""
     return bool(states) and all(s == "missing" for s in states)

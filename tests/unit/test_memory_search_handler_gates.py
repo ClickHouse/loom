@@ -947,3 +947,38 @@ async def test_a_re_entered_pass_never_re_reads(monkeypatch) -> None:
         input=inp, search_budget=SearchBudget(max_wall_ms=60_000), namespaces=["n"]
     )
     assert await _consistency_reread(ctx, []) is None  # type: ignore[arg-type]
+
+
+async def test_a_memory_whose_code_changed_is_served_lower_after_the_verdict(
+    search_env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import code_link_reads
+
+    def hits() -> list[SearchHit]:
+        sims = {"stale": 0.9, "b": 0.6, "c": 0.5, "d": 0.4, "e": 0.35}
+        return [_svc_hit(k, sim=s) for k, s in sims.items()]
+
+    marked: set[str] = set()
+
+    async def annotate(input: Any, pool: list[Any]) -> None:
+        for h in pool:
+            h._code_ranked_down = h.memory_key in marked
+
+    monkeypatch.setattr(code_link_reads, "annotate_hits", annotate)
+    search_env.hits = hits()
+    plain = await _run(search_env, top_k=5)
+    assert [h.memory_key for h in plain.results][0] == "stale"
+    marked.add("stale")
+    search_env.hits = hits()
+    out = await _run(search_env, top_k=5)
+    assert [h.memory_key for h in out.results] == ["b", "c", "d", "stale", "e"]
+    assert out.results[3].score_components["code_changed_places"] == -3.0
+    # the verdict read the results in relevance order
+    assert (out.abstain, out.retrieval_confidence) == (plain.abstain, plain.retrieval_confidence)
+    # 0 places moves nothing
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_code_changed_positions", 0)
+    search_env.hits = hits()
+    off = await _run(search_env, top_k=5)
+    assert [h.memory_key for h in off.results][0] == "stale"

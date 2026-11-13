@@ -527,6 +527,8 @@ class _MemorySearchHit(BaseModel):
     # The hit's code links in repositories the caller may read, as the search's code
     # annotation read them; None = not read (memory.ask reads them itself then).
     _code_links: list[dict[str, Any]] | None = None
+    # Its code changed or went and nobody holds it: the served results move it down.
+    _code_ranked_down: bool = False
 
     memory_key: str
     memory_type: MemoryType

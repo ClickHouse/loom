@@ -36,7 +36,9 @@ from server.memory.app.search.tiers import (
     _prepend_anchor,
     _prepend_recent,
 )
+from server.memory.domain import code_change
 from server.observability import degradations as _degradations
+from server.settings import settings
 
 if TYPE_CHECKING:
     from server.memory.domain.retrieval_calibration import RetrievalCalibration
@@ -215,7 +217,8 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
 async def _shape_final_hits(
     ctx: SearchContext, final_hits: list[_MemorySearchHit]
 ) -> tuple[list[_MemorySearchHit], tuple[int, int, int], list[str]]:
-    """Phase 22: shape the served hits — decorate, prepend recent/anchor
+    """Phase 22: shape the served hits — move down those whose code changed, decorate,
+    prepend recent/anchor
     rows, body floor, unit and source bodies, relative-date wording, foreign
     namespace marks, grounded excerpts, optional fields. Returns the hits,
     the unit-body counts and the namespaces searched."""
@@ -223,6 +226,10 @@ async def _shape_final_hits(
     namespaces = ctx.namespaces
     actual_work = ctx.actual_work
     _clock = ctx.clock
+    # After the verdict, which read relevance: a memory whose code changed is served
+    # lower, never left out.
+    places = settings.memory_search_code_changed_positions
+    final_hits = code_change.rank_down(final_hits, places)
     _decorate_hits(final_hits, input=input)
     recent, stale_recent = await _prepend_recent(final_hits, input, ctx.stale_versions)
     anchored, stale_anchor = await _prepend_anchor(recent, input, ctx.stale_versions)

@@ -7,7 +7,7 @@ import json
 import logging
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.code.app.common import repo_relative
 from server.core.ch import get_client
@@ -18,6 +18,7 @@ from server.memory.api.models_for_file import (
     MemoryForFileOutput,
     _MemoryForFileHit,
 )
+from server.memory.domain import code_change
 from server.memory.domain.code_change import STATE_RANK, worst
 from server.memory.domain.decision_schema import (
     CONSTRAINT_TAG,
@@ -32,6 +33,9 @@ from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import row_verification
 from server.settings import settings
 
+if TYPE_CHECKING:
+    from server.memory.store.code_links import LinkRow
+
 log = logging.getLogger(__name__)
 
 _VALUE_BYTES = 600
@@ -40,11 +44,6 @@ _LINE_CHARS = 220
 _ESCAPE_CHARS = 6
 # A character outside the Basic Multilingual Plane (an emoji) is two escapes.
 _PAIR_ESCAPE_CHARS = 2 * _ESCAPE_CHARS
-_CODE_NOTES = {
-    "changed": " (its code changed since it was written: check before relying on it)",
-    "unresolved": " (its code was renamed or removed and could not be followed: check it)",
-    "missing": " (the code it is about is gone: check before relying on it)",
-}
 # Rough prompt-token estimate for English prose and code paths.
 _CHARS_PER_TOKEN = 4
 
@@ -199,7 +198,8 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
         out += " (source changed)"
     if decision and FAILURE_TAG in tags:
         out += " (outcome: failed)"
-    return out + _CODE_NOTES.get(str(hit.get("code_state") or ""), "")
+    state, commit = str(hit.get("code_state") or ""), str(hit.get("code_changed_since") or "")
+    return out + code_change.note(state, commit)
 
 
 def _marker(hit: dict[str, Any], *, show_decision: bool) -> str:
@@ -459,13 +459,14 @@ async def _rows_for(
     path: str,
     base: str,
     tags: list[str],
-    linked: asyncio.Task[dict[str, list[str]] | None],
+    linked: asyncio.Task[dict[str, list[LinkRow]] | None],
     *,
     whole_only: bool = False,
 ) -> list[dict[str, Any]]:
     """One namespace's rows naming the file or linked to code still in it (`linked`:
-    memory_id -> the states of its links here, read alongside the files match; None when
-    that read failed), each stamped with its namespace and the worst of those states.
+    memory_id -> its links here, read alongside the files match; None when that read
+    failed), each stamped with its namespace, the worst state of those links and the
+    commit that put it there.
     `whole_only` keeps decisions and constraints only (the rows printed whole)."""
     statuses = ["active", "conflicted"] if input.include_conflicted else ["active"]
     params = {
@@ -481,28 +482,32 @@ async def _rows_for(
     }
     ch = get_client()
     found, read = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
-    states_of = read or {}
-    ids = sorted(m for m, states in states_of.items() if set(states) != {"missing"})
+    links_of = read or {}
+    ids = sorted(m for m, links in links_of.items() if {a["state"] for a in links} != {"missing"})
     # a hot file's links are bound a slice at a time; the best of the files match and
     # of each slice's own top `lim` are the namespace's
     if ids:
         found = found + await query_all_sliced(ch, _LINKED_SQL, params | {"linked": ids}, "linked")
     unique = {str(r["memory_id"]): r for r in found}.values()
     rows = sorted(unique, key=_order_key)[: int(input.top_k)]
-    return [
-        {
-            **r,
-            "namespace": namespace,
-            "code_state": worst(states_of.get(str(r.get("memory_id")), [])),
-        }
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        links = links_of.get(str(r.get("memory_id")), [])
+        out.append(
+            {
+                **r,
+                "namespace": namespace,
+                "code_state": worst([a["state"] for a in links]),
+                "code_changed_since": code_change.worst_commit(links),
+            }
+        )
+    return out
 
 
 async def _linked(
     input: MemoryForFileInput, path: str, nss: list[str]
-) -> dict[str, list[str]] | None:
-    """memory_id -> the code states of the links of the `nss` memories to code in `path`,
+) -> dict[str, list[LinkRow]] | None:
+    """memory_id -> the links of the `nss` memories to code in `path`,
     read from the trunk links of the repository the call is about: the one
     `extra_namespaces` or the `repo:` tag names. None named: no links (a path alone
     is in every repository). None when the read failed."""
@@ -523,10 +528,10 @@ async def _linked(
     except Exception as e:  # noqa: BLE001 — the links are additive; the files match stands
         log.debug("memory.for_file: code links skipped: %s", e)
         return None
-    out: dict[str, list[str]] = defaultdict(list)
+    out: dict[str, list[LinkRow]] = defaultdict(list)
     for a in links:
         if a["code_namespace"] in seen:
-            out[a["memory_id"]].append(a["state"])
+            out[a["memory_id"]].append(a)
     return out
 
 
@@ -633,7 +638,15 @@ async def listing_rows(
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
     rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only)
-    return [_hit(r, input).model_dump() | {"memory_id": str(r["memory_id"])} for r in rows], skipped
+    return [_listed(r, input) for r in rows], skipped
+
+
+def _listed(r: dict[str, Any], input: MemoryForFileInput) -> dict[str, Any]:
+    """A row as a reader renders it: its hit, its id and the commit its code changed at."""
+    return _hit(r, input).model_dump() | {
+        "memory_id": str(r["memory_id"]),
+        "code_changed_since": r.get("code_changed_since", ""),
+    }
 
 
 async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutput:
@@ -650,7 +663,11 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
         hits.append(hit)
         to_render.append(
             hit.model_dump()
-            | {"memory_id": r.get("memory_id"), "supersedes_ids": r.get("supersedes_ids") or []}
+            | {
+                "memory_id": r.get("memory_id"),
+                "supersedes_ids": r.get("supersedes_ids") or [],
+                "code_changed_since": r.get("code_changed_since", ""),
+            }
         )
 
     shown: list[dict[str, Any]] = []

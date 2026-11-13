@@ -383,6 +383,15 @@ Loom never writes the memory. The namespace's `code_change_policy`
 | `flag`                     | Flagged.                                                                                                                                                                                                                               | Flagged.                                                                                                                                                              |
 | `revise`                   | As `retire_removed`.                                                                                                                                                                                                                   | The claim is re-checked against the old and new code by the LLM: one that holds is re-anchored, a contradicted one gets a corrected claim as the link's `suggestion`. |
 
+Under every policy, search serves a memory whose worst link is `changed`, `unresolved`
+or `missing` lower: it moves down `memory_search_code_changed_positions` (3) places
+within the results, never out of them, after the confidence and abstain checks have read
+the results in relevance order, and `score_components.code_changed_places` says how far.
+A memory a person holds keeps its place, as do links into code the caller may not read
+and links nothing keeps current (`memory_code_links_enabled` off). `memory.ask`'s
+identifier lookups and a `context.pack` startup read with no query place their own rows
+and move none.
+
 `revise` judges a changed link once per edit, within a per-pass budget
 (`memory_code_links_revise_per_pass`). A memory labelled `high` sensitivity is never sent
 to the model. A memory a person pinned, locked (until the lock lapses) or verified, and
@@ -404,7 +413,9 @@ The links are read where the code is:
   names (over MCP the caller's memory home when it names none), never from every
   namespace the caller can read.
 - `memory.for_file` serves memories linked to code in the file beside those whose
-  `files` name it.
+  `files` name it. A line whose code changed, was not found again or went says so and
+  names the commit that did it; `context.pack` decision lines carry the same note, and
+  its memory lines a `code_state=<state>@<commit>` label.
 - `memory.get` returns the links as `code` (with any `suggestion`); `memory.search` hits
   read from a memory's own row carry its worst link as `code_state` (a chunk, record or
   summary hit carries none and is never left out); `memory.ask` notes the memories whose

@@ -406,6 +406,9 @@ def test_why_note_names_the_terms_by_magnitude_and_skips_the_base() -> None:
     }
     assert mcp_tools.why_note(h) == "key_match, entity-0.30, date+0.12"
     assert mcp_tools.why_note({"memory_key": "k"}) == ""
+    # A memory whose code changed: the places it moved, whatever the score's scale.
+    stale = {"memory_key": "k", "score_components": {"code_changed_places": -3.0}}
+    assert mcp_tools.why_note(stale) == "code_changed-3"
     # A reranked row: its own fused score is a base and the trail is positions.
     reranked = {
         "memory_key": "k",

@@ -16,6 +16,7 @@ import pytest
 
 from server.memory.api.models_for_file import MemoryForFileInput
 from server.memory.app import for_file as mff
+from server.memory.domain import code_change
 
 
 class _CH:
@@ -164,7 +165,7 @@ async def test_a_hot_files_links_are_bound_in_slices_and_the_best_of_all_are_kep
 ) -> None:
     import uuid
 
-    linked = {str(uuid.UUID(int=i)): ["fresh"] for i in range(5000)}
+    linked = {str(uuid.UUID(int=i)): [{"state": "fresh"}] for i in range(5000)}
     bound: list[list[str]] = []
     file_scans = 0
 
@@ -810,6 +811,26 @@ def test_an_unpinned_decision_whose_code_changed_notes_only_the_code() -> None:
         "- Decision (by alice, 3 days ago) (its code changed since it was "
         "written: check before relying on it): Decided X because Y."
     )
+
+
+def test_a_note_names_the_commit_its_code_changed_at() -> None:
+    hit = _decision("design/c", pinned=False, code_state="changed", code_changed_since="ab" * 20)
+    assert _lines([hit])[1].startswith(
+        "- Decision (by alice, 3 days ago) (its code changed since it was written, commit "
+        "abababababab: check before relying on it): Decided X because Y."
+    )
+
+
+def test_the_commit_is_the_first_link_in_the_worst_state_by_path_and_name() -> None:
+    links = [
+        {"state": "changed", "changed_since": "c2", "path": "b.py", "qualified_name": "f"},
+        {"state": "changed", "changed_since": "c1", "path": "a.py", "qualified_name": "g"},
+        {"state": "moved", "changed_since": "c3", "path": "0.py", "qualified_name": "h"},
+    ]
+    assert code_change.worst_commit(links) == "c1"
+    # a state no read notes names no commit
+    assert code_change.worst_commit([{"state": "moved", "changed_since": "c0"}]) == ""
+    assert code_change.worst_commit([]) == ""
 
 
 @pytest.mark.asyncio
