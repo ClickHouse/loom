@@ -616,8 +616,8 @@ async def calibrate_similarity_gates() -> None:
 
 
 async def start_cell_state() -> list[asyncio.Task[None]]:
-    """The workers child of a cell's process reads its cell's rows before it serves,
-    then on a timer; a failed read leaves it gated."""
+    """The workers child of a cell's process reads its cell's rows before its workers
+    start, then on a timer; a failed read leaves it gated."""
     from server.code.domain.index import repos
     from server.core import cell, pg_profile
 
