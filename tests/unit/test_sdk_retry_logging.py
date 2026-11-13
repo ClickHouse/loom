@@ -234,7 +234,13 @@ async def test_a_5xx_is_retried_for_a_non_idempotent_op_only_when_it_never_ran(
 
 @pytest.mark.parametrize(
     "code",
-    ["ANALYSIS_UNAVAILABLE", "CODED_WIDTH_MISMATCH", "GATEWAY_REQUIRED", "MODEL_CALL_UNATTRIBUTED"],
+    [
+        "ANALYSIS_UNAVAILABLE",
+        "CODED_WIDTH_MISMATCH",
+        "GATEWAY_REQUIRED",
+        "MODEL_CALL_UNATTRIBUTED",
+        "TENANCY_REFUSED",
+    ],
 )
 async def test_a_configuration_error_is_not_retried(sleeps: list[float], code: str) -> None:
     """A 503 an operator must fix: a retry gets the same answer."""

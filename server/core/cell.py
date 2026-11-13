@@ -385,6 +385,30 @@ _READ = (
 )
 
 
+# The state rows as plain columns, for `ensure` and `loom doctor`: the state verdict needs
+# no fingerprint, so a `loom.cell_self` value that does not decode fails neither a boot's
+# trigger pass nor a doctor run.
+_STATE = (
+    "SELECT (SELECT is_first FROM loom.cell_first) AS is_first, "
+    "(SELECT cell FROM loom.cell_first) AS cell, "
+    "(SELECT mode FROM loom.tenancy_mode) AS mode, "
+    "EXISTS (SELECT 1 FROM loom.cell_self) AS has_own, "
+    "EXISTS (SELECT 1 FROM loom.tenancy) AS has_tenancy"
+)
+
+
+async def read_state(conn: Any) -> str:
+    """The cell state on `conn` (`state`); raises when it cannot read."""
+    row = await conn.fetchrow(_STATE)
+    first = None if row["is_first"] is None else (bool(row["is_first"]), str(row["cell"]))
+    return state(
+        first=first,
+        mode=str(row["mode"] or ""),
+        has_own=bool(row["has_own"]),
+        has_tenancy=bool(row["has_tenancy"]),
+    )
+
+
 async def refresh() -> bool:
     """Read the state rows in one statement. A failed read, or rows that do not
     decode, keeps the last view and is retried on schedule."""

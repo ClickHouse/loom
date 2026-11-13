@@ -159,7 +159,7 @@ for (const width of [1400, 375]) {
   });
 }
 
-// Beside the assistant docked at the push minimum (1280 px, the page keeping 592 px), every
+// Beside the assistant docked at the push minimum (1280 px, the page keeping 640 px), every
 // table still fits.
 test.describe("1280 px with the assistant docked", () => {
   test.use({ viewport: { width: 1280, height: 900 } });

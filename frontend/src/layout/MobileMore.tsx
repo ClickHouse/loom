@@ -1,5 +1,9 @@
+import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { Modal } from "../components/ui/Modal";
+import { Unavailable } from "../components/ui/Unavailable";
+import { canWrite, needsRole, useNamespaceRole } from "../lib/namespaceRole";
+import { openNewDialog } from "../lib/newDialogs";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore, viewHref, type AdminBadges } from "../lib/state";
 import { adminItems, NavBadge, RAIL_GROUPS, SETTINGS_ITEM, type NavItem } from "./Sidebar";
@@ -40,7 +44,8 @@ export function mobileMoreItems(
   return groups;
 }
 
-/** The phone's "More" sheet: every route the sidebar has, in its groups. */
+/** The phone's "More" sheet: New (the header's New menu, which the phone's top bar leaves
+ *  out), then every route the sidebar has, in its groups. */
 export default function MoreSheet({ onClose }: { onClose: () => void }) {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
@@ -50,8 +55,54 @@ export default function MoreSheet({ onClose }: { onClose: () => void }) {
   // The sidebar stays mounted below md and reads the badges; the sheet shows its latest answer.
   const badges = useStore((s) => s.adminBadges);
   const groups = mobileMoreItems(whoami, myNamespaces, namespace, badges);
+  const libraryElsewhere = useStore((s) => s.libraryElsewhere);
+  const role = useNamespaceRole(namespace || undefined);
+  // The same rules as the header's New: a read-only role sees both unavailable with the
+  // reason, and Document goes while the Library shows a collection (its own Add document
+  // adds there).
+  const reason = canWrite(role) ? null : needsRole("writer", namespace);
+  const add = (which: "memory" | "document") => {
+    onClose();
+    openNewDialog(which);
+  };
   return (
     <Modal open onOpenChange={(o) => !o && onClose()} title="More" className="w-full max-w-[520px]">
+      {namespace && (
+        <section aria-labelledby="more-new" className="mb-4">
+          <div id="more-new" className="section-label mb-1.5 px-1">
+            New
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Unavailable reason={reason}>
+              <Button
+                type="secondary"
+                htmlType="button"
+                iconLeft="sparkle"
+                fillWidth
+                aria-label="New memory"
+                onClick={() => add("memory")}
+              >
+                Memory
+              </Button>
+            </Unavailable>
+            {!libraryElsewhere && (
+              <Unavailable reason={reason}>
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  iconLeft="document"
+                  fillWidth
+                  aria-label="New document"
+                  onClick={() => add("document")}
+                >
+                  Document
+                </Button>
+              </Unavailable>
+            )}
+          </div>
+          {reason && <p className="mt-1.5 px-1 text-xs text-text-muted">{reason}</p>}
+        </section>
+      )}
       {groups.map((g) => (
         <nav key={g.group} aria-label={g.group} className="mb-4">
           <div className="section-label mb-1.5 px-1">{g.group}</div>

@@ -351,7 +351,7 @@ describe("Assistant: the audit card", () => {
     useStore.setState({ myNamespaces: [] });
     // The assistant can answer, but this person's role does not allow the audit read.
     render(<InsightsHarness cannotAnswer={null} />);
-    expect(screen.getByRole("checkbox", { name: "Also ask the assistant" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Also ask the model" })).toBeChecked();
     expect(await screen.findByRole("button", { name: STARTER })).not.toHaveAttribute("aria-disabled");
   });
 });

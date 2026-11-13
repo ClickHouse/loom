@@ -53,10 +53,10 @@ describe("the button", () => {
     useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" } });
     const item = { chip: "key a", line: 'memory "a"' };
     const { unmount } = render(<AskAboutThis what="memory" item={item} />);
-    expect(screen.getByRole("button", { name: "Ask the assistant about this memory" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask AI about this memory" })).toBeInTheDocument();
     unmount();
     window.__LOOM_ASSISTANT = false;
     render(<AskAboutThis what="memory" item={item} />);
-    expect(screen.queryByRole("button", { name: "Ask the assistant about this memory" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ask AI about this memory" })).toBeNull();
   });
 });

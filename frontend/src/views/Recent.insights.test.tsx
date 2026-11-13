@@ -84,7 +84,7 @@ describe("Memories: the Insights button", () => {
     useDock.setState({ working: true });
     render(<Recent />);
     expect(await screen.findByRole("button", { name: "Insights" })).toHaveAccessibleDescription(
-      "Starters show once this answer ends: choose New conversation.",
+      "Starters show once this answer ends: choose New chat.",
     );
   });
 });

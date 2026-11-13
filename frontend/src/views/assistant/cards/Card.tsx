@@ -247,7 +247,7 @@ export function Card({ turn }: { turn: Turn }) {
       <SectionHeading id={head} level={3} label={starter.title} />
       <Controls card={card} reread={reread} />
       {card.unanswered && (
-        <p className="text-xs text-text-muted">{`The assistant can't answer: ${card.unanswered}. This is Loom's own read.`}</p>
+        <p className="text-xs text-text-muted">{`Ask AI can't answer: ${card.unanswered}. This is Loom's own read.`}</p>
       )}
       {!linked && (
         <p className="text-xs text-text-muted">{`Read in ${namespace}: switch to it to open what this card names.`}</p>

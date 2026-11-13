@@ -74,7 +74,7 @@ Park a large tool result (log, page, diff, query output) outside the model conte
 
 ## `context.pack`
 
-Startup context pack for this session, once near the start of a substantial task: profile, relevant memories, matching procedures, optionally docs/conversations, in one prompt-sized bundle.
+A task's memories, decisions and procedures: call it first in each task, unless a Loom hook already put Loom's context in this session.
 
 `POST /v1/context.pack` · MCP `loom_context_pack` · role `viewer` · read
 

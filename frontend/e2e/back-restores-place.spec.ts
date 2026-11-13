@@ -151,7 +151,7 @@ for (const width of [1400, 375]) {
       // A phone-wide drawer wraps the footer, Ask about this on the first row beside Edit.
       expect(h).toBeLessThanOrEqual(width < 640 ? 110 : 60);
       const top = async (name: string) => (await footer.getByRole("button", { name }).boundingBox())?.y;
-      expect(await top("Ask the assistant about this memory")).toBe(await top("Edit"));
+      expect(await top("Ask AI about this memory")).toBe(await top("Edit"));
       await footer.getByRole("button", { name: "More actions" }).click();
       const menu = page.getByRole("menu", { name: "More actions" });
       await expect(menu.getByRole("menuitem", { name: "Copy", exact: true })).toBeVisible();

@@ -29,6 +29,13 @@ from server.operations.read_projection import ProjectedRow
 # ============================================================
 
 
+# The other namespaces a read names (`knowledge.search`, `knowledge.list`), each checked
+# by `readable_namespaces`.
+NamedNamespaces = Annotated[
+    list[Annotated[str, Field(min_length=1, max_length=256)]], Field(max_length=100)
+]
+
+
 class KnowledgeAddInput(BaseModel):
     org: str
     namespace: str
@@ -186,9 +193,7 @@ class KnowledgeSearchInput(BaseModel):
     # Search `namespace` and exactly these (an agent's collection, `@me`)
     # instead of a fan-out; each must be one the caller may read, else the call
     # is refused (403). Empty = `namespace_scope` decides.
-    namespaces: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
-        default_factory=list, max_length=100
-    )
+    namespaces: NamedNamespaces = Field(default_factory=list)
     # hybrid: the vector leg, the BM25 lexical leg and the exact-key leg (the query's
     # identifiers looked up in an extracted file's chunk keys) fused by reciprocal rank;
     # semantic: vector only;
@@ -524,17 +529,21 @@ class KnowledgeGetOutput(BaseModel):
 
 
 class KnowledgeListInput(BaseModel):
-    """Paginated listing of documents in a namespace, for curation tools."""
+    """Paginated listing of the documents of one namespace or several, for curation tools."""
 
     org: str
     namespace: str
+    # Also list the documents of these namespaces (or `@me`), each read-checked (403 for the
+    # first refused), with a `next_cursor` that holds only for the same namespaces; empty =
+    # `namespace` alone.
+    namespaces: NamedNamespaces = Field(default_factory=list)
     # Documents carrying any one of these tags, in any case.
     tags: list[str] = Field(default_factory=list)
     # Require every one of `tags` instead of any one; default off. Not in the MCP listing:
     # the dashboard's stacked tag chips set it.
     tags_every: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Directory scope: documents whose source_uri starts
-    # with one of these prefixes; empty = whole namespace.
+    # with one of these prefixes; empty = no prefix filter.
     uri_prefix: list[str] = Field(default_factory=list, max_length=8)
     # Also list soft-deleted and superseded documents (their `superseded` is True).
     include_superseded: bool = False
@@ -543,12 +552,15 @@ class KnowledgeListInput(BaseModel):
     cursor: str | None = None  # opaque keyset cursor
     # The output fields the caller reads (a whitelist
     # resolved against the row model, as memory.list's is); unset,
-    # every field. `source_uri` always rides. The Library page names the
+    # every field. `namespace` and `source_uri` always ride. The Library page names the
     # eleven fields its rows render and drops the 24 kB of content_preview.
     fields: list[str] | None = None
 
 
 class _KnowledgeListEntry(ProjectedRow):
+    # Where the document is: `namespace`, or one of `namespaces` (`@me` as the personal
+    # namespace it names).
+    namespace: str
     source_uri: str
     title: str
     description: str = ""

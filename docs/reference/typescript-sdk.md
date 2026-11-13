@@ -297,8 +297,8 @@ the server sent):
   retryable, since the call was never sent;
 - a call the caller aborted is `input` and not retryable: the caller's choice, after which
   the call may have run;
-- a code the SDK never retries is `configuration` (`ANALYSIS_UNAVAILABLE`,
-  `CODED_WIDTH_MISMATCH`, `GATEWAY_REQUIRED`), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
+- a code the SDK never retries is `configuration` (a 503 an operator must fix, as the
+  [errors reference](./errors.md) classes it), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
   `dependency` (`PUBLICATION_PENDING`: the write is committed and its rows follow), not
   retryable;
 - a 5xx on an op that is not idempotent is not retryable, since the call may have written,

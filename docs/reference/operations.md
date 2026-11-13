@@ -278,7 +278,7 @@ Fields for every `context` op: [operations/context.md](operations/context.md).
 | --- | --- | --- | --- | --- | --- |
 | [`context.fetch`](operations/context.md#contextfetch) | Read back a parked result by key: a character slice (offset/limit) or only the lines matching a regex (pattern, with context_lines). | viewer | read | no |  |
 | [`context.offload`](operations/context.md#contextoffload) | Park a large tool result (log, page, diff, query output) outside the model context. | writer | idempotent | no |  |
-| [`context.pack`](operations/context.md#contextpack) | Startup context pack for this session, once near the start of a substantial task: profile, relevant memories, matching procedures, optionally docs/conversations, in one prompt-sized bundle. | viewer | read | yes |  |
+| [`context.pack`](operations/context.md#contextpack) | A task's memories, decisions and procedures: call it first in each task, unless a Loom hook already put Loom's context in this session. | viewer | read | yes |  |
 
 ### conversation
 
@@ -421,7 +421,7 @@ Fields for every `knowledge` op: [operations/knowledge.md](operations/knowledge.
 | [`knowledge.ingest_cancel`](operations/knowledge.md#knowledgeingest_cancel) | A pending job is cancelled at once; a running one stops before it publishes; a finished one stays as it ended. | writer | idempotent | no |  |
 | [`knowledge.ingest_status`](operations/knowledge.md#knowledgeingest_status) | A knowledge.ingest job's state, stage, coverage, failure and published revision. | viewer | read | no |  |
 | [`knowledge.inspect`](operations/knowledge.md#knowledgeinspect) | Report a namespace's documents, read-only. | viewer | read | no |  |
-| [`knowledge.list`](operations/knowledge.md#knowledgelist) | Paginated listing of documents in a namespace, for curation tools. | viewer | read | yes |  |
+| [`knowledge.list`](operations/knowledge.md#knowledgelist) | Paginated listing of the documents of one namespace or several, for curation tools. | viewer | read | yes |  |
 | [`knowledge.outline`](operations/knowledge.md#knowledgeoutline) | A document's table of contents, as recorded on its chunks at ingest, and optionally one section's assembled text. | viewer | read | no |  |
 | [`knowledge.query`](operations/knowledge.md#knowledgequery) | Calculate over the live snapshots of ingested datasets with a typed plan: filters, inner joins, groups and aggregates, or the rows themselves. | viewer | read | no |  |
 | [`knowledge.reads`](operations/knowledge.md#knowledgereads) | How often agents opened each document over the last `days` (`knowledge.get` ledger rows; dashboard, assistant and bench traffic left out). | viewer | read | no |  |

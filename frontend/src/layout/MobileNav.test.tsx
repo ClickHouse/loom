@@ -1,9 +1,9 @@
-import { act, render, screen, within } from "../test/rtl";
+import { render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { MyNamespaceEntry } from "../api";
 import { useStore, viewHref } from "../lib/state";
-import { useDock } from "../lib/assistantDock";
+import { useNewDialogs } from "../lib/newDialogs";
 import { MAIN, ADMIN_BASE, ADMIN_OPERATOR_ONLY } from "./Sidebar";
 import { MobileNav } from "./MobileNav";
 import { mobileMoreItems } from "./MobileMore";
@@ -119,23 +119,52 @@ describe("MobileNav", () => {
   });
 });
 
-describe("the Assistant item", () => {
-  it("sits between Library and More, a button with the launcher's marks, never the current tab", () => {
+describe("the tabs", () => {
+  it("are Memories, Library and More: the assistant opens from the top bar", () => {
     render(<MobileNav />);
     const nav = screen.getByRole("navigation", { name: "Sections" });
-    expect([...nav.children].map((e) => e.textContent?.trim())).toEqual(["Memories", "Library", "Assistant", "More"]);
-    const item = within(nav).getByRole("button", { name: "Assistant" });
-    expect(item).toHaveAttribute("data-focus-key", "assistant-launcher");
-    expect(item).toHaveAttribute("aria-expanded", "false");
-    expect(item).not.toHaveAttribute("aria-current");
-    expect(item).not.toHaveAttribute("aria-haspopup");
-    expect(item).not.toHaveAttribute("aria-controls");
-    act(() => useDock.setState({ working: true, mounted: true, open: true }));
-    expect(item).toHaveAccessibleName("Assistant, answering");
-    expect(item).toHaveAttribute("aria-expanded", "true");
-    expect(item).toHaveAttribute("aria-controls", "assistant-panel");
-    act(() => useDock.setState({ working: false, reason: { kind: "failing" } }));
-    expect(item).toHaveAccessibleName("Assistant, unavailable");
-    act(() => useDock.setState({ reason: null, open: false, mounted: false }));
+    expect([...nav.children].map((e) => e.textContent?.trim())).toEqual(["Memories", "Library", "More"]);
+    expect(nav.querySelector('[data-focus-key="assistant-launcher"]')).toBeNull();
+  });
+});
+
+describe("the More sheet's New", () => {
+  const openSheet = async () => {
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    return screen.findByRole("region", { name: "New" });
+  };
+
+  it("opens the header's Add memory and Add document dialogs, closing the sheet", async () => {
+    useStore.setState({ whoami: writer, myNamespaces: [row("writer")] });
+    useNewDialogs.setState({ memory: false, document: false });
+    const group = await openSheet();
+    expect(within(group).getByRole("button", { name: "New document" })).not.toHaveAttribute("aria-disabled");
+    await userEvent.setup().click(within(group).getByRole("button", { name: "New memory" }));
+    expect(useNewDialogs.getState().memory).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "More" })).toBeNull();
+  });
+
+  it("is unavailable with the reason for a read-only role", async () => {
+    useStore.setState({ whoami: writer, myNamespaces: [row("viewer")] });
+    useNewDialogs.setState({ memory: false, document: false });
+    const group = await openSheet();
+    const memory = within(group).getByRole("button", { name: "New memory" });
+    await waitFor(() => expect(memory).toHaveAttribute("aria-disabled", "true"));
+    expect(within(group).getByRole("button", { name: "New document" })).toHaveAttribute("aria-disabled", "true");
+    expect(group).toHaveTextContent(/writer/i);
+    await userEvent.setup().click(memory);
+    expect(useNewDialogs.getState().memory).toBe(false);
+  });
+
+  it("offers no Document while the Library shows a collection", async () => {
+    useStore.setState({ whoami: writer, myNamespaces: [row("writer")], libraryElsewhere: true });
+    try {
+      const group = await openSheet();
+      expect(within(group).getByRole("button", { name: "New memory" })).toBeInTheDocument();
+      expect(within(group).queryByRole("button", { name: "New document" })).toBeNull();
+    } finally {
+      useStore.setState({ libraryElsewhere: false });
+    }
   });
 });

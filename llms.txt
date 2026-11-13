@@ -57,6 +57,7 @@ Start with docs/index.md (the map). To install Loom, a coding agent reads docs/g
 - [The dashboard](docs/features/dashboard.md): The dashboard is a React single-page app the Loom server serves at its root URL.
 - [Entity graph](docs/features/entity-graph.md): Entity communities are off by default (`LOOM_ENTITY_COMMUNITIES_ENABLED`).
 - [Agent instructions](docs/features/integrations/agent-instructions.md): A short block in an agent's instruction file tells it when to load Loom's context, save a fact and use the code index instead of grepping or reading files.
+- [Agent Substrate](docs/features/integrations/agent-substrate.md): Needs Agent Substrate v1.0.0 and Loom's Helm chart in one Kubernetes cluster: Substrate's egress gateway adds each agent's Loom token to its MCP calls.
 - [Claude Code plugin](docs/features/integrations/claude-code.md): The `loom` plugin for Claude Code does three things in one install:
 - [ClickStack and HyperDX](docs/features/integrations/clickstack.md): Loom always emits OpenTelemetry; the HyperDX sources, dashboards and the erasure step need configuring.
 - [Codex plugin](docs/features/integrations/codex.md): The Codex plugin gives Codex the same Loom integration as Claude Code: MCP tools, hooks that capture the session and load a primer, and the code shunt.

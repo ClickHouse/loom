@@ -2,7 +2,7 @@
 
 The `_projection` + wrap-serializer pair on the memory rows
 is a shared `ProjectedRow` base; `knowledge.list` gains `fields`, resolved
-like memory.list's (`source_uri` always rides), and the Library page names
+like memory.list's (`namespace` and `source_uri` always ride), and the Library page names
 the eleven fields its rows read — never `content_preview`."""
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import pytest
 
 from server.core.errors import ValidationError
 from server.knowledge.api import models_knowledge as knowledge
+from server.knowledge.app.document_reads import _LIST_ALWAYS
 from server.memory.api import models_crud as memory_crud
 from server.operations import read_projection
 
@@ -22,6 +23,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 def _row(**over):
     base = dict(
+        namespace="n",
         source_uri="docs/a.md",
         title="A",
         tags=["x"],
@@ -48,15 +50,18 @@ def test_an_unprojected_knowledge_row_is_unchanged() -> None:
 
 def test_a_projected_knowledge_row_drops_unrequested_fields() -> None:
     keep = read_projection.resolve(
-        knowledge._KnowledgeListEntry, ["title", "tags"], always=frozenset({"source_uri"})
+        knowledge._KnowledgeListEntry, ["title", "tags"], always=_LIST_ALWAYS
     )
     row = _row()
     row._projection = keep
-    assert row.model_dump() == {"source_uri": "docs/a.md", "title": "A", "tags": ["x"]}
+    assert row.model_dump() == {
+        "namespace": "n",
+        "source_uri": "docs/a.md",
+        "title": "A",
+        "tags": ["x"],
+    }
     with pytest.raises(ValidationError):
-        read_projection.resolve(
-            knowledge._KnowledgeListEntry, ["nope"], always=frozenset({"source_uri"})
-        )
+        read_projection.resolve(knowledge._KnowledgeListEntry, ["nope"], always=_LIST_ALWAYS)
 
 
 def test_knowledge_list_takes_fields() -> None:

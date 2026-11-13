@@ -1,9 +1,6 @@
 import { Suspense, lazy, useState } from "react";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { useStore, viewHref } from "../lib/state";
-import { openAssistantSoon } from "../lib/assistantDock";
-import { useMedia } from "../lib/useMedia";
-import { EDGE_QUERY, useLauncher } from "./AssistantLauncher";
 import { MAIN, type NavItem } from "./Sidebar";
 import { ACTIVE, PRIMARY_IDS } from "./mobileTabs";
 
@@ -11,8 +8,9 @@ import { ACTIVE, PRIMARY_IDS } from "./mobileTabs";
 const MoreSheet = lazy(() => import("./MobileMore"));
 
 /**
- * Phone navigation (below `md`): two primary tabs, the assistant's launcher and a "More"
- * dialog (./MobileMore.tsx; Click UI's dialog fills the screen below 640 px).
+ * Phone navigation (below `md`): two primary tabs and a "More" dialog (./MobileMore.tsx;
+ * Click UI's dialog fills the screen below 640 px). The assistant opens from the top bar's
+ * Ask AI button.
  */
 const PRIMARY: NavItem[] = MAIN.filter((m) => PRIMARY_IDS.includes(m.id));
 
@@ -24,8 +22,6 @@ export function MobileNav() {
   const setView = useStore((s) => s.setView);
   const [open, setOpen] = useState(false);
   const moreActive = !PRIMARY_IDS.includes(view);
-  // From md the assistant edge is the launcher (layout/AssistantLauncher.tsx).
-  const wide = useMedia(EDGE_QUERY);
 
   return (
     <>
@@ -56,7 +52,6 @@ export function MobileNav() {
             </a>
           );
         })}
-        {!wide && <AssistantItem />}
         <button
           type="button"
           onClick={() => setOpen(true)}
@@ -76,17 +71,5 @@ export function MobileNav() {
         </Suspense>
       )}
     </>
-  );
-}
-
-/** The bottom nav's Assistant item: it opens the panel, which is modal below md (so the nav
- *  is inert under it). Not a page: never the current tab's fill or bar. */
-function AssistantItem() {
-  const { ref, mark, props } = useLauncher();
-  return (
-    <button ref={ref} {...props} onClick={openAssistantSoon} className={`${TAB} text-text-muted`}>
-      {mark}
-      <span className="text-xs font-medium">Assistant</span>
-    </button>
   );
 }
