@@ -96,16 +96,17 @@ async def search_repo_decisions(
 def merge_memory_hits(
     base: list[_MemorySearchHit], extra: list[_MemorySearchHit], home_ns: str
 ) -> tuple[list[_MemorySearchHit], list[_MemorySearchHit]]:
-    """One memory list and the `extra` hits added to it. `base` keeps its
-    own order (rank order, not always falling similarity); each `extra` hit
-    goes after the last base hit whose similarity is at least its own (the
-    rank scores of two searches do not compare). A base row its search moved
-    down for stale code holds no slot: an `extra` hit is placed among the current
-    rows, and the moved row's `code_changed_places` counts only its own search's
-    rows. An `extra` hit whose (namespace, memory_key) the base or an earlier
-    extra hit holds is left out. Nothing is cut: the extra hits are bounded by the caller's
-    `top_k` (`search_repo_decisions` keeps one per key), and a base hit pushed
-    out would be served on no page."""
+    """One memory list and the `extra` hits added to it. `base` keeps its own order
+    (rank order, not always falling similarity); each `extra` hit goes after the
+    last base hit whose similarity is at least its own (the rank scores of two
+    searches do not compare). A base row its search ranked down for stale code
+    (moved, or left in place with nothing to pass) holds no slot: an `extra` hit
+    lands after it only when a current row below it is at least as similar, and its
+    `code_changed_places` counts only its own search's rows. An `extra` hit whose
+    (namespace, memory_key) the base or an earlier extra hit holds is left out.
+    Nothing is cut: the extra hits are bounded by the caller's `top_k`
+    (`search_repo_decisions` keeps one per key), and a base hit pushed out would be
+    served on no page."""
     seen = {(h.namespace or home_ns, h.memory_key) for h in base}
     # the similarity each base row holds its slot at: none for one moved for stale code
     slot_sims = [-math.inf if code_change.moved_for_stale_code(b) else b.similarity for b in base]

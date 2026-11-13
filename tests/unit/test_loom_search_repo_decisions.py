@@ -970,6 +970,14 @@ def test_a_base_row_moved_for_stale_code_holds_no_slot_for_a_decision(similarity
     assert [h.memory_key for h in hits] == order
 
 
+def test_a_stale_base_row_left_in_place_holds_no_slot_for_a_decision() -> None:
+    stale = _hit("stale", 0.3, "me")
+    stale.score_components = {"code_changed_places": 0.0}  # nothing below it to pass
+    fresh = _hit("decision:x", 0.2, TRUNK, mtype="decision")
+    hits, _ = repo_decisions.merge_memory_hits([_hit("a", 0.9, "me"), stale], [fresh], "me")
+    assert [h.memory_key for h in hits] == ["a", "decision:x", "stale"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "moved", [None, -1.0, 0.0], ids=["current", "moved-for-stale-code", "nothing-to-pass"]
