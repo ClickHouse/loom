@@ -110,8 +110,8 @@ namespace needs it named, and so does any SDK feature that calls one: `auto_run`
 `run_scope()`, `session()` and `mentor()`, the context and working-memory tools in
 `bot.tools()`, and the LangGraph store's `search()` (its `memory.bulk_get`), among others
 (an ambient run that cannot begin is skipped). The SDK refuses `knowledge.upload` and
-`knowledge.download` without both org and namespace.
-An `agent` not given is `sdk-python:<script>`.
+`knowledge.download` without both org and namespace. An `agent` not given is
+`sdk-python:<script>`.
 
 An `agent` of `""`, `"-"` or `"*"` is replaced with `sdk-python:<script>` and a
 warning: an anonymous agent is indistinguishable from every other anonymous
