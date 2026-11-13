@@ -16,10 +16,12 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from server.clients import gdrive
 from server.knowledge.app import source_probes
+from server.knowledge.domain.sources import items_from_config
 
 FOLDER = "1AbCdEfGhIjKlMnOp"
 OTHER = "2QrStUvWxYzAbCdEf"
 CONFIG = {"folder_ids": [FOLDER, OTHER], "include": ["slides", "pdf"]}
+ITEMS = items_from_config("gdrive", CONFIG)
 
 
 def _key() -> tuple[str, Any]:
@@ -67,7 +69,7 @@ def test_the_probe_lists_the_folder_with_a_signed_assertion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen = _install(monkeypatch, _store)
-    found = asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL))
+    found = asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=ITEMS))
     assert (found.documents, found.sample, found.more) == (2, ["Newer", "Older"], False)
     token_call, *folder_calls, list_call = seen
     assert len(folder_calls) == 2
@@ -94,7 +96,7 @@ def test_a_key_that_is_not_a_service_account_is_refused_without_a_call(
     seen = _install(monkeypatch, _store)
     for bad in ("not json", '{"type": "user"}', '{"type": "service_account"}'):
         with pytest.raises(source_probes.CredentialRefused):
-            asyncio.run(source_probes.probe("gdrive", CONFIG, bad))
+            asyncio.run(source_probes.probe("gdrive", CONFIG, bad, items=ITEMS))
     assert seen == []
 
 
@@ -124,7 +126,7 @@ def test_failures_are_told_apart_and_carry_no_body(
 
     _install(monkeypatch, _handler)
     with pytest.raises(error) as e:
-        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL))
+        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=ITEMS))
     assert body not in str(e.value)
 
 
@@ -135,8 +137,10 @@ def test_an_id_that_is_not_a_folder_is_unreachable(monkeypatch: pytest.MonkeyPat
         return _store(request)
 
     _install(monkeypatch, _handler)
-    with pytest.raises(source_probes.SourceUnreachable):
-        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL))
+    with pytest.raises(source_probes.SourceUnreachable) as e:
+        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=ITEMS))
+    # Shared but no folder: sharing it again would not help.
+    assert str(e.value) == f"folder {FOLDER}: not a folder, or in the trash"
 
 
 def test_a_rate_limited_probe_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,20 +152,22 @@ def test_a_rate_limited_probe_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
 
     _install(monkeypatch, _handler)
     with pytest.raises(source_probes.SourceUnreachable, match="rate_limited"):
-        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL))
+        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=ITEMS))
 
 
 def test_a_probe_past_its_time_limit_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.settings import settings
 
-    async def _slow(config: dict[str, Any], credential: str) -> source_probes.Probe:
+    async def _slow(
+        items: list[dict[str, Any]], config: dict[str, Any], credential: str
+    ) -> source_probes.Probe:
         await asyncio.sleep(5)
         return source_probes.Probe(documents=0)
 
     monkeypatch.setattr(settings, "knowledge_source_probe_timeout_s", 0.05)
     monkeypatch.setitem(source_probes.PROBES, "gdrive", _slow)
     with pytest.raises(source_probes.SourceUnreachable, match="within 0.05 s"):
-        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL))
+        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=ITEMS))
 
 
 def test_a_folder_the_account_cannot_see_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,9 +178,9 @@ def test_a_folder_the_account_cannot_see_is_named(monkeypatch: pytest.MonkeyPatc
 
     seen = _install(monkeypatch, _handler)
     with pytest.raises(source_probes.SourceUnreachable) as e:
-        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL))
+        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=ITEMS))
     assert f"folder {OTHER}" in str(e.value) and FOLDER not in str(e.value)
-    assert "share the folder with the service account" in str(e.value)
+    assert "share it with the service account" in str(e.value) and e.value.item_id == OTHER
     assert not any(r.url.path.endswith("/files") for r in seen)  # no listing after it
 
 
@@ -218,7 +224,7 @@ def test_the_token_exchange_tells_a_rate_limit_from_a_refused_key(
 
     _install(monkeypatch, _handler)
     with pytest.raises(error, match=text):
-        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL))
+        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=ITEMS))
 
 
 def _key_json(pem: str) -> str:
@@ -246,7 +252,7 @@ def test_a_key_that_is_no_rsa_private_key_is_refused(
         ).decode()
     seen = _install(monkeypatch, _store)
     with pytest.raises(source_probes.CredentialRefused, match="not an RSA key"):
-        asyncio.run(source_probes.probe("gdrive", CONFIG, _key_json(pem)))
+        asyncio.run(source_probes.probe("gdrive", CONFIG, _key_json(pem), items=ITEMS))
     assert seen == []  # refused before any call
 
 
@@ -267,5 +273,57 @@ def test_a_failed_folder_check_cancels_the_others(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(gdrive, "access_token", _token)
     monkeypatch.setattr(gdrive, "require_folder", _require_folder)
     with pytest.raises(source_probes.SourceUnreachable, match=f"folder {FOLDER}"):
-        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL))
+        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=ITEMS))
     assert sorted(started) == sorted(CONFIG["folder_ids"]) and finished == []
+
+
+def test_a_recursive_folder_s_count_is_a_lower_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install(monkeypatch, _store)
+    items = [{"type": "folder", "id": FOLDER, "recursive": True}]
+    found = asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=items))
+    # The first page reads the folder's own files; its subfolders hold more.
+    assert found.documents == 2 and found.more
+
+
+def test_a_trashed_file_item_is_reported_not_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _trashed(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/files/trashed1"):
+            return httpx.Response(200, json={"mimeType": "application/pdf", "trashed": True})
+        return _store(request)
+
+    _install(monkeypatch, _trashed)
+    items = [{"type": "file", "id": "trashed1"}]
+    found = asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=items))
+    # The credential read it: add and update refuse it, check and rotate do not.
+    assert found.trashed == ["trashed1"] and found.foreign == {} and found.documents == 0
+
+
+def test_a_filter_s_unseen_folder_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(f"/files/{OTHER}"):
+            return httpx.Response(404, json={"error": {"code": 404}})
+        return _store(request)
+
+    _install(monkeypatch, _handler)
+    items = [{"type": "filter", "name_contains": "plan", "in": OTHER}]
+    with pytest.raises(source_probes.SourceUnreachable) as e:
+        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=items))
+    assert str(e.value) == f"folder {OTHER}: not found; share it with the service account"
+    assert e.value.item_id == OTHER
+
+
+def test_a_drive_the_account_is_no_member_of_says_to_add_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    drive_id = "0AbCdEfGhIjKlMnOpQr"
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(f"/drives/{drive_id}"):
+            return httpx.Response(404, json={"error": {"code": 404}})
+        return _store(request)
+
+    _install(monkeypatch, _handler)
+    items = [{"type": "shared_drive", "id": drive_id}]
+    with pytest.raises(source_probes.SourceUnreachable) as e:
+        asyncio.run(source_probes.probe("gdrive", CONFIG, CREDENTIAL, items=items))
+    assert str(e.value).endswith("add the service account as a member of the drive")

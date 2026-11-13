@@ -39,11 +39,22 @@ export function SourceDetailsDialog({
         <div className="space-y-4">
           <MetaList>
             <MetaRow label="Kind">{kindLabel(detail.kind)}</MetaRow>
-            {Object.entries(detail.config).map(([k, v]) => (
-              <MetaRow key={k} label={k} mono>
-                {configText(v)}
+            {/* What it reads: its items; a recording source's config, or an older
+                server's, which answers no items. */}
+            {detail.items?.length ? (
+              <MetaRow label="Reads" mono>
+                {detail.items.map((item) => (
+                  <div key={itemText(item)}>{itemText(item)}</div>
+                ))}
               </MetaRow>
-            ))}
+            ) : (
+              Object.entries(detail.config).map(([k, v]) => (
+                <MetaRow key={k} label={k} mono>
+                  {configText(v)}
+                </MetaRow>
+              ))
+            )}
+            {!!detail.include?.length && <MetaRow label="File kinds">{detail.include.join(", ")}</MetaRow>}
             <MetaRow label="Added by">{detail.created_by || "—"}</MetaRow>
             <MetaRow label="Last sync">
               {detail.sync.last_synced_at && (
@@ -85,6 +96,27 @@ export function SourceDetailsDialog({
       </ModalFooter>
     </Modal>
   );
+}
+
+const ITEM_LABELS: Record<string, string> = {
+  folder: "Folder",
+  file: "File",
+  shared_drive: "Shared drive",
+  filter: "Files matching",
+  page: "Page",
+  database: "Database",
+  project: "Project",
+  name_contains: "name contains",
+  modified_after: "changed after",
+  in: "in folder",
+};
+
+/** One item as a line: its type, its id or filter fields, and `recursive`. */
+function itemText(item: Record<string, unknown>): string {
+  const { type, recursive, ...rest } = item;
+  const label = (k: string) => ITEM_LABELS[k] ?? k;
+  const fields = Object.entries(rest).map(([k, v]) => (k === "id" ? configText(v) : `${label(k)}: ${configText(v)}`));
+  return [label(String(type)), ...fields, ...(recursive ? ["(with subfolders)"] : [])].join(" ");
 }
 
 /** A config value as text: a list of ids reads as one comma-separated line. */

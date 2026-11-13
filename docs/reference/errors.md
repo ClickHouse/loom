@@ -282,7 +282,7 @@ Raised in `server/code/app/repo_admin.py`.
 
 #### `BAD_CONFIG`
 
-Raised in `server/knowledge/app/sources.py`.
+HTTP 422, raised as `server.core.errors.BadConfigError`. 422 — a document source's config or items it cannot use, or a change it cannot make; the message, Loom's own, names what to fix. Category `input`, retryable: no.
 
 #### `BAD_CONSTRAINT`
 
@@ -313,6 +313,10 @@ Raised in `server/tracker/app/sources.py`.
 Raised in `server/code/app/repo_admin.py`.
 
 #### `BAD_KIND`
+
+Raised in `server/knowledge/app/sources.py`.
+
+#### `BAD_LINK`
 
 Raised in `server/knowledge/app/sources.py`.
 
@@ -478,7 +482,7 @@ Raised in `server/memory/domain/record_values.py`.
 
 #### `ERASURE_RUNNING`
 
-HTTP 409, raised as `server.core.errors.ErasureRunningError`. 409 — an erasure that will still run covers the namespace: a document source added now would outlast it, since its first step may already have read the namespace's sources. Category `capacity`, retryable: yes.
+HTTP 409, raised as `server.core.errors.ErasureRunningError`. 409 — an erasure that will still run covers the namespace: a document source added or updated now would outlast it, since its first step may already have read the namespace's sources. Category `capacity`, retryable: yes.
 
 #### `EXPIRED`
 
@@ -866,7 +870,7 @@ Raised in `server/knowledge/app/sources.py`, `server/tracker/app/sources.py`.
 
 #### `SOURCE_REPLACED`
 
-HTTP 409, raised as `server.core.errors.SourceReplacedError`. 409 — the document source was removed and added again as another source during the call (a rotate's probe, a sync request); act on the current one. Category `input`, retryable: no.
+HTTP 409, raised as `server.core.errors.SourceReplacedError`. 409 — the document source was removed and added again as another source during the call (an update's or a rotate's probe, a sync request); act on the current one. Category `input`, retryable: no.
 
 #### `SOURCE_TAGS_LOCKED`
 

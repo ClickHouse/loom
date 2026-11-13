@@ -25,6 +25,7 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
     ("loom.code_repos", "github_token_enc", (), "code_repos.token", ""),
     ("loom.qa_sources", "password_enc", (), "qa_sources.password", ""),
     ("loom.knowledge_sources", "credential_enc", (), "knowledge_sources.credential", ""),
+    ("loom.knowledge_sources", "secret_enc", (), "knowledge_sources.secret", ""),
     ("loom.provider_configuration", "envelope", (), "model-provider-configuration", ""),
     (
         "loom.provider_configuration",

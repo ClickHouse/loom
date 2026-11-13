@@ -938,6 +938,10 @@
               "body",
               "options"
             ],
+            "source_parse_links": [
+              "body",
+              "options"
+            ],
             "source_remove": [
               "body",
               "options"
@@ -947,6 +951,10 @@
               "options"
             ],
             "source_sync_now": [
+              "body",
+              "options"
+            ],
+            "source_update": [
               "body",
               "options"
             ],

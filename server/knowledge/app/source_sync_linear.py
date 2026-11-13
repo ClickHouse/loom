@@ -32,9 +32,9 @@ from typing import Any
 
 from server.clients import linear
 from server.core.errors import ValidationError
-from server.core.secrets_at_rest import unseal
 from server.knowledge.app import source_sync as sync
-from server.knowledge.domain.sources import KnowledgeSource, json_object
+from server.knowledge.app import sources as source_ops
+from server.knowledge.domain.sources import KnowledgeSource, item_ids, json_object
 from server.knowledge.store import sources as store
 from server.settings import settings
 
@@ -62,12 +62,12 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # one) only grants the given-up documents their retry.
     result.full = bool(detail.get("full")) or not state.get("state_value") or sync.full_due(detail)
     sync.start_waits(result, detail)
-    key = unseal("knowledge_sources.credential", src.credential_enc)
+    key = source_ops.credential_of(src)
     if not key:
         # Fail closed: a credential that no longer opens is never read as "no auth".
         result.fail("credential_invalid", "the stored credential no longer opens; rotate it")
         return result
-    projects = list(src.config.get("project_ids") or [])
+    projects = item_ids(src.items, "project")
     listed_at = datetime.now(UTC)
     files: dict[str, dict[str, Any]] = {}
     for project_id in projects:

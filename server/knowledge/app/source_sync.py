@@ -1,6 +1,7 @@
 """The sync of registered document sources into their namespaces' documents:
 one pass over every active source, run by the `knowledge_source_sync` worker and
-by `loom knowledge sync`. A folder's turn is below; each other kind has its own
+by `loom knowledge sync`. The shared-folder turn, over its items
+(`source_gdrive_items`), is below; each other kind has its own
 turn module (`source_sync_linear`, `source_sync_notion`, `source_sync_recording`),
 chosen by `_turn_of`, which builds on the public helpers here: `Pass` and
 `TurnResult`, `start_waits`, `full_due`, `capped`, `stamp_of` and `valid_stamp` for a
@@ -45,14 +46,18 @@ writer saved at the address during the fetch is left alone, and the file is coun
 `skipped`.
 
 A document is retired only on positive evidence that the source dropped it:
-absence from a complete full listing whose folders the account can still see,
-confirmed by a lookup of that file; an address that is no longer its file's; or a
-an admin's `remove(delete_documents=true)`. A fetch error, a rate limit or
-a folder the account lost retires nothing. A document another writer or another
-source holds is never written or retired.
+absence from a complete full listing whose folders and shared drives the account can
+still see, confirmed by a lookup of that file; an address that is no longer its file's;
+or an admin's `remove(delete_documents=true)`. A fetch error, a rate limit or a lost
+folder or drive retires nothing; past a walk cut at its bound, only the store's word on
+a file (trashed, deleted, or of a kind no longer read) retires it. A document another
+writer or another source holds is never written or retired.
 
-The stamp moves only when every listed file was handled, so a cut turn is
-listed again and its written files are skipped by revision.
+The stamp moves only when every listed file was handled (new files held back at
+`REVISIONS_LIMIT` wait for the next full listing), so a cut turn is listed again and its
+written files are skipped by revision. A listing that outlasts the
+pass budget writes nothing (no time is left to write), so a source's listing must fit
+in one pass; the item and walk bounds keep it there.
 
 After the sync, the extraction leg mines into decision rows in the same
 namespace (`decision_extract.extract_document`, as `loom decisions extract`
@@ -87,9 +92,10 @@ import dataclasses
 import functools
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from server.clients import gdrive
@@ -106,15 +112,16 @@ from server.core.ch import sequential_reads
 from server.core.errors import OverloadedError, ValidationError
 from server.core.hashing import sha256_text
 from server.core.pg_lease import PublicationPending
-from server.core.secrets_at_rest import unseal
 from server.knowledge.api.models_knowledge import KnowledgeDeleteInput, KnowledgeUpsertInput
 from server.knowledge.app import extractors, writes
+from server.knowledge.app import source_gdrive_items as gdrive_items
 from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import convert
 from server.knowledge.domain.sources import (
     GDRIVE_MIME_TYPES,
     SYNC_WORKER_ACTOR,
     KnowledgeSource,
+    include_in,
     json_object,
     source_key,
     source_tag,
@@ -147,6 +154,8 @@ _LEASE_TTL_S = 120.0  # not a setting: the entry-lease shape
 _WAIT_PASSES = 3  # not a setting: a bound on how long one file may stall a stamp
 # The sync-state key of the files the picture check flagged but found unchanged.
 _PICTURES_CHECKED = "pictures_checked"
+# Folder and drive checks a full turn has in flight at once.
+_CHECKS_AT_ONCE = 10  # not a setting: a bound on one turn's requests at once
 # How far behind the listing's start the stamp stays: a file the store stamps just
 # before the listing but indexes just after it is listed again next turn.
 _STAMP_SKEW_S = 60.0  # not a setting: a margin on the store's own indexing delay
@@ -174,6 +183,15 @@ class SourceGone(Exception):
     """The source was removed or replaced during its turn: the turn stops."""
 
 
+# Why a turn stopped short: they lead its error text, and the dashboard reads a note that
+# starts with one as "Incomplete" (frontend/src/lib/knowledgeSources.ts, CUT_SHORT).
+class TurnMark(StrEnum):
+    PASS_BOUND = "pass bound reached"
+    INCOMPLETE_SEARCH = "listing: incomplete search"
+    ITEM_LOST = "listing: an item listed nothing"
+    INCOMPLETE_RESULT = "listing: incomplete result"
+
+
 @dataclass
 class TurnResult:
     """What one turn did to one source, as its sync state records it."""
@@ -185,8 +203,11 @@ class TurnResult:
     unconverted: int = 0
     skipped: int = 0
     error: str = ""
-    # Why a turn that did not fail is still incomplete (the pass bound, an
-    # incomplete listing); shown as the error when there is none.
+    # Why the turn stopped short (the pass bound, an incomplete listing, a lost item),
+    # each once; they lead the error text, so the dashboard tells a cut turn from a note.
+    marks: list[TurnMark] = field(default_factory=list)
+    # What else a turn that did not fail noted: held-back files, an item or file it could
+    # not read. With the marks, shown as the error when there is none.
     note: str = ""
     # Why files were unconverted: reason -> count.
     reasons: dict[str, int] = field(default_factory=dict)
@@ -201,8 +222,6 @@ class TurnResult:
     retry_granted_for: str | None = None
     # Every listed file was handled, so the stamp may move.
     complete: bool = True
-    # The pass bound stopped the turn before every file was handled.
-    cut: bool = False
     # The newest revision the listing returned, capped at the listing's start.
     newest: str = ""
     full: bool = False
@@ -216,9 +235,26 @@ class TurnResult:
         if not self.error or status != "failed":
             self.status, self.error = status, error
 
-    def stop_at_bound(self) -> None:
-        self.complete, self.cut = False, True
-        self.note = self.note or "pass bound reached; the next pass goes on"
+    def mark(self, why: TurnMark) -> None:
+        """Record why the turn stopped short, once: it keeps its stamp and retires
+        nothing more. The pass bound goes first."""
+        self.complete = False
+        if why in self.marks:
+            return
+        if why is TurnMark.PASS_BOUND:
+            self.marks.insert(0, why)
+        else:
+            self.marks.append(why)
+
+    @property
+    def cut(self) -> bool:
+        """The pass bound stopped the turn before every file was handled."""
+        return TurnMark.PASS_BOUND in self.marks
+
+    @property
+    def state_error(self) -> str:
+        """The marks, then the notes, cut to 200 characters."""
+        return "; ".join([*self.marks, self.note] if self.note else self.marks)[:200]
 
     def unconverted_for(self, reason: str) -> None:
         self.unconverted += 1
@@ -319,7 +355,13 @@ async def run_sync(
         # A pass cancelled inside this source resumes at the next one.
         nxt = order[i + 1] if i + 1 < len(order) else (rest or order)[0]
         pass_context.set_cursor(_cursor_of(nxt))
-        await _sync_one(src, states.get(_cursor_of(src), {}), run, result)
+        turn = await _sync_one(src, states.get(_cursor_of(src), {}), run, result)
+        if turn is not None and turn.cut and not turn.documents_seen and i > len(asked):
+            # Out of time before any file, on what earlier sources left: the next pass
+            # starts here. The first of the rest moves on instead, so one slow source never
+            # holds the others back; a requested source goes first anyway.
+            pass_context.set_cursor(_cursor_of(src))
+            break
     await _extract_pending(order, run, result)
     if not order and not result.retired:
         pass_context.mark_idle()
@@ -362,14 +404,14 @@ async def _source_turn(src: KnowledgeSource) -> AsyncIterator[leases.Lease]:
 
 async def _sync_one(
     src: KnowledgeSource, state: dict[str, str], run: Pass, result: PassResult
-) -> None:
+) -> TurnResult | None:
     try:
         async with _source_turn(src):
             try:
                 turn = await _turn_of(src.kind)(src, state, run)
             except SourceGone:
                 log.info("knowledge_source_sync: %s was removed during its turn", _cursor_of(src))
-                return
+                return None
             except Exception as e:  # noqa: BLE001 — recorded as the source's failed turn
                 log.warning("knowledge_source_sync: %s failed: %s", _cursor_of(src), e)
                 turn = TurnResult()
@@ -377,13 +419,13 @@ async def _sync_one(
             await _write_state(src, state, turn)
     except leases.LeaseBusy:
         log.info("knowledge_source_sync: %s is being synced by another copy", _cursor_of(src))
-        return
+        return None
     except Exception as e:  # noqa: BLE001 — one source's failure must not stop the others
         result.errors.append(f"{_cursor_of(src)}: {type(e).__name__}")
         result.failed += 1
         log.warning("knowledge_source_sync: %s failed: %s", _cursor_of(src), e)
         pass_context.note_failure(e, _cursor_of(src))
-        return
+        return None
     result.synced += 1
     result.changed += turn.changed
     result.removed += turn.removed
@@ -394,6 +436,7 @@ async def _sync_one(
         result.failed += 1
         result.errors.append(f"{_cursor_of(src)}: {turn.status} {turn.error}".strip())
         pass_context.note_failure(RuntimeError(turn.error or turn.status), _cursor_of(src))
+    return turn
 
 
 def _turn_of(kind: str) -> Callable[..., Awaitable[TurnResult]]:
@@ -436,18 +479,20 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     # nothing (a definition in a code sample): file id -> the revision checked.
     checked = detail.get(_PICTURES_CHECKED)
     checked = checked if isinstance(checked, dict) else {}
-    credential = unseal("knowledge_sources.credential", src.credential_enc)
+    credential = source_ops.credential_of(src)
     if not credential:
         # Fail closed: a credential that no longer opens is never read as "no auth".
         turn.fail("credential_invalid", "the stored credential no longer opens; rotate it")
         return turn
-    folders = list(src.config.get("folder_ids") or [])
-    mime_types = [GDRIVE_MIME_TYPES[k] for k in src.config.get("include") or []]
     listed_at = datetime.now(UTC)
     try:
         token = await gdrive.access_token(gdrive.parse_service_account(credential))
-        files, whole = await gdrive.list_all(
-            token, folders, mime_types, modified_after="" if turn.full else stamp
+        listing = await gdrive_items.list_items(
+            token,
+            src.items,
+            include_in(src.config),
+            modified_after="" if turn.full else stamp,
+            out_of_time=run.budget.exhausted,
         )
     except gdrive.RateLimited:
         turn.fail("rate_limited", "rate_limited")
@@ -458,15 +503,15 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
     except gdrive.VendorError as e:
         turn.fail("failed", client_error(e))
         return turn
-    if turn.full and not await _folders_visible(token, folders, turn):
+    _note_listing(turn, listing)
+    if listing.ran_out:
+        return turn  # out of pass time: nothing more is written or retired this turn
+    if turn.full and not await _items_visible(token, src.items, turn, run.budget.exhausted):
         return turn
-    if not whole:
-        # The store could not search everything: write what it listed, but keep the
-        # stamp and retire nothing, and list again next pass.
-        turn.complete = False
-        turn.note = "listing: incomplete search"
-    # Only a whole listing of folders the account still sees says what is absent.
-    trusted = turn.full and turn.complete
+    files = listing.files
+    # Only a whole listing of items the account still sees, every folder walked,
+    # says what is absent; past a cut walk only the store's word on a file retires it.
+    trusted = turn.full and turn.complete and not listing.walk_cut
     files = [f for f in files if gdrive.valid_file_id(str(f.get("id") or ""))]
     turn.documents_seen = len(files)
     turn.newest = capped(
@@ -485,18 +530,62 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
         turn.waits = {k: v for k, v in turn.waits.items() if k in listed_ids}
     # Only a full listing lists an unchanged file, so only it asks for the pictures.
     revisions = await store.source_revisions(src.org, src.namespace, src.name, pictures=turn.full)
-    stored = {d["file_id"]: d for d in revisions}
-    for f in files:
+    bounded = _bounded(revisions, files, turn)
+    if bounded is None:
+        return turn
+    stored, writable = bounded
+    for f in writable:
         if not await _sync_file(src, token, f, stored.get(str(f["id"])), run, turn):
             break
-    if trusted and turn.complete:
+    if turn.full and turn.complete:
         # A file listed without an address it can be stored at counts as absent, so
         # its document is kept only if the lookup finds the file still there.
         addresses = {str(f["id"]): source_uri_of(f) for f in files}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
-        gone = functools.partial(_file_gone, token, folders=set(folders), turn=turn)
+        gone = functools.partial(_file_gone, token, listing=listing, turn=turn)
         await retire_absent(src, listed, gone, run, turn)
     return turn
+
+
+def _note_listing(turn: TurnResult, listing: gdrive_items.Listing) -> None:
+    """The listing's notes on the turn. An incomplete listing (the store could not search
+    everything, or an item listed nothing) has its files written, but the turn keeps its
+    stamp, retires nothing and lists again next pass; a listing the pass ran out on
+    writes nothing."""
+    turn.note = "; ".join([n for n in (listing.walk_cut, *listing.notes) if n])
+    if not listing.whole:
+        turn.mark(TurnMark.INCOMPLETE_SEARCH)
+    if listing.lost_item:
+        turn.mark(TurnMark.ITEM_LOST)
+    if listing.ran_out:
+        turn.mark(TurnMark.PASS_BOUND)
+
+
+def _bounded(
+    revisions: list[dict[str, str]], files: list[dict[str, Any]], turn: TurnResult
+) -> tuple[dict[str, dict[str, str]], list[dict[str, Any]]] | None:
+    """The stored copies by file id, and the listed files the turn may write: every
+    stored one, and new ones while the source stays within REVISIONS_LIMIT. None, with
+    the turn failed, when the source holds more: past the read's bound a stored file
+    would read as new, so such a source retires nothing until it is removed."""
+    limit = store.REVISIONS_LIMIT
+    if len(revisions) > limit:
+        turn.fail("failed", f"too_many_documents: more than {limit}")
+        return None
+    stored = {d["file_id"]: d for d in revisions}
+    room = limit - len(stored)
+    writable = []
+    for f in files:
+        if str(f["id"]) not in stored:
+            if room <= 0:
+                continue
+            room -= 1
+        writable.append(f)
+    if held := len(files) - len(writable):
+        # Ahead of the other notes, so an item note never cuts it off.
+        held_note = f"too_many_documents: {held} new files past {limit}"
+        turn.note = "; ".join(filter(None, [held_note, turn.note]))
+    return stored, writable
 
 
 def start_waits(turn: TurnResult, detail: dict[str, Any]) -> None:
@@ -551,23 +640,45 @@ def valid_stamp(stamp: str) -> bool:
     return gdrive.valid_stamp(stamp)
 
 
-async def _folders_visible(token: str, folders: list[str], turn: TurnResult) -> bool:
-    """Check that the account still sees every folder; whether the turn may go on.
-    A folder it lost lists empty, not refused, so a full listing is trusted for
-    removals only after this. A folder that fails leaves the turn `failed` and
-    incomplete, so nothing is retired while the files of the folders it still sees
-    are written; a rate limit or a 401 ends the turn."""
-    for folder in folders:
-        try:
-            await gdrive.require_folder(token, folder)
-        except gdrive.RateLimited:
+def _visibility_checks(
+    items: list[dict[str, Any]],
+) -> Iterator[tuple[Callable[[str, str], Awaitable[Any]], str]]:
+    for item in items:
+        if item["type"] == "folder":
+            yield gdrive.require_folder, item["id"]
+        elif item["type"] == "shared_drive":
+            yield gdrive.require_drive, item["id"]
+        elif item["type"] == "filter" and "in" in item:
+            yield gdrive.require_folder, item["in"]
+
+
+async def _items_visible(
+    token: str, items: list[dict[str, Any]], turn: TurnResult, out_of_time: Callable[[], bool]
+) -> bool:
+    """Whether the turn may go on after checking that the account still sees every folder
+    and shared drive its items name (a filter's `in` folder too): a lost folder lists
+    empty rather than refused. False on a rate limit, a 401 or the pass running out (the
+    turn writes nothing); True after any other failed check, which leaves the turn
+    failed, so it writes what it listed and retires nothing."""
+    checks = list(dict.fromkeys(_visibility_checks(items)))  # each folder once
+    for start in range(0, len(checks), _CHECKS_AT_ONCE):
+        if out_of_time():
+            turn.mark(TurnMark.PASS_BOUND)
+            return False
+        batch = checks[start : start + _CHECKS_AT_ONCE]
+        answers = await asyncio.gather(*(r(token, i) for r, i in batch), return_exceptions=True)
+        errors = [a for a in answers if isinstance(a, BaseException)]
+        if any(isinstance(e, gdrive.RateLimited) for e in errors):
             turn.fail("rate_limited", "rate_limited")
             return False
-        except gdrive.VendorError as e:
+        for e in errors:
+            if not isinstance(e, gdrive.VendorError):
+                raise e
             if e.status == 401:
                 turn.fail("credential_invalid", client_error(e))
                 return False
-            turn.fail("failed", client_error(e))
+        if errors:
+            turn.fail("failed", client_error(errors[0]))
             return True
     return True
 
@@ -591,7 +702,7 @@ async def retire_absent(
         if address == doc["source_uri"]:
             continue
         if run.spent():
-            turn.stop_at_bound()
+            turn.mark(TurnMark.PASS_BOUND)
             return
         run.left -= 1
         if address is None:
@@ -605,10 +716,13 @@ async def retire_absent(
             turn.removed += 1
 
 
-async def _file_gone(token: str, file_id: str, folders: set[str], turn: TurnResult) -> bool | None:
-    """Whether the store says the file is gone: not found, trashed, or in none of
-    the source's folders. A lookup that fails retires nothing; a rate limit or a
-    401 is the turn's, and None stops the retiring."""
+async def _file_gone(
+    token: str, file_id: str, listing: gdrive_items.Listing, turn: TurnResult
+) -> bool | None:
+    """Whether the store says the file is gone: not found, trashed, or reached by none
+    of the source's items (`Listing.reaches`; after a cut walk, only a kind `include` no
+    longer names). A lookup that fails retires nothing; a rate limit or a 401 is the
+    turn's, and None stops the retiring."""
     try:
         state = await gdrive.file_state(token, file_id)
     except gdrive.NotFound:
@@ -621,7 +735,12 @@ async def _file_gone(token: str, file_id: str, folders: set[str], turn: TurnResu
             turn.fail("credential_invalid", client_error(e))
             return None
         return False
-    return bool(state.get("trashed")) or not folders & set(state.get("parents") or [])
+    if state.get("trashed"):
+        return True
+    if listing.walk_cut:
+        # Below the cut a file may still be the source's; a kind it no longer reads is not.
+        return not listing.reads_kind(state)
+    return not listing.reaches(file_id, state)
 
 
 def client_error(e: BaseException) -> str:
@@ -702,7 +821,7 @@ async def sync_item(
     if before_fetch is not None and not await before_fetch():
         return True
     if run.spent():
-        turn.stop_at_bound()
+        turn.mark(TurnMark.PASS_BOUND)
         return False
     run.left -= 1
     outcome = await fetch_and_write()
@@ -1085,7 +1204,7 @@ async def _write_state(src: KnowledgeSource, read: dict[str, str], turn: TurnRes
             unconverted=turn.unconverted,
             unconverted_reasons=turn.reasons,
             skipped=turn.skipped,
-            error=turn.error or turn.note,
+            error=turn.error or turn.state_error,
         )
         detail.update(turn.kind_state)
         if turn.waits_read:

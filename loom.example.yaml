@@ -2790,8 +2790,9 @@ settings:
   # past it is refused with SOURCE_QUOTA. [live]
   # knowledge_sources_max_per_namespace: 8
 
-  # Seconds a document source's probe (add, check, rotate) may take in all; past it add
-  # and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. [live]
+  # Seconds a document source's probe (add, update, check, rotate) or tracker short-id
+  # lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and
+  # check answers reachable: false. [live]
   # knowledge_source_probe_timeout_s: 20.0
 
   # The knowledge_source_sync worker: pulls each registered document source's changed

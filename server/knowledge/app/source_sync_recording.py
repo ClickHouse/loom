@@ -42,8 +42,8 @@ from typing import Any
 
 from server.clients import recording
 from server.core.errors import ValidationError
-from server.core.secrets_at_rest import unseal
 from server.knowledge.app import source_sync as sync
+from server.knowledge.app import sources as source_ops
 from server.knowledge.domain.sources import KnowledgeSource, json_object
 from server.knowledge.domain.transcripts import Entry, parse_time, parse_vtt, transcript_markdown
 from server.knowledge.store import sources as store
@@ -244,7 +244,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     result = sync.TurnResult()
     result.full = bool(detail.get("full")) or parse_time(stamp) is None or sync.full_due(detail)
     sync.start_waits(result, detail)
-    credential = unseal("knowledge_sources.credential", src.credential_enc)
+    credential = source_ops.credential_of(src)
     if not credential:
         # Fail closed: a credential that no longer opens is never read as "no auth".
         result.fail("credential_invalid", "the stored credential no longer opens; rotate it")

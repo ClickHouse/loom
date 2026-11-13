@@ -682,6 +682,37 @@ schema. These rules keep that safe. The operator procedure is in
     replica serves ([knowledge gaps](knowledge-gaps.md#rolling-upgrades)).
     `tests/unit/test_knowledge_gaps.py` checks the refusals; the mixed-version gate does
     not.
+49. **A document source's items** (`loom.knowledge_sources.source_kind`, `items_json`,
+    `secret_enc`, migration `096_knowledge_source_items.sql`): N writes a source whose
+    items the id-list `config` can hold (only non-recursive folders, at most 20 of
+    anything) as N-1 writes it, `kind`, `config_json` and the credential in
+    `credential_enc`, with `items_json` beside them, so N-1 lists, checks, rotates and
+    syncs it as before. Any other source is stored with `kind` empty, its kind in
+    `source_kind`, its credential in `secret_enc` (purpose `knowledge_sources.secret`),
+    `credential_enc` empty and `config_json` holding no item. N-1 lists such a source
+    with kind `''`; its `check` answers `credential_invalid` (its `credential_enc` is
+    empty) and asks for a rotate, and its `rotate` fails with a server error before
+    writing, since it has no probe for kind `''`; and its sync turn reads it as a shared
+    folder with no credential, so the turn ends `credential_invalid` before any request
+    and retires nothing. N-1's `remove` of it, and its retirement when its namespace
+    goes, write an inactive row whose new columns read empty. So `knowledge.source.add`
+    and `knowledge.source.update` answer 503 `OVERLOADED` (`retry_after_s` 30) for a
+    source they would store with `kind` empty while any live process of any deployment
+    on the ClickHouse service (`loom.instances`, `read_live(all_deployments=True)`)
+    reports a schema version below 96, or none has been read. N reads `source_kind`
+    first and `kind` when it is empty, and `items_json` first and `config_json` when it
+    holds no item, so a row N-1 rewrote reads as it wrote it. N-1's `sync_now` without
+    `full` writes `full: false` over an update's waiting full request, so while it
+    serves, an added item's files older than the stamp wait for the periodic full
+    listing. N-1's `loom secrets reseal` does not reseal `secret_enc`, and its `--check`
+    reports clean, so run the reseal from build N before dropping
+    `LOOM_JWT_SECRET_PREVIOUS`: a `secret_enc` left under the old key reads as no
+    credential and its source's turns end `credential_invalid` until rotated. A later
+    release, once no build below 96 runs, writes `kind` for every source and keeps one
+    credential column. `tests/unit/test_knowledge_sources.py` checks the refusal, and
+    `tests/unit/test_knowledge_source_sync.py` that a folder turn over such a row ends
+    before any request; N-1's `check` and `rotate` failing is read from its code, and
+    the mixed-version gate does not check this rule.
 
 ## What checks them
 

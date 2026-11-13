@@ -3815,6 +3815,623 @@
           }
          ]
         },
+        "source": {
+         "prog": "loom knowledge source",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {},
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "source_command"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "source_command",
+           "action": "_SubParsersAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": "A...",
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null,
+           "subcommands": {
+            "list": {
+             "prog": "loom knowledge source list",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_cmd_list"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "namespace",
+                "org",
+                "server_url",
+                "token"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The namespace the source's documents live in",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": "",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default: the token's org",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": "http://localhost:7777",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token"
+               ],
+               "dest": "token",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "JWT (default: $LOOM_API_KEY, ~/.loom/token)",
+               "metavar": null
+              }
+             ]
+            },
+            "add": {
+             "prog": "loom knowledge source add",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_cmd_add"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "namespace",
+                "org",
+                "server_url",
+                "token",
+                "name",
+                "kind",
+                "link",
+                "item_json",
+                "include",
+                "credential_file",
+                "dry_run"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The namespace the source's documents live in",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": "",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default: the token's org",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": "http://localhost:7777",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token"
+               ],
+               "dest": "token",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "JWT (default: $LOOM_API_KEY, ~/.loom/token)",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--name"
+               ],
+               "dest": "name",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--kind"
+               ],
+               "dest": "kind",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "gdrive, notion or linear",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--link"
+               ],
+               "dest": "link",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "A link to read; repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--item-json"
+               ],
+               "dest": "item_json",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "An item to read as JSON, such as {\"type\": \"folder\", \"id\": \"...\"}; repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--include"
+               ],
+               "dest": "include",
+               "action": "_AppendAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "gdrive: a file kind to read (docs, slides, pdf, pptx, docx); repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--credential-file"
+               ],
+               "dest": "credential_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The file holding the source's read-only credential; - reads it from stdin",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--dry-run"
+               ],
+               "dest": "dry_run",
+               "action": "_StoreTrueAction",
+               "default": false,
+               "const": true,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "Probe and store nothing",
+               "metavar": null
+              }
+             ]
+            },
+            "update": {
+             "prog": "loom knowledge source update",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_cmd_update"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "namespace",
+                "org",
+                "server_url",
+                "token",
+                "name",
+                "link",
+                "item_json",
+                "include",
+                "remove_link",
+                "remove_item_json"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The namespace the source's documents live in",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": "",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default: the token's org",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": "http://localhost:7777",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token"
+               ],
+               "dest": "token",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "JWT (default: $LOOM_API_KEY, ~/.loom/token)",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--name"
+               ],
+               "dest": "name",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--link"
+               ],
+               "dest": "link",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "A link to read; repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--item-json"
+               ],
+               "dest": "item_json",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "An item to read as JSON, such as {\"type\": \"folder\", \"id\": \"...\"}; repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--include"
+               ],
+               "dest": "include",
+               "action": "_AppendAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "gdrive: a file kind to read (docs, slides, pdf, pptx, docx); repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--remove-link"
+               ],
+               "dest": "remove_link",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "A link to remove; repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--remove-item-json"
+               ],
+               "dest": "remove_item_json",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "An item to remove as JSON, such as {\"type\": \"folder\", \"id\": \"...\"}; repeatable",
+               "metavar": null
+              }
+             ]
+            }
+           },
+           "aliases_of": {
+            "list": "loom knowledge source list",
+            "add": "loom knowledge source add",
+            "update": "loom knowledge source update"
+           },
+           "choices_help": [
+            {
+             "dest": "list",
+             "help": "List the namespace's sources, items and sync state.",
+             "metavar": "list"
+            },
+            {
+             "dest": "add",
+             "help": "Register a source from links or items, probed with the credential before anything is stored (knowledge.source.add).",
+             "metavar": "add"
+            },
+            {
+             "dest": "update",
+             "help": "Add and remove a source's items or change its file kinds, the added items probed with the stored credential (knowledge.source.update).",
+             "metavar": "update"
+            }
+           ]
+          }
+         ]
+        },
         "migrate-originals": {
          "prog": "loom knowledge migrate-originals",
          "usage": null,
@@ -3911,6 +4528,7 @@
        },
        "aliases_of": {
         "sync": "loom knowledge sync",
+        "source": "loom knowledge source",
         "migrate-originals": "loom knowledge migrate-originals"
        },
        "choices_help": [
@@ -3918,6 +4536,11 @@
          "dest": "sync",
          "help": "Run one sync pass over a repository namespace's document sources now: list each source's changed files (every file with --full), write the changed ones as documents and retire those a full listing no longer has, then mine each document written since it was last mined for decisions (model calls, within LOOM_KNOWLEDGE_SOURCE_SYNC_CAP_SHARE of the namespace's cost cap), bounded like a worker pass by LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS; run it again to go on. Leaves a manual knowledge_source_sync row in loom.worker_status. Exits 1 when a source's turn or a document's extraction failed.",
          "metavar": "sync"
+        },
+        {
+         "dest": "source",
+         "help": "A namespace's document sources, over a running server.",
+         "metavar": "source"
         },
         {
          "dest": "migrate-originals",

@@ -189,9 +189,11 @@ OpName = Literal[
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
+    "knowledge.source.parse_links",
     "knowledge.source.remove",
     "knowledge.source.rotate",
     "knowledge.source.sync_now",
+    "knowledge.source.update",
     "knowledge.synthesize",
     "knowledge.update_metadata",
     "knowledge.upsert",
@@ -554,9 +556,11 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
+    "knowledge.source.parse_links",
     "knowledge.source.remove",
     "knowledge.source.rotate",
     "knowledge.source.sync_now",
+    "knowledge.source.update",
     "knowledge.synthesize",
     "knowledge.update_metadata",
     "knowledge.upsert",
@@ -2529,7 +2533,7 @@ OPS: dict[str, OpSpec] = {
         False,
         "admin",
         "experimental",
-        30000,
+        60000,
         True,
         False,
     ),
@@ -2569,6 +2573,18 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "knowledge.source.parse_links": OpSpec(
+        "knowledge.source.parse_links",
+        "KnowledgeSourceParseLinksInput",
+        "KnowledgeSourceParseLinksBody",
+        "KnowledgeSourceParseLinksOutput",
+        True,
+        "viewer",
+        "experimental",
+        50,
+        False,
+        True,
+    ),
     "knowledge.source.remove": OpSpec(
         "knowledge.source.remove",
         "KnowledgeSourceRemoveInput",
@@ -2602,6 +2618,18 @@ OPS: dict[str, OpSpec] = {
         "admin",
         "experimental",
         300,
+        True,
+        False,
+    ),
+    "knowledge.source.update": OpSpec(
+        "knowledge.source.update",
+        "KnowledgeSourceUpdateInput",
+        "KnowledgeSourceUpdateBody",
+        "KnowledgeSourceUpdateOutput",
+        False,
+        "admin",
+        "experimental",
+        60000,
         True,
         False,
     ),
@@ -11328,25 +11356,31 @@ class SearchHit(TypedDict, total=False):
 
 
 class KnowledgeSourceAddInput(TypedDict, total=False):
-    "Register a document source on a namespace: a kind, the ids it reads and a"
+    "Register a document source on a namespace: a kind, what it reads (items"
 
     org: Required[str]
     namespace: Required[str]
     name: Required[str]
     kind: Required[str]
-    config: Required[dict[str, Any]]
+    items: NotRequired[Optional[list[dict[str, Any]]]]
+    links: NotRequired[Optional[list[str]]]
+    config: NotRequired[Optional[dict[str, Any]]]
+    include: NotRequired[Optional[list[str]]]
     credential: Required[str]
     dry_run: NotRequired[bool]
 
 
 class KnowledgeSourceAddBody(TypedDict, total=False):
-    "Register a document source on a namespace: a kind, the ids it reads and a"
+    "Register a document source on a namespace: a kind, what it reads (items"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
     name: Required[str]
     kind: Required[str]
-    config: Required[dict[str, Any]]
+    items: NotRequired[Optional[list[dict[str, Any]]]]
+    links: NotRequired[Optional[list[str]]]
+    config: NotRequired[Optional[dict[str, Any]]]
+    include: NotRequired[Optional[list[str]]]
     credential: Required[str]
     dry_run: NotRequired[bool]
 
@@ -11355,6 +11389,8 @@ class KnowledgeSourceAddOutput(TypedDict, total=False):
     name: Required[str]
     kind: Required[str]
     namespace: Required[str]
+    items: NotRequired[list[dict[str, Any]]]
+    include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
     probe: NotRequired["KnowledgeSourceProbe"]
     dry_run: NotRequired[bool]
@@ -11366,10 +11402,12 @@ class KnowledgeSourceProbe(TypedDict, total=False):
     documents: NotRequired[int]
     more: NotRequired[bool]
     sample: NotRequired[list[str]]
+    checked: NotRequired[int]
+    sampled: NotRequired[bool]
 
 
 class KnowledgeSourceCheckInput(TypedDict, total=False):
-    "Probe a registered document source with its stored credential now (a check"
+    "Probe a registered document source with its stored credential now (a check of"
 
     org: Required[str]
     namespace: Required[str]
@@ -11377,7 +11415,7 @@ class KnowledgeSourceCheckInput(TypedDict, total=False):
 
 
 class KnowledgeSourceCheckBody(TypedDict, total=False):
-    "Probe a registered document source with its stored credential now (a check"
+    "Probe a registered document source with its stored credential now (a check of"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11390,12 +11428,14 @@ class KnowledgeSourceCheckOutput(TypedDict, total=False):
     documents: NotRequired[int]
     more: NotRequired[bool]
     sample: NotRequired[list[str]]
+    checked: NotRequired[int]
+    sampled: NotRequired[bool]
     summary: NotRequired[str]
     checked_at: NotRequired[str]
 
 
 class KnowledgeSourceInspectInput(TypedDict, total=False):
-    "One registered document source: its config, its sync state and the"
+    "One registered document source: its items, its sync state and the"
 
     org: Required[str]
     namespace: Required[str]
@@ -11403,7 +11443,7 @@ class KnowledgeSourceInspectInput(TypedDict, total=False):
 
 
 class KnowledgeSourceInspectBody(TypedDict, total=False):
-    "One registered document source: its config, its sync state and the"
+    "One registered document source: its items, its sync state and the"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11413,6 +11453,8 @@ class KnowledgeSourceInspectBody(TypedDict, total=False):
 class KnowledgeSourceInspectOutput(TypedDict, total=False):
     name: Required[str]
     kind: Required[str]
+    items: NotRequired[list[dict[str, Any]]]
+    include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
     created_by: NotRequired[str]
     created_at: NotRequired[str]
@@ -11471,10 +11513,39 @@ class KnowledgeSourceListOutput(TypedDict, total=False):
 class KnowledgeSourceEntry(TypedDict, total=False):
     name: Required[str]
     kind: Required[str]
+    items: NotRequired[list[dict[str, Any]]]
+    include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
     created_by: NotRequired[str]
     created_at: NotRequired[str]
     sync: NotRequired["KnowledgeSourceSync"]
+
+
+class KnowledgeSourceParseLinksInput(TypedDict, total=False):
+    "Read pasted links as a source's items, with no request to any store and"
+
+    org: Required[str]
+    namespace: Required[str]
+    links: Required[list[str]]
+
+
+class KnowledgeSourceParseLinksBody(TypedDict, total=False):
+    "Read pasted links as a source's items, with no request to any store and"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    links: Required[list[str]]
+
+
+class KnowledgeSourceParseLinksOutput(TypedDict, total=False):
+    links: NotRequired[list["KnowledgeSourceParsedLink"]]
+
+
+class KnowledgeSourceParsedLink(TypedDict, total=False):
+    link: Required[str]
+    kind: NotRequired[str]
+    item: NotRequired[dict[str, Any]]
+    unreadable: NotRequired[str]
 
 
 class KnowledgeSourceRemoveInput(TypedDict, total=False):
@@ -11547,6 +11618,42 @@ class KnowledgeSourceSyncNowBody(TypedDict, total=False):
 class KnowledgeSourceSyncNowOutput(TypedDict, total=False):
     name: Required[str]
     enabled: NotRequired[bool]
+
+
+class KnowledgeSourceUpdateInput(TypedDict, total=False):
+    "Add items to a registered document source or remove them, or change a gdrive"
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    add_items: NotRequired[list[dict[str, Any]]]
+    add_links: NotRequired[list[str]]
+    remove_items: NotRequired[list[dict[str, Any]]]
+    remove_links: NotRequired[list[str]]
+    include: NotRequired[Optional[list[str]]]
+
+
+class KnowledgeSourceUpdateBody(TypedDict, total=False):
+    "Add items to a registered document source or remove them, or change a gdrive"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    add_items: NotRequired[list[dict[str, Any]]]
+    add_links: NotRequired[list[str]]
+    remove_items: NotRequired[list[dict[str, Any]]]
+    remove_links: NotRequired[list[str]]
+    include: NotRequired[Optional[list[str]]]
+
+
+class KnowledgeSourceUpdateOutput(TypedDict, total=False):
+    name: Required[str]
+    items: NotRequired[list[dict[str, Any]]]
+    include: NotRequired[list[str]]
+    config: NotRequired[dict[str, Any]]
+    added: NotRequired[list[dict[str, Any]]]
+    removed: NotRequired[list[dict[str, Any]]]
+    probe: NotRequired["KnowledgeSourceProbe"]
 
 
 class KnowledgeSynthesizeInput(TypedDict, total=False):

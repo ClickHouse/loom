@@ -101,7 +101,7 @@ BASELINE = {
     "server/knowledge/app/source_sync.py": 5,
     "server/knowledge/app/source_sync_notion.py": 2,
     "server/knowledge/app/source_sync_recording.py": 4,
-    "server/knowledge/app/sources.py": 5,
+    "server/knowledge/app/sources.py": 4,
     "server/knowledge/app/upload_routes.py": 3,
     "server/knowledge/app/writes.py": 1,
     "server/knowledge/domain/datasets.py": 2,

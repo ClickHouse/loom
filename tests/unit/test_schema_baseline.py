@@ -151,6 +151,7 @@ def test_the_journal_files() -> None:
         "093_service_account_saves_to.sql",
         "094_cell_heartbeats.sql",
         "095_knowledge_gaps.sql",
+        "096_knowledge_source_items.sql",
     ]
 
 

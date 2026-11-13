@@ -12,8 +12,9 @@ import httpx
 import pytest
 
 from server.clients import linear
+from server.core.errors import BadConfigError
 from server.knowledge.app import source_probes
-from server.knowledge.domain.sources import SourceConfigError, parse_config
+from server.knowledge.domain.sources import items_from_config, parse_config
 
 PROJECT = "0b6d7a52-1c1e-4c2b-9a4e-5d0f3b1e2a01"
 OTHER = "7e3f9c10-8a2b-4d5e-b6f7-0123456789ab"
@@ -53,7 +54,9 @@ def _tracker(request: httpx.Request) -> httpx.Response:
 
 
 def _probe() -> source_probes.Probe:
-    return asyncio.run(source_probes.probe("linear", CONFIG, KEY + "\n"))
+    return asyncio.run(
+        source_probes.probe("linear", CONFIG, KEY + "\n", items=items_from_config("linear", CONFIG))
+    )
 
 
 def test_the_probe_reads_one_page_of_each_project(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,7 +120,11 @@ def test_a_key_that_cannot_be_a_header_is_refused_without_a_call(
 ) -> None:
     seen = _install(monkeypatch, _tracker)
     with pytest.raises(source_probes.CredentialRefused):
-        asyncio.run(source_probes.probe("linear", CONFIG, "two words"))
+        asyncio.run(
+            source_probes.probe(
+                "linear", CONFIG, "two words", items=items_from_config("linear", CONFIG)
+            )
+        )
     assert seen == []
 
 
@@ -156,5 +163,5 @@ def test_a_config_names_projects_by_id() -> None:
     ],
 )
 def test_a_config_the_kind_cannot_use_is_refused(config: dict[str, Any]) -> None:
-    with pytest.raises(SourceConfigError):
+    with pytest.raises(BadConfigError):
         parse_config("linear", config)

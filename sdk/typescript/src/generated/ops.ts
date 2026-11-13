@@ -4158,10 +4158,16 @@ export interface KnowledgeSourceAddInput {
   namespace: string;
   /** Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. */
   name: string;
-  /** The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (a m */
+  /** The source kind: `gdrive` (a shared-folder store), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording */
   kind: string;
-  /** The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; linear */
-  config: Record<string, unknown>;
+  /** The things the source reads, each an object with a `type`: 1-300 for gdrive, 1-20 for linear and 1-20 for notion; gdrive: {type: folder, id, recursive (default  */
+  items?: Array<Record<string, unknown>> | null;
+  /** Links to folders, files, documents, slides, pages, databases or projects, read as items (`knowledge.source.parse_links`); an unreadable link refuses the call (B */
+  links?: string[] | null;
+  /** What the source reads in the form that names ids per kind, instead of items or links; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, */
+  config?: Record<string, unknown> | null;
+  /** gdrive with items or links: the file kinds read, of docs, slides, pdf, pptx, docx (default all but docx). */
+  include?: string[] | null;
   /** The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an acc */
   credential: string;
   /** Probe and write nothing. */
@@ -4172,12 +4178,16 @@ export interface KnowledgeSourceProbe {
   documents?: number;
   more?: boolean;
   sample?: string[];
+  checked?: number;
+  sampled?: boolean;
 }
 
 export interface KnowledgeSourceAddOutput {
   name: string;
   kind: string;
   namespace: string;
+  items?: Array<Record<string, unknown>>;
+  include?: string[];
   config?: Record<string, unknown>;
   probe?: KnowledgeSourceProbe;
   dry_run?: boolean;
@@ -4198,6 +4208,8 @@ export interface KnowledgeSourceCheckOutput {
   documents?: number;
   more?: boolean;
   sample?: string[];
+  checked?: number;
+  sampled?: boolean;
   summary?: string;
   checked_at?: string;
 }
@@ -4240,6 +4252,8 @@ export interface KnowledgeSourceDocument {
 export interface KnowledgeSourceInspectOutput {
   name: string;
   kind: string;
+  items?: Array<Record<string, unknown>>;
+  include?: string[];
   config?: Record<string, unknown>;
   created_by?: string;
   created_at?: string;
@@ -4257,6 +4271,8 @@ export interface KnowledgeSourceListInput {
 export interface KnowledgeSourceEntry {
   name: string;
   kind: string;
+  items?: Array<Record<string, unknown>>;
+  include?: string[];
   config?: Record<string, unknown>;
   created_by?: string;
   created_at?: string;
@@ -4267,6 +4283,26 @@ export interface KnowledgeSourceListOutput {
   sources?: KnowledgeSourceEntry[];
   enabled?: boolean;
   accepts_sources?: boolean;
+}
+
+export interface KnowledgeSourceParseLinksInput {
+  /** The org. */
+  org: string;
+  /** The namespace the source would live in. */
+  namespace: string;
+  /** 1-300 links. */
+  links: string[];
+}
+
+export interface KnowledgeSourceParsedLink {
+  link: string;
+  kind?: string;
+  item?: Record<string, unknown>;
+  unreadable?: string;
+}
+
+export interface KnowledgeSourceParseLinksOutput {
+  links?: KnowledgeSourceParsedLink[];
 }
 
 export interface KnowledgeSourceRemoveInput {
@@ -4318,6 +4354,35 @@ export interface KnowledgeSourceSyncNowInput {
 export interface KnowledgeSourceSyncNowOutput {
   name: string;
   enabled?: boolean;
+}
+
+export interface KnowledgeSourceUpdateInput {
+  /** The org. */
+  org: string;
+  /** The namespace the source's documents live in. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+  /** Items to add, of the forms add takes; one of the same type and id replaces the stored one, and a folder of the id of a shared drive the source keeps or is given */
+  add_items?: Array<Record<string, unknown>>;
+  /** Links to add, read as items; a link to something the source holds names it as held (a recursive folder, a drive at its root), and an add_items entry for the sam */
+  add_links?: string[];
+  /** Items to remove, matched by type and id (a filter by its fields); a folder entry also removes a shared drive of the same id the source holds. One the source doe */
+  remove_items?: Array<Record<string, unknown>>;
+  /** Links to remove, read as items; a folder link also removes a shared drive of the same id the source holds. */
+  remove_links?: string[];
+  /** gdrive only: the new file kinds read, of docs, slides, pdf, pptx, docx; default unchanged. */
+  include?: string[] | null;
+}
+
+export interface KnowledgeSourceUpdateOutput {
+  name: string;
+  items?: Array<Record<string, unknown>>;
+  include?: string[];
+  config?: Record<string, unknown>;
+  added?: Array<Record<string, unknown>>;
+  removed?: Array<Record<string, unknown>>;
+  probe?: KnowledgeSourceProbe;
 }
 
 export interface KnowledgeSynthesizeInput {
@@ -10310,9 +10375,11 @@ export type OpName =
   | "knowledge.source.check"
   | "knowledge.source.inspect"
   | "knowledge.source.list"
+  | "knowledge.source.parse_links"
   | "knowledge.source.remove"
   | "knowledge.source.rotate"
   | "knowledge.source.sync_now"
+  | "knowledge.source.update"
   | "knowledge.synthesize"
   | "knowledge.update_metadata"
   | "knowledge.upsert"
@@ -10675,9 +10742,11 @@ export interface OpMap {
   "knowledge.source.check": { input: KnowledgeSourceCheckInput; output: KnowledgeSourceCheckOutput };
   "knowledge.source.inspect": { input: KnowledgeSourceInspectInput; output: KnowledgeSourceInspectOutput };
   "knowledge.source.list": { input: KnowledgeSourceListInput; output: KnowledgeSourceListOutput };
+  "knowledge.source.parse_links": { input: KnowledgeSourceParseLinksInput; output: KnowledgeSourceParseLinksOutput };
   "knowledge.source.remove": { input: KnowledgeSourceRemoveInput; output: KnowledgeSourceRemoveOutput };
   "knowledge.source.rotate": { input: KnowledgeSourceRotateInput; output: KnowledgeSourceRotateOutput };
   "knowledge.source.sync_now": { input: KnowledgeSourceSyncNowInput; output: KnowledgeSourceSyncNowOutput };
+  "knowledge.source.update": { input: KnowledgeSourceUpdateInput; output: KnowledgeSourceUpdateOutput };
   "knowledge.synthesize": { input: KnowledgeSynthesizeInput; output: KnowledgeSynthesizeOutput };
   "knowledge.update_metadata": { input: KnowledgeUpdateMetadataInput; output: KnowledgeUpdateMetadataOutput };
   "knowledge.upsert": { input: KnowledgeUpsertInput; output: KnowledgeUpsertOutput };
@@ -11036,13 +11105,15 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "knowledge.restore", group: "knowledge", method: "restore", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
   { name: "knowledge.search", group: "knowledge", method: "search", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
-  { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
   { name: "knowledge.source.inspect", group: "knowledge", method: "sourceInspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "knowledge.source.list", group: "knowledge", method: "sourceList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
+  { name: "knowledge.source.parse_links", group: "knowledge", method: "sourceParseLinks", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
   { name: "knowledge.source.remove", group: "knowledge", method: "sourceRemove", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.source.rotate", group: "knowledge", method: "sourceRotate", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "knowledge.source.sync_now", group: "knowledge", method: "sourceSyncNow", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: true, readOnly: false },
+  { name: "knowledge.source.update", group: "knowledge", method: "sourceUpdate", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.synthesize", group: "knowledge", method: "synthesize", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.update_metadata", group: "knowledge", method: "updateMetadata", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.upsert", group: "knowledge", method: "upsert", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: false },
@@ -11258,4 +11329,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 362;
+export const GENERATED_OP_COUNT = 364;

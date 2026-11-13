@@ -531,8 +531,8 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "grants.revoke": ("loom.namespace_grants",),
     "groups.remove_member": ("loom.principal_groups",),
     "personal.retire": ("loom.namespaces",),
-    # Deactivates the namespace's sources and clears their credentials: configuration,
-    # no memory or document content.
+    # Deactivates the namespace's sources and clears their credentials: configuration
+    # an admin wrote (ids, names, a filter's name fragment), no memory or document content.
     "knowledge_sources.retire": ("loom.knowledge_sources",),
     "collections.forget_owner": ("loom.collections", "loom.namespaces"),
     # The org's other cache: its cached query vectors (never their text), deleted

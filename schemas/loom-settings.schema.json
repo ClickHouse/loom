@@ -3183,7 +3183,7 @@
           "exclusiveMinimum": 0,
           "maximum": 25.0,
           "type": "number",
-          "description": "Seconds a document source's probe (add, check, rotate) may take in all; past it add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false."
+          "description": "Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false."
         },
         "knowledge_source_sync_cap_share": {
           "default": 0.25,
