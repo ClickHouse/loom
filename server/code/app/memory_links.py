@@ -173,7 +173,14 @@ async def grep_words(
             literal_paths=True,
             word=True,
         )
-    except (gitrepo.ArgumentsTooLong, gitrepo.GrepTimedOut):
+    except (gitrepo.ArgumentsTooLong, gitrepo.GrepTimedOut) as e:
+        log.warning(  # a missing link the mirror could have followed reads as the index says
+            "memory links: mirror search for %s over %d paths of %s cut short: %s",
+            literal,
+            len(paths),
+            scope.cfg.namespace,
+            type(e).__name__,
+        )
         return []
     except gitrepo.GitError:
         return None

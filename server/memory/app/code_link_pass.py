@@ -4,6 +4,7 @@ cursors it resumes from."""
 from __future__ import annotations
 
 import json
+import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -18,6 +19,8 @@ from server.code.domain.successor import Successor
 from server.memory.store.code_links import LinkRow
 from server.memory.store.key_write_lock import KeyWriteLocks
 from server.settings import settings
+
+log = logging.getLogger(__name__)
 
 # One host rechecks a repository at a time; the lease outlives the worker's pass budget.
 repository_locks = KeyWriteLocks(wait_s=1.0, ttl_s=900)
@@ -138,7 +141,18 @@ class RepoReads:
 
         async def read() -> list[str] | None:
             touched = await self.touched(base, head) if base else None
-            if not touched or len(touched) > settings.memory_code_links_mirror_changed_files:
+            if not touched:
+                return []
+            if len(touched) > settings.memory_code_links_mirror_changed_files:
+                log.info(
+                    "memory links: %s not searched for in the mirror: %d files changed in "
+                    "%s..%s of %s, past memory_code_links_mirror_changed_files",
+                    literal,
+                    len(touched),
+                    base[:12],
+                    head[:12],
+                    self.cns,
+                )
                 return []
             scope = await self._once(
                 ("scope", head), lambda: code.ingest_scope(self.org, self.cns, head)
@@ -153,8 +167,15 @@ class RepoReads:
             found = await code.grep_words(scope, head, literal, paths, limit=limit)
             if found is None:
                 return None
-            if len(found) >= limit:
-                return []  # a cut list is never taken as whole
+            if len(found) >= limit:  # a cut list is never taken as whole
+                log.info(
+                    "memory links: %s named by %d or more changed files of %s, past "
+                    "memory_code_links_mirror_naming_files: the index decides",
+                    literal,
+                    limit,
+                    self.cns,
+                )
+                return []
             return [p for p in found if await self._indexed_names(scope, head, p) is not None]
 
         return await self._once(("containing", head, literal, base), read)

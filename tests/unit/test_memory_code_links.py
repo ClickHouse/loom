@@ -4205,7 +4205,8 @@ async def test_a_grep_that_cannot_start_is_a_git_error(monkeypatch, errno_) -> N
 
 @pytest.mark.asyncio
 async def test_the_mirror_is_searched_for_a_name_without_its_ordinal(monkeypatch) -> None:
-    # a C++ overload's name carries the index's `#N`; the grep must read the bare name
+    # the grep reads a link's name without the index's `#N` ordinal (the fixture's Python
+    # numbers no duplicate, so this checks the search, not where the link goes)
     files = code_link_pass.RepoReads("o", "code-a")
     row, searched = _moved_module_world(monkeypatch, files, indexed=False)
     second = row | {"qualified_name": row["qualified_name"] + "#2"}
@@ -4225,7 +4226,7 @@ async def test_paths_too_many_for_git_leave_the_index_verdict(monkeypatch, why) 
         )
 
     monkeypatch.setattr(gitrepo, "grep_paths", too_many)
-    scope = SimpleNamespace(cfg=SimpleNamespace(git_dir="/nowhere"))
+    scope = SimpleNamespace(cfg=SimpleNamespace(git_dir="/nowhere", namespace="code-a"))
     assert await memory_links.grep_words(scope, "c1", "f", ["a.py"], limit=5) == []
 
 
