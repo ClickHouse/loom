@@ -392,7 +392,7 @@ async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[De
     for path in paths:
         try:
             names = await files.names(head, path)
-            for name in names or ():  # the grep found it at head: None only by its type
+            for name in names or ():  # never None: the grep found the file at head
                 if local_name(name, path) == local:
                     found += await files.defs(head, path, name)
         except code.ParseFailed:

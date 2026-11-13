@@ -4176,15 +4176,18 @@ async def test_the_mirror_search_reads_what_the_ingest_indexes(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
-async def test_a_grep_that_cannot_start_is_a_git_error(monkeypatch) -> None:
+@pytest.mark.parametrize("errno_", [7, 2], ids=["argument-list-too-long", "no-git"])
+async def test_a_grep_that_cannot_start_is_a_git_error(monkeypatch, errno_) -> None:
     from server.code.app.index import gitrepo
 
-    async def too_long(*a, **k):
-        raise OSError(7, "Argument list too long")
+    async def cannot_start(*a, **k):
+        raise OSError(errno_, "cannot start")
 
-    monkeypatch.setattr(gitrepo.asyncio, "create_subprocess_exec", too_long)
-    with pytest.raises(gitrepo.GitError):
+    monkeypatch.setattr(gitrepo.asyncio, "create_subprocess_exec", cannot_start)
+    with pytest.raises(gitrepo.GitError) as raised:
         await gitrepo.grep_paths("/nowhere", "a" * 40, "f", ("x.py",))
+    # E2BIG is the paths being too many, which leaves the index's verdict
+    assert isinstance(raised.value, gitrepo.ArgumentsTooLong) == (errno_ == 7)
 
 
 @pytest.mark.asyncio

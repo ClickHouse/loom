@@ -149,15 +149,12 @@ class IngestScope:
 
 
 async def ingest_scope(org: str, namespace: str, commit: str) -> IngestScope | None:
-    """The entry's ingest scope at `commit`; None when no repository indexes `namespace`
-    or git cannot read its ignore files."""
+    """The entry's ingest scope at `commit` (an ignore file git cannot read gives no
+    patterns, as for the ingest); None when no repository indexes `namespace`."""
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:
         return None
-    try:
-        return IngestScope(cfg, await load_denylist(cfg, commit, gitrepo.show_file))
-    except gitrepo.GitError:
-        return None
+    return IngestScope(cfg, await load_denylist(cfg, commit, gitrepo.show_file))
 
 
 async def grep_words(

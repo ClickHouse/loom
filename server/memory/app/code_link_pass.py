@@ -133,7 +133,8 @@ class RepoReads:
         `literal`, fewer than `limit`, those the ingest would not index left out; an empty
         list when the range's diff cannot be read (a force-push, a diff git fails on),
         more than `memory_code_links_mirror_changed_files` changed or `limit` or more
-        hold it; None when the mirror cannot be searched."""
+        hold it; None when the grep cannot be run. A file git then cannot read fails the
+        recheck, as any other file read does."""
 
         async def read() -> list[str] | None:
             touched = await self.touched(base, head) if base else None
