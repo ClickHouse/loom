@@ -111,7 +111,7 @@ _NAMED_OP = re.compile(
 _QUOTED = re.compile(r"((?<![A-Za-z`])'[^'\n]*'(?![A-Za-z]))")
 
 
-def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool = False) -> str:
+def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool) -> str:
     """``text`` as a client of this listing reads it: a listed op becomes its tool
     name, and an unlisted op keeps its dotted name, with "(via loom_op)" on its first
     mention when `loom_op` routes it (not a hidden op, not a write when ``writes`` is
@@ -355,7 +355,7 @@ def route(req: Any, *, toolset: str | None, auth: Any) -> tuple[Any, dict[str, A
     if op is None or not _routed(op, writes):
         if op is not None:  # a write on a read-only connection
             emit_token_refusal(op.name, auth, error_code=UNKNOWN_OP)
-        routed = [n for n, o in by_name.items() if _routed(o, writes)]
+        routed = [n for n, o in by_name.items() if o.read_only or writes]
         near = difflib.get_close_matches(name, routed, n=5, cutoff=0.6)
         body = {
             "error": f"no op {name!r} reachable here"

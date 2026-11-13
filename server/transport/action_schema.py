@@ -73,7 +73,7 @@ def _description(op: Operation, listed: Set[str]) -> str:
     if custom:
         # an op in the manifest is named by its tool name, any other by its op
         # name; a manifest lists no loom_op, so nothing is marked
-        return name_ops_for_listing(str(custom).strip(), listed)
+        return name_ops_for_listing(str(custom).strip(), listed, writes=False)
     return (
         f"Loom operation `{op.name}` "
         f"({'idempotent' if op.idempotent else 'state-transition'}, "

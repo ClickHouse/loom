@@ -232,10 +232,10 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
     return out
 
 
-# Holds the caller's default workspace while the rules are rendered: it is the
-# caller's data, not prose that names ops. Rendering the text whole keeps "first
-# mention only" across rule 5; a NUL never occurs in the prose.
-_DEFAULTS = "\x00defaults\x00"
+# Marks where the caller's default workspace goes once the rules are rendered: the
+# workspace is the caller's data, not prose that names ops. Rendering the text whole
+# keeps "first mention only" across rule 5; a NUL never occurs in the prose.
+_DEFAULTS_SLOT = "\x00defaults\x00"
 
 
 def _write_rules(tool: dict[str, str | None]) -> str:
@@ -360,7 +360,7 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
         "'not in Loom' as a final answer.\n\n"
         + _write_rules(tool)
         + "**5. Defaults.** "
-        + _DEFAULTS
+        + _DEFAULTS_SLOT
         + "\n\n"
         "**6. Native memory.** Use as fallback when Loom returns "
         "nothing, or as primary store for Claude-only ephemeral "
@@ -374,7 +374,7 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
         "where each kind of state goes and how to read what comes back "
         '(`part: "reference"` lists every plane).'
     )
-    return name_ops_for_toolset(text, toolset).replace(_DEFAULTS, _defaults_clause(defaults))
+    return name_ops_for_toolset(text, toolset).replace(_DEFAULTS_SLOT, _defaults_clause(defaults))
 
 
 def _assistant_primer(defaults: dict[str, Any] | None) -> str:
