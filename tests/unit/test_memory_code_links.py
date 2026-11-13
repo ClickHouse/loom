@@ -4113,23 +4113,32 @@ async def test_an_edited_move_the_index_settles_is_followed_when_the_mirror_cann
 
 @pytest.mark.asyncio
 async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypatch) -> None:
+    # through the real search: the file stays a match, and its names read as none
+    monkeypatch.setattr(code_link_pass.RepoReads, "containing", _REAL_CONTAINING)
     files = code_link_pass.RepoReads("o", "code-a")
-    row, _ = _moved_module_world(monkeypatch, files, indexed=False, edited=True)
-    names = files.names
+    scope = SimpleNamespace(takes=lambda path: True)
 
-    async def containing(head, literal, base, *, limit):
+    async def changed(base, head):
+        return {"pkg/b.py", "pkg/z.py"}
+
+    async def ingest_scope(org, cns, commit):
+        return scope
+
+    async def grep(scope, commit, literal, paths, *, limit):
         return ["pkg/b.py", "pkg/z.py"]
 
-    async def unparsed(commit, path):
+    async def indexed_names(scope, commit, path):
         if path == "pkg/z.py":
             raise code_links.code.ParseFailed(path, "parse: SyntaxError")
-        return await names(commit, path)
+        return {"pkg.b::fetch_rows"}
 
-    monkeypatch.setattr(files, "containing", containing)
-    monkeypatch.setattr(files, "names", unparsed)
-    moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
-    # the index holds no definition from z.py either: b.py's edited copy is followed
-    assert [(m.link.state, m.link.path) for m in moves] == [("changed", "pkg/b.py")]
+    monkeypatch.setattr(files, "touched", changed)
+    monkeypatch.setattr(code_links.code, "ingest_scope", ingest_scope)
+    monkeypatch.setattr(code_links.code, "grep_words", grep)
+    monkeypatch.setattr(code_links.code, "indexed_names", indexed_names)
+    assert await files.containing("c1", "fetch_rows", "c0", limit=5) == ["pkg/b.py", "pkg/z.py"]
+    assert await files.names("c1", "pkg/z.py") == set()  # no definition read from it
+    assert await files.names("c1", "pkg/b.py") == {"pkg.b::fetch_rows"}  # read once
 
 
 @pytest.mark.asyncio
@@ -4204,14 +4213,17 @@ async def test_the_mirror_is_searched_for_a_name_without_its_ordinal(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_paths_too_many_for_git_leave_the_index_verdict(monkeypatch) -> None:
+@pytest.mark.parametrize("why", ["too-many-arguments", "timed-out"])
+async def test_paths_too_many_for_git_leave_the_index_verdict(monkeypatch, why) -> None:
     from server.code.app import memory_links
     from server.code.app.index import gitrepo
 
-    async def too_long(*a, **k):
-        raise gitrepo.ArgumentsTooLong("many paths")
+    async def too_many(*a, **k):
+        raise (gitrepo.ArgumentsTooLong if why == "too-many-arguments" else gitrepo.GrepTimedOut)(
+            "many paths"
+        )
 
-    monkeypatch.setattr(gitrepo, "grep_paths", too_long)
+    monkeypatch.setattr(gitrepo, "grep_paths", too_many)
     scope = SimpleNamespace(cfg=SimpleNamespace(git_dir="/nowhere"))
     assert await memory_links.grep_words(scope, "c1", "f", ["a.py"], limit=5) == []
 

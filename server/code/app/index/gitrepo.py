@@ -37,6 +37,10 @@ class ArgumentsTooLong(GitError):
     """A git command whose arguments are past the system's limit (E2BIG)."""
 
 
+class GrepTimedOut(GitError):
+    """A `git grep` that ran past its time: the paths it searched were too many."""
+
+
 # Git C-quotes a path holding non-ASCII bytes ("src/caf\303\251.py") unless told
 # otherwise, and a quoted name reads back as a missing file. Every command names
 # paths verbatim; the path listings below also read NUL-separated records, so a
@@ -405,7 +409,7 @@ async def grep_paths(
     try:
         out, err = await communicate_or_kill(proc, timeout_s=timeout_s)
     except TimeoutError:
-        raise GitError(f"git grep {literal[:40]} timed out") from None
+        raise GrepTimedOut(f"git grep {literal[:40]} timed out") from None
     if proc.returncode == 1 and not err.strip():
         return []
     if proc.returncode != 0:

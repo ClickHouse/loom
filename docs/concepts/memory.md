@@ -373,8 +373,8 @@ since its last check as the mirror holds them, beside the index, so a definition
 a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
 followed when the link is rechecked. When `memory_code_links_mirror_naming_files` or more
 of those files name it, or more than `memory_code_links_mirror_changed_files` changed, or
-the diff cannot be read, or the paths are more than git takes in one command, the mirror
-adds nothing and the index decides. When the grep cannot be run otherwise, a live link
+the diff cannot be read, or the paths are more than git takes in one command or searches
+in its time, the mirror adds nothing and the index decides. When the grep cannot be run otherwise, a live link
 the index's namesakes do not settle is `unresolved`. Files the ingest would not index
 (outside the entry's `path_prefixes`, refused by its denylist, over the byte cap, binary)
 add no definition; a generated file, which the ingest declares without searching its

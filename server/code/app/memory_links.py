@@ -161,8 +161,8 @@ async def grep_words(
     scope: IngestScope, commit: str, literal: str, paths: list[str], *, limit: int
 ) -> list[str] | None:
     """Up to `limit` of `paths` whose text at `commit` holds the word `literal`, read
-    from the mirror; an empty list for paths too many to pass to git; None when git
-    cannot tell."""
+    from the mirror; an empty list for paths too many to pass to git or to search in its
+    time (the index decides, as for a range too wide); None when git cannot tell."""
     if not paths:
         return []
     try:
@@ -175,7 +175,7 @@ async def grep_words(
             literal_paths=True,
             word=True,
         )
-    except gitrepo.ArgumentsTooLong:
+    except (gitrepo.ArgumentsTooLong, gitrepo.GrepTimedOut):
         return []
     except gitrepo.GitError:
         return None
