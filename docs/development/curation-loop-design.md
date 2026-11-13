@@ -88,13 +88,14 @@ with the read-time check's verdict on each and the reason a lapsed one lapsed (i
 changed, it is `medium` or `high`, gone, expired, past its `valid_to`, promoted from a row
 that is not the namespace-wide one, or no longer `active`), and lists a definition that
 passes the check but is not served because a later promotion holds one of its names as
-`shadowed`, naming the row that wins. A changed text is promoted again. On N no automatic
-verdict retires or marks a definition's source (the exemptions below, and the
-negative-outcome quarantine of `memory.outcome`, which skips a definition's namespace-wide
-row as it skips a locked one; `memory.outcome_run` records harm events and quarantines
-nothing), so a source that is no longer `active` was rejected by a writer, or left that
-way by N-1 or before this design. The sensitivity sweep can still relabel a source, which
-lapses it as a relabel does. The admin brings it back by the way it lapsed:
+`shadowed`, naming the row that wins. Each entry carries its key, term, aliases and
+`promoted_from_candidate_id`. A changed text is promoted again. On N no automatic verdict
+retires or marks a definition's source (the exemptions below, and the negative-outcome
+quarantine of `memory.outcome`, which skips a definition's namespace-wide row as it skips
+a locked one; `memory.outcome_run` records harm events and quarantines nothing), so a
+source that is no longer `active` was rejected by a writer, or left that way by N-1 or
+before this design. The sensitivity sweep can still relabel a source, which lapses it as a
+relabel does. The admin brings it back by the way it lapsed:
 
 - retired automatically: `memory.restore` (`memory.auto_retirements` lists such
   retirements);
@@ -269,22 +270,24 @@ request that adds it.
 **Matching.** The query goes through `canonical_document_text` and loses its format
 characters, as a name does, so `MRR` matches the full-width `什么是ＭＲＲ` and `churn rate`
 matches a query that puts two spaces between the words; only case follows the per-word
-rule below. A term or alias matches where it appears in the query with no character next
-to it that continues its edge:
+rule below. Every combining mark (category M) is first joined to the character before it,
+in the term and in the query, and the rules compare these joined characters by their base:
+a term's edge that ends in a mark is its base letter's edge, and a neighbour that is a
+mark sitting on a letter is that letter. A mark with nothing before it, at the start of
+the query or after a space or punctuation, is punctuation. A term or alias then matches
+where it appears in the query, at whole joined characters, with no character next to it
+that continues its edge:
 
-- whatever the script, a combining mark (category M) after the term continues its edge, so
-  `कम` does not match inside "कमी" nor `ก` inside "กิ"; a mark before the term continues
-  its edge exactly when its base character would under the rules below, and a mark at the
-  start of the query, or after a space or punctuation, continues nothing;
 - next to a Latin letter (accented ones included), digit, `_`, `+` or `#`: another of
   those;
 - next to a letter of another script written with spaces (Cyrillic, Greek, Devanagari):
   any letter of a script other than Latin, or any decimal digit, so `मत` does not match
-  inside "कीमत";
+  inside "कीमत", `कम` not inside "कमी" and `बिक्री` not inside "बिक्रीकर";
 - before Hangul, a Hangul syllable, so `매출` does not match inside "판매출고"; after it,
   nothing, since Korean particles attach to the word before them;
-- next to a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar), a mark
-  of one, or punctuation: nothing, so `ยอดขาย` matches in "ดูยอดขาย".
+- next to a script written without spaces (Han, Kana, Thai, Lao, Khmer, Myanmar) or
+  punctuation: nothing, so `ยอดขาย` matches in "ดูยอดขาย", while `ก` does not match inside
+  "กิ", whose `ก` carries a mark.
 
 So `рост` does not match inside "простой" and `café` not inside "cafés", while `MRR`
 matches in "什么是MRR", `ARR` in "ARR은" and `매출` in "매출은 얼마야". Case is decided per word of
@@ -581,12 +584,12 @@ days; the threshold does not hide that.
 The parts land in the order the opening section gives: 1 knowledge gaps, 2 governed
 definitions, 3 `knowledge.gaps.draft` and query history.
 
-| Op                                                | Part | Role  | What it does                                                                                                                                             |
-| ------------------------------------------------- | ---- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`                             | 1    | admin | The namespace's gaps, most askers first.                                                                                                                 |
-| `memory.definitions.list`                         | 2    | admin | The namespace's shared definitions, a page at a time (a limit and a cursor), each with the read-time check's verdict and the reason a lapsed one lapsed. |
-| `knowledge.gaps.draft`                            | 3    | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`).                                    |
-| `knowledge.query_history.add`, `.list`, `.remove` | 3    | admin | Register, list and remove a query-history source on the namespace.                                                                                       |
+| Op                                                | Part | Role  | What it does                                                                                                                                                                                          |
+| ------------------------------------------------- | ---- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`                             | 1    | admin | The namespace's gaps, most askers first.                                                                                                                                                              |
+| `memory.definitions.list`                         | 2    | admin | The namespace's shared definitions, a page at a time (a limit and a cursor), each with its key, term, `promoted_from_candidate_id`, the read-time check's verdict and the reason a lapsed one lapsed. |
+| `knowledge.gaps.draft`                            | 3    | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`).                                                                                 |
+| `knowledge.query_history.add`, `.list`, `.remove` | 3    | admin | Register, list and remove a query-history source on the namespace.                                                                                                                                    |
 
 The `knowledge.gaps.` ops list what users asked and the `knowledge.query_history.` ops
 manage a source, not documents, so none honours a read-narrowed token: the check that
