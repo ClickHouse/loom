@@ -130,8 +130,8 @@ messages over again. The block's two calls:
   extraction, so a flush is one request and an extraction failure does not fail the turn.
 - **`aget`** searches the block's namespace, across every agent writing to it, with the
   latest user message and returns the matching memories, one line each, which `Memory`
-  places in the system message. It leaves out memories below
-  Loom's floor, and returns nothing when Loom **abstains**.
+  places in the system message. It leaves out memories below Loom's floor, and returns
+  nothing when Loom **abstains**.
 
 | `LoomMemoryBlock` field | Default           | Effect                                                                                              |
 | ----------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
