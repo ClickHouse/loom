@@ -1442,6 +1442,23 @@ def test_the_first_run_that_starts_loom_opens_the_dashboard(installer_env: dict[
     assert _opened(log) == ["http://127.0.0.1:7777/"]
 
 
+def test_a_namespace_no_check_can_use_opens_the_dashboard_once(
+    installer_env: dict[str, str],
+) -> None:
+    _start_stubs(installer_env)
+    env, log = _desktop(installer_env)
+    _on_terminal({**env, "LOOM_SKIP_START": "1"}, [], None)
+    target = Path(installer_env["LOOM_INSTALL_DIR"])
+    dotenv = target / ".env"
+    dotenv.write_text(dotenv.read_text() + 'LOOM_DEFAULT_NAMESPACE=my"space\n')
+    _on_terminal(env, [], None)
+    assert _opened(log) == ["http://127.0.0.1:7777/"]
+    assert not (target / ".memory-check-pending").exists()
+    log.unlink()
+    _on_terminal(env, [], None)
+    assert _opened(log) == []
+
+
 @pytest.mark.parametrize(
     "extra", [{"LOOM_NO_OPEN": "1"}, {"SSH_CONNECTION": "10.0.0.1 2 10.0.0.2 22"}]
 )

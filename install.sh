@@ -520,8 +520,8 @@ main() {
     grep -q '"found"[[:space:]]*:[[:space:]]*true' "$tmp_dir/api.out"
   }
   pending="$INSTALL_DIR/.memory-check-pending"
-  # A new install, up for the first time: also a rerun after a run that stopped
-  # before this point (a taken port, a failed pull).
+  # A new install, until its check passes: also a rerun after a run that stopped
+  # before this point (a taken port, a failed pull) or whose check failed.
   first_up=
   [ ! -f "$pending" ] || first_up=1
   memory="\"org\":\"$org\",\"namespace\":\"$namespace\",\"agent\":\"-\",\"memory_key\":\"loom/installer-check\""
@@ -530,6 +530,8 @@ main() {
     # Both go into a JSON body as they are.
     *[!A-Za-z0-9._-]*)
       skip_agents=1
+      # No check can run with this .env, on this run or a later one.
+      rm -f "$pending"
       printf '\nSkipped the memory check and the agent setup: LOOM_SELF_SIGNUP_ORG or LOOM_DEFAULT_NAMESPACE in .env holds a character other than letters, digits and . _ -\n'
       ;;
     *)
