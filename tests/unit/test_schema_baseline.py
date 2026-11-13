@@ -22,6 +22,8 @@ BASELINE = MIGRATIONS / "016_baseline.sql"
 TRANSIENT_TABLES = {
     "events": "the raw event stream; the per-event views copy what is kept",
     "search_trace_log": "a per-search trace for tuning, not a record anyone wrote",
+    "search_misses": "the searches that found nothing, kept to group into knowledge gaps",
+    "knowledge_gaps": "the gaps grouped from the misses, rebuilt daily",
     "memory_exposures": "an access log of which rows a read served",
     "code_search_trace": "a per-search trace of code search",
     "code_search_outcome": "the outcome of each traced code search",
@@ -148,6 +150,7 @@ def test_the_journal_files() -> None:
         "092_collection_titles.sql",
         "093_service_account_saves_to.sql",
         "094_cell_heartbeats.sql",
+        "095_knowledge_gaps.sql",
     ]
 
 

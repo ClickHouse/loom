@@ -62,6 +62,7 @@ the operations reference.
 | `knowledge.ingest_status`   | viewer | A job's state, stage, coverage, warnings, failure and published revision.              |
 | `knowledge.ingest_cancel`   | writer | Stop a job before it publishes.                                                        |
 | `knowledge.formats`         | viewer | The formats an ingest reads, the names that select each, and the upload's limits.      |
+| `knowledge.gaps.list`       | admin  | Questions several users asked that nothing answered ([below](#knowledge-gaps)).        |
 
 `knowledge.search` and `knowledge.reads` are hidden from MCP: neither is listed, and
 `loom_op` refuses them too. An agent reaches the knowledge plane through
@@ -1434,6 +1435,39 @@ curl -s localhost:7777/v1/knowledge.search -H "Authorization: Bearer $LOOM_API_K
   -d '{"org":"dev","namespace":"local","query":"roll back a deploy","namespace_scope":"this","narrow_spans":true}'
 ```
 
+## Knowledge gaps
+
+A knowledge gap is a question several users keep asking in a namespace that no memory or
+document answers. `knowledge.gaps.list` (admin) lists them, most askers first, and the
+dashboard's Library shows them to the namespace's admins as **Unanswered questions**.
+
+Needs `LOOM_KNOWLEDGE_GAPS_ENABLED=true` and capture on for the namespace: its
+`capture_generation_io` set to true, or `LOOM_LANGFUSE_CAPTURE_IO_LEVEL` set to `query` or
+`all` for a namespace that has not chosen
+([recording misses](../architecture/knowledge-gaps.md#recording-misses)).
+
+A search counts as a miss when the op the caller invoked found nothing to use: a
+`memory.search` that abstained or answered at high retrieval risk, a `knowledge.search`
+with no close or exact-key hit, or a `loom_search` whose memory section missed as
+`memory.search` does, or had every hit fall below its precision floor, and whose other
+sections came back empty. A memory or `loom_search` miss counts only when the search read
+the namespace-wide rows, with no filter that narrows it to part of the namespace, from a
+token that reads the whole namespace
+([knowledge gaps](../architecture/knowledge-gaps.md#recording-misses)). A later page or a
+degraded answer is not a miss. The asker is the person the token stands for (its end user,
+else the person who created it), never a body field, and each miss is kept 16 days; a pass
+groups the last 7. Once a day the `knowledge_gaps` worker groups a namespace's misses by
+their normalised text, drops every query fewer than `LOOM_KNOWLEDGE_GAPS_MIN_ASKERS`
+askers asked in that form, and merges the alike ones.
+
+```bash
+curl -s localhost:7777/v1/knowledge.gaps.list -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'content-type: application/json' -d '{"org":"dev","namespace":"local"}'
+```
+
+How misses are recorded and grouped, their erasure and their rolling-upgrade notes are in
+[knowledge gaps](../architecture/knowledge-gaps.md).
+
 ## Settings
 
 | Setting                                                                                                                                                                            | Effect                                                                                                                                                                                                                                                                                |
@@ -1446,6 +1480,7 @@ curl -s localhost:7777/v1/knowledge.search -H "Authorization: Bearer $LOOM_API_K
 | `LOOM_MEMORY_ASK_KNOWLEDGE_TOP_K`, `LOOM_MEMORY_ASK_SYNTHESIZE_ROUTE_MAX_DOCS`                                                                                                     | Whether and how `memory.ask` reads knowledge ([MemoryAsk](../reference/configuration.md#memoryask)).                                                                                                                                                                                  |
 | `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE`, `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S`                                                                                                | How many document sources one repository namespace may register, and how long a source's probe may take ([Knowledge](../reference/configuration.md#knowledge)).                                                                                                                       |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED`, `…_INTERVAL_SECONDS`, `…_IDLE_INTERVAL_SECONDS`, `…_MAX_PASS_SECONDS`, `…_DOCUMENTS_PER_PASS`, `…_FULL_INTERVAL_SECONDS`, `…_MAX_FILE_BYTES` | Whether and how often the sync worker pulls sources, how long it sleeps when there are none, how long one pass may run, how many documents a pass handles, how often a source is listed whole and the largest file it ingests ([Knowledge](../reference/configuration.md#knowledge)). |
+| `LOOM_KNOWLEDGE_GAPS_*`                                                                                                                                                            | Knowledge gaps: whether misses are recorded, the asker threshold and the daily grouping ([Knowledge](../reference/configuration.md#knowledge)).                                                                                                                                       |
 | `LOOM_RETENTION_CHUNKS_DAYS`, `LOOM_RETENTION_DOCUMENTS_DAYS`                                                                                                                      | Opt-in table TTLs; 0 keeps rows forever ([Retention](../reference/configuration.md#retention)).                                                                                                                                                                                       |
 
 ## Limits

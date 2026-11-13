@@ -261,7 +261,7 @@ async def test_the_cli_resume_reopens_from_the_fresh_census_and_reports_what_ran
     async def fake_list(*, org=None, ch=None):
         return [row]
 
-    async def fake_census(org, st, sv, *, ch=None):
+    async def fake_census(org, st, sv, *, ch=None, spellings=()):
         return dict(_OPERATOR_RESIDUE)
 
     async def fake_counts(*, ch=None):

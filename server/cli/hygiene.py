@@ -594,6 +594,7 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
 
 
 async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
+    from server.erasure.app.saga_steps import census_spellings
     from server.erasure.store import census as erasure_census
     from server.erasure.store import health as erasure_health
     from server.erasure.store import ledger as erasure_ledger
@@ -633,9 +634,16 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
             continue
         scope_type, scope_value, purge, _external = _re_verify_scope(row)
         names = scope_value if isinstance(scope_value, list) else [scope_value]
+        try:
+            spellings = await census_spellings(str(row["org"]), scope_type, scope_value)
+        except Exception as e:  # noqa: BLE001 — one saga's unread directory must not end the run
+            where = f"{row['id']} {row['org']}/{row['scope_type']}"
+            print(f"  {where}: directory unreadable ({error_summary(e)})")
+            rc = 1
+            continue
         with erasure_mutations.purge_scope(purge):
             census, unread = await erasure_census.evidence_census(
-                str(row["org"]), scope_type, scope_value, ch=ch
+                str(row["org"]), scope_type, scope_value, ch=ch, spellings=spellings
             )
         residue = {t.removeprefix("loom."): n for t, n in census.items() if n}
         done = list(row.get("steps_completed") or [])

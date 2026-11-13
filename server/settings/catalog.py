@@ -2180,6 +2180,36 @@ class KnowledgeSettings(BaseModel):
     # Seconds a knowledge.search waits on its reranker before it keeps the fused order.
     knowledge_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
 
+    # ---- knowledge gaps ----
+    # Record searches that found nothing and group them daily into knowledge.gaps.list
+    # (docs/architecture/knowledge-gaps.md).
+    # Off by default: a miss stores the query text, so it is an operator opt-in, and a
+    # miss is recorded only where the namespace's capture level is not `off`.
+    knowledge_gaps_enabled: bool = False
+    # Seconds between knowledge_gaps passes (each groups every namespace with misses). At
+    # most 3 days, with the pass deadline at most 6 hours, so two of each (a restart can
+    # add an interval) fit in a build's 7-day life.
+    knowledge_gaps_interval_seconds: int = Field(default=86_400, ge=3600, le=3 * 86_400)
+    # One pass's deadline, at most 6 hours: up to knowledge_gaps_max_namespaces namespaces,
+    # each one embed.
+    knowledge_gaps_max_pass_seconds: int = Field(default=3600, ge=60, le=6 * 3600)
+    # Distinct users a query needs, in that form, before a gap shows it: one person's
+    # question is never shown as a gap.
+    knowledge_gaps_min_askers: Annotated[int, LIVE] = Field(default=3, ge=3)
+    # Most asked query groups a pass embeds and merges per namespace.
+    knowledge_gaps_max_groups: Annotated[int, LIVE] = Field(default=200, ge=1, le=1000)
+    # Cosine similarity at which two query groups are one gap.
+    knowledge_gaps_merge_similarity: Annotated[float, LIVE] = Field(default=0.85, gt=0, le=1)
+    # Distinct askers a pass holds per query group, at most, never below
+    # knowledge_gaps_min_askers; past it a gap's count reads as the cap. Askers are held in
+    # memory for the pass and never stored.
+    knowledge_gaps_max_askers_per_group: Annotated[int, LIVE] = Field(default=10_000, ge=3)
+    # Miss recordings in flight in one process, at most; past it a miss is dropped
+    # and counted, so a burst of abstentions cannot pile up background reads.
+    knowledge_gaps_max_in_flight: Annotated[int, LIVE] = Field(default=256, ge=1)
+    # Namespaces one pass groups, at most; the ones with the most misses first.
+    knowledge_gaps_max_namespaces: Annotated[int, LIVE] = Field(default=500, ge=1)
+
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.
     # chunk_size 0 = one chunk per doc (hurts long-form retrieval). Smaller
@@ -5994,6 +6024,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # most the listing's 5 s bound, and a service it could not read is not waited for
     # again for a minute.
     "knowledge.formats": 5500,
+    "knowledge.gaps.list": 300,
     "knowledge.get": 30,
     "knowledge.ingest": 60,
     "knowledge.ingest_cancel": 60,

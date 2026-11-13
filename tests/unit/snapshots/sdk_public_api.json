@@ -874,6 +874,10 @@
               "body",
               "options"
             ],
+            "gaps_list": [
+              "body",
+              "options"
+            ],
             "get": [
               "body",
               "options"

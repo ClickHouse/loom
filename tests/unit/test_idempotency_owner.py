@@ -103,6 +103,6 @@ def test_the_census_counts_the_table_org_wide_in_both_scopes() -> None:
     (sql,) = [q for q, _ in ch.counts if "FROM loom.idempotency" in q]
     assert "namespace" not in sql and "org = {org:String}" in sql
     ch = _StubCH(count=0)
-    asyncio.run(erasure_census.residue_census("o", "user_id", "alice", ch=ch))
+    asyncio.run(erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"]))
     (sql,) = [q for q, _ in ch.counts if "FROM loom.idempotency" in q]
     assert "subject" not in sql and "org = {org:String}" in sql

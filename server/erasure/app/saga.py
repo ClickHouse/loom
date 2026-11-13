@@ -39,6 +39,7 @@ from server.erasure.app.saga_steps import (
     ErasureStepError,
     _step_verify_residue,
     authority_steps,
+    census_spellings,
 )
 from server.erasure.domain.scopes import (
     applied_purge,
@@ -541,8 +542,11 @@ async def _census_tail(
     if verify:
         return
     try:
+        spellings = await census_spellings(org, scope_type, scope_value)
         with erasure_mutations.purge_scope(purge):
-            per_table, unread = await erasure_census.evidence_census(org, scope_type, scope_value)
+            per_table, unread = await erasure_census.evidence_census(
+                org, scope_type, scope_value, spellings=spellings
+            )
     except Exception as e:  # noqa: BLE001 — the step's error is the reason; this is a footnote
         log.warning("erasure: census tail failed after a step failure: %s", error_summary(e))
         return

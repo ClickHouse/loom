@@ -2646,6 +2646,45 @@ settings:
   # [live]
   # knowledge_search_rerank_timeout_s: 8.0
 
+  # --- knowledge gaps ---
+
+  # Record searches that found nothing and group them daily into knowledge.gaps.list
+  # (docs/architecture/knowledge-gaps.md). Off by default: a miss stores the query text,
+  # so it is an operator opt-in, and a miss is recorded only where the namespace's
+  # capture level is not `off`. [restart]
+  # knowledge_gaps_enabled: false
+
+  # Seconds between knowledge_gaps passes (each groups every namespace with misses). At
+  # most 3 days, with the pass deadline at most 6 hours, so two of each (a restart can
+  # add an interval) fit in a build's 7-day life. [restart]
+  # knowledge_gaps_interval_seconds: 86400
+
+  # One pass's deadline, at most 6 hours: up to knowledge_gaps_max_namespaces
+  # namespaces, each one embed. [restart]
+  # knowledge_gaps_max_pass_seconds: 3600
+
+  # Distinct users a query needs, in that form, before a gap shows it: one person's
+  # question is never shown as a gap. [live]
+  # knowledge_gaps_min_askers: 3
+
+  # Most asked query groups a pass embeds and merges per namespace. [live]
+  # knowledge_gaps_max_groups: 200
+
+  # Cosine similarity at which two query groups are one gap. [live]
+  # knowledge_gaps_merge_similarity: 0.85
+
+  # Distinct askers a pass holds per query group, at most, never below
+  # knowledge_gaps_min_askers; past it a gap's count reads as the cap. Askers are held
+  # in memory for the pass and never stored. [live]
+  # knowledge_gaps_max_askers_per_group: 10000
+
+  # Miss recordings in flight in one process, at most; past it a miss is dropped and
+  # counted, so a burst of abstentions cannot pile up background reads. [live]
+  # knowledge_gaps_max_in_flight: 256
+
+  # Namespaces one pass groups, at most; the ones with the most misses first. [live]
+  # knowledge_gaps_max_namespaces: 500
+
   # --- chunking ---
 
   # Sliding-window chunking on knowledge.add/upsert, in characters. chunk_size 0 = one

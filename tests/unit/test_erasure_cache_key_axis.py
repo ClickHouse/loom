@@ -268,7 +268,9 @@ def test_communities_leave_when_only_the_users_memories_linked_the_entity() -> N
 
 def test_census_user_scope_counts_the_three_tables_with_the_step_predicates() -> None:
     ch = _RecCH(count=0)
-    out = asyncio.run(erasure_census.residue_census("o", "user_id", "alice", ch=ch))
+    out = asyncio.run(
+        erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])
+    )
     by_table = {sql.split("FROM ")[1].split()[0]: sql for sql, _ in ch.queries}
     assert out["loom.llm_response_cache"] == 0
     assert "hasAny(window_keys," in by_table["loom.llm_response_cache"]

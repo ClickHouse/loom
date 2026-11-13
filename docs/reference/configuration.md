@@ -885,6 +885,20 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `800` | live | Characters of each hit a reranker reads: its context (title, description, breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024. |
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_TIMEOUT_S` | `float` | `8.0` | live | Seconds a knowledge.search waits on its reranker before it keeps the fused order. |
 
+### Knowledge gaps
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_GAPS_ENABLED` | `bool` | `False` |  | Record searches that found nothing and group them daily into knowledge.gaps.list (docs/architecture/knowledge-gaps.md). Off by default: a miss stores the query text, so it is an operator opt-in, and a miss is recorded only where the namespace's capture level is not `off`. |
+| `LOOM_KNOWLEDGE_GAPS_INTERVAL_SECONDS` | `int` | `86400` |  | Seconds between knowledge_gaps passes (each groups every namespace with misses). At most 3 days, with the pass deadline at most 6 hours, so two of each (a restart can add an interval) fit in a build's 7-day life. |
+| `LOOM_KNOWLEDGE_GAPS_MAX_PASS_SECONDS` | `int` | `3600` |  | One pass's deadline, at most 6 hours: up to knowledge_gaps_max_namespaces namespaces, each one embed. |
+| `LOOM_KNOWLEDGE_GAPS_MIN_ASKERS` | `int` | `3` | live | Distinct users a query needs, in that form, before a gap shows it: one person's question is never shown as a gap. |
+| `LOOM_KNOWLEDGE_GAPS_MAX_GROUPS` | `int` | `200` | live | Most asked query groups a pass embeds and merges per namespace. |
+| `LOOM_KNOWLEDGE_GAPS_MERGE_SIMILARITY` | `float` | `0.85` | live | Cosine similarity at which two query groups are one gap. |
+| `LOOM_KNOWLEDGE_GAPS_MAX_ASKERS_PER_GROUP` | `int` | `10000` | live | Distinct askers a pass holds per query group, at most, never below knowledge_gaps_min_askers; past it a gap's count reads as the cap. Askers are held in memory for the pass and never stored. |
+| `LOOM_KNOWLEDGE_GAPS_MAX_IN_FLIGHT` | `int` | `256` | live | Miss recordings in flight in one process, at most; past it a miss is dropped and counted, so a burst of abstentions cannot pile up background reads. |
+| `LOOM_KNOWLEDGE_GAPS_MAX_NAMESPACES` | `int` | `500` | live | Namespaces one pass groups, at most; the ones with the most misses first. |
+
 ### Chunking
 
 | Variable | Type | Default | Live | Meaning |

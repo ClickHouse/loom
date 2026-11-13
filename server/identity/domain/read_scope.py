@@ -497,8 +497,15 @@ def with_read_identity[M: BaseModel](input: M, scope: ReadFilters) -> M:
     return input.model_copy(update=update) if update else input
 
 
+# Ops under a NARROW_SAFE_OPS prefix that still refuse a narrowed token: a knowledge
+# gap lists other people's questions.
+NARROW_REFUSED_PREFIXES: tuple[str, ...] = ("knowledge.gaps.",)
+
+
 def honours_read_scope(op_name: str) -> bool:
     """Whether `op_name` may be served to a token bounded below the namespace."""
+    if op_name.startswith(NARROW_REFUSED_PREFIXES):
+        return False
     if op_name in SCOPED_OPS or op_name in NARROW_SAFE_OPS:
         return True
     return any(k.endswith(".") and op_name.startswith(k) for k in NARROW_SAFE_OPS)

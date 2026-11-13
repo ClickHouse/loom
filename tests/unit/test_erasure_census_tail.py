@@ -72,7 +72,7 @@ async def _run(
         if audits is not None:
             audits.append(kw)
 
-    async def fake_census(org, st, sv, *, ch=None):
+    async def fake_census(org, st, sv, *, ch=None, spellings=()):
         calls.append(f"census:{st}:{'purge' if erasure_mutations.purge_mode() else 'live'}")
         if census is not None:
             return census(org, st, sv)
@@ -238,15 +238,19 @@ async def test_a_user_scope_tail_counts_by_user(monkeypatch) -> None:
         await h._do_step(step_name="memory.tombstone", step_fn=_boom, completed=completed, row=row)
         return []
 
-    async def fake_census(org, st, sv, *, ch=None):
+    async def fake_census(org, st, sv, *, ch=None, spellings=()):
         calls.append(f"{st}:{sv}:{erasure_mutations.purge_mode()}")
         return {"loom.memory": 0}
 
     async def noop(**kw):
         return None
 
+    async def spellings(org, user_id):
+        return [user_id]
+
     monkeypatch.setattr(h, "_saga_user_id", fake_user_saga)
     monkeypatch.setattr(h, "checkpoint", noop)
+    monkeypatch.setattr("server.erasure.app.saga_steps.folded_spellings", spellings)
     monkeypatch.setattr(h.audit, "emit", noop)
     monkeypatch.setattr(erasure_census, "residue_census", fake_census)
     monkeypatch.setattr(erasure_census, "table_residue", fake_census)
@@ -750,7 +754,7 @@ async def test_re_verify_run_lists_censuses_and_resumes_from_the_checkpoint(monk
         calls.append(("list", org))
         return [row]
 
-    async def fake_census(org, st, sv, *, ch=None):
+    async def fake_census(org, st, sv, *, ch=None, spellings=()):
         calls.append(("census", st, sv, erasure_mutations.purge_mode()))
         return {"loom.entity_edges": 3, "loom.memory": 0}
 
@@ -815,7 +819,7 @@ async def test_re_verify_run_fails_when_a_store_cannot_be_read(monkeypatch, caps
     async def fake_list(*, org=None, ch=None):
         return [_ledger_row(attempts=5)]
 
-    async def no_tables(org, st, sv, *, ch=None):
+    async def no_tables(org, st, sv, *, ch=None, spellings=()):
         return {"loom.memory": 0}
 
     async def pg_down(*args: Any, **kw: Any) -> dict[str, int]:
@@ -1387,3 +1391,46 @@ def test_a_step_failing_with_a_loom_error_keeps_its_code_and_message() -> None:
         "memory.tombstone", BackendUnavailableError("ClickHouse is unavailable; retry")
     )
     assert str(err) == "memory.tombstone: BACKEND_UNAVAILABLE: ClickHouse is unavailable; retry"
+
+
+async def test_re_verify_run_reports_an_unread_directory_and_goes_on(monkeypatch, capsys) -> None:
+    """A user saga whose directory cannot be read is reported; the run still reports the
+    next saga."""
+    from server.cli import hygiene
+
+    async def fake_list(*, org=None, ch=None):
+        user = _ledger_row(id="e1", scope_type="user_id", scope_value="alice")
+        return [user, _ledger_row(id="e2", attempts=5)]
+
+    async def no_tables(org, st, sv, *, ch=None, spellings=()):
+        return {"loom.memory": 0}
+
+    async def no_pg(*args: Any, **kw: Any) -> dict[str, int]:
+        return {}
+
+    async def directory_down(org, user_id):
+        raise ConnectionError("directory unreachable")
+
+    async def fake_counts(*, ch=None):
+        return {"orphan_entity_vectors": 0, "orphan_graph_namespaces": 0}
+
+    monkeypatch.setattr(erasure_ledger, "list_failed_requests", fake_list)
+    monkeypatch.setattr(erasure_census, "table_residue", no_tables)
+    monkeypatch.setattr(erasure_census, "pg_residue", no_pg)
+    monkeypatch.setattr(erasure_health, "integrity_counts", fake_counts)
+    monkeypatch.setattr("server.erasure.app.saga_steps.folded_spellings", directory_down)
+    args = argparse.Namespace(
+        org="o",
+        id=None,
+        resume=False,
+        skip_external=False,
+        orphan_graph=False,
+        erase=False,
+        batch=200,
+        show=20,
+        requester="t",
+        completed_since=None,
+    )
+    assert await hygiene._re_verify_run(object(), args) == 1
+    out = capsys.readouterr().out
+    assert "e1 o/user_id: directory unreadable" in out and "e2 o/namespace_list" in out

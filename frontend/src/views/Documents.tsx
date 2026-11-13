@@ -65,6 +65,7 @@ import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
 import { EmptyState } from "../components/EmptyState";
+import { KnowledgeGaps } from "./KnowledgeGaps";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { oneOf } from "../lib/oneOf";
 import { parseSearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
@@ -229,6 +230,8 @@ export function Documents() {
   // only the collection's own role decides.
   const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.add", roleRead.role, whoami);
   const [sourcesPanel, setSourcesPanel] = useState<HTMLDivElement | null>(null);
+  // The gaps tile lists other people's questions: an admin of the place shown sees it.
+  const seesGaps = shown ? shown.role === "admin" : canCall("knowledge.gaps.list", roleRead.role, whoami);
   const phone = useMedia(PHONE_QUERY);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
@@ -1049,6 +1052,7 @@ export function Documents() {
         </span>
       </PageHeader>
       {picker}
+      {seesGaps && !resolving && <KnowledgeGaps org={identity.org} namespace={identity.namespace} />}
       {/* One line: the library's figures once they are read, what the library is behind the tip.
           A phone, with the place picker above the list, has no room for it: the bar's count
           says how many are shown. */}

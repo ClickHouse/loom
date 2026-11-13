@@ -2994,6 +2994,63 @@
           "type": "integer",
           "description": "Characters between chunk starts: below chunk_size the chunks overlap; above it the step is chunk_size, so no text falls between chunks."
         },
+        "knowledge_gaps_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "Record searches that found nothing and group them daily into knowledge.gaps.list (docs/architecture/knowledge-gaps.md). Off by default: a miss stores the query text, so it is an operator opt-in, and a miss is recorded only where the namespace's capture level is not `off`."
+        },
+        "knowledge_gaps_interval_seconds": {
+          "default": 86400,
+          "maximum": 259200,
+          "minimum": 3600,
+          "type": "integer",
+          "description": "Seconds between knowledge_gaps passes (each groups every namespace with misses). At most 3 days, with the pass deadline at most 6 hours, so two of each (a restart can add an interval) fit in a build's 7-day life."
+        },
+        "knowledge_gaps_max_askers_per_group": {
+          "default": 10000,
+          "minimum": 3,
+          "type": "integer",
+          "description": "Distinct askers a pass holds per query group, at most, never below knowledge_gaps_min_askers; past it a gap's count reads as the cap. Askers are held in memory for the pass and never stored."
+        },
+        "knowledge_gaps_max_groups": {
+          "default": 200,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most asked query groups a pass embeds and merges per namespace."
+        },
+        "knowledge_gaps_max_in_flight": {
+          "default": 256,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Miss recordings in flight in one process, at most; past it a miss is dropped and counted, so a burst of abstentions cannot pile up background reads."
+        },
+        "knowledge_gaps_max_namespaces": {
+          "default": 500,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Namespaces one pass groups, at most; the ones with the most misses first."
+        },
+        "knowledge_gaps_max_pass_seconds": {
+          "default": 3600,
+          "maximum": 21600,
+          "minimum": 60,
+          "type": "integer",
+          "description": "One pass's deadline, at most 6 hours: up to knowledge_gaps_max_namespaces namespaces, each one embed."
+        },
+        "knowledge_gaps_merge_similarity": {
+          "default": 0.85,
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "type": "number",
+          "description": "Cosine similarity at which two query groups are one gap."
+        },
+        "knowledge_gaps_min_askers": {
+          "default": 3,
+          "minimum": 3,
+          "type": "integer",
+          "description": "Distinct users a query needs, in that form, before a gap shows it: one person's question is never shown as a gap."
+        },
         "knowledge_ingest_enabled": {
           "default": true,
           "type": "boolean",

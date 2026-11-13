@@ -403,12 +403,69 @@ async def _finish_search_output(
     _schedule_trace_log(
         input, _output, embedder, search_budget.elapsed_ms(), query_vec=ctx.query_vec
     )
+    _record_gap_miss(input, _output)
     _disclose_and_expose(ctx, _output)
     if _output.results:
         from server.memory.api.models_common import run_next_hint
 
         _output.next = run_next_hint(input.run_id)
     await _attach_scratchpad(input, _output)
+
+
+# The fields that narrow a memory.search to part of the namespace.
+_HARD_FILTERS = (
+    "user_id",
+    "exclude_keys",
+    "min_similarity",
+    "min_body_chars",
+    "category",
+    "session_id",
+    "session_ids",
+    "run_id",
+    "agent",
+    "memory_type",
+    "tags",
+    "scope",
+    "as_of",
+    "legs",
+)
+
+
+def _record_gap_miss(input: MemorySearchInput, output: MemorySearchOutput) -> None:
+    """A search that abstained or answered at high retrieval risk is a knowledge-gap
+    miss, when the caller invoked memory.search itself and it read the namespace-wide rows
+    with no hard filter, under a whole-namespace token. A degraded answer, or one with
+    writes still waiting for extraction, is not one."""
+    from server.knowledge.app.gaps import filtered, reads_whole_namespace, record_miss
+    from server.knowledge.domain.gaps import memory_missed, unsettled
+    from server.settings import settings
+
+    if not settings.knowledge_gaps_enabled:
+        return
+    if not memory_missed(output.abstain, output.retrieval_risk) or output.namespaces_skipped:
+        return
+    if unsettled(
+        degraded=output.degraded,
+        pending_extraction=output.pending_extraction,
+        stale_dropped=output.stale_dropped,
+    ):
+        return
+
+    # A namespace's retrieval defaults are not the caller narrowing the search, and soft
+    # tags or a soft category (a `role` becomes a soft tag) only boost rows.
+    skip = set(input._namespace_defaults_applied)
+    if input.tags_soft:
+        skip.add("tags")
+    if input.category_soft:
+        skip.add("category")
+    if filtered(input, [f for f in _HARD_FILTERS if f not in skip]) or not reads_whole_namespace():
+        return
+    record_miss(
+        op="memory.search",
+        org=input.org,
+        namespace=input.namespace,
+        query=input.query,
+    )
 
 
 async def _attach_scratchpad(input: Any, output: Any) -> None:

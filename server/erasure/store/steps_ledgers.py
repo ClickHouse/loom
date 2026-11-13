@@ -15,6 +15,7 @@ from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
 from server.erasure.store.predicates import (
+    MISS_ASKER,
     NS_EQ,
     NS_IN,
     ORPHAN_LEARNINGS,
@@ -208,6 +209,60 @@ async def delete_code_search_trace_by_user(
     # code_search_outcome has no user axis; the trace row does.
     return await delete_scoped(
         "loom.code_search_trace", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
+
+
+# Knowledge gaps: a miss keeps the asker and the normalised query; a gap keeps counts.
+# Plain MergeTrees, no soft-delete → ALTER DELETE.
+
+
+async def delete_search_misses_by_user(
+    org: str, spellings: Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """The misses asked under any of `spellings`, the user's id and its other spellings."""
+    return await delete_scoped(
+        "loom.search_misses",
+        org=org,
+        scope_where=MISS_ASKER,
+        params={"spellings": list(spellings)},
+        ch=ch,
+    )
+
+
+async def delete_search_misses_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    return await delete_scoped(
+        "loom.search_misses", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def delete_knowledge_gaps_by_user(
+    org: str, spellings: Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """The gap builds of every namespace the user has misses in: a gap keeps counts,
+    never who asked, so the user's are not told apart from the others there. Runs inside
+    `search_misses.delete`, before it removes the misses this reads; the next pass
+    rebuilds the namespaces without them."""
+    client = ch or _default_client()
+    rows = await client.query_all(
+        f"SELECT DISTINCT namespace FROM loom.search_misses "
+        f"WHERE org = {{org:String}} AND {MISS_ASKER}",
+        params={"org": org, "spellings": list(spellings)},
+    )
+    namespaces = [str(r["namespace"]) for r in rows]
+    if not namespaces:
+        return 0
+    return await delete_scoped(
+        "loom.knowledge_gaps", org=org, scope_where=NS_IN, params={"ns": namespaces}, ch=ch
+    )
+
+
+async def delete_knowledge_gaps_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    return await delete_scoped(
+        "loom.knowledge_gaps", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )
 
 

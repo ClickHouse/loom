@@ -173,6 +173,7 @@ OpName = Literal[
     "knowledge.dedup_resolve",
     "knowledge.delete",
     "knowledge.formats",
+    "knowledge.gaps.list",
     "knowledge.get",
     "knowledge.ingest",
     "knowledge.ingest_cancel",
@@ -537,6 +538,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.dedup_resolve",
     "knowledge.delete",
     "knowledge.formats",
+    "knowledge.gaps.list",
     "knowledge.get",
     "knowledge.ingest",
     "knowledge.ingest_cancel",
@@ -2374,6 +2376,18 @@ OPS: dict[str, OpSpec] = {
         5500,
         False,
         True,
+    ),
+    "knowledge.gaps.list": OpSpec(
+        "knowledge.gaps.list",
+        "KnowledgeGapsListInput",
+        "KnowledgeGapsListBody",
+        "KnowledgeGapsListOutput",
+        True,
+        "admin",
+        "experimental",
+        300,
+        False,
+        False,
     ),
     "knowledge.get": OpSpec(
         "knowledge.get",
@@ -10476,6 +10490,38 @@ class KnowledgeFormat(TypedDict, total=False):
     extensions: NotRequired[list[str]]
     media_types: NotRequired[list[str]]
     available: NotRequired[Optional[bool]]
+
+
+class KnowledgeGapsListInput(TypedDict, total=False):
+    "The questions people keep asking in a namespace that nothing answers."
+
+    org: Required[str]
+    namespace: Required[str]
+    limit: NotRequired[int]
+
+
+class KnowledgeGapsListBody(TypedDict, total=False):
+    "The questions people keep asking in a namespace that nothing answers."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class KnowledgeGapsListOutput(TypedDict, total=False):
+    gaps: NotRequired[list["KnowledgeGap"]]
+    built_at: NotRequired[Optional[str]]
+    capturing: NotRequired[Optional[bool]]
+    enabled: NotRequired[bool]
+
+
+class KnowledgeGap(TypedDict, total=False):
+    gap_id: Required[str]
+    head: Required[str]
+    samples: NotRequired[list[str]]
+    askers: Required[int]
+    asks: Required[int]
+    last_at: Required[str]  # date-time as ISO-8601 text
 
 
 class KnowledgeGetInput(TypedDict, total=False):

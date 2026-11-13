@@ -194,6 +194,25 @@ The document formats this deployment reads, as `knowledge.ingest` sends them to 
 | `refused_extensions` | `list[str]` | Extensions the upload refuses by name (`doc`, `xls`, `ppt`). |
 | `default_format` | `str` | The format of a file whose name and media type name none. |
 
+## `knowledge.gaps.list`
+
+The questions people keep asking in a namespace that nothing answers.
+
+`POST /v1/knowledge.gaps.list` · MCP `loom_knowledge_gaps_list` · role `admin` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The namespace whose gaps to list. |
+| `limit` | `int` | `50` | Gaps to return, at most; default 50. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `gaps` | `list[_KnowledgeGap]` | Most askers first, then most asks. |
+| `built_at` | `datetime \| None` | When the worker built this list; null before its first build, and while capturing is false. |
+| `capturing` | `bool \| None` | Whether capture is on for this namespace (its consent, or the deployment's capture level when it has not chosen), null while enabled is false; false records no miss and shows no gap. |
+| `enabled` | `bool` | Whether this deployment records misses (LOOM_KNOWLEDGE_GAPS_ENABLED). |
+
 ## `knowledge.get`
 
 Fetch a single document by source_uri.
