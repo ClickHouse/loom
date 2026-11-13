@@ -74,7 +74,7 @@ Park a large tool result (log, page, diff, query output) outside the model conte
 
 ## `context.pack`
 
-A task's memories, decisions and procedures in one bundle: call it first in each task, unless a Loom hook already put Loom's context in this session.
+A task's memories, decisions and procedures: call it first in each task, unless a Loom hook already put Loom's context in this session.
 
 `POST /v1/context.pack` · MCP `loom_context_pack` · role `viewer` · read
 

@@ -448,13 +448,15 @@ def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
 
     coding = mcp_primer._coding_instructions("coding")
     assert "First step of each task: call `loom_context_pack` with the task as `query`" in coding
-    assert '`only_sections` ["memories", "decisions", "procedures"]' in coding
     assert f"Skip it when {FIRST_STEP_HOOK}." in coding
-    assert len(coding) < 2048  # a client may cut its instructions there
     rules = mcp_primer._loom_rules("core", None)
-    assert "**1. Task context.** First step of each task: call `loom_context_pack`" in rules
+    assert (
+        "**1. Task context.** First step of each task: call `loom_context_pack` with the task as `query`"
+        in rules
+    )
     assert f"Skip it when {FIRST_STEP_HOOK}." in rules
     assert "For one fact, rule 2's search alone is enough." in rules
     summary = first_sentence(TOOL_DESCRIPTIONS["context.pack"])
-    assert summary.startswith("A task's memories, decisions and procedures in one bundle")
+    assert summary.startswith("A task's memories, decisions and procedures: call it first")
+    assert len(summary) <= 140  # loom_op's help catalog cuts a purpose there
     assert summary.endswith(f"unless {FIRST_STEP_HOOK}.")

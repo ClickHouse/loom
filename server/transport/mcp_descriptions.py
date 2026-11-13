@@ -1183,9 +1183,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # ---- Context pack (the first step of each task) ----
     "context.pack": (
-        "A task's memories, decisions and procedures in one bundle: call it first in each "
-        f"task, unless {FIRST_STEP_HOOK}. Pass the task as `query`, and `only_sections` "
-        "for just those; it can add the profile, docs and conversations. "
+        "A task's memories, decisions and procedures: call it first in each task, unless "
+        f"{FIRST_STEP_HOOK}. Pass the task as `query`; working memory and the profile come "
+        "too, `include_knowledge` / `include_conversations` add docs and chats. "
         "`include_runs=true` adds a manifest of your recent sessions and runs "
         "(goal, outcome, tool calls, files) — shortlist there "
         "before opening one with memory.evidence or memory.digests. For one "

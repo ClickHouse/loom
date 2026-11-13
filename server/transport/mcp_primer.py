@@ -334,7 +334,7 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     head = (
         "**Loom-first mode active for this conversation.**\n\n"
         "**1. Task context.** First step of each task: call "
-        f"{tool['context.pack']} with the task, for the memories, decisions and "
+        f"{tool['context.pack']} with the task as `query`, for the memories, decisions and "
         f"procedures that bear on it in one bounded bundle. Skip it when {FIRST_STEP_HOOK}. "
         "For one fact, rule 2's search alone is enough.\n\n"
         "**2. Recall lookup order.** When I ask about preferences, "
@@ -536,8 +536,7 @@ def _coding_instructions(toolset: str | None) -> str:
     # brings the team's memory in, unless a plugin's hooks load it for the session.
     return name_ops_for_toolset(
         "**Loom: memory and code for this session.**"
-        + "\n\nFirst step of each task: call `context.pack` with the task as `query` and "
-        + '`only_sections` ["memories", "decisions", "procedures"]. '
+        + "\n\nFirst step of each task: call `context.pack` with the task as `query`. "
         + f"Skip it when {FIRST_STEP_HOOK}."
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
         + memory,
