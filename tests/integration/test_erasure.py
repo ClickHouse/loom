@@ -1,4 +1,4 @@
-"""erasure.request + erasure.status — GDPR/EU AI Act scoped deletion.
+"""erasure.request + erasure.status — scoped deletion.
 
 Verifies:
   - user_id erasure tombstones memory + memory_embeddings; scrubs agent_events

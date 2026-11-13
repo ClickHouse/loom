@@ -38,7 +38,7 @@ nothing; a leg that errors fails open and the response names it in `degraded`.
 
 | Leg                   | Reads                                                   | Finds what the others miss                                                                                   |
 | --------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Fact, vector**      | `loom.memory_embeddings` value vector (exact scan)      | Paraphrases: the question and the stored claim share meaning, not words.                                     |
+| **Fact, vector**      | `loom.memory_embeddings` value vector (no vector index) | Paraphrases: the question and the stored claim share meaning, not words.                                     |
 | **Fact, key axis**    | The same table's `memory_key` vector                    | A question that names the attribute a key encodes. Scores `least(value distance, key distance)`.             |
 | **Lexical**           | Lowercased, stemmed and lemmatised excerpts and the key | Exact identifiers, numbers and rare words that embed poorly. Stemming runs in ClickHouse (`stem`).           |
 | **BM25**              | Per-token IDF and corpus length roll-ups                | Rare-term weighting for `bm25_hybrid`, with a live tail so new rows count at once.                           |
@@ -54,6 +54,10 @@ nothing; a leg that errors fails open and the response names it in `degraded`.
 poorly), passages deep in a long value (only the first part is embedded), and rows that
 name an entity in other words. Each leg is a query over a table Loom already writes, so
 adding one costs a statement, not a second system.
+
+**The vector legs scan, with no vector index.** The scan is exact, or, where
+[codes-first reads](../architecture/clickhouse.md#vector-storage) apply, a pass over
+quantized codes keeps a candidate pool and rescores it at full precision.
 
 **The key axis** is on per namespace when its keys are reused (`LOOM_MEMORY_SEARCH_KEY_AXIS=auto`,
 threshold `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_REUSE_SHARE`): reading two vector columns

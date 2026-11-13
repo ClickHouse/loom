@@ -497,7 +497,7 @@
           "maximum": 1.0,
           "minimum": 0.0,
           "type": "number",
-          "description": "The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in code/app/answers.py; a value in (0, 1] pins one threshold for every model."
+          "description": "The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in code/app/answers_entry.py; a value in (0, 1] pins one threshold for every model."
         },
         "code_ask_llm_cache": {
           "default": true,

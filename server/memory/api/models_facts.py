@@ -121,7 +121,7 @@ class FactsRelatedOutput(BaseModel):
 
 
 # ============================================================
-# facts.traverse — N-hop graph walk via recursive CTE
+# facts.traverse — N-hop graph walk, one bounded query per hop
 # ============================================================
 
 

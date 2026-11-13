@@ -4,8 +4,9 @@ An uploaded original is parsed into one shape, the extraction artifact, by an ex
 its own dependencies, never the Loom server. The server sends the original's bytes to the service its format is routed
 to, reads the artifact back as untrusted input, and cuts structural chunks from its blocks, so a SQL statement, a TOML
 key and a Markdown section are all cited by a locator into the source. Loom ships a reference extractor
-(`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL, TOML, CSV, PDF, DOCX, PPTX and XLSX; an operator can
-run another behind the same [wire contract](../reference/extractor-contract.md). `knowledge.ingest` extracts an uploaded
+(`extractor/loom_extractor/`) for Markdown, HTML, plain text, SQL, TOML, CSV, PDF, DOCX, PPTX, XLSX and, with
+`pyarrow` installed, Parquet; an operator can run another behind the same
+[wire contract](../reference/extractor-contract.md). `knowledge.ingest` extracts an uploaded
 original this way ([ingestion](#ingestion)), and the document-source sync calls it for the PDFs, `.pptx` and `.docx`
 files a registered folder holds ([syncing a source](../features/knowledge.md#syncing-a-source)); `knowledge.add` takes
 text the caller extracted.
@@ -90,7 +91,7 @@ denies those. The service refuses to start on an architecture its socket filter 
 | Part       | Holds                                                                                                                                                                                                                                                                                                   |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `blocks`   | the source's structure in order: `heading`, `paragraph`, `list`, `code`, `sql_statement`, `toml_table`, `toml_key`, ...; each with its text, locator, section path and parent                                                                                                                           |
-| `tables`   | the tables a source holds: each a name, typed columns, its rows of values, a header row count and a locator (CSV, XLSX, PDF)                                                                                                                                                                            |
+| `tables`   | the tables a source holds: each a name, typed columns, its rows of values, a header row count and a locator (CSV, XLSX, PDF, Parquet)                                                                                                                                                                   |
 | `coverage` | the unit the format is made of (`lines`, `statements`, `keys`, `chars`, `pages`, `paragraphs`, `slides`, `rows`), how many there are, how many extracted, each failed unit with its reason, and each capability lost                                                                                    |
 | `warnings` | facts a reader should see, such as an ambiguous SQL dialect                                                                                                                                                                                                                                             |
 | `options`  | the overrides the parse ran with (`sql_dialect` for SQL only, `encoding` by its codec name)                                                                                                                                                                                                             |

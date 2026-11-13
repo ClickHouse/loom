@@ -500,9 +500,10 @@ flush never fails a request; a crash loses the queue.
   [recommended settings](../operations/deployment.md#recommended-clickhouse-settings).
   Query vectors bind as `Array(Float32)`. A memory carries up to two vectors (value and
   key), so at 3072 dimensions up to 12 KiB of vectors.
-- **No table has a vector-similarity (HNSW) index.** Search is an exact `cosineDistance`
-  scan over the rows the identity predicates leave. The bytes a read scans therefore
-  grow with namespace size, not corpus size.
+- **No table has a vector-similarity (HNSW) index.** Search is a `cosineDistance` scan
+  over the rows the identity predicates leave: exact, or codes first and rescored where
+  codes-first reads (below) apply. The bytes a read scans therefore grow with namespace
+  size, not corpus size.
   [Why there is no vector index](#why-there-is-no-vector-index) has the measurements.
 - **Quantized codes.** On ClickHouse 26.8+, a fresh install creates the vector columns of
   `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`) with `CODEC(Quantized('rabitq', <dim>, 0))`
@@ -518,7 +519,12 @@ flush never fails a request; a crash loses the queue.
   pass over the codes keeps `LIMIT × LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER`
   candidates and rescores them at full precision. Coding and patch parts are re-probed
   every `LOOM_VECTOR_CODES_STATE_PROBE_SECONDS`; a failed probe reads as "not patch-free".
-  A replica that rejects the setting has it dropped and the read retried.
+  A replica that rejects the setting has it dropped and the read retried. The memory fact
+  leg has its own switch, `LOOM_MEMORY_SEARCH_FACT_CODES_FIRST`: `auto` follows its own
+  patch-parts probe, every `LOOM_MEMORY_EMBEDDINGS_PATCH_PARTS_PROBE_SECONDS`, and `on`
+  and `auto` read as off while `LOOM_VECTOR_SEARCH_QUANTIZED_CODES` is false or the
+  replica does not know the setting. Its over-fetch is
+  `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER`.
 - **Fixed-length placeholders.** Rows awaiting an embedding store zero vectors with
   `embedding_dim = 0` (`server/core/vectors/placeholders.py`). Every vector leg filters
   `embedding_dim > 0`.

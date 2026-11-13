@@ -106,6 +106,9 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     check. In order:
     - canonical-form match: `merge`, no insert (`_set_merge`);
     - pinned peer: `rejected` (409);
+    - under `newest_wins`, a templated substitution of a peer (same subject and
+      predicate, different object): `refines`, which retires the peer, or `conflict`
+      when the peer's `valid_at` is later than the new row's;
     - peer at or above `LOOM_DUPLICATE_THRESHOLD` with the same content words, unless
       each side states a value the other lacks (`values_differ`): `duplicate`;
     - any other close peer: `conflict`.
@@ -144,12 +147,13 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     long value is also split into `memory_chunks`, fail-open.
 
 **Embedding stubs.** `memory.set` embeds before it inserts, so an embed failure fails
-the call and writes nothing. Other writers (`memory.promote` on an embed failure,
-`namespace.rollback`) write a stub: `embedding_dim = 0` and a zero vector. Imports and
-observation writers may write no embedding row at all. `embedding_worker` fills both at
-the stub's version plus one, so a later real write still wins. A row that keeps failing
-accrues `embed_attempts` and is marked `embed_failed_at` so it cannot stall the batch.
-Every vector leg filters `embedding_dim > 0`.
+the call and writes nothing. Writers that can wait for a vector (such as
+`memory.promote` on an embed failure and `namespace.rollback`) write a stub:
+`embedding_dim = 0` and a zero vector. Imports and observation writers may write no
+embedding row at all. `embedding_worker` fills both at the stub's version plus one, so a
+later real write still wins. A row that keeps failing accrues `embed_attempts` and is
+marked `embed_failed_at` so it cannot stall the batch. Every vector leg filters
+`embedding_dim > 0`.
 
 ## The conflict resolver
 
@@ -973,12 +977,12 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    concurrently. Across several unordered namespaces, private ones are searched first
    and public ones only when no private hit clears the relevance floor.
 
-   | Leg              | Module                       | Reads                                                                                                                                                                                                     |
-   | ---------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | fact             | `fact_sql.py`                | One statement per namespace over `memory_embeddings FINAL`: identity columns in `PREWHERE`, row state in `WHERE`, an exact `cosineDistance` order (no table has a vector index), rank computed beside it. |
-   | lexical and BM25 | `lexical.py`, `side_legs.py` | `hasAnyTokens` over the lowercase, stem and lemma columns; Okapi BM25 from `memory_term_freq` / `memory_doc_stats` plus rows newer than the refresh mark.                                                 |
-   | verbatim chunks  | `chunks.py`                  | `memory_chunks`: a stage-1 candidate read, then one keyed stage 2 with neighbour windows.                                                                                                                 |
-   | records          | `side_legs.py`               | `memory_records`.                                                                                                                                                                                         |
+   | Leg              | Module                       | Reads                                                                                                                                                                                                                                                                                                          |
+   | ---------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | fact             | `fact_sql.py`                | One statement per namespace over `memory_embeddings FINAL`: identity columns in `PREWHERE`, row state in `WHERE`, a `cosineDistance` order with no vector index (exact, or [codes first, then a full-precision rescore](clickhouse.md#vector-storage) where codes-first reads apply), rank computed beside it. |
+   | lexical and BM25 | `lexical.py`, `side_legs.py` | `hasAnyTokens` over the lowercase, stem and lemma columns; Okapi BM25 from `memory_term_freq` / `memory_doc_stats` plus rows newer than the refresh mark.                                                                                                                                                      |
+   | verbatim chunks  | `chunks.py`                  | `memory_chunks`: a stage-1 candidate read, then one keyed stage 2 with neighbour windows.                                                                                                                                                                                                                      |
+   | records          | `side_legs.py`               | `memory_records`.                                                                                                                                                                                                                                                                                              |
 
    A pooled chunk of a long `memory.set` value folds onto the row whose current value cuts
    it (`pool.py`, `fold_set_chunks`): one read of the writer's served rows of the key with
@@ -1012,7 +1016,7 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    (`LOOM_MEMORY_SEARCH_IDENTIFIER_GROUNDING`).
 8. **Assemble and record** (`assemble.py`, `output.py`, `telemetry.py`). The window is
    cut to budget; with `paging=true` a larger pool is parked in `loom.context_blobs`.
-   Trace, exposure and query-node rows go to the events stream, fire-and-forget.
+   Trace, exposure and query-node rows are inserted directly, fire-and-forget.
 
 With `LOOM_ADAPTIVE_THRESHOLDS` on, the similarity gates come from the embedder's own
 cosine distribution (`memory/app/embedder_calibration.py`); the scalar settings are the
@@ -1477,9 +1481,10 @@ writes no outbox rows ([rule 22](rolling-upgrades.md#the-rules)).
 - Every vector leg filters `embedding_dim > 0`.
 - Merge, duplicate and pinned rejection are decided before the insert; only the LLM
   judge may run after it.
-- Ops addressed by an org-wide id (`memory.get_by_id`, `memory.update_by_id`,
-  `memory.redact`) check `authz.row_in_scope` after the fetch and answer `found=false`
-  on refusal, never a 403.
+- The memory ops addressed by an org-wide id answer a row the caller cannot reach as a
+  missing row, never a 403: `memory.get_by_id` and `memory.update_by_id` resolve the
+  id's namespace through `authz.row_reach` before the read, `memory.redact` checks
+  `authz.row_in_scope` after it.
 - A projection failure never fails the primary write.
 - Writes are not transactional across tables; bulk writes and cross-namespace promotion
   are not atomic.

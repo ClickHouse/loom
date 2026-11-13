@@ -101,9 +101,9 @@ class Operation:
     # which the transport would otherwise refuse with IDENTITY_INCOMPLETE for want of a
     # namespace — passes the role gate with its best per-namespace role.
     deployment_scoped: bool = False
-    # The op is addressed by an org-wide id (memory_id,
-    # erasure_id, pattern_id) and its handler authorizes the ROW's namespace
-    # (`row_in_scope`) once it has the row. A scoped token has
+    # The op is addressed only by an org-wide id (memory_id, erasure_id,
+    # pattern_id) and its handler authorizes the row's scope, before the read
+    # (`id_namespace.namespace_for_id`) or after it (`row_in_scope`). A scoped token has
     # no namespace to show the transport, so the gate only asks that it hold
     # the role somewhere in the org; the handler decides, and hides a foreign
     # row as not found.

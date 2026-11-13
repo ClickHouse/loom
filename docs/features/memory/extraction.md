@@ -449,12 +449,12 @@ See the [Extraction section](../../reference/configuration.md#extraction) unless
 
 ## Workers
 
-| Worker             | Role                                                             | Default |
-| ------------------ | ---------------------------------------------------------------- | ------- |
-| `extraction_queue` | Replays deferred requests.                                       | on      |
-| `observe_extract`  | Distils `observe.record` observations through the same pipeline. | off     |
-| `entity_extractor` | Fills `entities` on rows written without them.                   | on      |
-| `embedding_worker` | Embeds rows whose inline embedding failed.                       | on      |
+| Worker             | Role                                                                 | Default |
+| ------------------ | -------------------------------------------------------------------- | ------- |
+| `extraction_queue` | Replays deferred requests.                                           | on      |
+| `observe_extract`  | Distils `observe.record` observations through the same pipeline.     | off     |
+| `entity_extractor` | Fills `entities` on rows written without them.                       | on      |
+| `embedding_worker` | Embeds `embedding_dim = 0` stubs and memories with no embedding row. | on      |
 
 Cadences and switches: [workers reference](../../reference/workers.md).
 

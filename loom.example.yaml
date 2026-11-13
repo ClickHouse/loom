@@ -949,7 +949,8 @@ settings:
   # code_ask_token_budget: 4000
 
   # The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in
-  # code/app/answers.py; a value in (0, 1] pins one threshold for every model. [restart]
+  # code/app/answers_entry.py; a value in (0, 1] pins one threshold for every model.
+  # [restart]
   # code_ask_cache_threshold: 0.0
 
   # A cached code.ask answer older than this many days is a miss (checked and tombstoned

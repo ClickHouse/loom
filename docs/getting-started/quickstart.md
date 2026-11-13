@@ -48,9 +48,10 @@ Compose and ClickHouse configuration under `~/.loom`, pulls the matching
 document extractor service) images, and waits for `http://localhost:7777/v1/health`. The
 server image contains the API, workers, migrations and the built React dashboard at the
 server root; no Python or Node installation is needed. Python, TypeScript and Go compiler
-indexers are included and enabled. A repository indexed with the TypeScript indexer gets
-its dependencies installed automatically. Both images support Linux `amd64` and `arm64`,
-including Docker Desktop on Apple Silicon.
+indexers are included and enabled, and so is the C++ one (`scip-clang`) on `amd64`. A
+repository indexed with the TypeScript indexer gets its dependencies installed
+automatically. Both images support Linux `amd64` and `arm64`, including Docker Desktop
+on Apple Silicon.
 
 Once Loom answers, the installer:
 

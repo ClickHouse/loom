@@ -43,8 +43,8 @@ class ErasureRequestInput(BaseModel):
     # Hard-delete the rows of the soft-delete tables (memory, embeddings,
     # chunks, documents, summaries, links) instead of stamping tombstoned_at:
     # a tombstone keeps the bytes in every FINAL read and merge; a purge takes
-    # them out of the parts. For a `user_id` scope (a GDPR deletion) or
-    # throwaway namespaces. No restore window.
+    # them out of the parts. For a `user_id` scope or throwaway namespaces.
+    # No restore window.
     purge: bool = False
     # External backends (Langfuse traces by tag, ClickStack OTel rows, …) run
     # for every namespace of the scope and fail the saga closed. A
@@ -178,7 +178,7 @@ class ErasureStatusOutput(BaseModel):
 
 
 # ============================================================
-# erasure.export — GDPR Article 20 right-to-portability
+# erasure.export — the rows about a user or namespace, as one dump
 # ============================================================
 
 

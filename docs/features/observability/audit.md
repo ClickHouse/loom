@@ -236,8 +236,12 @@ All settings are in the [configuration reference](../../reference/configuration.
 
 ## Limits and failure modes
 
-- **Fail-open writes.** A failed audit insert loses the row and never fails the operation.
-  A crash can also lose rows still queued in the events stream.
+- **Fail-open writes.** A failed audit insert loses the row and never fails the operation,
+  except a `memory.restore` that undoes a retirement and a `namespace.restore`, which
+  depend on their record. The row is inserted directly before the response, not queued,
+  so a crash loses only the row of a call still in flight. Under the Postgres authority a
+  memory write's audit row is durable in Postgres before the write answers
+  ([audit](../../architecture/storage-authority.md#audit)).
 - **Detection, not prevention.** Anyone with write access to the ClickHouse table can
   alter it. The verifier shows the change; it cannot undo it.
 - **Bounded look-back.** The per-row check reads the last hour; the checkpoint recount
@@ -245,7 +249,10 @@ All settings are in the [configuration reference](../../reference/configuration.
   worker. Run `dev/verify_audit_chain.py` over the older partitions.
 - **A late insert is not tampering.** A backfill into an old window is reported as
   `late_insert`.
-- **No TTL.** Loom deletes no audit row by age.
+- **No TTL by default.** Audit rows expire only under a retention window:
+  `LOOM_RETENTION_AUDIT_LOG_DAYS` above 0 for the whole table, or a namespace's
+  `retention_days` for that namespace's rows
+  ([configured retention](../memory/retention-and-erasure.md#configured-retention)).
 
 ## Related
 

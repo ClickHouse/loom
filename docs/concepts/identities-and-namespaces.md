@@ -48,10 +48,14 @@ writes, saved messages), `-` is the row written with no user, session or run.
 whoever wrote it. Passing an `agent` only narrows. `user_id` and `session_id` on a read
 filter to rows written under them.
 
-**Why the tuple leads the tables.** The identity columns are the first columns of the
-memory tables' sort keys, so scoping a read to one namespace, one user or one session is
-a primary-key range in ClickHouse rather than a scan. It also makes a user's rows findable
-for erasure without a secondary index.
+**Why the tuple leads the tables.** The sort keys of `loom.memory` and
+`loom.memory_embeddings` start with `(org, namespace, agent, user_id, session_id)`, so a
+read scoped to one namespace is a primary-key range in ClickHouse rather than a scan, and
+naming an agent narrows it. A read across agents, the default, filters `user_id` and
+`session_id` inside the namespace's range: the key skips granules on them only as far as
+the agent column allows, and no skip index covers them. Any scoped read still reads at
+least a granule of every part its range spans
+([memory at scale](../benchmarks/results.md#memory-at-scale)).
 
 ### What the server stamps
 
@@ -171,9 +175,10 @@ operation's role, or a live grant does.
 - **Service accounts inherit.** A service account with no grant of its own on a namespace
   uses its creator's grant there, so a token minted from the dashboard follows the person
   who made it, except on a restricted namespace.
-- **Operations addressed by an org-wide id** (`memory.get_by_id`, `memory.update_by_id`,
-  `memory.redact`) check the fetched row's namespace after the read and answer
-  `found=false` on refusal, so a refusal never confirms that the id exists.
+- **Operations addressed by an org-wide id**, such as `memory.get_by_id`, authorize the
+  caller on the scope that holds the row. When the caller lacks the op's role on the
+  row's namespace, they answer as for a missing row, so a refusal never confirms that
+  the id exists ([row-scoped operations](../architecture/security.md#row-scoped-operations)).
 
 Why tokens plus grants: the token is verified locally on every call without a lookup,
 which keeps the hot path cheap; grants let an admin give and take access without

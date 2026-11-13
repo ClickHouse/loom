@@ -1,16 +1,16 @@
 """Re-measure the code.ask answer-cache threshold for the served embedder.
 
-`server/code/app/answers.py` serves a cached answer when the nearest
-cached question's cosine similarity clears a per-model threshold. This script
-embeds the labelled pairs in `pairs.json` (paraphrases that deserve the same
-answer, different questions that do not) with the repo's own embedder, prints
-both similarity distributions, and names the lowest threshold on a 0.01 grid
-that keeps every different-question pair a miss.
+`server/code/app/answers_cache.py` serves a cached answer when the nearest
+cached question's cosine similarity clears a per-model threshold
+(`server/code/app/answers_entry.py`). This script embeds the labelled pairs in
+`pairs.json` (paraphrases that deserve the same answer, different questions that do
+not) with the repo's own embedder, prints both similarity distributions, and names
+the lowest threshold on a 0.01 grid that keeps every different-question pair a miss.
 
     python bench/code_ask_cache_threshold/measure.py --env-file .env \
         --out bench/code_ask_cache_threshold/summary.json
 
-The identifier guard (`load_bearing_tokens` in `server/code/app/answers.py`: a
+The identifier guard (`load_bearing_tokens` in `server/code/app/answers_cache.py`: a
 semantic hit is served only when both questions name the same identifiers, settings,
 paths, numbers, quoted strings and error codes) is measured on 22 `different_identifier`
 near-miss pairs. The summary carries two choices: `chosen` (cosine alone, every
