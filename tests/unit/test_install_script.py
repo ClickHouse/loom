@@ -333,6 +333,65 @@ def _on_terminal(
     return seen
 
 
+def test_ctrl_c_stops_the_agent_cli_and_cleans_up(
+    installer_env: dict[str, str], tmp_path: Path
+) -> None:
+    """^C while a client CLI runs under `bounded`: the CLI is stopped, the run exits
+    130 and its temporary directory is removed."""
+    import pty
+    import select
+    import signal
+
+    _start_stubs(installer_env)
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    pids = bin_dir / "claude.pid"
+    claude = bin_dir / "claude"
+    # Deaf to the terminal's ^C and hangup: only the installer's own kill stops it.
+    claude.write_text(f'#!/bin/sh\ntrap "" HUP INT\necho $$ > "{pids}"\nexec sleep 60\n')
+    claude.chmod(0o755)
+    tmp = tmp_path / "tmp"
+    tmp.mkdir()
+    env = {**installer_env, "LOOM_SKIP_START": "0", "LOOM_CONNECT": "claude-code"}
+    env["TMPDIR"] = str(tmp)
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvpe("sh", ["sh", str(ROOT / "install.sh")], env)
+    deadline = time.monotonic() + 180  # a loaded machine runs the installer slowly
+    sent, status = False, None
+    try:
+        while status is None and time.monotonic() < deadline:
+            if select.select([fd], [], [], 0.2)[0]:
+                try:
+                    os.read(fd, 1024)
+                except OSError:  # the child closed the terminal
+                    pass
+            if not sent and pids.exists() and pids.read_text().strip():
+                os.write(fd, b"\x03")
+                sent = True
+            done, code = os.waitpid(pid, os.WNOHANG)
+            if done:
+                status = code
+    finally:
+        if status is None:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        os.close(fd)
+    assert sent and status is not None
+    assert os.waitstatus_to_exitcode(status) == 130
+    cli = int(pids.read_text())
+    gone = time.monotonic() + 10
+    while time.monotonic() < gone:
+        try:
+            os.kill(cli, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        os.kill(cli, signal.SIGKILL)
+        raise AssertionError(f"claude ({cli}) still runs")
+    assert list(tmp.iterdir()) == []
+
+
 def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
     seen = _on_terminal(env, ["--clickhouse", url], b"password for", answer)
     assert b"(Enter keeps the one saved in .env)" in seen, seen
@@ -1219,7 +1278,6 @@ def test_a_rerun_writes_no_memory_again(install, installer_env: dict[str, str]) 
     curl_log, _ = _start_stubs(installer_env)
     assert run(LOOM_SKIP_START="0").returncode == 0
     curl_log.write_text("")
-    _start_stubs(installer_env)
     result = run(LOOM_SKIP_START="0")
     assert result.returncode == 0, result.stderr
     assert "test memory" not in result.stdout
