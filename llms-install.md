@@ -10,6 +10,10 @@ Loom runs on the user's machine as a Docker Compose stack (the Loom server, its 
 extractor and ClickHouse) and serves MCP over streamable HTTP. A coding agent connects on
 `http://localhost:7777/mcp?toolset=coding`. Loom needs no API key and no account.
 
+Do not use `sudo`, install or upgrade system packages, or change Docker's setup. When a
+command fails, or a step below says to stop, stop and show the user the command's last
+lines.
+
 ## 1. Check for a running Loom
 
 On Windows, run every shell command in steps 1 to 3 (`curl`, `docker`, the `~/.loom`
@@ -30,8 +34,7 @@ curl -sS --noproxy '*' http://localhost:7777/v1/health
 ## 2. Install
 
 Docker with the Compose plugin, version 2.20 or later, must be installed
-(`docker compose version`). If that command fails or reports an older version, stop and
-tell the user; do not install or upgrade system packages.
+(`docker compose version`). If that command fails or reports an older version, stop.
 
 The installer reads `LOOM_*` environment variables, which can point it at another
 ClickHouse, port or directory. If `env | grep '^LOOM_'` prints any, stop and ask the user
