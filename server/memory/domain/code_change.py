@@ -13,9 +13,9 @@ what reads do:
                             is re-anchored, a contradicted one gets a suggested
                             correction on its link
 
-Under every policy, a memory search still serves whose worst link is changed, unresolved
-or missing ranks lower than its match (`rank_down`) on its first page. A memory a person pinned,
-locked or verified is only flagged.
+Under every policy, a memory that a search still serves ranks lower than its match
+(`rank_down`) on its first page when its worst link is changed, unresolved or missing.
+A memory a person pinned, locked or verified is only flagged.
 """
 
 from __future__ import annotations
