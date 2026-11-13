@@ -648,6 +648,7 @@ main() {
     # The plugins' own server URL, which a plugin installed before keeps.
     default_url=http://localhost:7777
     if considered claude-code && command -v claude >/dev/null 2>&1; then
+      claude_config="${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json"
       # A plugin installed before, or a loom MCP entry added without it, is left
       # as it is, with the server it was set up for; reading the plugin list and
       # Claude Code's config starts nothing.
@@ -656,8 +657,8 @@ main() {
       elif grep -Eq '(^|[[:space:]])loom@loom$' "$tmp_dir/claude.plugins"; then
         printf 'Claude Code: the Loom plugin is installed already; `claude mcp list` shows the server it uses, and `claude plugin install loom@loom --config server_url=%s` points it here\n' "$server_url"
         kept=1
-      elif grep -q '"loom"[[:space:]]*:' "${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json" 2>/dev/null; then
-        printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s), and is left as it is; to use the plugin instead: claude mcp remove loom, then claude plugin install loom@loom --config server_url=%s\n' "${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json" "$server_url"
+      elif grep -q '"loom"[[:space:]]*:' "$claude_config" 2>/dev/null; then
+        printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s), and is left as it is; to use the plugin instead: claude mcp remove loom, then claude plugin install loom@loom --config server_url=%s\n' "$claude_config" "$server_url"
         kept=1
       elif ! node_ok; then
         # Its hooks and MCP header helper run the `node` on PATH, with no search.

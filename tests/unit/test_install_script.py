@@ -1397,15 +1397,22 @@ def test_a_server_error_connects_no_agent(install, installer_env: dict[str, str]
     assert claude.read_text() == ""
 
 
-@pytest.mark.parametrize("status", [401, 500])
+@pytest.mark.parametrize("status", [401, 500, None])
 def test_a_server_that_refused_the_check_gets_no_connect_guide(
-    install, installer_env: dict[str, str], status: int
+    install, installer_env: dict[str, str], status: int | None
 ) -> None:
-    """Without a terminal or LOOM_CONNECT: the refusal said why, so no guide follows."""
-    run, _ = install
-    _start_stubs(installer_env, memory_status=status)
+    """Without a terminal or LOOM_CONNECT: the refusal said why, so no guide follows.
+    None is a namespace no check can use."""
+    run, target = install
+    if status is None:
+        assert run().returncode == 0
+        with (target / ".env").open("a") as env:
+            env.write('LOOM_DEFAULT_NAMESPACE=my"space\n')
+    _start_stubs(installer_env, memory_status=status or 200)
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="")
     assert result.returncode == 0, result.stderr
+    if status is None:
+        assert "Skipped the memory check" in result.stdout
     assert "Connect an agent:" not in result.stdout
 
 
