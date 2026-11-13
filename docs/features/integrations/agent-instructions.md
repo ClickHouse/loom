@@ -1,10 +1,9 @@
 # Agent instructions
 
-A short block in an agent's instruction file tells it to load Loom's context at the start
-of each task and before each edit, when to save a fact and when to ask the code index
-instead of grepping or reading files. This page gives that block once and the file each
-client reads it from; paste it, fill in its two namespaces from `code.repos` (below),
-and commit it with the repository.
+A short block in an agent's instruction file tells it when to load Loom's context, save
+a fact and use the code index instead of grepping or reading files. This page gives that
+block once and the file each client reads it from; paste it, fill in its two namespaces
+from `code.repos` (below), and commit it with the repository.
 
 The Claude Code and Codex plugins already do this through their hooks and skills
 ([Claude Code](claude-code.md#skills), [Codex](codex.md#skills)); the block is for every
@@ -60,7 +59,8 @@ Code
   tool answers `abstain: true`, grep instead of retrying with synonyms.
 ```
 
-`code.repos` lists the repositories the token can read, one row per indexed branch:
+`code.repos` lists the repositories the token can read or ask to join, one row per
+indexed branch:
 
 ```bash
 curl -s -X POST https://loom.example.com/v1/code.repos -H "Authorization: Bearer $LOOM_API_KEY" \
@@ -82,14 +82,14 @@ The block is the same everywhere; only the file and its header differ. Cursor, C
 Devin Desktop and VS Code also read `AGENTS.md`, so one file can serve them all;
 their own rule files keep the block apart from other instructions.
 
-| Client                                           | File                               | Header before the block                                                      |
-| ------------------------------------------------ | ---------------------------------- | ---------------------------------------------------------------------------- |
-| Codex, Zed, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root | none                                                                         |
-| Claude Code without the plugin                   | `CLAUDE.md` at the repository root | none                                                                         |
-| Cursor                                           | `.cursor/rules/loom.mdc`           | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
-| Devin Desktop (Windsurf)                         | `.devin/rules/loom.md`             | `---`, `trigger: always_on`, `---`                                           |
-| Cline                                            | `.clinerules/loom.md`              | none                                                                         |
-| VS Code (GitHub Copilot)                         | `.github/copilot-instructions.md`  | none                                                                         |
+| Client                                                              | File                                                                   | Header before the block                                                      |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Codex without the plugin, Zed, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root                                     | none                                                                         |
+| Claude Code without the plugin                                      | `CLAUDE.md` at the repository root                                     | none                                                                         |
+| Cursor                                                              | `.cursor/rules/loom.mdc`                                               | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
+| Devin Desktop (Windsurf)                                            | `.devin/rules/loom.md` (`.windsurf/rules/loom.md` on a Windsurf build) | `---`, `trigger: always_on`, `---`                                           |
+| Cline                                                               | `.clinerules/loom.md`                                                  | none                                                                         |
+| VS Code (GitHub Copilot)                                            | `.github/copilot-instructions.md`                                      | none                                                                         |
 
 Each header line goes on its own line. The Cursor file, for example, starts:
 
