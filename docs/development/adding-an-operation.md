@@ -128,7 +128,7 @@ The op is **read-only** (MCP `readOnlyHint`, the `readonly` toolset) exactly whe
 `server/operations/toolsets.py` decides where the op is listed:
 
 - **A curated roster** (`_MCP_CORE_OPS`, `_MCP_CODING_OPS`, `_MCP_ATOMIC_OPS`, `_MCP_TASK_OPS`, `_MCP_TRACKER_OPS`, `_MCP_CODE_CORE_OPS`) lists it on that `?toolset=`. Every listed property costs tokens on every turn, so add only what that archetype calls. `tests/unit/test_mcp_listing_budget.py` holds the listing under a token ceiling.
-- **Unlisted** (most ops): callable by name through `loom_op` on any listing. `?toolset=all` lists a `stable` op, and an `experimental` op only when the core or atomic roster lists it (`listed_under_all` in `server/operations/toolsets.py`).
+- **Unlisted** (most ops): callable by name through `loom_op` on any listing (reads only on `readonly`, [MCP toolsets](../reference/mcp.md#toolsets)). `?toolset=all` lists a `stable` op, and an `experimental` op only when the core or atomic roster lists it (`listed_under_all` in `server/operations/toolsets.py`).
 - **`_MCP_HIDDEN_OPS`**: not reachable over MCP. `tests/unit/test_hidden_op_says_why.py` requires a refusal that names what to call instead.
 
 A listed op needs its description in `server/transport/mcp_descriptions.py`

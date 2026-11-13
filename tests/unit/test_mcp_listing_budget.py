@@ -236,7 +236,8 @@ def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code:
                 tool = re.escape(OPS[op].mcp_tool_name)
                 assert not re.search(rf"\b{tool}\b", text), f"{toolset}: {t['name']} lists {op}"
                 if "loom_op" in names and reachable(OPS[op], toolset):
-                    marked = rf"(?<![\w.]){re.escape(op)}`? \(via loom_op\)"
+                    # the trail the renderer writes the marker after: a backtick, a possessive
+                    marked = rf"(?<![\w.]){re.escape(op)}`?(?:'s)? \(via loom_op\)"
                     assert re.search(marked, text), (
                         f"{toolset}: {t['name']} names unlisted {op} without saying how to reach it"
                     )
@@ -321,6 +322,17 @@ def test_naming_marks_only_what_loom_op_routes():
         mcp_op.name_ops_for_listing("`memory.set.value`", listed, writes=True)
         == "`memory.set.value`"
     )
+
+
+@pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
+def test_no_rendered_text_splits_a_call_or_a_code_span(toolset: str, code: bool):
+    """Field and model texts render too: a marker before `(` or inside backticks
+    means a source wrote an op as a call or inside a longer code span."""
+    for t in _listing(toolset, code):
+        for text in _texts(t):
+            assert "(via loom_op)(" not in text, (toolset, t["name"], text)
+            inside_spans = text.split("`")[1::2]
+            assert not any("(via loom_op)" in span for span in inside_spans), (toolset, t["name"])
 
 
 def test_a_listing_build_leaves_the_source_texts_as_written():

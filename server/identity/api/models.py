@@ -422,7 +422,7 @@ class NamespaceCancelRequestInput(BaseModel):
     """Withdraw the caller's own pending elevation request.
 
     Keeps the current (lower) role and clears `pending_role`. Self-only;
-    admin-driven cancellation goes through grants.approve(decision='reject').
+    an admin cancels it with grants.approve and decision='reject'.
     """
 
     org: str
