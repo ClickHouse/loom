@@ -255,7 +255,7 @@ class AgentTools:
             }
         if name == "loom_recall":
             body = {"query": _str(a, "query")}
-            if a.get("top_k") is not None:
+            if a.get("top_k") not in (None, ""):  # unset: the server's default
                 body["top_k"] = _int(a, "top_k")
             r = await call("memory.search", body)
             return {
@@ -285,7 +285,7 @@ class AgentTools:
         if name == "loom_fetch":
             body = {"blob_key": _str(a, "blob_key")}
             for k in ("pattern", "offset", "limit"):
-                if a.get(k) is not None:
+                if a.get(k) not in (None, ""):
                     body[k] = a[k] if k == "pattern" else _int(a, k)
             r = await call("context.fetch", body)
             if not r.get("found"):
@@ -314,7 +314,7 @@ def _parse_args(args: str | Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def _int(a: Mapping[str, Any], key: str) -> int:
-    # The TypeScript check: a whole number, quoted or not, 5.0 included.
+    # A whole number, quoted or not, 5.0 included; a bool is not a number here.
     v = a[key]
     n = v
     if isinstance(v, str) and v.strip():  # models sometimes quote a number
