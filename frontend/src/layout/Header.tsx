@@ -31,6 +31,7 @@ import { paletteShortcut } from "../lib/platform";
 import { forgetAssistantConversations } from "../lib/assistantStorage";
 import { openNewDialog, useNewDialogs } from "../lib/newDialogs";
 import { chatOff, useDock } from "../lib/assistantDock";
+import { claimReason } from "../lib/assistantClaims";
 import { isMemoryNamespace } from "../lib/namespace";
 import { ASK_PLACEHOLDER, SEARCH_PLACEHOLDER, blocksCard } from "../lib/searchAsk";
 import { AssistantLauncher } from "./AssistantLauncher";
@@ -326,11 +327,12 @@ function SearchPlaceholder({
   useEffect(() => {
     if (focus) ref.current?.focus();
   }, [focus]);
-  // As the search's body words it once loaded (it also reads the token's claims).
+  // The same checks the search's body makes once loaded, the token's claims included, so the
+  // placeholder does not change when it loads.
   const namespace = useStore((s) => s.identity?.namespace ?? "");
   const mine = useStore((s) => s.myNamespaces);
   const reason = useDock((s) => s.reason);
-  const asks = !chatOff() && !blocksCard(reason) && isMemoryNamespace(namespace, mine);
+  const asks = !chatOff() && !blocksCard(reason) && !claimReason() && isMemoryNamespace(namespace, mine);
   return (
     <div className="group relative w-full">
       <SearchField

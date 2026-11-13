@@ -7,12 +7,12 @@
 // (lib/assistantDock.ts).
 import { isAuthDisabled } from "../api";
 import { chatOff, useDock, type AskItem } from "./assistantDock";
+import { claimReason } from "./assistantClaims";
 import { PANEL_KEY } from "./assistantStorage";
 import {
   EXPAND_MIN,
   PANEL_MAX,
   PANEL_MIN,
-  claimReason,
   dockLayout,
   isModal,
   layoutOf,

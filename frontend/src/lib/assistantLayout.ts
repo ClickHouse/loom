@@ -1,10 +1,8 @@
 // The assistant panel's layout and reasons: read by the panel, its behaviour and its body,
 // which load the first time the panel is needed, and by the header search's body (its
 // answer card); the shell holds only ./assistantDock.ts.
-import { isAuthDisabled, storedToken } from "../api";
 import { useDock, type DockState } from "./assistantDock";
 import { PANEL_KEY } from "./assistantStorage";
-import { tokenPayload } from "./boot";
 
 export const PANEL_MIN = 360;
 export const PANEL_MAX = 720;
@@ -68,20 +66,6 @@ export function readPanel(): { open: boolean; width: number } {
   } catch {
     return { open: false, width: PANEL_DEFAULT };
   }
-}
-
-/** The reason the token's own claims give, read without verification (the route's refusal
- *  stays the truth): auth off, an org-wide token, a read scope narrower than the namespace.
- *  A token that expires soon is the route's to say (a first-party session is refreshed). */
-export function claimReason(token: string | null = storedToken()): AssistantReason | null {
-  if (isAuthDisabled()) return { kind: "auth_off" };
-  const c = tokenPayload(token);
-  if (!c) return null;
-  if (c.org === "*") return { kind: "org_wide" };
-  const pinned = typeof c.read_user_id === "string" ? c.read_user_id.trim() : "";
-  if (c.read_scope === "own_session") return { kind: "narrowed", scope: "one session" };
-  if (c.read_scope === "own_user" || pinned) return { kind: "narrowed", scope: pinned ? `user ${pinned}` : "one user" };
-  return null;
 }
 
 /** The panel's layout: the window's while it is open and expanded, else the docked one. */

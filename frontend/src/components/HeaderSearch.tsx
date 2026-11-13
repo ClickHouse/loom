@@ -28,7 +28,7 @@ import { Kbd, Loading, TagList } from "./ui";
 import { toast, toastError } from "./Toast";
 import { paletteShortcut } from "../lib/platform";
 import { chatOff, openAssistantSoon, useDock } from "../lib/assistantDock";
-import { claimReason } from "../lib/assistantLayout";
+import { claimReason } from "../lib/assistantClaims";
 import { readsAsQuestion } from "../lib/readsAsQuestion";
 import { ASK_PLACEHOLDER, SEARCH_PLACEHOLDER, blocksCard } from "../lib/searchAsk";
 import { MAX_MESSAGE_CHARS, pageContext, withContext } from "../views/assistant/pageContext";
@@ -69,8 +69,9 @@ interface CardAsk {
  *  Choosing it asks through the assistant's chat store (views/assistant/SearchAnswer.tsx):
  *  the answer streams into the card on top, headed "Ask AI", whose one "Continue in chat"
  *  option opens the panel on the same conversation, and the results stay listed under it.
- *  Typing alone never asks. No Ask AI option where the chat is off or a known reason keeps
- *  the assistant from answering. */
+ *  Typing alone never asks. No Ask AI option where the chat is off, the token's claims or a
+ *  reason other than the setup starting or failing block it, the namespace holds no
+ *  memories, or the question is longer than one request carries. */
 export function HeaderSearch({
   autoFocus = false,
   initialQuery = "",

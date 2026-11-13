@@ -12,10 +12,12 @@ import { Header } from "./Header";
 // phone header carries a search button that reveals the palette input.
 
 const listMine = vi.fn();
+const auth = vi.hoisted(() => ({ off: null as boolean | null }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
+    isAuthDisabled: () => auth.off ?? actual.isAuthDisabled(),
     listMine: (...args: unknown[]) => listMine(...args),
     listMemories: vi.fn(async () => ({ entries: [], truncated: false, total: 0 })),
     listProfile: vi.fn(async () => ({ entries: [] })),
@@ -47,6 +49,7 @@ beforeEach(() => {
   useStore.setState({ identity, view: "memories", myNamespaces: null });
   useNewDialogs.setState({ memory: false, document: false });
   viewport = 900;
+  auth.off = null;
   vi.stubGlobal("matchMedia", (query: string) => {
     const min = /min-width: (\d+)px/.exec(query);
     return {
@@ -148,6 +151,20 @@ describe("Header", () => {
     render(<Header />);
     await waitFor(() => expect(listMine).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
+  });
+
+  // The placeholder drawn before the search's body loads makes the body's checks, the token's
+  // claims included, so it does not change when the body arrives.
+  it("offers asking in the search's placeholder only where the search will, not with auth off", () => {
+    viewport = 1440;
+    auth.off = false;
+    listMine.mockResolvedValue(jwtOnly);
+    const { unmount } = render(<Header />);
+    expect(screen.getByLabelText("Search Loom")).toHaveAttribute("placeholder", "Search or ask a question");
+    unmount();
+    auth.off = true;
+    render(<Header />);
+    expect(screen.getByLabelText("Search Loom")).toHaveAttribute("placeholder", "Search profile, memories, library…");
   });
 
   it("has a Search button that reveals the palette input", async () => {
