@@ -7,9 +7,12 @@ from typing import Any
 
 import pytest
 
+from server.auth import authz
 from server.core.cursors import encode_cursor
 from server.core.errors import AuthInsufficientError, ValidationError
+from server.knowledge.api.models_knowledge import KnowledgeListInput
 from server.knowledge.app import document_reads
+from server.knowledge.store import documents as documents_repo
 
 AT = datetime(2026, 5, 17, 12, 0, 0)
 
@@ -63,8 +66,6 @@ def test_a_several_namespace_cursor_with_a_byte_changed_is_refused() -> None:
 async def test_knowledge_list_refuses_a_namespace_the_caller_cannot_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.auth import authz
-    from server.knowledge.api.models_knowledge import KnowledgeListInput
 
     async def check(auth: Any, role: Any, *, org: str, namespace: str, **_: Any) -> None:
         raise PermissionError(f"cannot access the collection {org}/{namespace}")
@@ -79,8 +80,6 @@ async def test_knowledge_list_refuses_a_namespace_the_caller_cannot_read(
 async def test_each_row_names_its_namespace_whatever_fields_are_asked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.knowledge.api.models_knowledge import KnowledgeListInput
-    from server.knowledge.store import documents as documents_repo
 
     async def page(org: str, namespaces: list[str], **_: Any) -> list[dict[str, Any]]:
         return [

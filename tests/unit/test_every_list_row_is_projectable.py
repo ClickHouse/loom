@@ -14,6 +14,7 @@ import pytest
 
 from server.core.errors import ValidationError
 from server.knowledge.api import models_knowledge as knowledge
+from server.knowledge.app.document_reads import _LIST_ALWAYS
 from server.memory.api import models_crud as memory_crud
 from server.operations import read_projection
 
@@ -48,8 +49,6 @@ def test_an_unprojected_knowledge_row_is_unchanged() -> None:
 
 
 def test_a_projected_knowledge_row_drops_unrequested_fields() -> None:
-    from server.knowledge.app.document_reads import _LIST_ALWAYS
-
     keep = read_projection.resolve(
         knowledge._KnowledgeListEntry, ["title", "tags"], always=_LIST_ALWAYS
     )
