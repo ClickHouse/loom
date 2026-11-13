@@ -733,13 +733,13 @@ Fields for every `tracker` op: [operations/tracker.md](operations/tracker.md).
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`tracker.answer`](operations/tracker.md#trackeranswer) | Answer a tracker question in prose — or from an artefact's anchors — by running the catalogue's templates: escalation / incident context, a customer across channels, incidents / escalations /… | viewer | read | no |  |
+| [`tracker.answer`](operations/tracker.md#trackeranswer) | Answer a tracker question in prose — or from an artefact's anchors — by running the catalogue's templates: escalation / incident context, a customer across channels, incidents / escalations… | viewer | read | no |  |
 | [`tracker.binding`](operations/tracker.md#trackerbinding) | What this namespace may ask the tracker plane: a QA namespace answers itself; a code namespace answers the tracker namespace bound to it (`LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON`), passed through… | viewer | read | no |  |
 | [`tracker.component`](operations/tracker.md#trackercomponent) | One component's risk snapshot and its open issues, most severe first. | viewer | read | no |  |
 | [`tracker.contract`](operations/tracker.md#trackercontract) | The record contract as the register page shows it before anyone connects: every table loom reads, required or optional, each column's family, the type a view writes, whether a default is safe, what… | viewer | read | no |  |
 | [`tracker.duplicate_check`](operations/tracker.md#trackerduplicate_check) | Does this draft already exist? | viewer | read | no |  |
 | [`tracker.flaky`](operations/tracker.md#trackerflaky) | Is this test a known flaky? | viewer | read | no |  |
-| [`tracker.item`](operations/tracker.md#trackeritem) | The tracker record of up to ten issue / PR numbers: component, severity, bisect verdict and branches still affected, test presence, CI result, reviewers, backport lineage, and the fixes / backports /… | viewer | read | no |  |
+| [`tracker.item`](operations/tracker.md#trackeritem) | The tracker record of up to ten issue / PR numbers: component, severity, bisect verdict and branches still affected, test presence, CI result, reviewers, backport lineage, and the fixes / backports… | viewer | read | no |  |
 | [`tracker.links`](operations/tracker.md#trackerlinks) | Which PR probably fixed this issue — or which issue this PR probably fixed — when nobody wrote the link down. | viewer | read | no |  |
 | [`tracker.release`](operations/tracker.md#trackerrelease) | Release readiness for one version (`26.3`): the blocker rows with their status and the latest health snapshot. | viewer | read | no |  |
 | [`tracker.similar`](operations/tracker.md#trackersimilar) | The reports that already say it: duplicate and related issues / PRs for a pasted report (`text`), an existing item (`issue_number` — its own title, body, component, versions and error code become the… | viewer | read | no |  |

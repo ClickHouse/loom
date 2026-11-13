@@ -580,7 +580,7 @@ Batched `path:line` -> enclosing function.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `results` | `list[dict[str, Any]]` | one entry per input location, input order preserved: {path, line, symbol, symbol_id, qualified_name, signature, tier, kind, start_line, end_line} kind is "function" / "method" / "fixture" for a line inside a function body; "class" /… |
+| `results` | `list[dict[str, Any]]` | one entry per input location, input order preserved: {path, line, symbol, symbol_id, qualified_name, signature, tier, kind, start_line, end_line} kind is "function" / "method" / "fixture" for a line inside a function body; "class"… |
 | `resolved` | `int` | Locations that landed inside a function, type, or document section. |
 | `paths_indexed` | `int` | distinct input paths that have any symbol rows |
 | `paths_total` | `int` | Distinct paths among the parseable input locations. |
@@ -732,7 +732,7 @@ Exact-match lookup over the indexed corpus.
 | `anchors_capped` | `bool` | more resolved functions than the 20 cap |
 | `neighbour_tokens` | `int` | Tokens of the neighbours block alone; 0 when it did not run. |
 | `note` | `str` | A caveat on the answer: the pattern was re-read as a regex or matched literally, the prefix is outside the index, or the embedding coverage is low; '' when none. |
-| `verdict` | `str` | mode=message only (dropped from the wire otherwise): raised_at \| no_template_match; the message's `{}` template; the ErrorCodes name for a `Code: N` prefix ("" when unmapped); the best statement's coverage (matched message characters /… |
+| `verdict` | `str` | mode=message only (dropped from the wire otherwise): raised_at \| no_template_match; the message's `{}` template; the ErrorCodes name for a `Code: N` prefix ("" when unmapped); the best statement's coverage (matched message characters… |
 | `template` | `str` | mode=message: the message with `{}` where arguments stood. |
 | `error_code` | `str` | mode=message: the ErrorCodes name for a `Code: N` prefix; '' when unmapped. |
 | `coverage` | `float` | mode=message: the best statement's matched share of the message characters (0..1). |

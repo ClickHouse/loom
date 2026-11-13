@@ -28,14 +28,14 @@ SECTIONS = (
 
 
 def shorten(text: str, limit: int) -> str:
-    """`text` if it fits in `limit` characters, else the whole words from its start that
-    fit, plus "…"."""
+    """`text` if it fits in `limit` characters, else the words from its start that fit
+    (a first word longer than the limit is cut), trailing punctuation dropped, plus "…"."""
     if len(text) <= limit:
         return text
     head = text[: limit - 1]
     if text[limit - 1] != " ":
         head = head.rsplit(" ", 1)[0]  # the slice ends inside a word: drop that word
-    return head.rstrip(",;:—- ") + "…"
+    return head.rstrip(",;:—-/ ") + "…"
 
 
 def first_sentence(text: str | None, limit: int = 200) -> str:

@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `tracker.answer`
 
-Answer a tracker question in prose — or from an artefact's anchors — by running the catalogue's templates: escalation / incident context, a customer across channels, incidents / escalations /…
+Answer a tracker question in prose — or from an artefact's anchors — by running the catalogue's templates: escalation / incident context, a customer across channels, incidents / escalations…
 
 `POST /v1/tracker.answer` · MCP `loom_tracker_answer` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -167,7 +167,7 @@ Is this test a known flaky?
 
 ## `tracker.item`
 
-The tracker record of up to ten issue / PR numbers: component, severity, bisect verdict and branches still affected, test presence, CI result, reviewers, backport lineage, and the fixes / backports /…
+The tracker record of up to ten issue / PR numbers: component, severity, bisect verdict and branches still affected, test presence, CI result, reviewers, backport lineage, and the fixes / backports…
 
 `POST /v1/tracker.item` · MCP `loom_tracker_item` · role `viewer` · read · not listed under the MCP `all` toolset
 
