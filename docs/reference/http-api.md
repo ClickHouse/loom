@@ -164,8 +164,10 @@ curl -sX POST "$LOOM/v1/memory.set" \
   `memory.search_trace`, `memory.ask`, `memory.update`, `search.query` or
   `knowledge.search` may also leave out `namespace` and `agent`: it runs in the
   install's namespace (`LOOM_DEFAULT_NAMESPACE`). An agent of `"-"` names no agent
-  and is kept, so the call writes or reads only rows with no agent, which the
-  dashboard's agents list leaves out. `memory.set` and `memory.bulk_set`
+  and is kept, as on any server: a write is recorded with no agent, which the
+  dashboard's agents list leaves out, `memory.list` and `memory.history` read only
+  rows with no agent, and `memory.get` and `memory.delete` try the key under `-`
+  first. `memory.set` and `memory.bulk_set`
   write as agent `http`; `memory.get` and `memory.delete` try the key under agent
   `http`, then under any agent of the same user; `memory.list` reads every agent's
   rows of the call's user and session (`-` when it names none) and `memory.history`

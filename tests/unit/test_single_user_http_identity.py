@@ -104,8 +104,10 @@ def test_an_agent_of_dash_is_kept(seen: Seen) -> None:
     A list keeps it too, so it reads only the rows with no agent."""
     _post("memory.set", {"agent": "-", "memory_key": "k", "value": "v"})
     _post("memory.get", {"agent": "-", "memory_key": "k"})
+    _post("memory.delete", {"agent": "-", "memory_key": "k"})
     _post("memory.list", {"agent": "-"})
-    assert [row[3] for row in seen] == ["-", "-", "-"]
+    _post("memory.history", {"agent": "-", "memory_key": "k"})
+    assert [row[3] for row in seen] == ["-"] * 5
     assert seen[0][1:3] == ("dev", "local")
 
 
