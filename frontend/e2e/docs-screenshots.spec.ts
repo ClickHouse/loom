@@ -18,8 +18,8 @@ import { isRecord, pickOption } from "./fixtures";
 
 const ENABLED = process.env.LOOM_DOCS_SCREENSHOTS === "1";
 const OUT = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/images");
-// The 1440 px shots (WebP) and the clips (WebM); the PNGs above stay where the translated
-// READMEs link them.
+// The 1440 px shots (WebP) and the clips (WebM). The PNGs above stay where they are: the
+// English pages link them, and the translated READMEs link the memories PNG by URL.
 const OUT_ASSETS = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/assets/screenshots");
 const NOW = Date.parse("2026-09-28T15:00:00Z");
 
@@ -245,7 +245,7 @@ function detail(m: DemoMemory) {
     entities: m.entities ?? [],
     char_limit: null,
     verified_at: m.verified ? ago(m.hours - 1) : null,
-    code: (m.code ?? []).map((c) => ({ code_namespace: CODE_NS, changed_since: "", ...c })),
+    code: (m.code ?? []).map((c) => ({ code_namespace: CODE_NS, changed_since: "", suggestion: "", ...c })),
   };
 }
 
@@ -687,6 +687,9 @@ const PASSAGES = [
     content:
       "A refund over $250 needs a second approver in the billing console before it is issued. The approver must not be the person who took the original payment.",
     score: 0.86,
+    similarity: 0.86,
+    distance: 0.14,
+    tags: [],
     revision: 4,
     format: "markdown",
     locator: { line_start: 41, line_end: 52 },
@@ -698,6 +701,9 @@ const PASSAGES = [
     content:
       "If a refund stays pending for more than an hour, check the settlement queue first; a refund in a currency other than USD waits for the day's FX rate.",
     score: 0.74,
+    similarity: 0.74,
+    distance: 0.26,
+    tags: [],
     revision: 2,
     format: "markdown",
     locator: { line_start: 118, line_end: 131 },
@@ -709,27 +715,25 @@ const PASSAGES = [
     content:
       "Converted amounts round half to even, the rule the settlement bank applies, so a refund in EUR settles to the cent the bank reports.",
     score: 0.61,
+    similarity: 0.61,
+    distance: 0.39,
+    tags: [],
     revision: 1,
     format: "markdown",
     locator: { line_start: 12, line_end: 20 },
   },
 ];
 
-/** The Audit log's events: writes, a resolved conflict, a grant and a document upload. A
- *  memory write names its writer as `kind:subject`; any other audited op names the token's
- *  subject. */
+/** The Audit log's events, each with the subject its op records (its input, or its
+ *  `audit_subject`). A memory write names its writer as `kind:subject`; any other audited op
+ *  names the token's subject. */
 const AGENT_SUBJECT = "sa:claude-code-7f2a";
+const AGENT_WRITER = `process:${AGENT_SUBJECT}`;
 const BOT_WRITER = "process:sa:support-bot-91c3";
 const AUDIT_ROWS = [
-  {
-    h: 0.9,
-    event_type: "conflicts.resolve",
-    actor: SUBJECT,
-    subject: { kept_memory_key: "billing/refunds/threshold" },
-  },
+  { h: 0.5, event_type: "memory.set", actor: `human:${SUBJECT}`, subject: { memory_key: "deploys/policy/windows" } },
   { h: 1.5, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "api/rate-limit/public" } },
-  { h: 1.6, event_type: "knowledge.upsert", actor: SUBJECT, subject: { source_uri: "policies/refunds.md" } },
-  { h: 2.2, event_type: "memory.pin", actor: SUBJECT, subject: { memory_key: "deploys/policy/windows" } },
+  { h: 2.0, event_type: "memory.set", actor: AGENT_WRITER, subject: { memory_key: "staging/db/read-only-window" } },
   {
     h: 3.1,
     event_type: "grants.create",
@@ -737,27 +741,18 @@ const AUDIT_ROWS = [
     subject: { role: "writer", namespace: NS_SUPPORT, subject: "sa:support-bot-91c3" },
   },
   { h: 4.4, event_type: "memory.set", actor: BOT_WRITER, subject: { memory_key: "support/refunds/approval" } },
-  {
-    h: 5.0,
-    event_type: "memory.delete",
-    actor: AGENT_SUBJECT,
-    subject: { memory_key: "staging/db/legacy-host", reason: "host retired" },
-  },
-  {
-    h: 6.7,
-    event_type: "memory.promote",
-    actor: SUBJECT,
-    subject: { memory_key: "procedures/rollback-prod", target_status: "shared" },
-  },
+  { h: 5.0, event_type: "memory.delete", actor: AGENT_SUBJECT, subject: { memory_key: "staging/db/legacy-host" } },
+  { h: 6.7, event_type: "memory.promote", actor: SUBJECT, subject: { memory_key: "procedures/rollback-prod" } },
   { h: 8.2, event_type: "namespace.join", actor: "dev2@acme.example", subject: { namespace: NS, role: "viewer" } },
-  { h: 12.0, event_type: "knowledge.upsert", actor: SUBJECT, subject: { source_uri: "runbooks/payments-on-call.md" } },
-  { h: 20.0, event_type: "memory.redact", actor: SUBJECT, subject: { memory_key: "support/escalations/contact" } },
+  { h: 12.0, event_type: "knowledge.delete", actor: SUBJECT, subject: { source_uri: "runbooks/old-pager-rota.md" } },
   {
-    h: 30.0,
-    event_type: "memory.set",
-    actor: `process:${AGENT_SUBJECT}`,
-    subject: { memory_key: "incidents/checkout-latency" },
+    h: 20.0,
+    event_type: "grants.revoke",
+    actor: SUBJECT,
+    subject: { subject: "sa:ci-bot-3d1e", namespace: NS_SUPPORT },
   },
+  { h: 30.0, event_type: "memory.set", actor: AGENT_WRITER, subject: { memory_key: "incidents/checkout-latency" } },
+  { h: 50.0, event_type: "memory.set", actor: AGENT_WRITER, subject: { memory_key: "payments/fx/rounding" } },
 ].map(({ h, event_type, actor, subject }) => ({
   ts: ago(h),
   event_type,
@@ -875,6 +870,9 @@ function assistantStream(): string {
   const pieces = ASSISTANT_ANSWER.match(/[\s\S]{1,24}/g) ?? [];
   const events: unknown[] = pieces.map((p) => ({ id: "chatcmpl-1", choices: [{ index: 0, delta: { content: p } }] }));
   events.push({ id: "chatcmpl-1", choices: [], usage: { prompt_tokens: 1800, completion_tokens: 140 } });
+  // The bridge's own events once the answer ends: the text is done, then the checked
+  // citations with the steps the answer's run took.
+  events.push({ object: "loom.text_done", id: "chatcmpl-1", choices: [] });
   events.push({
     object: "loom.citations",
     id: "chatcmpl-1",
@@ -882,6 +880,10 @@ function assistantStream(): string {
     citations: ASSISTANT_CITATIONS,
     support: "supported",
     unknown_names: [],
+    steps: [
+      { op: "knowledge.search", text: "Searched documents", ok: true },
+      { op: "memory.search", text: "Searched memories", ok: true },
+    ],
   });
   return `${events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("")}data: [DONE]\n\n`;
 }
@@ -1019,7 +1021,7 @@ async function installDemoApi(page: Page): Promise<void> {
       case "/v1/knowledge.list":
         return json({ rows: DOCUMENTS.map(documentRow), next_cursor: null });
       case "/v1/knowledge.search":
-        return json({ results: PASSAGES });
+        return json({ results: PASSAGES, embedding_model: "text-embedding-3-small" });
       case "/v1/audit.list":
         return json({ rows: AUDIT_ROWS, next_cursor: null });
       case "/v1/code.index_status":
@@ -1109,21 +1111,23 @@ async function installDemoApi(page: Page): Promise<void> {
   });
 }
 
-async function capture(page: Page, name: string): Promise<void> {
-  fs.mkdirSync(OUT, { recursive: true });
-  // Let fonts, transitions and the after-paint mounts settle before the frame.
+/** Let fonts, transitions and the after-paint mounts settle before the frame. */
+async function settle(page: Page): Promise<void> {
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(400);
   await page.mouse.move(0, 0);
+}
+
+async function capture(page: Page, name: string): Promise<void> {
+  fs.mkdirSync(OUT, { recursive: true });
+  await settle(page);
   await page.screenshot({ path: path.join(OUT, `${name}.png`) });
 }
 
 /** The page as WebP in docs/assets/screenshots/, encoded by Chromium on a blank page. */
 async function captureWebp(page: Page, name: string): Promise<void> {
   fs.mkdirSync(OUT_ASSETS, { recursive: true });
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(400);
-  await page.mouse.move(0, 0);
+  await settle(page);
   const png = (await page.screenshot()).toString("base64");
   const blank = await page.context().newPage();
   const webp = await blank.evaluate(async (data) => {
@@ -1147,52 +1151,62 @@ async function captureWebp(page: Page, name: string): Promise<void> {
 /** A short pause, so a clip's viewer can follow each step. */
 const beat = (page: Page, ms = 900) => page.waitForTimeout(ms);
 
+/** How a step runs: a shot goes straight to its frame, a clip types at a reading pace and
+ *  pauses where a viewer needs a moment. */
+interface Pace {
+  clip: boolean;
+  /** Milliseconds between typed characters. */
+  typing: number;
+}
+const SHOT: Pace = { clip: false, typing: 0 };
+const CLIP: Pace = { clip: true, typing: 45 };
+
 /** The steps the shots and the clips share, each ending on what it shows. */
 const steps = {
-  async linkedCode(page: Page, pace = 0) {
+  async linkedCode(page: Page, pace = SHOT) {
     await page.goto("/memories");
     const row = page.getByText("payments/fx/rounding", { exact: true }).first();
-    if (pace) {
+    if (pace.clip) {
       await row.scrollIntoViewIfNeeded();
-      await beat(page, pace);
+      await beat(page, 1200);
     }
     await row.click();
     await expect(page.getByRole("dialog").getByText("Linked code")).toBeVisible();
   },
-  async documentSearch(page: Page, typing = 0) {
+  async documentSearch(page: Page, pace = SHOT) {
     await page.goto("/library");
     await expect(page.getByText("Refunds policy").first()).toBeVisible();
     await page.getByRole("button", { name: "Find a passage" }).click();
     const field = page.getByRole("textbox", { name: "Passage to find" });
     await field.click();
-    await field.pressSequentially("Who approves a large refund?", { delay: typing });
+    await field.pressSequentially("Who approves a large refund?", { delay: pace.typing });
     await field.press("Enter");
     await expect(page.getByText("Approvals").first()).toBeVisible();
   },
-  async codeCallers(page: Page, typing = 0) {
+  async codeCallers(page: Page, pace = SHOT) {
     await page.goto(`/repositories?repo=${CODE_NS}`);
     await page.getByRole("tab", { name: "Explore" }).click();
     const search = page.getByRole("textbox", { name: "Search code" });
     await search.click();
-    await search.pressSequentially("where are refunds converted to USD", { delay: typing });
+    await search.pressSequentially("where are refunds converted to USD", { delay: pace.typing });
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await expect(page.getByText("payments.fx.convert").first()).toBeVisible();
-    if (typing) await beat(page);
+    if (pace.clip) await beat(page);
     await page.getByRole("button", { name: "payments.fx.convert", exact: true }).first().click();
     await expect(page.getByText(/^Callers \(\d+\)$/)).toBeVisible();
   },
-  async assistant(page: Page, typing = 0) {
+  async assistant(page: Page, pace = SHOT) {
     await page.goto("/memories");
     const launcher = page.locator('[data-focus-key="assistant-launcher"]');
     await expect(launcher).toBeVisible();
     await launcher.click();
     const question = page.getByRole("textbox", { name: "Question" });
-    await question.pressSequentially("What does a refund over $250 need?", { delay: typing });
+    await question.pressSequentially("What does a refund over $250 need?", { delay: pace.typing });
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     const checked = page.getByText("Checked against what Loom holds").first();
     await expect(checked).toBeVisible();
     // The clip ends on the checked sources, below the answer's last line.
-    if (typing) await page.getByRole("button", { name: "Retry" }).scrollIntoViewIfNeeded();
+    if (pace.clip) await page.getByRole("button", { name: "Retry" }).scrollIntoViewIfNeeded();
   },
 };
 
@@ -1281,7 +1295,14 @@ test.describe("docs screenshots at 1440 px", () => {
     await captureWebp(page, "memory-linked-files");
   });
 
-  test("review queue 1440", async ({ page }) => {
+  test("memories", async ({ page }) => {
+    await installDemoApi(page);
+    await page.goto("/memories");
+    await expect(page.getByText("deploys/policy/windows").first()).toBeVisible();
+    await captureWebp(page, "memories");
+  });
+
+  test("review queue", async ({ page }) => {
     await installDemoApi(page);
     await page.goto("/admin/review_queue");
     await expect(page.getByText("Conflict 1 of 2")).toBeVisible();
@@ -1291,7 +1312,7 @@ test.describe("docs screenshots at 1440 px", () => {
   test("audit log", async ({ page }) => {
     await installDemoApi(page);
     await page.goto("/admin/activity");
-    await expect(page.getByText(/Resolved conflict/).first()).toBeVisible();
+    await expect(page.getByText(/Granted writer on/).first()).toBeVisible();
     await captureWebp(page, "audit-log");
   });
 
@@ -1323,6 +1344,11 @@ test.describe("docs clips", () => {
   // and the file stays small.
   const SIZE = { width: 1280, height: 800 };
 
+  test.afterEach(() => {
+    if (process.env.LOOM_DOCS_DEBUG) console.log(debugCalls.join("\n"));
+    debugCalls.length = 0;
+  });
+
   async function record(browser: Browser, name: string, run: (page: Page) => Promise<void>): Promise<void> {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-clip-"));
     try {
@@ -1352,14 +1378,14 @@ test.describe("docs clips", () => {
   }
 
   test("clip memory linked code", async ({ browser }) => {
-    await record(browser, "memory-linked-code", (page) => steps.linkedCode(page, 1200));
+    await record(browser, "memory-linked-code", (page) => steps.linkedCode(page, CLIP));
   });
 
   test("clip assistant answer", async ({ browser }) => {
-    await record(browser, "assistant-answer", (page) => steps.assistant(page, 45));
+    await record(browser, "assistant-answer", (page) => steps.assistant(page, CLIP));
   });
 
   test("clip code callers", async ({ browser }) => {
-    await record(browser, "code-callers", (page) => steps.codeCallers(page, 45));
+    await record(browser, "code-callers", (page) => steps.codeCallers(page, CLIP));
   });
 });
