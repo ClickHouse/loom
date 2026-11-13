@@ -26,11 +26,11 @@ def test_a_page_cuts_into_sections_that_join_back_to_it(source: str) -> None:
 
 def test_a_short_page_goes_in_one_request_and_a_long_one_by_section() -> None:
     short = "# T\n\nintro\n\n## One\n\nx\n\n## Two\n\ny\n"
-    assert len(t.english_sections(short)) == 1
+    assert len(t.english_requests(short)) == 1
     long = short + ("## More\n\n" + "z " * 5000 + "\n")
-    assert len(t.english_sections(long)) == 4
+    assert len(t.english_requests(long)) == 4
     # Anchors stay page-wide across the requests.
-    assert "\n".join(t.english_sections(long)).count('<a id="') == 4
+    assert "\n".join(t.english_requests(long)).count('<a id="') == 4
 
 
 def test_sections_start_at_level_two_headings_outside_code() -> None:
@@ -229,7 +229,7 @@ def test_a_section_that_differs_is_retried_once_with_the_differences(
         return {"stop_reason": "end_turn", "content": [{"type": "text", "text": text}], "usage": {}}
 
     monkeypatch.setattr(t, "call", fake_call)
-    out = t.translate_section(section, t.LANGUAGES[4], "key", t.Spend("claude-sonnet-5-5", 1.0))
+    out = t.translate_text(section, t.LANGUAGES[4], "key", t.Spend("claude-sonnet-5-5", 1.0))
     assert out == "## Lancez\n\nLancez `loom up` deux fois.\n"
     assert len(sent) == 2 and "inline code" in sent[1][-1]["content"]
 

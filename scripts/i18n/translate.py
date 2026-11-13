@@ -468,7 +468,7 @@ def untranslated_pages() -> list[str]:
             path = ROOT / target_path(lang.code, source)
             if not path.is_file():
                 continue
-            english = "\n".join(english_sections(prepare(source, lang)[0]))
+            english = "\n".join(english_requests(prepare(source, lang)[0]))
             kept = labels(english) & labels(path.read_text())
             if kept:
                 rel = path.relative_to(ROOT).as_posix()
@@ -531,7 +531,7 @@ def request_chars(source: str, lang: Language) -> int:
     """The characters one translation of `source` sends: each request with the system prompt."""
     text, _ = prepare(source, lang)
     system = len(SYSTEM.format(language=lang.english, style=lang.style))
-    return sum(len(s) + system for s in english_sections(text))
+    return sum(len(s) + system for s in english_requests(text))
 
 
 def estimate_usd(model: str, chars: int) -> float:
@@ -584,21 +584,21 @@ def reply_text(data: dict) -> str:
     return "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
 
 
-def translate_section(section: str, lang: Language, key: str, spend: Spend) -> str:
-    if not section.strip():
-        return section
+def translate_text(text: str, lang: Language, key: str, spend: Spend) -> str:
+    if not text.strip():
+        return text
     system = SYSTEM.format(language=lang.english, style=lang.style)
-    messages = [{"role": "user", "content": section}]
+    messages = [{"role": "user", "content": text}]
     for _ in range(2):
         spend.before_call()
         data = call(key, spend.model, system, messages)
         spend.add(data.get("usage", {}))
-        text = reply_text(data)
-        problems = differences(section, text)
+        reply = reply_text(data)
+        problems = differences(text, reply)
         if not problems:
-            return _same_edges(section, text)
+            return _same_edges(text, reply)
         messages += [
-            {"role": "assistant", "content": text},
+            {"role": "assistant", "content": reply},
             {
                 "role": "user",
                 "content": "Fix these differences and reply with the whole text again:\n"
@@ -643,7 +643,7 @@ def render(source: str, lang: Language, body: str, line: str, model: str) -> str
 WHOLE_PAGE_CHARS = 8000
 
 
-def english_sections(text: str) -> list[str]:
+def english_requests(text: str) -> list[str]:
     """The page's requests as sent, each heading with its page-wide anchor: the whole page
     when it is short, else one `## ` section each."""
     seen: Counter[str] = Counter()
@@ -654,7 +654,7 @@ def english_sections(text: str) -> list[str]:
 
 def translate_page(source: str, lang: Language, key: str, spend: Spend) -> None:
     text, line = prepare(source, lang)
-    body = "\n".join(translate_section(s, lang, key, spend) for s in english_sections(text))
+    body = "\n".join(translate_text(s, lang, key, spend) for s in english_requests(text))
     path = ROOT / target_path(lang.code, source)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render(source, lang, body, line, spend.model))
