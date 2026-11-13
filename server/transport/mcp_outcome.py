@@ -304,10 +304,14 @@ def _mentor_hint(
             namespace=present(tenant["namespace"]) or "",
             agent=str(arguments.get("agent") or "-"),
         )
-        set_hint_context(hint[0] if hint else "")
+        set_hint_context("")
         if hint is None:
             return None
-        return hint[0], mentor_text_for_toolset(hint[1], toolset)
+        # the code is ledgered only once the hint is rendered, so a render failure
+        # leaves no row claiming a hint the client never saw
+        text = mentor_text_for_toolset(hint[1], toolset)
+        set_hint_context(hint[0])
+        return hint[0], text
     except Exception:  # noqa: BLE001 — advice never fails a tool call
         return None
 

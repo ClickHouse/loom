@@ -221,12 +221,16 @@ def test_a_listed_op_is_named_by_its_tool(toolset: str, code: bool):
             assert not dotted, f"{toolset}: {t['name']} names listed tools by op name {dotted}"
 
 
+@pytest.mark.parametrize("profile", [None, "compact"])
 @pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
-def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(toolset: str, code: bool):
+def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(
+    toolset: str, code: bool, profile: str | None
+):
     """An op the listing does not carry is named by its dotted name, the one
     loom_op takes, and when loom_op routes it a mention says "(via loom_op)"
-    (the renderer marks the first; test_naming_marks_only_what_loom_op_routes)."""
-    tools = _listing(toolset, code)
+    (the renderer marks the first; test_naming_marks_only_what_loom_op_routes).
+    compact cuts after rendering and must not cut between a mention and its mark."""
+    tools = _listing(toolset, code, profile)
     names = {t["name"] for t in tools}
     listed = {TOOL_TO_OP.get(n, n) for n in names}
     for t in tools:
@@ -297,6 +301,11 @@ def test_naming_marks_only_what_loom_op_routes():
     assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, writes=True) == (
         "memory.apply (via loom_op)"
     )
+    # joined text: a quoted value keeps what it spells; the first real mention keeps the mark
+    joined = "x `memory.apply` (via loom_op). one key, 'memory.apply (via loom_op)', and memory.apply (via loom_op)"
+    assert mcp_op.keep_first_marks(joined) == (
+        "x `memory.apply` (via loom_op). one key, 'memory.apply (via loom_op)', and memory.apply"
+    )
     # a dotted name that is no op, such as a response field path, stays
     assert (
         mcp_op.name_ops_for_listing("`memory.next_page`", listed, writes=True)
@@ -334,11 +343,14 @@ def test_naming_marks_only_what_loom_op_routes():
     )
 
 
+@pytest.mark.parametrize("profile", [None, "compact"])
 @pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
-def test_no_rendered_text_splits_a_call_or_a_code_span(toolset: str, code: bool):
+def test_no_rendered_text_splits_a_call_or_a_code_span(
+    toolset: str, code: bool, profile: str | None
+):
     """Field and model texts render too: a marker before `(` or inside backticks
     means a source wrote an op as a call or inside a longer code span."""
-    for t in _listing(toolset, code):
+    for t in _listing(toolset, code, profile):
         for text in _texts(t):
             assert "(via loom_op)(" not in text, (toolset, t["name"], text)
             assert "(via loom_op) (via loom_op)" not in text, (toolset, t["name"], text)

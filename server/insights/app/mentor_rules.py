@@ -353,7 +353,7 @@ def clip_keeping_note(text: str) -> str:
     if m is None:
         return clip(text)
     note = m.group(0)
-    return clip(text[: m.start()] + text[m.end() :], HINT_CHARS - len(note)) + note
+    return clip(text[: m.start()], HINT_CHARS - len(note)) + note
 
 
 @dataclass
