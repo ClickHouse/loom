@@ -641,6 +641,33 @@ schema. These rules keep that safe. The operator procedure is in
     `frontend/e2e/assistant-edge.spec.ts` ("an entry an earlier build pushed opens the
     assistant on Back after a reload") does.
 
+47. **A cell's org triggers keep their names and shape** ([cells](cells.md)). The
+    session marker `loom.tenancy_checked`, the function `loom.tenancy_refuse_unheld()`,
+    the trigger names `tenancy_insert` and `tenancy_update`, and their shape (AFTER, row
+    level, on INSERT and on UPDATE) do not change, since builds N-1 and N create and
+    read them on one cell. The function body changes only through a numbered migration
+    (`CREATE OR REPLACE FUNCTION`), and `missing` accepts the body and settings any
+    shipped file writes. A changed body ships in two releases: release K adds the new
+    body to `missing` as an accepted value beside the shipped files', and the migration
+    that writes it ships no earlier than K+1, so an N-1 `loom doctor` or attach on a
+    migrated cell names no defect. The `WHEN` text lives in the code that creates the
+    triggers (`server/core/cell_triggers.py`), so a changed `WHEN` ships in three
+    releases, in the body's order: release K adds the new `WHEN` to `missing` (which
+    `loom doctor` and attach read) as an accepted value beside the one it creates; K+1
+    creates the new `WHEN` and keeps the old one accepted, so a K pod that creates a
+    trigger on a skipped table, and a K `missing` reading one K+1 created, both name no
+    defect; and the migration that drops the triggers, which the same boot then creates
+    with the new `WHEN`, ships no earlier than K+2, so the N-1 that could create a
+    skipped table's trigger already carries the new text. The gate on processes with
+    `LOOM_CELL` unset, the marker and the triggers ship in one release: a release that
+    carried the triggers without the marker would refuse Loom's own writes on a cell,
+    and one with the gate alone would leave its unchecked writers unguarded. It breaks
+    side-by-side serving in one place: on a later cell already prepared, the release's
+    first migrating boot creates the triggers, and an older pod still serving there has
+    its inserts of a tenant org's rows refused, so such a cell is rolled out in one step
+    ([upgrades](../operations/upgrades.md), step 2). The mixed-version gate does not
+    check this rule.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

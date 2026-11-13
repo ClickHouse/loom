@@ -230,6 +230,16 @@ carries `010_revision_delivered_at.sql`, and start the deployment on that build 
    upload and ingest again each source it names under "to ingest again": a knowledge
    document's chunks and a dataset's rows live in ClickHouse alone.
 
+A [cell](../architecture/cells.md)'s Postgres carries org triggers that refuse a row for
+an org the cell holds no tenancy row for, from a session that does not mark itself. A
+logical restore into a cell is such a session: with every process of the cell stopped,
+run it as one command with the marker,
+`PGOPTIONS='-c loom.tenancy_checked=on' pg_restore ...`, then start one pod with
+`LOOM_BOOT_MIGRATE` on before the others. A data-only `pg_restore --disable-triggers`
+into an existing schema ends by enabling every trigger as an origin trigger, which
+leaves `loom.cell_first`'s two triggers off under `session_replication_role = replica`;
+that pod's boot sets them back to `ALWAYS`, and `loom doctor` names them until it does.
+
 On the Helm chart ([Kubernetes](kubernetes.md)), with release `loom`:
 
 1. Stop it: `kubectl scale deploy/loom --replicas=0`, and `deploy/loom-workers` too with

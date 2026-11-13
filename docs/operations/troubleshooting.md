@@ -312,9 +312,68 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     COMMIT;
     ```
 
+    Then drop the org triggers, in the same session and as the same role, after the
+    state transaction (so a migrating boot's `ensure` does not create them again); on a
+    lock failure, `ROLLBACK` if psql is still open, then rerun the step:
+
+    ```sql
+    \set ON_ERROR_STOP on
+    BEGIN;
+    SET LOCAL lock_timeout = '100ms';
+    SELECT pg_advisory_xact_lock(7813586394288842610);  -- the migration lock
+    SELECT format('DROP TRIGGER %I ON loom.%I', t.tgname, c.relname)
+    FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'loom' AND t.tgname IN ('tenancy_insert', 'tenancy_update') \gexec
+    COMMIT;
+    ```
+
   - **A restored copy of a cell's Postgres** on another deployment carries the source
     cell's deployment id, so the check returns the live source cell's row. Do not clear
     it, and do not serve it beside the source.
+
+### A boot logs "cell triggers: not applied"
+
+- **Symptom:** a boot of a cell in any state but `open` logs
+  `cell triggers: not applied on loom.<table> (...)`, and `loom doctor` names the table's
+  missing or disabled trigger (`loom.cell_first`'s in any such state, an org table's in
+  `enforced`).
+- **Cause:** the boot creates a cell's org triggers, and sets `loom.cell_first`'s back to
+  always, with a lock wait of 100 ms a try, three tries a second apart, and serves past a
+  table in two cases. The log names the sessions that held or queued a conflicting lock
+  when the table was still busy: a long transaction or a bulk write on it, or an
+  autovacuum, which the short tries do not make yield and which is left to finish (a wait
+  long enough to cancel it would queue every writer of the table behind the boot). It says
+  `this role cannot alter it` when the migrating role does not own the table, which
+  `loom doctor` names as an `owner` defect. Until a later boot finishes the table, a
+  writer that runs no tenancy check is not refused there; Loom's own writes are
+  unaffected.
+- **Fix:** for a busy table, end the transaction the log names if it is stale, or wait for
+  the autovacuum to finish (`pg_stat_progress_vacuum`); for a table the role cannot alter,
+  run the boot as the role that owns schema `loom`'s tables, or give the table to that
+  role with `ALTER TABLE loom.<table> OWNER TO <role>`. Then restart one pod with
+  `LOOM_BOOT_MIGRATE` on, and repeat until `loom doctor` names no missing or disabled
+  trigger.
+
+### Writes are slow, or a script is refused, on a deployment that is not a cell
+
+- **Symptom:** on a deployment whose cell state is `open` (every process serves), Loom's
+  own writes, and any script's or bulk loader's, take longer per row, or a role without
+  `SELECT` on `loom.cell_first` gets "permission denied for table cell_first".
+- **Cause:** the org triggers are still on its tables: a schema-only restore of a
+  prepared cell, or a cleanup that skipped the step that drops them. In `open` they let
+  every row through, but each unmarked write still reads the state.
+- **Check:**
+
+  ```sql
+  SELECT c.relname, t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'loom' AND t.tgname IN ('tenancy_insert', 'tenancy_update');
+  ```
+
+- **Fix:** run the drop step of
+  [A process with LOOM_CELL unset is gated](#a-process-with-loom_cell-unset-is-gated)
+  as the role that owns schema `loom`'s tables.
 
 ## Workers
 
