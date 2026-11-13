@@ -436,7 +436,7 @@ def _rules_reading(c: _Ctx) -> None:
             "meaning; keep a value read in a loop with working_memory.set.",
             ("search.query", "memory.search", "working_memory.set"),
             gets=gets,
-            searches=recalls,
+            recalls=recalls,
         )
     reads = recalls + gets + packs
     if (
@@ -489,8 +489,8 @@ def _rules_reliance(c: _Ctx) -> None:
             "relied_on_chunk_ids",
             "warning",
             f"{chunk_ids} of {credited} keys named in run.complete's memories_used this week are "
-            "chunk ids (chunk:<session>:<n>): credit them by the fact — every chunk hit carries "
-            "parent_memory_key, the key memory.get reads.",
+            "chunk ids (chunk:<session>:<n>): every chunk hit carries parent_memory_key; read "
+            "and credit that key (memory.get).",
             ("run.complete", "memory.get"),
             credited=credited,
             chunk_ids=chunk_ids,
@@ -991,7 +991,7 @@ def _rule_set_duplicate(
         return None
     return (
         "set_duplicate",
-        "this write duplicates the row duplicate_of names: revise that key instead "
+        "this write duplicates the row named in the result's duplicate_of: revise that key instead "
         "(same key = new version), or memory.link supersedes if this one replaces it.",
     )
 

@@ -298,7 +298,7 @@ def test_an_object_store_agent_is_told_to_recall_by_meaning_and_move_the_lease(
     # about writes (the hottest written key is another row).
     assert "key 'sre/lease' was read 116×" in loop.text and "written" not in loop.text
     key_only = p.hint("recall_by_key_only")
-    assert key_only is not None and key_only.evidence == {"gets": 6606, "searches": 52}
+    assert key_only is not None and key_only.evidence == {"gets": 6606, "recalls": 52}
     # search.query is listed as loom_search; the note names the op that is not
     assert key_only.text.endswith(" (call working_memory.set via loom_op)")
 

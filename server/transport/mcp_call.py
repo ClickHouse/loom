@@ -62,7 +62,7 @@ from server.transport.mcp_refusals import refusal_result
 from server.transport.mcp_tools import (
     _emit_mcp_event,
     assistant_connection,
-    mentor_namer,
+    hint_naming,
 )
 
 if TYPE_CHECKING:
@@ -317,13 +317,13 @@ async def _call_tool(
         # caches and refuse.
         genai.set_identity(operation=op.name, capture_level="off")
 
-    from server.insights.app.mentor import hint_namer
-
     start = time.perf_counter()
-    namer = mentor_namer(toolset)
-    namer_token = hint_namer.set(namer)
     try:
-        with gates.tenant_slot(auth, target), llm_free.serving(op):
+        with (
+            gates.tenant_slot(auth, target),
+            llm_free.serving(op),
+            hint_naming(toolset) as namer,
+        ):
             result = await op.handler(input_obj)
     except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
         return _handler_failed(
@@ -340,8 +340,6 @@ async def _call_tool(
             rl_org=rl_org,
             elapsed_ms=int((time.perf_counter() - start) * 1000),
         )
-    finally:
-        hint_namer.reset(namer_token)
     elapsed_ms = int((time.perf_counter() - start) * 1000)
     mentor_hint = _emit_success(
         op, arguments, elapsed_ms, request_id, result, mcp_session_id, namer

@@ -10,7 +10,8 @@ summary plus the lean sections), and writes a call's ledger row
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Set
+from collections.abc import Callable, Iterator, Set
+from contextlib import contextmanager
 from typing import Any, get_args
 
 from server.memory.api.models_loom_search import SearchInput
@@ -410,6 +411,20 @@ def mentor_namer(toolset: str | None) -> Callable[[str], str]:
         return name_ops_for_listing(without_listing_note(text), listing[0], writes=listing[1])
 
     return name
+
+
+@contextmanager
+def hint_naming(toolset: str | None) -> Iterator[Callable[[str], str]]:
+    """For one tool call: mentor text the handler renders names ops for ``toolset``'s
+    listing; yields the namer, for the call's own hint."""
+    from server.insights.app.mentor import hint_namer
+
+    namer = mentor_namer(toolset)
+    token = hint_namer.set(namer)
+    try:
+        yield namer
+    finally:
+        hint_namer.reset(token)
 
 
 def mentor_text_for_toolset(text: str, toolset: str | None) -> str:

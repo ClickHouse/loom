@@ -308,7 +308,8 @@ def _mentor_hint(
         set_hint_context("")
         if hint is None:
             return None
-        # the ledger names a hint only once it is rendered
+        # publish the code only after the text renders: a namer failure leaves the
+        # row without a hint
         text = namer(hint[1])
         set_hint_context(hint[0])
         return hint[0], text

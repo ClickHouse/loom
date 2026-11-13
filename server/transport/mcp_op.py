@@ -18,6 +18,10 @@ purpose. Ops hidden from MCP (`_MCP_HIDDEN_OPS`) stay hidden: they are not in
 the catalog and the rewritten call meets the same "not available" refusal a
 direct call does. A connection whose resolved toolset is `readonly` routes
 read ops only.
+
+The module also holds the renderer every listing-facing text goes through
+(`name_ops_for_listing`, `keep_first_marks`): tool and field descriptions, the
+primer, refusals and mentor hints name each op as the caller's listing does.
 """
 
 from __future__ import annotations
