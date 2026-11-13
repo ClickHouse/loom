@@ -473,7 +473,7 @@ test("Audit log: typing and clearing the filter stay under the INP budget at 4x 
   await cdp.detach();
 });
 
-test("Public namespaces: typing and clearing the search stay under the INP budget at 4x with 200 namespaces", async ({
+test("Namespaces in your org: typing and clearing the search stay under the INP budget at 4x with 200 namespaces", async ({
   page,
 }) => {
   await installApi(page, { browseRows: 200 });

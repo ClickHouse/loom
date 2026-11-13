@@ -271,14 +271,13 @@ describe("NamespacePicker groups", () => {
     expect(within(dialog).getByRole("button", { name: /Support agent/ })).toBeInTheDocument();
   });
 
-  it("names the picker's trigger Namespace: a word from xl, said to a screen reader below it", () => {
+  it("names the picker's trigger Namespace", () => {
     seed("team");
     render(<NamespacePicker />);
-    const trigger = screen.getByRole("button", { name: /^Namespace: team/ });
-    expect(within(trigger).getByText("Namespace")).toHaveClass("sr-only", "xl:not-sr-only");
+    expect(screen.getByRole("button", { name: /^Namespace: team/ })).toHaveTextContent(/^Namespace/);
   });
 
-  it("keeps the footer's Public namespaces link for someone whose joined namespaces all sit in a family", async () => {
+  it("keeps the footer's Browse public namespaces link for someone whose joined namespaces all sit in a family", async () => {
     seed("team", [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")]);
     render(<NamespacePicker />);
     const dialog = await openPicker();

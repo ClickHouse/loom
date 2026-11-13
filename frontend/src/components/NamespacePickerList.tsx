@@ -45,7 +45,7 @@ export function NamespacePickerList({
   /** The picker's trigger, which holds the focus while this panel loads. */
   triggerRef: RefObject<HTMLButtonElement>;
   onPick: (namespace: string) => void;
-  /** Close the popover (before a jump to Public namespaces). */
+  /** Close the popover (before a jump to Namespaces in your org). */
   onClose: () => void;
   /** Close the popover and open the create dialog. */
   onCreate: () => void;
@@ -167,7 +167,7 @@ export function NamespacePickerList({
   const owned = byRole(["admin"]);
   const joined = byRole(["writer", "viewer"]);
   const transient = byRole(["jwt"]);
-  // Joined anything, grouped or not: the Public namespaces link moves from the list to the footer.
+  // Joined anything, grouped or not: the link to public namespaces moves from the list to the footer.
   const hasJoined = listed.some((r) => !kindGroup(r) && r.role !== "admin");
 
   // Sort each group: current selection first, then most-recently-joined.
@@ -397,7 +397,7 @@ export function NamespacePickerList({
           </Button>
         )}
         {/* Browsing and joining public namespaces is part of picking one,
-          so the Public namespaces page is reached from here, not from the rail. One
+          so the Namespaces in your org page is reached from here, not from the rail. One
           call to action: the empty list above already carries it. */}
         {known != null && (hasJoined || !!query) && (
           <Button

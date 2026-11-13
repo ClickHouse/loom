@@ -25,7 +25,7 @@ const ROUTES: Array<[string, string]> = [
   ["Library", "/library"],
   ["Conversations", "/conversations"],
   ["Graph", "/graph"],
-  ["Public namespaces", "/spaces"],
+  ["Namespaces in your org", "/spaces"],
   ["Profile", "/profile"],
   ["Runs", "/runs"],
   ["Tasks", "/tasks"],

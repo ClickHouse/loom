@@ -886,7 +886,7 @@ describe("the Library on a collection", () => {
     useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
     render(<Documents />);
     await settle();
-    // Not known yet: no "Pick a collection", no "reaches no namespace", no Public namespaces to take back.
+    // Not known yet: no "Pick a collection", no "reaches no namespace", no Namespaces in your org to take back.
     expect(screen.queryByText("Pick a collection", { selector: "h2, h3, p, div" })).not.toBeInTheDocument();
     expect(screen.queryByText(/reaches no namespace/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Browse public namespaces" })).not.toBeInTheDocument();
@@ -919,7 +919,7 @@ describe("the Library on a collection", () => {
     useStore.setState({ myNamespaces: null });
   });
 
-  it("with no namespace and no collection, says so and points at Public namespaces", async () => {
+  it("with no namespace and no collection, says so and points at Namespaces in your org", async () => {
     api.listCollections.mockResolvedValue({ collections: [], next_cursor: null });
     useStore.setState({ identity: { org: "acme", namespace: "", agent: "loom-ui" } });
     render(<Documents />);

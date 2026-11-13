@@ -292,7 +292,7 @@ export function Browse() {
   return (
     <PageContainer>
       <PageHeader
-        title="Public namespaces"
+        title="Namespaces in your org"
         actions={
           <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreateOpen(true)}>
             Create namespace
@@ -365,7 +365,7 @@ export function Browse() {
           <SectionHeading
             level={2}
             id="spaces-public-heading"
-            label="Public namespaces"
+            label="Public namespaces to join"
             caption={`in ${identity.org}`}
             className="mb-2"
           />

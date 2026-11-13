@@ -258,12 +258,12 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                     {
                       value: "private",
                       label: "Private",
-                      description: "Only members you grant. Doesn't appear in Public namespaces.",
+                      description: "Only members you grant. Not listed for the org to join.",
                     },
                     {
                       value: "public",
                       label: "Public",
-                      description: "Anyone in the org can find + join this namespace via Public namespaces.",
+                      description: "Anyone in the org can find and join it.",
                     },
                   ]}
                 />

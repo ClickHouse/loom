@@ -278,6 +278,22 @@ describe("the admin list on every width", () => {
     expect(review()).toHaveTextContent("5");
   });
 
+  it("drops the previous namespace's Review queue from the open sheet on a namespace switch", async () => {
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin"), row("team-b", "admin")]);
+    render(<Sidebar />);
+    await painted();
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    const sheet = await screen.findByRole("dialog", { name: "More" });
+    const admin = () => within(sheet).getByRole("navigation", { name: "Admin" });
+    expect(within(admin()).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    act(() => useStore.setState({ identity: { org: "dev", namespace: "team-b", agent: "loom-ui" } }));
+    expect(within(admin()).queryByRole("link", { name: /Review queue/ })).toBeNull();
+    await painted();
+    expect(within(admin()).queryByRole("link", { name: /Review queue/ })).toBeNull();
+  });
+
   it("writes nothing once unmounted while a read is out", async () => {
     let settle: (n: number) => void = () => {};
     vi.mocked(countConflicts).mockReturnValueOnce(new Promise<number>((r) => (settle = r)));

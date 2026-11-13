@@ -94,8 +94,8 @@ export function PendingApprovalsList({
           <div className="py-6 text-sm text-text-muted text-center">
             No one's waiting for your approval.
             <div className="text-xs text-text-muted mt-1.5">
-              Join requests on namespaces you admin show up here. To invite someone proactively, head to Public
-              namespaces → Namespaces you manage.
+              Join requests on namespaces you admin show up here. To invite someone proactively, head to Namespaces in
+              your org → Namespaces you manage.
             </div>
             <Button
               type="secondary"
@@ -106,7 +106,7 @@ export function PendingApprovalsList({
                 useStore.getState().setView("browse");
               }}
             >
-              Open Public namespaces
+              Open Namespaces in your org
             </Button>
           </div>
         )}

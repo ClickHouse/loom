@@ -40,7 +40,8 @@ export function NamespacePicker() {
 }
 
 // The word is shown from xl: narrower, the header search and the picker share the row and
-// the word would leave the name no width, so only a screen reader says it.
+// the word would leave the name no width. Below xl it is screen-reader text on the static
+// label; the picker's trigger is named by its aria-label and hides this span.
 const NS_LABEL = "sr-only xl:not-sr-only text-text-muted";
 
 /** The one namespace, not a control. A cut name is focusable, whole in a tooltip. */

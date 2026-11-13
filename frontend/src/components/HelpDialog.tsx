@@ -36,7 +36,7 @@ function groups(): Group[] {
         { keys: "?", label: "Show keyboard shortcuts" },
         { keys: "g m", label: "Go to Memories" },
         { keys: "g l / g k", label: "Go to Library" },
-        { keys: "g d", label: "Go to Public namespaces" },
+        { keys: "g d", label: "Go to Namespaces in your org" },
         { keys: "g r", label: "Go to Review queue" },
         { keys: "g a", label: "Go to Audit log" },
         { keys: "g s", label: "Go to Settings" },

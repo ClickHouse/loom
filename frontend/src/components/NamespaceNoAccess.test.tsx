@@ -7,7 +7,7 @@ import { axeViolations } from "../test/axe";
 import { NamespaceNoAccess } from "./NamespaceNoAccess";
 
 // A link to a namespace the account cannot read opens this page in place of any view: it
-// names the namespace and why, and Continue, the picker or Public namespaces leave it.
+// names the namespace and why, and Continue, the picker or Namespaces in your org leave it.
 
 const team = { org: "dev", namespace: "team", agent: "loom-ui" };
 const pending: MyNamespaceEntry = {
@@ -83,7 +83,7 @@ describe("NamespaceNoAccess", () => {
     ).toBeInTheDocument();
   });
 
-  it("with no namespace to fall back on, offers Public namespaces instead of Continue", async () => {
+  it("with no namespace to fall back on, offers Namespaces in your org instead of Continue", async () => {
     useStore.setState({ identity: { ...team, namespace: "" } });
     render(<NamespaceNoAccess namespace="group-b-shared" />);
     expect(screen.queryByRole("button", { name: /^Continue/ })).toBeNull();

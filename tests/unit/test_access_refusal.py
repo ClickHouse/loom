@@ -23,7 +23,10 @@ def test_a_self_signup_token_is_told_to_claim_or_mint() -> None:
 
 def test_a_person_is_told_to_request_the_grant() -> None:
     body = ar.refusal("avery@example.com", "clickhouse", "code-loom")
-    assert "dashboard's Public namespaces page" in body["error"] and "claim" not in body["error"]
+    assert (
+        "dashboard (namespace picker → Browse public namespaces)" in body["error"]
+        and "claim" not in body["error"]
+    )
 
 
 def test_role_check_refusal_on_a_code_op_is_actionable() -> None:
@@ -63,7 +66,7 @@ def test_a_refused_collection_points_at_collection_list_and_a_namespace_does_not
     )
     col = mcp_auth._not_accessible_result("loom_memory_get", auth, "col-research")
     assert "collection.list" in col["structuredContent"]["error"]
-    assert "Public namespaces" not in col["structuredContent"]["error"], (
+    assert "Browse public namespaces" not in col["structuredContent"]["error"], (
         "a collection is never joined"
     )
     assert col["content"][0]["text"] == col["structuredContent"]["error"]
@@ -86,7 +89,7 @@ def test_an_assistant_connection_is_pointed_at_no_tool_it_cannot_call() -> None:
     assert "admin" in text
     assert "loom_op" not in text and "loom_search" not in text
     plain = mcp_auth._not_accessible_result("loom_knowledge_search", auth, "other", assistant=True)
-    assert "Public namespaces page" in plain["structuredContent"]["error"]
+    assert "(namespace picker → Browse public namespaces)" in plain["structuredContent"]["error"]
     assert "loom_search" not in plain["structuredContent"]["error"]
 
 
@@ -101,7 +104,11 @@ def test_someone_elses_personal_collection_gets_no_advice() -> None:
     personal = mcp_auth._not_accessible_result("loom_memory_get", auth, "col-me-0123456789abcdef")
     text = personal["structuredContent"]["error"]
     # A personal collection takes no grant, so the refusal names none.
-    assert "grant" not in text and "Public namespaces" not in text and "collection.list" not in text
+    assert (
+        "grant" not in text
+        and "Browse public namespaces" not in text
+        and "collection.list" not in text
+    )
 
 
 def test_a_scoped_token_refused_a_collection_is_told_its_claim_must_name_it() -> None:

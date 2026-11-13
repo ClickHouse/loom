@@ -3,7 +3,7 @@ import { installApi } from "./fixtures";
 
 // A count or summary that changes as the reader types is announced from a status region
 // that is mounted before the change, so a screen reader hears it: the Library's filter
-// count, the memory search summary and the Public namespaces count.
+// count, the memory search summary and the Namespaces in your org count.
 
 async function open(page: Page, path: string) {
   await installApi(page, { memoryRows: 8, knowledgeRows: 4, runRows: 6, profileRows: 3 });
@@ -39,7 +39,7 @@ test("the memory search is announced once, from the toolbar's count, mounted bef
     .toBe(1);
 });
 
-test("the Public namespaces count is said from one live region that stays mounted through a search", async ({
+test("the Namespaces in your org count is said from one live region that stays mounted through a search", async ({
   page,
 }) => {
   await open(page, "/spaces");

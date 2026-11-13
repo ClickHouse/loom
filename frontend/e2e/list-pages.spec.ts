@@ -322,10 +322,10 @@ test.describe("a touch pointer at 375 px", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
   });
 
-  // A member's guide summary in Public namespaces is a 12 px line of text, but its link is a button,
+  // A member's guide summary in Namespaces in your org is a 12 px line of text, but its link is a button,
   // and every button is a 44 px target under a coarse pointer: a tap near either edge opens
   // the guide, not the row's join.
-  test("a Public namespaces row's guide summary link is a 44 px target", async ({ page }) => {
+  test("a public namespace row's guide summary link is a 44 px target", async ({ page }) => {
     await installApi(page, {
       browseRows: 3,
       mine: [
@@ -454,7 +454,7 @@ test("styles.css draws the Kbd and the score bar on radius tokens", () => {
 // the row (a member's Request upgrade), not the guide.
 test.describe("1400 px, the guide summary line", () => {
   test.use({ viewport: { width: 1400, height: 900 } });
-  test("a click beside a Public namespaces row's guide link is the row's", async ({ page }) => {
+  test("a click beside a public namespace row's guide link is the row's", async ({ page }) => {
     await installApi(page, {
       browseRows: 3,
       mine: [

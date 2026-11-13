@@ -67,7 +67,7 @@ export interface NavItem {
 // The rail is three labelled groups around the questions a user brings — what does my AI
 // know (Memory), what has it been doing (Activity), what can it reach (Sources) — with
 // Profile on top as the identity surface and Settings at the foot. Recall is a tab of
-// Memories (MemoryTabs), Public namespaces (browse/join) is reached from the namespace
+// Memories (MemoryTabs), Namespaces in your org (browse/join) is reached from the namespace
 // picker, Graph is a drill-down from an entity, Flow is in the admin drawer.
 //
 // RAIL_GROUPS, SETTINGS_ITEM and adminItems are exported for the phone's "More" sheet, which

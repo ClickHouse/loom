@@ -19,7 +19,7 @@ import { must } from "../test/must";
 // Flow (route id "sharing") is an operator's view of the whole namespace — it lives in
 // the admin drawer, not the end-user rail. The rail is three labelled groups (Memory,
 // Activity, Sources) under Profile, Settings at the foot; Recall is a tab of Memories,
-// Public namespaces is reached from the namespace picker; the drawer reads as Review /
+// Namespaces in your org is reached from the namespace picker; the drawer reads as Review /
 // Observe / Access and gains Guardrails.
 
 const admin = { authenticated: true, subject: "op@example.com", org: "dev", roles: ["PLATFORM_ADMIN"] };
@@ -48,11 +48,11 @@ describe("Flow in the admin drawer", () => {
   });
 
   it("sits in the phone sheet's Admin group for admins and is absent for a writer", () => {
-    const forAdmin = mobileMoreItems(admin, [row("admin")], NS);
+    const forAdmin = mobileMoreItems(admin, [row("admin")], NS, null);
     const adminGroup = forAdmin.find((g) => g.group === "Admin");
     expect(adminGroup?.items.map((i) => i.id)).toContain("sharing");
     expect(forAdmin.find((g) => g.group === "Main")?.items.map((i) => i.id) ?? []).not.toContain("sharing");
-    const forWriter = mobileMoreItems(writer, [row("writer")], NS).flatMap((g) => g.items.map((i) => i.id));
+    const forWriter = mobileMoreItems(writer, [row("writer")], NS, null).flatMap((g) => g.items.map((i) => i.id));
     expect(forWriter).not.toContain("sharing");
   });
 });
@@ -67,7 +67,7 @@ describe("the rail reads as groups", () => {
     expect(SETTINGS_ITEM).toMatchObject({ id: "setup", label: "Settings" });
   });
 
-  it("Recall, Public namespaces, Graph and Flow are not rail destinations but stay resolvable views", () => {
+  it("Recall, Namespaces in your org, Graph and Flow are not rail destinations but stay resolvable views", () => {
     const rail = MAIN.map((m) => m.id);
     for (const v of ["recall", "browse", "graph", "sharing"] as const) {
       expect(rail, v).not.toContain(v);
@@ -90,9 +90,9 @@ describe("the rail reads as groups", () => {
   });
 
   it("the phone sheet inherits the groups and closes with Settings", () => {
-    const groups = mobileMoreItems(writer, [row("writer")], NS).map((g) => g.group);
+    const groups = mobileMoreItems(writer, [row("writer")], NS, null).map((g) => g.group);
     expect(groups).toEqual(["Memory", "Activity", "Sources", "Settings"]);
-    const forAdmin = mobileMoreItems(admin, [row("admin")], NS).map((g) => g.group);
+    const forAdmin = mobileMoreItems(admin, [row("admin")], NS, null).map((g) => g.group);
     expect(forAdmin).toEqual(["Memory", "Activity", "Sources", "Settings", "Admin"]);
   });
 });

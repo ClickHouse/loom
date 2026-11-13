@@ -17,7 +17,7 @@ export function mobileMoreItems(
   whoami: WhoAmI | null,
   mine: MyNamespaceEntry[] | null,
   namespace: string,
-  badges: AdminBadges | null = null,
+  badges: AdminBadges | null,
 ): Array<{ group: string; items: NavItem[] }> {
   // The sheet shows the rail's own groups; the two primary tabs are left out of theirs,
   // and Settings closes the list. An unlabelled rail group (Profile) joins the first

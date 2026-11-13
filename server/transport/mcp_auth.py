@@ -116,7 +116,7 @@ def _not_accessible_result(
             f" Ask the collection's admin for a grant on it or a collection above it.{creator}"
             if collection
             else " Omit the namespace argument to use your default namespace, or request a "
-            "grant from the dashboard's Public namespaces page."
+            "grant from the dashboard (namespace picker → Browse public namespaces)."
         )
     elif collection:
         # Never "omit the namespace": a write meant for the collection would land in the
@@ -133,8 +133,8 @@ def _not_accessible_result(
         )
         msg += (
             f" Next: {NAMESPACE_NEXT}. Omit the namespace argument to use your default "
-            f"namespace (loom_search reads {reads}), or request a grant from the dashboard's "
-            f"Public namespaces page.{creator}"
+            f"namespace (loom_search reads {reads}), or request a grant from the dashboard "
+            f"(namespace picker → Browse public namespaces).{creator}"
         )
         return _refusal_body(msg, ns, next=NAMESPACE_NEXT)
     return _refusal_body(msg, ns)

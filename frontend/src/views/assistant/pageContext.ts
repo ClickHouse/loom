@@ -18,7 +18,7 @@ export const PAGE_NAMES: Record<View, string> = {
   runs: "Runs",
   graph: "Graph",
   help: "Help",
-  browse: "Public namespaces",
+  browse: "Namespaces in your org",
   code: "Repositories",
   tasks: "Tasks",
   setup: "Settings",

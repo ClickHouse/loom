@@ -159,7 +159,7 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     expect(screen.queryByText("the filters in force", { exact: false })).toBeNull();
   });
 
-  it("Public namespaces: a word the rows have not taken yet leaves the count at what is shown", async () => {
+  it("Namespaces in your org: a word the rows have not taken yet leaves the count at what is shown", async () => {
     render(<Browse />);
     await screen.findByText("beta");
     await typeHeld(screen.getByLabelText("Search namespaces"), "alp");
@@ -167,7 +167,7 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     expect(screen.getByLabelText("Namespaces")).toHaveTextContent("2 namespaces");
   });
 
-  it("Public namespaces: with no public namespaces, a typed name waits for the rows before offering a request", async () => {
+  it("Namespaces in your org: with no public namespaces, a typed name waits for the rows before offering a request", async () => {
     api.browseNamespaces.mockResolvedValue([]);
     render(<Browse />);
     await screen.findByText("No public namespaces yet");
@@ -178,7 +178,7 @@ describe("the count and the no-match state follow the rows, not the box", () => 
     expect(screen.queryByText("No public namespace matching", { exact: false })).toBeNull();
   });
 
-  it("Public namespaces: clearing a name that matched nothing keeps the request card on that name until the rows return", async () => {
+  it("Namespaces in your org: clearing a name that matched nothing keeps the request card on that name until the rows return", async () => {
     render(<Browse />);
     await screen.findByText("beta");
     const box = screen.getByLabelText("Search namespaces");
