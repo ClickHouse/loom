@@ -671,8 +671,9 @@ conflicts and writes `memory.ask` answers. Both default to fakes that need no ne
 Every setting that names a model is in the `Models` section of
 [`server/settings/catalog.py`](../../server/settings/catalog.py), one per job. Set any
 of them in `.env` to move that job to another model. The provider comes from the name,
-so a job can run on Claude while the rest run on GPT, as long as both keys are set. An
-empty value uses `LOOM_LLM_MODEL`.
+so a job can run on Claude while the rest run on GPT, as long as both keys are set; a
+job naming `LOOM_LLM_MODEL` itself, or a name with no provider prefix, runs on
+`LOOM_LLM_PROVIDER`. An empty value uses `LOOM_LLM_MODEL`.
 
 | Job                                   | Setting                                 | Default           |
 | ------------------------------------- | --------------------------------------- | ----------------- |

@@ -442,6 +442,12 @@ reaches nothing, and Loom's own policy admits LibreChat when it names its peers.
 run non-root on a read-only root filesystem. `assistant.nodeSelector`,
 `assistant.tolerations` and `imagePullSecrets` apply to both pods.
 
+For `LOOM_ASSISTANT_PROVIDER=local`, a model server you run instead of Anthropic, add
+`LOCAL_LLM_BASE_URL` to the Secret and write a NetworkPolicy of your own that lets the
+LibreChat pod reach the server; the
+[local-model setup](../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)
+lists the rest.
+
 ## Analytics export
 
 `analyticsExport.enabled: true` adds a daily CronJob that writes the previous UTC day's

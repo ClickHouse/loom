@@ -3794,7 +3794,8 @@ class ModelSettings(BaseModel):
     Every setting that names a model lives here, one per job, so a deployment changes
     a job's model with one env var (`LOOM_<FIELD>`). The provider is inferred from the
     name (`claude*` → Anthropic, `gpt*` / o-series → OpenAI), so any job can run on
-    either provider when its API key is set. "" means the job uses `llm_model`.
+    either provider when its API key is set; `llm_model` itself, or a name with no such
+    prefix, runs on `llm_provider` (`provider_of`). "" means the job uses `llm_model`.
     """
 
     # --- defaults ---------------------------------------------------------------

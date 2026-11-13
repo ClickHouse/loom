@@ -18,8 +18,7 @@ KEY_ENV_BY_PROVIDER = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_K
 DEFAULT_MODEL_BY_PROVIDER = {
     "openai": "gpt-6-luna",
     "anthropic": "claude-haiku-4-5",
-    # A server the operator runs (`local`): a 3B model Ollama pulls in about 2 GB that
-    # follows the extraction prompt's JSON shape.
+    # A server the operator runs (`local`): a 3B model Ollama pulls in about 2 GB.
     "local": "qwen2.5:3b",
     "fake": "fake-echo-1",
 }
