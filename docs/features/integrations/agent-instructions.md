@@ -26,9 +26,9 @@ Every task (no hook loads Loom for you, so these two calls are not optional)
 
 - At the start of each task, before planning: `loom_context_pack` with the task as
   `query`. It returns the decisions, constraints and memories that bear on it.
-- Before editing a file: `loom_op` with `memory.for_file` and
-  `{"path": "<repo-relative path>", "extra_namespaces": ["<code-namespace>"]}`. Follow
-  every constraint and decision it returns.
+- Before editing a file: `loom_op` with `op` set to `memory.for_file` and `arguments`
+  holding `path` (the file's repo-relative path) and `extra_namespaces`
+  (`["<team-namespace>"]`). Follow every constraint and decision it returns.
 
 Memory
 
@@ -56,8 +56,10 @@ Code
   tool answers `abstain: true`, grep instead of retrying with synonyms.
 ```
 
-Replace `<code-namespace>` with the namespace the repository is indexed under;
-`code.repos` (through `loom_op`) lists the code namespaces the token can read.
+`code.repos` (through `loom_op`) lists the repositories the token can read. Replace
+`<code-namespace>` with the row's `namespace` (the indexed branch) and `<team-namespace>`
+with its `primary_namespace` (the trunk branch's, where team file rules and decisions
+live); for the trunk branch the two are the same.
 
 ## Where each client reads it
 
@@ -90,8 +92,9 @@ a section of it.
 
 ## Why these rules
 
-Agents without hooks rarely call a memory tool on their own, even when it is listed, so
-the block makes loading context part of every task, as the plugins' hooks do.
+Nothing in a session without hooks prompts a recall, and a listed memory tool is one
+choice among many, so the block makes loading context part of every task, as the
+plugins' hooks do.
 
 Each line is the short form of what the plugins teach:
 
