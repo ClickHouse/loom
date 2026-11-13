@@ -243,7 +243,7 @@ same model.
   `LOOM_ASSISTANT_ANSWER_CEILING_USD` against the namespace's daily model cost cap, as any
   unpriced model does. Under the Helm chart, add `LOCAL_LLM_BASE_URL` to the assistant's
   Secret; the chart's policy lets LibreChat reach only DNS, its database, Loom and TCP
-  443, so a server on another port needs a NetworkPolicy of your own that selects the
+  443, so the model server needs a NetworkPolicy of your own that selects the
   LibreChat pod.
 - **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
   published benchmark covers a local one, so treat a small model as a way to try Loom

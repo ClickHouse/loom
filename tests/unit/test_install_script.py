@@ -1939,8 +1939,10 @@ def test_local_models_ollama_sets_every_model_job_on_it(install) -> None:
     assert "ollama pull qwen2.5:3b" in out.stdout
 
 
-def test_without_a_terminal_ollama_is_not_offered(install) -> None:
+def test_without_a_terminal_ollama_is_not_offered(install, installer_env) -> None:
     run, target = install
+    # Ollama answers, so only the missing terminal keeps the offer off.
+    _ollama_answers(installer_env)
     assert run().returncode == 0
     assert _env(target)["LOOM_LLM_PROVIDER"] == "fake"
     assert "LOOM_LOCAL_LLM_BASE_URL" not in _env(target)

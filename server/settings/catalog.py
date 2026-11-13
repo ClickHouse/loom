@@ -4561,12 +4561,11 @@ class ProviderSettings(ModelSettings):
     # (loom.embedder_calibration), so every replica serves the same gates.
     calibration_refresh_seconds: float = 60.0
 
-    # "openai" | "anthropic" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake";
-    # "" = infer from LOOM_LLM_MODEL's name
-    # (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key
-    # present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once
-    # at load; an explicit value is never overridden. Run `make bench-quick`
-    # before making anthropic a default.
+    # "openai" | "anthropic" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
+    # infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* →
+    # anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
+    # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
+    # overridden. Run `make bench-quick` before making anthropic a default.
     llm_provider: str = ""
     # A fake or key-less provider is a `warn` in /v1/health `problems`; true
     # (production) makes it an `error` and `status: degraded`, which preflight
