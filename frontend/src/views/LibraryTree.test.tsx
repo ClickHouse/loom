@@ -108,6 +108,13 @@ describe("LibraryTree", () => {
     expect(places()).toContain("Engineering");
   });
 
+  it("names a show or hide button in a tooltip on focus", async () => {
+    tree();
+    const toggle = screen.getByRole("button", { name: "Collections in Engineering" });
+    act(() => toggle.focus());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Collections in Engineering");
+  });
+
   it("shows the parents of the collection shown, and what is inside it", () => {
     tree({ current: "col-runbooks" });
     expect(places()).toEqual(["Namespace bench", "My files", "Engineering", "Runbooks", "Ingest", "Legal"]);

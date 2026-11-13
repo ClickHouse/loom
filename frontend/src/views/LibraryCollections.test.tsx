@@ -5,7 +5,7 @@ import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { PHONE_QUERY } from "../lib/useMedia";
-import { TREE_PAGE_MIN } from "../lib/usePageRoom";
+import { TREE_PAGE_MIN } from "../lib/useTreeHeight";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CollectionEntry } from "../api";
 import { useStore } from "../lib/state";

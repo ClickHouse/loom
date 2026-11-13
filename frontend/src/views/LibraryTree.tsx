@@ -8,7 +8,8 @@ import { createCollection, type CollectionEntry } from "../api";
 import { toastError } from "../components/Toast";
 import { fieldError } from "../components/ui/fieldError";
 import { Loading } from "../components/ui/Loading";
-import { announceCreated } from "../lib/collectionPlaces";
+import { Tip } from "../components/ui/Tooltip";
+import { announceCreated } from "../flows/CreateCollectionDialog";
 import { canHold, collectionOrder, collectionTitle, distinctTitle, MAX_TITLE, titleTooLong } from "../lib/collections";
 import {
   collectionPath,
@@ -208,7 +209,7 @@ export function LibraryTree({
   };
   const into = making && making !== "top" ? making : null;
 
-  const collection = (c: CollectionEntry, depth: number): ReactNode => {
+  const branch = (c: CollectionEntry, depth: number): ReactNode => {
     const kids = tree.children.get(c.namespace) ?? [];
     const expanded = kids.length > 0 && isOpen(c.namespace);
     return (
@@ -223,7 +224,7 @@ export function LibraryTree({
           onToggle={kids.length > 0 ? () => toggle(c.namespace) : undefined}
           onPick={onPick}
         />
-        {expanded && <ul>{kids.map((k) => collection(k, depth + 1))}</ul>}
+        {expanded && <ul>{kids.map((k) => branch(k, depth + 1))}</ul>}
       </li>
     );
   };
@@ -234,7 +235,7 @@ export function LibraryTree({
         <p id={id} className="section-label library-tree-label">
           {label}
         </p>
-        <ul aria-labelledby={id}>{roots.map((c) => collection(c, 0))}</ul>
+        <ul aria-labelledby={id}>{roots.map((c) => branch(c, 0))}</ul>
       </>
     );
 
@@ -331,15 +332,17 @@ function PlaceRow({
   return (
     <div className="library-tree-row" data-selected={here || undefined} style={{ "--depth": depth } as CSSProperties}>
       {onToggle ? (
-        <button
-          type="button"
-          className="library-tree-twist"
-          aria-expanded={!!expanded}
-          aria-label={`Collections in ${label}`}
-          onClick={onToggle}
-        >
-          <Icon name={expanded ? "chevron-down" : "chevron-right"} size="xs" aria-hidden />
-        </button>
+        <Tip content={`Collections in ${label}`}>
+          <button
+            type="button"
+            className="library-tree-twist"
+            aria-expanded={!!expanded}
+            aria-label={`Collections in ${label}`}
+            onClick={onToggle}
+          >
+            <Icon name={expanded ? "chevron-down" : "chevron-right"} size="xs" aria-hidden />
+          </button>
+        </Tip>
       ) : (
         <span className="library-tree-twist" aria-hidden="true" />
       )}

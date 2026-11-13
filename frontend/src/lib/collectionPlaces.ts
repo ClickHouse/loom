@@ -1,7 +1,8 @@
 /**
  * How a collection is named outside the Library: by its title and its place, never as a
  * namespace. Its `col-…` name is its address, shown in details, and beside a title that looks
- * like another.
+ * like another. It also holds the bus that tells the Library's lists a collection changed
+ * (`onCollectionsChanged`).
  *
  * The boot loads this module on demand, so the index chunk does not carry it.
  */
@@ -11,7 +12,6 @@ import { collectionTitle, looksRepeated, repeatedLooks } from "./collections";
 import { isCollectionName, isPersonalCollection, type LandingTarget } from "./namespace";
 import { offersCollection } from "./tokenScope";
 import { invalidateShared, shared } from "./sharedReads";
-import { toast } from "../components/Toast";
 
 const COLLECTIONS_KEY = "collections:";
 
@@ -24,8 +24,8 @@ export function sharedCollections(org: string): Promise<CollectionListPage> {
 const changeListeners = new Set<(made: string) => void>();
 
 /** For a write that changes a collection: the next asker reads `collection.list` afresh, and
- *  the Library's lists (useReadableCollections) read it again, until they list `made` (a
- *  collection just created) when one is named. */
+ *  the Library's lists (useReadableCollections) read it again, asking again a few times while
+ *  `made` (a collection just created), when named, is not listed yet. */
 export function invalidateSharedCollections(made = ""): void {
   invalidateShared(COLLECTIONS_KEY);
   for (const listener of [...changeListeners]) listener(made);
@@ -38,15 +38,6 @@ export function onCollectionsChanged(listener: (made: string) => void): () => vo
   return () => {
     changeListeners.delete(listener);
   };
-}
-
-/** After collection.create: the shared reads of the collections start again, and the person
- *  is told whether it was made or one of that title already sits there. `typed`: the title
- *  asked for, shown when the answer names none. */
-export function announceCreated(r: { created: boolean; title?: string; namespace: string }, typed: string): void {
-  invalidateSharedCollections();
-  const shown = r.title || typed || r.namespace;
-  toast(r.created ? `Created ${shown}` : `${shown} already exists here`, r.created ? "ok" : "info");
 }
 
 /** Whether `m` is a direct grant on a shared collection, one the collection gate admits: not

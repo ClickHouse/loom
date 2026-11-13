@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { deleteCollection, listCollections, type CollectionEntry } from "../api";
@@ -90,9 +90,9 @@ export interface ReadableCollections {
    *  once it answers or fails. */
   refreshing: boolean;
   error: unknown;
-  /** Read again; `rows` is null until the new answer lands. `expect`: a collection just
+  /** Read again; `rows` is null until the new answer lands. `made`: a collection just
    *  created, asked for again a few times while a replica's list has not caught up. */
-  reload: (expect?: string) => void;
+  reload: (made?: string) => void;
   /** The collection the last reload or refresh waited for, or "". */
   expected: string;
 }
@@ -113,10 +113,10 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
   // for it sets: a later one clears it.
   const [asked, setAsked] = useState({ reloads: 0, refreshes: 0, expect: { org: "", name: "" } });
   const reload = useCallback(
-    (name = "") => {
+    (made = "") => {
       // An old failure would read as "no collections" before the new answer lands.
       setError(null);
-      setAsked((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name } }));
+      setAsked((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name: made } }));
     },
     [org],
   );
@@ -131,11 +131,9 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
   const expected = asked.expect.org === org ? asked.expect.name : "";
   // The collection shown, once the page's last reload is answered and lists it: a refresh
   // that leaves it out asks again, as for a lagging replica; a reload's answer decides.
-  const hold = useRef("");
-  useLayoutEffect(() => {
-    const answered = answer?.org === org && answer.reloads === asked.reloads;
-    hold.current = answered && answer.rows.some((c) => c.namespace === shown) ? shown : "";
-  });
+  // The read effect captures it when it starts: `shown` changing restarts no read.
+  const answered = answer?.org === org && answer.reloads === asked.reloads;
+  const hold = answered && answer.rows.some((c) => c.namespace === shown) ? shown : "";
   useAbortableEffect(
     (signal, live) => {
       setError(null);
@@ -151,7 +149,7 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
             if (!cursor) break;
           }
           const rows = [...byName.values()];
-          const caughtUp = [expected, hold.current].every((name) => !name || byName.has(name));
+          const caughtUp = [expected, hold].every((name) => !name || byName.has(name));
           if (caughtUp || attempt >= 2) return { rows, truncated: !!cursor };
           await new Promise((r) => setTimeout(r, 1000));
           if (signal.aborted) throw signal.reason;

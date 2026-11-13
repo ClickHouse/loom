@@ -64,7 +64,7 @@ import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
 import { TopLevelPlaces } from "./LibraryHierarchy";
 import { LibraryTree, NEW_COLLECTION_FOCUS } from "./LibraryTree";
-import { usePageRoom } from "../lib/usePageRoom";
+import { useTreeHeight } from "../lib/useTreeHeight";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
@@ -270,8 +270,7 @@ export function Documents() {
   const phone = useMedia(PHONE_QUERY);
   // The places are a tree beside the documents where <main> has room for both; narrower, or
   // not measured yet, the select stands in.
-  const room = usePageRoom();
-  const treeHeight = room?.wide ? room.height : null;
+  const treeHeight = useTreeHeight();
   const wide = treeHeight !== null;
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
