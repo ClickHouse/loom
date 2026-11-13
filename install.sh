@@ -735,7 +735,7 @@ main() {
       esac
     done
     if [ -n "$agents" ]; then
-      printf '\nConnected: %s. Start a new session and say "Remember that I never deploy on Friday.";\n' "${agents#, }"
+      printf '\nConnected: %s. Start a new session and say "Remember that I never deploy on Friday";\n' "${agents#, }"
       printf 'in the next session, ask "When can I deploy?"\n'
     elif [ -n "$kept" ]; then
       printf '\nYour agents keep the Loom setup they had.\n'
