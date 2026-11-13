@@ -142,7 +142,7 @@ class LoomMemoryRetriever(_LoomRetriever):
     ``valid_at``. The documents carry no id: a memory key is unique per agent,
     user and session, and a search reads every agent's memories. When Loom abstains
     (no memory above its calibrated floor) the retriever returns no documents, and
-    a memory below the floor that rides along with a strong one is left out,
+    a memory below the floor in a response that does not abstain is left out,
     unless ``honour_abstain`` is false.
     """
 

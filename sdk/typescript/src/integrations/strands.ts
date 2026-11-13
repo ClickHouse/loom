@@ -98,7 +98,7 @@ export class LoomMemoryStore {
     });
   }
 
-  /** `memory.search` limited to this store's tags and type; empty when loom abstains. */
+  /** `memory.search` limited to this store's tags and type; empty when loom abstains, and without hits below the floor, unless `honourAbstain` is false. */
   async search(query: string, options: SearchOptions = {}): Promise<MemoryEntry[]> {
     const topK = options.maxSearchResults ?? this.maxSearchResults;
     const out = await this.agent.recall(query, {

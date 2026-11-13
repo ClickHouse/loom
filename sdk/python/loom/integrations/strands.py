@@ -65,7 +65,7 @@ class LoomMemoryStore:
     and returns entries newest-ranked first; when loom abstains (no hit
     above the calibrated threshold) the store returns nothing rather than a
     low-similarity row, so the Memory Manager injects no context at all, and
-    a hit below the threshold that rides along with a strong one is left out.
+    a hit below the threshold in a response that does not abstain is left out.
     """
 
     def __init__(
