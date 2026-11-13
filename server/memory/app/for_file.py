@@ -18,7 +18,8 @@ from server.memory.api.models_for_file import (
     MemoryForFileOutput,
     _MemoryForFileHit,
 )
-from server.memory.domain.code_change import STATE_RANK, note, worst, worst_commit
+from server.memory.domain import code_change
+from server.memory.domain.code_change import STATE_RANK, worst
 from server.memory.domain.decision_schema import (
     CONSTRAINT_TAG,
     DECISION_TAG,
@@ -198,7 +199,7 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
     if decision and FAILURE_TAG in tags:
         out += " (outcome: failed)"
     state, commit = str(hit.get("code_state") or ""), str(hit.get("code_changed_since") or "")
-    return out + note(state, commit)
+    return out + code_change.note(state, commit)
 
 
 def _marker(hit: dict[str, Any], *, show_decision: bool) -> str:
@@ -497,7 +498,7 @@ async def _rows_for(
                 **r,
                 "namespace": namespace,
                 "code_state": worst([a["state"] for a in links]),
-                "code_changed_since": worst_commit(links),
+                "code_changed_since": code_change.worst_commit(links),
             }
         )
     return out
