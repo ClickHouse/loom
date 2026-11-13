@@ -404,6 +404,15 @@ const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ name: "assistan
 
 Loom's agent verbs (`AgentTools`: `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note`) as function tools built with `tool()` from `@openai/agents`, an optional peer dependency, bound to one user, session or run.
 
+## Mastra
+
+```ts
+import { loomTools } from "@clickhouse/loom/integrations/mastra";
+const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ id, name, model, instructions, tools }) from @mastra/core/agent
+```
+
+Loom's agent verbs (`AgentTools`) as Mastra tools built with `createTool`, keyed by name, from `@mastra/core`, an optional peer dependency.
+
 ## Strands Agents
 
 ```ts

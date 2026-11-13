@@ -28,6 +28,16 @@
         "default": "./dist/integrations/langchain.cjs"
       }
     },
+    "./integrations/mastra": {
+      "import": {
+        "types": "./dist/integrations/mastra.d.mts",
+        "default": "./dist/integrations/mastra.mjs"
+      },
+      "require": {
+        "types": "./dist/integrations/mastra.d.cts",
+        "default": "./dist/integrations/mastra.cjs"
+      }
+    },
     "./integrations/openai-agents": {
       "import": {
         "types": "./dist/integrations/openai-agents.d.mts",
@@ -103,7 +113,8 @@
   "peerDependencies": {
     "@aws-sdk/client-secrets-manager": "^3.0.0",
     "@langchain/core": ">=1.0.0 <2.0.0",
-    "@openai/agents": ">=0.22.0 <0.23.0"
+    "@openai/agents": ">=0.22.0 <0.23.0",
+    "@mastra/core": ">=1.83.0 <2.0.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-secrets-manager": {
@@ -114,12 +125,16 @@
     },
     "@openai/agents": {
       "optional": true
+    },
+    "@mastra/core": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.14",
     "@langchain/core": "1.4.0",
+    "@mastra/core": "1.83.0",
     "@openai/agents": "0.22.0",
     "@types/node": "^22.0.0",
     "publint": "^0.3.24",

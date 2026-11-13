@@ -147,6 +147,14 @@ describe("dist", () => {
     expect(readFileSync(join(dist, "integrations/openai-agents.mjs"), "utf8")).toMatch(/from "@openai\/agents"/);
   }, 30_000); // loading @openai/agents in both module formats takes seconds
 
+  it("the mastra subpath loads in both formats and leaves @mastra/core to the app", async () => {
+    const esm = (await import(join(dist, "integrations/mastra.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/mastra.cjs")) as object;
+    expect(names(esm)).toEqual(names(cjs));
+    expect(names(esm)).toEqual(["loomTools"]);
+    expect(readFileSync(join(dist, "integrations/mastra.mjs"), "utf8")).toMatch(/from "@mastra\/core\/tools"/);
+  }, 30_000); // loading @mastra/core in both module formats takes seconds
+
   it("no bundle imports a Node built-in", () => {
     const files = readdirSync(dist, { recursive: true }) as string[];
     for (const f of files.filter((n) => /\.(mjs|cjs)$/.test(n))) {
