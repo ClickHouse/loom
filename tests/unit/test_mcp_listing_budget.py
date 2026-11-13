@@ -20,19 +20,24 @@ from server.operations.toolsets import (
     _MCP_HIDDEN_OPS,
 )
 from server.settings import settings
+from server.transport import mcp_op
 from server.transport import mcp_tools as mt
 from server.transport.mcp_descriptions import (
+    ASSISTANT_TOOL_DESCRIPTIONS,
     ATOMIC_TOOL_DESCRIPTIONS,
+    CODING_TOOL_DESCRIPTIONS,
     REVISION_POLICY,
     TOOL_DESCRIPTIONS,
     revision_policy,
 )
+from server.transport.mcp_op import reachable
 from server.transport.mcp_schemas import (
     DEFAULT_SCHEMA_PROFILE,
     SCHEMA_PROFILES,
     apply_schema_profile,
     collapse_nullable,
 )
+from tests.unit.loom_op_marks import assert_marked_once_outside_parentheses, marked
 
 OPS = {op.name: op for op in ALL_OPERATIONS}
 TOOL_TO_OP = {op.mcp_tool_name: op.name for op in ALL_OPERATIONS}
@@ -136,9 +141,8 @@ def test_input_schema_keeps_every_argument_and_field_description():
 
 # ---------------------------------------------------------------- reference lint
 
-_OP_REF = re.compile(r"\b[a-z_]+(?:\.[a-z_]+){1,2}\b")
+_OP_REF = re.compile(rf"\b{mcp_op.OP_MENTION}\b")
 _TOOL_REF = re.compile(r"\bloom_[a-z_]+\b")
-_CALLABLE_BY_NAME = re.compile(r"\(([^()]*?)callable by name\)")
 
 
 def _op_refs(text: str) -> set[str]:
@@ -147,60 +151,249 @@ def _op_refs(text: str) -> set[str]:
     return refs
 
 
-def _marked_callable_by_name(text: str) -> set[str]:
-    """Ops named in a sentence that carries "callable by name" or "via
-    loom_op" — the sanctioned ways for a listed description to point at an
-    unlisted op (loom_op is how a client reaches one)."""
-    out: set[str] = set()
-    for m in re.finditer(r"callable by name|via loom_op", text):
-        head = text[: m.start()]
-        cut = max(head.rfind(". "), head.rfind("\n"), head.rfind("; "))
-        out |= _op_refs(head[cut + 1 :])
+_TOOLSETS = [
+    ("core", False),
+    ("core", True),
+    ("coding", False),
+    ("atomic", False),
+    ("tasks", False),
+    ("tracker", False),
+    ("readonly", False),
+    ("assistant", False),
+    ("all", False),
+    ("all", True),
+    ("coding+tracker", False),
+]
+
+
+@pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
+def test_no_listed_text_names_a_hidden_op(toolset: str, code: bool):
+    """A hidden op is refused by tools/call — naming it as a fallback sends
+    the model down a dead path. `assistant` lists two hidden searches."""
+    tools = _listing(toolset, code, "full")  # full: output schemas too
+    listed = {TOOL_TO_OP.get(t["name"], t["name"]) for t in tools}
+    for t in tools:
+        for text in _texts(t):
+            hidden = sorted((_op_refs(text) & _MCP_HIDDEN_OPS) - listed)
+            assert not hidden, f"{toolset}: {t['name']} names hidden {hidden}"
+
+
+# Every text a listing renders from, as written in the source.
+_SOURCE_TEXTS = (
+    TOOL_DESCRIPTIONS,
+    ATOMIC_TOOL_DESCRIPTIONS,
+    CODING_TOOL_DESCRIPTIONS,
+    ASSISTANT_TOOL_DESCRIPTIONS,
+    mcp_op._INSTEAD,
+)
+
+
+def _texts(tool: dict) -> list[str]:
+    """What a client reads of a tool: its description and every schema description."""
+    out = [tool["description"]]
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "description" and isinstance(value, str):
+                    out.append(value)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(tool["inputSchema"])
+    walk(tool.get("outputSchema", {}))
     return out
 
 
-@pytest.mark.parametrize(
-    ("toolset", "code"),
-    [
-        ("core", False),
-        ("core", True),
-        ("coding", False),
-        ("atomic", False),
-        ("tasks", False),
-        ("tracker", False),
-        ("all", False),
-        ("all", True),
-    ],
-)
-def test_no_listed_description_names_a_hidden_op(toolset: str, code: bool):
-    """A hidden op is refused by tools/call — naming it as a fallback sends
-    the model down a dead path."""
-    for t in _listing(toolset, code):
-        hidden = sorted(_op_refs(t["description"]) & _MCP_HIDDEN_OPS)
-        assert not hidden, f"{toolset}: {t['name']} names hidden {hidden}"
-
-
-@pytest.mark.parametrize(
-    ("toolset", "code"),
-    [
-        ("core", False),
-        ("core", True),
-        ("coding", False),
-        ("atomic", False),
-        ("tasks", False),
-        ("tracker", False),
-    ],
-)
-def test_no_listed_description_names_an_unlisted_op_without_saying_so(toolset: str, code: bool):
-    """Under a curated toolset a description may point at an op the listing
-    does not carry only if it says "(callable by name)" — most clients refuse
-    a tool name they were not listed."""
-    tools = _listing(toolset, code)
-    listed = {TOOL_TO_OP.get(t["name"], t["name"]) for t in tools}
+@pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
+def test_a_listed_op_is_named_by_its_tool(toolset: str, code: bool):
+    """A client calls the tool name it was listed; a dotted op name for a listed
+    tool reads as a different tool. loom_op's own text is about dotted names."""
+    tools = _listing(toolset, code, "full")  # full: output schemas too
+    listed = {TOOL_TO_OP[t["name"]] for t in tools if t["name"] in TOOL_TO_OP}
     for t in tools:
-        text = t["description"]
-        unlisted = _op_refs(text) - listed - _marked_callable_by_name(text)
-        assert not unlisted, f"{toolset}: {t['name']} names unlisted {sorted(unlisted)}"
+        if t["name"] == "loom_op":
+            continue
+        for text in _texts(t):
+            dotted = {r for r in _OP_REF.findall(text) if r in listed}
+            assert not dotted, f"{toolset}: {t['name']} names listed tools by op name {dotted}"
+
+
+@pytest.mark.parametrize("profile", [None, "compact", "full"])
+@pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
+def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(
+    toolset: str, code: bool, profile: str | None
+):
+    """An op the listing does not carry is named by its dotted name, the one
+    loom_op takes, and when loom_op routes it a mention says "(via loom_op)"
+    (the renderer marks the first; test_naming_marks_only_what_loom_op_routes).
+    compact cuts after rendering and must not cut between a mention and its mark."""
+    tools = _listing(toolset, code, profile)
+    names = {t["name"] for t in tools}
+    listed = {TOOL_TO_OP.get(n, n) for n in names}
+    for t in tools:
+        if t["name"] == "loom_op":
+            continue
+        for text in _texts(t):
+            for op in _op_refs(text) - listed:
+                tool = re.escape(OPS[op].mcp_tool_name)
+                assert not re.search(rf"\b{tool}\b", text), f"{toolset}: {t['name']} lists {op}"
+                if "loom_op" in names and reachable(OPS[op], toolset):
+                    # the trail the renderer writes the marker after: a backtick, a possessive
+                    assert marked(op).search(text), (
+                        f"{toolset}: {t['name']} names unlisted {op} without saying how to reach it"
+                    )
+
+
+def test_the_assistant_listing_names_only_its_own_tools():
+    """With no loom_op to reach the rest, a text may name only tools the listing carries,
+    the synthetic ones included."""
+    tools = _listing("assistant", False)
+    names = {t["name"] for t in tools}
+    listed = {TOOL_TO_OP.get(n, n) for n in names}
+    assert "loom_op" not in names
+    for t in tools:
+        for text in _texts(t):
+            unlisted = _op_refs(text) - listed
+            assert not unlisted, f"assistant: {t['name']} names {sorted(unlisted)}"
+            synthetic = set(re.findall(r"\bloom_[a-z_]+\b", text)) & (
+                mt.SYNTHETIC_TOOL_NAMES - names
+            )
+            assert not synthetic, f"assistant: {t['name']} names {sorted(synthetic)}"
+
+
+def test_no_source_text_puts_an_op_inside_a_longer_code_span():
+    """The "(via loom_op)" marker would land inside the span."""
+    for texts in _SOURCE_TEXTS:
+        for name, text in texts.items():
+            for span in re.findall(r"`([^`]+)`", text):
+                ops = [m for m in re.findall(mcp_op.OP_MENTION, span) if m in OPS]
+                assert not ops or span.strip() in ops, f"{name}: `{span}`"
+
+
+def test_no_source_text_writes_an_op_as_a_call():
+    """`op(args)` would put the "(via loom_op)" marker between the name and `(`."""
+    for texts in _SOURCE_TEXTS:
+        for name, text in texts.items():
+            calls = [m for m in re.findall(rf"\b({mcp_op.OP_MENTION})\(", text) if m in OPS]
+            assert not calls, f"{name}: {calls}"
+
+
+def test_naming_marks_only_what_loom_op_routes():
+    listed = {"loom_op", "loom_memory_set"}
+    text = "Save with memory.set; tidy with `memory.apply`, then memory.apply again."
+    assert mcp_op.name_ops_for_listing(text, listed, writes=True) == (
+        "Save with loom_memory_set; tidy with `memory.apply` (via loom_op), "
+        "then memory.apply again."
+    )
+    # loom_op routing reads only (writes=False) leaves a write unmarked; a hidden op stays
+    assert mcp_op.name_ops_for_listing("memory.apply", listed, writes=False) == "memory.apply"
+    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, writes=False) == "memory.apply"
+    assert mcp_op.name_ops_for_listing("memory.bulk_set", listed, writes=True) == "memory.bulk_set"
+    # without loom_op on the listing nothing is marked
+    assert (
+        mcp_op.name_ops_for_listing("memory.apply", {"loom_memory_set"}, writes=True)
+        == "memory.apply"
+    )
+    assert mcp_op.name_ops_for_listing("loom_memory_apply", listed, writes=True) == (
+        "memory.apply (via loom_op)"
+    )
+    # joined text: a quoted value keeps what it spells; the first real mention keeps the mark
+    joined = "x `memory.apply` (via loom_op). one key, 'memory.apply (via loom_op)', and memory.apply (via loom_op)"
+    assert mcp_op.keep_first_marks(joined) == (
+        "x `memory.apply` (via loom_op). one key, 'memory.apply (via loom_op)', and memory.apply"
+    )
+    # a dotted name that is no op, such as a response field path, stays
+    assert (
+        mcp_op.name_ops_for_listing("`memory.next_page`", listed, writes=True)
+        == "`memory.next_page`"
+    )
+    # a quoted value or a path is not a reference; a possessive is
+    assert mcp_op.name_ops_for_listing("('memory.delete', 'memory.*')", listed, writes=True) == (
+        "('memory.delete', 'memory.*')"
+    )
+    assert mcp_op.name_ops_for_listing("/v1/memory.set", listed, writes=True) == "/v1/memory.set"
+    assert mcp_op.name_ops_for_listing("memory.set's text", listed, writes=True) == (
+        "loom_memory_set's text"
+    )
+    # an unlisted op's marker goes after its possessive
+    assert mcp_op.name_ops_for_listing("memory.apply's limit", listed, writes=True) == (
+        "memory.apply's (via loom_op) limit"
+    )
+    # a possessive after a code span is no opening quote: what follows is still prose
+    assert mcp_op.name_ops_for_listing(
+        "`memory.apply`'s limit; memory.delete takes one key; other writers' rows",
+        listed,
+        writes=True,
+    ) == (
+        "`memory.apply`'s (via loom_op) limit; memory.delete (via loom_op) takes one key; "
+        "other writers' rows"
+    )
+    # a citation tag is not an op mention
+    assert mcp_op.name_ops_for_listing("[knowledge.query#1]", listed, writes=True) == (
+        "[knowledge.query#1]"
+    )
+    # a field path under a listed op is not an op mention and stays whole
+    assert (
+        mcp_op.name_ops_for_listing("`memory.set.value`", listed, writes=True)
+        == "`memory.set.value`"
+    )
+
+
+@pytest.mark.parametrize("profile", [None, "compact", "full"])
+@pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
+def test_no_rendered_text_splits_a_call_or_a_code_span(
+    toolset: str, code: bool, profile: str | None
+):
+    """Field and model texts render too: a marker before `(` or inside backticks
+    means a source wrote an op as a call or inside a longer code span."""
+    for t in _listing(toolset, code, profile):
+        for text in _texts(t):
+            assert "(via loom_op)(" not in text, (toolset, t["name"], text)
+            assert "(via loom_op) (via loom_op)" not in text, (toolset, t["name"], text)
+            assert_marked_once_outside_parentheses(text, (toolset, t["name"]))
+            inside_spans = text.split("`")[1::2]
+            assert not any("(via loom_op)" in span for span in inside_spans), (toolset, t["name"])
+
+
+def test_a_listing_build_leaves_the_source_texts_as_written():
+    """Rendering works on copies: a second build matches the first, and the
+    source texts keep op names and carry no hand-written marker."""
+    assert _listing("core", True) == _listing("core", True)
+    assert "memory.update" in TOOL_DESCRIPTIONS["memory.set"]
+    for texts in _SOURCE_TEXTS:
+        for name, text in texts.items():
+            assert "(via loom_op)" not in text, f"{name}: the listing adds the marker"
+
+
+@pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
+def test_listed_tool_names_is_what_the_listing_shows(toolset: str, code: bool, monkeypatch):
+    """A refusal names ops by listed_tool_names; it must be the listing's own set."""
+    listing = {t["name"] for t in _listing(toolset, code)}
+    monkeypatch.setattr(settings, "mcp_toolset", toolset)
+    monkeypatch.setattr(settings, "mcp_code_tools", code)
+    assert mt.listed_tool_names(None) == listing
+
+
+@pytest.mark.parametrize("toolset", ["core", "all", "readonly"])
+def test_compact_loom_op_keeps_discovery_and_the_call(toolset: str):
+    """compact keeps a description's first sentence; loom_op's must hold help and a call."""
+    tools = {t["name"]: t for t in _listing(toolset, True, "compact")}
+    text = tools["loom_op"]["description"]
+    assert '"op": "help"' in text and '"op": "memory.related"' in text
+    assert ("Run a Loom read op" in text) == (toolset == "readonly")
+
+
+def test_the_compact_profile_keeps_the_tool_names():
+    """compact cuts each description to its first lines; what stays is rendered text."""
+    tools = _listing("core", True, "compact")
+    listed = {TOOL_TO_OP[t["name"]] for t in tools if t["name"] in TOOL_TO_OP}
+    for t in tools:
+        if t["name"] != "loom_op":
+            assert not {r for r in _OP_REF.findall(t["description"]) if r in listed}, t["name"]
 
 
 # ---------------------------------------------------------------- one revision policy
@@ -219,7 +412,7 @@ def test_one_revision_policy_text_everywhere():
     core_set = TOOL_DESCRIPTIONS["memory.set"]
     assert revision_policy("memory.update") in core_set
     assert revision_policy("memory.update") in TOOL_DESCRIPTIONS["memory.update"]
-    assert revision_policy("loom_memory_set") in ATOMIC_TOOL_DESCRIPTIONS["memory.set"]
+    assert revision_policy("memory.set") in ATOMIC_TOOL_DESCRIPTIONS["memory.set"]
     assert "revision policy" in ATOMIC_TOOL_DESCRIPTIONS["memory.delete"]
     # the contradiction is gone: a changed fact is never "a NEW memory_key"
     assert "NEW memory_key" not in core_set
@@ -267,13 +460,15 @@ def test_roster_sizes_derive_from_the_registry():
 def test_listing_budget_chars_over_four():
     """The ceilings sit a little above the current listings; a new tool or a
     long description pays for itself here."""
-    assert _tok({"tools": _listing("core", True)}) <= 9_300
-    assert _tok({"tools": _listing("core", False)}) <= 5_800
-    assert _tok({"tools": _listing("coding", False)}) <= 8_850
+    assert _tok({"tools": _listing("core", True)}) <= 9_475
+    assert _tok({"tools": _listing("core", False)}) <= 5_950
+    assert _tok({"tools": _listing("coding", False)}) <= 9_100
     assert _tok({"tools": _listing("atomic", False)}) <= 4_500
-    # every listed tool, on the widest listing (it carries everything core lists)
-    for t in _listing("all", True):
-        assert len(t["description"]) // 4 <= 480, f"{t['name']} description is over budget"
+    # every listed tool on every listing: a text's length depends on the listing,
+    # since an unlisted op gains "(via loom_op)" where a listed one is renamed
+    for toolset, code in _TOOLSETS:
+        for t in _listing(toolset, code):
+            assert len(t["description"]) // 4 <= 480, f"{toolset}: {t['name']} is over budget"
 
 
 def test_tracker_toolset_lists_the_tracker_record_bisect_pr_check_and_impact_within_its_own_budget():

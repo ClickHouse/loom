@@ -15,8 +15,9 @@ from server.operations.toolsets import (
     MCP_TOOLSETS,
     curated_roster,
     op_toolsets,
+    resolve_toolset,
 )
-from server.transport.mcp_tools import _tools_descriptor, resolve_toolset
+from server.transport.mcp_tools import _tools_descriptor
 
 TASK_OPS = {
     "task.pull",

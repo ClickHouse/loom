@@ -10,8 +10,14 @@ Everything here runs against a fake store: no ClickHouse.
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
+import re
+import textwrap
+from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -22,7 +28,10 @@ from server.insights.app import mentor_brief as handler
 from server.insights.app import mentor_rules
 from server.observability import ledger
 from server.settings import settings
+from server.transport import mcp_call, mcp_op, mcp_outcome, mcp_primer, mcp_tools
+from server.transport.mcp_op import OP_MENTION
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.loom_op_marks import assert_marked_once_outside_parentheses
 
 
 class _CH:
@@ -216,6 +225,17 @@ def _profile(**kw: Any) -> mentor_rules.MentorProfile | None:
     return asyncio.run(m.mentor_profile("o", "ns", kw.pop("agent", "a"), **kw))
 
 
+def _assert_rendered_cleanly(text: str) -> None:
+    """A hint as MCP renders it: each unlisted op marked once, no marker inside a
+    parenthesis."""
+    # MCP strips the note, so the op it names must be in the text it leaves
+    if note := mentor_rules._LOOM_OP_NOTE_RE.search(text):
+        assert note.group(1) in mentor_rules.without_listing_note(text), text
+    for toolset in ("core", "coding", "tracker", "tasks", "atomic", "readonly"):
+        rendered = mcp_tools.mentor_text_for_toolset(text, toolset)
+        assert_marked_once_outside_parentheses(rendered, toolset)
+
+
 def _codes(p: mentor_rules.MentorProfile | None) -> set[str]:
     return {h.code for h in (p.hints if p else ())}
 
@@ -276,10 +296,10 @@ def test_an_object_store_agent_is_told_to_recall_by_meaning_and_move_the_lease(
     assert loop is not None and "sre/lease" in loop.text and "working_memory" in loop.text
     # The sentence names the READ key with its read count and says nothing
     # about writes (the hottest written key is another row).
-    assert "(sre/lease) was read 116×" in loop.text and "written" not in loop.text
+    assert "key 'sre/lease' was read 116×" in loop.text and "written" not in loop.text
     key_only = p.hint("recall_by_key_only")
-    assert key_only is not None and key_only.evidence == {"gets": 6606, "searches": 52}
-    # memory.search is listed as loom_search; the note names the op that is not
+    assert key_only is not None and key_only.evidence == {"gets": 6606, "recalls": 52}
+    # search.query is listed as loom_search; the note names the op that is not
     assert key_only.text.endswith(" (call working_memory.set via loom_op)")
 
 
@@ -306,6 +326,7 @@ def test_tracker_hint_needs_a_source_test_tagged_writes_and_no_qa_calls(
     }
     text = p.hint("tracker_unused").text  # type: ignore[union-attr]
     assert "0 tracker.* calls" in text and "qa." not in text
+    assert "the tracker source ('qa') answers tracker.similar" in text
     m.reset_cache()
     _wire(
         monkeypatch,
@@ -381,7 +402,8 @@ def test_every_other_rule_fires_on_its_fact_and_the_profile_keeps_eight(
     for h in full:
         assert len(h.text) <= mentor_rules.HINT_CHARS
         assert h.ops
-    # loom_search is listed under another name; the note names the op that is not
+        _assert_rendered_cleanly(h.text)
+    # search.query is on every listing (as loom_search); the note names the op that is not
     abstains = next(h for h in full if h.code == "search_abstains")
     assert abstains.text.endswith(" (call namespace.audit via loom_op)")
 
@@ -444,9 +466,11 @@ def test_reliance_rules_fire_on_chunk_credit_missing_keys_and_read_misses(
     assert by["relied_on_chunk_ids"].severity == "warning"
     assert "450 of 1000" in by["relied_on_chunk_ids"].text
     assert "parent_memory_key" in by["relied_on_chunk_ids"].text
-    assert by["relied_on_chunk_ids"].ops == ("run.complete", "memory.bulk_get")
+    assert by["relied_on_chunk_ids"].ops == ("run.complete", "memory.get")
     assert "80 of 1000" in by["relied_on_missing_keys"].text
     assert "1100 of 4000" in by["reads_miss"].text
+    for h in p.hints:
+        _assert_rendered_cleanly(h.text)
     # the facts come from the run table and the ledger's outcome columns
     assert any(
         "FROM loom.agent_runs FINAL" in q and "arrayJoin(memories_used)" in q for q in _last_ch.sqls
@@ -600,6 +624,24 @@ def test_pack_section_renders_three_hints_within_the_cap_and_nothing_when_quiet(
     assert len(body) <= m.PACK_CHARS and body.count("·") <= 1
 
 
+def test_the_pack_section_names_ops_for_the_mcp_listing_rendered_whole() -> None:
+    note = " (call working_memory.set via loom_op)"
+    p = _fake_profile(
+        _h("a", text="search.query recalls by meaning; keep it with working_memory.set." + note),
+        _h("b", text="working_memory.set holds it."),
+    )
+    assert "search.query" in m.render_pack_section(p)  # HTTP: as stored
+    token = m.hint_namer.set(mcp_tools.mentor_namer("core"))
+    try:
+        body = m.render_pack_section(p)
+    finally:
+        m.hint_namer.reset(token)
+    assert "loom_search recalls" in body and "search.query" not in body
+    # rendered whole: each op marked once, the tail named for the listing too
+    assert "(call " not in body and body.count("working_memory.set (via loom_op)") == 1
+    assert body.endswith("mentor.brief (via loom_op) has the evidence")
+
+
 def test_top_hint_line_reads_only_the_cache() -> None:
     assert m.top_hint_line("o", "ns", "a") == ""
     m._cache_put(("o", "ns", "a"), 10**12, _fake_profile(_h("code_index_unused")))
@@ -626,8 +668,9 @@ def test_the_dashboard_and_the_assistant_get_no_call_hint() -> None:
 
 def test_get_miss_fires_once_per_session() -> None:
     hint = _call("memory.get", {"memory_key": "deploy_window"}, {"found": False})
-    assert hint is not None and hint[0] == "get_miss" and "deploy_window" in hint[1]
-    assert "memory.search" in hint[1]
+    # the hint points at the call's own key, never a copy the clip could change
+    assert hint is not None and hint[0] == "get_miss" and "no row at that key" in hint[1]
+    assert "search.query" in hint[1]
     assert _call("memory.get", {"memory_key": "other"}, {"found": False}) is None
     assert _call("memory.get", {"memory_key": "other"}, {"found": False}, session="s2") is not None
     # A found row says nothing.
@@ -639,7 +682,7 @@ def test_get_miss_fires_once_per_session() -> None:
 
 def test_set_rules_duplicate_large_value_and_churn() -> None:
     dup = _call("memory.set", {"memory_key": "k", "value": "v"}, {"duplicate_of": "k0"})
-    assert dup is not None and dup[0] == "set_duplicate" and "k0" in dup[1]
+    assert dup is not None and dup[0] == "set_duplicate" and "duplicate_of" in dup[1]
     big = _call("memory.set", {"memory_key": "k2", "value": "x" * 5000}, {"memory_id": "1"})
     assert big is not None and big[0] == "set_large_value" and "knowledge.upsert" in big[1]
     for i in range(4):
@@ -797,13 +840,12 @@ def test_emit_agent_event_carries_the_current_hint_code(monkeypatch: pytest.Monk
 
 
 def test_mcp_helper_attaches_the_hint_and_publishes_the_code() -> None:
-    from server.transport import mcp_outcome
-
     hint = mcp_outcome._mentor_hint(
         "memory.get",
         {"org": "o", "namespace": "ns", "agent": "a", "memory_key": "k"},
         {"found": False},
         "mcp-session-1",
+        mcp_tools.mentor_namer(None),
     )
     assert hint is not None and hint[0] == "get_miss"
     assert ledger.current_hint_code() == "get_miss"
@@ -814,6 +856,7 @@ def test_mcp_helper_attaches_the_hint_and_publishes_the_code() -> None:
             {"org": "o", "namespace": "ns", "memory_key": "k2"},
             {"found": False},
             "mcp-session-1",
+            mcp_tools.mentor_namer(None),
         )
         is None
     )
@@ -835,7 +878,7 @@ def test_http_helper_rides_the_hint_as_headers() -> None:
         resp,
     )
     assert resp.headers["X-Loom-Hint-Code"] == "get_miss"
-    assert "memory.search" in resp.headers["X-Loom-Hint"]
+    assert "search.query" in resp.headers["X-Loom-Hint"]
     assert ledger.current_hint_code() == "get_miss"
     ledger.set_hint_context("")
 
@@ -899,6 +942,31 @@ def test_pack_renders_the_mentor_section_and_stays_silent_otherwise(
 
 
 # --- mentor.brief ---------------------------------------------------------------------
+
+
+def test_mentor_brief_over_mcp_names_ops_for_the_listing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.insights.api.models_mentor import MentorBriefInput
+
+    note = " (call working_memory.set via loom_op)"
+    hint = _h("a", text="search.query recalls by meaning; keep it with working_memory.set." + note)
+
+    async def _p(*a: Any, **k: Any) -> Any:
+        return _fake_profile(hint)
+
+    monkeypatch.setattr(m, "mentor_profile", _p)
+    monkeypatch.setattr(handler, "get_client", lambda: _CH())
+    token = m.hint_namer.set(mcp_tools.mentor_namer("core"))
+    try:
+        out = asyncio.run(
+            handler.handle_mentor_brief(MentorBriefInput(org="o", namespace="ns", agent="a"))
+        )
+    finally:
+        m.hint_namer.reset(token)
+    text = out.hints[0].text
+    assert "loom_search recalls" in text and "(call " not in text
+    assert "working_memory.set (via loom_op)" in text
+    whens = " ".join(plane.when for plane in out.planes)
+    assert "search.query" not in whens and "loom_search" in whens
 
 
 def test_mentor_brief_returns_the_profile_planes_and_adoption(
@@ -1483,8 +1551,6 @@ def test_the_dashboards_own_traffic_is_never_mentored() -> None:
 def test_handshake_warms_the_profile_when_nothing_is_cached(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.transport import mcp_call, mcp_primer
-
     warmed: list[tuple[str, str, str]] = []
     monkeypatch.setattr(m, "warm_profile", lambda o, n, a: warmed.append((o, n, a)))
 
@@ -1498,6 +1564,177 @@ def test_handshake_warms_the_profile_when_nothing_is_cached(
     m._cache_put(("o", "ns", "a"), 10**12, _fake_profile(_h("code_index_unused")))
     line = asyncio.run(mcp_primer._mentor_line(None))
     assert "code_index_unused" in line and len(warmed) == 1
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [{"repos": 1, "tracker_sources": ["qa"]}, {"repos": 1}, {"tracker_sources": ["qa"]}, {}],
+)
+def test_a_fixed_text_call_hint_fits_whole_with_its_note(facts: dict[str, Any]) -> None:
+    """MCP strips the note, so a clip would leave the agent cut advice: these fit."""
+    # the longest issue number the reference pattern takes
+    args = {"memory_key": "bugs/9", "value": _TRACE + "\nsee #1234567"}
+    for rule in (mentor_rules._rule_set_stack_trace, mentor_rules._rule_set_issue_reference):
+        out = rule("memory.set", args, {}, facts, {})
+        assert out is not None, rule.__name__
+        assert len(out[1]) <= mentor_rules.HINT_CHARS, out[1]
+        assert mentor_rules.clip_keeping_note(out[1]) == out[1]
+        _assert_rendered_cleanly(out[1])
+        names = re.findall(rf"\b{mcp_op.OP_MENTION}\b", mentor_rules.without_listing_note(out[1]))
+        for toolset in ("core", "coding"):
+            rendered = mcp_tools.mentor_text_for_toolset(out[1], toolset)
+            assert len(rendered) <= mentor_rules.HINT_CHARS + len(names) * len(" (via loom_op)")
+
+
+def test_a_clipped_call_hint_keeps_its_note_whole() -> None:
+    note = " (call code.trace via loom_op)"
+    text = mentor_rules.clip_keeping_note("x " * 200 + "code.trace." + note)
+    assert len(text) <= mentor_rules.HINT_CHARS and text.endswith("…" + note)
+
+
+def test_several_echoed_names_keep_their_quotes_and_the_advice() -> None:
+    names = ["r" * 70 + str(i) for i in range(3)]
+    echo = mentor_rules._quoted_list(names)
+    assert echo.count("'") == 6 and len(echo) <= mentor_rules.ECHO_CHARS + 12
+    text = mentor_rules.clip_keeping_note(f"3 indexed repos ({echo}) and 0 code.* calls: advice.")
+    assert text.endswith("advice.")
+
+
+def test_an_empty_echoed_list_is_only_its_count() -> None:
+    assert mentor_rules._quoted_list([], total=3) == "+3"
+    assert mentor_rules._quoted_list([]) == ""
+
+
+def test_a_long_echoed_list_is_counted_past_three() -> None:
+    echo = mentor_rules._quoted_list([f"source-{i}" for i in range(12)])
+    assert echo.count("'") == 6 and echo.endswith(", +9")
+    assert len(echo) <= mentor_rules.ECHO_CHARS + 12
+
+
+def test_the_initialize_instructions_mark_each_op_once_with_a_mentor_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rules and the cached mentor line are rendered apart; joined, each op is
+    still marked on its first mention only."""
+
+    async def _defaults(*_args: Any) -> dict[str, str]:
+        return {"org": "o", "namespace": "ns", "agent": "a"}
+
+    monkeypatch.setattr(mcp_primer, "_caller_defaults", _defaults)
+    text = "keep it with working_memory.set" + mentor_rules._unlisted(("working_memory.set",))
+    m._cache_put(("o", "ns", "a"), 10**12, _fake_profile(_h("scratch_unused", text=text)))
+    joined = asyncio.run(mcp_primer._initialize_instructions(None, "core"))
+    assert "keep it with working_memory.set" in joined
+    assert (
+        joined.count("working_memory.set` (via loom_op)")
+        + joined.count("working_memory.set (via loom_op)")
+        == 1
+    )
+
+
+def test_two_long_hot_keys_leave_the_coordination_advice_whole() -> None:
+    c = mentor_rules._Ctx(
+        usage={},
+        sessions=2,
+        facts={
+            "max_sets_one_key": 12,
+            "max_gets_one_key": 40,
+            "hot_set_key": "w" * 70,
+            "hot_get_key": "r" * 70,
+        },
+        agent="a",
+    )
+    sentence, _ = mentor_rules._coordination_sentence(c, True, True)
+    assert sentence.count("'") == 4 and len(sentence) <= mentor_rules.ECHO_CHARS + 80
+
+
+def test_an_echoed_value_that_spells_a_note_is_not_taken_for_one() -> None:
+    fake = "x (call memory.clear via loom_op)"
+    text = mentor_rules.clip_keeping_note(
+        f"this write duplicates {mentor_rules._quoted(fake)}: revise."
+    )
+    assert text.endswith(": revise.")
+    assert "(call memory.clear via loom_op)" in mcp_tools.mentor_text_for_toolset(text, "core")
+
+
+def test_following_the_reading_hint_through_search_query_clears_it() -> None:
+    """The reading rules advise search.query, so a search.query call counts as a recall."""
+    keyed = {"memory.get": 60}
+    rules = mentor_rules.evaluate_rules
+    before = {h.code for h in rules(keyed, 3, {}, agent="a", max_hints=32)}
+    after = {h.code for h in rules({**keyed, "search.query": 20}, 3, {}, agent="a", max_hints=32)}
+    assert "recall_by_key_only" in before and "recall_by_key_only" not in after
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "tracker.flaky",
+        "user's memory.get",
+        "a\nmemory.apply",
+        "s tracker.flaky now",
+        "k" * 190 + " memory.apply" + "x" * 100,
+    ],
+)
+def test_an_echoed_key_comes_through_rendering_as_written(key: str) -> None:
+    # a hint the length budget clips keeps the value's closing quote
+    text = mentor_rules.clip_keeping_note(mentor_rules._quoted(key) + " was set 5 times")
+    rendered = mcp_tools.mentor_text_for_toolset(text, "core")
+    assert rendered == text and "\n" not in text and text.endswith("was set 5 times")
+
+
+def test_a_call_hint_on_mcp_names_ops_for_its_listing() -> None:
+    args = {"org": "o", "namespace": "ns", "agent": "a", "memory_key": "k"}
+    core = mcp_outcome._mentor_hint(
+        "memory.get", args, {"found": False}, "s-core", mcp_tools.mentor_namer("core")
+    )
+    coding = mcp_outcome._mentor_hint(
+        "memory.get", args, {"found": False}, "s-coding", mcp_tools.mentor_namer("coding")
+    )
+    assert core is not None and coding is not None
+    assert "loom_search recalls by meaning" in core[1] and "memory.list (via loom_op)" in core[1]
+    assert "loom_search recalls by meaning" in coding[1] and "(call " not in coding[1]
+
+
+def test_no_hint_text_writes_an_op_as_a_call_or_names_a_hidden_op() -> None:
+    """The handshake renders hint texts as it renders tool descriptions. A hidden
+    op named in prose is one the user acts on, and its note says so (conflicts)."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.operations.toolsets import _MCP_HIDDEN_OPS
+
+    tree = ast.parse(Path(mentor_rules.__file__).read_text())
+    prose = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and " " in str(n.value)]
+    for text in prose:
+        for name, paren in re.findall(rf"\b({OP_MENTION})(\(?)", str(text)):
+            if name not in OPERATIONS_BY_NAME:
+                continue
+            assert not paren, f"{name}( in {text!r}"
+            assert name not in _MCP_HIDDEN_OPS or name.startswith("conflicts."), text
+    # a plane's `when` carries no note, so it names no hidden op at all
+    for _, _, when, _ in mentor_rules.PLANES:
+        assert not any(op in when for op in _MCP_HIDDEN_OPS), when
+
+
+def test_the_handshake_mentor_line_names_ops_for_its_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hint's ops are named as the connection's listing names them, and the
+    core-listing note the stored text carries does not ride along."""
+
+    async def _defaults(auth: Any, client_name: Any) -> dict[str, str]:
+        return {"org": "o", "namespace": "ns", "agent": "a"}
+
+    monkeypatch.setattr(mcp_primer, "_caller_defaults", _defaults)
+    # the stored text carries the note _unlisted writes for an op core leaves out
+    note = mentor_rules._unlisted(("working_memory.set",))
+    assert note
+    text = "keep it with working_memory.set" + note
+    m._cache_put(("o", "ns", "a"), 10**12, _fake_profile(_h("scratch_unused", text=text)))
+    core = asyncio.run(mcp_primer._mentor_line(None, None, "core"))
+    coding = asyncio.run(mcp_primer._mentor_line(None, None, "coding"))
+    assert "keep it with working_memory.set (via loom_op)" in core and "(call " not in core
+    assert "keep it with loom_working_memory_set" in coding and "(call " not in coding
+    assert "`mentor.brief` (via loom_op)" in core
 
 
 def test_brief_for_an_anonymous_caller_is_about_the_top_writer(
@@ -1628,8 +1865,8 @@ def test_coordination_sentence_gives_each_key_its_own_count(
     assert p is not None
     loop = p.hint("coordination_loop")
     assert loop is not None
-    assert "one key (a/lease) was written 12×" in loop.text
-    assert "one key (b/pointer) was read 40×" in loop.text
+    assert "key 'a/lease' was written 12×" in loop.text
+    assert "key 'b/pointer' was read 40×" in loop.text
     assert loop.evidence["key"] == "a/lease" and loop.evidence["hot_get_key_chars"] == 20
     m.reset_cache()
     _wire(
@@ -1646,7 +1883,7 @@ def test_coordination_sentence_gives_each_key_its_own_count(
     p = _profile()
     assert p is not None
     loop = p.hint("coordination_loop")
-    assert loop is not None and "one key (a/lease) was written 12× and read 40×" in loop.text
+    assert loop is not None and "key 'a/lease' was written 12× and read 40×" in loop.text
 
 
 def _tiers(*specs: tuple[str, str, str]) -> list[SimpleNamespace]:
@@ -1686,7 +1923,9 @@ def test_code_index_counts_distinct_repos_the_agents_principal_may_read(
     assert p.facts["repos"] == 1 and p.facts["repo_entries"] == 2
     assert p.facts["repos_total"] == 5 and p.facts["repo_names"] == ["acme/ch"]
     hint = p.hint("code_index_unused")
-    assert hint is not None and hint.text.startswith("1 indexed repo (acme/ch) and 0 code.* calls")
+    assert hint is not None and hint.text.startswith(
+        "1 indexed repo ('acme/ch') and 0 code.* calls"
+    )
     grants_sql = next(s for s in ch.sqls if M_GRANTS in s)
     assert "inherit_creator_grants" in grants_sql and "loom.service_accounts FINAL" in grants_sql
     m.reset_cache()
@@ -1716,7 +1955,7 @@ def test_code_index_counts_distinct_repos_the_agents_principal_may_read(
     p = _profile()
     assert p is not None and p.facts["repos"] == 4
     hint = p.hint("code_index_unused")
-    assert hint is not None and "4 indexed repos (acme/ch, acme/go, acme/py, +1)" in hint.text
+    assert hint is not None and "4 indexed repos ('acme/ch', 'acme/go', 'acme/py', +1)" in hint.text
 
 
 def test_a_tag_naming_a_file_is_not_a_tracker_tag() -> None:
@@ -1752,7 +1991,7 @@ def test_records_hint_states_the_prefix_share_and_skips_aggregate_when_used(
     assert p is not None
     hint = p.hint("records_for_identities")
     assert hint is not None
-    assert "801 writes keyed by a number, 60 of them finding_phase_d_pr<id>" in hint.text
+    assert "801 writes keyed by a number, 60 of them under 'finding_phase_d_pr'" in hint.text
     assert "memory.aggregate" not in hint.text
     m.reset_cache()
     _wire(
@@ -1851,3 +2090,160 @@ def test_a_long_hint_keeps_its_listing_note(monkeypatch: pytest.MonkeyPatch) -> 
     loop = p.hint("coordination_loop")
     assert loop is not None and len(loop.text) <= mentor_rules.HINT_CHARS
     assert loop.text.endswith(" (call working_memory.set via loom_op)")
+
+
+def _note_and_its_text(rule: Callable[..., Any]) -> list[tuple[str, str]]:
+    """Each ``text + _unlisted((ops))`` in a call rule: the ops and the text before them."""
+    pairs = []
+    for node in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(rule)))):
+        right = node.right if isinstance(node, ast.BinOp) else None
+        if isinstance(right, ast.Call) and getattr(right.func, "id", "") == "_unlisted":
+            consts = [c.value for c in ast.walk(node.left) if isinstance(c, ast.Constant)]
+            text = "".join(v for v in consts if isinstance(v, str))
+            pairs += [
+                (op.value, text) for op in ast.walk(right.args[0]) if isinstance(op, ast.Constant)
+            ]
+    return pairs
+
+
+def test_a_call_rule_names_in_its_text_each_op_its_note_may_name() -> None:
+    """MCP strips the note, so an op the note names must be in the hint already."""
+    noted = {rule.__name__: _note_and_its_text(rule) for rule in mentor_rules.CALL_RULES}
+    assert {name for name, pairs in noted.items() if pairs} == {
+        "_rule_set_stack_trace",
+        "_rule_set_issue_reference",
+        "_rule_set_large_value",
+        "_rule_run_over_budget",
+    }
+    for name, pairs in noted.items():
+        for op, text in pairs:
+            assert op in text, (name, op, text)
+
+
+_KEYED = {"memory.get": 6606, "memory.search": 52, "memory.set": 1687}
+
+
+def _profile_hint(code: str, usage: dict[str, int], sessions: int, facts: dict[str, Any]) -> str:
+    hints = mentor_rules.evaluate_rules(usage, sessions, facts, max_hints=32)
+    hint = next((h for h in hints if h.code == code), None)
+    assert hint is not None, code
+    return hint.text
+
+
+def _call_rule_hint(
+    rule: Callable[..., Any],
+    op: str,
+    args: dict[str, Any],
+    *,
+    res: dict[str, Any] | None = None,
+    facts: dict[str, Any] | None = None,
+    st: dict[str, Any] | None = None,
+) -> str:
+    out = rule(op, args, res or {}, facts or {}, st or {})
+    assert out is not None, rule.__name__
+    return mentor_rules.clip_keeping_note(out[1])
+
+
+def _hot(set_key: str, get_key: str) -> dict[str, Any]:
+    return {
+        "max_sets_one_key": 40,
+        "max_gets_one_key": 116,
+        "hot_set_key": set_key,
+        "hot_get_key": get_key,
+    }
+
+
+# Each rule that echoes a caller value, as a hint for that value.
+_ECHOES: dict[str, Callable[[str], str]] = {
+    "code_index_unused": lambda v: _profile_hint(
+        "code_index_unused",
+        {"memory.set": 40},
+        1,
+        {"repos": 16, "repo_names": [v, v + "-go", v + "-js"]},
+    ),
+    "coordination_loop, two keys": lambda v: _profile_hint(
+        "coordination_loop", _KEYED, 30, _hot(v, v + "/next")
+    ),
+    "coordination_loop, one key": lambda v: _profile_hint(
+        "coordination_loop", _KEYED, 30, _hot(v, v)
+    ),
+    "tracker_unused": lambda v: _profile_hint(
+        "tracker_unused",
+        {"memory.set": 40},
+        5,
+        {"tracker_tagged_sets": 12, "tracker_sources": [v, v + "-ci", v + "-qa"]},
+    ),
+    "records_for_identities": lambda v: _profile_hint(
+        "records_for_identities",
+        {"memory.set": 40},
+        5,
+        {"id_keyed_sets": 40, "top_prefix_sets": 30, "top_prefix": v},
+    ),
+    "set_churn": lambda v: _call_rule_hint(
+        mentor_rules._rule_set_churn, "memory.set", {"memory_key": v}, st={"set_keys": {v: 9}}
+    ),
+    "search_identifier_query": lambda v: _call_rule_hint(
+        mentor_rules._rule_search_identifier,
+        "memory.search",
+        {"query": v + "::merge"},
+        res={"abstain": True},
+        facts={"repos": 1},
+    ),
+}
+_LONG = "k" * 70
+
+
+@pytest.mark.parametrize("rule", sorted(_ECHOES))
+def test_a_hint_with_a_typical_echoed_value_keeps_all_its_advice(rule: str) -> None:
+    text = _ECHOES[rule]("StorageShared")
+    assert not mentor_rules.without_listing_note(text).endswith("…"), text
+
+
+@pytest.mark.parametrize("rule", sorted(_ECHOES))
+def test_a_hint_with_a_long_echoed_value_keeps_its_quotes_and_its_note_op(rule: str) -> None:
+    text = _ECHOES[rule](_LONG)
+    assert len(text) <= mentor_rules.HINT_CHARS
+    # the clip lands after the last echoed value, never inside one
+    assert mentor_rules.without_listing_note(text).count("'") % 2 == 0, text
+    _assert_rendered_cleanly(text)
+
+
+def test_the_code_index_hint_keeps_all_its_advice_after_a_long_echo() -> None:
+    assert _ECHOES["code_index_unused"](_LONG).endswith("code.grep for a literal.")
+
+
+@pytest.mark.parametrize("toolset", ["core", "coding", "readonly"])
+def test_a_rendered_hint_grows_only_by_one_name_change_per_op(toolset: str) -> None:
+    """HINT_CHARS bounds a stored hint; rendering renames or marks each op it names."""
+    text = _ECHOES["code_index_unused"](_LONG)
+    names = re.findall(rf"\b{mcp_op.OP_MENTION}\b", mentor_rules.without_listing_note(text))
+    rendered = mcp_tools.mentor_text_for_toolset(text, toolset)
+    assert len(rendered) <= mentor_rules.HINT_CHARS + len(names) * len(" (via loom_op)")
+
+
+def test_every_rule_that_echoes_a_caller_value_is_in_the_echo_table() -> None:
+    """Pins each function's echo count and the echoing rules to _ECHOES, so a new
+    echo, even in a function that already has one, fails until the table covers it."""
+    calls = {
+        name: len(re.findall(r"\b_quoted(?:_list)?\(", inspect.getsource(f)))
+        for name, f in vars(mentor_rules).items()
+        if inspect.isfunction(f)
+        and f.__module__ == mentor_rules.__name__
+        and name not in ("_quoted", "_quoted_list")
+    }
+    assert {n: k for n, k in calls.items() if k} == {
+        "_rules_planes": 2,
+        "_coordination_sentence": 3,
+        "_rules_shapes": 1,
+        "_rules_identity": 1,  # agent_unnamed echoes only '-' or '*'
+        "_rule_set_churn": 1,
+        "_rule_search_identifier": 1,
+    }
+    assert {key.split(",")[0] for key in _ECHOES} == {
+        "code_index_unused",
+        "tracker_unused",
+        "coordination_loop",
+        "records_for_identities",
+        "set_churn",
+        "search_identifier_query",
+    }

@@ -1,15 +1,18 @@
-"""MCP transport — tool descriptors, the `loom_search` rendering and the
-per-call ledger rows.
+"""MCP transport — tool descriptors, the `loom_search` rendering, naming ops
+for a listing and the per-call ledger rows.
 
 Builds the `tools/list` descriptors (registry-derived + synthetic), renders
 the `search.query` op's result as the `loom_search` tool answers it (a text
-summary plus the lean sections), and writes a call's ledger row
-(`_emit_mcp_event`). Never imports ``mcp_call`` or ``server.transport.mcp``.
+summary plus the lean sections), names ops in other text as a listing does
+(`name_ops_for_toolset`, `mentor_namer`, `hint_naming`), and writes a call's
+ledger row (`_emit_mcp_event`). Never imports ``mcp_call`` or ``server.transport.mcp``.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterator, Set
+from contextlib import contextmanager
 from typing import Any, get_args
 
 from server.memory.api.models_loom_search import SearchInput
@@ -24,11 +27,10 @@ from server.operations.toolsets import (
     ASSISTANT_NAMED_AGENT_OPS,
     SYNTHETIC_TOOL_OPS,
     assistant_ops,
-    canonical_toolset,
     curated_roster,
     is_assistant,
     is_curated,
-    is_toolset,
+    resolve_toolset,
     toolset_parts,
 )
 from server.transport.lean_results import lean_search_result
@@ -51,6 +53,13 @@ from server.transport.mcp_descriptions import (
     TOOL_DESCRIPTIONS as _TOOL_DESCRIPTIONS,
 )
 from server.transport.mcp_descriptions import coding_search_description
+from server.transport.mcp_op import DESCRIPTOR as LOOM_OP_DESCRIPTOR
+from server.transport.mcp_op import (
+    LOOM_OP_TOOL_NAME,
+    loom_op_description,
+    name_ops_for_listing,
+    routes_writes,
+)
 from server.transport.mcp_schemas import (
     _shape_schema,
     _strip_blob_fields_from_knowledge,
@@ -66,11 +75,34 @@ log = logging.getLogger(__name__)
 # Tool descriptors (from operation registry)
 # ============================================================
 
-# Tool name → op: how a `tools/call` resolves its op, and its refusal rows name it.
-TOOLS_BY_NAME: dict[str, Operation] = {op.mcp_tool_name: op for op in ALL_OPERATIONS}
+
+def _name_ops_in_fields(schema: Any, listed: Set[str], *, writes: bool) -> Any:
+    """A copy of ``schema`` with every field description rendered for the listing."""
+    if isinstance(schema, list):
+        return [_name_ops_in_fields(item, listed, writes=writes) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key == "description" and isinstance(value, str):
+            out[key] = name_ops_for_listing(value, listed, writes=writes)
+        else:
+            out[key] = _name_ops_in_fields(value, listed, writes=writes)
+    return out
 
 
-def _synthetic_tool_descriptors(toolset: str = "core") -> list[dict[str, Any]]:
+# The hand-written tools every listing but `assistant` carries; the builder
+# below makes one descriptor for each.
+SYNTHETIC_TOOL_NAMES = frozenset(
+    {LOOM_OP_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME, _LOOM_ACTIVATE_TOOL_NAME}
+)
+
+
+def _synthetic_tool_descriptors(
+    toolset: str, listed: Set[str], *, writes: bool
+) -> list[dict[str, Any]]:
+    """The hand-written tools a listing carries. ``listed`` is that listing's tool
+    names and ``writes`` its `routes_writes`."""
     from server.transport.mcp_schemas import collapse_nullable
 
     out = _synthetic_tool_descriptors_core()
@@ -78,6 +110,8 @@ def _synthetic_tool_descriptors(toolset: str = "core") -> list[dict[str, Any]]:
         # The schema-shape rule (inert defaults go) applies to the hand-written
         # synthetic schemas as it does to the registry's.
         d["inputSchema"] = collapse_nullable(d["inputSchema"])
+        if d["name"] == LOOM_OP_TOOL_NAME:  # its text names what this listing leaves out
+            d["description"] = loom_op_description(listed, writes=writes)
     if "coding" in toolset_parts(toolset):
         # The coding tier's activation text (same triggers,
         # one line, no persona-tone clause) and search text (derived).
@@ -90,10 +124,8 @@ def _synthetic_tool_descriptors(toolset: str = "core") -> list[dict[str, Any]]:
 
 
 def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
-    from server.transport.mcp_op import DESCRIPTOR as _LOOM_OP
-
     return [
-        dict(_LOOM_OP),
+        dict(LOOM_OP_DESCRIPTOR),
         {
             "name": _LOOM_SEARCH_TOOL_NAME,
             "description": (
@@ -180,10 +212,10 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
                         "default": "excerpt",
                         "description": (
                             "How much of each memory body to return: excerpt (the default: "
-                            "200 chars, a decision or constraint as stored; fetch the rest "
-                            "with memory.get), full (the 1,200-char stored clip), unit "
-                            "(whole stored values by rank until body_budget_tokens), or "
-                            "none (keys and scores only)."
+                            "200 chars, a decision or constraint as stored), full (the "
+                            "1,200-char stored clip), unit (whole stored values by rank until "
+                            "body_budget_tokens), or none (keys and scores only). Fetch the "
+                            "rest of an excerpt with memory.get."
                         ),
                     },
                 },
@@ -283,19 +315,6 @@ def _tool_annotations(op: Operation) -> dict[str, bool]:
     }
 
 
-def resolve_toolset(requested: str | None, configured: str | None) -> str:
-    """The toolset a listing uses: the per-request ``?toolset=`` override when
-    it names a known toolset, else the deployment's ``settings.mcp_toolset``,
-    else ``core``. An unknown value on either side falls through — a bad
-    query string never widens or narrows the listing silently (
-    the rule ``?schema_profile=`` follows)."""
-    configured_l = canonical_toolset(configured or "core")
-    if not is_toolset(configured_l):
-        configured_l = "core"
-    requested_l = canonical_toolset(requested)
-    return requested_l if requested_l and is_toolset(requested_l) else configured_l
-
-
 # The identity arguments an assistant read lists: the other toolsets hide them, since the
 # caller's own identity fills in, but the assistant writes nothing and reads other writers'
 # rows, so it names the row a search hit showed it.
@@ -365,6 +384,61 @@ def _curated_description(toolset: str, op_name: str) -> str | None:
     return tiered or _TOOL_DESCRIPTIONS.get(op_name)
 
 
+def listed_tool_names(toolset: str | None) -> set[str]:
+    """The tool names a `tools/list` on ``toolset`` shows."""
+    from server.settings import settings
+
+    resolved = resolve_toolset(toolset, settings.mcp_toolset)
+    return _tool_names(listed_ops(resolved), resolved)
+
+
+def name_ops_for_toolset(text: str, toolset: str | None) -> str:
+    """``text`` naming each op as a `tools/list` on ``toolset`` does."""
+    return name_ops_for_listing(text, listed_tool_names(toolset), writes=routes_writes(toolset))
+
+
+def mentor_namer(toolset: str | None) -> Callable[[str], str]:
+    """Names a stored mentor hint as ``toolset``'s listing does, working the listing
+    out on first use. The core-listing note goes: the listing marks an op it leaves
+    out itself."""
+    from server.insights.app.mentor_rules import without_listing_note
+
+    listing: tuple[set[str], bool] | None = None
+
+    def name(text: str) -> str:
+        nonlocal listing
+        if listing is None:
+            listing = (listed_tool_names(toolset), routes_writes(toolset))
+        return name_ops_for_listing(without_listing_note(text), listing[0], writes=listing[1])
+
+    return name
+
+
+@contextmanager
+def hint_naming(toolset: str | None) -> Iterator[Callable[[str], str]]:
+    """Sets `mentor.hint_namer` for one tool call, so the mentor text the handler
+    renders names ops as ``toolset``'s listing does; yields the namer for the
+    call's own hint."""
+    from server.insights.app.mentor import hint_namer
+
+    namer = mentor_namer(toolset)
+    token = hint_namer.set(namer)
+    try:
+        yield namer
+    finally:
+        hint_namer.reset(token)
+
+
+def mentor_text_for_toolset(text: str, toolset: str | None) -> str:
+    return mentor_namer(toolset)(text)
+
+
+def _tool_names(ops: list[Operation], resolved: str) -> set[str]:
+    """``ops``' tool names plus the synthetic ones, on a resolved toolset."""
+    names = {op.mcp_tool_name for op in ops}
+    return names if is_assistant(resolved) else names | SYNTHETIC_TOOL_NAMES
+
+
 def listed_ops(toolset: str | None) -> list[Operation]:
     """The registry ops a `tools/list` on ``toolset`` (the per-request
     ``?toolset=`` value, resolved against the deployment's) lists, in registry
@@ -417,16 +491,22 @@ async def _tools_descriptor(
     """Build the MCP tools/list response.
 
     Description is `_TOOL_DESCRIPTIONS[op.name]` if present, else a metadata
-    fallback. The caller's default-workspace context is delivered once via
-    the `initialize` `instructions` field, not duplicated per tool; descriptors
-    are caller-independent. ``toolset`` is the per-request ``?toolset=`` override.
+    fallback, with the ops it names rendered for this listing
+    (`name_ops_for_listing`; every schema field description the profile sends
+    too). The caller's default-workspace context is delivered once via the
+    `initialize` `instructions` field, not duplicated per tool; descriptors
+    are caller-independent. ``toolset`` is the per-request ``?toolset=``
+    override.
     """
     from server.settings import settings
 
     toolset = resolve_toolset(toolset, settings.mcp_toolset)
     always_load = {n.strip() for n in settings.mcp_always_load_tools.split(",") if n.strip()}
     descriptors: list[dict[str, Any]] = []
-    for op in listed_ops(toolset):
+    ops = listed_ops(toolset)
+    listed = _tool_names(ops, toolset)
+    writes = routes_writes(toolset)
+    for op in ops:
         custom = _curated_description(toolset, op.name)
         if custom:
             desc = custom
@@ -463,7 +543,7 @@ async def _tools_descriptor(
             descriptor["_meta"] = {"anthropic/alwaysLoad": True}
         descriptors.append(descriptor)
     if not is_assistant(toolset):
-        descriptors.extend(_synthetic_tool_descriptors(toolset))
+        descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,
@@ -476,6 +556,15 @@ async def _tools_descriptor(
     profile = str(schema_profile or default).lower()
     if profile not in SCHEMA_PROFILES:
         profile = default  # an unknown request value never widens or narrows silently
+    # only the full profile sends output schemas
+    schemas = ("inputSchema", "outputSchema") if profile == "full" else ("inputSchema",)
+    for d in descriptors:
+        if d["name"] == LOOM_OP_TOOL_NAME:  # built for this listing already
+            continue
+        d["description"] = name_ops_for_listing(d["description"], listed, writes=writes)
+        for schema in schemas:
+            if schema in d:
+                d[schema] = _name_ops_in_fields(d[schema], listed, writes=writes)
     return apply_schema_profile(descriptors, profile)
 
 

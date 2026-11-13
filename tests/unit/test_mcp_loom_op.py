@@ -1,15 +1,17 @@
 """`loom_op` reaches an op the roster leaves unlisted.
 
-Claude Code's MCP client calls only tools it was listed, so ops the docs call
-"callable by name" (tracker.flaky, task.pull, …) need a listed way in.
+Claude Code's MCP client calls only tools it was listed, so ops a listing names
+with "(via loom_op)" (tracker.flaky, task.pull, …) need a listed way in.
 `loom_op {op, arguments}` is rewritten
 into the target's own `tools/call` before authorization, so it runs the same
 path a listed tool runs."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import server.transport.mcp as mcp
 import server.transport.mcp_call as mcp_call
 from server.auth.jwt import mint_token
+from server.operations.registry import ALL_OPERATIONS, OPERATIONS_BY_NAME
 from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.settings import settings
 from server.transport import mcp_op
@@ -55,8 +58,6 @@ def _client(monkeypatch: pytest.MonkeyPatch, *, authed: bool) -> TestClient:
 
 @pytest.mark.parametrize("toolset", ["core", "coding", "tracker", "tasks", "atomic", "readonly"])
 def test_every_roster_lists_loom_op(toolset: str) -> None:
-    import asyncio
-
     names = {t["name"] for t in asyncio.run(_tools_descriptor(toolset=toolset))}
     assert "loom_op" in names, toolset
 
@@ -101,6 +102,33 @@ def test_loom_op_runs_the_target_through_the_listed_tool_path(
     assert seen and seen[0].test_name == "02346_text_index" and seen[0].namespace == "n"
 
 
+def test_a_handler_over_mcp_names_mentor_ops_for_the_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A handler run over MCP sees the call's `hint_namer`, as context.pack and
+    mentor.brief do; `test_name` only carries the rendered text back out."""
+    from server.insights.app import mentor
+
+    tool = "loom_tracker_flaky"
+    op = mcp_call.TOOLS_BY_NAME[tool]
+
+    async def _handler(inp: Any) -> Any:
+        return op.output_model(
+            test_name=mentor.named_for_caller("search.query"), verdict="no_flaky_signal"
+        )
+
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, tool, dataclasses.replace(op, handler=_handler))
+
+    async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return {"org": "o", "namespace": "n", "agent": "claude-code"}
+
+    monkeypatch.setattr(mcp_call, "_caller_defaults", _defaults)
+    r = _client(monkeypatch, authed=False).post(
+        "/mcp", json=_call("tracker.flaky", {"test_name": "02346_text_index"})
+    )
+    assert r.json()["result"]["structuredContent"]["test_name"] == "loom_search"
+
+
 def test_a_hidden_op_is_refused_as_a_direct_call_is(monkeypatch: pytest.MonkeyPatch) -> None:
     hidden = sorted(_MCP_HIDDEN_OPS)[0]
     body = _client(monkeypatch, authed=False).post("/mcp", json=_call(hidden)).json()["result"]
@@ -132,6 +160,15 @@ def test_a_readonly_connection_routes_reads_only() -> None:
         _call("tracker.flaky", {"test_name": "t"}), toolset="readonly", auth=None
     )
     assert early is None and rewritten["params"]["name"] == "loom_tracker_flaky"
+
+
+def test_a_readonly_refusal_suggests_only_reads() -> None:
+    by_name = {op.name: op for op in ALL_OPERATIONS}
+    for name in ("task.create", "task.creat"):
+        _, early = mcp_op.route(_call(name, {}), toolset="readonly", auth=None)
+        assert early is not None
+        near = early["result"]["structuredContent"]["did_you_mean"]
+        assert near and all(by_name[n].read_only for n in near), near
 
 
 def test_the_namespace_check_sees_the_inner_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -174,25 +211,38 @@ def test_the_namespace_check_sees_the_inner_arguments(monkeypatch: pytest.Monkey
 
 
 def test_the_description_stays_small() -> None:
-    import json
-
-    assert len(json.dumps(mcp_op.DESCRIPTOR)) // 4 <= 220
+    """Both examples shown, with and without the read-only sentence."""
+    for writes in (True, False):
+        text = mcp_op.loom_op_description(set(), writes=writes)
+        assert len(json.dumps({**mcp_op.DESCRIPTOR, "description": text})) // 4 <= 260
 
 
 @pytest.mark.parametrize(
     "toolset", ["core", "coding", "atomic", "tasks", "tracker", "readonly", "all"]
 )
-def test_the_example_op_is_unlisted_wherever_loom_op_is(
+def test_loom_op_text_is_built_for_its_listing(
     toolset: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The op the description gives as its example is one the listing does not show."""
-    import asyncio
-    import re
-
+    """The listed text is the one built for this listing: every op it names,
+    the example call's included, is one the listing does not show and loom_op
+    routes on it."""
     monkeypatch.setattr(settings, "mcp_code_tools", True)
-    names = {d["name"] for d in asyncio.run(_tools_descriptor(toolset=toolset))}
-    assert "loom_op" in names
-    examples = re.findall(r"such as ([a-z_]+(?:\.[a-z_]+)+)", mcp_op.DESCRIPTOR["description"])
-    assert examples
-    for op in examples:
-        assert "loom_" + op.replace(".", "_") not in names, (toolset, op)
+    tools = asyncio.run(_tools_descriptor(toolset=toolset))
+    names = {d["name"] for d in tools}
+    text = next(d["description"] for d in tools if d["name"] == "loom_op")
+    assert text == mcp_op.loom_op_description(names, writes=mcp_op.routes_writes(toolset))
+    named = set(re.findall(r'"op": "([a-z_]+(?:\.[a-z_]+)+)"', text))
+    named |= set(re.findall(r"\(([a-z_]+\.[a-z_]+)\)", text))
+    assert "memory.related" in named
+    # the example call's arguments are what memory.related takes
+    example = json.loads(re.search(r'(\{"op": "memory\.related".*?\}\})', text).group(1))
+    model = OPERATIONS_BY_NAME["memory.related"].input_model
+    model.model_validate({"org": "o", "namespace": "n", "agent": "a", **example["arguments"]})
+    assert set(example["arguments"]) <= set(model.model_fields)
+    for op in named:
+        assert OPERATIONS_BY_NAME[op].mcp_tool_name not in names, (toolset, op)
+        assert mcp_op.reachable(OPERATIONS_BY_NAME[op], toolset), (toolset, op)
+    assert ("Run a Loom read op" in text) == (toolset == "readonly")
+    # both examples are reads that `all` and `readonly` list as tools
+    expected = {"all": set(), "readonly": set()}.get(toolset, {"memory.evidence", "memory.digests"})
+    assert named - {"memory.related"} == expected, toolset

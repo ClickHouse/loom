@@ -465,10 +465,13 @@ def test_the_endpoint_ledgers_a_screened_refusal_as_the_connections(
 
 
 def _model_fields(model: Any, out: set[str], seen: set[Any]) -> set[str]:
-    """Every field name of `model` and of the models nested in its fields."""
+    """Every field name of `model` and of the models nested in its fields, and
+    every literal value a field takes (a text may name an enum value)."""
     from pydantic import BaseModel
 
     for arg in get_args(model):
+        if isinstance(arg, str):
+            out.add(arg)
         _model_fields(arg, out, seen)
     if isinstance(model, type) and issubclass(model, BaseModel) and model not in seen:
         seen.add(model)
@@ -480,12 +483,18 @@ def _model_fields(model: Any, out: set[str], seen: set[Any]) -> set[str]:
 
 def test_every_field_an_assistant_description_names_is_served() -> None:
     from server.transport.mcp_descriptions import ASSISTANT_TOOL_DESCRIPTIONS
-    from server.transport.mcp_tools import TOOLS_BY_NAME
+    from server.transport.mcp_op import OP_MENTION, TOOLS_BY_NAME
 
     for name, text in ASSISTANT_TOOL_DESCRIPTIONS.items():
-        # The op's own fields, and those of a tool the text sends the model to.
+        # The op's own fields, and those of an op the text sends the model to,
+        # named by op name or tool name.
         ops = [OPERATIONS_BY_NAME[name]]
         ops += [TOOLS_BY_NAME[t] for t in re.findall(r"loom_[a-z_]+", text) if t in TOOLS_BY_NAME]
+        ops += [
+            OPERATIONS_BY_NAME[o]
+            for o in re.findall(rf"\b{OP_MENTION}\b", text)
+            if o in OPERATIONS_BY_NAME
+        ]
         served: set[str] = set()
         for op in ops:
             _model_fields(op.input_model, served, set())

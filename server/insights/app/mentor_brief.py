@@ -114,7 +114,7 @@ def _planes(profile: mentor_rules.MentorProfile) -> list[MentorPlane]:
                 plane=plane,
                 calls=calls.get(plane, 0),
                 available=avail.get(plane, True),
-                when=when,
+                when=svc.named_for_caller(when),
                 mentored=mentor_rules.plane_mentored(plane),
             )
         )
@@ -294,7 +294,7 @@ async def handle_mentor_brief(inp: MentorBriefInput) -> MentorBriefOutput:
         MentorHint(
             code=h.code,
             severity=h.severity,
-            text=h.text,
+            text=svc.named_for_caller(h.text),
             ops=list(h.ops),
             evidence=dict(h.evidence),
             plane=mentor_rules.hint_plane(h.ops),

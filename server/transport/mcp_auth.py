@@ -161,7 +161,7 @@ def _ledger_refusal(
     consumer: str = "",
 ) -> None:
     from server.transport.mcp_ledger import emit_token_refusal
-    from server.transport.mcp_tools import TOOLS_BY_NAME
+    from server.transport.mcp_op import TOOLS_BY_NAME
 
     op = TOOLS_BY_NAME.get(str(tool_name or ""))
     if op is not None:

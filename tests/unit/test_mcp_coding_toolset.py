@@ -28,14 +28,19 @@ from server.operations.toolsets import (
     MCP_TOOLSETS,
     curated_roster,
     op_toolsets,
+    resolve_toolset,
 )
 from server.settings import settings
-from server.transport import mcp_primer
+from server.transport import mcp_op, mcp_primer
 from server.transport import mcp_tools as mt
 from server.transport.mcp_descriptions import (
     ACTIVATION_TRIGGERS,
     CODING_TOOL_DESCRIPTIONS,
     TOOL_DESCRIPTIONS,
+)
+from tests.unit.loom_op_marks import (
+    assert_marked_once_outside_parentheses,
+    synthetic_descriptors,
 )
 
 OPS = {op.name: op for op in ALL_OPERATIONS}
@@ -64,6 +69,12 @@ def _listing(toolset: str, code: bool, *, requested: str | None = None) -> list[
 
 def _names(tools: list[dict]) -> set[str]:
     return {t["name"] for t in tools}
+
+
+def _shown(listed: dict[str, dict], toolset: str, name: str, source: str) -> bool:
+    """Whether tool ``name`` carries ``source`` as this listing renders it."""
+    text = mcp_op.name_ops_for_listing(source, set(listed), writes=mcp_op.routes_writes(toolset))
+    return listed[name]["description"] == text
 
 
 # ---------------------------------------------------------------- membership
@@ -157,12 +168,12 @@ def test_core_and_atomic_listings_are_unchanged_by_the_new_tier():
 
 
 def test_toolset_is_selectable_per_deployment_and_per_request():
-    assert mt.resolve_toolset(None, "coding") == "coding"
-    assert mt.resolve_toolset("coding", "core") == "coding"
-    assert mt.resolve_toolset("CODING", "core") == "coding"
-    assert mt.resolve_toolset("bogus", "core") == "core", "an unknown request value is the default"
-    assert mt.resolve_toolset(None, "bogus") == "core", "an unknown configured value is core"
-    assert mt.resolve_toolset("", None) == "core"
+    assert resolve_toolset(None, "coding") == "coding"
+    assert resolve_toolset("coding", "core") == "coding"
+    assert resolve_toolset("CODING", "core") == "coding"
+    assert resolve_toolset("bogus", "core") == "core", "an unknown request value is the default"
+    assert resolve_toolset(None, "bogus") == "core", "an unknown configured value is core"
+    assert resolve_toolset("", None) == "core"
     # the per-request override on a `core` deployment is the coding listing
     assert len(_listing("core", True, requested="coding")) == 21
     assert (
@@ -183,6 +194,18 @@ def test_coding_descriptions_derive_from_the_core_texts():
     # derived: every replace took effect and the rest of the text is the core text
     assert "native memory" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
     assert "native memory" in TOOL_DESCRIPTIONS["memory.set"]
+    assert "Other writes" in CODING_TOOL_DESCRIPTIONS["memory.set"]
+    # the removal pick line on memory.delete: listed paths by tool, the rest marked
+    expected = {
+        "core": ("loom_memory_apply with", "loom_blacklist_add;"),
+        "coding": ("memory.apply (via loom_op) with", "blacklist.add (via loom_op);"),
+    }
+    for toolset, (apply_ref, refuse_ref) in expected.items():
+        delete = {t["name"]: t for t in _listing(toolset, False)}["loom_memory_delete"]
+        line = next(ln for ln in delete["description"].splitlines() if ln.startswith("WHICH"))
+        assert line.startswith("WHICH REMOVAL: one key is this tool;"), line
+        assert apply_ref in line and refuse_ref in line, (toolset, line)
+        assert "memory.clear (via loom_op)" in line and "erasure.request (via loom_op)" in line
     for must in (
         "Call this proactively",
         "Don't search before saving",
@@ -196,22 +219,18 @@ def test_coding_descriptions_derive_from_the_core_texts():
     ):
         assert must in CODING_TOOL_DESCRIPTIONS["memory.set"], must
     listed = {t["name"]: t for t in _listing("coding", False)}
-    assert listed["loom_memory_set"]["description"] == CODING_TOOL_DESCRIPTIONS["memory.set"]
+    assert _shown(listed, "coding", "loom_memory_set", CODING_TOOL_DESCRIPTIONS["memory.set"])
     assert "loom_memory_pin" not in listed
-    assert listed["loom_memory_update"]["description"] == TOOL_DESCRIPTIONS["memory.update"]
+    assert _shown(listed, "coding", "loom_memory_update", TOOL_DESCRIPTIONS["memory.update"])
     # the core tier does not see the coding texts
     core = {t["name"]: t for t in _listing("core", True)}
-    assert core["loom_memory_set"]["description"] == TOOL_DESCRIPTIONS["memory.set"]
-    assert core["loom_memory_pin"]["description"] == TOOL_DESCRIPTIONS["memory.pin"]
+    assert _shown(core, "core", "loom_memory_set", TOOL_DESCRIPTIONS["memory.set"])
+    assert _shown(core, "core", "loom_memory_pin", TOOL_DESCRIPTIONS["memory.pin"])
 
 
 def test_activation_triggers_are_one_list_on_both_tiers():
-    core_text = next(
-        d for d in mt._synthetic_tool_descriptors("core") if d["name"] == "loom_activate"
-    )
-    coding_text = next(
-        d for d in mt._synthetic_tool_descriptors("coding") if d["name"] == "loom_activate"
-    )
+    core_text = next(d for d in synthetic_descriptors("core") if d["name"] == "loom_activate")
+    coding_text = next(d for d in synthetic_descriptors("coding") if d["name"] == "loom_activate")
     assert coding_text["description"] == CODING_TOOL_DESCRIPTIONS["loom_activate"]
     for trigger in ACTIVATION_TRIGGERS:
         assert f"'{trigger}'" in core_text["description"], trigger
@@ -222,10 +241,8 @@ def test_activation_triggers_are_one_list_on_both_tiers():
     # parentheticals go, every call / paging / do-not-call sentence stays
     from server.transport.mcp_descriptions import coding_search_description
 
-    core_s = next(d for d in mt._synthetic_tool_descriptors("core") if d["name"] == "loom_search")
-    coding_s = next(
-        d for d in mt._synthetic_tool_descriptors("coding") if d["name"] == "loom_search"
-    )
+    core_s = next(d for d in synthetic_descriptors("core") if d["name"] == "loom_search")
+    coding_s = next(d for d in synthetic_descriptors("coding") if d["name"] == "loom_search")
     assert coding_s["description"] == coding_search_description(core_s["description"])
     assert "profile, knowledge and past conversations" in coding_s["description"]
     assert "(uploaded documents)" in core_s["description"]
@@ -325,11 +342,11 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
     assert not is_toolset("coding+all") and not is_toolset("coding+readonly")
     assert not is_toolset("coding+bogus") and not is_toolset("+") and not is_toolset("")
     assert is_curated("coding+tracker") and not is_curated("all") and not is_curated("coding+all")
-    assert mt.resolve_toolset("coding+tracker", "core") == "coding+tracker"
-    assert mt.resolve_toolset("Coding+TRACKER+coding", "core") == "coding+tracker"
-    assert mt.resolve_toolset("coding+qa", "core") == "core"
-    assert mt.resolve_toolset("coding+bogus", "core") == "core", "an unknown part is the default"
-    assert mt.resolve_toolset(None, "coding+tracker") == "coding+tracker", (
+    assert resolve_toolset("coding+tracker", "core") == "coding+tracker"
+    assert resolve_toolset("Coding+TRACKER+coding", "core") == "coding+tracker"
+    assert resolve_toolset("coding+qa", "core") == "core"
+    assert resolve_toolset("coding+bogus", "core") == "core", "an unknown part is the default"
+    assert resolve_toolset(None, "coding+tracker") == "coding+tracker", (
         "a deployment may default to a union"
     )
     # the roster is the union of the parts' rosters
@@ -347,11 +364,14 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
     } <= names
     # the first part drives tier texts: coding's memory.set and activation texts
     listed = {t["name"]: t for t in tools}
-    assert listed["loom_memory_set"]["description"] == CODING_TOOL_DESCRIPTIONS["memory.set"]
-    assert listed["loom_code_impact"]["description"] == CODING_TOOL_DESCRIPTIONS["code.impact"]
+    union_ts = "coding+tracker"
+    assert _shown(listed, union_ts, "loom_memory_set", CODING_TOOL_DESCRIPTIONS["memory.set"])
+    assert _shown(listed, union_ts, "loom_code_impact", CODING_TOOL_DESCRIPTIONS["code.impact"])
     # a `qa`-first union still finds the coding texts (qa has no tier of its own)
     tracker_first = {t["name"]: t for t in _listing("core", True, requested="tracker+coding")}
-    assert tracker_first["loom_memory_set"]["description"] == CODING_TOOL_DESCRIPTIONS["memory.set"]
+    assert _shown(
+        tracker_first, "tracker+coding", "loom_memory_set", CODING_TOOL_DESCRIPTIONS["memory.set"]
+    )
 
 
 def test_the_core_code_tools_ask_to_be_loaded_up_front() -> None:
@@ -382,9 +402,19 @@ def test_mcp_always_load_tools_names_the_flagged_ops(monkeypatch) -> None:
 
 def test_the_primer_names_collection_list_by_the_tool_that_reaches_it() -> None:
     refs = mcp_primer._tool_refs("core")
-    assert refs["collection.list"] == "`loom_op` (op `collection.list`)"
+    assert refs["collection.list"] == "`collection.list`"
     rules = mcp_primer._write_rules(refs)
     assert "shared collection (`col-…`)" in rules
+    # the rendered primer names it as core's listing does, outside any parenthesis
+    assert "`collection.list` (via loom_op) names those collections." in mcp_primer._loom_rules(
+        "core", None
+    )
+
+
+@pytest.mark.parametrize("toolset", ["core", "coding", "tasks", "tracker", "atomic", "readonly"])
+def test_the_primer_marks_each_unlisted_op_once_and_outside_parentheses(toolset: str) -> None:
+    for text in (mcp_primer._loom_rules(toolset, None), mcp_primer._coding_instructions(toolset)):
+        assert_marked_once_outside_parentheses(text, toolset)
 
 
 def test_the_primers_say_loom_search_reads_collections() -> None:

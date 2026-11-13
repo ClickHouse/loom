@@ -9,10 +9,10 @@ tells an agent, from what it is actually doing, which plane it is not using.
 the agent's operation counts for the window from `loom.agent_events`, the
 namespace facts a rule needs (indexed repos, a tracker source, documents,
 records, writers, open conflicts, the row shapes the audit already grades)
-and evaluates a fixed
-rule table: each rule is a hint code, a condition on those counts, a
-sentence of at most `HINT_CHARS` naming the situation and the op, and the
-ops it recommends. The profile is cached per (org, namespace, agent) for
+and evaluates a fixed rule table: each rule is a hint code, a condition on
+those counts, a sentence of at most `HINT_CHARS` naming the situation and the
+op (as stored; MCP renders each op for the listing afterwards), and the ops it
+recommends. The profile is cached per (org, namespace, agent) for
 `settings.mentor_ttl_seconds`; a failed read is None, held briefly, never
 raised.
 
@@ -34,6 +34,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from typing import Any
 
 from server.core.background import create_deferred_task
@@ -46,8 +47,9 @@ from server.insights.app.mentor_rules import (
     SEARCHES,
     SETS,
     MentorProfile,
-    clip,
+    clip_keeping_note,
     evaluate_rules,
+    without_listing_note,
 )
 from server.insights.store.mentor import ProfileReads
 from server.memory.domain.excerpt import EXCERPT_LIMIT
@@ -411,19 +413,36 @@ def warm_profile(org: str, namespace: str, agent: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Names each op in a hint as the caller's MCP listing does; the MCP transport sets
+# it around a tool call, and over HTTP a hint reads as stored.
+hint_namer: ContextVar[Callable[[str], str] | None] = ContextVar("loom_hint_namer", default=None)
+
+
+def named_for_caller(text: str) -> str:
+    namer = hint_namer.get()
+    return namer(text) if namer else text
+
+
 def render_pack_section(
     profile: MentorProfile | None, *, cap: int = PACK_CHARS, max_hints: int = PACK_MAX_HINTS
 ) -> str:
     """The `mentor` block of context.pack: up to `max_hints` hints, hard
-    capped; "" when nothing fires. The tail names the op and the skill."""
+    capped; "" when nothing fires. The tail names mentor.brief."""
     if profile is None or not profile.hints:
         return ""
-    items = [f"{h.code}: {h.text}" for h in profile.hints[:max_hints]]
-    # Each hint already names its op; pointing at the skill makes agents open
-    # the skill file even in sessions whose results carry no hint.
+    # Over MCP the section is rendered whole, so each op is marked once; a hint's
+    # core-listing note is dropped, since the namer marks the op.
+    namer = hint_namer.get()
+    items = [
+        f"{h.code}: {without_listing_note(h.text) if namer else h.text}"
+        for h in profile.hints[:max_hints]
+    ]
+    # Each hint already names its op; the tail points at the evidence behind them.
     tail = "mentor.brief has the evidence"
     while True:
-        body = "Loom mentor — " + " · ".join(items) + f" ({tail})" if items else ""
+        body = "Loom mentor — " + " · ".join([*items, tail])
+        if namer:
+            body = namer(body)
         if len(body) <= cap or len(items) <= 1:
             break
         items.pop()
@@ -437,7 +456,8 @@ def top_hint_line(org: str, namespace: str, agent: str) -> str:
     if p is None or not p.hints:
         return ""
     h = p.hints[0]
-    return f"**Loom mentor:** {h.text} (`{h.code}`; `mentor.brief` for the evidence)"
+    # the hint text comes last, so its note still ends the line
+    return f"**Loom mentor:** `mentor.brief` has the evidence for `{h.code}`: {h.text}"
 
 
 # ---------------------------------------------------------------------------
@@ -511,7 +531,7 @@ def call_hint(
         st["count"] += 1
         if profile is not None and profile.hint(code) is not None:
             _profile_shown.setdefault(profile_key, set()).add(code)
-        return code, clip(text)
+        return code, clip_keeping_note(text)
     except Exception as exc:  # noqa: BLE001 — advice never fails a call
         log.debug("mentor call_hint failed for %s: %s", op_name, exc)
         return None
@@ -530,6 +550,8 @@ __all__ = [
     "call_hint",
     "cached_profile",
     "mentor_profile",
+    "hint_namer",
+    "named_for_caller",
     "render_pack_section",
     "reset_cache",
     "session_key_for",

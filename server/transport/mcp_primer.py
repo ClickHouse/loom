@@ -36,8 +36,15 @@ from server.transport.mcp_identity import (
     _caller_defaults,
     no_default_namespace_line,
 )
+from server.transport.mcp_op import keep_first_marks
 from server.transport.mcp_op import reachable as loom_op_reachable
-from server.transport.mcp_tools import _emit_mcp_event, assistant_connection, listed_ops
+from server.transport.mcp_tools import (
+    _emit_mcp_event,
+    assistant_connection,
+    listed_ops,
+    mentor_text_for_toolset,
+    name_ops_for_toolset,
+)
 
 log = logging.getLogger("server.transport.mcp")
 
@@ -206,12 +213,12 @@ async def _get_prompt(
 
 
 def _tool_refs(toolset: str | None) -> dict[str, str | None]:
-    """How the primer names each op it points at, on this connection's
-    toolset: its own tool when the listing carries it, else `loom_op` with the
-    op name — the tool every listing carries — and None when neither reaches
-    it (a write on a connection whose `loom_op` routes reads only), so the
-    primer never asks for a call the client cannot make."""
-    listed = {op.name: op.mcp_tool_name for op in listed_ops(toolset)}
+    """Each op the primer points at, by op name, or None when the connection
+    reaches it neither as a listed tool nor through `loom_op` (a write on a
+    connection whose `loom_op` routes reads only), so the primer never asks for
+    a call the client cannot make. `name_ops_for_toolset` then names them as
+    the listing does."""
+    listed = {op.name for op in listed_ops(toolset)}
     out: dict[str, str | None] = {}
     for name in (
         "context.pack",
@@ -221,12 +228,8 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
         "mentor.guide",
         "collection.list",
     ):
-        if name in listed:
-            out[name] = f"`{listed[name]}`"
-        elif loom_op_reachable(OPERATIONS_BY_NAME[name], toolset):
-            out[name] = f"`loom_op` (op `{name}`)"
-        else:
-            out[name] = None
+        reached = name in listed or loom_op_reachable(OPERATIONS_BY_NAME[name], toolset)
+        out[name] = f"`{name}`" if reached else None
     return out
 
 
@@ -326,7 +329,8 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     """The Loom-first rules with the caller's default workspace baked in, naming
     the tools the connection's ``toolset`` listing carries."""
     tool = _tool_refs(toolset)
-    return (
+    collections = knowledge_search_reads_collections()
+    head = (
         "**Loom-first mode active for this conversation.**\n\n"
         "**1. Session context.** At the start of a substantial task, "
         f"call {tool['context.pack']} once if you need a bounded bundle of "
@@ -338,25 +342,20 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
         "about Y':\n"
         "   a. Call `loom_search` once. It searches memory, profile, "
         "knowledge (your namespaces' documents"
+        + (" and the collections you can read" if collections else "")
+        + "), and conversations server-side in one round trip."
         + (
-            " and the collections you can read"
-            + (
-                f"; {tool['collection.list']} names those collections"
-                if tool["collection.list"]
-                else ""
-            )
-            if knowledge_search_reads_collections()
+            f" {tool['collection.list']} names those collections."
+            if collections and tool["collection.list"]
             else ""
         )
-        + "), and conversations server-side in one round trip.\n"
+        + "\n"
         "   b. If it returns nothing relevant, fall through to "
         "native memory / past-conversation context — don't surface "
-        "'not in Loom' as a final answer.\n\n"
-        + _write_rules(tool)
-        + "**5. Defaults.** "
-        + _defaults_clause(defaults)
-        + "\n\n"
-        "**6. Native memory.** Use as fallback when Loom returns "
+        "'not in Loom' as a final answer.\n\n" + _write_rules(tool) + "**5. Defaults.** "
+    )
+    tail = (
+        "\n\n**6. Native memory.** Use as fallback when Loom returns "
         "nothing, or as primary store for Claude-only ephemeral "
         "scratchpad."
         + (
@@ -367,6 +366,12 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
         + f"\n\n**7. Using Loom.** {tool['mentor.guide']} returns how to use Loom: "
         "where each kind of state goes and how to read what comes back "
         '(`part: "reference"` lists every plane).'
+    )
+    # the defaults clause is the caller's data, so it goes in unrendered
+    return keep_first_marks(
+        name_ops_for_toolset(head, toolset)
+        + _defaults_clause(defaults)
+        + name_ops_for_toolset(tail, toolset)
     )
 
 
@@ -486,7 +491,9 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
         else await _caller_default_context(auth, defaults)
     )
     profile = await _profile_section(auth, defaults) if auth is not None else ""
-    return rules + workspace + scope_line + await _mentor_line(auth, defaults) + profile
+    mentor = await _mentor_line(auth, defaults, toolset)
+    # the rules and the mentor line are rendered apart: mark each op once across both
+    return keep_first_marks(rules + workspace + scope_line + mentor) + profile
 
 
 def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
@@ -524,17 +531,20 @@ def _coding_instructions(toolset: str | None) -> str:
         if save
         else "This connection is read-only: memory writes are not available."
     )
-    return (
+    return name_ops_for_toolset(
         "**Loom: memory and code for this session.**"
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
-        + memory
+        + memory,
+        toolset,
     )
 
 
-async def _mentor_line(auth: Any, defaults: dict[str, Any] | None = None) -> str:
-    """The top mentor hint for the caller's default workspace,
-    only when its profile is already cached — never a ledger read on the
-    handshake. "" otherwise, and on any failure."""
+async def _mentor_line(
+    auth: Any, defaults: dict[str, Any] | None = None, toolset: str | None = None
+) -> str:
+    """The top mentor hint for the caller's default workspace, naming ops as the
+    ``toolset`` listing does, only when its profile is already cached — never a
+    ledger read on the handshake. "" otherwise, and on any failure."""
     try:
         from server.insights.app import mentor as _mentor
 
@@ -545,7 +555,9 @@ async def _mentor_line(auth: Any, defaults: dict[str, Any] | None = None) -> str
         namespace = str(defaults.get("namespace") or "")
         agent = str(defaults.get("agent") or "-")
         line = _mentor.top_hint_line(org, namespace, agent)
-        if not line:
+        if line:
+            line = mentor_text_for_toolset(line, toolset)
+        else:
             # Nothing cached: start the read now so the next handshake of
             # this agent carries the line. Never awaited here.
             _mentor.warm_profile(org, namespace, agent)

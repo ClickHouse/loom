@@ -258,7 +258,7 @@ Derive code-specific abstention thresholds from the authored probe corpus (query
 
 ## `code.callees`
 
-What does this symbol call — forward call edges (depth<=3), tier-marked like loom_code_callers.
+What does this symbol call — forward call edges (depth<=3), tier-marked like code.callers.
 
 `POST /v1/code.callees` · MCP `loom_code_callees` · role `viewer` · read · not listed under the MCP `all` toolset
 

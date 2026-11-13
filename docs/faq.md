@@ -111,8 +111,8 @@ namespace. See [tokens and grants](guides/tokens-and-grants.md).
 The MCP listing depends on the toolset (`?toolset=` or `LOOM_MCP_TOOLSET`, default
 `core`), and code tools are listed only with `LOOM_MCP_CODE_TOOLS=true`. Under `all`, an
 op that neither the core nor the atomic roster lists and that is marked `experimental` is
-left out. Every op is still callable by name through `loom_op`, over HTTP and from the
-SDKs. See [MCP toolsets](reference/mcp.md#toolsets).
+left out. Every op is still callable by name through `loom_op` (reads only on
+`readonly`), over HTTP and from the SDKs. See [MCP toolsets](reference/mcp.md#toolsets).
 
 ### How good is the retrieval, and how do you know?
 

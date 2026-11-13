@@ -30,8 +30,20 @@ def test_manifest_has_one_tool_per_operation_with_loom_extras():
     assert by_op["memory.delete"]["loom"]["effect"] == "destructive"
     # no pydantic titles ride along (listing bytes)
     assert "title" not in t["inputSchema"]
+    # a description names the other ops by their tool names, as a listing would
+    assert "loom_memory_set" in by_op["memory.apply"]["description"]
+    assert "memory.set" not in by_op["memory.apply"]["description"]
     # the manifest round-trips as JSON
     json.loads(A.to_manifest_json())
+
+
+def test_a_manifest_of_some_ops_names_the_rest_by_op_name():
+    """An op outside the manifest keeps its dotted name, unmarked: no loom_op is in it."""
+    ops = [op for op in ALL_OPERATIONS if op.name in ("memory.apply", "memory.delete")]
+    by_op = {t["loom"]["operation"]: t for t in A.build_manifest(ops)["tools"]}
+    text = by_op["memory.apply"]["description"]
+    assert "loom_memory_delete" in text and "memory.set" in text
+    assert "loom_memory_set" not in text and "(via loom_op)" not in text
 
 
 def test_effect_class_agrees_with_mcp_annotations():

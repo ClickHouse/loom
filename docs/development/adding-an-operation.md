@@ -128,11 +128,11 @@ The op is **read-only** (MCP `readOnlyHint`, the `readonly` toolset) exactly whe
 `server/operations/toolsets.py` decides where the op is listed:
 
 - **A curated roster** (`_MCP_CORE_OPS`, `_MCP_CODING_OPS`, `_MCP_ATOMIC_OPS`, `_MCP_TASK_OPS`, `_MCP_TRACKER_OPS`, `_MCP_CODE_CORE_OPS`) lists it on that `?toolset=`. Every listed property costs tokens on every turn, so add only what that archetype calls. `tests/unit/test_mcp_listing_budget.py` holds the listing under a token ceiling.
-- **Unlisted** (most ops): callable by name through `loom_op` on any listing. `?toolset=all` lists a `stable` op, and an `experimental` op only when the core or atomic roster lists it (`listed_under_all` in `server/operations/toolsets.py`).
+- **Unlisted** (most ops): callable by name through `loom_op` on any listing (reads only on `readonly`, [MCP toolsets](../reference/mcp.md#toolsets)). `?toolset=all` lists a `stable` op, and an `experimental` op only when the core or atomic roster lists it (`listed_under_all` in `server/operations/toolsets.py`).
 - **`_MCP_HIDDEN_OPS`**: not reachable over MCP. `tests/unit/test_hidden_op_says_why.py` requires a refusal that names what to call instead.
 
 A listed op needs its description in `server/transport/mcp_descriptions.py`
-(`TOOL_DESCRIPTIONS`). Write it for the model: when to call the tool, what it returns, what not to use it for. A description about a changed fact interpolates `revision_policy()` from the same module instead of stating its own. See the [MCP reference](../reference/mcp.md).
+(`TOOL_DESCRIPTIONS`). Write it for the model: when to call the tool, what it returns, what not to use it for. A description about a changed fact interpolates `revision_policy()` from the same module instead of stating its own. Name another op by its dotted op name; each listing renames a listed op to its tool and marks an unlisted one ([MCP reference](../reference/mcp.md#tool-list)). Never write an op as a call (`op(args)`), inside a longer code span, or with a hand-written "(via loom_op)". An op name given as a field's example value goes in single quotes (`'memory.ask'`), which the listing leaves as written.
 
 ## 5. Check reach and maturity
 

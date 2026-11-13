@@ -46,8 +46,9 @@ def _rule_op_literals() -> set[str]:
     }
 
 
-# The coding-agent tools a hint can name that belong to no plane: their hints get no page.
-_NO_PLANE = {"loom_activate", "loom_search"}
+# What a hint can name that belongs to no plane, so its hint gets no page: the synthetic
+# tools, and search.query, the unified search behind loom_search.
+_NO_PLANE = {"loom_activate", "search.query"}
 
 
 def test_every_op_a_rule_names_has_a_plane_unless_it_is_a_tool_of_none() -> None:

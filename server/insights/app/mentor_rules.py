@@ -64,6 +64,9 @@ READ_MISS_SHARE = 0.20
 
 GETS = ("memory.get", "memory.bulk_get")
 SEARCHES = ("memory.search", "memory.ask")
+# Every recall by meaning, the unified search (loom_search's op) included: what the
+# reading rules count, since they advise search.query.
+RECALLS = (*SEARCHES, "search.query")
 SETS = (
     "memory.set",
     "memory.bulk_set",
@@ -74,6 +77,9 @@ SETS = (
 )
 PACKS = ("context.pack", "loom_activate", "memory.stack", "memory.brief")
 HISTORY_OPS = ("code.blame_range", "code.history", "code.symbol_history")
+
+# Who acts on a conflict: an agent cannot settle one over MCP.
+_CONFLICTS_ACTOR = "the user resolves conflicts in the dashboard's Review queue"
 
 # The plane an op belongs to, for `mentor.brief`'s planes table and the
 # "when" a hint points at. Prefix → (plane, one-line when).
@@ -93,7 +99,7 @@ PLANES: tuple[tuple[str, str, str, bool], ...] = (
     (
         "memory",
         "claims",
-        "one plain-text claim per readable key; recall by meaning with memory.search",
+        "one plain-text claim per readable key; recall by meaning with search.query",
         True,
     ),
     (
@@ -154,7 +160,7 @@ PLANES: tuple[tuple[str, str, str, bool], ...] = (
     (
         "conflicts",
         "conflicts",
-        "two facts that disagree: conflicts.list shows them, conflicts.resolve settles one",
+        "two facts that disagree: " + _CONFLICTS_ACTOR,
         True,
     ),
     (
@@ -199,7 +205,7 @@ def known_plane(op: str) -> str | None:
 
 def hint_plane(ops: list[str] | tuple[str, ...]) -> str | None:
     """The plane a hint names: that of the first of its ops that has one, or None (a hint
-    may lead with a coding-agent tool of no plane, `loom_search`, before the ops it is about)."""
+    may lead with an op of no plane, `search.query`, before the ops it is about)."""
     return next((p for op in ops if (p := known_plane(op))), None)
 
 
@@ -251,15 +257,25 @@ def _prefix_count(usage: dict[str, int], prefix: str) -> int:
 
 # Ops an MCP agent reaches through a listed synthetic tool or a core alias:
 # no listing note for these.
-_LISTED_VIA_ALIAS = frozenset(
-    {"loom_search", "loom_activate", "memory.search", "knowledge.search", "conversation.search"}
-)
+_LISTED_VIA_ALIAS = frozenset({"memory.search", "knowledge.search", "conversation.search"})
+
+
+# The note _unlisted adds for an op the core listing leaves out, and its pattern.
+_LOOM_OP_NOTE = " (call {} via loom_op)"
+# The note ends a hint: anchored, so an echoed value that spells one is not taken for it.
+_LOOM_OP_NOTE_RE = re.compile(r" \(call ([a-z_.]+) via loom_op\)\Z")
+
+
+def without_listing_note(text: str) -> str:
+    """``text`` without _unlisted's core-listing note, for a caller that names
+    ops for its own listing instead."""
+    return _LOOM_OP_NOTE_RE.sub("", text)
 
 
 def _unlisted(ops: tuple[str, ...]) -> str:
     """A trailing note for the first recommended op that is not on the core
-    listing, so the agent knows not to look for it in its tool list (the
-    reference lint's "via loom_op" marker)."""
+    listing, for a reader of the stored text (HTTP, the SDK, the dashboard). Over
+    MCP the note is stripped and the hint is named for the caller's own listing."""
     try:
         from server.operations.toolsets import _MCP_HIDDEN_OPS, op_toolsets
     except Exception:  # noqa: BLE001 — no MCP config in this process: no note
@@ -274,10 +290,10 @@ def _unlisted(ops: tuple[str, ...]) -> str:
         if op in _MCP_HIDDEN_OPS:
             # Name who acts, never a route an agent could chase.
             if op.startswith("conflicts."):
-                return " (the user resolves conflicts in the dashboard's Review queue)"
+                return f" ({_CONFLICTS_ACTOR})"
             return f" ({op} is not an agent tool; skip it over MCP)"
         if "core" not in sets:
-            return f" (call {op} via loom_op)"
+            return _LOOM_OP_NOTE.format(op)
     return ""
 
 
@@ -296,13 +312,48 @@ def _duration(seconds: int) -> str:
     return f"{minutes // 60}h {minutes % 60}m"
 
 
-def _byname(op: str) -> str:
-    """The op as written in a hint; the listing note rides the hint's tail."""
-    return op
+# Room the values a hint echoes take, together: short enough that the clip never
+# cuts a closing quote, and that a hint with typical values keeps all its advice.
+ECHO_CHARS = 40
+
+
+def _quoted(value: object, limit: int = ECHO_CHARS) -> str:
+    """A caller's value as a hint echoes it: in single quotes, which the MCP renderer
+    leaves as written, with none inside and no line break; cut to ``limit`` with an
+    ASCII "..." that the X-Loom-Hint header keeps."""
+    text = str(value).replace("'", '"').replace("\r", " ").replace("\n", " ")
+    if len(text) > limit:
+        text = text[: limit - 3] + "..."
+    return f"'{text}'"
+
+
+# The most echoed values a hint lists by name; the rest are counted.
+ECHO_VALUES = 3
+
+
+def _quoted_list(values: list[Any], total: int | None = None) -> str:
+    """Up to ECHO_VALUES echoed values sharing one ECHO_CHARS budget, then "+K" for the
+    rest of ``total`` (default: the values given)."""
+    shown = values[:ECHO_VALUES]
+    each = ECHO_CHARS // max(1, len(shown))
+    more = (len(values) if total is None else total) - len(shown)
+    parts = [_quoted(v, each) for v in shown] + ([f"+{more}"] if more > 0 else [])
+    return ", ".join(parts)
 
 
 def clip(text: str, limit: int = HINT_CHARS) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def clip_keeping_note(text: str) -> str:
+    """``text`` clipped to HINT_CHARS with a "(call X via loom_op)" note at its end kept
+    whole, as _Ctx.add keeps a profile hint's: that note says how to reach the op. The
+    other notes _unlisted writes are part of the body and clip with it."""
+    m = _LOOM_OP_NOTE_RE.search(text)
+    if m is None:
+        return clip(text)
+    note = m.group(0)
+    return clip(text[: m.start()], HINT_CHARS - len(note)) + note
 
 
 @dataclass
@@ -322,6 +373,10 @@ class _Ctx:
     @property
     def searches(self) -> int:
         return _count(self.usage, SEARCHES)
+
+    @property
+    def recalls(self) -> int:
+        return _count(self.usage, RECALLS)
 
     @property
     def sets(self) -> int:
@@ -361,9 +416,10 @@ def _rules_identity(c: _Ctx) -> None:
         c.add(
             "agent_unnamed",
             "info",
-            f"{c.sets} writes under the anonymous agent name '{c.agent or '-'}': name the agent "
-            "(SDK agent=, MCP clientInfo.name, the X-Loom-Agent of a bot) so the mentor, the cost "
-            "views and provenance can tell this caller from every other unnamed one.",
+            f"{c.sets} writes under the anonymous agent name {_quoted(c.agent or '-')}: name "
+            "the agent (SDK agent=, MCP clientInfo.name, the X-Loom-Agent of a bot) so the "
+            "mentor, the cost views and provenance can tell this caller from every other "
+            "unnamed one.",
             ("memory.set",),
             sets=c.sets,
         )
@@ -371,18 +427,18 @@ def _rules_identity(c: _Ctx) -> None:
 
 def _rules_reading(c: _Ctx) -> None:
     """How the agent reads: by key, never, without a pack."""
-    gets, searches, sets, packs = c.gets, c.searches, c.sets, c.packs
-    if gets >= KEY_ONLY_MIN_GETS and gets >= KEY_ONLY_RATIO * max(searches, 1):
+    gets, recalls, sets, packs = c.gets, c.recalls, c.sets, c.packs
+    if gets >= KEY_ONLY_MIN_GETS and gets >= KEY_ONLY_RATIO * max(recalls, 1):
         c.add(
             "recall_by_key_only",
             "warning",
-            f"{gets} exact-key reads to {searches} searches this week: memory.search / loom_search "
-            "recall by meaning; a key read in a loop belongs in working_memory.",
-            ("memory.search", "working_memory.set"),
+            f"{gets} exact-key reads to {recalls} searches this week: search.query recalls by "
+            "meaning; keep a value read in a loop with working_memory.set.",
+            ("search.query", "memory.search", "working_memory.set"),
             gets=gets,
-            searches=searches,
+            recalls=recalls,
         )
-    reads = searches + gets + packs
+    reads = recalls + gets + packs
     if (
         sets >= WRITES_NEVER_READ_MIN_SETS
         and c.sessions >= 2
@@ -393,8 +449,8 @@ def _rules_reading(c: _Ctx) -> None:
             "warning",
             f"{sets} writes and {reads} reads over {c.sessions} sessions: "
             "nothing written here is read back. Open a session with context.pack; "
-            "recall with memory.search before deciding.",
-            ("context.pack", "memory.search"),
+            "recall with search.query before deciding.",
+            ("context.pack", "search.query", "memory.search"),
             sets=sets,
             reads=reads,
             sessions=c.sessions,
@@ -409,15 +465,16 @@ def _rules_reading(c: _Ctx) -> None:
             ("context.pack",),
             sessions=sw,
         )
-    abst = c.fact("abstains")
+    # abstains are counted over the memory searches, whose rows carry out_abstain
+    abst, searches = c.fact("abstains"), c.searches
     if searches >= ABSTAIN_MIN_SEARCHES and abst >= ABSTAIN_SHARE * searches:
         c.add(
             "search_abstains",
             "warning",
             f"{abst} of {searches} searches abstained: write the claim first in the value, use "
-            "loom_search to fan out to documents and conversations, and namespace.audit when "
+            "search.query to fan out to documents and conversations, and namespace.audit when "
             "recall misses what you wrote.",
-            ("loom_search", "namespace.audit", "memory.set"),
+            ("search.query", "namespace.audit", "memory.set"),
             abstains=abst,
             searches=searches,
         )
@@ -431,10 +488,10 @@ def _rules_reliance(c: _Ctx) -> None:
         c.add(
             "relied_on_chunk_ids",
             "warning",
-            f"{chunk_ids} of {credited} keys named in run.complete(memories_used) this week are "
-            "chunk ids (chunk:<session>:<n>): credit them by the fact — every chunk hit carries "
-            "parent_memory_key, and memory.bulk_get answers a chunk id with its parent.",
-            ("run.complete", "memory.bulk_get"),
+            f"{chunk_ids} of {credited} keys named in run.complete's memories_used this week are "
+            "chunk ids (chunk:<session>:<n>). Every chunk hit carries parent_memory_key; "
+            "credit that key and read it with memory.get.",
+            ("run.complete", "memory.get"),
             credited=credited,
             chunk_ids=chunk_ids,
         )
@@ -443,7 +500,7 @@ def _rules_reliance(c: _Ctx) -> None:
         c.add(
             "relied_on_missing_keys",
             "warning",
-            f"{unresolvable} of {credited} keys named in run.complete(memories_used) this week "
+            f"{unresolvable} of {credited} keys named in run.complete's memories_used this week "
             "answer no live memory row: the credit lands nowhere. Name the memory_key the "
             "search returned (or its parent_memory_key), and re-read it with memory.get "
             "before relying on it.",
@@ -456,10 +513,10 @@ def _rules_reliance(c: _Ctx) -> None:
         c.add(
             "reads_miss",
             "warning",
-            f"{missed} of {asked} keys asked of memory.get / bulk_get this week were not there: "
+            f"{missed} of {asked} exact-key reads this week found no row: "
             "a key from a search result that misses is a chunk or a moved key — follow "
-            "canonical_key, or recall by meaning with memory.search.",
-            ("memory.get", "memory.search"),
+            "canonical_key, or recall by meaning with search.query.",
+            ("memory.get", "search.query", "memory.search"),
             asked=asked,
             missed=missed,
         )
@@ -474,14 +531,14 @@ def _rules_planes(c: _Ctx) -> None:
         and (c.searches >= CODE_UNUSED_MIN_SEARCHES or c.sets >= CODE_UNUSED_MIN_SETS)
     ):
         shown = list(c.facts.get("repo_names") or [])
-        names = ", ".join(shown) + (f", +{repos - len(shown)}" if repos > len(shown) else "")
+        names = _quoted_list(shown, total=repos)
         c.add(
             "code_index_unused",
             "warning",
             f"{repos} indexed {'repo' if repos == 1 else 'repos'} ({names}) and 0 code.* calls: "
-            "code.search answers a concept, code.symbol a definition, code.callers who calls "
-            "it, code.grep an exact literal. code.repos lists them.",
-            ("code.search", "code.symbol", "code.callers", "code.grep", "code.impact"),
+            "code.search for a concept, code.symbol for a definition, code.callers for "
+            "callers, code.grep for a literal.",
+            ("code.search", "code.symbol", "code.callers", "code.grep"),
             repos=repos,
         )
     tracker_sources = c.facts.get("tracker_sources")
@@ -490,23 +547,29 @@ def _rules_planes(c: _Ctx) -> None:
         and _prefix_count(c.usage, "tracker") == 0
         and c.fact("tracker_tagged_sets") > 0
     ):
+        sources = list(tracker_sources)
+        # one source keeps the four tracker ops and the note within HINT_CHARS
+        echo = _quoted_list(sources[:1], total=len(sources))
+        answers = (
+            f"the tracker source ({echo}) answers"
+            if len(sources) == 1
+            else f"tracker sources ({echo}) answer"
+        )
         c.add(
             "tracker_unused",
             "warning",
-            f"{c.fact('tracker_tagged_sets')} writes tagged test/flaky/ci and 0 tracker.* "
-            f"calls: the tracker source ({', '.join(tracker_sources)}) answers "
-            f"{_byname('tracker.similar')}, "
-            "tracker.duplicate_check, tracker.flaky, tracker.test_signal.",
+            f"{c.fact('tracker_tagged_sets')} test/flaky/ci writes, 0 tracker.* calls: {answers} "
+            "tracker.similar, tracker.duplicate_check, tracker.flaky, tracker.test_signal.",
             ("tracker.similar", "tracker.duplicate_check", "tracker.flaky", "tracker.test_signal"),
             tracker_tagged_sets=c.fact("tracker_tagged_sets"),
-            sources=list(tracker_sources),
+            sources=sources,
         )
     hist = _count(c.usage, HISTORY_OPS)
     if hist >= BISECT_MIN_HISTORY_CALLS and int(c.usage.get("code.bisect_candidates", 0)) == 0:
         c.add(
             "bisect_available",
             "info",
-            f"{hist} blame/history calls and no bisect: {_byname('code.bisect_candidates')} "
+            f"{hist} blame/history calls and no bisect: code.bisect_candidates "
             "names the PRs that first shipped in the failing release and touched the frames — "
             "start there.",
             ("code.bisect_candidates",),
@@ -522,7 +585,7 @@ def _rules_planes(c: _Ctx) -> None:
             "facts_graph_unused",
             "info",
             f"{ent} rows carry entities and the graph was never walked: facts.traverse from a "
-            f"seed entity, memory.related for a row's neighbours, {_byname('facts.path')} "
+            f"seed entity, memory.related for a row's neighbours, facts.path "
             "between two names.",
             ("facts.traverse", "memory.related", "facts.path"),
             entity_rows=ent,
@@ -531,8 +594,8 @@ def _rules_planes(c: _Ctx) -> None:
         c.add(
             "runs_unused",
             "info",
-            f"{c.sessions} sessions and no run ledger: {_byname('run.begin')} before the work "
-            "and run.complete(memories_used) after grade the memories by the outcomes they "
+            f"{c.sessions} sessions and no run ledger: run.begin before the work "
+            "and run.complete with memories_used after grade the memories by the outcomes they "
             "produced.",
             ("run.begin", "run.complete"),
             sessions=c.sessions,
@@ -549,7 +612,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "warning",
             f"{max(over, large)} rows this agent wrote are documents stored as memories "
             "(over ~2 KB or JSON past "
-            f"the embed clip): {_byname('knowledge.upsert')} the body and keep a one-paragraph "
+            f"the embed clip): knowledge.upsert the body and keep a one-paragraph "
             "pointer row under the same key.",
             ("knowledge.upsert", "memory.set"),
             oversized_rows=over,
@@ -561,7 +624,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "checkpoints_as_memory",
             "warning",
             f"{max(huge, blobs)} checkpoint-sized writes: park a run dump with "
-            f"{_byname('context.offload')} (summary + TTL) and keep one short episodic row "
+            "context.offload, giving it a summary and a TTL, and keep one short episodic row "
             "keyed by run id.",
             ("context.offload", "memory.set"),
             huge_sets=huge,
@@ -573,12 +636,14 @@ def _rules_shapes(c: _Ctx) -> None:
         and int(c.usage.get("memory.record.write", 0)) == 0
     ):
         counts = "" if int(c.usage.get("memory.aggregate", 0)) else "; memory.aggregate counts them"
+        top = c.facts.get("top_prefix")
+        prefix = _quoted(top) if top else "one prefix"
         c.add(
             "records_for_identities",
             "info",
             f"{idk} writes keyed by a number, {c.fact('top_prefix_sets')} of them "
-            f"{c.facts.get('top_prefix') or 'prefix'}<id>: facts with identity — "
-            f"{_byname('memory_schema.register')} once, then memory.record.write{counts}.",
+            f"under {prefix}: facts with identity — "
+            f"memory_schema.register once, then memory.record.write{counts}.",
             ("memory_schema.register", "memory.record.write", "memory.aggregate"),
             id_keyed_sets=idk,
             top_prefix=c.facts.get("top_prefix", ""),
@@ -601,7 +666,7 @@ def _rules_shapes(c: _Ctx) -> None:
             "conflicts_pending",
             "info",
             f"{conflicted} facts in this namespace disagree with another and nobody has looked: "
-            f"{_byname('conflicts.list')} shows the pairs, conflicts.resolve settles one; "
+            f"conflicts.list shows the pairs, conflicts.resolve settles one; "
             "search penalises them until then.",
             ("conflicts.list", "conflicts.resolve"),
             conflicted_rows=conflicted,
@@ -616,13 +681,17 @@ def _coordination_sentence(c: _Ctx, hot_set: bool, hot_get: bool) -> tuple[str, 
     set_key = str(c.facts.get("hot_set_key") or "")
     get_key = str(c.facts.get("hot_get_key") or "")
     if hot_set and hot_get and set_key == get_key:
-        return f"one key ({set_key}) was written {ms}× and read {mg}× in a single session", set_key
+        return (
+            f"key {_quoted(set_key)} was written {ms}× and read {mg}× in one session",
+            set_key,
+        )
     parts: list[str] = []
+    each = ECHO_CHARS // (2 if hot_set and hot_get else 1)  # the two keys share the budget
     if hot_set:
-        parts.append(f"one key ({set_key}) was written {ms}×")
+        parts.append(f"key {_quoted(set_key, each)} was written {ms}×")
     if hot_get:
-        parts.append(f"one key ({get_key}) was read {mg}×")
-    return " and ".join(parts) + " in a single session", set_key if hot_set else get_key
+        parts.append(f"key {_quoted(get_key, each)} was read {mg}×")
+    return " and ".join(parts) + " in one session", set_key if hot_set else get_key
 
 
 def _rules_coordination(c: _Ctx) -> None:
@@ -640,8 +709,8 @@ def _rules_coordination(c: _Ctx) -> None:
     c.add(
         "coordination_loop",
         "warning",
-        f"{what}: coordination state — {_byname('working_memory.set')} / working_memory.get "
-        "holds it without a version row, an embedding or a conflict check per write.",
+        f"{what}: coordination state; keep it in working_memory.set / working_memory.get, "
+        "unversioned.",
         ("working_memory.set", "working_memory.get"),
         max_sets_one_key=ms,
         max_gets_one_key=mg,
@@ -806,7 +875,7 @@ def _rule_set_churn(
         return None
     return (
         "set_churn",
-        f"{key} was set {n} times this session: a value that changes every turn is "
+        f"{_quoted(key)} was set {n} times this session: a value that changes every turn is "
         "working_memory.set, not a memory version each time.",
     )
 
@@ -819,16 +888,15 @@ def _rule_set_stack_trace(
     repos, qa = int(facts.get("repos") or 0), list(facts.get("tracker_sources") or [])
     if repos and qa:
         text = (
-            "this value is a stack trace: code.trace resolves every frame to the indexed symbol, "
-            "and tracker.similar says whether a report already names it — keep the "
-            "memory row as one "
-            "claim that points at them." + _unlisted(("code.trace", "tracker.similar"))
+            "this value is a stack trace: code.trace resolves each frame to its symbol and "
+            "tracker.similar finds a report that names it; keep the memory row as one claim "
+            "pointing at them." + _unlisted(("code.trace", "tracker.similar"))
         )
     elif repos:
         text = (
-            "this value is a stack trace: code.trace resolves every frame to the indexed symbol "
-            "(then code.callers / code.history on the frame that matters); the memory row should "
-            "be the one-line finding." + _unlisted(("code.trace",))
+            "this value is a stack trace: code.trace resolves each frame to its symbol and "
+            "code.callers / code.history follow the one that matters; keep the memory row as "
+            "the one-line finding." + _unlisted(("code.trace",))
         )
     elif qa:
         text = (
@@ -839,8 +907,9 @@ def _rule_set_stack_trace(
         )
     else:
         text = (
-            "this value is a stack trace: park the dump with context.offload (summary + TTL) and "
-            "keep the memory row as the one-line finding." + _unlisted(("context.offload",))
+            "this value is a stack trace: park the dump with context.offload, giving it a summary "
+            "and a TTL, and keep the memory row as the one-line finding."
+            + _unlisted(("context.offload",))
         )
     return ("set_stack_trace", text)
 
@@ -856,17 +925,15 @@ def _rule_set_issue_reference(
     if facts.get("tracker_sources"):
         return (
             "set_issue_reference",
-            f"this row names issue/PR #{refs[0]}: tracker.item returns its tracker "
-            f"record (component, "
-            "severity, bisect, branches affected) — write the claim, not the ticket; "
-            "memory.record.write keeps a table of them."
-            + _unlisted(("tracker.item", "memory.record.write")),
+            f"this row names issue/PR #{refs[0]}: tracker.item returns its record (component, "
+            "severity, bisect) — write the claim, not the ticket; memory.record.write keeps a "
+            "table of them." + _unlisted(("tracker.item", "memory.record.write")),
         )
     return (
         "set_issue_reference",
-        f"this row names issue/PR #{refs[0]}: rows keyed by a ticket number are a table of facts "
-        "with identity — memory_schema.register once, then memory.record.write per ticket; "
-        "code.pr_check before opening a duplicate." + _unlisted(("memory_schema.register",)),
+        f"this row names issue/PR #{refs[0]}: ticket-keyed rows are facts with identity — "
+        "memory_schema.register once, then memory.record.write per ticket; code.pr_check "
+        "before a second PR." + _unlisted(("memory_schema.register",)),
     )
 
 
@@ -875,11 +942,10 @@ def _rule_get_miss(
 ) -> _Call:
     if op != "memory.get" or not _get_missed(res):
         return None
-    key = str(args.get("memory_key") or "")
     return (
         "get_miss",
-        f"no row at {key or 'that key'}: memory.search recalls by meaning, memory.list prefix= "
-        "lists the siblings, and a moved key answers with canonical_key (follow=true).",
+        "no row at that key: search.query recalls by meaning, memory.list with a "
+        "key prefix lists the siblings, and a moved key answers with canonical_key (follow=true).",
     )
 
 
@@ -894,9 +960,9 @@ def _rule_search_identifier(
         return None
     return (
         "search_identifier_query",
-        f"'{q[:60]}' is an identifier, not a question: code.symbol gives its definition, "
-        "code.callers who calls it, code.grep the exact literal, code.search the concept — "
-        "memory holds what was said about it, the index holds what it is.",
+        f"{_quoted(q)} is an identifier: code.symbol gives its definition, code.callers its "
+        "callers, code.grep the literal, code.search the concept; memory holds only what was "
+        "said about it.",
     )
 
 
@@ -915,7 +981,7 @@ def _rule_search_abstain(
         return (
             "search_abstain_knowledge",
             f"memory abstained and this namespace holds {facts['documents']} documents: "
-            "loom_search fans out to knowledge and conversations in one call.",
+            "search.query fans out to knowledge and conversations in one call.",
         )
     return None
 
@@ -927,8 +993,8 @@ def _rule_set_duplicate(
         return None
     return (
         "set_duplicate",
-        f"this write duplicates {res['duplicate_of']}: revise that key instead (same key = new "
-        "version), or memory.link supersedes if this one replaces it.",
+        "this write duplicates the row named in the result's duplicate_of: revise that key instead "
+        "(same key = new version), or memory.link supersedes if this one replaces it.",
     )
 
 
@@ -985,7 +1051,7 @@ CALL_RULES: tuple[Callable[..., _Call], ...] = (
 # Per-call hint codes and the ops that count as following them (the profile
 # codes carry their own `ops`); read by mentor.brief's adoption.
 CALL_HINT_OPS: dict[str, tuple[str, ...]] = {
-    "get_miss": ("memory.search", "memory.list", "loom_search"),
+    "get_miss": ("memory.search", "memory.list", "search.query"),
     "search_identifier_query": ("code.symbol", "code.callers", "code.grep", "code.search"),
     "search_abstain_code": (
         "code.search",
@@ -994,7 +1060,7 @@ CALL_HINT_OPS: dict[str, tuple[str, ...]] = {
         "code.grep",
         "code.repos",
     ),
-    "search_abstain_knowledge": ("loom_search", "knowledge.search", "knowledge.get"),
+    "search_abstain_knowledge": ("search.query", "knowledge.search", "knowledge.get"),
     "set_duplicate": ("memory.update", "memory.link", "memory.get", "memory.related"),
     "set_large_value": ("knowledge.upsert", "knowledge.add"),
     "run_over_budget": ("run.complete",),
@@ -1022,6 +1088,7 @@ __all__ = [
     "Hint",
     "MentorProfile",
     "clip",
+    "clip_keeping_note",
     "evaluate_rules",
     "hint_plane",
     "issue_references",
@@ -1030,4 +1097,5 @@ __all__ = [
     "looks_like_stack_trace",
     "plane_mentored",
     "plane_of",
+    "without_listing_note",
 ]

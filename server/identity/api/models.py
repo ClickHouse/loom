@@ -58,7 +58,7 @@ _BodiesStr = Literal["full", "excerpt", "none", "unit", "source"]
 
 
 class NamespaceRetrievalDefaults(BaseModel):
-    """What an unpinned memory.search on this namespace runs.
+    """What an unpinned memory search on this namespace runs.
 
     Every knob is optional; a set one is applied to a search whose caller did
     not send that field — after a recipe (a caller choice), before the
@@ -422,7 +422,7 @@ class NamespaceCancelRequestInput(BaseModel):
     """Withdraw the caller's own pending elevation request.
 
     Keeps the current (lower) role and clears `pending_role`. Self-only;
-    admin-driven cancellation goes through grants.approve(decision='reject').
+    an admin cancels it with grants.approve and decision='reject'.
     """
 
     org: str

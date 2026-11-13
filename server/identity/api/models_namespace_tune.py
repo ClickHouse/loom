@@ -50,7 +50,7 @@ class NamespaceTuneInput(BaseModel):
 class TuneApply(BaseModel):
     """The ordinary write that would apply a proposal, for a person to approve."""
 
-    # The operation, e.g. `namespace.guide_set`; for `via` admin_route the endpoint
+    # The operation, e.g. 'namespace.guide_set'; for `via` admin_route the endpoint
     # (`settings.set` is POST /v1/admin/settings.set), for `environment` the variable.
     op: str
     # How the write is made: `op`, a Loom operation; `admin_route`, a deployment admin

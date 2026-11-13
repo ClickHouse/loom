@@ -141,8 +141,8 @@ def test_owner_only_refusals_name_the_user_never_a_route() -> None:
         memory_key, memory_id, lock_reason, locked_by, lock_until = "k", "id", "", "", None
 
     lock_msg = L.refusal(Row(), "delete", op="memory.delete", mode="read_only").detail["message"]
-    unlock = hidden_refusal("memory.unlock")
-    other = hidden_refusal("memory.dedup_list")
+    unlock = hidden_refusal("memory.unlock", None)
+    other = hidden_refusal("memory.dedup_list", None)
     assert unlock is not None and other is not None
     for text in (lock_msg, unlock["instead"], unlock["error"], other["instead"]):
         low = text.lower()

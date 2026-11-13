@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from server.core import llm_free
@@ -262,10 +263,11 @@ def _emit_success(
     request_id: str,
     result: Any,
     mcp_session_id: str,
+    namer: Callable[[str], str],
 ) -> tuple[str, str] | None:
     """The success row of a tool call, with the mentor's hint computed first
     so the row carries `out_hint_code`. Returns the hint for the result."""
-    hint = _mentor_hint(op.name, arguments, result, mcp_session_id)
+    hint = _mentor_hint(op.name, arguments, result, mcp_session_id, namer)
     _emit_mcp_event(
         op.name,
         arguments,
@@ -279,11 +281,15 @@ def _emit_success(
 
 
 def _mentor_hint(
-    op_name: str, arguments: dict[str, Any], result: Any, mcp_session_id: str
+    op_name: str,
+    arguments: dict[str, Any],
+    result: Any,
+    mcp_session_id: str,
+    namer: Callable[[str], str],
 ) -> tuple[str, str] | None:
-    """The mentor's one hint for this call, or None; the
-    code is published on the request context for the ledger row. Never
-    raises and never reads the store."""
+    """The mentor's one hint for this call, its ops named by ``namer`` for the
+    caller's listing, or None; the code is published on the request context
+    for the ledger row. Never raises and never reads the store."""
     try:
         from server.insights.app import mentor as _mentor
         from server.observability.ledger import set_hint_context
@@ -299,8 +305,14 @@ def _mentor_hint(
             namespace=present(tenant["namespace"]) or "",
             agent=str(arguments.get("agent") or "-"),
         )
-        set_hint_context(hint[0] if hint else "")
-        return hint
+        set_hint_context("")
+        if hint is None:
+            return None
+        # publish the code only after the text renders: a namer failure leaves the
+        # row without a hint
+        text = namer(hint[1])
+        set_hint_context(hint[0])
+        return hint[0], text
     except Exception:  # noqa: BLE001 — advice never fails a tool call
         return None
 
