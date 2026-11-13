@@ -115,7 +115,9 @@ To try it with nothing installed, open it in a codespace:
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ClickHouse/loom?quickstart=1)
 ([what it runs and who can reach it](./docs/getting-started/quickstart.md#try-it-in-github-codespaces))
 
-For the default personal installation, with Docker installed:
+For the default personal installation, with Docker installed (on Windows, in a WSL 2
+terminal where `docker` works: Docker Desktop with its WSL integration on, or Docker Engine
+installed in the distribution):
 
 ```bash
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
