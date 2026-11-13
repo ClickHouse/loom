@@ -430,7 +430,7 @@ function indexStatus() {
     last_error: "",
   });
   const head = "4be19a0c7d2e5f13";
-  // The status answers without the repository list's `indexed_at`.
+  // Shaped as the dashboard's `CodeIndexStatus`: a repository summary without `indexed_at`.
   const { indexed_at: _indexedAt, ...base } = codeRepo(CODE_NS, "main", head, 1284, 18342, 0.3);
   return {
     ...base,
