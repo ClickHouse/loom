@@ -27,8 +27,8 @@ import { RowMenu, type RowMenuItem } from "../../components/ui/RowMenu";
  * move is in the menu. A group shows 20 rows, then "Show all N".
  *
  * The DOM is a grid (the WAI-ARIA grid pattern): each group is a rowgroup whose first row
- * holds the collapse button, then its task rows. The grid is one tab stop: Up / Down (and
- * j / k) move between group headers and task rows, Home / End jump to the ends, and Left /
+ * holds the collapse button, then its task rows. The grid is one tab stop: Up / Down move
+ * between group headers and task rows, Home / End jump to the ends, and Left /
  * Right walk a row's controls (a header is one cell, so there they do nothing). A writer
  * drags a row onto another group to move it (`useTaskDrag`); while a row is held, empty
  * and hidden groups show as drop targets.
@@ -41,7 +41,7 @@ export interface RowContext {
   progressNotes: ReadonlyMap<string, string>;
   selectedId: string | null;
   onOpen: (r: TaskListRow) => void;
-  /** Move the selection (and the focus) to a row, as j / k do. */
+  /** Move the selection (and the focus) to a row, as Up / Down do. */
   onSelect: (r: TaskListRow) => void;
   /** Why the caller's role cannot move a task, or null: the moves stay in view with it. */
   writeReason: string | null;
@@ -90,7 +90,7 @@ function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
   return (
     <span className="tq-meta">
       {r.status === "triage" && (
-        <Unavailable reason={ctx.writeReason} tip={ctx.writeReason ? undefined : "Accept · A"}>
+        <Unavailable reason={ctx.writeReason}>
           <Button
             type="secondary"
             htmlType="button"
@@ -99,7 +99,6 @@ function Meta({ r, ctx }: { r: TaskListRow; ctx: RowContext }) {
               ctx.onAccept(r);
             }}
             aria-label={`Accept ${r.title}`}
-            aria-keyshortcuts={ctx.writeReason ? undefined : "a"}
           >
             Accept
           </Button>

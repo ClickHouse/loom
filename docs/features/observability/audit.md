@@ -9,6 +9,8 @@ seals closed hourly windows into a hash chain. A ClickHouse administrator can st
 the table; the next verifier pass shows the edit or deletion. This is an engineering
 primitive, not a compliance certification.
 
+![The dashboard's Audit log: saved memories, a deleted memory, a namespace join and a grant, newest first](../../assets/screenshots/audit-log.webp)
+
 ## What leaves an audit row
 
 | Source                                                                | `event_type`                                                                                                                                                                                                                                  | `subject` holds                                                                                                                                                                                                                                                                                                                                                                                              |

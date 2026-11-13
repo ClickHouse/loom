@@ -316,7 +316,7 @@ async def test_tools_execute_runs_each_verb_under_the_scope() -> None:
 
 
 async def test_tools_reject_unknown_bad_json_and_missing_args_and_truncate() -> None:
-    a, _ = _agent(
+    a, calls = _agent(
         {
             "context.fetch": lambda b: (
                 {"found": False, "blob_key": b["blob_key"]}
@@ -335,6 +335,17 @@ async def test_tools_reject_unknown_bad_json_and_missing_args_and_truncate() -> 
         await tools.execute("loom_recall", "{not json")
     with pytest.raises(LoomError, match="query is required"):
         await tools.execute("loom_recall", {"query": ""})
+    with pytest.raises(LoomError, match='top_k must be an integer, got "five"'):
+        await tools.execute("loom_recall", {"query": "seat", "top_k": "five"})
+    with pytest.raises(LoomError, match="offset must be an integer, got 1.5"):
+        await tools.execute("loom_fetch", {"blob_key": "b", "offset": 1.5})
+    with pytest.raises(LoomError, match="top_k must be an integer, got true"):
+        await tools.execute("loom_recall", {"query": "seat", "top_k": True})
+    for top_k in (5, 5.0, "5", "5.0"):
+        await tools.execute("loom_recall", {"query": "seat", "top_k": top_k})
+    await tools.execute("loom_recall", {"query": "seat", "top_k": ""})  # unset, as in TypeScript
+    sent = [b for op, b in calls if op == "memory.search"]
+    assert [b.get("top_k") for b in sent] == [5, 5, 5, 5, None]
     assert "no parked text under blob_key=nope" in await tools.execute(
         "loom_fetch", {"blob_key": "nope"}
     )

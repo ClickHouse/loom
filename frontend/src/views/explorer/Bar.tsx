@@ -133,7 +133,7 @@ export function Bar({
           {/* Below sm the field takes the whole row, so its placeholder is not cut. */}
           <div className="relative basis-full sm:basis-auto sm:flex-1 sm:max-w-[520px]">
             {/* An entity box, not a search box: a node glyph and an
-                entity placeholder, so it does not read as the header's ⌘K search. */}
+                entity placeholder, so it does not read as the header's search. */}
             <TextField
               id="graph-seed"
               role="combobox"
@@ -196,7 +196,7 @@ export function Bar({
                 )}
                 {suggestions.length > 0 && pathQuery && (
                   <p className="px-2.5 py-1 text-xs text-text-muted border-t border-border">
-                    ↵ finds the path from <span className="font-mono">{pathQuery.a}</span> to the highlighted entity
+                    Choose an entity to find the path from <span className="font-mono">{pathQuery.a}</span> to it
                   </p>
                 )}
               </div>
@@ -257,8 +257,8 @@ export function Bar({
           />
         )}
         <span id="explorer-patterns-hint" className="sr-only">
-          Open issues by component and severity from the tracker, and the issue and PR graph behind a cell. Press again
-          to return to the entity graph.
+          Open issues by component and severity from the tracker, and the issue and PR graph behind a cell. Choose
+          Patterns again to return to the entity graph.
         </span>
       </PageHeader>
       {trail.length > 0 && (

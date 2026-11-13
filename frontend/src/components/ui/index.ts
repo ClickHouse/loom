@@ -6,7 +6,6 @@
 // page (scripts/bundle_budget.mjs).
 export { Chip, type ChipProps } from "./Chip";
 export { ExternalLink } from "./ExternalLink";
-export { Kbd } from "./Kbd";
 export { MetaList, MetaRow, type MetaRowProps } from "./Meta";
 export { Panel, type PanelProps } from "./Panel";
 export { SectionHeading, type SectionHeadingProps } from "./SectionHeading";

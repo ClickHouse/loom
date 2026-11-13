@@ -476,11 +476,10 @@ async def _scope_of(cfg: Any, head: str) -> Any:
     """The entry's scope as a path predicate: under a configured prefix and not
     refused by the path layers of its denylist (content rules need the bytes)."""
     from server.code.app.index import gitrepo
-    from server.code.app.index.denylist import load_denylist
+    from server.code.app.index.denylist import load_denylist, takes_path
 
-    prefixes = tuple(cfg.path_prefixes) or ("",)
     denylist = await load_denylist(cfg, head, gitrepo.show_file)
-    return lambda path: path.startswith(prefixes) and not denylist.reason(path)
+    return lambda path: takes_path(cfg.path_prefixes, denylist, path, declared=False)
 
 
 async def _tombstone_gone(repo: Any, cfg: Any, paths: list[str]) -> int:

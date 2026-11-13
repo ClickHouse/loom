@@ -298,13 +298,17 @@ it("keeps each header menu's trigger in the menu's open state while it is open",
   }
 });
 
-// The search field's hint is written the way the keyboard prints it: Ctrl K off Apple
-// platforms (the handler takes either modifier). The help button's tooltip names its key.
-it("labels the search shortcut for the platform, and the help key in its tooltip", async () => {
+// The dashboard has no keyboard shortcuts: the header has no shortcuts button and its
+// search shows no key chip, and Ctrl K, ⌘K and ? do nothing.
+it("has no shortcuts button or key chip, and takes no Ctrl K, ⌘K or ?", async () => {
   listMine.mockResolvedValue(jwtOnly);
   useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
-  render(<Header />);
-  expect(document.querySelector("#header-search kbd")).toHaveTextContent(/^Ctrl K$/);
-  await userEvent.hover(screen.getByRole("button", { name: "Keyboard shortcuts" }));
-  expect((await screen.findAllByText("Keyboard shortcuts · ?")).length).toBeGreaterThan(0);
+  const { container } = render(<Header />);
+  await screen.findByRole("button", { name: "Account: w@example.com" });
+  expect(screen.queryByRole("button", { name: /keyboard shortcuts/i })).toBeNull();
+  expect(container.querySelector("kbd")).toBeNull();
+  expect(container.querySelector("[aria-keyshortcuts]")).toBeNull();
+  await userEvent.keyboard("{Control>}k{/Control}{Meta>}k{/Meta}?");
+  expect(screen.getByLabelText("Search Loom")).not.toHaveFocus();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

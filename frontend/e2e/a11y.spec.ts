@@ -26,13 +26,6 @@ for (const width of [1400, 375]) {
   });
 }
 
-test("the Help dialog has no WCAG A/AA violations", async ({ page }) => {
-  await open(page, "/memories");
-  await page.keyboard.press("?");
-  await expect(page.getByRole("dialog")).toBeVisible();
-  expect(await violations(page)).toEqual([]);
-});
-
 test("the New menu has no WCAG A/AA violations", async ({ page }) => {
   await open(page, "/memories");
   await page.getByRole("button", { name: "New" }).click();
@@ -108,11 +101,13 @@ test.describe("open overlays", () => {
     expect(await violations(page)).toEqual([]);
   });
 
-  test("j moves focus over the memory cards, one ring on the card, and the inspector returns it", async ({ page }) => {
+  test("the arrows move focus over the memory cards, one ring on the card, and the inspector returns it", async ({
+    page,
+  }) => {
     await open(page, "/memories");
     const opens = page.locator("[data-memory-open]");
-    await page.keyboard.press("j");
-    await page.keyboard.press("j");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
     await expect(opens.nth(1)).toBeFocused();
     // The card draws the ring; its stretched button draws none of its own.
     const rings = await opens.nth(1).evaluate((el) => ({
@@ -560,42 +555,11 @@ test("a date field keeps its focus border on its calendar button", async ({ page
   expect(await field.evaluate((el) => getComputedStyle(el).borderColor)).toBe(active);
 });
 
-// WCAG 2.1.4: the one-key shortcuts can be turned off, and ? then types nothing.
-test("the single-key shortcuts turn off from the help dialog", async ({ page }) => {
-  await open(page, "/memories");
-  await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
-  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
-  await help.getByRole("switch", { name: "Single-key shortcuts" }).click();
-  await page.keyboard.press("Escape");
-  await expect(help).toBeHidden();
-  await page.locator("main h1").first().click();
-  await page.keyboard.press("?");
-  await page.waitForTimeout(300);
-  await expect(help).toBeHidden();
-});
-
-// The help dialog scrolls as one: Click UI's dialog body, never a second region inside it.
-test("the help dialog has one scroll region on a short window, and is axe-clean", async ({ page }) => {
-  await page.setViewportSize({ width: 1400, height: 520 });
-  await open(page, "/memories");
-  await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
-  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
-  await expect(help).toBeVisible();
-  const scrollers = await help.evaluate(
-    (dialog) =>
-      [dialog, ...dialog.querySelectorAll("*")].filter((el) => {
-        const y = getComputedStyle(el).overflowY;
-        return (y === "auto" || y === "scroll") && el.scrollHeight > el.clientHeight + 1;
-      }).length,
-  );
-  expect(scrollers).toBe(1);
-  expect(await violations(page)).toEqual([]);
-});
-
 test("reduced motion stops Click UI's dialog animation", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await open(page, "/memories");
-  await page.keyboard.press("?");
+  await page.getByRole("button", { name: "New" }).click();
+  await page.getByRole("menuitem", { name: /Memory/ }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");

@@ -1,22 +1,25 @@
 # Agent frameworks and orchestrators
 
 The SDKs ship adapters that present Loom through a framework's own memory or retrieval
-interface. The LangChain retrievers need the framework: install the SDK's extra for it
-(`pip install 'clickhouse-loom[langchain]'`), or, in TypeScript, `@langchain/core`, an
-optional peer dependency. The LangGraph and Strands adapters import without their
-framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is Loom's
-namespace authorization. Every adapter calls your Loom server through the SDK: the data is
-stored in your Loom deployment (ClickHouse, and Postgres for live memory under the
+interface. An adapter needs its framework: in Python, the SDK extra its section names
+(`pip install 'clickhouse-loom[langchain]'` and so on); in TypeScript, the framework
+package, an optional peer dependency. The LangGraph and Strands adapters import without
+their framework. Identity comes from the Loom `Agent` the adapter wraps, and isolation is
+Loom's namespace authorization. Every adapter calls your Loom server through the SDK: the
+data is stored in your Loom deployment (ClickHouse, and Postgres for live memory under the
 [Postgres memory authority](../../architecture/storage-authority.md)), and no adapter adds
 or needs another database, vector store or cache.
 
-| Framework      | Adapter                                         | SDK                                                   | Framework interface                    |
-| -------------- | ----------------------------------------------- | ----------------------------------------------------- | -------------------------------------- |
-| LangChain      | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | Python, `loom.integrations.langchain`                 | `BaseRetriever`                        |
-| LangChain.js   | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | TypeScript, `@clickhouse/loom/integrations/langchain` | `BaseRetriever` from `@langchain/core` |
-| LangGraph      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                 | `BaseStore`                            |
-| Strands Agents | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                   | the `MemoryStore` protocol             |
-| Strands Agents | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`   | the same protocol, structurally        |
+| Framework                      | Adapter                                         | SDK                                                       | Framework interface                    |
+| ------------------------------ | ----------------------------------------------- | --------------------------------------------------------- | -------------------------------------- |
+| LangChain                      | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | Python, `loom.integrations.langchain`                     | `BaseRetriever`                        |
+| LangChain.js                   | `LoomKnowledgeRetriever`, `LoomMemoryRetriever` | TypeScript, `@clickhouse/loom/integrations/langchain`     | `BaseRetriever` from `@langchain/core` |
+| LlamaIndex                     | `LoomRetriever`, `LoomMemoryBlock`              | Python, `loom.integrations.llamaindex`                    | `BaseRetriever`, `BaseMemoryBlock`     |
+| OpenAI Agents SDK              | `loom_tools`                                    | Python, `loom.integrations.openai_agents`                 | `FunctionTool`                         |
+| OpenAI Agents SDK (TypeScript) | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/openai-agents` | `tool()` from `@openai/agents`         |
+| LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                            |
+| Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol             |
+| Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally        |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
@@ -76,6 +79,126 @@ const docs = await new LoomKnowledgeRetriever(agent, { k: 3 }).invoke("refund po
 const memories = await new LoomMemoryRetriever(agent, { scope: { userId: "alice" } }).invoke(
   "seat preference",
 );
+```
+
+## LlamaIndex
+
+`LoomRetriever` searches the namespace's documents (`knowledge.search`) as a LlamaIndex
+`BaseRetriever`, for a query engine, a chat engine or a retriever tool. `LoomMemoryBlock`
+is a long-term memory block for LlamaIndex's `Memory`. Install with
+`pip install 'clickhouse-loom[llamaindex]'` (`llama-index-core` 0.14).
+
+```python
+from llama_index.core.memory import Memory
+from loom import SyncAgent
+from loom.integrations.llamaindex import LoomMemoryBlock, LoomRetriever, flush
+
+with SyncAgent(org="acme", namespace="support") as agent:
+    nodes = LoomRetriever(agent, similarity_top_k=3).retrieve("refund policy")
+    memory = Memory.from_defaults(
+        session_id="s-42", memory_blocks=[LoomMemoryBlock(agent=agent, user_id="alice")]
+    )
+    ...  # the session's turns go through memory.put / memory.get
+    flush(memory)  # at the session's end: hand the rest of the window to the blocks
+```
+
+`retrieve` (and a sync query engine) needs a `SyncAgent`; `aretrieve` takes an `Agent` or
+a `SyncAgent`. A node's text is the chunk, its id `<namespace>/<source_uri>#<chunk_idx>`,
+its score the similarity, and its metadata `source_uri`, `chunk_idx`, `section` (when
+the chunk has one), `namespace` and `tags`, of which only `source_uri` and `section` reach
+the text a synthesizer sends the model. A query engine takes the retriever with
+`RetrieverQueryEngine.from_args(LoomRetriever(agent), llm=...)` and the LLM you use.
+
+| `LoomRetriever` argument | Default | Effect                                                                        |
+| ------------------------ | ------- | ----------------------------------------------------------------------------- |
+| `similarity_top_k`       | 4       | nodes per query                                                               |
+| `tags`                   | none    | only chunks carrying any of these Loom tags                                   |
+| `uri_prefix`             | none    | only documents whose `source_uri` starts with one of these                    |
+| `namespace_scope`        | `this`  | `all_mine` adds the caller's other namespaces, up to the server's fan-out cap |
+| `search_kwargs`          | none    | further `knowledge.search` fields, such as `search_mode` or `rerank`          |
+
+`Memory` keeps the recent messages itself and hands the block the ones that leave its
+short-term window, which by default is 70% of a 30,000-token limit; a shorter session hands
+it nothing. Call `await aflush(memory)` (`flush(memory)` from sync code), both from
+`loom.integrations.llamaindex`, when a session ends: like `Memory`'s own hand-over, it gives
+what is still in the window to every block of that `Memory` and then archives it, so the
+window starts empty. If a block fails, nothing is archived and the next flush hands the same
+messages over again. The block's two calls:
+
+- **`aput`** sends the user and assistant turns to `memory.set_from_messages` under the
+  `Memory`'s session id; Loom extracts the facts worth keeping and resolves duplicates and
+  conflicts with what it already holds. With `defer` (the default) the server queues the
+  extraction, so a flush is one request and an extraction failure does not fail the turn.
+- **`aget`** searches the block's namespace, across every agent writing to it, with the
+  latest user message and returns the matching memories, one line each, which `Memory`
+  places in the system message. It leaves out memories below Loom's floor, and returns
+  nothing when Loom **abstains**.
+
+| `LoomMemoryBlock` field | Default           | Effect                                                                                              |
+| ----------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
+| `agent`                 | required          | the `Agent` or `SyncAgent` the block reads and writes through                                       |
+| `top_k`                 | 5                 | memories per read                                                                                   |
+| `tags`                  | none              | stamped on extracted memories; reads keep memories carrying any of them                             |
+| `user_id`               | none              | the end user the memories belong to; unset, reads every user's memories in the namespace            |
+| `honour_abstain`        | `True`            | leave out memories below Loom's floor; nothing when Loom abstains                                   |
+| `defer`                 | `True`            | queue the extraction on the server; `False` extracts inline whatever the operator's defer list says |
+| `name`, `priority`      | `LoomMemories`, 0 | LlamaIndex's block name and truncation priority (0: never truncated)                                |
+
+Give the block a `SyncAgent` when `Memory` is used through its sync methods (`get`, `put`)
+or `flush` is called, which may run a call on another event loop than the one an `Agent`
+was opened on; an `Agent` serves `aget` and `aput` on its own loop. `Memory` keeps its
+short-term messages in its own chat store (in process by default); only what the block
+receives reaches Loom.
+
+## OpenAI Agents SDK
+
+`loom_tools` returns Loom's agent verbs as the OpenAI Agents SDK's `FunctionTool`s, so the
+model keeps and reads long-term memory in Loom during a run. Install with
+`pip install 'clickhouse-loom[openai-agents]'` (`openai-agents` 0.24).
+
+```python
+from agents import Agent as OpenAIAgent, Runner
+from loom import Agent
+from loom.integrations.openai_agents import loom_tools
+
+async with Agent(org="acme", namespace="support") as loom_agent:
+    assistant = OpenAIAgent(
+        name="assistant",
+        instructions="Recall what you know about the user before answering.",
+        tools=loom_tools(loom_agent, user_id="alice"),
+    )
+    result = await Runner.run(assistant, "Book my usual seat to Lisbon")
+```
+
+The tools are Loom's `AgentTools`
+([sessions and tools](../../reference/python-sdk.md#sessions-and-tools)): `loom_remember`
+(`memory.set`), `loom_recall` (`memory.search`), `loom_ask` (`memory.ask`), `loom_offload`
+and `loom_fetch` (`context.offload`, `context.fetch`) and `loom_note`
+(`working_memory.append`), with the same schemas and results in both SDKs. `user_id`,
+`session_id` and `run_id` bind every call to one scope; `only=[...]` keeps a subset and
+`max_result_chars` (8,000 by default) caps what a call returns. The schemas have optional
+parameters, so the tools are not strict. A call Loom refuses (a missing argument, a
+rejected value, a server error) returns `<tool> failed: <message>` to the model, which can
+correct the call; the run goes on.
+
+Conversation history stays in the session store the run is given: the OpenAI Agents
+SDK's `Session` protocol removes and clears items, and Loom's conversations are
+append-only. To keep what a conversation established, give the model `loom_remember`, or
+send the turns to `memory.set_from_messages`.
+
+In TypeScript, `loomTools(agent, scope)` from `@clickhouse/loom/integrations/openai-agents`
+returns the same tools built with `tool()` from `@openai/agents`, an optional peer
+dependency:
+
+```ts
+import { Agent as OpenAIAgent, run } from "@openai/agents";
+import { loomTools } from "@clickhouse/loom/integrations/openai-agents";
+
+const assistant = new OpenAIAgent({
+  name: "assistant",
+  tools: loomTools(agent, { userId: "alice" }),
+});
+const result = await run(assistant, "Book my usual seat to Lisbon");
 ```
 
 ## LangGraph
@@ -194,6 +317,8 @@ client can speak for several agents.
 ## Failure modes
 
 - **Abstain is not an error.** An empty search means nothing cleared Loom's floor.
+- **A refused tool call is a message, not an exception.** The OpenAI Agents SDK tools
+  return Loom's error to the model as the call's result.
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as
   `conflicted` or `duplicate` returns normally; read the namespace's conflicts in the
   dashboard or with `conflicts.list` ([conflicts and refusal](../memory/conflicts-and-refusal.md)).

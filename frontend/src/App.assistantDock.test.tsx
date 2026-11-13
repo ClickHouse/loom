@@ -137,7 +137,6 @@ beforeEach(() => {
     view: "memories",
     sessionExpired: false,
     sidebarCollapsed: false,
-    helpOpen: false,
     inspectedMemoryKey: null,
   });
   Element.prototype.scrollTo = vi.fn();

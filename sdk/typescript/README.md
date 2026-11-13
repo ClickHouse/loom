@@ -395,6 +395,15 @@ const memories = await new LoomMemoryRetriever(bot, { scope: { userId: "u-42" } 
 
 Both extend `BaseRetriever` from `@langchain/core` (install it next to the SDK; it is an optional peer dependency) and return one `Document` per document chunk (`knowledge.search`) or memory (`memory.search`). The memory retriever returns nothing when loom abstains, and leaves out memories below the floor, unless `honourAbstain: false`.
 
+## OpenAI Agents SDK
+
+```ts
+import { loomTools } from "@clickhouse/loom/integrations/openai-agents";
+const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ name: "assistant", tools }) from @openai/agents
+```
+
+Loom's agent verbs (`AgentTools`: `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note`) as function tools built with `tool()` from `@openai/agents`, an optional peer dependency, bound to one user, session or run.
+
 ## Strands Agents
 
 ```ts

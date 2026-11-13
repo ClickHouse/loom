@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "../test/rtl";
 import { ListRow } from "../components/ui/ListRow";
-import { setSingleKeyShortcuts } from "./shortcuts";
 import { useRowNav } from "./useRowNav";
 
 function List({ names = ["one", "two", "three"], onOpen = (_: string) => {}, controls = false }) {
@@ -73,16 +72,16 @@ describe("useRowNav", () => {
     expect(open("two")).toHaveFocus();
   });
 
-  it("moves with j/k and the arrows, and jumps with Home/End", async () => {
+  it("moves with the arrows, and jumps with Home/End", async () => {
     render(<List />);
     const user = userEvent.setup();
-    await user.keyboard("j");
+    await user.keyboard("{ArrowDown}");
     expect(open("one")).toHaveFocus();
-    await user.keyboard("jj");
+    await user.keyboard("{ArrowDown}{ArrowDown}");
     expect(open("three")).toHaveFocus();
-    await user.keyboard("j");
+    await user.keyboard("{ArrowDown}");
     expect(open("three")).toHaveFocus();
-    await user.keyboard("k{ArrowUp}");
+    await user.keyboard("{ArrowUp}{ArrowUp}{ArrowUp}");
     expect(open("one")).toHaveFocus();
     await user.keyboard("{End}");
     expect(open("three")).toHaveFocus();
@@ -100,7 +99,7 @@ describe("useRowNav", () => {
     try {
       render(<List />);
       const user = userEvent.setup();
-      await user.keyboard("j{ArrowDown}");
+      await user.keyboard("{ArrowDown}{ArrowDown}");
       expect(open("two")).toHaveFocus();
       expect(scrolled).toEqual([open("one").closest(".list-row"), open("two").closest(".list-row")]);
     } finally {
@@ -116,25 +115,21 @@ describe("useRowNav", () => {
     expect(screen.getByRole("button", { name: "Before" })).toHaveFocus();
   });
 
-  it("drops j/k while single-key shortcuts are off; the arrows stay", async () => {
+  // The dashboard has no keyboard shortcuts: j and k are keys like any other.
+  it("does not move on j or k", async () => {
     render(<List />);
     open("one").focus();
-    setSingleKeyShortcuts(false);
-    try {
-      await userEvent.keyboard("j");
-      expect(open("one")).toHaveFocus();
-      await userEvent.keyboard("{ArrowDown}");
-      expect(open("two")).toHaveFocus();
-    } finally {
-      setSingleKeyShortcuts(true);
-    }
+    await userEvent.keyboard("jk");
+    expect(open("one")).toHaveFocus();
+    await userEvent.keyboard("j");
+    expect(open("one")).toHaveFocus();
   });
 
   it("opens with Enter and toggles the row's checkbox with Space", async () => {
     const opened: string[] = [];
     render(<List onOpen={(n) => opened.push(n)} />);
     const user = userEvent.setup();
-    await user.keyboard("jj ");
+    await user.keyboard("{ArrowDown}{ArrowDown} ");
     expect(screen.getByLabelText("Select two")).toBeChecked();
     expect(opened).toEqual([]);
     expect(open("two")).toHaveFocus();

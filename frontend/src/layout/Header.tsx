@@ -22,12 +22,11 @@ const HeaderSearch = lazy(() => loadHeaderSearch().then((m) => ({ default: m.Hea
 import { PendingApprovalsBell } from "../components/PendingApprovalsBell";
 import { TaskInboxBell } from "../components/TaskInboxBell";
 import { IconButton } from "../components/IconButton";
-import { Kbd, Unavailable } from "../components/ui";
+import { Unavailable } from "../components/ui";
 import { Tip } from "../components/ui/Tooltip";
 import { useMedia } from "../lib/useMedia";
 import { canWrite, needsRole, useNamespaceRole } from "../lib/namespaceRole";
 import { MenuTrigger } from "../components/ui/Menu";
-import { paletteShortcut } from "../lib/platform";
 import { forgetAssistantConversations } from "../lib/assistantStorage";
 import { openNewDialog, useNewDialogs } from "../lib/newDialogs";
 import { useDock } from "../lib/assistantDock";
@@ -53,7 +52,6 @@ import { AssistantLauncher } from "./AssistantLauncher";
 export function Header() {
   const whoami = useStore((s) => s.whoami);
   const identity = useStore((s) => s.identity);
-  const openHelp = useStore((s) => s.openHelp);
   const newWorded = useMedia(NEW_WORD_QUERY);
   // Below md New is in the More sheet (layout/MobileMore.tsx): the top bar keeps one row.
   const newShown = useMedia(MD_QUERY);
@@ -189,17 +187,6 @@ export function Header() {
             this namespace's inboxes. One task.counts call per two minutes. */}
         <TaskInboxBell />
 
-        {/* Keyboard shortcut + general help. Opens HelpDialog mounted
-            in App.tsx (state lives in the store). */}
-        {/* A phone has no keyboard: its header leaves the shortcuts out. */}
-        <IconButton
-          icon="question"
-          label="Keyboard shortcuts"
-          tooltip="Keyboard shortcuts · ?"
-          onClick={() => openHelp(true)}
-          className="max-md:pointer-coarse:hidden"
-        />
-
         {whoami && (
           <Menu
             label={`Signed in as ${whoami.subject}, org ${whoami.org}`}
@@ -307,20 +294,9 @@ function NewLabel() {
 }
 
 /** The same input in the same place, before the search body has loaded (HeaderSearch
- *  draws the same SearchField with the ⌘K / Ctrl K hint over its end while empty):
- *  it takes focus and keystrokes (kept as the draft the real box mounts
- * with), and carries the Graph view's tab-order rule. */
-function SearchPlaceholder({
-  draft,
-  onDraft,
-  focus,
-  view,
-}: {
-  draft: string;
-  onDraft: (v: string) => void;
-  focus: boolean;
-  view: string;
-}) {
+ *  draws the same SearchField): it takes focus and keystrokes, kept as the draft the real
+ *  box mounts with. */
+function SearchPlaceholder({ draft, onDraft, focus }: { draft: string; onDraft: (v: string) => void; focus: boolean }) {
   const ref = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     if (focus) ref.current?.focus();
@@ -330,31 +306,23 @@ function SearchPlaceholder({
   const reason = useDock((s) => s.reason);
   const asks = offersAsk(reason, namespace, mine);
   return (
-    <div className="group relative w-full">
+    <div className="relative w-full">
       <SearchField
         ref={ref}
         aria-label="Search Loom"
         placeholder={asks ? ASK_PLACEHOLDER : SEARCH_PLACEHOLDER}
         value={draft}
         onChange={(v) => onDraft(v)}
-        tabIndex={view === "graph" ? -1 : undefined}
       />
-      {/* The hint leaves once the field has the focus or any text. */}
-      {!draft && (
-        <Kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex sm:group-focus-within:hidden">
-          {paletteShortcut()}
-        </Kbd>
-      )}
     </div>
   );
 }
 
 /** The search box's input is on the screen at boot; its body (state, reads, the result
  *  panel — 14 kB, a tenth of the index chunk) loads on idle after first paint, or at once
- *  on the first focus, keystroke or ⌘K, and mounts with the focus and draft the person
+ *  on the first focus or keystroke, and mounts with the focus and draft the person
  *  gave the placeholder. */
 function DeferredHeaderSearch({ autoFocus }: { autoFocus: boolean }) {
-  const view = useStore((s) => s.view);
   const [ready, setReady] = useState(autoFocus);
   const [wantFocus, setWantFocus] = useState(autoFocus);
   const [draft, setDraft] = useState("");
@@ -374,16 +342,7 @@ function DeferredHeaderSearch({ autoFocus }: { autoFocus: boolean }) {
     // lib.dom declares it, but Safari and jsdom still lack it.
     if (typeof window.requestIdleCallback === "function") idle = window.requestIdleCallback(go, { timeout: 1500 });
     else timer = setTimeout(go, 400);
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setWantFocus(true);
-        setReady(true);
-      }
-    };
-    document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("keydown", onKey);
       if (timer) clearTimeout(timer);
       if (idle !== null && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idle);
     };
@@ -403,7 +362,6 @@ function DeferredHeaderSearch({ autoFocus }: { autoFocus: boolean }) {
       <SearchPlaceholder
         draft={draft}
         focus={wantFocus}
-        view={view}
         onDraft={(v) => {
           setDraft(v);
           setWantFocus(true);

@@ -1207,6 +1207,8 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` | `int` | `60` |  | Seconds the memory code-link pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them (at least 10). A write visible later than this is passed and stays unlinked until a backfill reads it; a longer wait makes that rarer and links every write that much later. |
 | `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` |  | Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped. |
 | `LOOM_MEMORY_CODE_LINKS_REVISE_PER_PASS` | `int` | `20` |  | Changed claims one pass re-checks with the LLM under the `revise` policy. |
+| `LOOM_MEMORY_CODE_LINKS_MIRROR_NAMING_FILES` | `int` | `200` |  | Changed files that may hold a lost link's name (its callers count) for the mirror's answer to be used; from this many on, the code index alone decides. |
+| `LOOM_MEMORY_CODE_LINKS_MIRROR_CHANGED_FILES` | `int` | `5000` |  | Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched (at most 20,000: each is an argument to git); past it, the code index alone decides. |
 
 ### Memory chunks
 

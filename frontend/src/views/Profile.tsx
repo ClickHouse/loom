@@ -134,7 +134,7 @@ export function Profile() {
       : entries;
   }, [entries, listQuery]);
   // Checkboxes: one row, a Shift-click range, every section shown; Escape clears them while
-  // no editor is open (it owns Escape). Arrows and j/k move over the rows, Enter opens one.
+  // no editor is open (it owns Escape). The arrows move over the rows, Enter opens one.
   const labels = useMemo(() => (filteredEntries ?? []).map((e) => e.label), [filteredEntries]);
   const editorOpen = !!editing || newOpen;
   const selection = useRowSelection(labels, { enabled: !editorOpen && !deleteReason });

@@ -517,7 +517,7 @@ export function templatesFile(cat: TrackerContractCatalogue, tables: readonly st
   const head = [
     `-- Views Loom reads, in ${cat.database}. Replace <your_table> with the table each record lives in,`,
     "-- map every column marked MUST map, keep a default only where you have no data, then run this",
-    "-- in your ClickHouse and press Check in Loom.",
+    "-- in your ClickHouse and choose Check in Loom.",
     "-- Keep DEFINER (Loom's user reads the views, not your tables) and loom_uuid5 (the ids Loom computes).",
     "",
   ].join("\n");

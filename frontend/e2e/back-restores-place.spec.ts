@@ -166,13 +166,14 @@ for (const width of [1400, 375]) {
   });
 }
 
-test("a g-jump focuses the new page's h1 and says where it went", async ({ page }) => {
+const sectionLink = (page: Page, name: RegExp) =>
+  page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name });
+
+test("a sidebar jump focuses the new page's h1 and says where it went", async ({ page }) => {
   await installApi(page, { memoryRows: 3, knowledgeRows: 2 });
   await page.goto("/memories", { waitUntil: "domcontentloaded" });
   await expect(page.locator("[data-memory-open]").first()).toBeVisible();
-  await page.locator("main#main").focus();
-  await page.keyboard.press("g");
-  await page.keyboard.press("l");
+  await sectionLink(page, /^Library/).click();
   await expect(page).toHaveURL(new RegExp(`/library\\?namespace=${NAMESPACE}$`));
   await expect(page.getByRole("heading", { level: 1, name: "Library" })).toBeFocused();
   await expect(page.locator("#loom-nav-status")).toHaveText("Library");
@@ -182,15 +183,15 @@ test("a g-jump focuses the new page's h1 and says where it went", async ({ page 
   await expect(page.getByRole("heading", { level: 1, name: "Memories" })).toBeFocused();
 });
 
-// Every row list keys its rows (data-focus-key), so Back focuses the row that had it.
-test("Back after a g-jump focuses the Library row that had the focus", async ({ page }) => {
+// Every row list keys its rows (data-focus-key), so Back focuses the row that had it. The
+// link is clicked from script, which leaves the focus on the row as the jump is made.
+test("Back after a jump focuses the Library row that had the focus", async ({ page }) => {
   await installApi(page, { memoryRows: 3, knowledgeRows: 5 });
   await page.goto("/library", { waitUntil: "domcontentloaded" });
   const open = page.locator("[data-doc-row]").nth(2).locator("[data-row-open]");
   await expect(open).toBeVisible();
   await open.focus();
-  await page.keyboard.press("g");
-  await page.keyboard.press("m");
+  await sectionLink(page, /^Memories/).evaluate((a) => (a as HTMLElement).click());
   await expect(page).toHaveURL(new RegExp(`/memories\\?namespace=${NAMESPACE}$`));
   await page.goBack();
   await expect(page.locator("[data-doc-row]").nth(2).locator("[data-row-open]")).toBeFocused();

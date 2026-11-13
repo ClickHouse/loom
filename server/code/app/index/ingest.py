@@ -20,7 +20,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from server.code.app.index.denylist import Denylist, default_denylist
+from server.code.app.index.denylist import GENERATED_REFUSAL, Denylist, default_denylist
 from server.code.app.index.describe import _describe_new_chunks
 from server.code.app.index.ingest_chunks import (
     _callee_outline,
@@ -112,7 +112,7 @@ def _declared_not_searched(reason: str, stats: FileIngestStats) -> bool:
     edges enter the index (the `.pb.go` message types and `_gen.go` columns everything
     else calls), its text does not. True when the entry's generated rule refused the
     file; the stats keep the reason so the counters still say why it has no text."""
-    if not reason.startswith("excluded: generated"):
+    if not reason.startswith(GENERATED_REFUSAL):
         return False
     stats.excluded = reason
     stats.declared_only = True

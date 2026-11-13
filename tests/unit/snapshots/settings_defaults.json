@@ -712,6 +712,8 @@
  "memory_code_links_enabled": true,
  "memory_code_links_interval_seconds": 60,
  "memory_code_links_max_pass_seconds": 600.0,
+ "memory_code_links_mirror_changed_files": 5000,
+ "memory_code_links_mirror_naming_files": 200,
  "memory_code_links_pending_days": 14,
  "memory_code_links_revise_per_pass": 20,
  "memory_code_links_settle_seconds": 60,
