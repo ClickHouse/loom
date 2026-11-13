@@ -37,6 +37,7 @@ from server.transport.mcp_descriptions import (
     ACTIVATION_TRIGGERS,
     CODING_TOOL_DESCRIPTIONS,
     FIRST_STEP_HOOK,
+    FIRST_STEP_SECTIONS,
     TOOL_DESCRIPTIONS,
 )
 from tests.unit.loom_op_marks import (
@@ -447,6 +448,11 @@ def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
 
     coding = mcp_primer._coding_instructions("coding")
     assert "First step of each task: call `loom_context_pack` with the task as `query`" in coding
+    # every section but the profile, which these instructions already carry
+    assert (
+        f"`only_sections` {FIRST_STEP_SECTIONS}" in coding
+        and '"profile"' not in FIRST_STEP_SECTIONS
+    )
     assert f"Skip it when {FIRST_STEP_HOOK}." in coding
     rules = mcp_primer._loom_rules("core", None)
     assert (
@@ -454,6 +460,7 @@ def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
         in rules
     )
     assert f"Skip it when {FIRST_STEP_HOOK}." in rules
+    assert f"`only_sections` {FIRST_STEP_SECTIONS}" in rules
     assert "For one fact, rule 2's search alone is enough." in rules
     summary = first_sentence(TOOL_DESCRIPTIONS["context.pack"])
     assert summary.startswith("A task's memories, decisions and procedures: call it first")

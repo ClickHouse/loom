@@ -9,6 +9,11 @@ from __future__ import annotations
 # The first step's one exception, in agent-instructions.md's words; each text naming the
 # step uses it.
 FIRST_STEP_HOOK = "a Loom hook already put Loom's context in this session"
+# The sections the first step asks for: all but the profile, which the session's
+# instructions already carry.
+FIRST_STEP_SECTIONS = (
+    '["working_memory", "memory_stack", "namespace_guide", "memories", "decisions", "procedures"]'
+)
 
 # The one revision policy. Descriptions that each state their own revision
 # rule end up contradicting one another in the listing, so every description
@@ -1068,7 +1073,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "working_memory.get": (
         "Fetch one working-memory block by key. Prefer context.pack at "
-        "session startup; use this only when an integration needs a "
+        "the start of a task; use this only when an integration needs a "
         "direct read."
     ),
     "working_memory.render": (
@@ -1185,8 +1190,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     # ---- Context pack (the first step of each task) ----
     "context.pack": (
         "A task's memories, decisions and procedures: call it first in each task, unless "
-        f"{FIRST_STEP_HOOK}. Pass the task as `query`; working memory and the profile come "
-        "too, `include_knowledge` / `include_conversations` add docs and chats. "
+        f"{FIRST_STEP_HOOK}. Pass the task as `query`, and `only_sections` without "
+        "`profile` when the session's instructions carry it; `include_knowledge` / "
+        "`include_conversations` add docs and chats. "
         "`include_runs=true` adds a manifest of your recent sessions and runs "
         "(goal, outcome, tool calls, files) — shortlist there "
         "before opening one with memory.evidence or memory.digests. For one "

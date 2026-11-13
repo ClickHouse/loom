@@ -1,7 +1,7 @@
-"""Handler for context.pack (see memory/api/context.py).
+"""Handler for context.pack (models: server/memory/api/models_context.py).
 
 `context.pack` builds the bounded context an agent loads at the start of
-each task: editable working memory, always-loaded profile,
+a session or a task: editable working memory, always-loaded profile,
 relevant durable memories, matching procedures, and optional knowledge /
 conversation snippets.
 """

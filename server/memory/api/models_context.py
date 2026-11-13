@@ -1,7 +1,7 @@
 """Context packing operations.
 
 `context.pack` builds the bounded context an agent loads at the start of
-each task: editable working memory, always-loaded profile,
+a session or a task: editable working memory, always-loaded profile,
 relevant durable memories, matching procedures, and optional knowledge /
 conversation snippets.
 """
