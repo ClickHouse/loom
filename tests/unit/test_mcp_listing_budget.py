@@ -189,7 +189,7 @@ _SOURCE_TEXTS = (
 
 
 def _texts(tool: dict) -> list[str]:
-    """What a client reads of a tool: its description and every field description."""
+    """What a client reads of a tool: its description and every schema description."""
     out = [tool["description"]]
 
     def walk(node) -> None:
@@ -204,6 +204,7 @@ def _texts(tool: dict) -> list[str]:
                 walk(item)
 
     walk(tool["inputSchema"])
+    walk(tool.get("outputSchema", {}))
     return out
 
 
@@ -221,7 +222,7 @@ def test_a_listed_op_is_named_by_its_tool(toolset: str, code: bool):
             assert not dotted, f"{toolset}: {t['name']} names listed tools by op name {dotted}"
 
 
-@pytest.mark.parametrize("profile", [None, "compact"])
+@pytest.mark.parametrize("profile", [None, "compact", "full"])
 @pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
 def test_an_unlisted_op_loom_op_routes_is_marked_via_loom_op(
     toolset: str, code: bool, profile: str | None
@@ -342,7 +343,7 @@ def test_naming_marks_only_what_loom_op_routes():
     )
 
 
-@pytest.mark.parametrize("profile", [None, "compact"])
+@pytest.mark.parametrize("profile", [None, "compact", "full"])
 @pytest.mark.parametrize(("toolset", "code"), _TOOLSETS)
 def test_no_rendered_text_splits_a_call_or_a_code_span(
     toolset: str, code: bool, profile: str | None

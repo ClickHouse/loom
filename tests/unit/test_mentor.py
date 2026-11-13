@@ -1588,6 +1588,7 @@ def test_a_fixed_text_call_hint_fits_whole_with_its_note(facts: dict[str, Any]) 
         assert out is not None, rule.__name__
         assert len(out[1]) <= mentor_rules.HINT_CHARS, out[1]
         assert mentor_rules.clip_keeping_note(out[1]) == out[1]
+        _assert_rendered_cleanly(out[1])
         names = re.findall(rf"\b{mcp_op.OP_MENTION}\b", mentor_rules.without_listing_note(out[1]))
         for toolset in ("core", "coding"):
             rendered = mcp_tools.mentor_text_for_toolset(out[1], toolset)

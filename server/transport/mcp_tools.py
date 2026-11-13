@@ -547,7 +547,9 @@ async def _tools_descriptor(
         if d["name"] == LOOM_OP_TOOL_NAME:  # built for this listing already
             continue
         d["description"] = name_ops_for_listing(d["description"], listed, writes=writes)
-        d["inputSchema"] = _name_ops_in_fields(d["inputSchema"], listed, writes=writes)
+        for schema in ("inputSchema", "outputSchema"):
+            if schema in d:
+                d[schema] = _name_ops_in_fields(d[schema], listed, writes=writes)
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,

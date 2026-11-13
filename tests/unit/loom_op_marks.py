@@ -6,11 +6,10 @@ from __future__ import annotations
 
 import re
 
-from server.transport.mcp_op import _MARK_TRAIL, OP_MENTION
+from server.transport.mcp_op import _MARK_TRAIL, _MARKED
 
 # Every trail the renderer writes the marker after, as the renderer spells it.
 _TRAIL = rf"(?:{_MARK_TRAIL})"
-_MARKED = re.compile(rf"(?<![\w.])({OP_MENTION}){_TRAIL} \(via loom_op\)")
 
 
 def marked(op: str) -> re.Pattern[str]:
@@ -23,7 +22,9 @@ def assert_marked_once_outside_parentheses(text: str, context: object = "") -> N
         # code spans do not count as parentheses
         before = re.sub(r"`[^`]*`", "", text[: marker.start()])
         assert before.count("(") == before.count(")"), (context, text)
-    mentions = _MARKED.findall(text)
+    # a marker followed by another parenthesis reads as one
+    assert "(via loom_op) (" not in text, (context, text)
+    mentions = [m.group(1) for m in _MARKED.finditer(text)]
     assert len(mentions) == len(set(mentions)), (context, mentions)
 
 
