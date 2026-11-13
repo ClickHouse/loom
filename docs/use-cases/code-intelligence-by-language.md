@@ -12,7 +12,8 @@ compiler tiers' setup is in
 
 An answer names the tier behind it (`tier: "scip"` for the compiler tier, `"treesitter"`
 for the fast tier), and `code.coverage` reports what a namespace holds per language and
-tier. Read it before trusting callers or impact in a language you have not used Loom with.
+tier. Read it before trusting `code.callers` or `code.impact` answers in a language you
+have not used Loom with.
 
 ## C and C++
 

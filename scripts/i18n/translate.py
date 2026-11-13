@@ -162,7 +162,8 @@ HEADING = re.compile(r"^(#{1,6}) +(.+?) *$")
 ANCHOR = re.compile(r'^<a id="([^"]+)"></a>$')
 NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 
-SYSTEM = """You translate one section of a Markdown page of Loom's documentation into {language}.
+SYSTEM = """You translate a Markdown page of Loom's documentation, or one section of it, into
+{language}.
 Loom is an open-source memory, document search and code index server for AI agents.
 Rules:
 - Translate the prose, headings, table cells, list items, alt text and link text.
@@ -174,7 +175,7 @@ Rules:
   table layout, the same blank lines between blocks.
 - Write the plain, technical register of developer documentation in {language}.
 - {style}
-Reply with the translated section only, with no preamble and no code fence around it."""
+Reply with the translated text only, with no preamble and no code fence around it."""
 
 
 # ---- page structure -------------------------------------------------------------------
@@ -600,11 +601,11 @@ def translate_section(section: str, lang: Language, key: str, spend: Spend) -> s
             {"role": "assistant", "content": text},
             {
                 "role": "user",
-                "content": "Fix these differences and reply with the whole section:\n"
+                "content": "Fix these differences and reply with the whole text again:\n"
                 + "\n".join(problems),
             },
         ]
-    raise SystemExit(f"{lang.code}: a section still differs after a retry: {problems}")
+    raise SystemExit(f"{lang.code}: a translation still differs after a retry: {problems}")
 
 
 def _same_edges(source: str, text: str) -> str:
