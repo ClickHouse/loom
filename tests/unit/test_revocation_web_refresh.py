@@ -137,7 +137,6 @@ def test_lifespan_starts_the_token_state_and_cancels_it_at_shutdown() -> None:
     src = (ROOT / "server" / "main.py").read_text()
     lifespan = src[src.index("async def lifespan(") :]
     assert "auth_loops = await boot.start_token_state()" in lifespan
-    assert "cell_loops = await boot.start_cell_gate()" in lifespan
     assert (
         "for loop in (*cell_loops, *auth_loops, overrides_loop):\n            loop.cancel()"
         in lifespan

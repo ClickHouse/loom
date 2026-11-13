@@ -55,6 +55,8 @@ async def stores(monkeypatch: pytest.MonkeyPatch):
         "router_operator_token": OPERATOR,
     }.items():
         monkeypatch.setattr(settings, name, value)
+    # A pool an earlier file left open would still point at the shared database.
+    await pg.close_pool()
     monkeypatch.setattr(directory, "_pool", None)
     ch = get_client()
     try:

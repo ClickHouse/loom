@@ -1,6 +1,7 @@
 """Keep the model control plane reachable while data-plane work is draining,
 refuse work on a process whose configuration drifted from the deployment's, and
-refuse everything but the health probes on a cell its own rows do not let serve."""
+refuse everything but the health probes on a cell its own rows do not let serve, or
+on a process its deployment's cell state gates."""
 
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
