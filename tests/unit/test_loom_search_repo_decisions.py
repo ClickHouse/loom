@@ -972,12 +972,21 @@ def test_a_base_row_moved_for_stale_code_holds_the_slot_of_the_row_above_it(
     assert [h.memory_key for h in hits] == order
 
 
-def test_a_stale_base_row_with_nothing_above_it_holds_no_slot() -> None:
-    stale = _hit("stale", 0.9, "me")
-    stale.score_components = {"code_changed_places": 0.0}  # nothing below it to pass
-    fresh = _hit("decision:x", 0.85, TRUNK, mtype="decision")
-    hits, _ = repo_decisions.merge_memory_hits([stale], [fresh], "me")
-    assert [h.memory_key for h in hits] == ["decision:x", "stale"]
+@pytest.mark.parametrize(
+    ("above", "passed"),
+    [((), 0.0), (("a", "b"), -2.0)],
+    ids=["nothing-to-pass", "stopped-at-the-end"],
+)
+def test_a_stale_base_row_that_stopped_short_of_its_places_holds_no_slot(
+    monkeypatch, above, passed
+) -> None:
+    monkeypatch.setattr(repo_decisions.settings, "memory_search_code_changed_places", 3)
+    stale = _hit("stale", 0.95, "me")
+    stale.score_components = {"code_changed_places": passed}
+    base = [*(_hit(k, 0.9 - 0.1 * i, "me") for i, k in enumerate(above)), stale]
+    fresh = _hit("decision:x", 0.7, TRUNK, mtype="decision")
+    hits, _ = repo_decisions.merge_memory_hits(base, [fresh], "me")
+    assert [h.memory_key for h in hits] == [*above, "decision:x", "stale"]
 
 
 @pytest.mark.asyncio

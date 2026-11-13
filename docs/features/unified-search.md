@@ -80,7 +80,9 @@ block too. `explain=true` keeps everything.
 
 The memory section has one paragraph per hit, `[date] [key] (type) excerpt`, in the order `memory.ask` would read
 them. A decision from the scoped repository names its namespace beside its type, `(decision, <namespace>)`, and is
-placed among the home hits by similarity (a home row moved down for stale code counts the similarity of the row above it), then moved down like a home hit when its code changed.
+placed among the home hits by similarity, then moved down like a home hit when its code changed. A home row moved
+down for stale code holds its place at the lower of its own similarity and that of the row above it, or, when it
+stopped short of its places, holds none: a decision placed below it goes above it.
 
 The reading rule rides ahead of the block once per MCP session, then as a one-line pointer (every time for a client
 that sends no session id).

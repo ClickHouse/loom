@@ -100,19 +100,24 @@ def merge_memory_hits(
     own order (rank order, not always falling similarity); each `extra` hit
     goes after the last base hit whose similarity is at least its own (the
     rank scores of two searches do not compare). A base row its search moved
-    down for stale code counts at most the similarity of the row above it, as a
-    home row placed there would, and one with no row above it counts none. An `extra` hit whose
-    (namespace, memory_key) the base or an earlier extra hit holds is left
+    down for stale code its full `memory_search_code_changed_places` counts at
+    most the similarity of the row above it, as a home row placed there would;
+    one that stopped short (at the end of the list or a filler row) holds no
+    slot, so every `extra` hit placed below it goes above it. An `extra` hit
+    whose (namespace, memory_key) the base or an earlier extra hit holds is left
     out. Nothing is cut: the extra hits are bounded by the caller's
     `top_k` (`search_repo_decisions` keeps one per key), and a base hit pushed
     out would be served on no page."""
     seen = {(h.namespace or home_ns, h.memory_key) for h in base}
+    places = settings.memory_search_code_changed_places
     slot_sims: list[float] = []  # the similarity each base row holds its slot at
     for b in base:
         if not code_change.moved_for_stale_code(b):
             slot_sims.append(b.similarity)
-        else:  # a stale row first, with nothing above it, holds no slot
-            slot_sims.append(min(b.similarity, slot_sims[-1]) if slot_sims else -math.inf)
+        elif -b.score_components["code_changed_places"] < places:
+            slot_sims.append(-math.inf)  # it had places left: it passes what lands below it
+        else:  # it passed `places` rows, the last of them just above it
+            slot_sims.append(min(b.similarity, slot_sims[-1]))
     # slots[i]: the extra hits that go after the first i base hits
     slots: list[list[_MemorySearchHit]] = [[] for _ in range(len(base) + 1)]
     added: list[_MemorySearchHit] = []
