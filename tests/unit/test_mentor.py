@@ -1531,12 +1531,25 @@ def test_handshake_warms_the_profile_when_nothing_is_cached(
 )
 def test_a_fixed_text_call_hint_fits_whole_with_its_note(facts: dict[str, Any]) -> None:
     """MCP strips the note, so a clip would leave the agent cut advice: these fit."""
-    args = {"memory_key": "bugs/9", "value": _TRACE + "\nsee #123456"}
+    from server.transport import mcp_op, mcp_tools
+
+    # the longest issue number the reference pattern takes
+    args = {"memory_key": "bugs/9", "value": _TRACE + "\nsee #1234567"}
     for rule in (mentor_rules._rule_set_stack_trace, mentor_rules._rule_set_issue_reference):
         out = rule("memory.set", args, {}, facts, {})
         assert out is not None, rule.__name__
         assert len(out[1]) <= mentor_rules.HINT_CHARS, out[1]
         assert mentor_rules.clip_keeping_note(out[1]) == out[1]
+        names = re.findall(rf"\b{mcp_op.OP_MENTION}\b", mentor_rules.without_listing_note(out[1]))
+        for toolset in ("core", "coding"):
+            rendered = mcp_tools.mentor_text_for_toolset(out[1], toolset)
+            assert len(rendered) <= mentor_rules.HINT_CHARS + len(names) * len(" (via loom_op)")
+
+
+def test_a_clipped_call_hint_keeps_its_note_whole() -> None:
+    note = " (call code.trace via loom_op)"
+    text = mentor_rules.clip_keeping_note("x " * 200 + "code.trace." + note)
+    assert len(text) <= mentor_rules.HINT_CHARS and text.endswith("…" + note)
 
 
 def test_several_echoed_names_keep_their_quotes_and_the_advice() -> None:

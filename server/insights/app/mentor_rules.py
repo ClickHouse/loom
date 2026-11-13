@@ -928,7 +928,7 @@ def _rule_set_issue_reference(
         "set_issue_reference",
         f"this row names issue/PR #{refs[0]}: ticket-keyed rows are facts with identity — "
         "memory_schema.register once, then memory.record.write per ticket; code.pr_check "
-        "before a duplicate." + _unlisted(("memory_schema.register",)),
+        "before a second PR." + _unlisted(("memory_schema.register",)),
     )
 
 
