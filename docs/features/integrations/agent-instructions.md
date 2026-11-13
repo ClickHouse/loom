@@ -68,9 +68,9 @@ Replace `<code-namespace>` with the `namespace` of the branch's row and
 `<team-namespace>` with its `primary_namespace` (the trunk branch's, where team file
 rules and decisions live); for the trunk branch the two are the same. A branch indexed
 on its own carries its own row's `namespace` in its copy of the file. A repository with
-no row (not indexed), or whose row says `readable: false` (an admin's view of a
-repository without a grant on it), takes the block without `extra_namespaces` and
-without its Code section.
+no row (not indexed), or whose row says `readable: false` (a repository this token
+cannot read, listed so you can join it or ask for access), takes the block without
+`extra_namespaces` and without its Code section.
 
 ## Where each client reads it
 
@@ -83,7 +83,7 @@ their own rule files keep the block apart from other instructions.
 | Codex, Zed, and any agent that reads `AGENTS.md` | `AGENTS.md` at the repository root | none                                                                         |
 | Claude Code without the plugin                   | `CLAUDE.md` at the repository root | none                                                                         |
 | Cursor                                           | `.cursor/rules/loom.mdc`           | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
-| Devin Desktop (`loom install --client windsurf`) | `.devin/rules/loom.md`             | `---`, `trigger: always_on`, `---`                                           |
+| Devin Desktop                                    | `.devin/rules/loom.md`             | `---`, `trigger: always_on`, `---`                                           |
 | Cline                                            | `.clinerules/loom.md`              | none                                                                         |
 | VS Code (GitHub Copilot)                         | `.github/copilot-instructions.md`  | none                                                                         |
 
