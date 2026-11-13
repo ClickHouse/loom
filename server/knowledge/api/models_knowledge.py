@@ -558,7 +558,8 @@ class KnowledgeListInput(BaseModel):
 
 
 class _KnowledgeListEntry(ProjectedRow):
-    # Where the document is: `namespace`, or one of `namespaces`.
+    # Where the document is: `namespace`, or one of `namespaces` (`@me` as the personal
+    # namespace it names).
     namespace: str
     source_uri: str
     title: str
