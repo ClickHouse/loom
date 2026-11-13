@@ -28,7 +28,9 @@ configuration in either mode.
 
 ### Fast path: released image, no clone
 
-Prerequisite: Docker Desktop or Docker Engine with Compose 2.20 or later.
+Prerequisite: Docker Desktop or Docker Engine with Compose 2.20 or later. On Windows, run
+the command in a WSL 2 terminal, with Docker Desktop's WSL integration turned on for that
+distribution; the installer is a POSIX shell script.
 
 ```bash
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh

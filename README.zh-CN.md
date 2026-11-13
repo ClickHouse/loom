@@ -58,7 +58,7 @@ Loom 不是供单个智能体在进程内使用的短期记忆库，也不是智
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ClickHouse/loom?quickstart=1)
 （[它运行什么、谁能访问](./docs/getting-started/quickstart.md#try-it-in-github-codespaces)）
 
-装好 Docker 后运行：
+装好 Docker 后运行（Windows 上请在 WSL 2 终端中运行，并在 Docker Desktop 中为该发行版启用 WSL 集成）：
 
 ```bash
 curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
