@@ -12,8 +12,8 @@ import { useMedia } from "../lib/useMedia";
  * muted text, then New chat, History (pressed while History shows), Expand (from EXPAND_MIN
  * px) and Close. Once the session has ended only Close stays: the body asks to sign in
  * again and holds no chat to start or list. In History the title says so, after a Back
- * button that returns to the chat. New chat and History are said to the panel's body through the dock
- * state (views/assistant/Dock.tsx), which loads after this row.
+ * button that returns to the chat. New chat and History are said to the panel's body
+ * through the dock state (views/assistant/Dock.tsx), which loads after this row.
  */
 export function AssistantHeader({ expanded }: { expanded: boolean }) {
   const expired = useDock((s) => s.expired);
