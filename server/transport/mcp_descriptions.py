@@ -7,7 +7,7 @@ builds the tools/list descriptors.
 from __future__ import annotations
 
 # The first step's one exception, in agent-instructions.md's words; every text naming it.
-FIRST_STEP_SKIP = "Skip it when a Loom hook already put Loom's context in this session"
+FIRST_STEP_HOOK = "a Loom hook already put Loom's context in this session"
 
 # The one revision policy. Descriptions that each state their own revision
 # rule end up contradicting one another in the listing, so every description
@@ -1184,8 +1184,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     # ---- Context pack (the first step of each task) ----
     "context.pack": (
         "A task's memories, decisions and procedures in one bundle: call it first in each "
-        "task, unless a Loom hook already put Loom's context in this session. Pass the task "
-        "as `query`; it adds the profile and, optionally, docs and conversations. "
+        f"task, unless {FIRST_STEP_HOOK}. Pass the task as `query`, and `only_sections` "
+        "for just those; it can add the profile, docs and conversations. "
         "`include_runs=true` adds a manifest of your recent sessions and runs "
         "(goal, outcome, tool calls, files) — shortlist there "
         "before opening one with memory.evidence or memory.digests. For one "

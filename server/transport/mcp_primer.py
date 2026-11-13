@@ -31,7 +31,7 @@ from server.transport.mcp_config import (
     _ok,
     cache_hints,
 )
-from server.transport.mcp_descriptions import FIRST_STEP_SKIP
+from server.transport.mcp_descriptions import FIRST_STEP_HOOK
 from server.transport.mcp_identity import (
     _caller_default_context,
     _caller_defaults,
@@ -333,9 +333,9 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     collections = knowledge_search_reads_collections()
     head = (
         "**Loom-first mode active for this conversation.**\n\n"
-        "**1. Session context.** First step of each task: call "
+        "**1. Task context.** First step of each task: call "
         f"{tool['context.pack']} with the task, for the memories, decisions and "
-        f"procedures that bear on it in one bounded bundle. {FIRST_STEP_SKIP}. "
+        f"procedures that bear on it in one bounded bundle. Skip it when {FIRST_STEP_HOOK}. "
         "For one fact, rule 2's search alone is enough.\n\n"
         "**2. Recall lookup order.** When I ask about preferences, "
         "decisions, family/relationships, work, bills, contracts, "
@@ -536,7 +536,9 @@ def _coding_instructions(toolset: str | None) -> str:
     # brings the team's memory in, unless a plugin's hooks load it for the session.
     return name_ops_for_toolset(
         "**Loom: memory and code for this session.**"
-        + f"\n\nFirst step of each task: call `context.pack` with the task. {FIRST_STEP_SKIP}."
+        + "\n\nFirst step of each task: call `context.pack` with the task as `query` and "
+        + '`only_sections` ["memories", "decisions", "procedures"]. '
+        + f"Skip it when {FIRST_STEP_HOOK}."
         + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
         + memory,
         toolset,

@@ -440,20 +440,21 @@ def test_the_primers_drop_the_collections_clause_when_search_does_not_span_them(
 
 def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
     """The coding instructions, the full primer and context.pack's description name the
-    first step and its one exception in the same words; the full primer keeps the
-    one-fact search."""
+    first step and its one exception (`FIRST_STEP_HOOK`); the full primer keeps the
+    one-fact search, and the generated reference's summary keeps the exception."""
+    from scripts.codegen.page_summary import first_sentence
     from server.transport import mcp_primer
-    from server.transport.mcp_descriptions import FIRST_STEP_SKIP, TOOL_DESCRIPTIONS
+    from server.transport.mcp_descriptions import FIRST_STEP_HOOK, TOOL_DESCRIPTIONS
 
     coding = mcp_primer._coding_instructions("coding")
-    step = f"First step of each task: call `loom_context_pack` with the task. {FIRST_STEP_SKIP}."
-    assert step in coding
+    assert "First step of each task: call `loom_context_pack` with the task as `query`" in coding
+    assert '`only_sections` ["memories", "decisions", "procedures"]' in coding
+    assert f"Skip it when {FIRST_STEP_HOOK}." in coding
+    assert len(coding) < 2048  # a client may cut its instructions there
     rules = mcp_primer._loom_rules("core", None)
-    assert "**1. Session context.** First step of each task: call `loom_context_pack`" in rules
-    assert FIRST_STEP_SKIP in rules
+    assert "**1. Task context.** First step of each task: call `loom_context_pack`" in rules
+    assert f"Skip it when {FIRST_STEP_HOOK}." in rules
     assert "For one fact, rule 2's search alone is enough." in rules
-    # the generated reference keeps the first sentence: the exception is in it
-    first = TOOL_DESCRIPTIONS["context.pack"].split(". ")[0]
-    assert first.startswith("A task's memories, decisions and procedures in one bundle")
-    assert "call it first in each task" in first
-    assert "unless a Loom hook already put Loom's context in this session" in first
+    summary = first_sentence(TOOL_DESCRIPTIONS["context.pack"])
+    assert summary.startswith("A task's memories, decisions and procedures in one bundle")
+    assert summary.endswith(f"unless {FIRST_STEP_HOOK}.")
