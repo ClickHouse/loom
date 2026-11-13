@@ -284,7 +284,6 @@ def test_check_skips_anchors_of_stale_pages_only_when_asked(
     monkeypatch.setattr(t, "orphans", lambda: [])
     monkeypatch.setattr(t, "untranslated_pages", lambda: [])
     monkeypatch.setattr(t, "readme_language_line_differs", lambda: False)
-    monkeypatch.setattr(t, "target_path", lambda lang, source: f"i18n/{lang}/{source}")
     monkeypatch.setattr(t, "stale", lambda model=t.DEFAULT_MODEL: [("b.md", ja)])
     assert t.check(skip_stale=True) == 0
     assert t.check() == 1
