@@ -28,6 +28,7 @@ opt-in; one you leave unconfigured does nothing. They fall into three groups:
 | LibreChat v0.8.8                                         | chat client on the assistant toolset, per-user token    | `integrations/librechat/`: [librechat.md](librechat.md)                                 |
 | LangChain, LangGraph, Strands Agents                     | SDK retrievers and memory adapters; needs the framework | `loom.integrations.langchain`, `.langgraph`, `.strands`: [frameworks.md](frameworks.md) |
 | Agent orchestrators                                      | shared MCP mount                                        | [frameworks.md](frameworks.md)                                                          |
+| Agent Substrate                                          | MCP through the egress gateway, per-agent token         | [agent-substrate.md](agent-substrate.md)                                                |
 | AX (sandboxed agent tasks)                               | Workspace manifest: MCP config, `AGENTS.md`, run budget | `integrations/ax/`: [README](../../../integrations/ax/README.md)                        |
 | Langfuse                                                 | traces, retrieval scores, erasure; needs Langfuse       | [langfuse.md](langfuse.md)                                                              |
 | ClickStack / HyperDX                                     | OpenTelemetry spans, logs, metrics; erasure             | [clickstack.md](clickstack.md)                                                          |
