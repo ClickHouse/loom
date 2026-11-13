@@ -96,6 +96,22 @@ async def test_advanced_models_require_their_own_keys(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
+async def test_a_job_naming_the_main_model_is_checked_on_the_main_provider(monkeypatch):
+    # A Claude-named model served by an OpenAI-compatible endpoint: the verifier naming it
+    # runs on openai at runtime, so the check needs no Anthropic key.
+    llm, embed = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(validation, "_probe_llm", llm)
+    monkeypatch.setattr(validation, "_probe_embedding", embed)
+    setup = setup_input(
+        llm={"provider": "openai", "model": "claude-x", "verification_models": ["claude-x"]},
+        keys={"openai": "one-test-key"},
+    )
+    result = await validation.validate_providers(setup, {})
+    assert result.ready
+    assert {check.provider for check in result.checks} == {"openai"}
+
+
+@pytest.mark.asyncio
 async def test_one_openai_key_validates_both_roles_without_anthropic(monkeypatch):
     llm, embed = AsyncMock(), AsyncMock()
     monkeypatch.setattr(validation, "_probe_llm", llm)

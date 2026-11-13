@@ -7,6 +7,7 @@ ledger, which lists no price for the model.
 
 from __future__ import annotations
 
+from server.llm import gateway
 from server.llm.openai import OpenAILLMClient
 
 
@@ -18,7 +19,7 @@ class LocalLLMClient(OpenAILLMClient):
     _cap_name = "max_tokens"
 
     def __init__(self, model: str) -> None:
-        # A placeholder past the parent's key check; `_headers` sends no bearer.
+        # A placeholder past the parent's key check; `_headers` never sends it.
         super().__init__(model, api_key="local")
 
     def _root(self) -> str:
@@ -27,6 +28,7 @@ class LocalLLMClient(OpenAILLMClient):
         return settings.local_llm_base_url
 
     async def _headers(self, url: str) -> dict[str, str]:
-        # No bearer. A required gateway still refuses the host: the model client checks
-        # every request it sends (server.clients._http).
-        return {}
+        # No key of its own: behind an inference gateway the workload's token, which
+        # also refuses a host off the gateway; otherwise no bearer at all.
+        bearer = await gateway.bearer("", url)
+        return {"Authorization": f"Bearer {bearer}"} if bearer else {}

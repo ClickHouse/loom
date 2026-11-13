@@ -164,3 +164,17 @@ def test_the_setup_check_and_the_runtime_name_one_provider() -> None:
     assert provider_of("claude-x", "claude-x", "openai") == "openai"
     assert provider_of("claude-y", "claude-x", "openai") == "anthropic"
     assert provider_of("llama3.2:3b", "qwen2.5:3b", "local") == "local"
+
+
+def test_behind_an_inference_gateway_the_local_client_sends_its_token(
+    _setup: _Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.llm import gateway
+
+    async def bearer(key: str, url: str) -> str:
+        return "workload-token"
+
+    monkeypatch.setattr(gateway, "bearer", bearer)
+    asyncio.run(LocalLLMClient("qwen2.5:3b").complete("s", "u", max_tokens=10))
+    ((_, headers, _),) = _setup.calls
+    assert headers["Authorization"] == "Bearer workload-token"
