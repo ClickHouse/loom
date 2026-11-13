@@ -32,7 +32,7 @@
 <p>
   <img src="./docs/images/dashboard-memories.png" width="32%" alt="Loom dashboard showing shared agent memories, a pinned fact and flagged conflicts">
   <img src="./docs/assets/screenshots/document-search.webp" width="32%" alt="Library search: passages from a refunds policy and an on-call runbook, each cited by document, revision and lines">
-  <img src="./docs/assets/screenshots/code-callers.webp" width="32%" alt="A repository's Explore tab: payments.fx.convert with its definition, callers and callees">
+  <img src="./docs/assets/screenshots/code-callers.webp" width="32%" alt="A repository's Explore tab: payments.fx.convert with its definition and callers">
 </p>
 
 Loom is an open-source, self-hosted MCP server that gives your agents long-term, shared

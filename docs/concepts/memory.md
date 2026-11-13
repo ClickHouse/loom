@@ -332,11 +332,6 @@ Each line:
 
 ## Memories linked to code
 
-![A memory's detail in the dashboard: its linked code, one definition current and one changed since a commit](../assets/screenshots/memory-linked-files.webp)
-
-The dashboard shows the same links when a memory opens
-([clip](../assets/screenshots/clip-memory-surfacing.webm)).
-
 A memory about code is linked to the definitions and files it names, and the links
 follow the code. The `memory_code_links` worker links each memory tagged `repo:<id>`
 (the coding plugins tag their sessions) or written in a repository's code namespace
@@ -348,6 +343,11 @@ against that repository's trunk:
 - a bare camelCase or snake_case word of the prose only to a definition in the memory's
   `files`;
 - each file the memory names that holds none of those definitions.
+
+![A memory's detail in the dashboard: its linked code, one definition current and one changed since a commit](../assets/screenshots/memory-linked-files.webp)
+
+A memory's detail in the dashboard lists these links with their state
+([clip](../assets/screenshots/clip-memory-linked-code.webm)).
 
 A qualified name trunk does not define yet waits for `memory_code_links_pending_days`
 (14), so a memory about unmerged code links once it merges.

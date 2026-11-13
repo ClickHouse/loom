@@ -7,7 +7,7 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
 
 ![The dashboard's Library: a search for a refund rule answered by cited passages](assets/screenshots/document-search.webp)
 
-<video src="assets/screenshots/clip-search-answer.webm" autoplay loop muted playsinline width="100%" aria-label="The assistant answering a question about refunds, with its sources checked against Loom"></video>
+<video src="assets/screenshots/clip-assistant-answer.webm" controls autoplay loop muted playsinline width="100%" aria-label="The assistant answering a question about refunds, with its sources checked against Loom"><a href="assets/screenshots/clip-assistant-answer.webm">The assistant answering with checked sources (clip)</a></video>
 
 ## Start here
 

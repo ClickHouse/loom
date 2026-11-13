@@ -159,11 +159,6 @@ trusting callers or impact for a language. Adding a language:
 
 ## How an agent uses it
 
-![A repository's Explore tab: payments.fx.convert with its definition, callers and callees](../../assets/screenshots/code-callers.webp)
-
-A person walks the same graph from the repository's **Explore** tab
-([clip](../../assets/screenshots/clip-code-callers.webm)).
-
 ```mermaid
 flowchart LR
   Q["question in words"] --> S["code.search / code.ask"]
@@ -186,6 +181,11 @@ flowchart LR
    touched symbols, the tests that reach them, and `co_change_missing`.
 5. **Check for a duplicate.** `code.pr_check`: `verdict` is `duplicate_of`, `related`
    or `none` ([history-and-prs.md](history-and-prs.md)).
+
+![A repository's Explore tab: payments.fx.convert with its definition and callers](../../assets/screenshots/code-callers.webp)
+
+A person walks the same graph from the repository's **Explore** tab
+([clip](../../assets/screenshots/clip-code-callers.webm)).
 
 These are the ops the `coding` toolset lists. `code.callees` and `code.test_gate` are
 callable by name or through `loom_op`. Report what you did with the hits through

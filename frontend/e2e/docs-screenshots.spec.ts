@@ -9,7 +9,7 @@
 // The clock is fixed, so relative times ("2h ago") read the same on every run. The 1440 px
 // shots and the clips go to docs/assets/screenshots/, encoded as WebP by Chromium itself.
 
-import { expect, test, type Browser, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page, type Video } from "@playwright/test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -18,8 +18,8 @@ import { isRecord, pickOption } from "./fixtures";
 
 const ENABLED = process.env.LOOM_DOCS_SCREENSHOTS === "1";
 const OUT = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/images");
-// The newer shots (WebP) and clips (WebM), at 1440 px; the PNGs above stay where the
-// translated READMEs link them.
+// The 1440 px shots (WebP) and the clips (WebM); the PNGs above stay where the translated
+// READMEs link them.
 const OUT_ASSETS = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../docs/assets/screenshots");
 const NOW = Date.parse("2026-09-28T15:00:00Z");
 
@@ -50,7 +50,13 @@ interface DemoMemory {
   status?: string;
   entities?: string[];
   /** The code the memory is linked to (`memory.get`'s `code`). */
-  code?: Array<{ path: string; symbol: string; state: string; changed_since?: string }>;
+  // Each link's state takes CodeLink's values (frontend/src/api.ts).
+  code?: Array<{
+    path: string;
+    symbol: string;
+    state: "fresh" | "moved" | "changed" | "unresolved" | "missing";
+    changed_since?: string;
+  }>;
 }
 
 const MEMORIES: DemoMemory[] = [
@@ -168,7 +174,9 @@ const MEMORIES: DemoMemory[] = [
     type: "semantic",
     value:
       "FX conversion rounds half to even, as the settlement bank does; never switch payments.fx.convert to ROUND_HALF_UP or refunds stop matching settlement.",
-    tags: ["payments", "constraint"],
+    // The repository tag the coding plugins put on a session's memories, which the code-link
+    // worker links from.
+    tags: ["payments", "constraint", "repo:5e1a9c03d2"],
     agent: "claude-code",
     hours: 50,
     verified: true,
@@ -707,26 +715,48 @@ const PASSAGES = [
   },
 ];
 
-/** The Audit log's events: writes, a resolved conflict, a grant and a document upload. */
+/** The Audit log's events: writes, a resolved conflict, a grant and a document upload. An
+ *  agent's write names its token's subject (`process:sa:…`), a person's `human:…`. */
+const AGENT_ACTOR = "process:sa:claude-code-7f2a";
+const BOT_ACTOR = "process:sa:support-bot-91c3";
 const AUDIT_ROWS = [
-  [0.3, "memory.set", "claude-code", { memory_key: "payments/fx/rounding" }],
-  [0.9, "conflicts.resolve", SUBJECT, { kept_memory_key: "billing/refunds/threshold" }],
-  [1.6, "knowledge.upsert", SUBJECT, { source_uri: "policies/refunds.md" }],
-  [2.2, "memory.pin", SUBJECT, { memory_key: "deploys/policy/windows" }],
-  [3.1, "grants.create", SUBJECT, { role: "writer", namespace: NS_SUPPORT, subject: "sa:support-bot-91c3" }],
-  [4.4, "memory.set", "support-bot", { memory_key: "support/refunds/approval" }],
-  [5.0, "memory.delete", "claude-code", { memory_key: "staging/db/legacy-host", reason: "host retired" }],
-  [6.7, "memory.promote", SUBJECT, { memory_key: "procedures/rollback-prod", target_status: "shared" }],
-  [8.2, "namespace.join", "dev2@acme.example", { namespace: NS, role: "viewer" }],
-  [9.5, "memory.set", "claude-code", { memory_key: "incidents/checkout-latency" }],
-  [12.0, "knowledge.upsert", SUBJECT, { source_uri: "runbooks/payments-on-call.md" }],
-  [20.0, "memory.redact", SUBJECT, { memory_key: "support/escalations/contact" }],
-].map(([h, event_type, actor, subject]) => ({
-  ts: ago(h as number),
+  {
+    h: 0.9,
+    event_type: "conflicts.resolve",
+    actor: SUBJECT,
+    subject: { kept_memory_key: "billing/refunds/threshold" },
+  },
+  { h: 1.5, event_type: "memory.set", actor: BOT_ACTOR, subject: { memory_key: "api/rate-limit/public" } },
+  { h: 1.6, event_type: "knowledge.upsert", actor: SUBJECT, subject: { source_uri: "policies/refunds.md" } },
+  { h: 2.2, event_type: "memory.pin", actor: SUBJECT, subject: { memory_key: "deploys/policy/windows" } },
+  {
+    h: 3.1,
+    event_type: "grants.create",
+    actor: SUBJECT,
+    subject: { role: "writer", namespace: NS_SUPPORT, subject: "sa:support-bot-91c3" },
+  },
+  { h: 4.4, event_type: "memory.set", actor: BOT_ACTOR, subject: { memory_key: "support/refunds/approval" } },
+  {
+    h: 5.0,
+    event_type: "memory.delete",
+    actor: AGENT_ACTOR,
+    subject: { memory_key: "staging/db/legacy-host", reason: "host retired" },
+  },
+  {
+    h: 6.7,
+    event_type: "memory.promote",
+    actor: SUBJECT,
+    subject: { memory_key: "procedures/rollback-prod", target_status: "shared" },
+  },
+  { h: 8.2, event_type: "namespace.join", actor: "dev2@acme.example", subject: { namespace: NS, role: "viewer" } },
+  { h: 12.0, event_type: "knowledge.upsert", actor: SUBJECT, subject: { source_uri: "runbooks/payments-on-call.md" } },
+  { h: 20.0, event_type: "memory.redact", actor: SUBJECT, subject: { memory_key: "support/escalations/contact" } },
+  { h: 30.0, event_type: "memory.set", actor: AGENT_ACTOR, subject: { memory_key: "incidents/checkout-latency" } },
+].map(({ h, event_type, actor, subject }) => ({
+  ts: ago(h),
   event_type,
   actor,
   subject: JSON.stringify(subject),
-  request_id: `req-${String(h).replace(".", "")}a1`,
 }));
 
 /** The acme/payments code the Explore tab reads: FX conversion and the two places that call it. */
@@ -776,9 +806,6 @@ function codeUnit(symbol: string, score = 0) {
     tier: "scip",
     elided: false,
     score,
-    churn: 0,
-    amp: 0,
-    tested: false,
     ...CODE_UNITS[symbol],
   };
 }
@@ -1094,9 +1121,7 @@ const steps = {
       await beat(page, pace);
     }
     await row.click();
-    const drawer = page.getByRole("dialog");
-    await expect(drawer.getByText("Linked code")).toBeVisible();
-    return drawer;
+    await expect(page.getByRole("dialog").getByText("Linked code")).toBeVisible();
   },
   async documentSearch(page: Page, typing = 0) {
     await page.goto("/library");
@@ -1258,34 +1283,44 @@ test.describe("docs screenshots at 1440 px", () => {
 // name once the page closes.
 test.describe("docs clips", () => {
   test.skip(!ENABLED, "set LOOM_DOCS_SCREENSHOTS=1 to regenerate docs/assets/screenshots");
+  // Smaller than the shots: a clip plays inline at page width, where 1280 px reads the same
+  // and the file stays small.
   const SIZE = { width: 1280, height: 800 };
 
   async function record(browser: Browser, name: string, run: (page: Page) => Promise<void>): Promise<void> {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-clip-"));
-    const context = await browser.newContext({
-      viewport: SIZE,
-      deviceScaleFactor: 1,
-      colorScheme: "dark",
-      baseURL: test.info().project.use.baseURL,
-      recordVideo: { dir, size: SIZE },
-    });
-    const page = await context.newPage();
-    await installDemoApi(page);
-    await run(page);
-    await beat(page, 1600);
-    const video = page.video();
-    await context.close();
-    fs.mkdirSync(OUT_ASSETS, { recursive: true });
-    await video?.saveAs(path.join(OUT_ASSETS, `clip-${name}.webm`));
-    fs.rmSync(dir, { recursive: true, force: true });
+    try {
+      const context = await browser.newContext({
+        viewport: SIZE,
+        deviceScaleFactor: 1,
+        colorScheme: "dark",
+        baseURL: test.info().project.use.baseURL,
+        recordVideo: { dir, size: SIZE },
+      });
+      let video: Video | null = null;
+      try {
+        const page = await context.newPage();
+        await installDemoApi(page);
+        await run(page);
+        await beat(page, 1600);
+        video = page.video();
+      } finally {
+        // The recording is written out when its context closes.
+        await context.close();
+      }
+      fs.mkdirSync(OUT_ASSETS, { recursive: true });
+      await video?.saveAs(path.join(OUT_ASSETS, `clip-${name}.webm`));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 
-  test("clip memory surfacing", async ({ browser }) => {
-    await record(browser, "memory-surfacing", (page) => steps.linkedCode(page, 1200).then(() => undefined));
+  test("clip memory linked code", async ({ browser }) => {
+    await record(browser, "memory-linked-code", (page) => steps.linkedCode(page, 1200));
   });
 
-  test("clip search answer", async ({ browser }) => {
-    await record(browser, "search-answer", (page) => steps.assistant(page, 45));
+  test("clip assistant answer", async ({ browser }) => {
+    await record(browser, "assistant-answer", (page) => steps.assistant(page, 45));
   });
 
   test("clip code callers", async ({ browser }) => {
