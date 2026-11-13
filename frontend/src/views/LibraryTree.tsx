@@ -1,6 +1,15 @@
 /** The Library's places as a tree beside the documents (disclosure buttons, plain Tab stops,
  *  no keys of their own), with New collection at its foot. */
-import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -18,29 +27,6 @@ import {
   sharedWithMe,
   topLevelCollections,
 } from "./LibraryHierarchy";
-
-/** <main>'s width the Library's tree needs: <main> at 1280 px with the sidebar open and Ask AI
- *  closed, where the search beside the tree keeps 265 px. Ask AI beside the page narrows it. */
-export const TREE_PAGE_MIN = 1036;
-/** <main>'s size, kept current as the window, the sidebar or Ask AI beside the page change it;
- *  null where it cannot be measured (no #main, or no ResizeObserver). */
-export function useMainSize(): { width: number; height: number } | null {
-  const [size, setSize] = useState(measureMain);
-  useEffect(() => {
-    const main = document.getElementById("main");
-    if (!main || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setSize(measureMain()));
-    ro.observe(main);
-    return () => ro.disconnect();
-  }, []);
-  return size;
-}
-
-function measureMain(): { width: number; height: number } | null {
-  if (typeof document === "undefined" || typeof ResizeObserver === "undefined") return null;
-  const main = document.getElementById("main");
-  return main ? { width: main.clientWidth, height: main.clientHeight } : null;
-}
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
@@ -142,9 +128,11 @@ export function LibraryTree({
   org,
   rows,
   repeated,
+  byName,
   truncated = false,
   failed = false,
   busy = false,
+  viewHeight,
   shelf,
   current,
   onPick,
@@ -156,12 +144,16 @@ export function LibraryTree({
   rows: CollectionEntry[] | null;
   /** Titles two collections share (`repeatedTitles`): those show their address too. */
   repeated: Set<string>;
+  /** The listed collections by name. */
+  byName: Map<string, CollectionEntry>;
   /** The list stopped early: a collection missing from it may still be there. */
   truncated?: boolean;
   /** The list could not be read: the page beside says so and offers to read it again. */
   failed?: boolean;
   /** The list is read again: the tree shows the last answer until the new one lands. */
   busy?: boolean;
+  /** The height of <main>'s view, when measured. */
+  viewHeight?: number;
   /** The header's namespace, when it holds documents; null when it does not. */
   shelf: string | null;
   /** The collection shown, or null for the header's namespace. */
@@ -172,7 +164,6 @@ export function LibraryTree({
   onCreated: (collection: string, org: string) => void;
 }) {
   const list = rows ?? NONE;
-  const byName = useMemo(() => new Map(list.map((c) => [c.namespace, c])), [list]);
   // What the person opened, remembered for the next visit.
   const [open, setOpen] = useState<Set<string>>(() => loadExpanded(org));
   // What a move opened to show the place reached: for this visit only.
@@ -210,9 +201,14 @@ export function LibraryTree({
     }
   };
   const tree = useMemo(() => placeTree(list), [list]);
-  // As tall as <main>'s view, which a bar above the header (a new build to reload) shortens:
-  // New collection at the foot stays in reach.
-  const main = useMainSize();
+  // As tall as <main>'s view less what sits above the tree in it (a banner): New collection
+  // at the foot stays in reach.
+  const nav = useRef<HTMLElement | null>(null);
+  const [above, setAbove] = useState(0);
+  useLayoutEffect(() => {
+    const top = nav.current?.parentElement?.offsetTop ?? 0;
+    setAbove((prev) => (prev === top ? prev : top));
+  });
 
   // The form's target, fixed when New collection is pressed; null while closed.
   const [making, setMaking] = useState<CollectionEntry | "top" | null>(null);
@@ -262,10 +258,11 @@ export function LibraryTree({
 
   return (
     <nav
+      ref={nav}
       aria-label="Library places"
       aria-busy={busy || undefined}
       className="library-tree"
-      style={main ? { maxHeight: main.height } : undefined}
+      style={viewHeight ? { maxHeight: viewHeight - above } : undefined}
     >
       {(shelf !== null || tree.own) && (
         <ul>

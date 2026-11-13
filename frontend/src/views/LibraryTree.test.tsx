@@ -50,14 +50,16 @@ function places(): string[] {
 
 type TreeProps = Parameters<typeof LibraryTree>[0];
 
-/** The tree with these props over the defaults; `update` draws it again with more of them. */
+/** The tree with these props over the defaults (`byName` follows `rows`); `update` draws it
+ *  again with more of them. */
 function tree(over: Partial<TreeProps> = {}, options: RenderOptions = {}) {
   const onPick = vi.fn();
   const onCreated = vi.fn();
   let props: Partial<TreeProps> = over;
   const ui = () => {
     const p = { org: "acme", rows: ROWS, repeated: new Set<string>(), shelf: "bench", current: null, ...props };
-    return <LibraryTree onPick={onPick} onCreated={onCreated} {...p} />;
+    const byName = new Map((p.rows ?? []).map((c) => [c.namespace, c]));
+    return <LibraryTree byName={byName} onPick={onPick} onCreated={onCreated} {...p} />;
   };
   const { rerender } = render(ui(), options);
   const update = (more: Partial<TreeProps>) => {

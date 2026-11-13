@@ -1096,6 +1096,31 @@ describe("the Library on a collection", () => {
     });
   });
 
+  describe("where <main> can be measured", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it.each([
+      [1100, true],
+      [900, false],
+    ] as const)("at %i px of <main> draws the tree: %s", async (width, tree) => {
+      const rect = HTMLElement.prototype.getBoundingClientRect;
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        return this.id === "main" ? ({ width, height: 800 } as DOMRect) : rect.call(this);
+      });
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library");
+      // The window query says narrow: <main>'s own width decides.
+      render(
+        <main id="main">
+          <Documents />
+        </main>,
+      );
+      await settle();
+      expect(screen.queryAllByRole("navigation", { name: "Library places" })).toHaveLength(tree ? 1 : 0);
+      expect(screen.queryAllByRole("button", { name: "Show the documents of" })).toHaveLength(tree ? 0 : 1);
+    });
+  });
+
   describe("refreshes", () => {
     it("waits for a created collection in its own org only", async () => {
       resizable();

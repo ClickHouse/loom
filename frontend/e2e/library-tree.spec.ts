@@ -136,6 +136,38 @@ test.describe("1440 px under a reload bar", () => {
   });
 });
 
+test.describe("1280 px", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("the tree is drawn, a classic scrollbar on a long list or not", async ({ page }) => {
+    await installApi(page, { knowledgeRows: 40, collections: COLLECTIONS });
+    // Chromium draws a classic scrollbar, which takes width from <main>, for this rule.
+    await page.addInitScript(() => {
+      document.addEventListener("DOMContentLoaded", () => {
+        const style = document.createElement("style");
+        style.textContent = "#main::-webkit-scrollbar { width: 16px; }";
+        document.head.append(style);
+      });
+    });
+    await page.goto("/library");
+    const tree = page.getByRole("navigation", { name: "Library places" });
+    await expect(tree).toBeVisible();
+    // The list scrolls, so <main>'s scrollbar takes some of its width; the tree stays.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const main = document.getElementById("main")!;
+          return main.clientWidth < main.getBoundingClientRect().width;
+        }),
+      )
+      .toBe(true);
+    await page.evaluate(() => document.getElementById("main")!.scrollBy(0, 200));
+    await page.waitForTimeout(300);
+    await expect(tree).toBeVisible();
+    await expect(page.getByLabel("Show the documents of")).toHaveCount(0);
+  });
+});
+
 // Ask AI beside the page narrows <main>: the tree shows only where the page keeps the width
 // it has at 1280 px without the panel.
 for (const [width, tree] of [

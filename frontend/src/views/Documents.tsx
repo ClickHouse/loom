@@ -63,7 +63,8 @@ import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
 import { TopLevelPlaces } from "./LibraryHierarchy";
-import { LibraryTree, NEW_COLLECTION_FOCUS, TREE_PAGE_MIN, useMainSize } from "./LibraryTree";
+import { LibraryTree, NEW_COLLECTION_FOCUS } from "./LibraryTree";
+import { usePageRoom } from "../lib/useMainSize";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
 import { PageContainer } from "../layout/PageContainer";
@@ -269,9 +270,9 @@ export function Documents() {
   const phone = useMedia(PHONE_QUERY);
   // The places are a tree beside the documents where <main> has room for both; narrower, the
   // select stands in.
-  const main = useMainSize();
+  const room = usePageRoom();
   const wideWindow = useMedia(TREE_QUERY);
-  const wide = main ? main.width >= TREE_PAGE_MIN : wideWindow;
+  const wide = room ? room.wide : wideWindow;
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
@@ -958,7 +959,9 @@ export function Documents() {
       org={picked.org}
       rows={collections.kept?.rows ?? null}
       repeated={repeated}
+      byName={byName}
       truncated={collections.kept?.truncated}
+      viewHeight={room?.height}
       failed={!!collections.error}
       busy={collections.refreshing}
       shelf={ownShelf ? picked.namespace : null}
