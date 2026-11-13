@@ -271,7 +271,8 @@ export function Documents() {
   // The places are a tree beside the documents where <main> has room for both; narrower, or
   // not measured yet, the select stands in.
   const room = usePageRoom();
-  const wide = !!room?.wide;
+  const treeHeight = room?.wide ? room.height : null;
+  const wide = treeHeight !== null;
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);
@@ -951,7 +952,7 @@ export function Documents() {
       besideTree={wide}
     />
   );
-  const tree = room?.wide && (
+  const tree = treeHeight !== null && (
     <LibraryTree
       // One per org: nothing read or opened in one org shows in, or is saved for, another.
       key={picked.org}
@@ -960,7 +961,7 @@ export function Documents() {
       repeated={repeated}
       byName={byName}
       truncated={collections.kept?.truncated}
-      viewHeight={room.height}
+      viewHeight={treeHeight}
       failed={!!collections.error}
       busy={collections.refreshing}
       shelf={ownShelf ? picked.namespace : null}

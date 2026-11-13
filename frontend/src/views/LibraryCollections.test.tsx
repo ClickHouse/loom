@@ -375,7 +375,7 @@ function inMain(): HTMLElement {
 
 /** <main>, measured `width` px wide (room for the tree by default), where the page looks for
  *  it; the function it returns narrows it. */
-function resizable(width = TREE_PAGE_MIN + 64) {
+function resizable(width = TREE_PAGE_MIN) {
   const observers: Array<() => void> = [];
   vi.stubGlobal(
     "ResizeObserver",
@@ -393,7 +393,7 @@ function resizable(width = TREE_PAGE_MIN + 64) {
   });
   inMain();
   return () => {
-    width = TREE_PAGE_MIN - 136;
+    width = TREE_PAGE_MIN - 1;
     for (const f of observers) f();
   };
 }
@@ -1011,6 +1011,28 @@ describe("the Library on a collection", () => {
     expect(screen.queryByRole("dialog", { name: "A" })).not.toBeInTheDocument();
   });
 
+  it("leaves a refused collection on the first answer when a write's refresh overtakes the reload", async () => {
+    const { ApiError } = await import("../lib/errors");
+    api.listCollections
+      .mockResolvedValueOnce({ collections: ROWS, next_cursor: null })
+      // The page's reload, asked for after the refusal, stays unanswered.
+      .mockReturnValueOnce(new Promise(() => {}))
+      .mockResolvedValue({ collections: [], next_cursor: null });
+    api.listKnowledge.mockImplementation(async (id: { namespace: string }) => {
+      if (id.namespace === "col-q3") throw new ApiError({ status: 403, code: "AUTH_INSUFFICIENT", message: "no" });
+      return { rows: [], next_cursor: null };
+    });
+    history.replaceState(null, "", "/library?collection=col-q3");
+    render(<Documents />);
+    await settle();
+    expect(api.listCollections).toHaveBeenCalledTimes(2);
+    act(() => invalidateSharedCollections());
+    await settle();
+    // The refresh's first answer decides, as the reload's would have: no wait for col-q3.
+    expect(api.listCollections).toHaveBeenCalledTimes(3);
+    expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+  });
+
   it("leaves a collection refused while shown, for the namespace", async () => {
     const { ApiError } = await import("../lib/errors");
     api.listCollections
@@ -1121,8 +1143,8 @@ describe("the Library on a collection", () => {
 
   describe("where <main> can be measured", () => {
     it.each([
-      [TREE_PAGE_MIN + 64, true],
-      [TREE_PAGE_MIN - 136, false],
+      [TREE_PAGE_MIN, true],
+      [TREE_PAGE_MIN - 1, false],
     ] as const)("at %i px of <main> draws the tree: %s", async (width, tree) => {
       resizable(width);
       api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });

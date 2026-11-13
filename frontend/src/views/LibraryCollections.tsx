@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { deleteCollection, listCollections, type CollectionEntry } from "../api";
@@ -101,7 +101,7 @@ export interface ReadableCollections {
  *  clears `rows` until its answer; a write elsewhere keeps them. `shown`: the collection the
  *  page shows, which only a reload's answer may find gone. */
 export function useReadableCollections(org: string, shown = ""): ReadableCollections {
-  const [read, setRead] = useState<{
+  const [answer, setAnswer] = useState<{
     org: string;
     reloads: number;
     refreshes: number;
@@ -110,18 +110,13 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
   } | null>(null);
   const [error, setError] = useState<unknown>(null);
   // Each read waits for `expect` (a name in an org), which the reload or refresh that asked
-  // for it sets: a later one clears it. `kind`: who asked for the last read.
-  const [reads, setReads] = useState({
-    reloads: 0,
-    refreshes: 0,
-    expect: { org: "", name: "" },
-    kind: "reload" as "reload" | "refresh",
-  });
+  // for it sets: a later one clears it.
+  const [asked, setAsked] = useState({ reloads: 0, refreshes: 0, expect: { org: "", name: "" } });
   const reload = useCallback(
     (name = "") => {
       // An old failure would read as "no collections" before the new answer lands.
       setError(null);
-      setReads((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name }, kind: "reload" }));
+      setAsked((r) => ({ ...r, reloads: r.reloads + 1, expect: { org, name } }));
     },
     [org],
   );
@@ -129,15 +124,18 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
   useEffect(
     () =>
       onCollectionsChanged((made) =>
-        setReads((r) => ({ ...r, refreshes: r.refreshes + 1, expect: { org, name: made }, kind: "refresh" })),
+        setAsked((r) => ({ ...r, refreshes: r.refreshes + 1, expect: { org, name: made } })),
       ),
     [org],
   );
-  const expected = reads.expect.org === org ? reads.expect.name : "";
-  // The collection shown, when the last answer listed it: a refresh that leaves it out asks
-  // again, as for a lagging replica; a reload's answer decides.
-  const listedShown = useRef("");
-  listedShown.current = read?.org === org && read.rows.some((c) => c.namespace === shown) ? shown : "";
+  const expected = asked.expect.org === org ? asked.expect.name : "";
+  // The collection shown, once the page's last reload is answered and lists it: a refresh
+  // that leaves it out asks again, as for a lagging replica; a reload's answer decides.
+  const hold = useRef("");
+  useLayoutEffect(() => {
+    const answered = answer?.org === org && answer.reloads === asked.reloads;
+    hold.current = answered && answer.rows.some((c) => c.namespace === shown) ? shown : "";
+  });
   useAbortableEffect(
     (signal, live) => {
       setError(null);
@@ -153,29 +151,28 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
             if (!cursor) break;
           }
           const rows = [...byName.values()];
-          const hold = reads.kind === "refresh" ? listedShown.current : "";
-          const caughtUp = [expected, hold].every((name) => !name || byName.has(name));
+          const caughtUp = [expected, hold.current].every((name) => !name || byName.has(name));
           if (caughtUp || attempt >= 2) return { rows, truncated: !!cursor };
           await new Promise((r) => setTimeout(r, 1000));
           if (signal.aborted) throw signal.reason;
         }
       })()
         .then(({ rows, truncated }) => {
-          if (live()) setRead({ org, reloads: reads.reloads, refreshes: reads.refreshes, rows, truncated });
+          if (live()) setAnswer({ org, reloads: asked.reloads, refreshes: asked.refreshes, rows, truncated });
         })
         .catch((e) => {
           if (live()) setError(e);
         });
     },
-    [org, reads],
+    [org, asked],
   );
-  const kept = read && read.org === org ? read : null;
-  const current = kept && kept.reloads === reads.reloads ? kept : null;
+  const kept = answer && answer.org === org ? answer : null;
+  const current = kept && kept.reloads === asked.reloads ? kept : null;
   return {
     rows: current?.rows ?? null,
     truncated: current?.truncated ?? false,
     kept,
-    refreshing: !!kept && !error && (!current || current.refreshes !== reads.refreshes),
+    refreshing: !!kept && !error && (!current || current.refreshes !== asked.refreshes),
     error,
     reload,
     expected,
