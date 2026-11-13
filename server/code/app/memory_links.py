@@ -181,16 +181,21 @@ async def grep_words(
         return None
 
 
-async def symbols_indexed(scope: IngestScope, commit: str, path: str) -> bool:
-    """The ingest indexes `path`'s definitions at `commit` by its content: not over the
-    byte cap, and not refused but for the generated rule, which still declares them."""
+async def indexed_names(scope: IngestScope, commit: str, path: str) -> set[str] | None:
+    """The qualified names `path` defines at `commit`, read once for both questions: None
+    when the ingest would not index its definitions (over the byte cap, refused by its
+    content) or the commit has no such file. A file that does not parse raises
+    `ParseFailed`."""
     try:
         data = await gitrepo.file_at(
             scope.cfg.git_dir, commit, path, max_bytes=settings.code_ingest_max_file_bytes
         )
     except gitrepo.BlobTooLarge:
-        return False
-    return data is not None and indexes_symbols(scope.denylist.refusal(path, data))
+        return None
+    if data is None or not indexes_symbols(scope.denylist.refusal(path, data)):
+        return None
+    pf = await asyncio.to_thread(_parse, path, data)
+    return {s.qualified_name for s in pf.symbols} if pf is not None else set()
 
 
 async def renamed_from(

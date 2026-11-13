@@ -4122,7 +4122,7 @@ async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypat
 
     async def unparsed(commit, path):
         if path == "pkg/z.py":
-            raise code_links.code.ParseFailed(path, "over code_ingest_max_file_bytes")
+            raise code_links.code.ParseFailed(path, "parse: SyntaxError")
         return await names(commit, path)
 
     monkeypatch.setattr(files, "containing", containing)
@@ -4195,9 +4195,10 @@ async def test_a_grep_that_cannot_start_is_a_git_error(monkeypatch, errno_) -> N
 
 @pytest.mark.asyncio
 async def test_the_mirror_is_searched_for_a_name_without_its_ordinal(monkeypatch) -> None:
+    # a C++ overload's name carries the index's `#N`; the grep must read the bare name
     files = code_link_pass.RepoReads("o", "code-a")
     row, searched = _moved_module_world(monkeypatch, files, indexed=False)
-    second = row | {"qualified_name": row["qualified_name"] + "#2"}  # the file's second one
+    second = row | {"qualified_name": row["qualified_name"] + "#2"}
     await code_link_recheck._recheck("o", "code-a", [second], _MOVED, "c1", files)
     assert searched == [("c1", "fetch_rows", "c0")]
 
@@ -4229,6 +4230,6 @@ async def test_a_file_over_the_ingest_byte_cap_adds_no_definition(monkeypatch, t
         replace(base, git_dir=str(tmp_path / ".git")), code_links.code.Denylist()
     )
     monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 64)
-    assert not await memory_links.symbols_indexed(scope, head, "pkg/big.py")
+    assert await memory_links.indexed_names(scope, head, "pkg/big.py") is None
     monkeypatch.setattr(settings, "code_ingest_max_file_bytes", 1 << 20)
-    assert await memory_links.symbols_indexed(scope, head, "pkg/big.py")
+    assert await memory_links.indexed_names(scope, head, "pkg/big.py") == {"pkg.big::fetch_rows"}
