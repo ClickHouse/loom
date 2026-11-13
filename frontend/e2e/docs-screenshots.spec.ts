@@ -357,7 +357,7 @@ function codeRepo(namespace: string, branch: string, head: string, files: number
     fast_tier_lag: 0,
     scip_lag: 0,
     scip_py_lag: 0,
-    scip_producer: "scip-typescript",
+    scip_producer: "python",
     indexed_at: agoCh(hours),
     last_refresh_at: agoCh(hours / 3),
     counts: { code_files: files, code_symbols: symbols },
@@ -443,10 +443,23 @@ function indexStatus() {
     },
     scip_commit: head,
     scip_commit_py: head,
-    compiler_tiers: [],
+    compiler_tiers: [
+      {
+        producer: "python",
+        tool: "scip-python",
+        label: "Python",
+        watermark_key: "scip_commit_py",
+        commit: head,
+        lag: 0,
+        updated_at: agoCh(0.5),
+        primary: true,
+        workers: ["code_scip_py_delta", "code_scip_apply"],
+        note: "Per-merge delta in the tier's working tree; a first run indexes the tree.",
+      },
+    ],
     pr_cursor: "2026-09-28",
     last_refresh_detail: "",
-    path_prefixes: [],
+    path_prefixes: [""],
     provider: "github",
     profile: "python",
     compiler_candidates: [],
@@ -667,6 +680,7 @@ const DOCUMENTS = [
 function documentRow(d: (typeof DOCUMENTS)[number]) {
   return {
     source_uri: d.source_uri,
+    namespace: NS,
     title: d.title,
     description: d.description,
     tags: d.tags,
@@ -1080,7 +1094,14 @@ async function installDemoApi(page: Page): Promise<void> {
           retrieval_risk: "low",
           retrieval_confidence: 0.88,
           tokens_returned: 412,
-          as_of: { commit: "4be19a0c7d2e5f13", indexed_at: agoCh(0.3), lag_commits: 0, stale: false },
+          as_of: {
+            commit: "4be19a0c7d2e5f13",
+            branch: "main",
+            indexed_at: agoCh(0.3),
+            lag_commits: 0,
+            stale: false,
+            status: "fresh",
+          },
         });
       case "/v1/code.symbol": {
         const name = String(body.name ?? "");
