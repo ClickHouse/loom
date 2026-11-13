@@ -533,8 +533,7 @@ or own row are a deployment never prepared, and a failed read is never taken for
 absent row; a process that reads no state (the workers child and a CLI with
 `LOOM_CELL` unset, and every process under the ClickHouse authority) is not gated by
 it. In `enforced`, a cell serves exactly the orgs it holds a row for; an org a process
-read as
-not held, for a caller acting in another org, is read again after
+read as not held, for a caller acting in another org, is read again after
 `LOOM_TENANCY_MODE_CACHE_S`. A `recording` row is written by one statement that inserts
 it only while the mode is `recording`, reading the mode row `FOR SHARE`; it runs at
 `READ COMMITTED` in its own transaction and commits before the request goes on. Attach's

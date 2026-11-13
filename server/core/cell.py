@@ -3,9 +3,10 @@
 A server process under the Postgres authority reads the state rows whether
 `LOOM_CELL` is set or not. With it unset the process serves as a single deployment
 while the deployment is no cell (`open`) or a first cell still `recording`, and is
-gated in any other state (`state`); it keeps its verdict through failed reads, and a
-process that has read nothing (a CLI, the workers child, the ClickHouse authority)
-reads as `open`. With it set, a process serves only while three rows of its cell's
+gated in any other state (`state`); it keeps its verdict through failed reads. A
+server process under the Postgres authority is gated until its first read lands; a
+process that reads nothing (a CLI, the workers child, the ClickHouse authority) reads
+as `open`. With it set, a process serves only while three rows of its cell's
 Postgres are read and agree with its configuration (docs/architecture/cells.md, "The
 cell's own row"):
 

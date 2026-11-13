@@ -519,8 +519,8 @@ def test_a_failed_read_keeps_the_last_rows_only_up_to_the_stale_bound(
     assert not cell.readiness_check().ok
 
 
-@pytest.mark.parametrize("in_a_cell", [True, False])
-def test_the_workers_child_reads_the_cell_rows_before_its_workers_start(
+@pytest.mark.parametrize("in_a_cell", [True, False], ids=["in-a-cell", "outside-a-cell-reads-none"])
+def test_the_workers_child_reads_its_cell_rows_only_in_a_cell(
     monkeypatch: pytest.MonkeyPatch, in_a_cell: bool
 ) -> None:
     """With LOOM_CELL set the child reads its cell's rows first; with it unset (under
