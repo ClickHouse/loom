@@ -19,3 +19,11 @@ def test_prints_each_named_extras_requirements(capsys: pytest.CaptureFixture[str
 def test_an_unknown_extra_fails(capsys: pytest.CaptureFixture[str]) -> None:
     assert gate.main(["langchain", "no-such-framework"]) == 1
     assert "no-such-framework" in capsys.readouterr().err
+
+
+def test_the_adapter_target_type_checks_with_the_dev_mypy() -> None:
+    root = gate.PYPROJECT.parents[2]
+    dev = tomllib.loads((root / "pyproject.toml").read_text())["project"]["optional-dependencies"]
+    (pin,) = [r for r in dev["dev"] if r.startswith("mypy==")]
+    target = (root / "Makefile").read_text().split("test-sdk-adapters:", 1)[1].split("\n\n", 1)[0]
+    assert f" {pin}" in target

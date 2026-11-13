@@ -48,16 +48,16 @@ async with Agent(org="acme", namespace="support") as agent:
 | `LoomKnowledgeRetriever` | the chunk       | `<namespace>/<source_uri>#<chunk_idx>`                                              | `source_uri`, `chunk_idx`, `similarity`, `section`, `namespace`, `tags`                           |
 | `LoomMemoryRetriever`    | the memory text | none: a key is unique per agent, user and session, and a search reads every agent's | `namespace`, `memory_key`, `memory_type`, `similarity`, `source`, `valid_at` when the row has one |
 
-| Field                                         | Retriever | Default | Effect                                                                               |
-| --------------------------------------------- | --------- | ------- | ------------------------------------------------------------------------------------ |
-| `k`                                           | both      | 4       | documents per query                                                                  |
-| `search_tags`                                 | both      | none    | only rows carrying at least one of these Loom tags (`tags` is LangChain's own field) |
-| `uri_prefix`                                  | knowledge | none    | only documents whose `source_uri` starts with one of these                           |
-| `namespace_scope`                             | knowledge | `this`  | `all_mine` adds the caller's other namespaces, up to the server's fan-out cap        |
-| `search_kwargs`                               | knowledge | none    | further `knowledge.search` fields, such as `search_mode` or `rerank`                 |
-| `memory_type`                                 | memory    | any     | only memories of this type                                                           |
-| `user_id`, `session_id`, `run_id`, `agent_id` | memory    | none    | only that user's, session's, run's or agent's memories                               |
-| `honour_abstain`                              | memory    | `True`  | return no documents when Loom abstains                                               |
+| Field                                         | Retriever | Default                                   | Effect                                                                               |
+| --------------------------------------------- | --------- | ----------------------------------------- | ------------------------------------------------------------------------------------ |
+| `k`                                           | both      | 4                                         | documents per query                                                                  |
+| `search_tags`                                 | both      | none                                      | only rows carrying at least one of these Loom tags (`tags` is LangChain's own field) |
+| `uri_prefix`                                  | knowledge | none                                      | only documents whose `source_uri` starts with one of these                           |
+| `namespace_scope`                             | knowledge | `this`                                    | `all_mine` adds the caller's other namespaces, up to the server's fan-out cap        |
+| `search_kwargs`                               | knowledge | none                                      | further `knowledge.search` fields, such as `search_mode` or `rerank`                 |
+| `memory_type`                                 | memory    | every searchable type except `reflection` | only memories of this type                                                           |
+| `user_id`, `session_id`, `run_id`, `agent_id` | memory    | none                                      | only that user's, session's, run's or agent's memories                               |
+| `honour_abstain`                              | memory    | `True`                                    | return no documents when Loom abstains                                               |
 
 A LangChain agent built with `create_agent` runs on LangGraph: pass `LoomStore` (below)
 as its `store` for long-term memory.

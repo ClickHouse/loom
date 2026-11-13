@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 from langchain_core.retrievers import BaseRetriever
+from loom import Agent
 from loom.integrations.langchain import LoomKnowledgeRetriever, LoomMemoryRetriever
 from loom.knowledge import SearchHit
 from loom.memory import MemorySearchHit, MemorySearchResult
@@ -203,3 +204,98 @@ def test_without_langchain_core_the_import_names_the_extra(monkeypatch: pytest.M
     monkeypatch.delitem(sys.modules, "loom.integrations.langchain")
     with pytest.raises(ImportError, match=r"clickhouse-loom\[langchain\]"):
         importlib.import_module("loom.integrations.langchain")
+
+
+# The SDK's own clients, with only the HTTP boundary stubbed: a renamed client
+# argument or a changed request body fails here.
+
+
+class _Wire:
+    def __init__(self, reply: dict[str, Any]) -> None:
+        self.posts: list[tuple[str, dict[str, Any]]] = []
+        self._reply = reply
+
+    async def post(self, path: str, payload: dict[str, Any], *a: Any, **kw: Any) -> dict[str, Any]:
+        self.posts.append((path, dict(payload)))
+        return self._reply
+
+
+_CHUNK = {
+    "source_uri": "doc://refunds",
+    "chunk_idx": 0,
+    "content": "Annual plans refund pro rata.",
+    "tags": [],
+    "distance": 0.1,
+    "similarity": 0.9,
+}
+_MEMORY = {
+    "memory_key": "prefs/seat",
+    "memory_type": "preference",
+    "content_excerpt": "Alice prefers aisle seats",
+    "distance": 0.1,
+    "similarity": 0.9,
+}
+
+
+def _real_agent(wire: _Wire) -> Agent:
+    agent = Agent(org="acme", namespace="support", agent="bot", base_url="http://x", api_key="k")
+    agent.transport.post = wire.post  # type: ignore[method-assign]
+    return agent
+
+
+def test_the_knowledge_retriever_posts_knowledge_search_through_the_sdk() -> None:
+    wire = _Wire({"results": [_CHUNK], "embedding_model": "m"})
+    retriever = LoomKnowledgeRetriever(
+        agent=_real_agent(wire), k=2, search_tags=["policy"], uri_prefix=["doc://"]
+    )
+    (doc,) = asyncio.run(retriever.ainvoke("refunds"))
+    ((path, body),) = wire.posts
+    assert path == "/v1/knowledge.search"
+    assert body["org"] == "acme" and body["namespace"] == "support"
+    assert {k: body[k] for k in ("query", "top_k", "tags", "uri_prefix", "namespace_scope")} == {
+        "query": "refunds",
+        "top_k": 2,
+        "tags": ["policy"],
+        "uri_prefix": ["doc://"],
+        "namespace_scope": "this",
+    }
+    assert doc.id == "support/doc://refunds#0"
+
+
+def test_the_memory_retriever_posts_memory_search_through_the_sdk() -> None:
+    wire = _Wire({"results": [_MEMORY]})
+    retriever = LoomMemoryRetriever(
+        agent=_real_agent(wire),
+        k=2,
+        search_tags=["customer"],
+        memory_type="preference",
+        user_id="alice",
+        session_id="s-1",
+    )
+    (doc,) = asyncio.run(retriever.ainvoke("seat"))
+    ((path, body),) = wire.posts
+    assert path == "/v1/memory.search"
+    assert {
+        k: body[k] for k in ("query", "top_k", "tags", "memory_type", "user_id", "session_id")
+    } == {
+        "query": "seat",
+        "top_k": 2,
+        "tags": ["customer"],
+        "memory_type": "preference",
+        "user_id": "alice",
+        "session_id": "s-1",
+    }
+    assert doc.metadata["memory_key"] == "prefs/seat"
+
+
+def test_invoke_on_a_real_sync_agent_posts_through_its_loop() -> None:
+    wire = _Wire({"results": [_CHUNK], "embedding_model": "m"})
+    with SyncAgent(
+        org="acme", namespace="support", agent="bot", base_url="http://x", api_key="k"
+    ) as sa:
+        sa._agent.transport.post = wire.post  # type: ignore[method-assign]
+        (doc,) = LoomKnowledgeRetriever(agent=sa).invoke("refunds")
+        assert [d.id for d in asyncio.run(LoomKnowledgeRetriever(agent=sa).ainvoke("refunds"))] == [
+            doc.id
+        ]
+    assert [p for p, _ in wire.posts] == ["/v1/knowledge.search", "/v1/knowledge.search"]

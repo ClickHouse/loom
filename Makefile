@@ -157,6 +157,7 @@ test-sdk-adapters:
 	$(SDK_ADAPTERS_PY) scripts/gates/sdk_extra_requirements.py $(SDK_ADAPTER_EXTRAS) > $(SDK_ADAPTERS_VENV)/adapters.txt
 	uv pip install -q --python $(SDK_ADAPTERS_PY) --resolution $(SDK_ADAPTERS_RESOLUTION) \
 	  -e ./sdk/python -r $(SDK_ADAPTERS_VENV)/adapters.txt "pytest>=8.0" mypy==2.3.1
+	uv pip list --python $(SDK_ADAPTERS_PY)
 	cd sdk/python && $(SDK_ADAPTERS_PY) -m pytest -q
 	$(SDK_ADAPTERS_PY) -m mypy --strict --python-version \
 	  "$$($(SDK_ADAPTERS_PY) -c 'import sys; print("%d.%d" % sys.version_info[:2])')" sdk/python/loom/integrations
