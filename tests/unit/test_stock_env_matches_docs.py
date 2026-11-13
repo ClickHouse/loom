@@ -61,15 +61,17 @@ QUICKSTART_MUST_MENTION = (
 # `LOOM_*` names the quickstart may use that are not server Settings fields.
 # The SDK reads its credential from LOOM_API_KEY; Compose consumes
 # the release-bundle image pins before the server
-# environment is built; the installer consumes its offline bundle paths
-# and LOOM_SKIP_START to prepare files without starting the stack.
+# environment is built; the installer reads its own options: its offline
+# bundle paths, LOOM_SKIP_START, LOOM_CONNECT and LOOM_NO_OPEN.
 NON_SETTINGS_VARS = {
     "LOOM_API_KEY",
     "LOOM_CLICKHOUSE_IMAGE",
+    "LOOM_CONNECT",
     "LOOM_EXTRACTOR_IMAGE_REPOSITORY",
     "LOOM_IMAGE_REPOSITORY",
     "LOOM_INSTALL_BUNDLE",
     "LOOM_INSTALL_CHECKSUM",
+    "LOOM_NO_OPEN",
     "LOOM_PORT",
     "LOOM_SKIP_START",
     "LOOM_VERSION",

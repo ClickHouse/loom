@@ -42,6 +42,18 @@ main() {
     exit 1
   }
 
+  # Ctrl-C stops the run, and an agent CLI it started (a job of this shell, which
+  # ignores the signal) with it.
+  cmd_pid=
+  dog_pid=
+  on_interrupt() {
+    [ -z "$cmd_pid" ] || kill "$cmd_pid" 2>/dev/null || true
+    [ -z "$dog_pid" ] || kill "$dog_pid" 2>/dev/null || true
+    printf '\n' >&2
+    exit 130
+  }
+  trap on_interrupt HUP INT TERM
+
   # Prints 1 when release $1 is below $2, else 0 (X.Y.Z or X.Y.Z-rc.N; a
   # candidate is below its own final release, and rc.1 below rc.2).
   version_below() {
@@ -73,6 +85,24 @@ main() {
     *) [ "$LOOM_PORT" -ge 1 ] && [ "$LOOM_PORT" -le 65535 ] \
       || fail "LOOM_PORT must be between 1 and 65535: $LOOM_PORT" ;;
   esac
+
+  # LOOM_CONNECT: which coding agents to connect without asking, as a comma list.
+  case ${LOOM_CONNECT:-} in
+    *[!a-z,-]* | ,* | *, | *,,*) fail "LOOM_CONNECT takes claude-code, codex, vscode, all or none, in lowercase, separated by single commas: $LOOM_CONNECT" ;;
+  esac
+  case ,${LOOM_CONNECT:-}, in
+    ,none,) ;;
+    *,none,*) fail "LOOM_CONNECT=none connects no agent, so it takes no other name: $LOOM_CONNECT" ;;
+  esac
+  rest=${LOOM_CONNECT:-}
+  while [ -n "$rest" ]; do
+    client=${rest%%,*}
+    case $rest in *,*) rest=${rest#*,} ;; *) rest= ;; esac
+    case $client in
+      claude-code | codex | vscode | all | none) ;;
+      *) fail "LOOM_CONNECT takes claude-code, codex, vscode, all or none, separated by commas: $client" ;;
+    esac
+  done
 
   while [ $# -gt 0 ]; do
     case $1 in
@@ -184,7 +214,7 @@ main() {
     stty -echo </dev/tty
     IFS= read -r CH_PASSWORD </dev/tty || CH_PASSWORD=
     stty echo </dev/tty
-    trap - HUP INT TERM
+    trap on_interrupt HUP INT TERM
     printf '\n' >/dev/tty
   }
 
@@ -238,7 +268,7 @@ main() {
     LOOM_CH_READER_USER LOOM_VERSION COMPOSE_PROJECT_NAME
 
   tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/loom-install.XXXXXX")
-  trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+  trap 'rm -rf "$tmp_dir"' EXIT
 
   if [ -n "${LOOM_INSTALL_BUNDLE:-}" ]; then
     cp "$LOOM_INSTALL_BUNDLE" "$tmp_dir/loom-stack.tar.gz"
@@ -317,6 +347,8 @@ main() {
       -e "s/__LOOM_DOCUMENT_EXTRACTOR_TOKEN__/$extractor_token/" \
       "$bundle/env.example" >"$INSTALL_DIR/.env"
     printf 'Created %s/.env\n' "$INSTALL_DIR"
+    # A new install gets the memory check once it is up (below); an upgrade does not.
+    : >"$INSTALL_DIR/.memory-check-pending"
   else
     printf 'Preserved existing %s/.env\n' "$INSTALL_DIR"
     had_env=1
@@ -455,22 +487,275 @@ main() {
 
   health="http://$host:$port/v1/health"
   attempt=0
-  while [ "$attempt" -lt 90 ]; do
-    if curl -fsS --noproxy '*' "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; then
-      printf '\nLoom is ready.\n'
-      printf 'Dashboard: http://%s:%s/\n' "$host" "$port"
-      printf 'Files:     %s\n' "$INSTALL_DIR"
-      printf 'Logs:      docker compose --project-directory %s logs -f loom\n' "$INSTALL_DIR"
-      # --profile bundled also stops a bundled server left from before a switch.
-      printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"
-      exit 0
-    fi
+  until curl -fsS --noproxy '*' "$health" 2>/dev/null | grep -q '"status"[[:space:]]*:[[:space:]]*"ok"'; do
     attempt=$((attempt + 1))
+    if [ "$attempt" -ge 90 ]; then
+      compose logs --tail 60 loom >&2 || true
+      fail "Loom did not become healthy at $health within 180 seconds"
+    fi
     sleep 2
   done
 
-  compose logs --tail 60 loom >&2 || true
-  fail "Loom did not become healthy at $health within 180 seconds"
+  dashboard="http://$host:$port/"
+  printf '\nLoom is ready.\n'
+  printf 'Dashboard: %s\n' "$dashboard"
+  printf 'Files:     %s\n' "$INSTALL_DIR"
+  printf 'Logs:      docker compose --project-directory %s logs -f loom\n' "$INSTALL_DIR"
+  # --profile bundled also stops a bundled server left from before a switch.
+  printf 'Stop:      docker compose --project-directory %s --profile bundled down\n' "$INSTALL_DIR"
+
+  # The memory check: once per new install, a test memory saved, read back and
+  # deleted with no token, as agent "-"; the read also says whether sign-in is on.
+  org=$(get_env LOOM_SELF_SIGNUP_ORG)
+  org=${org:-dev}
+  namespace=$(get_env LOOM_DEFAULT_NAMESPACE)
+  namespace=${namespace:-local}
+  # api OP BODY [SECONDS]: POST to the server (20 s unless given), the body to
+  # $tmp_dir/api.out; prints the status, 000 when no answer came.
+  api() {
+    curl -s --noproxy '*' --max-time "${3:-20}" -o "$tmp_dir/api.out" -w '%{http_code}' -X POST \
+      -H 'Content-Type: application/json' -d "$2" "http://$host:$port/v1/$1" || true
+  }
+  found() {
+    grep -q '"found"[[:space:]]*:[[:space:]]*true' "$tmp_dir/api.out"
+  }
+  pending="$INSTALL_DIR/.memory-check-pending"
+  # A new install, until its check passes: also a rerun after a run that stopped
+  # before this point (a taken port, a failed pull) or whose check failed.
+  first_up=
+  [ ! -f "$pending" ] || first_up=1
+  memory="\"org\":\"$org\",\"namespace\":\"$namespace\",\"agent\":\"-\",\"memory_key\":\"loom/installer-check\""
+  skip_agents=
+  case $org$namespace in
+    # Both go into a JSON body as they are.
+    *[!A-Za-z0-9._-]*)
+      skip_agents=1
+      # No check can run with this .env, on this run or a later one.
+      rm -f "$pending"
+      printf '\nSkipped the memory check and the agent setup: LOOM_SELF_SIGNUP_ORG or LOOM_DEFAULT_NAMESPACE in .env holds a character other than letters, digits and . _ -\n'
+      ;;
+    *)
+      http_status=$(api memory.get "{$memory}")
+      if [ "$http_status" = 200 ] && [ -f "$pending" ]; then
+        # A first save on a cold server can take a while (its first embedding).
+        set_status=$(api memory.set "{$memory,\"value\":\"A check the installer saves and deletes.\"}" 60)
+        if [ "$set_status" != 200 ]; then
+          # It may still land: the marker stays, and the next run deletes it.
+          printf '\nCould not confirm a test memory saved (HTTP %s); the next run checks again and deletes it. `docker compose --project-directory %s logs loom` says why.\n' "$set_status" "$INSTALL_DIR"
+        else
+          # A replicated ClickHouse can answer the first read before it has the row.
+          tries=0
+          while :; do
+            http_status=$(api memory.get "{$memory}")
+            [ "$http_status" = 200 ] && found && break
+            tries=$((tries + 1))
+            [ "$tries" -lt 3 ] || break
+            sleep 1
+          done
+          read_back=
+          if [ "$http_status" = 200 ] && found; then read_back=1; fi
+          delete_status=$(api memory.delete "{$memory}")
+          if [ -n "$read_back" ] && [ "$delete_status" = 200 ]; then
+            rm -f "$pending"
+            printf '\nSaved, read back and deleted a test memory: writes and reads work.\n'
+          elif [ -n "$read_back" ]; then
+            printf '\nSaved and read back a test memory, but could not delete loom/installer-check; the next run tries again.\n'
+          elif [ "$http_status" = 200 ]; then
+            printf '\nSaved a test memory but could not read it back; the next run checks again, and `docker compose --project-directory %s logs loom` says why.\n' "$INSTALL_DIR"
+          fi
+        fi
+      fi
+      case $http_status in
+        200) ;;
+        401 | 403)
+          skip_agents=1
+          # A server with sign-in has no check to run: it is not one later either.
+          rm -f "$pending"
+          printf '\nSign-in is on: agents connect with a token from Settings → Tokens in the dashboard.\n'
+          ;;
+        *)
+          skip_agents=1
+          printf '\nCould not read memories (HTTP %s); `docker compose --project-directory %s logs loom` says why.\n' "$http_status" "$INSTALL_DIR"
+          ;;
+      esac
+      ;;
+  esac
+
+  # bounded SECONDS CMD...: CMD, stopped after SECONDS (macOS has no `timeout`).
+  # Run in this shell, not in a pipeline or $(...), so that Ctrl-C reaches what it
+  # started. A child CMD started itself (a git clone) outlives a stop.
+  bounded() {
+    bound_s=$1
+    shift
+    "$@" &
+    cmd_pid=$!
+    # The watchdog takes its sleep with it when it is stopped.
+    (
+      nap=
+      trap '[ -z "$nap" ] || kill "$nap" 2>/dev/null; exit 0' TERM
+      sleep "$bound_s" &
+      nap=$!
+      wait "$nap" && kill "$cmd_pid" 2>/dev/null
+    ) >/dev/null 2>&1 &
+    dog_pid=$!
+    cmd_status=0
+    wait "$cmd_pid" || cmd_status=$?
+    cmd_pid=
+    kill "$dog_pid" 2>/dev/null || true
+    dog_pid=
+    # 143: the watchdog stopped it.
+    [ "$cmd_status" != 143 ] || printf '%s did not finish within %s seconds\n' "$1" "$bound_s" >&2
+    return "$cmd_status"
+  }
+  # wants NAME: whether to connect a client `considered` let through: yes when
+  # LOOM_CONNECT named it, otherwise the terminal is asked (a run without one, such
+  # as CI, skipped the agents altogether).
+  wants() {
+    [ -z "${LOOM_CONNECT:-}" ] || return 0
+    printf 'Connect %s to Loom? [Y/n] ' "$1"
+    read -r answer || return 1
+    case $answer in '' | [Yy]*) return 0 ;; *) return 1 ;; esac
+  }
+  # considered CLIENT: whether this run looks at CLIENT at all: LOOM_CONNECT names it
+  # (or all), or it is unset and a terminal may be asked.
+  considered() {
+    case ",${LOOM_CONNECT:-}," in *,all,* | *",$1,"*) return 0 ;; esac
+    [ -z "${LOOM_CONNECT:-}" ]
+  }
+  # node_ok: Node.js 18 or later on PATH. Claude Code's plugin runs that `node`;
+  # Codex's runs it through a launcher that also looks in nvm, fnm, Volta and the
+  # like, so for Codex a miss is only a hint.
+  node_ok() {
+    major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null) || return 1
+    case $major in '' | *[!0-9]*) return 1 ;; esac
+    [ "$major" -ge 18 ]
+  }
+
+  # Agents on this machine, connected the way the README does it, with no token:
+  # only a server without sign-in takes that. LOOM_CONNECT=none looks for none.
+  agents=
+  kept=
+  guide=
+  # Without a terminal and without LOOM_CONNECT no client can be connected, so
+  # none is looked at either, and the guide is linked instead (not after a server
+  # that refused the check, which said why).
+  if [ -z "$skip_agents" ] && [ -z "${LOOM_CONNECT:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; then
+    skip_agents=1 guide=1
+  fi
+  if [ -z "$skip_agents" ] && [ "${LOOM_CONNECT:-}" != none ]; then
+    server_url=http://localhost:$port
+    [ "$host" = 127.0.0.1 ] || server_url=http://$host:$port
+    # The plugins' own server URL, which a plugin installed before keeps.
+    default_url=http://localhost:7777
+    if considered claude-code && command -v claude >/dev/null 2>&1; then
+      claude_config="${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json"
+      # A plugin installed before, or a loom MCP entry added without it, is left
+      # as it is, with the server it was set up for; reading the plugin list and
+      # Claude Code's config starts nothing.
+      if ! bounded 60 claude plugin list >"$tmp_dir/claude.plugins"; then
+        printf 'Claude Code: could not list its plugins (above), so it is left as it is\n'
+      elif grep -Eq '(^|[[:space:]])loom@loom$' "$tmp_dir/claude.plugins"; then
+        printf 'Claude Code: the Loom plugin is installed already; `claude mcp list` shows the server it uses, and `claude plugin install loom@loom --config server_url=%s` points it here\n' "$server_url"
+        kept=1
+      elif grep -q '"loom"[[:space:]]*:' "$claude_config" 2>/dev/null; then
+        printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s), and is left as it is; to use the plugin instead: claude mcp remove loom, then claude plugin install loom@loom --config server_url=%s\n' "$claude_config" "$server_url"
+        kept=1
+      elif ! node_ok; then
+        # Its hooks and MCP header helper run the `node` on PATH, with no search.
+        printf 'Claude Code: the Loom plugin runs the Node.js 18 or later on PATH, which is not there; install it and run this again, or add the MCP server alone: claude mcp add --transport http loom "%s/mcp?toolset=coding" -s user\n' "$server_url"
+      elif wants "Claude Code"; then
+        # A marketplace added before is no error: the install below says what fails.
+        # It clones the repository: the slowest call, so it gets 5 minutes.
+        bounded 300 claude plugin marketplace add ClickHouse/loom >/dev/null || true
+        # The URL is always given: the plugin's default reads LOOM_BASE_URL.
+        if bounded 60 claude plugin install loom@loom --config "server_url=$server_url" >/dev/null; then
+          printf 'Claude Code: connected to %s (the plugin'"'"'s other settings are optional)\n' "$server_url"
+          agents="$agents, Claude Code"
+        else
+          printf 'Claude Code: could not install the plugin (above); to try again: claude plugin marketplace add ClickHouse/loom; claude plugin install loom@loom --config server_url=%s\n' "$server_url"
+        fi
+      fi
+    fi
+    if considered codex && command -v codex >/dev/null 2>&1; then
+      codex_config="${CODEX_HOME:-${HOME:-}/.codex}/config.toml"
+      # The STATUS column of `codex plugin list`: "installed, enabled", "installed,
+      # disabled" or, with only the marketplace added, "not installed".
+      if ! bounded 60 codex plugin list >"$tmp_dir/codex.plugins"; then
+        printf 'Codex: could not list its plugins (above), so it is left as it is\n'
+      elif [ "$(awk '$1 == "loom@loom" { print $2; exit }' "$tmp_dir/codex.plugins")" = installed, ]; then
+        printf 'Codex: the Loom plugin is installed already; `codex plugin list` shows whether it is enabled\n'
+        kept=1
+      elif grep -q '^\[mcp_servers\.loom\]' "$codex_config" 2>/dev/null; then
+        printf 'Codex: a loom MCP server is set up already (%s)\n' "$codex_config"
+        kept=1
+      elif [ "$server_url" != "$default_url" ]; then
+        # Codex plugins take no install options: the URL is fixed in the plugin.
+        printf 'Codex: its Loom plugin always uses %s; to reach %s, see https://github.com/%s/blob/main/docs/features/integrations/codex.md\n' "$default_url" "$server_url" "$REPOSITORY"
+      elif wants Codex; then
+        bounded 300 codex plugin marketplace add ClickHouse/loom >/dev/null || true
+        if bounded 60 codex plugin add loom@loom >/dev/null; then
+          printf 'Codex: connected; run `codex` once and approve the plugin'"'"'s hooks\n'
+          agents="$agents, Codex"
+          node_ok || printf 'Codex: the plugin runs on Node.js 18 or later, which is not on PATH here; without one its launcher finds, use the MCP server alone instead: codex plugin remove loom@loom && codex mcp add loom --url "%s/mcp?toolset=coding"\n' "$server_url"
+        else
+          printf 'Codex: could not add the plugin (above); to try again: codex plugin marketplace add ClickHouse/loom; codex plugin add loom@loom\n'
+        fi
+      fi
+    fi
+    # VS Code's own CLI adds an MCP server by name; a `loom` entry the user has (for
+    # a team server, say) is left as it is. Inside a remote session or WSL, `code`
+    # is another machine's, so it is not offered there.
+    vscode_mcp="${XDG_CONFIG_HOME:-${HOME:-}/.config}/Code/User/mcp.json"
+    [ "$(uname -s)" != Darwin ] || vscode_mcp="${HOME:-}/Library/Application Support/Code/User/mcp.json"
+    if ! considered vscode; then
+      :
+    elif command -v code >/dev/null 2>&1 && [ -n "${REMOTE_CONTAINERS:-}${CODESPACES:-}${SSH_CONNECTION:-}${WSL_DISTRO_NAME:-}" ]; then
+      case ",${LOOM_CONNECT:-}," in
+        *,vscode,* | *,all,*) printf 'VS Code: not offered in a remote session or WSL, where `code` is another machine'"'"'s\n' ;;
+      esac
+    elif command -v code >/dev/null 2>&1; then
+      if grep -q '"loom"[[:space:]]*:' "$vscode_mcp" 2>/dev/null; then
+        printf 'VS Code: a loom MCP server is set up already (%s)\n' "$vscode_mcp"
+        kept=1
+      elif wants "VS Code"; then
+        if bounded 60 code --add-mcp "{\"name\":\"loom\",\"type\":\"http\",\"url\":\"$server_url/mcp?toolset=coding\"}" >/dev/null; then
+          printf 'VS Code: added the loom MCP server\n'
+          agents="$agents, VS Code"
+        else
+          printf 'VS Code: could not add the MCP server (above)\n'
+        fi
+      fi
+    fi
+    # A client LOOM_CONNECT names that this machine does not have.
+    for client in "claude-code:claude:Claude Code" "codex:codex:Codex" "vscode:code:VS Code"; do
+      name=${client%%:*} rest=${client#*:}
+      case ",${LOOM_CONNECT:-}," in
+        *",$name,"*) command -v "${rest%%:*}" >/dev/null 2>&1 \
+          || printf '%s: `%s` is not on PATH\n' "${rest#*:}" "${rest%%:*}" ;;
+      esac
+    done
+    if [ -n "$agents" ]; then
+      printf '\nConnected: %s. Start a new session and say "Remember that I never deploy on Friday";\n' "${agents#, }"
+      printf 'in the next session, ask "When can I deploy?"\n'
+    elif [ -n "$kept" ]; then
+      printf '\nYour agents keep the Loom setup they had.\n'
+    else
+      guide=1
+    fi
+  fi
+  [ -z "$guide" ] \
+    || printf '\nConnect an agent: https://github.com/%s/blob/main/docs/getting-started/connect-a-coding-agent.md\n' "$REPOSITORY"
+
+  # The dashboard, for a new install on a desktop: a terminal, no SSH session and
+  # a way to open a browser there.
+  if [ -n "$first_up" ] && [ "${LOOM_NO_OPEN:-0}" != 1 ] && [ -t 1 ] && [ -z "${SSH_CONNECTION:-}" ]; then
+    if [ "$(uname -s)" = Darwin ] && command -v open >/dev/null 2>&1; then
+      open "$dashboard" >/dev/null 2>&1 || true
+    elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "$dashboard" >/dev/null 2>&1 &
+    fi
+  fi
+  exit 0
 }
 
 { main "$@"; }

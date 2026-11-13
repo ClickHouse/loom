@@ -39,8 +39,9 @@ if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOM
     || printf 'LOOM_PUBLIC_BASE_URL=%s\n' "$codespace_url" >>"$LOOM_INSTALL_DIR/.env"
 fi
 
-# The install again keeps .env, then starts the stack and waits for it.
-sh "$installer"
+# The install again keeps .env, then starts the stack and waits for it; Claude Code
+# is connected below, so the installer connects no agent.
+LOOM_CONNECT=none sh "$installer"
 
 npm install --global --silent @anthropic-ai/claude-code
 claude plugin marketplace list 2>/dev/null | grep -Eq '[[:space:]]loom$' \
@@ -50,6 +51,6 @@ claude plugin install loom@loom
 # The installer printed the dashboard at 127.0.0.1, the codespace's own address.
 printf '\nLoom is running in the codespace. Dashboard: %s\n' "${codespace_url:-the forwarded port 7777 (Ports tab)}"
 cat <<'TEXT'
-Try it: run `cd ~ && claude`, sign in, and say "Remember that I deploy only on
-Tuesdays". In a new `claude` session, ask "When do I deploy?".
+Try it: run `cd ~ && claude`, sign in, and say "Remember that I never deploy
+on Friday." In a new `claude` session, ask "When can I deploy?".
 TEXT

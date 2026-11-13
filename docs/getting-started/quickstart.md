@@ -49,6 +49,34 @@ indexers are included and enabled. A repository indexed with the TypeScript inde
 its dependencies installed automatically. Both images support Linux `amd64` and `arm64`,
 including Docker Desktop on Apple Silicon.
 
+Once Loom answers, the installer:
+
+1. **Checks a memory.** A new install saves a test memory, reads it back and deletes it,
+   which shows that writes and reads work and leaves no live memory (its deleted version
+   shows under Recently deleted). A rerun after that check passed, or an upgrade, skips
+   it.
+2. **Learns whether sign-in is on.** With sign-in on, it connects no agent and says where
+   tokens come from.
+3. **Offers to connect your coding agents.** On a terminal it asks, for each one it finds:
+   Claude Code and Codex through their plugins, VS Code through `code --add-mcp`.
+   `LOOM_CONNECT` answers instead, for a run without a terminal too, and only the clients
+   it names are looked at: a comma list of `claude-code`, `codex` and `vscode`, `all`, or
+   `none` alone; any other value stops the install. Without a terminal and without
+   `LOOM_CONNECT`, no agent is looked at or changed. A plugin or MCP server set up before
+   (by the plugin, `claude mcp add`, `codex mcp add` or `loom install`) is left as it is;
+   for a Claude Code plugin the installer prints the command that points it at this
+   install. Claude Code's plugin runs the Node.js 18 or later on PATH, so without one the
+   installer installs no plugin and prints the `claude mcp add` line for the MCP server
+   alone; Codex's finds Node.js through nvm and the like too, so it is installed, with the
+   `codex mcp add` line beside it. Codex's plugin always uses `http://localhost:7777`, so
+   for an install elsewhere it gets a link to its setup page instead. VS Code is not
+   offered in a remote session or WSL. A client `LOOM_CONNECT` names that is not on PATH
+   is named.
+4. **Opens the dashboard** on a desktop, for a new install; `LOOM_NO_OPEN=1` skips that.
+
+Ctrl-C stops the run at any step; a clone an agent CLI started for its plugin may still
+finish in the background.
+
 The stack runs its own ClickHouse container. To use a ClickHouse you already run, a
 self-managed server or a ClickHouse Cloud service (26.4 or later, with a Keeper), pass its
 URL; the installer asks for the password when the URL has none, creates the `loom`
@@ -122,7 +150,7 @@ codespace. Dashboard: https://<codespace name>-7777.app.github.dev`, the **Ports
 forwarded address for port 7777); the installer's `http://127.0.0.1:7777/` above it is the
 codespace's own address. In the codespace's terminal, run `cd ~ && claude` (outside the
 checkout, whose instructions are for working on Loom itself), sign in, and say "Remember
-that I deploy only on Tuesdays"; in a new `claude` session, ask "When do I deploy?".
+that I never deploy on Friday"; in a new `claude` session, ask "When can I deploy?".
 
 The try-out runs single-user, with no sign-in. In the browser, port 7777 is forwarded
 privately: its address answers only your GitHub account. Keep it private: public, or
@@ -445,6 +473,8 @@ The client surfaces are in the [Python SDK](../reference/python-sdk.md) and
 [TypeScript SDK](../reference/typescript-sdk.md) references.
 
 ## 6. First memory from a coding agent
+
+If the installer connected your agent, skip to the last paragraph of this section.
 
 For Claude Code, install the Loom plugin. It adds hooks (context at session start,
 capture at the end) and skills on top of the MCP tools:
