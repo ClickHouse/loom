@@ -13,7 +13,9 @@ what reads do:
                             is re-anchored, a contradicted one gets a suggested
                             correction on its link
 
-A memory a person pinned, locked or verified is only flagged.
+Under every policy, search serves a memory whose code changed, was not found again or
+went lower than its match (`rank_down`). A memory a person pinned, locked or verified is
+only flagged.
 """
 
 from __future__ import annotations
@@ -78,8 +80,10 @@ def worst_commit(links: Sequence[Mapping[str, Any]]) -> str:
     return str(first.get("changed_since") or "")
 
 
+# the score components of the rows a search's anchor and recent tiers place
+TIER_COMPONENTS: tuple[str, ...] = ("anchor_first", "recent_first")
 # rows placed by something other than their score, which a move leaves where they are
-_PLACED = ("identifier_match", "anchor_first", "recent_first")
+_PLACED = ("identifier_match", *TIER_COMPONENTS)
 
 
 def _placed(hit: Any) -> bool:
