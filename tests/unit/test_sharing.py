@@ -1190,7 +1190,7 @@ def test_a_search_naming_its_namespaces_reads_those_alone_and_each_must_be_reada
 ) -> None:
     from server.auth import authz, context
     from server.core.errors import AuthInsufficientError
-    from server.knowledge.app.readable import named_namespaces
+    from server.knowledge.app.readable import readable_namespaces
 
     user = _user("alice")
     readable = {"col-agent-helper", personal_name(ORG, "user:alice")}
@@ -1202,7 +1202,7 @@ def test_a_search_naming_its_namespaces_reads_those_alone_and_each_must_be_reada
     monkeypatch.setattr(authz, "check_authorized", _check)
 
     def _named(*names: str) -> list[str]:
-        return asyncio.run(named_namespaces(ORG, "col-agent-helper", list(names)))
+        return asyncio.run(readable_namespaces(ORG, "col-agent-helper", list(names)))
 
     context.set_current_auth(user)
     try:

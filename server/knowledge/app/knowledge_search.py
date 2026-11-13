@@ -21,7 +21,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeSearchOutput,
     _SearchHit,
 )
-from server.knowledge.app.readable import named_namespaces
+from server.knowledge.app.readable import readable_namespaces
 from server.knowledge.domain.chunking import embedding_text
 from server.memory.app.log_once import LogOnce
 from server.settings import settings
@@ -62,7 +62,7 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     search = _namespaces_search(input, embedder, query_vec, pool, dropped)
     skipped: list[str] = []
     if input.namespaces:
-        namespaces = await named_namespaces(input.org, input.namespace, input.namespaces)
+        namespaces = await readable_namespaces(input.org, input.namespace, input.namespaces)
     else:
         namespaces, skipped = await namespaces_to_search(
             input.org,

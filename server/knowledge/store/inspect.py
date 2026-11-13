@@ -120,8 +120,8 @@ async def chunk_health(
     """Over the live documents: how many there are, and how many (with up to MAX_SAMPLES
     URIs each) have no live chunk, a live chunk with no vector, live chunks none of which
     is under `model`, or live chunks of more than one version under `model`. The
-    documents are filtered in a derived table before the join (a WHERE on a FINAL join
-    side fails in the analyzer, NOT_FOUND_COLUMN_IN_BLOCK), and a missing chunk side
+    documents are filtered in a derived table before the join (CH 26.5's analyzer fails a
+    WHERE on a FINAL join side, NOT_FOUND_COLUMN_IN_BLOCK), and a missing chunk side
     reads as 0 under either `join_use_nulls`."""
     n = MAX_SAMPLES
     checks = {

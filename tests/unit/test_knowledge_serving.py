@@ -181,7 +181,7 @@ async def test_a_search_leaves_out_the_stale_version_and_counts_it(
     monkeypatch.setattr(bm25, "lexical_stats", stats)
     monkeypatch.setattr(ch_mod, "get_client", lambda: None)
     monkeypatch.setattr(ks, "_search_private_first", first)
-    monkeypatch.setattr(ks, "named_namespaces", named)
+    monkeypatch.setattr(ks, "readable_namespaces", named)
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr(pg_documents, "serving", heads)
     out = await ks.handle_knowledge_search(
@@ -244,7 +244,7 @@ async def test_a_search_serves_one_hit_per_chunk_of_a_source_with_no_head(
     monkeypatch.setattr(ks, "get_embedder", _Embedder)
     monkeypatch.setattr(search, "hybrid_search", legs)
     monkeypatch.setattr(ks, "_search_private_first", first)
-    monkeypatch.setattr(ks, "named_namespaces", named)
+    monkeypatch.setattr(ks, "readable_namespaces", named)
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr(pg_documents, "serving", heads)
     out = await ks.handle_knowledge_search(
@@ -423,7 +423,7 @@ async def test_a_read_that_cannot_reach_the_heads_fails_closed(
     monkeypatch.setattr(document_reads, "get_embedder", _Embedder)
     monkeypatch.setattr(search, "hybrid_search", legs)
     monkeypatch.setattr(ks, "_search_private_first", first)
-    monkeypatch.setattr(ks, "named_namespaces", named)
+    monkeypatch.setattr(ks, "readable_namespaces", named)
     monkeypatch.setattr(knowledge_repo, "list_for_doc", listed)
     monkeypatch.setattr(documents_repo, "get_one", doc)
     monkeypatch.setattr(pg, "enabled", lambda: True)

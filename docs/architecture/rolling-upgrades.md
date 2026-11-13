@@ -89,7 +89,7 @@ schema. These rules keep that safe. The operator procedure is in
    nothing else until an N replica leads.
 4. **Wire formats** (cursors, session and run ids, worker resume cursors, JSON stored in
    rows): N reads the old and the new format, and only N+1 writes the new one. Exception: a
-   cursor for a request N-1 cannot serve (a `knowledge.list` naming `namespaces`) is new
+   cursor for a request N-1 answers for `namespace` alone (a `knowledge.list` naming `namespaces`) is new
    in N, and each build refuses the one the other wrote (rule 12).
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
    refresh interval (the command refuses less), so no process signs with a kid an N-1

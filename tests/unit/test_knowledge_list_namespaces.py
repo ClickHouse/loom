@@ -100,7 +100,7 @@ async def test_each_row_names_its_namespace_whatever_fields_are_asked(
         return [namespace, *names]
 
     monkeypatch.setattr(documents_repo, "list_with_chunk_counts", page)
-    monkeypatch.setattr(document_reads, "named_namespaces", named)
+    monkeypatch.setattr(document_reads, "readable_namespaces", named)
     out = await document_reads.handle_knowledge_list(
         KnowledgeListInput(org="acme", namespace="a", namespaces=["b"], fields=["title"])
     )

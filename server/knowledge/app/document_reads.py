@@ -27,7 +27,7 @@ from server.knowledge.api.models_knowledge import (
     _OutlineEntry,
 )
 from server.knowledge.app import pg_serving
-from server.knowledge.app.readable import named_namespaces
+from server.knowledge.app.readable import readable_namespaces
 from server.knowledge.domain.chunk_metadata import read_structure
 from server.knowledge.domain.chunking import Chunk
 from server.operations.read_projection import resolve as _resolve_projection
@@ -62,7 +62,7 @@ async def handle_knowledge_list(
     from server.core.ch import own_write_reads
     from server.knowledge.store import documents as documents_repo
 
-    namespaces = await named_namespaces(input.org, input.namespace, input.namespaces)
+    namespaces = await readable_namespaces(input.org, input.namespace, input.namespaces)
     cursor = _list_position(input.cursor, input.org, namespaces) if input.cursor else None
     with own_write_reads():  # a document added a call ago
         raw_rows = await documents_repo.list_with_chunk_counts(

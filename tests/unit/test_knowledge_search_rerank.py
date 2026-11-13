@@ -144,7 +144,7 @@ def _stub_handler(
     monkeypatch.setattr(ks, "get_embedder", _Embedder)
     monkeypatch.setattr(ks, "_namespaces_search", _search)
     monkeypatch.setattr(ks, "_search_private_first", _first)
-    monkeypatch.setattr(ks, "named_namespaces", _named)
+    monkeypatch.setattr(ks, "readable_namespaces", _named)
     monkeypatch.setattr(rerank_mod, "rerank", _reversed)
 
 
@@ -200,7 +200,7 @@ async def test_each_chunk_shows_its_own_namespaces_context(monkeypatch) -> None:
         return ["n", "m"]
 
     monkeypatch.setattr(ks, "_namespaces_search", _search)
-    monkeypatch.setattr(ks, "named_namespaces", _named)
+    monkeypatch.setattr(ks, "readable_namespaces", _named)
     await ks.handle_knowledge_search(
         _input(rerank="builtin:openai", namespaces=["n", "m"], collapse_sections=False)
     )

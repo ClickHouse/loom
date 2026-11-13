@@ -29,6 +29,13 @@ from server.operations.read_projection import ProjectedRow
 # ============================================================
 
 
+# The other namespaces a read names (`knowledge.search`, `knowledge.list`), each checked
+# by `readable_namespaces`.
+NamedNamespaces = Annotated[
+    list[Annotated[str, Field(min_length=1, max_length=256)]], Field(max_length=100)
+]
+
+
 class KnowledgeAddInput(BaseModel):
     org: str
     namespace: str
@@ -186,9 +193,7 @@ class KnowledgeSearchInput(BaseModel):
     # Search `namespace` and exactly these (an agent's collection, `@me`)
     # instead of a fan-out; each must be one the caller may read, else the call
     # is refused (403). Empty = `namespace_scope` decides.
-    namespaces: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
-        default_factory=list, max_length=100
-    )
+    namespaces: NamedNamespaces = Field(default_factory=list)
     # hybrid: the vector leg, the BM25 lexical leg and the exact-key leg (the query's
     # identifiers looked up in an extracted file's chunk keys) fused by reciprocal rank;
     # semantic: vector only;
@@ -530,9 +535,7 @@ class KnowledgeListInput(BaseModel):
     namespace: str
     # Also list the documents of these namespaces (or `@me`), each read-checked (403 for the
     # first refused); empty = `namespace` alone.
-    namespaces: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
-        default_factory=list, max_length=100
-    )
+    namespaces: NamedNamespaces = Field(default_factory=list)
     # Documents carrying any one of these tags, in any case.
     tags: list[str] = Field(default_factory=list)
     # Require every one of `tags` instead of any one; default off. Not in the MCP listing:
