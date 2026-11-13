@@ -16,9 +16,10 @@ lines.
 
 ## 1. Check for a running Loom
 
-On Windows, run the `curl`, `docker`, `~/.loom`, `env` and installer commands in a WSL 2
-terminal where `docker` works. Cline on Windows keeps its configuration on Windows: write
-the step 3 entry there, and run `cline mcp add` where Cline runs, not inside WSL.
+On Windows, run the `curl`, `docker` and `env` commands, the `~/.loom` check and the
+installer in a WSL 2 terminal where `docker` works. Cline on Windows keeps its
+configuration on Windows: write the step 3 entry there, and run `cline mcp add` where
+Cline runs, not inside WSL.
 
 ```bash
 curl -sS --noproxy '*' --max-time 5 http://localhost:7777/v1/health
@@ -110,7 +111,8 @@ other clients.
 
 ## 4. Check it
 
-1. Reload the MCP servers. The tool list includes `loom_memory_set` and `loom_search`.
+1. Reload the MCP servers (the Cline CLI loads them when a session starts, so start a new
+   one). The tool list includes `loom_memory_set` and `loom_search`.
 2. Pick a key `setup/check/<random digits>` and call `loom_memory_get` on it. If it is
    found, pick another key.
 3. Call `loom_memory_set` with that `memory_key` and a short `value`, then
