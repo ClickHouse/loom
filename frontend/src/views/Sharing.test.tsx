@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getMySharingSummary,
+  isAuthDisabled,
   listCodeRepos,
   listCollections,
   listMine,
@@ -66,6 +67,7 @@ vi.mock("../api", async (importOriginal) => {
     listMine: vi.fn(async () => MINE),
     listCodeRepos: vi.fn(async () => []),
     getMySharingSummary: vi.fn(async () => SUMMARY),
+    isAuthDisabled: vi.fn(() => false),
     listCollections: vi.fn(async () => ({
       collections: [{ namespace: "col-r", parent: "", personal: false, role: "writer", title: "Research" }],
       next_cursor: null,
@@ -170,5 +172,33 @@ describe("Flow: collections", () => {
     expect(screen.getByText("across the 1 namespace and 2 collections you can read")).toBeInTheDocument();
     expect(screen.getByText("collection Research (col-a)")).toBeInTheDocument();
     expect(screen.getByText(/^collection research\s+\(col-b\)$/)).toBeInTheDocument();
+  });
+});
+
+describe("Flow: nothing yet", () => {
+  const EMPTY = {
+    ...SUMMARY,
+    totals: { ...SUMMARY.totals, namespaces: 0, agents: 0 },
+    namespaces: [],
+  } as unknown as SharingSummary;
+
+  it("points to the picker's link to public namespaces", async () => {
+    vi.mocked(getMySharingSummary).mockResolvedValueOnce(EMPTY);
+    render(<Sharing />);
+    expect(
+      await screen.findByText(/join a public namespace from the namespace picker → Find public namespaces to join —/),
+    ).toBeInTheDocument();
+  });
+
+  it("names no picker with auth off, where the header has none", async () => {
+    vi.mocked(getMySharingSummary).mockResolvedValueOnce(EMPTY);
+    vi.mocked(isAuthDisabled).mockReturnValue(true);
+    try {
+      render(<Sharing />);
+      expect(await screen.findByText(/or you join a public namespace — the cross-tool flow/)).toBeInTheDocument();
+      expect(screen.queryByText(/namespace picker/)).toBeNull();
+    } finally {
+      vi.mocked(isAuthDisabled).mockReturnValue(false);
+    }
   });
 });

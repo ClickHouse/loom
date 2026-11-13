@@ -69,6 +69,7 @@ def test_a_refused_collection_points_at_collection_list_and_a_namespace_does_not
     assert col["content"][0]["text"] == col["structuredContent"]["error"]
     other = mcp_auth._not_accessible_result("loom_memory_get", auth, "other")
     assert "collection.list" not in other["structuredContent"]["error"]
+    assert mcp_auth.DASHBOARD_REQUEST in other["structuredContent"]["error"]
 
 
 def test_an_assistant_connection_is_pointed_at_no_tool_it_cannot_call() -> None:
@@ -86,10 +87,7 @@ def test_an_assistant_connection_is_pointed_at_no_tool_it_cannot_call() -> None:
     assert "admin" in text
     assert "loom_op" not in text and "loom_search" not in text
     plain = mcp_auth._not_accessible_result("loom_knowledge_search", auth, "other", assistant=True)
-    assert (
-        "(namespace picker → Find public namespaces to join; for a private namespace, "
-        "search its exact name there)" in plain["structuredContent"]["error"]
-    )
+    assert mcp_auth.DASHBOARD_REQUEST in plain["structuredContent"]["error"]
     assert "loom_search" not in plain["structuredContent"]["error"]
 
 

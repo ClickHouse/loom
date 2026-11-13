@@ -7,7 +7,7 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { Table } from "@clickhouse/click-ui/Table";
 import { Title } from "@clickhouse/click-ui/Title";
-import { getMySharingSummary, type SharingSummary, type CodeRepoSummary } from "../api";
+import { getMySharingSummary, isAuthDisabled, type SharingSummary, type CodeRepoSummary } from "../api";
 import { sharedCodeRepos, sharedMine } from "../lib/sharedReads";
 import { useStore, useIdentity } from "../lib/state";
 import { canCallCodeRepos } from "../lib/canCall";
@@ -175,7 +175,10 @@ export function Sharing() {
         <EmptyState
           icon="share-network"
           title="No activity yet"
-          description="Once your agents start writing memories — or you join a public namespace — the cross-tool flow will appear here."
+          // With auth off the header shows the one namespace, and no picker to point at.
+          description={`Once your agents start writing memories — or you join a public namespace${
+            isAuthDisabled() ? "" : " from the namespace picker → Find public namespaces to join"
+          } — the cross-tool flow will appear here.`}
         />
       </PageContainer>
     );

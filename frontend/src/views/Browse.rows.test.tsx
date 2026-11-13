@@ -330,6 +330,27 @@ describe("Namespaces in your org: the rows", () => {
 });
 
 describe("Namespaces in your org: requesting a private namespace by name", () => {
+  it("offers the request for a name no public row carries, beside the rows that match it", async () => {
+    browse.push({ ...browse[1], namespace: "support-team", guide_summary: "", member_count: 3 });
+    try {
+      render(<Browse />);
+      await screen.findByText("support-team");
+      const box = screen.getByRole("textbox", { name: "Search namespaces" });
+      await userEvent.type(box, "support");
+      expect(await screen.findByText("No public namespace named", { exact: false })).toHaveTextContent(
+        "No public namespace named support.",
+      );
+      expect(within(screen.getByTestId("browse-list")).getByText("support-team")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Request access" })).toBeInTheDocument();
+      await userEvent.clear(box);
+      await userEvent.type(box, "support-team");
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Request access" })).toBeNull());
+      expect(within(screen.getByTestId("browse-list")).getByText("support-team")).toBeInTheDocument();
+    } finally {
+      browse.pop();
+    }
+  });
+
   it("empties the search once the typed name is joined", async () => {
     render(<Browse />);
     await screen.findByText("Support team runbooks");

@@ -228,6 +228,11 @@ export function Browse() {
     return (rows || []).filter((r) => matchesSpace(r, q));
   }, [rows, listQuery]);
   const managedShown = managedMemory.filter((r) => matchesSpace(r, listQuery.toLowerCase()));
+  // A typed name no listed row carries may be a private namespace to request, even when
+  // other rows match it (a public `support-team` for `support`). With rows listed, a name
+  // the caller already holds a role on needs no card.
+  const offersRequest =
+    !!listQuery && !filtered.some((r) => r.namespace === listQuery) && (filtered.length === 0 || !myRole[listQuery]);
   const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
   const dialogOpen = !!(joinDialog || manageNs || settingsNs || createOpen);
   // The rows of both sections are one tab stop; the arrows move through them.
@@ -393,18 +398,6 @@ export function Browse() {
             />
           )}
 
-          {rows !== null && filtered.length === 0 && listQuery && (
-            <RequestAccessCard
-              org={identity.org}
-              typedName={listQuery}
-              existingRole={myRole[listQuery]}
-              onSuccess={() => {
-                setQuery("");
-                load();
-              }}
-            />
-          )}
-
           {rows !== null && filtered.length > 0 && (
             <div className="space-y-2" data-testid="browse-list" aria-busy={refreshing || undefined}>
               {filtered.map((r) => (
@@ -423,6 +416,20 @@ export function Browse() {
                   actions={rowActions}
                 />
               ))}
+            </div>
+          )}
+
+          {rows !== null && offersRequest && (
+            <div className={filtered.length > 0 ? "mt-3" : undefined}>
+              <RequestAccessCard
+                org={identity.org}
+                typedName={listQuery}
+                existingRole={myRole[listQuery]}
+                onSuccess={() => {
+                  setQuery("");
+                  load();
+                }}
+              />
             </div>
           )}
         </section>
@@ -860,9 +867,9 @@ function JoinDialog({
   );
 }
 
-// Inline card that appears when the search yields no public matches:
-// the caller already typed an exact name into the list search, so we
-// reuse that input rather than asking them to type it again.
+// Inline card that appears when no public row is named what the search holds: the caller
+// may have typed the exact name of a private namespace, so the card reuses that input
+// rather than asking for it again.
 function RequestAccessCard({
   org,
   typedName,
@@ -920,7 +927,7 @@ function RequestAccessCard({
         <Icon name="globe" size="md" aria-hidden="true" className="mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium">
-            No public namespace matching <span className="font-mono">{typedName}</span>.
+            No public namespace named <span className="font-mono">{typedName}</span>.
           </div>
           <div className="text-xs text-text-muted mt-1">
             If <span className="font-mono">{typedName}</span> is a private namespace someone told you about, request

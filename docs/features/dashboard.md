@@ -353,8 +353,8 @@ shows the same namespace.
   targets: it is known by its reserved `col-` name, and the picker's footer links to the
   Library, where collections are. **Find public namespaces to join** ends the list until
   you have joined one; afterwards, and while you search, it is in the footer. The footer
-  also says in one line what a namespace is: one shared store of memories and documents,
-  a code index, or tracker records.
+  also says in one line what a namespace is: one store of memories and documents, a code
+  index, or tracker records.
 
 ### The admin drawer
 

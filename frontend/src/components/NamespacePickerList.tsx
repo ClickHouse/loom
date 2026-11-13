@@ -431,7 +431,7 @@ export function NamespacePickerList({
         {/* One line: a taller footer shrinks the list and gives it a scrollbar. The button above
             says where collections are. */}
         <p className="px-3 pt-1 text-xs text-text-muted">
-          A namespace is one shared store: memories and documents, a code index, or tracker records.
+          A namespace is one store: memories and documents, a code index, or tracker records.
         </p>
       </div>
     </>

@@ -54,6 +54,11 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
     return True, False
 
 
+# Where a person asks for a namespace's grant in the dashboard.
+DASHBOARD_REQUEST = (
+    "(namespace picker → Find public namespaces to join; for a private namespace, "
+    "search its exact name on Namespaces in your org)"
+)
 # The next step for a namespace the token may not read. A namespace that does not exist
 # is refused alike, so the step is the same for both and confirms neither.
 NAMESPACE_NEXT = (
@@ -116,8 +121,7 @@ def _not_accessible_result(
             f" Ask the collection's admin for a grant on it or a collection above it.{creator}"
             if collection
             else " Omit the namespace argument to use your default namespace, or request a "
-            "grant from the dashboard (namespace picker → Find public namespaces to join; "
-            "for a private namespace, search its exact name there)."
+            f"grant from the dashboard {DASHBOARD_REQUEST}."
         )
     elif collection:
         # Never "omit the namespace": a write meant for the collection would land in the
@@ -135,8 +139,7 @@ def _not_accessible_result(
         msg += (
             f" Next: {NAMESPACE_NEXT}. Omit the namespace argument to use your default "
             f"namespace (loom_search reads {reads}), or request a grant from the dashboard "
-            "(namespace picker → Find public namespaces to join; for a private namespace, "
-            f"search its exact name there).{creator}"
+            f"{DASHBOARD_REQUEST}.{creator}"
         )
         return _refusal_body(msg, ns, next=NAMESPACE_NEXT)
     return _refusal_body(msg, ns)

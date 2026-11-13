@@ -216,24 +216,25 @@ export function adminItems(
   whoami: WhoAmI | null,
   mine: MyNamespaceEntry[] | null,
   namespace: string,
-  b: AdminBadges | null,
+  badges: AdminBadges | null,
 ): NavItem[] {
   if (!isNamespaceAdmin(whoami, mine, namespace)) return [];
   // Over cap on Usage is a warning dot; Agents counts the clients new in the last 24 h.
   const items = [...ADMIN_BASE, ...operatorItems(whoami)].map((item): NavItem => {
-    if (item.id === "admin:usage" && b?.overCap) return { ...item, badge: 999, badgeTone: "warn" };
-    if (item.id === "admin:agents" && b?.newAgents) return { ...item, badge: b.newAgents, badgeTone: "accent" };
+    if (item.id === "admin:usage" && badges?.overCap) return { ...item, badge: 999, badgeTone: "warn" };
+    if (item.id === "admin:agents" && badges?.newAgents)
+      return { ...item, badge: badges.newAgents, badgeTone: "accent" };
     return item;
   });
-  const open = !!b?.conflicts;
-  if (!open && !b?.autoResolved) return items;
+  const open = !!badges?.conflicts;
+  if (!open && !badges?.autoResolved) return items;
   // Open conflicts warn with their count; recent auto-resolutions alone use the
   // Auto-resolved tab's icon, no number.
   const review: NavItem = {
     id: "admin:review_queue",
     label: "Review queue",
     icon: open ? "warning" : "flash",
-    badge: b?.conflicts || undefined,
+    badge: badges?.conflicts || undefined,
   };
   return [review, ...items];
 }
