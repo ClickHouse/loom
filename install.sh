@@ -429,6 +429,8 @@ main() {
     # The jobs that name a hosted model by default take the local one too.
     set_env LOOM_MEMORY_EXTRACT_VERIFY_MODELS "$local_model"
     set_env LOOM_CONFLICT_RESOLVER_MODEL "$local_model"
+    # A CPU reads a long prompt for minutes; the hosted default would cut it short.
+    set_env LOOM_LLM_REQUEST_TIMEOUT_S 900
     for key in LOOM_SESSION_BRIEF_LLM_MODEL LOOM_CODE_BISECT_LLM_RERANK_MODEL \
       LOOM_TRACKER_DUPCHECK_RERANK_MODEL LOOM_RETRIEVAL_JUDGE_MODEL; do
       set_env "$key" ""

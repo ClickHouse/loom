@@ -216,6 +216,7 @@ LOOM_ASSISTANT_PROVIDER=local
 LOOM_ASSISTANT_MODEL=qwen2.5:3b
 LOOM_MEMORY_EXTRACT_VERIFY_MODELS=qwen2.5:3b
 LOOM_CONFLICT_RESOLVER_MODEL=qwen2.5:3b
+LOOM_LLM_REQUEST_TIMEOUT_S=900
 LOOM_SESSION_BRIEF_LLM_MODEL=
 LOOM_CODE_BISECT_LLM_RERANK_MODEL=
 LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
@@ -225,7 +226,9 @@ LOOM_RETRIEVAL_JUDGE_MODEL=
 Pull the model first (`ollama pull qwen2.5:3b`, about 2 GB), and give Ollama a context
 window that holds Loom's prompts: extraction sends about 15,000 tokens, and Ollama cuts a
 longer prompt to its window without an error, so run it with
-`OLLAMA_CONTEXT_LENGTH=32768` (the window `qwen2.5` takes). For llama.cpp, point
+`OLLAMA_CONTEXT_LENGTH=32768` (the window `qwen2.5` takes). A CPU can take minutes to
+read a prompt that long, so the preset waits `LOOM_LLM_REQUEST_TIMEOUT_S=900` seconds for
+a reply rather than the hosted default of 300. For llama.cpp, point
 `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root (`http://host.docker.internal:8080/v1`) and
 set `LOOM_LLM_MODEL` to the name it serves. A server run from a checkout reaches the
 model at `localhost`, the setting's default (`http://localhost:11434/v1`). A per-job model
