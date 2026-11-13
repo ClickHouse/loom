@@ -18,6 +18,16 @@
         "default": "./dist/index.cjs"
       }
     },
+    "./integrations/ai-sdk": {
+      "import": {
+        "types": "./dist/integrations/ai-sdk.d.mts",
+        "default": "./dist/integrations/ai-sdk.mjs"
+      },
+      "require": {
+        "types": "./dist/integrations/ai-sdk.d.cts",
+        "default": "./dist/integrations/ai-sdk.cjs"
+      }
+    },
     "./integrations/langchain": {
       "import": {
         "types": "./dist/integrations/langchain.d.mts",
@@ -114,7 +124,8 @@
     "@aws-sdk/client-secrets-manager": "^3.0.0",
     "@langchain/core": ">=1.0.0 <2.0.0",
     "@mastra/core": ">=1.83.0 <2.0.0",
-    "@openai/agents": ">=0.22.0 <0.23.0"
+    "@openai/agents": ">=0.22.0 <0.23.0",
+    "ai": ">=7.0.0 <8.0.0"
   },
   "peerDependenciesMeta": {
     "@aws-sdk/client-secrets-manager": {
@@ -128,6 +139,9 @@
     },
     "@openai/agents": {
       "optional": true
+    },
+    "ai": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -137,6 +151,7 @@
     "@mastra/core": "1.83.0",
     "@openai/agents": "0.22.0",
     "@types/node": "^22.0.0",
+    "ai": "7.0.172",
     "publint": "^0.3.24",
     "tsdown": "^0.23.0",
     "typedoc": "^0.28.20",

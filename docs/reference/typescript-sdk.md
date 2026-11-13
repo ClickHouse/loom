@@ -25,7 +25,7 @@ then run `npm install <clone>/sdk/typescript` in your project.
 The package ships ESM and CommonJS builds with their own declaration files and
 imports no Node built-in when it loads; signing in loads `node:fs` and the
 other built-ins it needs on first use. The framework adapters are their own entry
-points: `@clickhouse/loom/integrations/langchain`,
+points: `@clickhouse/loom/integrations/ai-sdk`, `@clickhouse/loom/integrations/langchain`,
 `@clickhouse/loom/integrations/mastra`, `@clickhouse/loom/integrations/openai-agents` and
 `@clickhouse/loom/integrations/strands`.
 
@@ -245,6 +245,13 @@ const recentAudit = await collect(
   50,
 );
 ```
+
+## AI SDK adapter
+
+`loomTools(agent, scope)` from `@clickhouse/loom/integrations/ai-sdk` returns `AgentTools`
+as an AI SDK `ToolSet`, built with `tool()` and `jsonSchema()` from `ai`, an optional peer
+dependency (`ai` 7.x, which needs Node 22 or later). See
+[Frameworks](../features/integrations/frameworks.md#ai-sdk).
 
 ## LangChain.js adapter
 

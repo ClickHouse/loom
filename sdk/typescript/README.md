@@ -380,6 +380,15 @@ const recentAudit = await collect(
 );
 ```
 
+## AI SDK
+
+```ts
+import { loomTools } from "@clickhouse/loom/integrations/ai-sdk";
+const tools = loomTools(bot, { userId: "u-42" }); // generateText({ model, tools, prompt }) from ai
+```
+
+Loom's agent verbs (`AgentTools`) as an AI SDK `ToolSet` built with `tool()` and `jsonSchema()` from `ai`, an optional peer dependency (7.x, which needs Node 22 or later).
+
 ## LangChain.js
 
 ```ts
