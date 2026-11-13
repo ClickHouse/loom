@@ -58,20 +58,20 @@ measured; it does not prove that Loom performs well.
 
 Each item below answers evaluation questions from the matrix above:
 
-1. **Write integrity and corrections:** extraction precision, false-memory rate,
-   supersession and stale-answer rate on one public conversational corpus.
-2. **Knowledge RAG:** retrieval, answer and citation quality on text documents, followed
-   by a licensed format-fidelity corpus for PDF, CSV and structured text.
-3. **End-to-end code-agent outcome:** leak-controlled patch generation and test success,
-   paired against the same agent without Loom.
-4. **Live code portability:** real-provider measurements across the existing polyglot,
-   SQL/shell and OSS fixtures.
-5. **Index economics and freshness:** cold and incremental curves by repository size,
-   with hardware, ClickHouse storage and worker resources recorded.
-6. **Capacity and reliability:** a mixed memory/code workload across tenants, followed by
-   worker, ClickHouse and network fault injection.
-7. **Safety and privacy:** publish named-attack results separately; never collapse them
-   into a general safety score.
+- **Write integrity and corrections:** extraction precision, false-memory rate,
+  supersession and stale-answer rate on one public conversational corpus.
+- **Knowledge RAG:** retrieval, answer and citation quality on text documents, followed
+  by a licensed format-fidelity corpus for PDF, CSV and structured text.
+- **End-to-end code-agent outcome:** leak-controlled patch generation and test success,
+  paired against the same agent without Loom.
+- **Live code portability:** real-provider measurements across the existing polyglot,
+  SQL/shell and OSS fixtures.
+- **Index economics and freshness:** cold and incremental curves by repository size,
+  with hardware, ClickHouse storage and worker resources recorded.
+- **Capacity and reliability:** a mixed memory/code workload across tenants, followed by
+  worker, ClickHouse and network fault injection.
+- **Safety and privacy:** publish named-attack results separately; never collapse them
+  into a general safety score.
 
 Each new result follows [Adding a result](./results.md#adding-a-result): commit the raw
 artifact, record every model and the server build, state the dataset licence, include the
