@@ -1,13 +1,13 @@
 """MkDocs hooks for the documentation site built from docs/.
 
-Each page's meta description is its first sentence, the line llms.txt lists for it, so a
-search result shows the answer the page opens with. An inline Markdown link or image that
-leaves docs/ (source files, the README, llms.txt) points at the file on GitHub instead of
-a missing page; links in code blocks and code spans are left as written, and
-reference-style links are not rewritten (the docs use inline links). The sidebar follows
-llms.txt's section order, with Overview and Quickstart first in Getting started, and a
-generated page gets no edit button (its source is the generator, not the page).
-"""
+Each page's meta description is its first sentence, the line llms.txt lists for it, cut to
+160 characters, so a search result shows the answer the page opens with. An inline
+Markdown link or image that leaves docs/ (source files, the README, llms.txt) points at
+the file on GitHub instead of a missing page; links in code blocks and code spans are left
+as written, and reference-style links are not rewritten (the docs use inline links). The
+sidebar follows llms.txt's section order, with Overview and Quickstart first in Getting
+started, and a generated page gets no edit button (its source is the generator, not the
+page)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from scripts.codegen.page_summary import SECTIONS, page_summary  # noqa: E402
+from scripts.codegen.page_summary import SECTIONS, page_summary, shorten  # noqa: E402
 
 BLOB = "https://github.com/ClickHouse/loom/blob/main/"
 RAW = "https://raw.githubusercontent.com/ClickHouse/loom/main/"
@@ -49,10 +49,8 @@ def on_page_markdown(markdown, page, config, files):
     description = page.meta.get("description") or summary.replace("`", "")
     if description.endswith(":"):
         description = description[:-1] + "."  # an opening sentence that leads into a list
-    if len(description) > _DESCRIPTION_MAX:
-        # Search engines cut a description near this length; end on a whole word instead.
-        cut = description[: _DESCRIPTION_MAX - 1].rsplit(" ", 1)[0]
-        description = cut.rstrip(",;:—- ") + "…"
+    # Search engines cut a description near this length; end on a whole word instead.
+    description = shorten(description, _DESCRIPTION_MAX)
     if description:
         # The theme writes the description into its <meta> attribute unescaped.
         page.meta["description"] = html.escape(description)

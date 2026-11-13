@@ -34,12 +34,11 @@ def test_the_description_is_the_first_sentence_escaped_without_backticks(tmp_pat
 
 def test_a_long_description_ends_on_a_whole_word_within_the_limit(tmp_path: Path) -> None:
     src = tmp_path / "page.md"
-    src.write_text("# Page\n\n" + "word " * 60 + "end.\n")
+    src.write_text("# Page\n\n" + "alpha beta gamma " * 20 + "end.\n")
     page = _page(src, "features/page.md")
     hooks.on_page_markdown("", page, None, None)
-    description = page.meta["description"]
-    assert len(description) <= 160
-    assert description.endswith("word…")
+    # A plain 159-character slice would end inside "gamma"; the cut keeps whole words.
+    assert page.meta["description"] == "alpha beta gamma " * 9 + "alpha…"
 
 
 def test_a_description_set_in_front_matter_is_kept_and_escaped(tmp_path: Path) -> None:

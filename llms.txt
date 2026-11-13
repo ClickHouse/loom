@@ -169,7 +169,7 @@ Start with docs/index.md (the map). To install Loom, a coding agent reads docs/g
 - [Extend Loom](docs/development/extending-loom.md): Loom has one registry per kind of thing: operations, workers, settings, providers, language lanes, extraction steps and tracker sources.
 - [Local development](docs/development/local-development.md): This page sets up a checkout for working on Loom's code.
 - [Migrations](docs/development/migrations.md): This page holds the rules for writing a migration.
-- [Release process](docs/development/release-process.md): Loom follows SemVer, and the server, the Python SDK, the TypeScript SDK, the web app, the root skills (`loom-code`, `loom`) and the Gemini CLI extension share one version `X.Y.Z`.
+- [Release process](docs/development/release-process.md): Loom follows SemVer: the server, both SDKs, the web app, the root skills (`loom-code`, `loom`) and the Gemini CLI extension share one version `X.Y.Z`.
 - [Repository guide](docs/development/repository-guide.md): What every top-level directory holds, where a concern lives inside `server/`, the order to read the code in, and the conventions a pull request fails without.
 - [Testing](docs/development/testing.md): Which suite a test belongs in, what each suite needs to run, how tests skip when their environment is missing, which gates CI enforces, and how to regenerate what they pin.
 

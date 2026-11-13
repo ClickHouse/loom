@@ -2,8 +2,8 @@
 
 `llms.txt` (scripts/codegen/docs_reference.py) lists this sentence for every page, and the
 documentation site (scripts/docs_site/hooks.py) uses it as the page's meta description,
-so both show the same answer. Standard library only: the site build imports it without
-the server's dependencies.
+cut to the length a search engine shows, so both start with the same answer. Standard
+library only: the site build imports it without the server's dependencies.
 """
 
 from __future__ import annotations
@@ -27,6 +27,14 @@ SECTIONS = (
 )
 
 
+def shorten(text: str, limit: int) -> str:
+    """`text` if it fits in `limit` characters, else its last whole words that fit, plus "…"."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1].rsplit(" ", 1)[0]
+    return cut.rstrip(",;:—- ") + "…"
+
+
 def first_sentence(text: str | None, limit: int = 200) -> str:
     """The first sentence of a docstring or description, on one line."""
     if not text:
@@ -36,10 +44,7 @@ def first_sentence(text: str | None, limit: int = 200) -> str:
     m = re.search(r"(?<!\.\.)(?<![eE]\.g\.)(?<![iI]\.e\.)(?<=[.!?])\s+(?=[A-Z`*(])", para)
     sentence = para[: m.start()] if m else para
     sentence = sentence.replace("**", "")
-    if len(sentence) > limit:
-        cut = sentence[: limit - 1].rsplit(" ", 1)[0]
-        sentence = cut.rstrip(",;:—- ") + "…"
-    return sentence
+    return shorten(sentence, limit)
 
 
 def page_summary(path: Path) -> tuple[str, str]:
