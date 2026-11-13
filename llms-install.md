@@ -1,8 +1,8 @@
 # Install Loom as an MCP server
 
 This file is for a coding agent asked to set Loom up as an MCP server for its user.
-People can read the [README](README.md) and the
-[quickstart](docs/getting-started/quickstart.md). Claude Code and Codex have their own
+People can read the [README](https://github.com/ClickHouse/loom#readme) and the
+[quickstart](https://clickhouse.github.io/loom/getting-started/quickstart/). Claude Code and Codex have their own
 setup contract:
 [agent-setup.txt](https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt).
 
@@ -105,7 +105,7 @@ add this entry to `~/.cline/data/settings/cline_mcp_settings.json`:
 }
 ```
 
-The [MCP clients page](docs/features/integrations/mcp-clients.md) gives the entry for
+The [MCP clients page](https://clickhouse.github.io/loom/features/integrations/mcp-clients/) gives the entry for
 other clients.
 
 ## 4. Check it
@@ -123,4 +123,4 @@ other clients.
 
 The code tools (`loom_code_search`, `loom_code_symbol` and the others) answer once a
 repository is indexed. On the released stack, add it to `LOOM_CODE_REPOS_JSON`
-([Index a repository](docs/getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)).
+([Index a repository](https://clickhouse.github.io/loom/getting-started/quickstart/#optional-index-a-repository-on-the-released-stack)).
