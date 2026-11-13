@@ -106,13 +106,9 @@ _NAMED_OP = re.compile(
 )
 
 
-# A span in single quotes whose quotes touch no letter: not a possessive or a contraction.
-_QUOTED = re.compile(r"((?<![A-Za-z])'[^'\n]*'(?![A-Za-z]))")
-
-
-def _lookup(name: str) -> Operation | None:
-    """The op a prose mention names, by tool name or dotted op name."""
-    return TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
+# A span in single quotes whose quotes touch no letter and that does not open with a
+# possessive ('s): not a possessive or a contraction.
+_QUOTED = re.compile(r"((?<![A-Za-z])'(?!s\b)[^'\n]*'(?![A-Za-z]))")
 
 
 def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool = False) -> str:
@@ -127,7 +123,7 @@ def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool = False) -
 
     def rename(m: re.Match[str]) -> str:
         name, trail = m.groups()
-        op = _lookup(name)
+        op = TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
         if op is None:
             return m.group(0)
         if op.mcp_tool_name in listed:

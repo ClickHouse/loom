@@ -254,9 +254,7 @@ def _prefix_count(usage: dict[str, int], prefix: str) -> int:
 
 # Ops an MCP agent reaches through a listed synthetic tool or a core alias:
 # no listing note for these.
-_LISTED_VIA_ALIAS = frozenset(
-    {"search.query", "memory.search", "knowledge.search", "conversation.search"}
-)
+_LISTED_VIA_ALIAS = frozenset({"memory.search", "knowledge.search", "conversation.search"})
 
 
 # The note _unlisted adds for an op the core listing leaves out, and its pattern.
@@ -315,10 +313,18 @@ def _byname(op: str) -> str:
     return op
 
 
+# Room an echoed value takes in a hint: short enough that the clip never cuts its
+# closing quote, and that the advice after it survives.
+ECHO_CHARS = 60
+
+
 def _quoted(value: object) -> str:
     """A caller's value as a hint echoes it: in single quotes with none inside and no
-    newline, so the MCP renderer leaves it as written."""
-    return "'" + str(value).replace("'", "\u2019").replace("\n", " ") + "'"
+    newline, cut to ECHO_CHARS, so the MCP renderer leaves it as written."""
+    text = str(value).replace("'", "\u2019").replace("\n", " ")
+    if len(text) > ECHO_CHARS:
+        text = text[: ECHO_CHARS - 1] + "…"
+    return f"'{text}'"
 
 
 def clip(text: str, limit: int = HINT_CHARS) -> str:
@@ -396,9 +402,10 @@ def _rules_identity(c: _Ctx) -> None:
         c.add(
             "agent_unnamed",
             "info",
-            f"{c.sets} writes under the anonymous agent name '{c.agent or '-'}': name the agent "
-            "(SDK agent=, MCP clientInfo.name, the X-Loom-Agent of a bot) so the mentor, the cost "
-            "views and provenance can tell this caller from every other unnamed one.",
+            f"{c.sets} writes under the anonymous agent name {_quoted(c.agent or '-')}: name "
+            "the agent (SDK agent=, MCP clientInfo.name, the X-Loom-Agent of a bot) so the "
+            "mentor, the cost views and provenance can tell this caller from every other "
+            "unnamed one.",
             ("memory.set",),
             sets=c.sets,
         )
@@ -406,18 +413,18 @@ def _rules_identity(c: _Ctx) -> None:
 
 def _rules_reading(c: _Ctx) -> None:
     """How the agent reads: by key, never, without a pack."""
-    gets, searches, sets, packs = c.gets, c.recalls, c.sets, c.packs
-    if gets >= KEY_ONLY_MIN_GETS and gets >= KEY_ONLY_RATIO * max(searches, 1):
+    gets, recalls, sets, packs = c.gets, c.recalls, c.sets, c.packs
+    if gets >= KEY_ONLY_MIN_GETS and gets >= KEY_ONLY_RATIO * max(recalls, 1):
         c.add(
             "recall_by_key_only",
             "warning",
-            f"{gets} exact-key reads to {searches} searches this week: search.query recalls by "
+            f"{gets} exact-key reads to {recalls} searches this week: search.query recalls by "
             "meaning; keep a value read in a loop with working_memory.set.",
             ("search.query", "memory.search", "working_memory.set"),
             gets=gets,
-            searches=searches,
+            searches=recalls,
         )
-    reads = searches + gets + packs
+    reads = recalls + gets + packs
     if (
         sets >= WRITES_NEVER_READ_MIN_SETS
         and c.sessions >= 2
@@ -507,10 +514,12 @@ def _rules_planes(c: _Ctx) -> None:
     if (
         repos
         and _prefix_count(c.usage, "code") == 0
-        and (c.recalls >= CODE_UNUSED_MIN_SEARCHES or c.sets >= CODE_UNUSED_MIN_SETS)
+        and (c.searches >= CODE_UNUSED_MIN_SEARCHES or c.sets >= CODE_UNUSED_MIN_SETS)
     ):
         shown = list(c.facts.get("repo_names") or [])
-        names = ", ".join(shown) + (f", +{repos - len(shown)}" if repos > len(shown) else "")
+        names = ", ".join(_quoted(n) for n in shown) + (
+            f", +{repos - len(shown)}" if repos > len(shown) else ""
+        )
         c.add(
             "code_index_unused",
             "warning",
@@ -530,7 +539,7 @@ def _rules_planes(c: _Ctx) -> None:
             "tracker_unused",
             "warning",
             f"{c.fact('tracker_tagged_sets')} writes tagged test/flaky/ci and 0 tracker.* "
-            f"calls: the tracker source ({', '.join(tracker_sources)}) answers "
+            f"calls: the tracker source ({', '.join(_quoted(t) for t in tracker_sources)}) answers "
             f"{_byname('tracker.similar')}, "
             "tracker.duplicate_check, tracker.flaky, tracker.test_signal.",
             ("tracker.similar", "tracker.duplicate_check", "tracker.flaky", "tracker.test_signal"),

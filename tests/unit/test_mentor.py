@@ -1527,13 +1527,22 @@ def test_following_the_reading_hint_through_search_query_clears_it() -> None:
     assert "recall_by_key_only" in before and "recall_by_key_only" not in after
 
 
-@pytest.mark.parametrize("key", ["tracker.flaky", "user's memory.get", "a\nmemory.apply"])
+@pytest.mark.parametrize(
+    "key",
+    [
+        "tracker.flaky",
+        "user's memory.get",
+        "a\nmemory.apply",
+        "k" * 190 + " memory.apply" + "x" * 100,
+    ],
+)
 def test_an_echoed_key_comes_through_rendering_as_written(key: str) -> None:
     from server.transport import mcp_tools
 
-    text = mentor_rules._quoted(key) + " was set 5 times"
+    # a hint the length budget clips keeps the value's closing quote
+    text = mentor_rules.clip_keeping_note(mentor_rules._quoted(key) + " was set 5 times")
     rendered = mcp_tools.mentor_text_for_toolset(text, "core")
-    assert rendered == text and "\n" not in text
+    assert rendered == text and "\n" not in text and text.endswith("was set 5 times")
 
 
 def test_a_call_hint_on_mcp_names_ops_for_its_listing() -> None:
@@ -1780,7 +1789,9 @@ def test_code_index_counts_distinct_repos_the_agents_principal_may_read(
     assert p.facts["repos"] == 1 and p.facts["repo_entries"] == 2
     assert p.facts["repos_total"] == 5 and p.facts["repo_names"] == ["acme/ch"]
     hint = p.hint("code_index_unused")
-    assert hint is not None and hint.text.startswith("1 indexed repo (acme/ch) and 0 code.* calls")
+    assert hint is not None and hint.text.startswith(
+        "1 indexed repo ('acme/ch') and 0 code.* calls"
+    )
     grants_sql = next(s for s in ch.sqls if M_GRANTS in s)
     assert "inherit_creator_grants" in grants_sql and "loom.service_accounts FINAL" in grants_sql
     m.reset_cache()
@@ -1810,7 +1821,7 @@ def test_code_index_counts_distinct_repos_the_agents_principal_may_read(
     p = _profile()
     assert p is not None and p.facts["repos"] == 4
     hint = p.hint("code_index_unused")
-    assert hint is not None and "4 indexed repos (acme/ch, acme/go, acme/py, +1)" in hint.text
+    assert hint is not None and "4 indexed repos ('acme/ch', 'acme/go', 'acme/py', +1)" in hint.text
 
 
 def test_a_tag_naming_a_file_is_not_a_tracker_tag() -> None:

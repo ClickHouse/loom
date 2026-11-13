@@ -313,6 +313,15 @@ def test_naming_marks_only_what_loom_op_routes():
     assert mcp_op.name_ops_for_listing("memory.apply's limit", listed, writes=True) == (
         "memory.apply's (via loom_op) limit"
     )
+    # a possessive after a code span is no opening quote: what follows is still prose
+    assert mcp_op.name_ops_for_listing(
+        "`memory.apply`'s limit; memory.delete takes one key; other writers' rows",
+        listed,
+        writes=True,
+    ) == (
+        "`memory.apply`'s (via loom_op) limit; memory.delete (via loom_op) takes one key; "
+        "other writers' rows"
+    )
     # a citation tag is not an op mention
     assert mcp_op.name_ops_for_listing("[knowledge.query#1]", listed, writes=True) == (
         "[knowledge.query#1]"
