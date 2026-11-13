@@ -351,6 +351,43 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     }
   });
 
+  it("offers no request for a name a listed row carries in another case, or for a phrase", async () => {
+    browse.push({ ...browse[1], namespace: "support-team", guide_summary: "", member_count: 3 });
+    try {
+      render(<Browse />);
+      await screen.findByText("support-team");
+      const box = screen.getByRole("textbox", { name: "Search namespaces" });
+      await userEvent.type(box, "Support-Team");
+      expect(await within(screen.getByTestId("browse-list")).findByText("support-team")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+      await userEvent.clear(box);
+      // Matches alpha's description, but is no namespace name.
+      await userEvent.type(box, "support team");
+      expect(await within(screen.getByTestId("browse-list")).findByText("alpha")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+    } finally {
+      browse.pop();
+    }
+  });
+
+  it("offers a viewer of a private namespace the higher role beside a partly matching public row", async () => {
+    const before = [...mine];
+    mine.push({ ...mine[0], namespace: "sup", role: "viewer" });
+    try {
+      render(<Browse />);
+      await screen.findByText("Support team runbooks");
+      await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "sup");
+      expect(await screen.findByText("No public namespace named", { exact: false })).toHaveTextContent(
+        "No public namespace named sup.",
+      );
+      expect(within(screen.getByTestId("browse-list")).getByText("alpha")).toBeInTheDocument();
+      expect(screen.getByText(/Pick a higher role above to request an upgrade/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Request access" })).toBeDisabled();
+    } finally {
+      mine.splice(0, mine.length, ...before);
+    }
+  });
+
   it("empties the search once the typed name is joined", async () => {
     render(<Browse />);
     await screen.findByText("Support team runbooks");

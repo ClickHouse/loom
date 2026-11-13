@@ -18,7 +18,7 @@ import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { GuideDialog } from "../flows/GuideDialog";
-import { isCollectionName, isPersonalCollection } from "../lib/namespace";
+import { NAMESPACE_NAME, isCollectionName, isPersonalCollection } from "../lib/namespace";
 import { canEditGuide, roleOnNamespace } from "../lib/namespaceRole";
 import { callReason } from "../lib/callReason";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
@@ -228,11 +228,12 @@ export function Browse() {
     return (rows || []).filter((r) => matchesSpace(r, q));
   }, [rows, listQuery]);
   const managedShown = managedMemory.filter((r) => matchesSpace(r, listQuery.toLowerCase()));
-  // A typed name no listed row carries may be a private namespace to request, even when
-  // other rows match it (a public `support-team` for `support`). With rows listed, a name
-  // the caller already holds a role on needs no card.
-  const offersRequest =
-    !!listQuery && !filtered.some((r) => r.namespace === listQuery) && (filtered.length === 0 || !myRole[listQuery]);
+  // A search that is a namespace name no listed row carries may name a private namespace
+  // to request, even when other rows match it (a public `support-team` for `support`).
+  // Names are lowercase, so the search is compared lowercased. A name the caller already
+  // holds a role on keeps the card: its alert offers the higher role.
+  const typedName = listQuery.toLowerCase();
+  const offersRequest = NAMESPACE_NAME.test(typedName) && !filtered.some((r) => r.namespace === typedName);
   const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
   const dialogOpen = !!(joinDialog || manageNs || settingsNs || createOpen);
   // The rows of both sections are one tab stop; the arrows move through them.
@@ -423,8 +424,8 @@ export function Browse() {
             <div className={filtered.length > 0 ? "mt-3" : undefined}>
               <RequestAccessCard
                 org={identity.org}
-                typedName={listQuery}
-                existingRole={myRole[listQuery]}
+                typedName={typedName}
+                existingRole={myRole[typedName]}
                 onSuccess={() => {
                   setQuery("");
                   load();
