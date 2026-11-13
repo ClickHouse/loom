@@ -3,8 +3,8 @@
 A short block in an agent's instruction file tells it to load Loom's context at the start
 of each task and before each edit, when to save a fact and when to ask the code index
 instead of grepping or reading files. This page gives that block once and the file each
-client reads it from; paste it, fill in the code namespace, and commit it with the
-repository.
+client reads it from; paste it, fill in its two namespaces from `code.repos` (below),
+and commit it with the repository.
 
 The Claude Code and Codex plugins already do this through their hooks and skills
 ([Claude Code](claude-code.md#skills), [Codex](codex.md#skills)); the block is for every
@@ -107,7 +107,10 @@ Each line is the short form of what the plugins teach:
   [`loom-code`](../../../integrations/claude-code-plugin/skills/loom-code/SKILL.md)
   skill, which the plugins' code shunt enforces.
 
-The skills carry the detail the block leaves out: the receipt fields, documents versus
+The block's last memory line stands for the end-of-task review; to spell it out, copy
+its questions from the
+[agent-integration guide](../../guides/agent-integration.md#7-follow-the-memory-skills-review)
+under the block. The skills carry the detail the block leaves out: the receipt fields, documents versus
 memories, the stop rules. To give an agent skills instead of the block, install the
 `loom` and `loom-code` skills alone ([coding agents](index.md#coding-agents)); `loom`
 covers what `loom-memory` teaches.

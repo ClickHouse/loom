@@ -127,7 +127,8 @@ name (`$loom-status`) or let its description trigger it.
 
 With the plugin, the skills above carry the contract and `AGENTS.md` needs none. Codex
 without the plugin reads the block in [agent instructions](agent-instructions.md) from
-`AGENTS.md` at the repository root (or `~/.codex/AGENTS.md`).
+`AGENTS.md` at the repository root: the block names that repository's namespaces, so
+it does not belong in the global `~/.codex/AGENTS.md`.
 
 ## Headless
 

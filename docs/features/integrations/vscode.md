@@ -57,8 +57,8 @@ Open the agent mode chat and check that the `loom_*` tools are listed;
 
 Add the [agent instructions](agent-instructions.md) block to
 `.github/copilot-instructions.md` so the agent knows when to call the tools. The block
-names the `coding` toolset's tools: connect with `?toolset=coding` on `url`, or the ones
-it names run through `loom_op`.
+names the `coding` toolset's tools: connect with `?toolset=coding` on `url`; otherwise the
+tools it names that the listing leaves out run through `loom_op`, as the block says.
 
 ## Related
 
