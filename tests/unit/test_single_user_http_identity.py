@@ -101,14 +101,13 @@ def test_a_blank_or_sentinel_identity_is_filled_too(seen: Seen, blank: str) -> N
 
 def test_an_agent_of_dash_is_kept(seen: Seen) -> None:
     """`-` names no agent: the agents views leave it out, where `http` would show.
-    A list keeps it too, so it reads only the rows with no agent."""
+    A list and a key history keep it too, so they read only the rows with no agent."""
     _post("memory.set", {"agent": "-", "memory_key": "k", "value": "v"})
     _post("memory.get", {"agent": "-", "memory_key": "k"})
     _post("memory.delete", {"agent": "-", "memory_key": "k"})
     _post("memory.list", {"agent": "-"})
     _post("memory.history", {"agent": "-", "memory_key": "k"})
-    assert [row[3] for row in seen] == ["-"] * 5
-    assert seen[0][1:3] == ("dev", "local")
+    assert [row[1:] for row in seen] == [("dev", "local", "-")] * 5
 
 
 def test_an_agent_of_dash_beside_a_misspelled_one_runs_as_no_agent(seen: Seen) -> None:

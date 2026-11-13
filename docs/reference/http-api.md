@@ -163,23 +163,23 @@ curl -sX POST "$LOOM/v1/memory.set" \
   `memory.get`, `memory.delete`, `memory.list`, `memory.history`, `memory.search`,
   `memory.search_trace`, `memory.ask`, `memory.update`, `search.query` or
   `knowledge.search` may also leave out `namespace` and `agent`: it runs in the
-  install's namespace (`LOOM_DEFAULT_NAMESPACE`). An agent of `"-"` names no agent
-  and is kept, as on any server: a write is recorded with no agent, which the
-  dashboard's agents list leaves out, `memory.list` and `memory.history` read only
-  rows with no agent, and `memory.get` and `memory.delete` try the key under `-`
-  first. `memory.set` and `memory.bulk_set`
-  write as agent `http`; `memory.get` and `memory.delete` try the key under agent
-  `http`, then under any agent of the same user; `memory.list` reads every agent's
-  rows of the call's user and session (`-` when it names none) and `memory.history`
-  every agent's, user's and session's versions of the key, as on MCP; a
-  `memory.history` that names a `user_id` or `session_id` names its agent too. An op
-  whose agent is optional and left out acts across every agent: a search reads every
-  agent's rows, and `memory.update` finds the key in the whole namespace. A key that
-  misspells one of these (`namepsace`) is taken as naming it, so that field is not
-  filled and, where the op requires it, the call is refused. Every other op names
-  its own namespace and agent; on a single-user server with no token, a blank or
-  `"-"` namespace on one that requires a namespace (code and tracker ops aside) is
-  refused as missing. A call with a token (one the Python SDK finds by itself
+  install's namespace (`LOOM_DEFAULT_NAMESPACE`). With no agent, `memory.set` and
+  `memory.bulk_set` write as agent `http`; `memory.get` and `memory.delete` try the
+  key under agent `http`, then under any agent of the same user; `memory.list` reads
+  every agent's rows of the call's user and session (`-` when it names none) and
+  `memory.history` every agent's, user's and session's versions of the key, as on
+  MCP; a `memory.history` that names a `user_id` or `session_id` names its agent
+  too. An agent of `"-"` names no agent and is kept, as on any server: a write is
+  recorded with no agent, which the dashboard's agents list leaves out;
+  `memory.list` and `memory.history` read only rows with no agent; `memory.get` and
+  `memory.delete` try the key under `-`, then under any agent of the same user. An
+  op whose agent is optional and left out acts across every agent: a search reads
+  every agent's rows, and `memory.update` finds the key in the whole namespace. A
+  key that misspells one of these (`namepsace`) is taken as naming it, so that field
+  is not filled and, where the op requires it, the call is refused. Every other op
+  names its own namespace and agent; on a single-user server with no token, a blank
+  or `"-"` namespace on one that requires a namespace (code and tracker ops aside)
+  is refused as missing. A call with a token (one the Python SDK finds by itself
   included: [Credentials](python-sdk.md#credentials)) gets nothing filled, and
   neither does any call in another identity mode.
 - **`consumer`.** Any body may carry `consumer`, a short tag for the product or
