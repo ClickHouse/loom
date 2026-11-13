@@ -678,15 +678,17 @@ function documentRow(d: (typeof DOCUMENTS)[number]) {
   };
 }
 
-/** `knowledge.search` passages for the refund question, best first, each with where it sits. */
+/** `knowledge.search` passages for the refund question, best first, each with where it
+ *  sits; `score` is the hybrid search's fused reciprocal rank. */
 const PASSAGES = [
   {
     source_uri: "policies/refunds.md",
     chunk_idx: 3,
     section: "Approvals",
+    section_path: ["Approvals"],
     content:
       "A refund over $250 needs a second approver in the billing console before it is issued. The approver must not be the person who took the original payment.",
-    score: 0.86,
+    score: 0.0328,
     similarity: 0.86,
     distance: 0.14,
     tags: [],
@@ -698,9 +700,10 @@ const PASSAGES = [
     source_uri: "runbooks/payments-on-call.md",
     chunk_idx: 7,
     section: "Refund stuck in pending",
+    section_path: ["Refund stuck in pending"],
     content:
       "If a refund stays pending for more than an hour, check the settlement queue first; a refund in a currency other than USD waits for the day's FX rate.",
-    score: 0.74,
+    score: 0.032,
     similarity: 0.74,
     distance: 0.26,
     tags: [],
@@ -712,9 +715,10 @@ const PASSAGES = [
     source_uri: "architecture/fx-settlement.md",
     chunk_idx: 1,
     section: "Rounding",
+    section_path: ["Rounding"],
     content:
       "Converted amounts round half to even, the rule the settlement bank applies, so a refund in EUR settles to the cent the bank reports.",
-    score: 0.61,
+    score: 0.0161,
     similarity: 0.61,
     distance: 0.39,
     tags: [],
@@ -808,9 +812,9 @@ function symbolUnit(symbol: string) {
   return { unit_id: `s-${symbol}`, symbol, tier: "scip", elided: false, score: 0, ...unit, kind: "symbol" };
 }
 
-/** A hybrid search hit: a chunk unit, with an empty tier and signature and the leg that
- *  found it. */
-function codeUnit(symbol: string, score: number) {
+/** A hybrid search hit: a chunk unit, with an empty tier and signature, found by both
+ *  legs at `rank`. */
+function codeUnit(symbol: string, score: number, rank: number) {
   return {
     unit_id: `u-${symbol}`,
     symbol,
@@ -818,6 +822,8 @@ function codeUnit(symbol: string, score: number) {
     elided: false,
     score,
     via: "both",
+    lexical_rank: rank,
+    vector_rank: rank,
     ...CODE_UNITS[symbol],
     signature: "",
   };
@@ -1088,7 +1094,7 @@ async function installDemoApi(page: Page): Promise<void> {
         });
       case "/v1/code.search":
         return json({
-          results: [codeUnit("payments.fx.convert", 0.91), codeUnit("payments.refunds.refund", 0.74)],
+          results: [codeUnit("payments.fx.convert", 0.91, 1), codeUnit("payments.refunds.refund", 0.74, 2)],
           route: "hybrid",
           abstain: false,
           abstain_reason: "",
@@ -1166,30 +1172,20 @@ async function captureWebp(page: Page, name: string): Promise<void> {
     return canvas.toDataURL("image/webp", 0.85);
   }, png);
   await blank.close();
-  // A browser without a WebP encoder answers PNG instead, which must not be saved as WebP.
-  if (!webp.startsWith("data:image/webp;base64,")) throw new Error(`${name}: no WebP encoder`);
   fs.writeFileSync(path.join(OUT_ASSETS, `${name}.webp`), Buffer.from(webp.split(",", 2)[1], "base64"));
 }
 
 /** A short pause, so a clip's viewer can follow each step. */
 const beat = (page: Page, ms = 900) => page.waitForTimeout(ms);
 
-/** How a step runs: a shot goes straight to its frame, a clip types at a reading pace and
- *  pauses where a viewer needs a moment. */
-interface Pace {
-  clip: boolean;
-  /** Milliseconds between typed characters. */
-  typing: number;
-}
-const SHOT: Pace = { clip: false, typing: 0 };
-const CLIP: Pace = { clip: true, typing: 45 };
-
-/** The steps the shots and the clips share, each ending on what it shows. */
+/** The steps the shots and the clips share, each ending on what it shows. A shot goes
+ *  straight to its frame; a clip types at a reading pace and pauses where a viewer needs
+ *  a moment. */
 const steps = {
-  async linkedCode(page: Page, pace = SHOT) {
+  async linkedCode(page: Page, clip = false) {
     await page.goto("/memories");
     const row = page.getByText("payments/fx/rounding", { exact: true }).first();
-    if (pace.clip) {
+    if (clip) {
       await row.scrollIntoViewIfNeeded();
       await beat(page, 1200);
     }
@@ -1206,30 +1202,30 @@ const steps = {
     await field.press("Enter");
     await expect(page.getByText("Approvals").first()).toBeVisible();
   },
-  async codeCallers(page: Page, pace = SHOT) {
+  async codeCallers(page: Page, clip = false) {
     await page.goto(`/repositories?repo=${CODE_NS}`);
     await page.getByRole("tab", { name: "Explore" }).click();
     const search = page.getByRole("textbox", { name: "Search code" });
     await search.click();
-    await search.pressSequentially("where are refunds converted to USD", { delay: pace.typing });
+    await search.pressSequentially("where are refunds converted to USD", { delay: clip ? 45 : 0 });
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await expect(page.getByText("payments.fx.convert").first()).toBeVisible();
-    if (pace.clip) await beat(page);
+    if (clip) await beat(page);
     await page.getByRole("button", { name: "payments.fx.convert", exact: true }).first().click();
     await expect(page.getByText(/^Callers \(\d+\)$/)).toBeVisible();
   },
-  async assistant(page: Page, pace = SHOT) {
+  async assistant(page: Page, clip = false) {
     await page.goto("/memories");
     const launcher = page.locator('[data-focus-key="assistant-launcher"]');
     await expect(launcher).toBeVisible();
     await launcher.click();
     const question = page.getByRole("textbox", { name: "Question" });
-    await question.pressSequentially("What does a refund over $250 need?", { delay: pace.typing });
+    await question.pressSequentially("What does a refund over $250 need?", { delay: clip ? 45 : 0 });
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     const checked = page.getByText("Checked against what Loom holds").first();
     await expect(checked).toBeVisible();
     // The clip ends on the checked sources, below the answer's last line.
-    if (pace.clip) await page.getByRole("button", { name: "Retry" }).scrollIntoViewIfNeeded();
+    if (clip) await page.getByRole("button", { name: "Retry" }).scrollIntoViewIfNeeded();
   },
 };
 
@@ -1386,14 +1382,14 @@ test.describe("docs clips", () => {
   }
 
   test("clip memory linked code", async ({ browser }) => {
-    await record(browser, "memory-linked-code", (page) => steps.linkedCode(page, CLIP));
+    await record(browser, "memory-linked-code", (page) => steps.linkedCode(page, true));
   });
 
   test("clip assistant answer", async ({ browser }) => {
-    await record(browser, "assistant-answer", (page) => steps.assistant(page, CLIP));
+    await record(browser, "assistant-answer", (page) => steps.assistant(page, true));
   });
 
   test("clip code callers", async ({ browser }) => {
-    await record(browser, "code-callers", (page) => steps.codeCallers(page, CLIP));
+    await record(browser, "code-callers", (page) => steps.codeCallers(page, true));
   });
 });
