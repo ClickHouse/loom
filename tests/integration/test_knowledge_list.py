@@ -173,11 +173,12 @@ async def test_list_reads_several_namespaces_as_one_newest_first(control_plane_u
     ) as a:
         keys: list[tuple[str, str, str]] = []
         cursor = None
-        # Two a page, through the SDK: the cursor walks across the namespaces.
+        # Three a page, through the SDK: a page holds one source from two namespaces, and
+        # the cursor resumes inside a namespace.
         while True:
             # In another order, and naming its own namespace again: neither changes the list.
             page = await a.knowledge.list(
-                limit=2, cursor=cursor, namespaces=namespaces_listed[1:] + [namespaces_listed[0]]
+                limit=3, cursor=cursor, namespaces=namespaces_listed[1:] + [namespaces_listed[0]]
             )
             keys += [(r["ingested_at"], r["namespace"], r["source_uri"]) for r in page["rows"]]
             # Each namespace holds the same sources: a count keyed by source alone shows here.

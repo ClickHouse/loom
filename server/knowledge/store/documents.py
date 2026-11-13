@@ -393,15 +393,13 @@ async def _live_chunk_counts(
         f"""
         SELECT namespace, source_uri, count() AS n
         FROM loom.chunks
-        -- `namespace IN` uses the primary key; the pairs alone could not, as
-        -- embedding_model sits between namespace and source_uri in it.
-        WHERE org = {{org:String}} AND namespace IN {{nss:Array(String)}}
+        WHERE org = {{org:String}}
           AND (namespace, source_uri) IN {{keys:Array(Tuple(String, String))}}
           AND {LIVE_CHUNK_SQL}
         GROUP BY namespace, source_uri
         LIMIT {{n:UInt32}}
         """,
-        params={"org": org, "nss": sorted({ns for ns, _ in keys}), "keys": keys, "n": len(keys)},
+        params={"org": org, "keys": keys, "n": len(keys)},
     )
     return {(r["namespace"], r["source_uri"]): int(r["n"]) for r in rows}
 

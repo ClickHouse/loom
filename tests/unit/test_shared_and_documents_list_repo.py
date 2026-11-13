@@ -303,7 +303,6 @@ async def test_list_with_chunk_counts_counts_only_the_page_sources() -> None:
     assert "FROM loom.chunks" in sql
     assert "(namespace, source_uri) IN {keys:Array(Tuple(String, String))}" in sql
     assert params["keys"] == [("a", "kb://1"), ("b", "kb://2")]
-    assert params["nss"] == ["a", "b"]
     assert [r["chunk_count"] for r in rows] == [0, 3]
 
 
