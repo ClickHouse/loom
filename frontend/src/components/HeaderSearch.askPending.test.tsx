@@ -54,7 +54,7 @@ it("asks once for two Enters before the first ask has returned", async () => {
   render(<HeaderSearch />);
   const field = screen.getByRole("combobox", { name: "Search Loom" });
   await userEvent.setup().type(field, "what does billing remember");
-  await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+  await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
   // The card's chunk is loaded (the card preloads it): the first Enter's ask still waits for
   // its import to answer, a later task, when the second Enter lands in the same go.
   await import("../views/assistant/SearchAnswer");
@@ -63,7 +63,7 @@ it("asks once for two Enters before the first ask has returned", async () => {
     fireEvent.keyDown(field, { key: "Enter" });
   });
   await waitFor(() => expect(asks.n).toBe(1));
-  expect(await screen.findByRole("option", { name: "Answering: what does billing remember" })).toBeInTheDocument();
+  expect(await screen.findByRole("option", { name: "Continue in chat" })).toBeInTheDocument();
   // A second ask would have found the first answering and marked the card busy.
   expect(screen.queryByText("An answer is still coming in.")).toBeNull();
   expect(asks.n).toBe(1);

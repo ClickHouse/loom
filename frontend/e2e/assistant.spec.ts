@@ -2,8 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi } from "./fixtures";
 
-// The assistant panel's starters read Loom's own cards, each with the person's own token and
-// no model call (the "Also ask the assistant" box off). This spec draws every card, with the
+// The Ask AI panel's starters read Loom's own cards, each with the person's own token and
+// no model call (the "Also ask the model" box off). This spec draws every card, with the
 // server's full-length text and a long subject id, in the docked panel at its narrowest, in
 // the expanded window and on the phone sheet: no horizontal scroll, no axe violation.
 
@@ -645,20 +645,20 @@ async function installAssistant(page: Page, { width = 420, expand = false } = {}
   }, width);
   await page.goto("/memories");
   await page.locator('[data-focus-key="assistant-launcher"]').click();
-  if (expand) await page.getByRole("button", { name: "Expand the assistant" }).click();
+  if (expand) await page.getByRole("button", { name: "Expand", exact: true }).click();
   await expect(page.getByRole("list", { name: "Starters" })).toBeVisible();
 }
 
-/** Choose a starter, as the empty conversation lists it; on a phone, past More starters. */
+/** Choose a starter, as the empty conversation lists it, past More questions. */
 async function choose(page: Page, label: string) {
-  const more = page.getByRole("button", { name: "More starters" });
-  if (await more.isVisible()) await more.click();
+  const more = page.getByRole("button", { name: "More questions" });
+  if ((await more.isVisible()) && (await more.getAttribute("aria-expanded")) === "false") await more.click();
   await page.getByRole("button", { name: label }).click();
 }
 
 /** A new conversation, whose empty state lists the starters again. */
 async function fresh(page: Page) {
-  await page.getByRole("button", { name: "New conversation" }).click();
+  await page.getByRole("button", { name: "New chat" }).click();
   await expect(page.getByRole("list", { name: "Starters" })).toBeVisible();
 }
 

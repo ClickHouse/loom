@@ -52,26 +52,25 @@ interface NsRow {
   joined: boolean;
 }
 
-/** The question asked from the box: its turn once it shows (null before), whether another
- *  answer held the conversation (`busy`), and whether its answer has started. */
+/** The question asked from the box: its turn once it shows (null before), and whether
+ *  another answer held the conversation (`busy`). */
 interface CardAsk {
   question: string;
   turnId: string | null;
   busy: boolean;
-  started: boolean;
 }
 
 /** `autoFocus`: the phone header hides this input behind a search button; when that
  *  button reveals it, focus lands here so the palette opens without a second tap.
  *
- *  A question is answered in place: text that reads as one (lib/readsAsQuestion.ts), unless
- *  it holds a search filter (`tag:`, `namespace:`, `type:`), or the text Tab or the "Ask AI"
- *  row was pressed on (until it is edited), shows an "Ask AI: <question>" card as the first
- *  option. Enter asks it through the assistant's chat store
- *  (views/assistant/SearchAnswer.tsx), and the answer streams into the card; Enter once it
- *  has started, or Ctrl/⌘ Enter, goes on in the assistant panel, on the same conversation.
- *  Typing alone never asks. No card where the chat is off or a known reason keeps the
- *  assistant from answering. */
+ *  A question is answered in place. The results list an 'Ask AI about "<text>"' option, with
+ *  a visible Ask: after the results for keywords, first for text that reads as a question
+ *  (lib/readsAsQuestion.ts) and holds no search filter (`tag:`, `namespace:`, `type:`).
+ *  Choosing it asks through the assistant's chat store (views/assistant/SearchAnswer.tsx):
+ *  the answer streams into the card on top, headed "Ask AI", whose one "Continue in chat"
+ *  option opens the panel on the same conversation, and the results stay listed under it.
+ *  Typing alone never asks. No Ask AI option where the chat is off or a known reason keeps
+ *  the assistant from answering. */
 export function HeaderSearch({
   autoFocus = false,
   initialQuery = "",
@@ -102,10 +101,8 @@ export function HeaderSearch({
   const [docs, setDocs] = useState<KnowledgeEntry[]>([]);
   const [profileSections, setProfileSections] = useState<ProfileEntry[]>([]);
   const [nsRows, setNsRows] = useState<NsRow[]>([]);
-  // Tab or the "Ask AI" row showed the card for text that does not read as a question.
-  const [askForced, setAskForced] = useState(false);
-  // Once asked, the popover is the card: its option, then the answer under the listbox (a
-  // listbox holds options alone); other text brings the results back.
+  // Once asked, the card leads the popover, above the listbox (a listbox holds options
+  // alone), and the results stay under it; other text is another question.
   const [asked, setAsked] = useState<CardAsk | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
@@ -336,14 +333,13 @@ export function HeaderSearch({
     });
   }, [docs, parsed]);
 
-  const resultsShown = !asked;
-  const namespacesShown = resultsShown ? matchedNamespaces.slice(0, 2) : [];
-  const profileShown = resultsShown ? matchedProfile.slice(0, PER_GROUP_CAP) : [];
-  const memoryShown = resultsShown && q.length > 0 ? hits : [];
+  const namespacesShown = matchedNamespaces.slice(0, 2);
+  const profileShown = matchedProfile.slice(0, PER_GROUP_CAP);
+  const memoryShown = q.length > 0 ? hits : [];
   // The empty box offers the newest memories and the profile as options of the same listbox.
   const recentShown = q.length === 0 ? recent.slice(0, 3) : [];
   const yourProfileShown = q.length === 0 ? profileSections.slice(0, 3) : [];
-  const documentsShown = resultsShown ? matchedDocuments.slice(0, PER_GROUP_CAP) : [];
+  const documentsShown = matchedDocuments.slice(0, PER_GROUP_CAP);
 
   // A namespace switch keeps the page: the view re-reads under the new namespace, and the
   // toast says what changed (a switch never also moves the person to another view). The
@@ -393,9 +389,6 @@ export function HeaderSearch({
     !!identity &&
     isMemoryNamespace(identity.namespace, mine);
   useEffect(() => {
-    // Tab or the row asked for the card for this text: an edit goes back to results first,
-    // unless the new text reads as a question.
-    setAskForced(false);
     // Other text is another question: the card goes back to asking it (the answer before
     // goes on in the conversation).
     setAsked((a) => (a && a.question !== parsed.raw ? null : a));
@@ -404,22 +397,22 @@ export function HeaderSearch({
   useEffect(() => {
     setAsked(null);
   }, [identity?.namespace]);
-  // Text with a search filter (tag:, namespace:, type:) is a search: the card comes only on
-  // Tab or the Ask AI row.
+  // Text with a search filter (tag:, namespace:, type:) is a search: its Ask AI option comes
+  // after the results, as for keywords.
   const filtered = parsed.tags.length > 0 || parsed.namespaces.length > 0 || parsed.typeFilters.length > 0;
-  const cardShown = parsed.raw.length > 0 && (!!asked || (askable && (askForced || (!filtered && readsAsQuestion(q)))));
-  // Keywords stay results-first: the card is a row after them.
-  const askRowShown = askable && parsed.raw.length > 0 && !cardShown;
+  const cardShown = parsed.raw.length > 0 && !!asked;
+  const askRowShown = askable && parsed.raw.length > 0 && !asked;
+  // A question leads with the option that asks it; keywords stay results-first.
+  const askRowFirst = askRowShown && !filtered && readsAsQuestion(q);
   useEffect(() => {
     // A preload: a chunk that fails to load is said when the question is asked.
-    if (cardShown) loadSearchAnswer().catch(() => undefined);
-  }, [cardShown]);
-  const onStarted = useCallback(() => setAsked((a) => (a && !a.started ? { ...a, started: true } : a)), []);
+    if (askRowFirst) loadSearchAnswer().catch(() => undefined);
+  }, [askRowFirst]);
   const onGone = useCallback(() => setAsked(null), []);
 
   // Flat activation list for ↑↓ keyboard nav.
   type Activation =
-    | { kind: "ask" }
+    | { kind: "continue" }
     | { kind: "askRow" }
     | { kind: "recent"; mem: MemoryListEntry }
     | { kind: "ns"; ns: NsRow }
@@ -428,16 +421,27 @@ export function HeaderSearch({
     | { kind: "doc"; doc: KnowledgeEntry };
   const activations: Activation[] = useMemo(
     () => [
-      ...(cardShown ? [{ kind: "ask" as const }] : []),
+      ...(cardShown ? [{ kind: "continue" as const }] : []),
+      ...(askRowFirst ? [{ kind: "askRow" as const }] : []),
       ...recentShown.map((mem) => ({ kind: "recent" as const, mem })),
       ...yourProfileShown.map((section) => ({ kind: "profile" as const, section })),
       ...namespacesShown.map((ns) => ({ kind: "ns" as const, ns })),
       ...profileShown.map((section) => ({ kind: "profile" as const, section })),
       ...memoryShown.map((mem) => ({ kind: "mem" as const, mem })),
       ...documentsShown.map((doc) => ({ kind: "doc" as const, doc })),
-      ...(askRowShown ? [{ kind: "askRow" as const }] : []),
+      ...(askRowShown && !askRowFirst ? [{ kind: "askRow" as const }] : []),
     ],
-    [cardShown, recentShown, yourProfileShown, namespacesShown, profileShown, memoryShown, documentsShown, askRowShown],
+    [
+      cardShown,
+      askRowFirst,
+      recentShown,
+      yourProfileShown,
+      namespacesShown,
+      profileShown,
+      memoryShown,
+      documentsShown,
+      askRowShown,
+    ],
   );
 
   // A query highlights its top hit, so Enter opens it; the empty box highlights nothing
@@ -480,7 +484,9 @@ export function HeaderSearch({
           shown = turnId;
           setAsked((a) => (a && a.question === question ? { ...a, turnId } : a));
         });
-        setAsked({ question, turnId: shown, busy: !sent, started: false });
+        setAsked({ question, turnId: shown, busy: !sent });
+        // The card's Continue in chat is the first option now.
+        setActiveIdx(0);
       })
       .catch((e: unknown) => toastError("Couldn't ask the assistant", e, { read: true }))
       .finally(() => {
@@ -488,30 +494,20 @@ export function HeaderSearch({
       });
   };
 
-  /** Continue in the assistant: the panel opens on the conversation, the popover closes. A
-   *  question not asked yet is asked first; one the store could not ask is in the panel's
-   *  field (views/assistant/SearchAnswer.tsx, chatStore.ts). */
-  const continueInAssistant = () => {
+  /** Continue in chat: the panel opens on the conversation, the popover closes. A question
+   *  the store could not ask is in the panel's field (views/assistant/SearchAnswer.tsx,
+   *  chatStore.ts). */
+  const continueInChat = () => {
     setOpen(false);
-    if (asked) openAssistantSoon();
-    else void askQuestion().then(openAssistantSoon);
+    openAssistantSoon();
   };
-
-  // Once asked, Enter on the card goes on in the panel when the answer has started (or the
-  // question was not asked): the card's name, words and key follow the same rule.
-  const continues = !!asked && (asked.started || asked.busy);
-  const cardVerb = !asked ? "Ask AI" : continues ? "Continue in the assistant" : "Answering";
 
   const activate = (i: number) => {
     const a = activations[i];
     if (!a) return;
-    if (a.kind === "ask") {
-      if (!asked) void askQuestion();
-      else if (continues) continueInAssistant();
-    } else if (a.kind === "askRow") {
-      setAskForced(true);
-      setActiveIdx(0);
-    } else if (a.kind === "recent") openMemory(a.mem);
+    if (a.kind === "continue") continueInChat();
+    else if (a.kind === "askRow") void askQuestion();
+    else if (a.kind === "recent") openMemory(a.mem);
     else if (a.kind === "ns") switchNs(a.ns.namespace);
     else if (a.kind === "profile") openProfileSection(a.section.label);
     else if (a.kind === "mem") openMemory({ memory_key: a.mem.memory_key, agent: a.mem.agent || "" });
@@ -521,18 +517,6 @@ export function HeaderSearch({
   const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
       setOpen(false);
-      return;
-    }
-    // Tab asks for the card once; with it shown, Tab leaves the field as usual.
-    if (e.key === "Tab" && !e.shiftKey && popoverOpen && askable && parsed.raw && !cardShown) {
-      e.preventDefault();
-      setAskForced(true);
-      setActiveIdx(0);
-      return;
-    }
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && cardShown) {
-      e.preventDefault();
-      continueInAssistant();
       return;
     }
     if (activations.length === 0) return;
@@ -560,7 +544,8 @@ export function HeaderSearch({
   const memoryPending = searching && memoryQuery.length >= MEMORY_MIN_CHARS;
 
   // Index offsets for activeIdx → row mapping.
-  const offRecent = cardShown ? 1 : 0;
+  const offAskFirst = cardShown ? 1 : 0;
+  const offRecent = offAskFirst + (askRowFirst ? 1 : 0);
   const offYourProfile = offRecent + recentShown.length;
   const offNs = offYourProfile + yourProfileShown.length;
   const offProfile = offNs + namespacesShown.length;
@@ -586,8 +571,10 @@ export function HeaderSearch({
   // card leads the popover, after the listbox.
   const status = (
     <>
-      {/* With the card offered, a miss is no dead end: no "No matches" or filter tips. */}
-      {q.length > 0 && !hasResults && (memoryPending ? <Searching /> : !cardShown && <NoResults q={q} />)}
+      {/* With Ask AI offered, a miss is no dead end: no "No matches" or filter tips. */}
+      {q.length > 0 &&
+        !hasResults &&
+        (memoryPending ? <Searching /> : !cardShown && !askRowShown && <NoResults q={q} />)}
 
       {hasResults && (
         <div className="pb-1.5 text-xs text-text-muted flex items-center justify-between">
@@ -606,6 +593,30 @@ export function HeaderSearch({
         </div>
       )}
     </>
+  );
+
+  // The 'Ask AI about "<text>"' option, at `idx`: choosing it (a click, or Enter while it is
+  // highlighted) asks, and its Ask says so.
+  const askOption = (idx: number, className: string) => (
+    <OptionGroup id={`${listboxId}-ask`} icon="sparkle" label="Ask AI" className={className}>
+      <button
+        type="button"
+        {...optionProps(idx)}
+        aria-label={`Ask AI about "${parsed.raw}"`}
+        onClick={() => {
+          activate(idx);
+          inputRef.current?.focus();
+        }}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Icon name="sparkle" size="sm" aria-hidden="true" className="shrink-0" />
+          <span className="text-sm truncate">{`Ask AI about "${parsed.raw}"`}</span>
+          <span className="search-ask ml-auto shrink-0" aria-hidden="true">
+            Ask
+          </span>
+        </div>
+      </button>
+    </OptionGroup>
   );
 
   // Radix counts the anchor as outside the panel, so the focus that opens the panel (or a
@@ -673,36 +684,35 @@ export function HeaderSearch({
         onInteractOutside={keepOpenFromAnchor}
         className="w-(--radix-popover-trigger-width) max-h-[70vh] overflow-y-auto"
       >
+        {asked && (
+          <Suspense fallback={<p className="text-sm text-text-muted pb-2">Answering…</p>}>
+            <SearchAnswer turnId={asked.turnId} busy={asked.busy} onGone={onGone} />
+          </Suspense>
+        )}
+
         {!cardShown && status}
 
         {activations.length > 0 && (
           <div id={listboxId} role="listbox" aria-label="Search results">
             {cardShown && (
+              // The card's one action, an option so Enter and the arrows reach it as they reach
+              // the results under it; drawn as Click UI's button, spanning the card on a phone.
               // biome-ignore lint/a11y/useSemanticElements: an option group inside a listbox, not form controls, so not a fieldset
-              <div role="group" aria-label="Assistant" className="mb-1">
-                <button
-                  type="button"
+              <div role="group" aria-label="Ask AI" className="pb-2">
+                <Button
+                  type="secondary"
+                  htmlType="button"
+                  iconRight="arrow-right"
                   {...optionProps(0)}
-                  // Named, and labelled, after what Enter does now: ask; nothing while the
-                  // answer has not started; then go on in the panel.
-                  aria-label={`${cardVerb}: ${parsed.raw}`}
-                  onClick={() => {
-                    activate(0);
-                    inputRef.current?.focus();
-                  }}
+                  className="search-continue max-sm:w-full"
+                  onClick={() => activate(0)}
                 >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Icon name="sparkle" size="sm" aria-hidden="true" className="shrink-0" />
-                    <span className="text-sm truncate">
-                      <span className="text-text-muted">{`${cardVerb}: `}</span>
-                      {parsed.raw}
-                    </span>
-                    {/* Enter asks; once asked, Continue's own chord says how to go on. */}
-                    {!asked && <Kbd className="ml-auto shrink-0 hidden sm:inline-flex">Enter</Kbd>}
-                  </div>
-                </button>
+                  Continue in chat
+                </Button>
               </div>
             )}
+
+            {askRowFirst && askOption(offAskFirst, "mb-1")}
 
             {recentShown.length > 0 && (
               <OptionGroup id={`${listboxId}-recent`} icon="clock" label="Recent memories">
@@ -834,44 +844,11 @@ export function HeaderSearch({
               </OptionGroup>
             )}
 
-            {askRowShown && (
-              <OptionGroup id={`${listboxId}-ask`} icon="sparkle" label="Assistant" className="mt-1">
-                <button
-                  type="button"
-                  {...optionProps(offAskRow)}
-                  aria-label={`Ask AI: ${parsed.raw}`}
-                  onClick={() => {
-                    activate(offAskRow);
-                    inputRef.current?.focus();
-                  }}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Icon name="sparkle" size="sm" aria-hidden="true" className="shrink-0" />
-                    <span className="text-sm truncate">
-                      <span className="text-text-muted">Ask AI: </span>
-                      {parsed.raw}
-                    </span>
-                    <Kbd className="ml-auto shrink-0 hidden sm:inline-flex">Tab</Kbd>
-                  </div>
-                </button>
-              </OptionGroup>
-            )}
+            {askRowShown && !askRowFirst && askOption(offAskRow, "mt-1")}
           </div>
         )}
 
-        {asked && (
-          <Suspense fallback={<p className="text-sm text-text-muted pb-2">Answering…</p>}>
-            <SearchAnswer
-              turnId={asked.turnId}
-              busy={asked.busy}
-              onStarted={onStarted}
-              onGone={onGone}
-              onContinue={continueInAssistant}
-            />
-          </Suspense>
-        )}
-
-        {cardShown && resultsShown && status}
+        {cardShown && status}
 
         {q.length === 0 && <SyntaxHelp />}
 

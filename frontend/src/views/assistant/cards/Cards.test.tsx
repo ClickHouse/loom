@@ -919,17 +919,14 @@ describe("Assistant: overview", () => {
     ).toEqual([
       "What does this namespace hold, and who appears in it?",
       "How is this namespace being used?",
+      "What would Loom advise an agent writing here?",
+      "What could be improved here?",
       "What does a user, agent or session remember?",
       "What documents does it hold?",
-      "What would Loom advise an agent writing here?",
       "How are an entity and its neighbours related?",
-      "What could be improved here?",
     ]);
-    // The assistant cannot answer here: the box is off, said why, and nothing costs a model call.
-    const box = screen.getByRole("checkbox", { name: "Also ask the assistant" });
-    expect(box).not.toBeChecked();
-    expect(box).toBeDisabled();
-    expect(box).toHaveAccessibleDescription(/The assistant can't answer: model calls are off/);
+    // The assistant cannot answer here: no box offers to ask the model.
+    expect(screen.queryByRole("checkbox", { name: "Also ask the model" })).toBeNull();
     expect(namespaceInventory).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: INVENTORY_STARTER }));
     await screen.findByTestId("assistant-inventory");

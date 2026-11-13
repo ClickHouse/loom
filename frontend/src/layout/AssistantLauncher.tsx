@@ -3,7 +3,6 @@ import type { IconName } from "@clickhouse/click-ui/Icon";
 import { Tip } from "../components/ui/Tooltip";
 import { reducedMotion, useMedia } from "../lib/useMedia";
 import { toggleAssistantSoon, useDock } from "../lib/assistantDock";
-import { assistantShortcut } from "../lib/platform";
 
 /** Tailwind's `xl`, from which the button shows its word beside its icon: narrower, the
  *  header's search and actions need the room (e2e/namespace-picker.spec.ts). */
@@ -11,8 +10,8 @@ const WORD_QUERY = "(min-width: 1280px)";
 
 /**
  * The header's Ask AI button, right after the search field at every width: it opens the
- * assistant panel, and closes it while it sits beside the page (over the page the header is
- * inert: Close, Esc and Ctrl/⌘ J close it there), and is never disabled. From xl a
+ * Ask AI panel, and closes it while it sits beside the page (over the page the header is
+ * inert: Close and Esc close it there), and is never disabled. From xl a
  * secondary button with its word; below it the icon alone, frameless like the header's
  * other icon buttons (32 px, 44 under a coarse pointer). One element at every width, so the
  * focus stays across a resize. Its marks, each a shape of its own and in its name: answering
@@ -35,14 +34,12 @@ export function AssistantLauncher() {
           : "normal",
   );
   const worded = useMedia(WORD_QUERY);
-  const keys = assistantShortcut();
-  // A reason the assistant cannot answer, with the shortcut after it.
-  const reason = reasonShort ? `${reasonShort} (${keys})` : null;
+  const reason = reasonShort || null;
   return (
     <span className="relative inline-flex shrink-0">
-      {/* The word names it from xl, and the tooltip says what the word does not (the
-          shortcut, a reason); below xl the icon is all there is, and the tooltip names it. */}
-      <Tip content={worded ? (reason ?? keys) : reason ? `Ask AI: ${reason}` : `Ask AI (${keys})`} side="bottom">
+      {/* The word names it from xl, and the tooltip says what it does, with a reason it can't
+          answer; below xl the icon is all there is, and the tooltip names it. */}
+      <Tip content={reason ? `Ask AI: ${reason}` : TIP} side="bottom">
         <Button
           type={worded ? "secondary" : "empty"}
           htmlType="button"
@@ -62,6 +59,9 @@ export function AssistantLauncher() {
     </span>
   );
 }
+
+/** What the button does, said by its tooltip. */
+const TIP = "Ask AI about this namespace";
 
 // Each state's icon (under reduced motion the answering spinner is a static ring) and the
 // words its name adds.

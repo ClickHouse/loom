@@ -1814,9 +1814,33 @@ textarea[aria-invalid="true"]:focus-visible {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
+      align-content: center;
       column-gap: var(--spaces-1);
       min-height: var(--spacing-hit);
     }
+  }
+  /* The panel header's History button while History shows (aria-pressed): Click UI's ghost
+     icon button has no selected state, so it takes that button's :active tokens. */
+  .assistant-head button[aria-pressed="true"] {
+    color: var(--click-button-iconButton-color-ghost-text-active);
+    border-color: var(--click-button-iconButton-color-ghost-stroke-active);
+    background-color: var(--click-button-iconButton-color-ghost-background-active);
+  }
+  /* The search's Ask AI option's "Ask": what choosing the option does, drawn as a small
+     primary button (its tokens) inside the option, which a nested button would not be. */
+  .search-ask {
+    padding: 0 var(--spaces-2);
+    border-radius: var(--click-button-radii-all);
+    background: var(--click-button-basic-color-primary-background-default);
+    color: var(--click-button-basic-color-primary-text-default);
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+  }
+  /* The answer card's Continue in chat is a listbox option (the focus stays in the search
+     field): the option the keys moved to takes the focus ring, as the other options do. */
+  .search-continue[data-by-keys] {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
   }
   /* The Ask AI button's "answer ready" dot, on the accent token, on its corner. */
   .assistant-launcher-dot {

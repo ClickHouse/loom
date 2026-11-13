@@ -11,9 +11,9 @@ import { AssistantLauncher } from "../layout/AssistantLauncher";
 import { searchMemory } from "../api";
 import { HeaderSearch } from "./HeaderSearch";
 
-// The header search answers a question in place: an "Ask AI" card through the assistant's
-// chat store, streaming into the card, and Continue in the assistant on the same
-// conversation.
+// The header search answers a question in place: its 'Ask AI about "<text>"' option asks
+// through the assistant's chat store, the answer streams into a card headed "Ask AI" over
+// the results, and Continue in chat opens the panel on the same conversation.
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -109,46 +109,65 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    const card = await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    const card = await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     expect(screen.getAllByRole("option")[0]).toBe(card);
+    expect(within(screen.getByRole("group", { name: "Ask AI" })).getByRole("option")).toBe(card);
     await waitFor(() => expect(field()).toHaveAttribute("aria-activedescendant", card.id));
-    expect(card).toHaveTextContent("Enter");
+    // A visible Ask says what choosing it does; no key is shown.
+    expect(card).toHaveTextContent(/^Ask AI about "what does billing remember"Ask$/);
     await new Promise((r) => setTimeout(r, 300));
     expect(chats).toHaveLength(0);
     expect(await panelViolations()).toEqual([]);
   });
 
-  it("is a row after the results for keywords, and Tab or a click on the row shows it first", async () => {
+  it("is an option after the results for keywords, and a click on it asks; Tab moves the focus on", async () => {
     const user = userEvent.setup();
-    render(<HeaderSearch />);
+    render(
+      <>
+        <HeaderSearch />
+        <button type="button">after</button>
+      </>,
+    );
     await user.type(field(), "billing invoices");
     await screen.findByRole("group", { name: "Best matches" });
     const options = screen.getAllByRole("option");
     expect(options[0]).toHaveTextContent("billing/invoices");
-    expect(options.at(-1)).toHaveAccessibleName("Ask AI: billing invoices");
+    const row = options.at(-1) as HTMLElement;
+    expect(row).toHaveAccessibleName('Ask AI about "billing invoices"');
+    expect(row).toHaveTextContent("Ask");
     // Enter opens the highlighted result as before.
     expect(field()).toHaveAttribute("aria-activedescendant", options[0].id);
+    await user.click(row);
+    await waitFor(() => expect(chats).toHaveLength(1));
+    expect(chats[0].messages.at(-1)?.content).toBe("Context: Memories page\n\nbilling invoices");
+    expect(await screen.findByTestId("search-answer")).toBeInTheDocument();
+    // Tab leaves the field as it would anywhere: nothing opens, and nothing more is asked.
+    field().focus();
     await user.keyboard("{Tab}");
-    expect(field()).toHaveFocus();
-    const card = screen.getAllByRole("option")[0];
-    expect(card).toHaveAccessibleName("Ask AI: billing invoices");
-    expect(within(screen.getByRole("group", { name: "Assistant" })).getByRole("option")).toBe(card);
-    expect(field()).toHaveAttribute("aria-activedescendant", card.id);
-    expect(chats).toHaveLength(0);
+    expect(field()).not.toHaveFocus();
+    expect(chats).toHaveLength(1);
+  });
 
-    await user.clear(field());
-    await user.type(field(), "billing weekly");
+  it("keeps the best matches listed under the card while it answers and once it has", async () => {
+    const user = userEvent.setup();
+    render(<HeaderSearch />);
+    await user.type(field(), "how often are invoices sent?");
     await screen.findByRole("group", { name: "Best matches" });
-    await user.click(screen.getAllByRole("option").at(-1) as HTMLElement);
-    expect(screen.getAllByRole("option")[0]).toHaveAccessibleName("Ask AI: billing weekly");
-    expect(chats).toHaveLength(0);
+    await user.keyboard("{Enter}");
+    const card = await screen.findByTestId("search-answer");
+    const below = (el: Element) => card.compareDocumentPosition(el) === Node.DOCUMENT_POSITION_FOLLOWING;
+    const matches = () => screen.getByRole("group", { name: "Best matches" });
+    expect(below(matches())).toBe(true);
+    await answer("Weekly.");
+    expect(below(matches())).toBe(true);
+    expect(within(matches()).getByRole("option")).toHaveTextContent("billing/invoices");
   });
 
   it("Enter asks once, the answer streams into the card, and its end is said, not marked unread", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "how often are invoices sent?");
-    await screen.findByRole("option", { name: "Ask AI: how often are invoices sent?" });
+    await screen.findByRole("option", { name: 'Ask AI about "how often are invoices sent?"' });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(1));
     // The conversation's question, with the page line the panel sends.
@@ -165,7 +184,11 @@ describe("the search's answer card", () => {
     expect(within(card).getByRole("list", { name: "Sources" })).toHaveTextContent("billing/invoices");
     expect(within(card).getByRole("list", { name: "Sources" })).not.toHaveTextContent("memory:");
     expect(card).toHaveTextContent("What it read (1)");
-    expect(within(card).getByRole("button", { name: "Continue in the assistant" })).toBeInTheDocument();
+    // Headed "Ask AI", with one Continue in chat, the first option under it.
+    expect(within(card).getByText("Ask AI")).toBeInTheDocument();
+    expect(screen.getAllByRole("option", { name: "Continue in chat" })).toHaveLength(1);
+    expect(screen.getAllByRole("option")[0]).toHaveAccessibleName("Continue in chat");
+    expect(screen.queryByRole("option", { name: /^Ask AI/ })).toBeNull();
     expect(field()).toHaveFocus();
     await waitFor(() => expect(status()).toHaveTextContent("The answer is complete."));
     expect(useDock.getState().unread).toBe(false);
@@ -174,11 +197,11 @@ describe("the search's answer card", () => {
     expect(await panelViolations()).toEqual([]);
   });
 
-  it("Enter once the answer has started, or Continue, opens the panel on the same conversation", async () => {
+  it("Enter on Continue in chat opens the panel on the same conversation", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await answer("Weekly invoices.");
     const id = useChat.getState().id;
@@ -192,24 +215,11 @@ describe("the search's answer card", () => {
     expect(chats).toHaveLength(1);
   });
 
-  it("Ctrl+Enter asks and continues at once", async () => {
-    const user = userEvent.setup();
-    render(<HeaderSearch />);
-    await user.type(field(), "who wrote the invoice policy");
-    await screen.findByRole("option", { name: "Ask AI: who wrote the invoice policy" });
-    await user.keyboard("{Control>}{Enter}{/Control}");
-    await waitFor(() => expect(useDock.getState().open).toBe(true));
-    await waitFor(() => expect(chats).toHaveLength(1));
-    expect(useChat.getState().turns.at(-1)).toMatchObject({ question: "who wrote the invoice policy" });
-    await answer("Ada.");
-    expect(useChat.getState().turns.at(-1)).toMatchObject({ answer: "Ada.", state: "done" });
-  });
-
   it("closed while it answers, the answer goes on and is marked ready", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(1));
     await user.keyboard("{Escape}");
@@ -233,7 +243,7 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(1));
     expect(chats[0].messages).toHaveLength(1);
@@ -271,27 +281,17 @@ describe("the search's answer card", () => {
     expect(chats).toHaveLength(0);
   });
 
-  it("once asked is named after what Enter does: nothing before the answer starts, then continue", async () => {
+  it("once asked, Continue in chat opens the panel while the answer still comes in", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
-    const waiting = await screen.findByRole("option", { name: "Answering: what does billing remember" });
-    expect(waiting).toHaveTextContent("Answering: what does billing remember");
-    expect(waiting).not.toHaveTextContent("Enter");
-    // Enter does nothing yet.
-    await user.keyboard("{Enter}");
-    expect(useDock.getState().open).toBe(false);
-    await act(async () => {
-      chats[0].on.onText("Weekly.");
-    });
-    const card = await screen.findByRole("option", { name: "Continue in the assistant: what does billing remember" });
-    expect(card).toHaveTextContent("Continue in the assistant: what does billing remember");
-    // The row drops its Enter hint: Continue's own chord says how to go on.
-    expect(card).not.toHaveTextContent("Enter");
-    await user.keyboard("{Enter}");
+    const go = await screen.findByRole("option", { name: "Continue in chat" });
+    await waitFor(() => expect(field()).toHaveAttribute("aria-activedescendant", go.id));
+    await user.click(go);
     await waitFor(() => expect(useDock.getState().open).toBe(true));
+    expect(useChat.getState().answering).toBe(true);
   });
 
   it("found busy, leaves the panel's answer unread when it ends, and says nothing of it", async () => {
@@ -301,7 +301,7 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     expect(await screen.findByTestId("search-answer")).toHaveTextContent("An answer is still coming in.");
     await act(async () => {
@@ -313,8 +313,8 @@ describe("the search's answer card", () => {
     expect(status()).not.toHaveTextContent("The answer is complete.");
     expect(chats).toHaveLength(1);
     // Nothing answers now: the card asks again, and Enter asks.
-    const card = await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
-    expect(card).toHaveTextContent("Enter");
+    const card = await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
+    expect(card).toHaveTextContent("Ask");
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(2));
     // Given back to the panel's field while busy, it leaves it once asked.
@@ -342,7 +342,7 @@ describe("the search's answer card", () => {
       </>,
     );
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(1));
     await act(async () => {
@@ -363,12 +363,12 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await answer("Weekly invoices.");
     act(() => newConversation());
-    const card = await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
-    expect(card).toHaveTextContent("Enter");
+    const card = await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
+    expect(card).toHaveTextContent("Ask");
     expect(screen.queryByTestId("search-answer")).toBeNull();
   });
 
@@ -392,13 +392,13 @@ describe("the search's answer card", () => {
       const user = userEvent.setup();
       render(<HeaderSearch />);
       await user.type(field(), "what does billing remember");
-      await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+      await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
       await user.keyboard("{Enter}");
       expect(await screen.findByTestId("search-answer")).toHaveTextContent("Another tab was answering");
       await new Promise((r) => setTimeout(r, 100));
       expect(screen.getByTestId("search-answer")).toHaveTextContent("Another tab was answering");
       expect(chats).toHaveLength(0);
-      await screen.findByRole("option", { name: "Continue in the assistant: what does billing remember" });
+      await screen.findByRole("option", { name: "Continue in chat" });
       await user.keyboard("{Enter}");
       await waitFor(() => expect(useDock.getState().open).toBe(true));
       // The question it could not ask waits in the panel's field.
@@ -414,7 +414,7 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     const card = await screen.findByTestId("search-answer");
     expect(card).toHaveTextContent("An answer is still coming in.");
@@ -433,7 +433,7 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(1));
     // The search's question went without the item.
@@ -448,25 +448,6 @@ describe("the search's answer card", () => {
     expect(useDock.getState().pageOff).toBe(false);
   });
 
-  it("after Tab, an edit goes back to results first, and Enter opens the top hit", async () => {
-    const inspect = vi.fn();
-    useStore.setState({ inspect });
-    const user = userEvent.setup();
-    render(<HeaderSearch />);
-    await user.type(field(), "billing");
-    await screen.findByRole("group", { name: "Best matches" });
-    await user.keyboard("{Tab}");
-    expect(screen.getAllByRole("option")[0]).toHaveAccessibleName("Ask AI: billing");
-    // Edited without ever emptying the field.
-    await user.type(field(), " invoices");
-    await screen.findByRole("group", { name: "Best matches" });
-    expect(screen.getAllByRole("option")[0]).not.toHaveAccessibleName(/^Ask AI/);
-    await waitFor(() => expect(screen.getAllByRole("option")[0]).toHaveTextContent("billing/invoices"));
-    await user.keyboard("{Enter}");
-    expect(inspect).toHaveBeenCalledWith("billing/invoices", { agent: "a" });
-    expect(chats).toHaveLength(0);
-  });
-
   it("found busy, Continue opens the panel with the question in its field and its chip kept", async () => {
     const item = { view: "memories" as const, org: "dev", namespace: "team", chip: "key a/b", line: 'memory "a/b"' };
     useDock.setState({ item, pageOff: false, draft: "" });
@@ -475,64 +456,26 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     expect(await screen.findByTestId("search-answer")).toHaveTextContent("An answer is still coming in.");
-    await user.click(screen.getByRole("button", { name: "Continue in the assistant" }));
+    await user.click(screen.getByRole("option", { name: "Continue in chat" }));
     await waitFor(() => expect(useDock.getState().open).toBe(true));
     expect(useDock.getState().draft).toBe("what does billing remember");
     expect(useDock.getState().item).toEqual(item);
     expect(chats).toHaveLength(1);
   });
 
-  it("says an answer that is only a table holds one, to read in the assistant", async () => {
+  it("says an answer that is only a table holds one, to read in chat", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await answer("| Account | Cadence |\n| --- | --- |\n| north | weekly |");
     const card = screen.getByTestId("search-answer");
     expect(within(card).queryByTestId("search-answer-text")).toBeNull();
-    expect(card).toHaveTextContent("The answer holds a table or code: continue in the assistant to read it.");
-  });
-
-  describe("Ctrl/⌘ Enter on a card not asked yet, when the question cannot be asked", () => {
-    const item = { view: "memories" as const, org: "dev", namespace: "team", chip: "key a/b", line: 'memory "a/b"' };
-
-    it("with another answer coming in, opens the panel with the question in its field", async () => {
-      useDock.setState({ item, pageOff: false, draft: "" });
-      ask("from the panel", "team", { context: null, item: null }, null, { fromField: false });
-      await waitFor(() => expect(chats).toHaveLength(1));
-      const user = userEvent.setup();
-      render(<HeaderSearch />);
-      await user.type(field(), "what does billing remember");
-      await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
-      await user.keyboard("{Control>}{Enter}{/Control}");
-      await waitFor(() => expect(useDock.getState().open).toBe(true));
-      expect(useDock.getState().draft).toBe("what does billing remember");
-      expect(useDock.getState().item).toEqual(item);
-      expect(chats).toHaveLength(1);
-    });
-
-    it("with another tab holding the conversation, opens the panel with the question in its field", async () => {
-      useDock.setState({ item, pageOff: false, draft: "" });
-      const locks = { request: (_n: string, _o: unknown, f: (l: null) => unknown) => Promise.resolve(f(null)) };
-      Object.defineProperty(navigator, "locks", { value: locks, configurable: true });
-      try {
-        const user = userEvent.setup();
-        render(<HeaderSearch />);
-        await user.type(field(), "what does billing remember");
-        await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
-        await user.keyboard("{Meta>}{Enter}{/Meta}");
-        await waitFor(() => expect(useDock.getState().open).toBe(true));
-        await waitFor(() => expect(useDock.getState().draft).toBe("what does billing remember"));
-        expect(useDock.getState().item).toEqual(item);
-        expect(chats).toHaveLength(0);
-      } finally {
-        Reflect.deleteProperty(navigator, "locks");
-      }
-    });
+    expect(card).toHaveTextContent("The answer holds a table or code: continue in chat to read it.");
   });
 
   it("a question another tab kept from being asked leaves the panel's field once it is asked", async () => {
@@ -545,7 +488,7 @@ describe("the search's answer card", () => {
       const user = userEvent.setup();
       render(<HeaderSearch />);
       await user.type(field(), "what does billing remember");
-      await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+      await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
       await user.keyboard("{Enter}");
       await waitFor(() => expect(useDock.getState().draft).toBe("what does billing remember"));
       expect(chats).toHaveLength(0);
@@ -553,7 +496,7 @@ describe("the search's answer card", () => {
       held = false;
       await user.clear(field());
       await user.type(field(), "what does billing remember");
-      await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+      await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
       await user.keyboard("{Enter}");
       await waitFor(() => expect(chats).toHaveLength(1));
       expect(useDock.getState().draft).toBe("");
@@ -573,8 +516,6 @@ describe("the search's answer card", () => {
     await user.paste(long);
     await screen.findByRole("group", { name: "Best matches" });
     expect(screen.queryByRole("option", { name: /^Ask AI/ })).toBeNull();
-    await user.keyboard("{Tab}");
-    expect(screen.queryByRole("option", { name: /^Ask AI/ })).toBeNull();
     expect(chats).toHaveLength(0);
   });
 
@@ -589,7 +530,7 @@ describe("the search's answer card", () => {
     await screen.findByRole("group", { name: "Best matches" });
     expect(screen.queryByRole("option", { name: /^Ask AI/ })).toBeNull();
     act(() => useDock.setState({ pageOff: true }));
-    expect(await screen.findByRole("option", { name: `Ask AI: ${long}` })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: `Ask AI about "${long}"` })).toBeInTheDocument();
     act(() => useDock.setState({ pageOff: false }));
   });
 
@@ -598,7 +539,7 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(1));
     await act(async () => {
@@ -614,15 +555,13 @@ describe("the search's answer card", () => {
     expect(await screen.findByTestId("search-answer")).toHaveTextContent("The assistant can't answer: setting up.");
   });
 
-  it("keeps results first for a question with a search filter, and Tab still shows the card", async () => {
+  it("keeps results first for a question with a search filter, its Ask AI option last", async () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "tag:billing what is due?");
     await screen.findByRole("group", { name: "Best matches" });
     expect(screen.getAllByRole("option")[0]).not.toHaveAccessibleName(/^Ask AI/);
-    expect(screen.getAllByRole("option").at(-1)).toHaveAccessibleName("Ask AI: tag:billing what is due?");
-    await user.keyboard("{Tab}");
-    expect(screen.getAllByRole("option")[0]).toHaveAccessibleName("Ask AI: tag:billing what is due?");
+    expect(screen.getAllByRole("option").at(-1)).toHaveAccessibleName('Ask AI about "tag:billing what is due?"');
     expect(chats).toHaveLength(0);
   });
 
@@ -630,14 +569,14 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await answer("Weekly invoices.");
     expect(screen.getByTestId("search-answer")).toHaveTextContent("Weekly invoices.");
     act(() => useStore.setState({ identity: { org: "dev", namespace: "ops", agent: "dashboard" } }));
     await waitFor(() => expect(screen.queryByTestId("search-answer")).toBeNull());
-    expect(await screen.findByRole("option", { name: "Ask AI: what does billing remember" })).toHaveTextContent(
-      "Enter",
+    expect(await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' })).toHaveTextContent(
+      "Ask",
     );
   });
 
@@ -647,7 +586,7 @@ describe("the search's answer card", () => {
       const user = userEvent.setup();
       render(<HeaderSearch />);
       await user.type(field(), "what does billing remember");
-      await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+      await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
       // The search has answered and its "Searching" status gone: what is left is what shows.
       await waitFor(() =>
         expect(searchMemory).toHaveBeenCalledWith(expect.anything(), "what does billing remember", expect.anything()),
@@ -672,7 +611,7 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     // The answer cites two memories; the check found the first (the `answer` helper's).
     await answer("Weekly [memory:billing/invoices@v1], retried daily [memory:billing/retries@v2].");
@@ -704,7 +643,7 @@ describe("the search's answer card", () => {
       const user = userEvent.setup();
       render(<HeaderSearch />);
       await user.type(field(), "what does billing remember");
-      await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+      await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
       await user.keyboard("{Enter}");
       await answer(
         "**Weekly [memory:billing/invoices@v1]** and `retry [memory:billing/codes@v1]`.\n\n- reminders [memory:billing/retries@v2]\n- [memory:billing/invoices@v1] again",
@@ -729,7 +668,7 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(1));
     const c = chats[0];
@@ -756,7 +695,7 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(1));
     const c = chats[0];
@@ -785,7 +724,7 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(1));
     const c = chats[0];
@@ -813,7 +752,7 @@ describe("the search's answer card", () => {
     const user = userEvent.setup();
     render(<HeaderSearch />);
     await user.type(field(), "what does billing remember");
-    await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+    await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
     await user.keyboard("{Enter}");
     await waitFor(() => expect(chats).toHaveLength(1));
     const c = chats[0];

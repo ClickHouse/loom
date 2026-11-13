@@ -3,8 +3,7 @@ import { Modal } from "./ui/Modal";
 import { Fragment, useId, useState } from "react";
 import { Switch } from "@clickhouse/click-ui/Switch";
 import { setSingleKeyShortcuts, singleKeyShortcutsOn } from "../lib/shortcuts";
-import { assistantShortcut, isApplePlatform, paletteShortcut } from "../lib/platform";
-import { chatOff } from "../lib/assistantDock";
+import { isApplePlatform, paletteShortcut } from "../lib/platform";
 
 /** One shortcut: its keys ("g m" is a sequence, "Ctrl+Enter" a chord, "j / ↓" two
  *  alternatives) and what it does. `syntax`: typed into the search, not pressed. `cap`: one
@@ -29,16 +28,8 @@ function groups(): Group[] {
       title: "Global",
       rows: [
         { keys: paletteShortcut(), label: "Focus the universal search bar", cap: true },
-        { keys: assistantShortcut(), label: "Open or close the assistant", cap: true },
         { keys: "↑ / ↓", label: "Move through search results" },
-        { keys: "Enter", label: chatOff() ? "Open the search result" : "Open the search result, or ask the question" },
-        // The search's answer card, which a deployment with its chat off never shows.
-        ...(chatOff()
-          ? []
-          : [
-              { keys: "Tab", label: "Show the Ask AI card for the search text" },
-              { keys: isApplePlatform() ? "⌘Enter" : "Ctrl+Enter", label: "Continue in the assistant" },
-            ]),
+        { keys: "Enter", label: "Open the search result" },
         { keys: "tag:work", label: "Search memories tagged work (partial OK)", syntax: true },
         { keys: "namespace:qa", label: "Search for a namespace to jump to", syntax: true },
         { keys: "?", label: "Show keyboard shortcuts" },

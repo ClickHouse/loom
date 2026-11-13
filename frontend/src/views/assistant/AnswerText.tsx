@@ -1,3 +1,4 @@
+import { Link } from "@clickhouse/click-ui/Link";
 import { Table } from "@clickhouse/click-ui/Table";
 import { Fragment, type ReactNode } from "react";
 import { CodeBlock } from "./CodeBlock";
@@ -8,11 +9,16 @@ import { CodeBlock } from "./CodeBlock";
  * React text node: HTML in it shows as written, an image or a link shows as its Markdown
  * source, and a URL is not made a link. A citation (`[memory:<key>@v<version>]`,
  * `[doc:<uri> § <section>]`, `[help:<page> § <section>]`, `[code:<path>:<line>]`) shows
- * as written; the answer's Sources list links each one the server verified. A heading is
- * drawn as a bold line, keeping the page's heading outline its own.
+ * as `cite` draws it (its number, `numberedCitations`), else as written; the answer's
+ * Sources list links each one the server verified. A heading is drawn as a bold line,
+ * keeping the page's heading outline its own.
  */
-export function AnswerText({ text }: { text: string }) {
-  return <div className="space-y-2 text-sm text-text break-words">{blocks(text)}</div>;
+export function AnswerText({ text, cite }: { text: string; cite?: CitationRenderer }) {
+  return (
+    <div className="space-y-2 text-sm text-text break-words">
+      {renderBlocks(text, (line) => inline(line, undefined, cite))}
+    </div>
+  );
 }
 
 type Block =
@@ -100,10 +106,6 @@ function startsTable(lines: string[], i: number): boolean {
   return lines[i].includes("|") && i + 1 < lines.length && TABLE_RULE.test(lines[i + 1]) && lines[i + 1].includes("-");
 }
 
-function blocks(text: string): ReactNode[] {
-  return renderBlocks(text, inline);
-}
-
 /** `text`'s blocks, each line's inline Markdown drawn by `spans`: `inline` for an answer;
  *  the Help page passes one that also draws links into the docs. */
 export function renderBlocks(text: string, spans: (line: string) => ReactNode[]): ReactNode[] {
@@ -155,9 +157,71 @@ export function renderBlocks(text: string, spans: (line: string) => ReactNode[])
  *  answer's text, the search card's numbers and the Sources rows read. */
 export const CITATION = /\[(?:memory|doc|help|code):[^\]\n]+\]/;
 
-/** A marker as a preview writes it, its whitespace collapsed: how a citation's text and a
- *  marker in the search card's preview are matched. */
+/** A marker with its whitespace collapsed: how a citation's text and a marker in an
+ *  answer's text are matched. */
 export const citationKey = (marker: string) => marker.replace(/\s+/g, " ");
+
+/** Each distinct marker the answer `text` draws, by its key (`citationKey`), numbered by
+ *  where it first appears: the same block and inline passes the answer renders, so a marker
+ *  inside code (drawn as code) gets none. The panel's answer and the search's card number
+ *  an answer with this, so their numbers and their Sources rows agree. */
+export function citationNumbers(text: string): Map<string, number> {
+  const numbers = new Map<string, number>();
+  const count: CitationRenderer = (marker) => {
+    const key = citationKey(marker);
+    if (!numbers.has(key)) numbers.set(key, numbers.size + 1);
+    return null;
+  };
+  for (const b of parseBlocks(text)) {
+    const lines =
+      b.kind === "paragraph"
+        ? [b.text]
+        : b.kind === "list"
+          ? b.items
+          : b.kind === "table"
+            ? [...b.header, ...b.rows.flat()]
+            : [];
+    for (const line of lines) inline(line, undefined, count);
+  }
+  return numbers;
+}
+
+/** Draws a marker as its number from `numbers`: a link to its Sources row (at the id
+ *  `${prefix}-${n}`) once the rows show (`rows`, by key), else the number alone. The link
+ *  is no tab stop: the rows are the keyboard's way to the sources, and their 44 px rows the
+ *  finger's (a touch area round the number would widen the line). */
+export function numberedCitations(
+  numbers: ReadonlyMap<string, number>,
+  rows: ReadonlySet<string>,
+  prefix: string,
+): CitationRenderer {
+  return (marker) => {
+    const key = citationKey(marker);
+    const n = numbers.get(key);
+    if (n === undefined) return marker;
+    if (!rows.has(key)) return <sup className="text-text-muted">{n}</sup>;
+    return (
+      <sup>
+        {/* A link to the row, not a button: a button takes a 44 px hit area under a finger,
+            which would widen the line. */}
+        <Link
+          href={`#${prefix}-${n}`}
+          size="sm"
+          tabIndex={-1}
+          aria-label={`Source ${n}`}
+          onClick={(e) => {
+            e.preventDefault();
+            const row = document.getElementById(`${prefix}-${n}`);
+            row?.scrollIntoView?.({ block: "nearest" });
+            row?.querySelector<HTMLElement>("button, [tabindex]")?.focus();
+          }}
+        >
+          {n}
+        </Link>
+      </sup>
+    );
+  };
+}
 
 // A citation first, so the emphasis rules never reach into a key or a path
 // (`[code:server/__init__.py:3]`); then code spans, strong, then emphasis. An underscore

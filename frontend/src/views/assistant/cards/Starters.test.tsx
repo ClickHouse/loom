@@ -1,5 +1,5 @@
 // The starters in the conversation: a starter reads its card with the person's token and,
-// with "Also ask the assistant" on and the assistant able to answer, asks its question as the
+// with "Also ask the model" on and the assistant able to answer, asks its question as the
 // person's turn; the answer's steps show while it streams and under it once it ends; a card
 // restored from History applies nothing until read again; a draft's action is the person's
 // own click.
@@ -243,14 +243,12 @@ const status = () => document.getElementById("loom-assistant-status")?.textConte
 describe("a starter that asks the assistant", () => {
   it("reads its card and asks its question, naming the card's arguments, as the person's turn", async () => {
     const { container } = render(<Panel />);
-    const box = screen.getByRole("checkbox", { name: "Also ask the assistant" });
+    const box = screen.getByRole("checkbox", { name: "Also ask the model" });
     expect(box).toBeChecked();
-    expect(box).toHaveAccessibleDescription(/calls a model/);
-    // Off, a starter reads only Loom, and a typed question still calls a model.
+    expect(box).toHaveAccessibleDescription("Uses this namespace's model budget.");
+    // Off, a starter reads only Loom.
     await userEvent.click(box);
-    expect(box).toHaveAccessibleDescription(
-      "A starter then reads only Loom: no model is called. A question typed below still calls one.",
-    );
+    expect(box).toHaveAccessibleDescription("A starter reads only Loom: no model is called.");
     await userEvent.click(box);
     await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
     await waitFor(() => expect(sent).toHaveLength(1));
@@ -316,7 +314,7 @@ describe("a starter that asks the assistant", () => {
       answer?.send({ id: "msg-1", choices: [{ delta: { content: "Three exact-key reads." } }] });
       answer?.done();
     });
-    await userEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await userEvent.click(await screen.findByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(sent).toHaveLength(2));
     expect(sent[1].messages).toEqual([
       { role: "user", content: "How is this namespace being used over the last 7 days?" },
@@ -328,7 +326,7 @@ describe("a starter that asks the assistant", () => {
     });
     await waitFor(() => expect(useChat.getState().answering).toBe(false));
 
-    await userEvent.click(screen.getByRole("button", { name: "Edit your question" }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit question" }));
     const field = screen.getByLabelText("Question");
     await userEvent.clear(field);
     await userEvent.type(field, "Which reads are exact-key?");
@@ -378,7 +376,7 @@ describe("a starter that asks the assistant", () => {
         { status: 503, headers: { "Content-Type": "application/json" } },
       ),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     const tryAgain = await screen.findByRole("button", { name: "Try again" });
     const turn = useChat.getState().turns[0];
     expect(turn.answer).toBe("Three exact-key reads.");
@@ -414,7 +412,7 @@ describe("a starter that asks the assistant", () => {
           { status: 503, headers: { "Content-Type": "application/json" } },
         ),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
     await act(async () => land({ ...AUDIT, criticals: 9 }));
@@ -452,7 +450,7 @@ describe("a starter that asks the assistant", () => {
             );
         }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(isFresh(turnId)).toBe(true));
     await act(async () => refuse());
     await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
@@ -484,7 +482,7 @@ describe("a starter that asks the assistant", () => {
           { status: 503, headers: { "Content-Type": "application/json" } },
         ),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
     const card = useChat.getState().turns[0].card;
@@ -513,7 +511,7 @@ describe("a starter that asks the assistant", () => {
           { status: 503, headers: { "Content-Type": "application/json" } },
         ),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(auditNamespace).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(useChat.getState().hint).toEqual({ kind: "starting" }));
     expect(useChat.getState().turns[0].card?.busy).toBeFalsy();
@@ -525,7 +523,7 @@ describe("a starter that asks the assistant", () => {
 
   it("remembers the box per viewer, and with it off reads the card alone", async () => {
     render(<Panel />);
-    await userEvent.click(screen.getByRole("checkbox", { name: "Also ask the assistant" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Also ask the model" }));
     expect(localStorage.getItem("loom_assistant_also_ask")).toBe("false");
     await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
     expect(await screen.findByTestId("audit-summary")).toBeInTheDocument();
@@ -535,14 +533,10 @@ describe("a starter that asks the assistant", () => {
     expect(useChat.getState().turns[0].state).toBe("card");
   });
 
-  it("when the assistant cannot answer, the box is off and says why, and the card says so", async () => {
+  it("when the assistant cannot answer, offers no box, and the card says why", async () => {
     render(<Panel cannotAnswer="model calls are off" />);
-    const box = screen.getByRole("checkbox", { name: "Also ask the assistant" });
-    expect(box).toBeDisabled();
-    // Nothing can be typed and sent then, so the line says only what a starter does.
-    expect(box).toHaveAccessibleDescription(
-      "The assistant can't answer: model calls are off. A starter reads only Loom: no model is called.",
-    );
+    // A box that could do nothing is not shown.
+    expect(screen.queryByRole("checkbox", { name: "Also ask the model" })).toBeNull();
     await userEvent.click(await screen.findByRole("button", { name: AUDIT_STARTER }));
     expect(
       await screen.findByText("The assistant can't answer: model calls are off. This is Loom's own read."),
@@ -551,31 +545,44 @@ describe("a starter that asks the assistant", () => {
   });
 });
 
-describe("the phone sheet", () => {
-  it("puts the focus on the first new starter even with the subject form open", async () => {
-    render(<Panel phone />);
-    await userEvent.click(await screen.findByRole("button", { name: "What does a user, agent or session remember?" }));
-    await userEvent.click(screen.getByRole("button", { name: "More starters" }));
-    expect(screen.getByRole("button", { name: "What would Loom advise an agent writing here?" })).toHaveFocus();
-  });
-
-  it("shows four starters, and More starters shows the rest with the focus on the first of them", async () => {
-    render(<Panel phone />);
+describe("More questions", () => {
+  it("shows four starters chosen for the page, and More questions shows the rest in place", async () => {
+    render(<Panel />);
     const list = await screen.findByRole("list", { name: "Starters" });
-    expect(
+    const labels = () =>
       within(list)
         .getAllByRole("button")
-        .map((b) => b.textContent),
-    ).toEqual([
+        .map((b) => b.textContent);
+    expect(labels()).toEqual([
       "What does this namespace hold, and who appears in it?",
       AUDIT_STARTER,
-      "What does a user, agent or session remember?",
-      "What documents does it hold?",
+      "What would Loom advise an agent writing here?",
+      "What could be improved here?",
     ]);
-    await userEvent.click(screen.getByRole("button", { name: "More starters" }));
+    const more = screen.getByRole("button", { name: "More questions" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(more);
+    // A disclosure: the rest show in place, and the focus stays on it.
+    expect(labels()).toHaveLength(7);
+    expect(more).toHaveAttribute("aria-expanded", "true");
+    expect(more).toHaveFocus();
+    await userEvent.click(more);
+    expect(labels()).toHaveLength(4);
+  });
+
+  it("leads with the page's own starter", async () => {
+    useStore.setState({ view: "knowledge" });
+    render(<Panel />);
+    const list = await screen.findByRole("list", { name: "Starters" });
+    expect(within(list).getAllByRole("button")[0]).toHaveTextContent("What documents does it hold?");
+  });
+
+  it("shows three on the phone sheet", async () => {
+    render(<Panel phone />);
+    const list = await screen.findByRole("list", { name: "Starters" });
+    expect(within(list).getAllByRole("button")).toHaveLength(3);
+    await userEvent.click(screen.getByRole("button", { name: "More questions" }));
     expect(within(list).getAllByRole("button")).toHaveLength(7);
-    expect(screen.getByRole("button", { name: "What would Loom advise an agent writing here?" })).toHaveFocus();
-    expect(screen.queryByRole("button", { name: "More starters" })).toBeNull();
   });
 });
 

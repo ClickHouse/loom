@@ -168,7 +168,7 @@ describe("HeaderSearch", () => {
     // The two matches, then the row that asks the assistant instead.
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(3);
-    expect(options[2]).toHaveAccessibleName("Ask AI: coffee");
+    expect(options[2]).toHaveAccessibleName('Ask AI about "coffee"');
     await waitFor(() => expect(input).toHaveAttribute("aria-activedescendant", options[0].id));
     expect(options[0]).toHaveAttribute("aria-selected", "true");
 

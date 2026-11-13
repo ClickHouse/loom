@@ -61,11 +61,11 @@ it("says an ask whose chunk failed to load, and asks again on the next Enter", a
   const user = userEvent.setup();
   render(<HeaderSearch />);
   await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "what does billing remember");
-  await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+  await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
   await user.keyboard("{Enter}");
   await waitFor(() => expect(toasts).toEqual(["Couldn't ask the assistant"]));
   await user.keyboard("{Enter}");
   await waitFor(() => expect(toasts).toHaveLength(2));
   expect(asks.n).toBe(0);
-  expect(screen.getByRole("option", { name: "Ask AI: what does billing remember" })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: 'Ask AI about "what does billing remember"' })).toBeInTheDocument();
 });

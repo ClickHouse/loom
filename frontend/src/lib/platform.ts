@@ -10,8 +10,3 @@ export function isApplePlatform(): boolean {
 export function paletteShortcut(): string {
   return isApplePlatform() ? "⌘K" : "Ctrl K";
 }
-
-/** The assistant panel's shortcut as the keyboard prints it: `⌘ J` on Apple, `Ctrl J` elsewhere. */
-export function assistantShortcut(): string {
-  return isApplePlatform() ? "⌘ J" : "Ctrl J";
-}

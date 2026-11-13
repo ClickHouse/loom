@@ -1,5 +1,5 @@
 // The assistant panel's behaviour, loaded with the panel the first time it is needed (a
-// click on the launcher, the shortcut, the search card's Continue, a reload that restores
+// click on the launcher, the search card's Continue, a reload that restores
 // it open, or a browser holding stored conversations): opening, closing and expanding it,
 // the phone sheet's history entry, what navigations, Back and resizes do to it, the page's
 // inert while it is modal, an /assistant address, and the deletion of another person's
@@ -87,7 +87,7 @@ export function openAssistant({ expanded = false }: { expanded?: boolean } = {})
   writePanel(true, s.prefWidth);
 }
 
-/** Close the panel. `person`: Esc, Close, the launcher or the shortcut; the focus goes back
+/** Close the panel. `person`: Esc, Close or the launcher; the focus goes back
  *  to the launcher when it was in the panel, and the phone sheet's own entry is left by
  *  Back. `nav`: a navigation or Back/Forward closed it; the modal attributes go at once, in
  *  the same task, so the arrival's focus is not held by a dialog that is closing, and the
@@ -122,8 +122,8 @@ export function askAbout(item: AskItem): void {
   openAssistant();
 }
 
-/** The Ask AI button and Ctrl+J (⌘J): open the panel, or close it, Ctrl+J the expanded
- *  window too (a close from outside the panel leaves the focus where it is). */
+/** The Ask AI button: open the panel, or close it (a close from outside the panel leaves the
+ *  focus where it is). */
 export function toggleAssistant(): void {
   if (useDock.getState().open) closeAssistant("person");
   else openAssistant();
@@ -227,7 +227,7 @@ export function announceAssistant(message: string): void {
 }
 
 /** The page elements a modal panel makes inert (marked `data-dock-inert` in App and its
- *  layout): the skip link, the "Go to the assistant" skip button, the sidebar, the reload
+ *  layout): the skip link, the "Go to Ask AI" skip button, the sidebar, the reload
  *  bar, the header (the Ask AI button with it), <main> and the phone nav. The toasts,
  *  portals and live regions stay live. */
 function applyInert(modal: boolean): void {

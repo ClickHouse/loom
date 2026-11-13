@@ -50,6 +50,7 @@ const json = (body: unknown, status = 200) =>
 
 /** What `/v1/health/ready` says of the assistant: a check, or none (not configured). */
 let assistantCheck: Record<string, unknown> | null = { ok: true, required: false };
+let whoamiRoles = ["VIEWER"];
 let role = "admin";
 let paths: string[] = [];
 
@@ -141,6 +142,7 @@ beforeEach(() => {
   Element.prototype.scrollTo = vi.fn();
   stubMedia();
   assistantCheck = { ok: true, required: false };
+  whoamiRoles = ["VIEWER"];
   role = "admin";
   paths = [];
   localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["VIEWER"] }));
@@ -152,7 +154,7 @@ beforeEach(() => {
       const path = url.replace(/^https?:\/\/[^/]+/, "").split("?")[0];
       paths.push(path);
       if (path === "/v1/whoami")
-        return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["VIEWER"] });
+        return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: whoamiRoles });
       if (path === "/v1/namespace.list_mine")
         return json({
           ...GENERIC,
@@ -211,20 +213,20 @@ describe("the Ask AI button", () => {
   it("below 1280 px, where it is its icon, its tooltip names it", async () => {
     await boot(1100);
     await userEvent.setup().hover(launcher());
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ask AI \(Ctrl J\)$/);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ask AI about this namespace$/);
     act(() => useDock.setState({ reason: { kind: "starting" }, reasonShort: "setting up" }));
-    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ask AI: setting up \(Ctrl J\)$/));
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ask AI: setting up$/));
     act(() => useDock.setState({ reason: null, reasonShort: "" }));
   });
 
-  it("its tooltip is the shortcut, or a reason and the shortcut", async () => {
+  it("its tooltip says what it does, or the reason it can't answer, and names no key", async () => {
     await boot(1440);
     await userEvent.setup().hover(launcher());
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ctrl J$/);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Ask AI about this namespace$/);
     act(() => useDock.setState({ reason: { kind: "starting" }, reasonShort: "setting up" }));
-    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^setting up \(Ctrl J\)$/));
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ask AI: setting up$/));
     act(() => useDock.setState({ reason: { kind: "not_configured" }, reasonShort: "chat not set up" }));
-    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^chat not set up \(Ctrl J\)$/));
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^Ask AI: chat not set up$/));
   });
 
   it("is the icon alone below 1280 px, named Ask AI, and on a phone opens the sheet", async () => {
@@ -275,9 +277,9 @@ describe("the Ask AI button", () => {
     expect(launcher().closest("[inert]")).not.toBeNull();
   });
 
-  it('"Go to the assistant" opens the panel with the focus in the field, and stays a skip control', async () => {
+  it('"Go to Ask AI" opens the panel with the focus in the field, and stays a skip control', async () => {
     await boot(1440);
-    const skip = screen.getByRole("button", { name: "Go to the assistant" });
+    const skip = screen.getByRole("button", { name: "Go to Ask AI" });
     expect(skip).toHaveAttribute("data-dock-inert");
     await userEvent.setup().click(skip);
     await until(() => document.activeElement?.id === "assistant-question");
@@ -297,18 +299,18 @@ describe("the expanded window (from 1024 px)", () => {
     await openByLauncher();
     const href = location.href;
     const length = history.length;
-    const button = toggle("Expand the assistant");
+    const button = toggle("Expand");
     await userEvent.setup().click(button);
     expect(panel()).toHaveAttribute("data-mode", "expanded");
     expect(panel()).toHaveAttribute("role", "dialog");
-    expect(panel()).toHaveAttribute("aria-labelledby", "assistant-panel-title");
-    expect(screen.getByRole("heading", { level: 2, name: "Assistant" })).toBeInTheDocument();
+    expect(panel()).toHaveAccessibleName("Ask AI");
+    expect(screen.getByRole("heading", { level: 2, name: "Ask AI" })).toBeInTheDocument();
     expect(document.querySelector("main")?.closest("[inert]")).not.toBeNull();
     expect(launcher().closest("[inert]")).not.toBeNull();
     expect(location.href).toBe(href);
     expect(history.length).toBe(length);
     // One button whose label swaps: the focus stays on it.
-    expect(button).toHaveAccessibleName("Collapse the assistant");
+    expect(button).toHaveAccessibleName("Collapse");
     expect(button).toHaveFocus();
     await waitFor(() =>
       expect(document.getElementById("loom-assistant-status")).toHaveTextContent("The assistant fills the window"),
@@ -322,23 +324,23 @@ describe("the expanded window (from 1024 px)", () => {
     );
   });
 
-  it("Esc and a click on the scrim collapse it; Ctrl+J closes it, and the next open is docked", async () => {
+  it("Esc and a click on the scrim collapse it; Close closes it, and the next open is docked", async () => {
     await boot(1100);
     await openByLauncher();
-    await userEvent.setup().click(toggle("Expand the assistant"));
+    await userEvent.setup().click(toggle("Expand"));
     await userEvent.setup().keyboard("{Escape}");
     expect(panel()).toHaveAttribute("data-mode", "overlay");
     await waitFor(() =>
       expect(document.getElementById("loom-assistant-status")).toHaveTextContent("The assistant is over the page"),
     );
-    await userEvent.setup().click(toggle("Expand the assistant"));
+    await userEvent.setup().click(toggle("Expand"));
     await userEvent.setup().click(document.querySelector(".assistant-scrim") as HTMLElement);
     expect(panel()).toHaveAttribute("data-mode", "overlay");
-    await userEvent.setup().click(toggle("Expand the assistant"));
-    fireEvent.keyDown(field(), { key: "j", ctrlKey: true });
+    await userEvent.setup().click(toggle("Expand"));
+    await userEvent.setup().click(toggle("Close"));
     await until(() => !useDock.getState().open);
     expect(useDock.getState().expanded).toBe(false);
-    fireEvent.keyDown(document.body, { key: "j", ctrlKey: true });
+    await userEvent.setup().click(launcher());
     await until(() => useDock.getState().open);
     expect(panel()).toHaveAttribute("data-mode", "overlay");
   });
@@ -346,7 +348,7 @@ describe("the expanded window (from 1024 px)", () => {
   it("is not offered below 1024 px, and a resize below it collapses it with the focus to the field", async () => {
     await boot(1440);
     await openByLauncher();
-    await userEvent.setup().click(toggle("Expand the assistant"));
+    await userEvent.setup().click(toggle("Expand"));
     await resize(900);
     expect(useDock.getState().expanded).toBe(false);
     expect(panel()).toHaveAttribute("data-mode", "overlay");
@@ -359,7 +361,7 @@ describe("the expanded window (from 1024 px)", () => {
   it("a navigation from it leaves the window, and beside the page the panel stays", async () => {
     await boot(1440);
     await openByLauncher();
-    await userEvent.setup().click(toggle("Expand the assistant"));
+    await userEvent.setup().click(toggle("Expand"));
     act(() => useStore.getState().setView("runs"));
     expect(useDock.getState()).toMatchObject({ open: true, expanded: false });
     expect(panel()).toHaveAttribute("data-mode", "push");
@@ -368,7 +370,7 @@ describe("the expanded window (from 1024 px)", () => {
   it("a session expiry leaves it: beside the page the panel stays, over the page it closes", async () => {
     await boot(1440);
     await openByLauncher();
-    await userEvent.setup().click(toggle("Expand the assistant"));
+    await userEvent.setup().click(toggle("Expand"));
     act(() => useStore.setState({ sessionExpired: true }));
     expect(useDock.getState()).toMatchObject({ open: true, expanded: false });
     expect(panel()).toHaveAttribute("data-mode", "push");
@@ -376,7 +378,7 @@ describe("the expanded window (from 1024 px)", () => {
     expect(within(panel()).queryByRole("button", { name: "Expand the assistant" })).toBeNull();
     act(() => useStore.setState({ sessionExpired: false }));
     await resize(1100);
-    await userEvent.setup().click(toggle("Expand the assistant"));
+    await userEvent.setup().click(toggle("Expand"));
     act(() => useStore.setState({ sessionExpired: true }));
     expect(useDock.getState()).toMatchObject({ open: false, expanded: false });
   });
@@ -434,7 +436,7 @@ describe("push mode (from 1280 px, the page keeping 640 px beside the panel)", (
   it("has a splitter with its range, moved by the arrows, Home and End within the mode's widths", async () => {
     await boot(1440);
     await openByLauncher();
-    const splitter = screen.getByRole("separator", { name: "Resize the assistant panel" });
+    const splitter = screen.getByRole("separator", { name: "Resize Ask AI" });
     expect(splitter).toHaveAttribute("aria-orientation", "vertical");
     expect(splitter).toHaveAttribute("aria-controls", "assistant-panel");
     expect(splitter).toHaveAttribute("aria-valuemin", "360");
@@ -521,57 +523,32 @@ describe("overlay mode (below the push threshold)", () => {
     expect(history.length).toBe(length);
     expect(inertOnPage()).toBeNull();
   });
-
-  it("leaves Ctrl+J to another dialog that holds the focus", async () => {
-    await boot(900);
-    act(() => useStore.getState().openHelp(true));
-    const dialog = await screen.findByRole("dialog");
-    await until(() => dialog.contains(document.activeElement));
-    fireEvent.keyDown(document.activeElement as Element, { key: "j", ctrlKey: true });
-    await act(async () => new Promise((r) => setTimeout(r, 50)));
-    expect(useDock.getState().open).toBe(false);
-    expect(dialog.contains(document.activeElement)).toBe(true);
-  });
 });
 
-describe("the shortcut", () => {
-  it("Ctrl+J and ⌘J open and close the panel; a close from outside leaves the focus where it was", async () => {
+describe("keys", () => {
+  it("opens nothing on Ctrl+J, ⌘J, Ctrl+/ or a bare j: Ask AI opens from its button and from search", async () => {
     await boot(1440);
-    const opened = fireEvent.keyDown(document.body, { key: "j", ctrlKey: true });
-    // The browser's own Ctrl+J (its downloads) is not run.
-    expect(opened).toBe(false);
-    await until(() => document.activeElement?.id === "assistant-question");
-    fireEvent.keyDown(field(), { key: "j", metaKey: true });
-    await until(() => !useDock.getState().open);
-    expect(launcher()).toHaveFocus();
-    fireEvent.keyDown(document.body, { key: "J", metaKey: true });
-    await until(() => useDock.getState().open);
-    const other = screen.getByRole("button", { name: "Keyboard shortcuts" });
-    other.focus();
-    fireEvent.keyDown(other, { key: "j", ctrlKey: true });
-    await until(() => !useDock.getState().open);
-    expect(other).toHaveFocus();
+    for (const key of [
+      { key: "j", ctrlKey: true },
+      { key: "j", metaKey: true },
+      { key: "/", ctrlKey: true },
+      { key: "j" },
+    ])
+      fireEvent.keyDown(document.body, key);
+    await act(async () => new Promise((r) => setTimeout(r, 50)));
+    expect(useDock.getState().open).toBe(false);
   });
 
   it("opens the panel to its starters with the chat off", async () => {
     window.__LOOM_ASSISTANT = false;
     try {
       await boot(1440);
-      fireEvent.keyDown(document.body, { key: "j", ctrlKey: true });
+      await userEvent.setup().click(launcher());
       await until(() => useDock.getState().open);
       expect(within(panel()).queryByRole("textbox", { name: "Question" })).toBeNull();
     } finally {
       window.__LOOM_ASSISTANT = undefined;
     }
-  });
-
-  it("a bare j, Ctrl+/ and Ctrl+Shift+J are not the panel's", async () => {
-    await boot(1440);
-    fireEvent.keyDown(document.body, { key: "j" });
-    fireEvent.keyDown(document.body, { key: "/", ctrlKey: true });
-    fireEvent.keyDown(document.body, { key: "J", ctrlKey: true, shiftKey: true });
-    await act(async () => new Promise((r) => setTimeout(r, 50)));
-    expect(useDock.getState().open).toBe(false);
   });
 });
 
@@ -627,7 +604,7 @@ describe("the phone sheet", () => {
     expect(panel()).toHaveAttribute("aria-modal", "true");
     expect((history.state as Record<string, unknown>).loomSheet).toBe(true);
     expect(history.length).toBe(length + 1);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Close the assistant" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Close" }));
     await until(() => !(history.state as Record<string, unknown> | null)?.loomSheet);
     expect(panel()).toHaveAttribute("hidden");
     expect(launcher()).toHaveFocus();
@@ -706,38 +683,28 @@ describe("the assistant's live region", () => {
   });
 });
 
-describe("the Health link", () => {
-  it("at overlay widths closes the panel and lands the focus on Health's assistant row", async () => {
-    assistantCheck = { ok: false, reason: "failing", required: false };
+describe("chat not set up", () => {
+  it("Open Models & keys, at overlay widths, closes the panel and opens Settings at Models & keys", async () => {
+    assistantCheck = null;
+    whoamiRoles = ["platform_admin"];
     await boot(900);
     await userEvent.setup().click(launcher());
-    const link = await screen.findByRole("button", { name: "see Health" }, { timeout: 5000 });
-    expect(screen.getByTestId("assistant-unavailable")).toHaveTextContent(
-      "An admin of this deployment fixes the assistant's setup. Loom retries the setup on its own; this updates when it works.",
-    );
-    await userEvent.setup().click(link);
-    expect(panel()).toHaveAttribute("hidden");
-    await until(() => document.activeElement?.getAttribute("data-focus-key") === "health-assistant");
+    const open = await screen.findByRole("button", { name: "Open Models & keys" }, { timeout: 5000 });
+    expect(screen.getByTestId("assistant-unavailable")).toHaveTextContent("Chat isn't set up");
+    await userEvent.setup().click(open);
+    await until(() => panel().hasAttribute("hidden"));
+    expect(useStore.getState().view).toBe("setup");
+    expect(location.search).toContain("tab=models");
     expect(inertOnPage()).toBeNull();
   });
 
-  it("falls back to the h1 at once when the row does not show, without waiting out the timeout", async () => {
-    assistantCheck = { ok: false, reason: "failing", required: false };
+  it("says who sets it up, with no link, to a caller who cannot open Models & keys", async () => {
+    assistantCheck = null;
     await boot(900);
     await userEvent.setup().click(launcher());
-    const link = await screen.findByRole("button", { name: "see Health" }, { timeout: 5000 });
-    // Ready by the time Health reads: the row is not shown to a non-platform admin.
-    assistantCheck = { ok: true, required: false };
-    // With the clock held, the arrival's wait for the row cannot run out: the focus reaching
-    // the h1 is Health having answered that it shows no row.
-    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
-    try {
-      await userEvent.setup().click(link);
-      await until(() => document.activeElement?.tagName === "H1" && document.activeElement.textContent === "Health");
-    } finally {
-      clock.mockRestore();
-    }
-    expect(document.querySelector('[data-focus-key="health-assistant"]')).toBeNull();
+    const body = await screen.findByTestId("assistant-unavailable", {}, { timeout: 5000 });
+    expect(body).toHaveTextContent("Ask an admin to set it up in Models & keys.");
+    expect(within(body).queryByRole("button")).toBeNull();
   });
 });
 

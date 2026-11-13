@@ -3,15 +3,12 @@
 // the card shows that turn's answer as it streams. A chunk of its own, loaded once the search
 // shows the card.
 import { useEffect, useId, type ReactNode } from "react";
-import { Button } from "@clickhouse/click-ui/Button";
-import { Link } from "@clickhouse/click-ui/Link";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { Alert } from "../../components/ui/Alert";
-import { Kbd } from "../../components/ui/Kbd";
 import { useDock } from "../../lib/assistantDock";
 import { SHORT_REASON } from "../../lib/assistantLayout";
-import { isApplePlatform } from "../../lib/platform";
 import { useStore } from "../../lib/state";
-import { citationKey, inline, parseBlocks, type CitationRenderer } from "./AnswerText";
+import { citationKey, citationNumbers, inline, numberedCitations, parseBlocks } from "./AnswerText";
 import { Sources } from "./Sources";
 import { announceAssistant } from "../../lib/assistantDockRuntime";
 import { OTHER_TAB, adoptOwner, ask, latestStep, ownerOf, startIn, useChat } from "./chatStore";
@@ -51,55 +48,6 @@ export function askFromSearch(question: string, onTurn: (turnId: string) => void
   return true;
 }
 
-/** Each distinct marker the preview `text` draws, numbered by where it first appears: the
- *  same inline pass the preview renders, so a marker inside a code span (drawn as code) gets
- *  none. */
-function numbering(text: string): Map<string, number> {
-  const numbers = new Map<string, number>();
-  inline(text, undefined, (marker) => {
-    if (!numbers.has(marker)) numbers.set(marker, numbers.size + 1);
-    return null;
-  });
-  return numbers;
-}
-
-/** Draws a marker as its number: a link to its row under the card once the rows show
- *  (`rows`), else the number alone. `numbers` come from the same preview text, so every
- *  marker it draws has one. The link is no tab stop: the rows below are the keyboard's way
- *  to the sources, and their 44 px rows the finger's (the clamped preview would cut a
- *  touch area round the number). */
-function numberedCitations(
-  numbers: ReadonlyMap<string, number>,
-  rows: ReadonlySet<string>,
-  prefix: string,
-): CitationRenderer {
-  return (marker) => {
-    const n = numbers.get(marker);
-    if (n === undefined) return marker;
-    if (!rows.has(marker)) return <sup className="text-text-muted">{n}</sup>;
-    return (
-      <sup>
-        {/* A link to the row in this card, not a button: a button takes a 44 px hit area
-            under a finger, which would widen the line. */}
-        <Link
-          href={`#${prefix}-${n}`}
-          size="sm"
-          tabIndex={-1}
-          aria-label={`Source ${n}`}
-          onClick={(e) => {
-            e.preventDefault();
-            const row = document.getElementById(`${prefix}-${n}`);
-            row?.scrollIntoView?.({ block: "nearest" });
-            row?.querySelector<HTMLElement>("button, [tabindex]")?.focus();
-          }}
-        >
-          {n}
-        </Link>
-      </sup>
-    );
-  };
-}
-
 /** The answer's text as one run of inline Markdown, for a preview clamped to a few lines:
  *  code and tables are left out. */
 function preview(answer: string): string {
@@ -111,31 +59,26 @@ function preview(answer: string): string {
 }
 
 /**
- * The card under its "Ask AI: <question>" option once asked: the answer's first lines as
- * they stream, the working line, then its label and sources as the panel shows them, and
- * Continue in the assistant, which opens the panel on the conversation. `turnId`: the turn
- * asked, null until it shows; `busy`: nothing was asked, another answer is still coming in.
- * While it shows, the answer's end is seen here: it is said as complete through the
- * assistant's live region, never marked unread.
+ * The card on top of the search's results once a question is asked, headed "Ask AI": the
+ * answer's first lines as they stream, the working line, then its label and sources as the
+ * panel shows them, numbered alike. Its one action, Continue in chat, is the search's first
+ * option under it (components/HeaderSearch.tsx). `turnId`: the turn asked, null until it
+ * shows; `busy`: nothing was asked, another answer is still coming in. While it shows, the
+ * answer's end is seen here: it is said as complete through the assistant's live region,
+ * never marked unread.
  */
 export function SearchAnswer({
   turnId,
   busy,
-  onStarted,
   onGone,
-  onContinue,
 }: {
   turnId: string | null;
   busy: boolean;
-  /** Told once the answer has started (text, or an end) or a refusal's reason shows, when
-   *  Enter continues. */
-  onStarted: () => void;
   /** Told when nothing answers the card's question any more and no turn of it shows: the
    *  turn left the conversation shown (a new one, another from History), or it was never
    *  asked (another answer was coming in, or another tab held the conversation). The card
    *  goes back to asking. */
   onGone: () => void;
-  onContinue: () => void;
 }) {
   const turns = useChat((s) => s.turns);
   const answering = useChat((s) => s.answering);
@@ -146,7 +89,6 @@ export function SearchAnswer({
   const rowPrefix = useId();
   const at = turnId ? turns.findIndex((t) => t.id === turnId) : -1;
   const turn = at >= 0 ? turns[at] : null;
-  const started = !!turn && (!!turn.answer || turn.state !== "answering");
 
   // Only the card's own turn is seen here: an answer the panel streams when the card found
   // it busy ends unread, with its dot.
@@ -166,13 +108,6 @@ export function SearchAnswer({
   useEffect(() => {
     if (gone) onGone();
   }, [gone, onGone]);
-  // Enter continues once the answer has started or the question ended unasked with a reason
-  // (the panel says it at more length).
-  const ended = started || (!turn && refused);
-  useEffect(() => {
-    if (ended) onStarted();
-  }, [ended, onStarted]);
-
   let body: ReactNode;
   // Busy only while that other answer runs: once it ends, what the card says is the !turn
   // case's (a reason, or back to asking).
@@ -184,7 +119,7 @@ export function SearchAnswer({
     body = <p className="text-sm text-text-muted">{!answering && why ? why : "Answering…"}</p>;
   } else {
     const text = preview(turn.answer);
-    const numbers = numbering(text);
+    const numbers = citationNumbers(turn.answer);
     // The label and rows show once the answer is done and its check has ended (a server a
     // release behind sends its citations before the end, with no text_done); the numbers
     // link to rows only then. A citation's text matches its marker with its whitespace
@@ -201,9 +136,7 @@ export function SearchAnswer({
         )}
         {/* A finished answer that is only a table or code: the preview has no words for it. */}
         {!text && turn.state === "done" && turn.answer.trim() && (
-          <p className="text-sm text-text-muted">
-            The answer holds a table or code: continue in the assistant to read it.
-          </p>
+          <p className="text-sm text-text-muted">The answer holds a table or code: continue in chat to read it.</p>
         )}
         {/* The working line: the latest step while the answer reads, never blank. */}
         {turn.state === "answering" && (!text || step) && (
@@ -231,21 +164,10 @@ export function SearchAnswer({
   }
   return (
     <div className="space-y-1.5 pb-2" data-testid="search-answer" aria-busy={turn?.state === "answering" || undefined}>
-      {body}
-      <div className="flex items-center gap-2 pt-1">
-        <Button type="secondary" htmlType="button" iconRight="arrow-right" onClick={onContinue}>
-          Continue in the assistant
-        </Button>
-        <span className="hidden sm:inline-flex items-center gap-1 text-xs text-text-muted" aria-hidden="true">
-          {isApplePlatform() ? (
-            <Kbd>⌘Enter</Kbd>
-          ) : (
-            <>
-              <Kbd>Ctrl</Kbd>+<Kbd>Enter</Kbd>
-            </>
-          )}
-        </span>
+      <div className="section-label py-1 flex items-center gap-1">
+        <Icon name="sparkle" size="xs" aria-hidden="true" /> Ask AI
       </div>
+      {body}
     </div>
   );
 }

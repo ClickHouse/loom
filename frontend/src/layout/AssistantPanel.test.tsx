@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useDock } from "../lib/assistantDock";
@@ -41,6 +41,7 @@ beforeEach(() => {
     collapsed: false,
     prefWidth: PANEL_DEFAULT,
     focusField: false,
+    history: false,
   });
   useStore.setState({ view: "memories", identity: { org: "dev", namespace: "team", agent: "loom-ui" } });
 });
@@ -91,11 +92,11 @@ describe("the window", () => {
   it("has a level-2 title, Expand and Collapse are one button, and from closed there is no spacer", async () => {
     render(<AssistantPanel />);
     act(() => openAssistant({ expanded: true }));
-    expect(screen.getByRole("heading", { level: 2, name: "Assistant" })).toHaveAttribute("id", "assistant-panel-title");
+    expect(screen.getByRole("heading", { level: 2, name: "Ask AI" })).toHaveAttribute("id", "assistant-panel-title");
     expect(document.querySelector("[data-assistant-spacer]")).toBeNull();
-    const button = screen.getByRole("button", { name: "Collapse the assistant" });
+    const button = screen.getByRole("button", { name: "Collapse" });
     await userEvent.click(button);
-    expect(button).toHaveAccessibleName("Expand the assistant");
+    expect(button).toHaveAccessibleName("Expand");
     expect(button).toHaveFocus();
     expect(useDock.getState().expanded).toBe(false);
   });
@@ -106,7 +107,64 @@ describe("the window", () => {
     render(<AssistantPanel />);
     act(() => openAssistant({ expanded: true }));
     expect(useDock.getState().expanded).toBe(false);
-    expect(screen.queryByRole("button", { name: "Expand the assistant" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Expand" })).toBeNull();
+  });
+});
+
+describe("the header", () => {
+  it("is one row: the title, the namespace muted, then New chat, History, Expand and Close, always there", async () => {
+    render(<AssistantPanel />);
+    act(() => openAssistant());
+    expect(panel()).toHaveAccessibleName("Ask AI");
+    const head = panel().querySelector(".assistant-head") as HTMLElement;
+    expect(within(head).getByRole("heading", { level: 2 })).toHaveTextContent("Ask AI");
+    // The namespace in muted text, with no prefix and no link.
+    const ns = within(head).getByTestId("assistant-namespace");
+    expect(ns).toHaveTextContent(/^team$/);
+    expect(ns).toHaveClass("text-text-muted");
+    expect(within(head).queryByRole("link")).toBeNull();
+    expect(
+      within(head)
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label")),
+    ).toEqual(["New chat", "History", "Expand", "Close"]);
+  });
+
+  it("History toggles the panel's History view, pressed while it shows, with Back and its title", async () => {
+    render(<AssistantPanel />);
+    act(() => openAssistant());
+    const history = screen.getByRole("button", { name: "History" });
+    expect(history).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(history);
+    expect(useDock.getState().history).toBe(true);
+    expect(history).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("History");
+    expect(screen.queryByTestId("assistant-namespace")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Back to the chat" }));
+    expect(useDock.getState()).toMatchObject({ history: false, focusField: true });
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent("Ask AI");
+  });
+
+  it("New chat asks the body for a new chat, and is unavailable while an answer streams", async () => {
+    render(<AssistantPanel />);
+    act(() => openAssistant());
+    const before = useDock.getState().newChatSeq ?? 0;
+    const button = screen.getByRole("button", { name: "New chat" });
+    await userEvent.click(button);
+    expect(useDock.getState().newChatSeq).toBe(before + 1);
+    act(() => useDock.setState({ working: true }));
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveAccessibleDescription("An answer is still coming in.");
+    await userEvent.click(button);
+    expect(useDock.getState().newChatSeq).toBe(before + 1);
+    act(() => useDock.setState({ working: false }));
+  });
+
+  it("Close closes the panel", async () => {
+    render(<AssistantPanel />);
+    act(() => openAssistant());
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(useDock.getState().open).toBe(false);
   });
 });
 
@@ -116,7 +174,7 @@ describe("the splitter", () => {
     act(() => openAssistant());
     // jsdom lays nothing out: the panel's right edge is given, away from the window's.
     vi.spyOn(panel(), "getBoundingClientRect").mockReturnValue({ right: 1392 } as DOMRect);
-    const splitter = screen.getByRole("separator", { name: "Resize the assistant panel" });
+    const splitter = screen.getByRole("separator", { name: "Resize Ask AI" });
     fireEvent.pointerDown(splitter, { pointerId: 1, clientX: 972 });
     fireEvent.pointerMove(splitter, { pointerId: 1, clientX: 900 });
     fireEvent.pointerUp(splitter, { pointerId: 1 });

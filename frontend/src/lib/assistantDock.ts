@@ -73,6 +73,10 @@ export interface DockState {
   entering?: boolean;
   /** Bumped by the Memories page's Insights button: the panel opens on the starters. */
   startersSeq?: number;
+  /** The panel shows History in place of the chat (its header's History button, pressed). */
+  history?: boolean;
+  /** Bumped by the header's New chat, so the panel's body starts one once. */
+  newChatSeq?: number;
   /** The audit's card is read too (an old link to the Memories Insights tab), nothing asked. */
   startersAudit?: boolean;
   /** The turn the header search's answer card shows: that answer's end is seen there, so it
@@ -138,25 +142,14 @@ export function loadDockRuntime(): Promise<Runtime> {
   return loading;
 }
 
-/** The Ask AI button and Ctrl+J (⌘J): open the panel, or close it. */
+/** The Ask AI button: open the panel, or close it. */
 export function toggleAssistantSoon(): void {
   void loadDockRuntime().then((m) => m.toggleAssistant());
 }
 
-/** "Go to the assistant" and the search card's Continue: open the panel, or focus it. */
+/** "Go to Ask AI" and the search card's Continue: open the panel, or focus it. */
 export function openAssistantSoon(): void {
   void loadDockRuntime().then((m) => m.openAssistant());
-}
-
-/** Ctrl+J (⌘J on Apple keyboards): open or close the panel. A key pressed in another dialog
- *  (the inspector, a confirmation, the help) is left to it. */
-export function onAssistantShortcut(e: KeyboardEvent): void {
-  if (e.key.toLowerCase() !== "j" || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
-  const a = document.activeElement;
-  const dialog = a instanceof Element ? a.closest('[role="dialog"], [role="alertdialog"]') : null;
-  if (dialog && !dialog.matches("[data-assistant-panel]")) return;
-  e.preventDefault();
-  toggleAssistantSoon();
 }
 
 /** Back or Forward: the panel's say, before App restores the entry's place. True when the

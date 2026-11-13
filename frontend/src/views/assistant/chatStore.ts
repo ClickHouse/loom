@@ -5,7 +5,7 @@
 import { create } from "zustand";
 import { isAuthDisabled, isProxyMode, storedToken } from "../../api";
 import { type ChatMessage, type Support, streamAssistantChat } from "../../api/assistantChat";
-import { ApiError } from "../../lib/errors";
+import { ApiError, isLostConnection } from "../../lib/errors";
 import { humanizeError } from "../../lib/errorWords";
 import type { Owner } from "../../lib/assistantStorage";
 import { chatOff, useDock } from "../../lib/assistantDock";
@@ -620,12 +620,31 @@ async function answer(
     end(
       {
         state: refusedBefore ? "refused" : "failed",
-        error: humanizeError(e, { read: true }),
+        error: turnFailure(e, refusedBefore),
         ...(retryableError(e) ? { retryable: true } : {}),
       },
       "",
     );
   }
+}
+
+/** How the panel and the search's card word an answer that failed: one sentence that says
+ *  what happened and that the question is kept (the turn keeps it, Retry asks it again), for
+ *  the ends the dashboard can name surely (the stream cut short, the connection lost, the
+ *  model stopping inside the stream); any other failure in the server's words. */
+export function turnFailure(e: unknown, refusedBefore: boolean): string {
+  const inStream = !refusedBefore;
+  const code = e instanceof ApiError ? e.code : "";
+  const raw = e instanceof Error ? e.message : String(e);
+  const lead =
+    code === "STREAM_ENDED"
+      ? "The answer stopped before it finished."
+      : inStream && code === "ASSISTANT_UPSTREAM_FAILED"
+        ? "The model stopped before the answer finished."
+        : !(e instanceof ApiError) && isLostConnection(raw)
+          ? "The connection to Loom was lost before the answer finished."
+          : null;
+  return lead ? `${lead} Your question is kept.` : humanizeError(e, { read: true });
 }
 
 /** Whether turn `turnId`'s answer is on screen: in the open panel, or in the search's answer

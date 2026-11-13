@@ -56,7 +56,6 @@ import {
   assistantPopstate,
   bootDock,
   loadDockRuntime,
-  onAssistantShortcut,
   openAssistantSoon,
   useDock,
 } from "./lib/assistantDock";
@@ -292,15 +291,13 @@ export default function App() {
     return () => window.removeEventListener("popstate", sync);
   }, [authed, arriveFromHistory]);
 
-  // The assistant panel: its mode follows the window, a navigation closes it at overlay and
-  // phone widths, and Ctrl+J (⌘J) opens and closes it. Wired once the shell has drawn (the
-  // elements a modal panel makes inert exist from then on).
+  // The assistant panel: its mode follows the window and a navigation closes it at overlay
+  // and phone widths. Wired once the shell has drawn (the elements a modal panel makes inert
+  // exist from then on).
   const shellDrawn = !!identity && !!whoami_;
   useEffect(() => {
     if (!shellDrawn) return;
     bootDock();
-    document.addEventListener("keydown", onAssistantShortcut);
-    return () => document.removeEventListener("keydown", onAssistantShortcut);
   }, [shellDrawn]);
   const dockMounted = useDock((s) => s.mounted);
 
@@ -678,7 +675,7 @@ export default function App() {
         Skip to main content
       </a>
       <button type="button" data-dock-inert="" className={SKIP} onClick={openAssistantSoon}>
-        Go to the assistant
+        Go to Ask AI
       </button>
       {/* `data-dock-inert`: what a modal assistant panel makes inert (lib/assistantDock.ts);
           the wrappers are `display: contents`, so the layout is the children's. */}

@@ -54,7 +54,7 @@ it("asks nothing for an Enter whose text changed while the card's chunk loaded",
   render(<HeaderSearch />);
   const field = screen.getByRole("combobox", { name: "Search Loom" });
   await user.type(field, "what does billing remember");
-  await screen.findByRole("option", { name: "Ask AI: what does billing remember" });
+  await screen.findByRole("option", { name: 'Ask AI about "what does billing remember"' });
   // The card's chunk, preloaded once the card shows, then resolves in a later task: Enter and
   // the next keystroke land before it, in one go.
   await import("../views/assistant/SearchAnswer");
@@ -62,12 +62,12 @@ it("asks nothing for an Enter whose text changed while the card's chunk loaded",
     fireEvent.keyDown(field, { key: "Enter" });
     fireEvent.change(field, { target: { value: "what does billing remember now" } });
   });
-  const card = await screen.findByRole("option", { name: "Ask AI: what does billing remember now" });
+  const card = await screen.findByRole("option", { name: 'Ask AI about "what does billing remember now"' });
   await new Promise((r) => setTimeout(r, 50));
   expect(asks.n).toBe(0);
-  expect(card).toHaveTextContent("Enter");
+  expect(card).toHaveTextContent("Ask");
   // The text in the field is asked on its own Enter.
   await user.keyboard("{Enter}");
   await waitFor(() => expect(asks.n).toBe(1));
-  expect(await screen.findByRole("option", { name: "Answering: what does billing remember now" })).toBeInTheDocument();
+  expect(await screen.findByRole("option", { name: "Continue in chat" })).toBeInTheDocument();
 });

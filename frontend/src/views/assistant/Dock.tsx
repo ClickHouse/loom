@@ -1,30 +1,24 @@
-import { Suspense, lazy, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
+import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
+import { Title } from "@clickhouse/click-ui/Title";
 import { isAuthDisabled, isProxyMode } from "../../api";
 import { getOrgModelCalls } from "../../api/guardrails";
-import { confirmAction } from "../../components/ConfirmDialog";
 import { toast } from "../../components/Toast";
 import { ListTime } from "../../components/ui/ListTime";
-import { SectionHeading } from "../../components/ui/SectionHeading";
+import { ListRow } from "../../components/ui/ListRow";
+import { RowMenu } from "../../components/ui/RowMenu";
 import { useStarterPrefs } from "./cards/prefs";
 import { chatOff, useDock } from "../../lib/assistantDock";
 import { STARTERS_WAIT } from "./startersWait";
-import {
-  SHORT_REASON,
-  claimReason,
-  dockLayout,
-  isModal,
-  setDockReason,
-  useDockMode,
-  type AssistantReason,
-} from "../../lib/assistantLayout";
-import { announceAssistant, closeAssistant, collapseAssistant } from "../../lib/assistantDockRuntime";
+import { SHORT_REASON, claimReason, setDockReason, useDockMode, type AssistantReason } from "../../lib/assistantLayout";
+import { announceAssistant, closeAssistant } from "../../lib/assistantDockRuntime";
 import { CONVERSATION_PREFIX, EPOCH_KEY, INDEX_KEY, type Owner } from "../../lib/assistantStorage";
 import { canReadNamespace, isCollectionName, isMemoryNamespace } from "../../lib/namespace";
-import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../../lib/role";
+import { hasOrgAdminClaim, hasPlatformAdminClaim } from "../../lib/role";
 import { useStore } from "../../lib/state";
-import { AssistantChat } from "./Chat";
+import { AssistantChat, KEPT_HERE } from "./Chat";
 import {
   CITE_SOURCES,
   useChat,
@@ -92,9 +86,10 @@ export function DockBody() {
   const readiness = useChat((s) => s.readiness);
   const chatId = useChat((s) => s.id);
   const off = chatOff();
-  const modal = useDock(isModal);
   const focusField = useDock((s) => s.focusField);
-  const [showHistory, setShowHistory] = useState(false);
+  // History is the panel's own view, which its header's History button toggles.
+  const showHistory = useDock((s) => !!s.history);
+  const setShowHistory = (history: boolean) => useDock.setState({ history });
   // An open the person starts asks for the question field (openAssistant's focusField), on
   // an open panel too (the search's Continue): History gives way to the chat, which shows it.
   useEffect(() => {
@@ -104,6 +99,17 @@ export function DockBody() {
   useEffect(() => {
     if (!open) setShowHistory(false);
   }, [open]);
+  // The header's New chat: a new conversation, on the chat view, its field focused. While an
+  // answer streams the button is unavailable, and the store keeps the conversation.
+  const newChatSeq = useDock((s) => s.newChatSeq ?? 0);
+  const handledNewChat = useRef(newChatSeq);
+  useEffect(() => {
+    if (newChatSeq === handledNewChat.current) return;
+    handledNewChat.current = newChatSeq;
+    if (useChat.getState().answering) return;
+    newConversation();
+    useDock.setState({ history: false, focusField: true });
+  }, [newChatSeq]);
   // "Ask about this" (lib/assistantDockRuntime.ts askAbout): the chat shows, and a
   // conversation about another namespace gives way to a new one in the header's, which the
   // question being typed and the chip move to (they are the panel's); the old one stays in
@@ -263,6 +269,9 @@ export function DockBody() {
     ask(question, c.namespace ?? header, asked, null, { ...again, fromField: draft === question });
   };
 
+  // Chat not set up or its setup failing: the panel is its empty state and the starters,
+  // with no question field (ReasonBody's SetupState).
+  const setupDown = reason?.kind === "not_configured" || reason?.kind === "failing";
   const memory = isMemoryNamespace(namespace, mine);
   const mismatch = turns.length > 0 && convNamespace !== null && convNamespace !== namespace;
   const blocked = blockedBy({ reason, checking, memory, mismatch });
@@ -289,20 +298,13 @@ export function DockBody() {
   // except under a conversation reopened from History, which is read-only.
   const startersShown =
     ownerSettled && !expired && !(showHistory && owner) && (turns.length === 0 || (off && chatId === null));
-  // With the chat off an open's focus goes to the first starter (Starters takes it), or to
-  // the panel where none renders.
+  // With no question field an open's focus goes to the first starter (Starters takes it), or
+  // to the panel where none renders.
   useEffect(() => {
-    if (!off || !focusField || !ownerSettled || startersShown) return;
+    if (!setupDown || !focusField || !ownerSettled || startersShown) return;
     document.getElementById("assistant-panel")?.focus();
     useDock.setState({ focusField: false });
-  }, [off, focusField, ownerSettled, startersShown]);
-  const hasStored = off && !!owner && listConversations(owner, readable).length > 0;
-  // With the chat off History shows only while something is stored: deleting the last one
-  // leaves it for the starters.
-  useEffect(() => {
-    if (off && !hasStored) setShowHistory(false);
-  }, [off, hasStored]);
-
+  }, [setupDown, focusField, ownerSettled, startersShown]);
   if (expired)
     return (
       <p className="px-4 py-3 text-sm text-text-muted" role="status">
@@ -312,23 +314,17 @@ export function DockBody() {
 
   const starters = startersShown ? (
     <Suspense fallback={null}>
-      <Starters namespace={namespace} phone={mode === "sheet"} cannotAnswer={cannotAnswer} />
+      <Starters namespace={namespace} phone={mode === "sheet"} cannotAnswer={cannotAnswer} noField={setupDown} />
     </Suspense>
   ) : null;
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <Toolbar
-        modal={modal}
-        namespace={namespace}
-        history={showHistory}
-        onHistory={off && !hasStored ? null : () => setShowHistory((v) => !v)}
-        startNew={!answering && turns.length > 0 ? (off && chatId === null ? "Clear" : "New conversation") : null}
-      />
       {showHistory && owner ? (
         <History
           owner={owner}
           readable={readable}
+          current={chatId}
           onDeleted={() => setIndexTick((n) => n + 1)}
           onOpen={async (entry) => {
             if (!(await openConversation(entry.id))) return;
@@ -344,7 +340,7 @@ export function DockBody() {
         <>
           {/* It scrolls when the starters fill it; the padding keeps their focus rings whole. */}
           <div className="px-4 pt-3 pb-2 min-h-0 overflow-y-auto">
-            <div className="assistant-column space-y-2">
+            <div className="assistant-column space-y-3">
               {reason ? (
                 <ReasonBody reason={reason} onTryAgain={() => void tryAgain()} />
               ) : checking ? (
@@ -358,7 +354,9 @@ export function DockBody() {
               ) : mismatch && convNamespace ? (
                 <Mismatch old={convNamespace} now={namespace} />
               ) : turns.length === 0 ? (
-                <EmptyState />
+                <p className="text-sm text-text-muted">
+                  Ask about what this namespace holds. Answers cite the memories and documents they use.
+                </p>
               ) : null}
               {starters}
               {storageOff && (
@@ -375,87 +373,17 @@ export function DockBody() {
               )}
             </div>
           </div>
-          <AssistantChat namespace={convNamespace ?? namespace} blocked={blocked} />
+          <AssistantChat namespace={convNamespace ?? namespace} blocked={blocked} composer={!setupDown} />
         </>
       )}
     </div>
   );
 }
 
-function Toolbar({
-  modal,
-  namespace,
-  history,
-  onHistory,
-  startNew,
-}: {
-  modal: boolean;
-  namespace: string;
-  history: boolean;
-  /** Null where History has nothing to list (the chat off and nothing stored before). */
-  onHistory: (() => void) | null;
-  /** The button that starts over, by its words; null when there is nothing to start over. */
-  startNew: string | null;
-}) {
-  return (
-    <div className="px-4 py-2 border-b border-border shrink-0">
-      <div className="assistant-column flex flex-wrap items-center gap-2">
-        {!modal ? (
-          <span className="text-xs text-text-muted truncate">ns {namespace}</span>
-        ) : (
-          // The header's picker is covered while the panel is modal: over the page the panel
-          // closes, beside it the window collapses, before the picker opens.
-          <Link
-            component="button"
-            type="button"
-            size="sm"
-            onClick={() => {
-              const s = useDock.getState();
-              if (dockLayout(s.viewport, s.collapsed, s.prefWidth).mode !== "push") closeAssistant("nav");
-              else collapseAssistant();
-              useStore.getState().openNamespacePicker(true);
-            }}
-          >
-            {`ns ${namespace}`}
-          </Link>
-        )}
-        <div className="flex-1" />
-        {onHistory && (
-          <Button type="secondary" htmlType="button" aria-pressed={history} onClick={onHistory}>
-            History
-          </Button>
-        )}
-        {!history && startNew && (
-          <Button
-            type="secondary"
-            htmlType="button"
-            onClick={() => {
-              newConversation();
-              useDock.setState({ focusField: true });
-            }}
-          >
-            {startNew}
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="text-sm text-text-muted space-y-1">
-      <p>Ask about what this namespace holds, or start from one of Loom's own reads.</p>
-      <p className="text-xs">{savedHere()}</p>
-    </div>
-  );
-}
-
-/** Where the conversations are kept, said where they are listed. */
-function savedHere(): string {
-  return isProxyMode()
-    ? "Saved in this browser only, for 30 days."
-    : "Saved in this browser only, for 30 days. Signing out deletes them.";
+/** Where the chats are kept and what deleting does, said at the end of History. */
+function keptHere(): string {
+  const signOut = isProxyMode() ? "" : " Signing out deletes them.";
+  return `${KEPT_HERE}${signOut} Deleting a memory does not change answers already saved here.`;
 }
 
 function Mismatch({ old, now }: { old: string; now: string }) {
@@ -518,123 +446,172 @@ function Mismatch({ old, now }: { old: string; now: string }) {
 function History({
   owner,
   readable,
+  current,
   onDeleted,
   onOpen,
 }: {
   owner: Owner;
   readable: (ns: string) => boolean;
+  /** The chat the panel shows, marked in the list. */
+  current: string | null;
   /** A Delete or Delete all here: DockBody draws the list again, as for another tab's. */
   onDeleted: () => void;
   onOpen: (entry: { id: string; namespace: string }) => Promise<void>;
 }) {
-  const headingId = useId();
   const list = useRef<HTMLUListElement>(null);
-  // Where the focus goes once a Delete or Delete all has drawn: a row's id, or the heading.
-  const [focusTo, setFocusTo] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  // Where the focus goes once a Delete, Delete all or the confirmation's buttons have drawn:
+  // a row (by its chat's id), Delete all chats, the confirmation's Cancel, else the panel
+  // header's History button, which stays.
+  const [focusTo, setFocusTo] = useState<{ row: string } | "delete-all" | "cancel" | "history" | null>(null);
+  const deleteAll = useRef<HTMLButtonElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!focusTo) return;
-    const row = list.current?.querySelector<HTMLElement>(`[data-conversation="${focusTo}"] button`);
-    (row ?? document.getElementById(headingId))?.focus();
+    const target =
+      focusTo === "delete-all"
+        ? deleteAll.current
+        : focusTo === "cancel"
+          ? cancel.current
+          : typeof focusTo === "object"
+            ? list.current?.querySelector<HTMLElement>(`[data-conversation="${focusTo.row}"] [data-row-open]`)
+            : null;
+    (target ?? historyButton())?.focus();
     setFocusTo(null);
-  }, [focusTo, headingId]);
+  }, [focusTo]);
   // Read on each render (cheap: one small key): DockBody draws it again on a delete here or
   // a write to the index in another tab.
   const entries = listConversations(owner, readable);
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
       <div className="assistant-column space-y-3">
-        <SectionHeading label="History" level={3} id={headingId} focusable />
         {entries.length === 0 ? (
-          <p className="text-sm text-text-muted">No conversations saved here yet.</p>
+          <p className="text-sm text-text-muted">No chats saved here yet.</p>
         ) : (
-          <ul ref={list} className="space-y-1" aria-label="Saved conversations">
-            {entries.map((e, i) => (
-              <li key={e.id} data-conversation={e.id} className="flex items-center gap-2">
-                <Link component="button" type="button" size="sm" onClick={() => void onOpen(e)}>
-                  {e.title || "Untitled"}
-                </Link>
-                <span className="text-xs text-text-muted truncate">
-                  {e.namespace} · <ListTime time={new Date(e.updated).toISOString()} />
-                </span>
-                <div className="flex-1" />
-                <Button
-                  type="secondary"
-                  htmlType="button"
-                  aria-label={`Delete ${e.title || "this conversation"}`}
-                  onClick={() => {
-                    // The conversation shown goes first, an answer in it stopped: nothing
-                    // writes it after the delete.
-                    if (useChat.getState().id === e.id) resetChat(owner);
-                    deleteConversation(e.id);
-                    // The button goes with its row: the focus goes to the next row, or the heading.
-                    setFocusTo((entries[i + 1] ?? entries[i - 1])?.id ?? "heading");
-                    onDeleted();
-                  }}
-                >
-                  Delete
-                </Button>
-              </li>
-            ))}
+          <ul ref={list} className="space-y-1" aria-label="Saved chats">
+            {entries.map((e, i) => {
+              const title = e.title || "Untitled";
+              const shown = e.id === current;
+              return (
+                <li key={e.id} data-conversation={e.id}>
+                  <ListRow
+                    active={shown}
+                    trailing={
+                      <RowMenu
+                        name={title}
+                        items={[
+                          {
+                            label: "Delete",
+                            icon: "trash",
+                            danger: true,
+                            onSelect: () => {
+                              // The chat shown goes first, an answer in it stopped: nothing
+                              // writes it after the delete.
+                              if (useChat.getState().id === e.id) resetChat(owner);
+                              deleteConversation(e.id);
+                              // The row goes: the focus goes to the next row, or History.
+                              const next = (entries[i + 1] ?? entries[i - 1])?.id;
+                              setFocusTo(next ? { row: next } : "history");
+                              onDeleted();
+                            },
+                          },
+                        ]}
+                      />
+                    }
+                  >
+                    <button
+                      type="button"
+                      data-row-open=""
+                      className="list-row-open block w-full min-w-0 text-sm text-text truncate"
+                      aria-current={shown ? "true" : undefined}
+                      onClick={() => void onOpen(e)}
+                    >
+                      {title}
+                    </button>
+                    <span className="block text-xs text-text-muted truncate">
+                      {e.namespace} · <ListTime time={new Date(e.updated).toISOString()} />
+                      {shown && " · Open now"}
+                    </span>
+                  </ListRow>
+                </li>
+              );
+            })}
           </ul>
         )}
-        <p className="text-xs text-text-muted">{savedHere()}</p>
-        {entries.length > 0 && (
-          <div className="space-y-1">
-            <Button
-              type="danger"
-              htmlType="button"
-              onClick={() =>
-                void confirmAction({
-                  title: "Delete every saved conversation?",
-                  message: "They are deleted from this browser.",
-                  confirmLabel: "Delete all",
-                  danger: true,
-                }).then((ok) => {
-                  if (!ok) return;
-                  deleteAllConversations(owner);
-                  resetChat(owner);
-                  // The button goes with the list: the focus goes to the heading.
-                  setFocusTo("heading");
-                  onDeleted();
-                })
-              }
-            >
-              Delete all
-            </Button>
-            <p className="text-xs text-text-muted">Deleting a memory doesn't change answers already saved here.</p>
-          </div>
-        )}
+        <div className="space-y-2 border-t border-border pt-3">
+          <p className="text-xs text-text-muted">{keptHere()}</p>
+          {entries.length > 0 &&
+            (confirming ? (
+              // Confirmed here, in the panel: a dialog over a dialog would stack two traps.
+              // biome-ignore lint/a11y/useSemanticElements: a confirmation's two buttons, not a form's fields
+              <div role="group" aria-label="Delete all chats" className="space-y-2">
+                <p className="text-sm text-text">Delete every chat saved in this browser?</p>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    type="secondary"
+                    htmlType="button"
+                    ref={cancel}
+                    onClick={() => {
+                      setConfirming(false);
+                      setFocusTo("delete-all");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="danger"
+                    htmlType="button"
+                    onClick={() => {
+                      deleteAllConversations(owner);
+                      resetChat(owner);
+                      setConfirming(false);
+                      // The list goes: the focus goes to the History button.
+                      setFocusTo("history");
+                      onDeleted();
+                    }}
+                  >
+                    Delete all
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                type="danger"
+                htmlType="button"
+                ref={deleteAll}
+                onClick={() => {
+                  setConfirming(true);
+                  setFocusTo("cancel");
+                }}
+              >
+                Delete all chats
+              </Button>
+            ))}
+        </div>
       </div>
     </div>
   );
 }
 
+/** The panel header's History button (layout/AssistantPanel.tsx). */
+const historyButton = () => document.querySelector<HTMLElement>(".assistant-head button[aria-pressed]");
+
 /** Why the assistant cannot answer, in words that say who fixes it and where (the link
  *  goes only to someone who can open the page it names). */
 function ReasonBody({ reason, onTryAgain }: { reason: AssistantReason; onTryAgain: () => void }) {
   const whoami = useStore((s) => s.whoami);
-  const mine = useStore((s) => s.myNamespaces);
   const identity = useStore((s) => s.identity);
   const platform = hasPlatformAdminClaim(whoami);
   const orgAdmin = hasOrgAdminClaim(whoami);
-  const seesHealth = isNamespaceAdmin(whoami, mine, identity?.namespace ?? "");
   const modelCalls = useModelCalls(reason.kind === "model_calls_off" && (platform || orgAdmin), identity?.org ?? "");
-  const health = (label: string) => (
-    <Link
-      component="button"
-      type="button"
-      size="sm"
-      onClick={() => useStore.getState().navigate("admin:health", { arriveFocus: "health-assistant" })}
-    >
-      {label}
-    </Link>
-  );
   const guardrails = (
     <Link component="button" type="button" size="sm" onClick={() => useStore.getState().navigate("admin:guardrails")}>
       Admin › Guardrails
     </Link>
   );
-  const retries = "Loom retries the setup on its own; this updates when it works.";
+  // Chat not set up, or its setup failing: one empty state, Loom's own reads under it.
+  if (reason.kind === "not_configured" || reason.kind === "failing")
+    return <SetupState failing={reason.kind === "failing"} onTryAgain={onTryAgain} />;
   let text: ReactNode;
   switch (reason.kind) {
     case "auth_off":
@@ -652,26 +629,6 @@ function ReasonBody({ reason, onTryAgain }: { reason: AssistantReason; onTryAgai
       break;
     case "starting":
       text = "Setting up — usually under a minute. This updates on its own.";
-      break;
-    case "not_configured":
-      text = platform ? (
-        <>Set up chat: {health("see Health")}</>
-      ) : (
-        "Chat is not set up on this deployment; the starters read Loom without it. An admin of this deployment sets it up."
-      );
-      break;
-    case "failing":
-      text = platform ? (
-        <>
-          The assistant's setup failed: {health("see Health")}. {retries}
-        </>
-      ) : seesHealth ? (
-        <>
-          An admin of this deployment fixes the assistant's setup. {retries} Details: {health("see Health")}
-        </>
-      ) : (
-        `An admin of this deployment fixes the assistant's setup. ${retries}`
-      );
       break;
     case "model_calls_off":
       text =
@@ -691,11 +648,52 @@ function ReasonBody({ reason, onTryAgain }: { reason: AssistantReason; onTryAgai
   return (
     <div className="space-y-2" data-testid="assistant-unavailable" data-reason={reason.kind}>
       <p className="text-sm text-text">{text}</p>
-      {/* With the chat off there is nothing to try again. */}
-      {!chatOff() && (
+      <Button type="secondary" htmlType="button" onClick={onTryAgain}>
+        Try again
+      </Button>
+    </div>
+  );
+}
+
+/** Chat not set up (`failing`: its setup failing): the icon, a title and one sentence, then
+ *  Open Models & keys for a caller who can open that page, or Try again while it fails. The
+ *  starters under it are Loom's own reads, which need no model. */
+function SetupState({ failing, onTryAgain }: { failing: boolean; onTryAgain: () => void }) {
+  const whoami = useStore((s) => s.whoami);
+  // Settings › Models & keys shows to a platform admin, and to everyone with auth off.
+  const canOpen = isAuthDisabled() || hasPlatformAdminClaim(whoami);
+  const sentence = failing
+    ? "Loom retries the setup on its own; until it works, Loom can still answer these from its own reads."
+    : canOpen
+      ? "An admin chooses the model and key in Models & keys. Until then, Loom can still answer these from its own reads."
+      : "Ask an admin to set it up in Models & keys.";
+  return (
+    <div
+      className="flex flex-col items-center gap-2 py-4 text-center"
+      data-testid="assistant-unavailable"
+      data-reason={failing ? "failing" : "not_configured"}
+    >
+      <div className="grid h-10 w-10 place-items-center rounded-sm bg-surface-2 text-text-muted">
+        <Icon name={failing ? "warning" : "sparkle"} size="md" aria-hidden="true" />
+      </div>
+      <Title type="h3" size="sm">
+        {failing ? "Chat can't reach its model" : "Chat isn't set up"}
+      </Title>
+      <p className="max-w-sm text-sm text-text-muted">{sentence}</p>
+      {failing ? (
         <Button type="secondary" htmlType="button" onClick={onTryAgain}>
           Try again
         </Button>
+      ) : (
+        canOpen && (
+          <Button
+            type="secondary"
+            htmlType="button"
+            onClick={() => useStore.getState().navigate("setup", { query: { tab: "models" } })}
+          >
+            Open Models & keys
+          </Button>
+        )
       )}
     </div>
   );

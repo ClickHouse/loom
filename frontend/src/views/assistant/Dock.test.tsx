@@ -18,7 +18,7 @@ import { askAbout, openAssistant } from "../../lib/assistantDockRuntime";
 import { PANEL_DEFAULT } from "../../lib/assistantLayout";
 import { INDEX_KEY } from "../../lib/assistantStorage";
 import { axeViolations } from "../../test/axe";
-import { ConfirmViewport } from "../../components/ConfirmDialog";
+import { AssistantHeader } from "../../layout/AssistantHeader";
 import { READINESS_POLL_MS, DockBody } from "./Dock";
 import { READINESS_TIMEOUT_MS } from "./readiness";
 import { OTHER_TAB, resetChat, useChat } from "./chatStore";
@@ -87,6 +87,7 @@ function signIn(who: Who, claims: Record<string, unknown> = {}) {
 function show() {
   return render(
     <>
+      <AssistantHeader expanded={false} />
       <DockBody />
       <p id="loom-assistant-status" role="status" />
     </>,
@@ -127,6 +128,7 @@ beforeEach(() => {
     prefWidth: PANEL_DEFAULT,
     item: null,
     pageOff: false,
+    history: false,
   });
   vi.stubGlobal(
     "fetch",
@@ -162,50 +164,46 @@ const refusal = (status: number, detail: object) => () => json({ detail }, statu
 
 describe("reasons, worded per reader", () => {
   it.each<[Who, string, boolean]>([
-    ["platform", "Set up chat: see Health", true],
     [
-      "nsAdmin",
-      "Chat is not set up on this deployment; the starters read Loom without it. An admin of this deployment sets it up.",
-      false,
+      "platform",
+      "Chat isn't set upAn admin chooses the model and key in Models & keys. Until then, Loom can still answer these from its own reads.",
+      true,
     ],
-    [
-      "viewer",
-      "Chat is not set up on this deployment; the starters read Loom without it. An admin of this deployment sets it up.",
-      false,
-    ],
+    ["nsAdmin", "Chat isn't set upAsk an admin to set it up in Models & keys.", false],
+    ["viewer", "Chat isn't set upAsk an admin to set it up in Models & keys.", false],
   ])("not configured, for a %s", async (who, text, link) => {
     check = null;
     signIn(who);
     show();
-    expect(await unavailable()).toHaveTextContent(text);
-    expect(!!screen.queryByRole("button", { name: "see Health" })).toBe(link);
-    expect(screen.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-disabled", "true");
+    const body = await unavailable();
+    expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat isn't set up");
+    expect(body).toHaveTextContent(text);
+    // The link shows only to a caller who can open Models & keys.
+    const open = within(body).queryByRole("button", { name: "Open Models & keys" });
+    expect(!!open).toBe(link);
+    // No question field and no box: the starters under it are Loom's own reads.
+    expect(screen.queryByLabelText("Question")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(await screen.findByRole("list", { name: "Starters" })).toBeInTheDocument();
     await waitFor(() => expect(useDock.getState().reason).toEqual({ kind: "not_configured" }));
+    if (open) {
+      await userEvent.click(open);
+      expect(useStore.getState().view).toBe("setup");
+      expect(window.location.search).toContain("tab=models");
+    }
   });
 
-  it.each<[Who, string, boolean]>([
-    [
-      "platform",
-      "The assistant's setup failed: see Health. Loom retries the setup on its own; this updates when it works.",
-      true,
-    ],
-    [
-      "nsAdmin",
-      "An admin of this deployment fixes the assistant's setup. Loom retries the setup on its own; this updates when it works. Details: see Health",
-      true,
-    ],
-    [
-      "viewer",
-      "An admin of this deployment fixes the assistant's setup. Loom retries the setup on its own; this updates when it works.",
-      false,
-    ],
-  ])("failing, for a %s", async (who, text, link) => {
+  it.each<Who>(["platform", "nsAdmin", "viewer"])("failing, for a %s", async (who) => {
     check = { ok: false, reason: "failing", required: false };
     signIn(who);
     show();
     const body = await unavailable();
-    expect(body).toHaveTextContent(text);
-    expect(!!within(body).queryByRole("button", { name: "see Health" })).toBe(link);
+    expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat can't reach its model");
+    expect(body).toHaveTextContent(
+      "Loom retries the setup on its own; until it works, Loom can still answer these from its own reads.",
+    );
+    expect(within(body).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Question")).toBeNull();
   });
 
   it("starting, and readiness is read again while it sets up", async () => {
@@ -418,7 +416,7 @@ describe("Try again", () => {
     expect(await screen.findByText("Ada.")).toBeInTheDocument();
     await waitFor(() => expect(useChat.getState().answering).toBe(false));
     chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
-    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await unavailable();
     // The turn is back as it was, its question waiting in the field as an edit.
     expect(screen.getByText("Ada.")).toBeInTheDocument();
@@ -447,7 +445,7 @@ describe("Try again", () => {
     await unavailable();
     const user = userEvent.setup();
     // The refused question waits in the field: an Edit would replace it.
-    expect(screen.queryByRole("button", { name: "Edit your question" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit question" })).toBeNull();
     chat.push(() => answer("Since May."));
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("Since May.")).toBeInTheDocument();
@@ -462,7 +460,7 @@ describe("Try again", () => {
     show();
     await answered("Who owns billing?", "Ada.");
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    await user.click(screen.getByRole("button", { name: "Edit question" }));
     const field = screen.getByLabelText("Question");
     await user.clear(field);
     await user.type(field, "Who owns invoices?");
@@ -474,8 +472,8 @@ describe("Try again", () => {
     await user.type(field, "next");
     await waitFor(() => expect(useChat.getState().refused?.question).toBe("Who owns invoices?"));
     await user.clear(field);
-    expect(screen.queryByRole("button", { name: "Edit your question" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit question" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Ask again, answer/ })).toBeNull();
     await user.keyboard("{ArrowUp}");
     expect(field).toHaveValue("");
     // Try again still asks the edited words in place.
@@ -512,7 +510,7 @@ describe("Try again", () => {
     // Nothing can be asked until the reason goes: an edit opened now would end with the
     // refused question's Try again.
     await user.clear(screen.getByLabelText("Question"));
-    expect(screen.queryByRole("button", { name: "Edit your question" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit question" })).toBeNull();
   });
 
   it("answers a Retry refused while the field held other text in its turn, and keeps that text", async () => {
@@ -522,7 +520,7 @@ describe("Try again", () => {
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Question"), "half typed");
     chat.push(starting());
-    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await unavailable();
     expect(screen.getByLabelText("Question")).toHaveValue("half typed");
     chat.push(() => answer("Grace."));
@@ -538,7 +536,7 @@ describe("Try again", () => {
     await answered("Who owns billing?", "Ada.");
     chat.push(starting());
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await unavailable();
     await user.click(screen.getByRole("button", { name: "Cancel edit" }));
     expect(useChat.getState().editing).toBeNull();
@@ -577,7 +575,7 @@ describe("Try again", () => {
     await unavailable();
     // The turn put back waits for Try again: no second attempt can replace its words.
     expect(screen.queryByRole("button", { name: "Ask again with sources" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Ask again, answer/ })).toBeNull();
     expect(sent).toHaveLength(2);
     chat.push(() => answer("On Fridays."));
     await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -594,7 +592,7 @@ describe("Try again", () => {
     act(() => useStore.setState({ view: "recall" }));
     chat.push(starting());
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await unavailable();
     chat.push(() => answer("Grace."));
     await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -639,7 +637,7 @@ describe("Try again", () => {
     const id = useChat.getState().id as string;
     chat.push(next());
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     if (stopIt) await user.click(await screen.findByRole("button", { name: "Stop" }));
     await waitFor(() => expect(useChat.getState().answering).toBe(false));
     expect(pairs()).toEqual([["Who owns billing?", "Ada."]]);
@@ -657,7 +655,7 @@ describe("Try again", () => {
     const id = useChat.getState().id as string;
     chat.push((init?: RequestInit) => stream([], init));
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await user.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(useChat.getState().answering).toBe(true));
     // The page hides before any text: the stored turn is still the answer before.
     window.dispatchEvent(new Event("pagehide"));
@@ -695,7 +693,7 @@ describe("Try again", () => {
     await answered("Who owns billing?", "Ada.");
     const id = useChat.getState().id as string;
     chat.push((init?: RequestInit) => stream(events, init));
-    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(useChat.getState().answering).toBe(false));
     expect(pairs()).toEqual([["Who owns billing?", "Ada."]]);
     expect(screen.getByText("Ada.")).toBeInTheDocument();
@@ -724,7 +722,7 @@ describe("Try again", () => {
         ),
     );
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    await user.click(screen.getByRole("button", { name: "Edit question" }));
     const field = screen.getByLabelText("Question");
     await user.clear(field);
     await user.type(field, "Who owns invoices?");
@@ -748,7 +746,7 @@ describe("Try again", () => {
     await answered("Who owns billing?", "Ada.");
     chat.push((init?: RequestInit) => stream([], init));
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Edit your question" }));
+    await user.click(screen.getByRole("button", { name: "Edit question" }));
     const field = screen.getByLabelText("Question");
     await user.clear(field);
     await user.type(field, "Who owns invoices?");
@@ -764,7 +762,7 @@ describe("Try again", () => {
     signIn("viewer");
     show();
     const user = await stoppedEdit();
-    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    await user.click(screen.getByRole("button", { name: "New chat" }));
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     expect(useChat.getState().refused).toBeNull();
 
@@ -821,7 +819,7 @@ describe("Try again", () => {
     show();
     await answered("Who owns billing?", "Ada.");
     chat.push(starting());
-    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await unavailable();
     await act(async () => {
       vi.advanceTimersByTime(READINESS_POLL_MS + 10);
@@ -839,7 +837,7 @@ describe("Try again", () => {
     show();
     await answered("Who owns billing?", "Ada.");
     chat.push(refusal(429, { code: "RATE_LIMITED", message: "over the cap", retry_after_s: 60 }));
-    await userEvent.setup().click(screen.getByRole("button", { name: "Retry" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await waitFor(() => expect(useChat.getState().notice).toMatch(/^Not asked again: /));
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     expect(useChat.getState().refused).toBeNull();
@@ -868,8 +866,14 @@ const done = (i: number): Turn => ({
   at: i,
 });
 
+/** A History row's Delete, in the row's menu. */
+async function deleteRow(user: ReturnType<typeof userEvent.setup>, title: string) {
+  await user.click(screen.getByRole("button", { name: `Actions for ${title}` }));
+  await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+}
+
 describe("History", () => {
-  it("lists this person's conversations, with the browser-only note, Delete and Delete all", async () => {
+  it("lists this person's chats, with the privacy line, a row menu's Delete and Delete all", async () => {
     signIn("viewer");
     saveConversation({
       id: "c1",
@@ -900,21 +904,54 @@ describe("History", () => {
     });
     const { container } = show();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "History" }));
-    const list = screen.getByRole("list", { name: "Saved conversations" });
+    const history = screen.getByRole("button", { name: "History" });
+    expect(history).toHaveAttribute("aria-pressed", "false");
+    await user.click(history);
+    // History is its own view: the header says so, after Back, and History shows pressed.
+    expect(screen.getByRole("heading", { level: 2, name: "History" })).toBeInTheDocument();
+    expect(history).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Back to the chat" })).toBeInTheDocument();
+    const list = screen.getByRole("list", { name: "Saved chats" });
     expect(
       within(list)
         .getAllByRole("listitem")
         .map((li) => li.textContent),
     ).toEqual([expect.stringContaining("Invoices"), expect.stringContaining("Refunds")]);
-    expect(screen.getByText("Saved in this browser only, for 30 days. Signing out deletes them.")).toBeInTheDocument();
-    expect(screen.getByText("Deleting a memory doesn't change answers already saved here.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Chats are kept in this browser for 30 days. Signing out deletes them. Deleting a memory does not change answers already saved here.",
+      ),
+    ).toBeInTheDocument();
     expect(await axeViolations(container)).toEqual([]);
-    await user.click(screen.getByRole("button", { name: "Delete Refunds" }));
+    await deleteRow(user, "Refunds");
     expect(screen.queryByText("Refunds")).not.toBeInTheDocument();
-    vi.stubGlobal("confirm", () => true);
+    // Delete all is confirmed in the panel; Cancel keeps everything.
+    await user.click(screen.getByRole("button", { name: "Delete all chats" }));
+    const confirm = screen.getByRole("group", { name: "Delete all chats" });
+    expect(confirm).toHaveTextContent("Delete every chat saved in this browser?");
+    expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Delete all chats" })).toHaveFocus();
+    expect(screen.getByText("Invoices")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Delete all chats" }));
     await user.click(screen.getByRole("button", { name: "Delete all" }));
-    await waitFor(() => expect(screen.getByText("No conversations saved here yet.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("No chats saved here yet.")).toBeInTheDocument());
+  });
+
+  it("marks the chat shown, and Back returns to it with the focus in the question field", async () => {
+    signIn("viewer");
+    saved([done(0)]);
+    show();
+    const user = userEvent.setup();
+    await openSaved(user);
+    await user.click(screen.getByRole("button", { name: "History" }));
+    const row = screen.getByRole("button", { name: "Invoices" });
+    expect(row).toHaveAttribute("aria-current", "true");
+    expect(row.closest(".list-row")).toHaveAttribute("data-active");
+    await user.click(screen.getByRole("button", { name: "Back to the chat" }));
+    expect(screen.getByRole("heading", { level: 2, name: "Ask AI" })).toBeInTheDocument();
+    expect(screen.getByText("Answer 0")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Question")).toHaveFocus());
   });
 
   it("lists no conversation kept in a collection: the header never holds one", async () => {
@@ -932,7 +969,7 @@ describe("History", () => {
       saveConversation({ id, owner: alice, namespace, title, turns: [done(0)], trimmed: false, updated: Date.now() });
     show();
     await userEvent.setup().click(screen.getByRole("button", { name: "History" }));
-    const list = screen.getByRole("list", { name: "Saved conversations" });
+    const list = screen.getByRole("list", { name: "Saved chats" });
     expect(within(list).getByText("Invoices")).toBeInTheDocument();
     expect(within(list).queryByText(/Research notes/)).toBeNull();
   });
@@ -963,7 +1000,11 @@ describe("History", () => {
     signIn("viewer");
     show();
     await userEvent.setup().click(screen.getByRole("button", { name: "History" }));
-    expect(screen.getByText("Saved in this browser only, for 30 days.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Chats are kept in this browser for 30 days. Deleting a memory does not change answers already saved here.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("hides the conversations while the session is expired, and shows them again on the same person's sign-in", async () => {
@@ -980,8 +1021,10 @@ describe("History", () => {
     show();
     act(() => useStore.setState({ sessionExpired: true }));
     expect(screen.getByText("Your session ended. Sign in again to see your conversations.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "History" })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: "History" }));
+    expect(screen.queryByRole("button", { name: "Invoices" })).not.toBeInTheDocument();
     act(() => useStore.setState({ sessionExpired: false }));
+    act(() => useDock.setState({ history: false }));
     await userEvent.setup().click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByRole("button", { name: "Invoices" })).toBeInTheDocument();
   });
@@ -992,7 +1035,7 @@ describe("History", () => {
     show();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "History" }));
-    expect(await screen.findByRole("heading", { name: "History" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "History" })).toBeInTheDocument();
     act(() => useDock.setState({ open: false }));
     act(() => useDock.setState({ open: true, focusField: true }));
     await waitFor(() => expect(screen.getByLabelText("Question")).toHaveFocus());
@@ -1152,7 +1195,8 @@ describe("the conversation", () => {
       }),
     );
     expect(screen.getByText("This conversation is about team.")).toBeInTheDocument();
-    const pick = await screen.findByTestId("pick-agent");
+    // The card is a chunk of its own, which a busy run loads late.
+    const pick = await screen.findByTestId("pick-agent", {}, { timeout: 5000 });
     // The pick itself is open: the person's own read of the card's namespace.
     expect(pick).not.toHaveAttribute("aria-disabled");
     const before = asked.length;
@@ -1212,7 +1256,8 @@ describe("the conversation", () => {
       at: Date.now(),
     };
     act(() => useChat.setState((c) => ({ turns: [...c.turns, card as never], answering: true })));
-    const pick = await screen.findByTestId("pick-agent");
+    // The card is a chunk of its own, which a busy run loads late.
+    const pick = await screen.findByTestId("pick-agent", {}, { timeout: 5000 });
     expect(pick).toHaveAttribute("aria-disabled", "true");
     expect(pick).toHaveAccessibleDescription("An answer is still coming in.");
     act(() => useChat.setState({ answering: false }));
@@ -1569,7 +1614,7 @@ describe("one answer per conversation across tabs", () => {
     await waitFor(() => expect(useChat.getState().id).not.toBeNull());
     const id = useChat.getState().id as string;
     await user.click(screen.getByRole("button", { name: "History" }));
-    await user.click(screen.getByRole("button", { name: "Delete Who?" }));
+    await deleteRow(user, "Who?");
     expect(useChat.getState()).toMatchObject({ answering: false, id: null, notice: null });
     expect(useDock.getState().working).toBe(false);
     await act(async () => {
@@ -1885,34 +1930,28 @@ describe("the focus, beside the page", () => {
     });
   };
 
-  it("a row's Delete hands it to the next row, then the last one's to the History heading", async () => {
+  it("a row's Delete hands it to the next row, then the last one's to the History button", async () => {
     signIn("viewer");
     two();
     show();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "History" }));
-    await user.click(screen.getByRole("button", { name: "Delete Invoices" }));
-    expect(screen.getByRole("button", { name: "Refunds" })).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "Delete Refunds" }));
-    expect(screen.getByRole("heading", { name: "History" })).toHaveFocus();
+    await deleteRow(user, "Invoices");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refunds" })).toHaveFocus());
+    await deleteRow(user, "Refunds");
+    await waitFor(() => expect(screen.getByRole("button", { name: "History" })).toHaveFocus());
   });
 
-  it("Delete all hands it to the History heading", async () => {
+  it("Delete all hands it to the History button", async () => {
     signIn("viewer");
     two();
-    render(
-      <>
-        <DockBody />
-        <ConfirmViewport />
-        <p id="loom-assistant-status" role="status" />
-      </>,
-    );
+    show();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Delete all chats" }));
     await user.click(screen.getByRole("button", { name: "Delete all" }));
-    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Delete all" }));
-    await waitFor(() => expect(screen.getByText("No conversations saved here yet.")).toBeInTheDocument());
-    await waitFor(() => expect(screen.getByRole("heading", { name: "History" })).toHaveFocus());
+    await waitFor(() => expect(screen.getByText("No chats saved here yet.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "History" })).toHaveFocus());
   });
 
   it("Try again that clears the reason hands it to the question field", async () => {
@@ -1936,7 +1975,6 @@ describe("the page a question is asked from", () => {
     ...over,
   });
   const chipText = () => screen.getByTestId("assistant-page-chip").textContent;
-  const HINT = "Your question names this page. Remove it here.";
   beforeEach(() => useStore.setState({ view: "memories" }));
 
   it("each new question carries the page, shown as a chip, sent as a leading line the transcript leaves out", async () => {
@@ -1944,8 +1982,8 @@ describe("the page a question is asked from", () => {
     show();
     chat.push(() => answer("Ada."));
     await waitFor(() => expect(chipText()).toBe("Includes: Memories"));
+    // The chip carries no helper line: its × and its tooltip say what it does.
     expect(screen.getByRole("button", { name: "Don't include this page" })).toBeInTheDocument();
-    expect(screen.getByText(HINT)).toBeInTheDocument();
     await askIt("Who owns billing?");
     await screen.findByText("Ada.");
     expect(sent).toEqual([["Context: Memories page\n\nWho owns billing?"]]);
@@ -1953,9 +1991,6 @@ describe("the page a question is asked from", () => {
     expect(turn).toHaveTextContent("Who owns billing?");
     expect(turn).toHaveTextContent("Includes: Memories");
     expect(turn).not.toHaveTextContent("Context:");
-    // The hint is shown until the first question.
-    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
-    expect(localStorage.getItem("loom_assistant_page_hint")).toBe("1");
   });
 
   it("removing the chip sends nothing about the page; the next question carries it again", async () => {
@@ -1968,7 +2003,6 @@ describe("the page a question is asked from", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Don't include this page" }));
     expect(screen.queryByTestId("assistant-page-chip")).not.toBeInTheDocument();
-    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Question")).toHaveFocus();
     await askIt("Who owns billing?");
     await screen.findByText("Ada.");
@@ -2244,7 +2278,8 @@ describe("Ask about this, the edge cases", () => {
     await user.click(screen.getByRole("button", { name: "Try again" }));
     // "Context: Memories page, memory "user/pref/lang"" is 47 characters, and two line breaks.
     const line = "Not sent: with this page's line the question is longer than 19,951 characters.";
-    expect(await screen.findByText(line)).toBeInTheDocument();
+    // The panel's line; the live region says the same.
+    expect(await screen.findByText(line, { ignore: "#loom-assistant-status" })).toBeInTheDocument();
     await waitFor(() => expect(document.getElementById("loom-assistant-status")).toHaveTextContent(line));
     expect(sent).toHaveLength(1);
     expect(screen.getByLabelText("Question")).toHaveValue("a newer question");
@@ -2267,7 +2302,7 @@ describe("Ask about this, the edge cases", () => {
     await user.click(screen.getByRole("button", { name: "Try again" }));
     // 19,951 less " Cite your sources." (19 characters).
     const line = "Not sent: with this page's line the question is longer than 19,932 characters.";
-    expect(await screen.findByText(line)).toBeInTheDocument();
+    expect(await screen.findByText(line, { ignore: "#loom-assistant-status" })).toBeInTheDocument();
     expect(sent).toHaveLength(1);
   });
 
@@ -2313,8 +2348,8 @@ describe("the starters", () => {
     show();
     await unavailable();
     expect(await screen.findByRole("list", { name: "Starters" })).toBeInTheDocument();
-    // The assistant can't answer: the box is off and says why.
-    expect(screen.getByRole("checkbox", { name: "Also ask the assistant" })).toBeDisabled();
+    // The assistant can't answer: no box offers to ask the model.
+    expect(screen.queryByRole("checkbox", { name: "Also ask the model" })).toBeNull();
   });
 
   it("the Insights button starts a new conversation over a finished one, so the starters show", async () => {
@@ -2355,17 +2390,16 @@ describe("with the chat off", () => {
     window.__LOOM_ASSISTANT = undefined;
   });
 
-  it("opens to the starters with the reason: no question field, no Try again, no Also ask, no readiness read", async () => {
+  it("opens to the starters with the reason: no question field, no Try again, no box, no readiness read", async () => {
     mode.authOff = true;
     signIn("viewer");
     show();
     expect(await unavailable()).toHaveAttribute("data-reason", "not_configured");
     await starter(/What does this namespace hold/);
     expect(screen.queryByLabelText("Question")).toBeNull();
-    expect(screen.queryByRole("form", { name: "Ask the assistant" })).toBeNull();
+    expect(screen.queryByRole("form", { name: "Ask AI" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-    expect(screen.queryByRole("checkbox", { name: "Also ask the assistant" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Also ask the model" })).toBeNull();
     expect(paths).not.toContain("/v1/health/ready");
     expect(useDock.getState().reason).toEqual({ kind: "not_configured" });
   });
@@ -2380,8 +2414,8 @@ describe("with the chat off", () => {
     expect(screen.getByTestId("assistant-starters")).toBeInTheDocument();
     expect(localStorage.getItem(INDEX_KEY)).toBeNull();
     expect(paths).not.toContain("/v1/assistant/chat/completions");
-    // Over the unsaved list the toolbar's button clears it.
-    await user.click(screen.getByRole("button", { name: "Clear" }));
+    // Over the unsaved list the header's New chat clears it.
+    await user.click(screen.getByRole("button", { name: "New chat" }));
     expect(useChat.getState().turns).toHaveLength(0);
   });
 
@@ -2404,15 +2438,15 @@ describe("with the chat off", () => {
     await screen.findByText("Answer 0");
     expect(screen.queryByTestId("assistant-starters")).toBeNull();
     // Read-only: nothing asks it again.
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Ask again, answer/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Ask again with sources/ })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    await user.click(screen.getByRole("button", { name: "New chat" }));
     await user.click(await starter(/How is this namespace being used/));
     await waitFor(() => expect(useChat.getState().turns).toHaveLength(1));
     expect(localStorage.getItem(INDEX_KEY)).toBe(index);
   });
 
-  it("deleting the last stored conversation leaves History for the starters", async () => {
+  it("deleting the last stored conversation leaves History empty, and Back shows the starters", async () => {
     signIn("nsAdmin");
     saveConversation({
       id: "c1",
@@ -2426,9 +2460,10 @@ describe("with the chat off", () => {
     show();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "History" }));
-    await user.click(screen.getByRole("button", { name: "Delete Invoices" }));
+    await deleteRow(user, "Invoices");
+    expect(await screen.findByText("No chats saved here yet.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Back to the chat" }));
     await starter(/What does this namespace hold/);
-    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
   });
 
   it("a read in another namespace than the list's starts a new list there", async () => {

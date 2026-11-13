@@ -2,12 +2,13 @@ import { expect, test, type Page, type Request } from "@playwright/test";
 import { violations } from "./axe";
 import { installApi, NAMESPACE } from "./fixtures";
 
-// The assistant panel's chat, opened from its launcher, against a fake chat route: the answer arrives as the
+// The Ask AI panel's chat, opened from its launcher, against a fake chat route: the answer arrives as the
 // server-sent chunks `POST /v1/assistant/chat/completions` streams (OpenAI's chunk shape,
 // ending at `data: [DONE]`), a refusal before the stream as Loom's error envelope. The
 // answer carries every Markdown form the chat draws, a table wider than a phone, HTML and
-// an image that must stay text, and citations, which stay plain text in the answer; the
-// checked ones follow in its Sources, from the stream's last `loom.citations` event.
+// an image that must stay text, and citations, each drawn as its number; the checked ones
+// follow in its Sources, led by the same numbers, from the stream's last `loom.citations`
+// event.
 
 const SCREENSHOT = process.env.ASSISTANT_CHAT_SCREENSHOT;
 
@@ -64,8 +65,8 @@ function streamed(text: string): string {
 }
 
 /** A page with the panel open on an empty chat: readiness reports the assistant ready, and
- *  the Ask AI button (or `Ctrl+J`) opens it. */
-async function openChat(page: Page, by: "launcher" | "shortcut" = "launcher") {
+ *  the Ask AI button opens it. */
+async function openChat(page: Page) {
   await installApi(page);
   await page.route("**/v1/health/ready", (r) =>
     r.fulfill({ status: 200, json: { ready: true, checks: { assistant: { ok: true, required: false } } } }),
@@ -73,14 +74,7 @@ async function openChat(page: Page, by: "launcher" | "shortcut" = "launcher") {
   await page.goto("/memories");
   await expect(page.locator("main h1").first()).toBeVisible();
   await expect(launcher(page)).toBeVisible();
-  if (by === "launcher") await launcher(page).click();
-  // The shortcut's listener is wired once the shell has drawn: a press that lands before
-  // it is pressed again, only while the panel is still closed.
-  else
-    await expect(async () => {
-      if ((await launcher(page).getAttribute("aria-expanded")) !== "true") await page.keyboard.press("Control+j");
-      await expect(launcher(page)).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
-    }).toPass({ timeout: 30_000 });
+  await launcher(page).click();
   await expect(page.getByRole("textbox", { name: "Question" })).toBeFocused();
 }
 
@@ -126,12 +120,18 @@ for (const width of [1400, 375]) {
 
       await expect(chat.locator("strong", { hasText: "Billing" })).toBeVisible();
       await expect(chat.locator("pre")).toContainText("SELECT account");
-      await expect(chat).toContainText("[memory:billing/invoices@v3]");
-      await expect(chat).toContainText("[code:server/billing/schedule.py:42]");
+      // Each citation is its number, as the search's card draws it, linking to its row.
+      await expect(chat).not.toContainText("[memory:billing/invoices@v3]");
+      await expect(chat).toContainText("on Fridays 1.");
+      await expect(chat).toContainText("schedule.py 3.");
       await expect(chat).toContainText('<img src="https://evil.example/x.png">');
-      expect(await chat.locator("a, img").count()).toBe(0);
+      expect(await chat.locator("img").count()).toBe(0);
+      expect(await chat.locator("a:not([href^='#'])").count()).toBe(0);
       const sources = chat.getByRole("list", { name: "Sources" });
       await expect(sources.getByRole("listitem")).toHaveCount(4);
+      await expect(sources.getByRole("listitem").first()).toHaveText("1. billing/invoices");
+      const one = chat.getByRole("link", { name: "Source 1" });
+      expect(await one.getAttribute("href")).toBe(`#${await sources.getByRole("listitem").first().getAttribute("id")}`);
       await expect(sources.getByRole("button", { name: "billing/invoices" })).toBeVisible();
       await expect(sources).toContainText("SQL query: SELECT account, count() FROM invoices");
       await expect(sources).toContainText("code citations are not checked");
@@ -146,7 +146,7 @@ for (const width of [1400, 375]) {
 
 test("each turn sends the whole conversation", async ({ page }) => {
   const bodies: unknown[] = [];
-  await openChat(page, "shortcut");
+  await openChat(page);
   await page.route("**/v1/assistant/chat/completions", (r) => {
     bodies.push(r.request().postDataJSON());
     return r.fulfill({ status: 200, contentType: "text/event-stream", body: streamed(`Answer ${bodies.length}.`) });
@@ -193,7 +193,10 @@ test("a refusal before the stream and an error event inside it are shown in the 
   // The refused question waits in the field.
   await expect(page.getByRole("textbox", { name: "Question" })).toHaveValue("Who owns billing?");
   await page.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(page.getByRole("alert").filter({ hasText: "The assistant could not finish this answer" })).toBeVisible();
+  // One sentence; the server did not mark it retryable, so the alert offers no Retry.
+  const failed = page.getByRole("alert").filter({ hasText: "The model stopped before the answer finished." });
+  await expect(failed).toContainText("Your question is kept.");
+  await expect(failed.getByRole("button", { name: "Retry" })).toHaveCount(0);
   await expect(conversation(page)).toContainText("Partly");
 });
 
@@ -228,11 +231,14 @@ test("an unavailable assistant is a plain state, not a crash", async ({ page }) 
     }),
   );
   await ask(page, "Who owns billing?");
-  // A refusal that names no reason reads as not set up; a platform admin is sent to Health.
+  // A refusal that names no reason reads as not set up: one empty state, with the link to
+  // Models & keys for a platform admin, the starters under it, and no question field.
   const why = panel(page).getByTestId("assistant-unavailable");
   await expect(why).toHaveAttribute("data-reason", "not_configured");
-  await expect(why).toContainText("Set up chat: see Health");
-  await expect(page.getByRole("button", { name: "Ask", exact: true })).toHaveAttribute("aria-disabled", "true");
+  await expect(why.getByRole("heading", { level: 3 })).toHaveText("Chat isn't set up");
+  await expect(why.getByRole("button", { name: "Open Models & keys" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Question" })).toHaveCount(0);
+  await expect(panel(page).getByRole("checkbox")).toHaveCount(0);
   // Chat not set up is no broken mark on the launcher: its starters still read.
   await expect(launcher(page)).toHaveAccessibleName("Ask AI");
   await expect(launcher(page)).toHaveAttribute("data-launcher-state", "normal");
