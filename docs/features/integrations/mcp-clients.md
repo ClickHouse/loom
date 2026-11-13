@@ -18,7 +18,8 @@ path as `POST /v1/<op>`. The protocol is in the [MCP reference](../../reference/
 
 A plain MCP entry gives the tools only: no session capture, primer or code shunt. Loom
 still records an implicit run per MCP session and names the agent after the client's
-`clientInfo.name` (`Cursor` becomes `cursor`).
+`clientInfo.name` (`Cursor` becomes `cursor`). To teach the agent when to call the tools,
+add the [agent instructions](agent-instructions.md) block to the client's rule file.
 
 ## Wire a client with `loom install`
 
@@ -120,6 +121,9 @@ install commands. For one repository, put the entry in `<repo>/.mcp.json`:
 }
 ```
 
+Without the plugin's skills, add the [agent instructions](agent-instructions.md) block to
+the repository's `CLAUDE.md`.
+
 ## Codex without the plugin
 
 `loom install --client codex` runs, or prints when `codex` is not on `PATH`:
@@ -132,7 +136,8 @@ Codex reads the token from the environment, so export `LOOM_API_KEY` in your she
 profile. The command also prints the equivalent TOML block, writes `url` and `token` to
 `~/.loom/config.json` for the plugin's hooks, and prints the plugin install commands.
 With the plugin installed, read [codex.md](codex.md#the-server) first: an entry under the
-same name replaces the plugin's.
+same name replaces the plugin's. Without the plugin, add the
+[agent instructions](agent-instructions.md) block to `AGENTS.md`.
 
 ## Choosing a toolset
 

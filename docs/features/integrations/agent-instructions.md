@@ -1,0 +1,97 @@
+# Agent instructions
+
+A short block in an agent's instruction file tells it when to recall memory, when to save
+a fact and when to ask the code index instead of grepping or reading files. This page
+gives that block once and the file each client reads it from; paste it, fill in the
+code namespace, and commit it with the repository.
+
+The Claude Code and Codex plugins already teach this through their skills
+([Claude Code](claude-code.md#skills), [Codex](codex.md#skills)); the block is for every
+other client, and for Claude Code or Codex connected without the plugin. It names the
+tools the `coding` toolset lists, so connect the client on `?toolset=coding`
+(`loom install --client <name> --toolset coding`, [MCP clients](mcp-clients.md)).
+
+## The block
+
+```markdown
+## Loom: memory and code index
+
+Loom is connected as an MCP server; its tools are named `loom_*`. A tool you do not see
+listed runs through `loom_op` with its dotted name (`memory.history`).
+
+Memory
+
+- Before a non-trivial task, call `loom_search` once with the task's topic, files or
+  error. Use what it returns; say so when a result is marked stale or unverified, and
+  treat `abstain` as "nothing relevant".
+- When the user states a decision, preference, constraint or correction, save it with
+  `loom_memory_set` right away: one plain-text fact per call under a readable key
+  (`<scope>/<kind>/<id>`), dates as calendar dates. Never save a guess, your reasoning or
+  the conversation.
+- A fact that changed: `loom_memory_update` on the same key, never a second copy.
+- Your plan and checklist for this task: `loom_working_memory_set`, not `loom_memory_set`.
+- Before reporting done, one pass over what should outlive the session.
+
+Code
+
+- This repository's code namespace is `<code-namespace>`; pass it as `namespace` on
+  every `loom_code_*` call.
+- Where X is defined: `loom_code_symbol`. Who calls X: `loom_code_callers`. A concept
+  with no exact keyword: `loom_code_search`. An exact string: `loom_code_grep`. What is
+  in a file: `loom_code_outline`, then read one span. What a change breaks:
+  `loom_code_impact`.
+- Grep your own uncommitted files and repositories the index does not cover. When a code
+  tool answers `abstain: true`, grep instead of retrying with synonyms.
+```
+
+Replace `<code-namespace>` with the namespace the repository is indexed under;
+`code.repos` (through `loom_op`) lists the code namespaces the token can read. Under the
+Claude Code or Codex plugin, drop that line: the plugin sends the scope with every call.
+
+## Where each client reads it
+
+The block is the same everywhere; only the file and its header differ.
+
+| Client                                    | File                               | Header before the block                                                      |
+| ----------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
+| Codex, and any agent that reads AGENTS.md | `AGENTS.md` at the repository root | none                                                                         |
+| Claude Code without the plugin            | `CLAUDE.md` at the repository root | none                                                                         |
+| Cursor                                    | `.cursor/rules/loom.mdc`           | `---`, `description: Loom memory and code index`, `alwaysApply: true`, `---` |
+| Windsurf                                  | `.windsurf/rules/loom.md`          | `---`, `trigger: always_on`, `---`                                           |
+| Cline                                     | `.clinerules/loom.md`              | none                                                                         |
+| Roo Code                                  | `.roo/rules/loom.md`               | none                                                                         |
+| Continue                                  | `.continue/rules/loom.md`          | `---`, `name: Loom memory and code index`, `alwaysApply: true`, `---`        |
+| VS Code (GitHub Copilot)                  | `.github/copilot-instructions.md`  | none                                                                         |
+
+Each header line goes on its own line. The Cursor file, for example, starts:
+
+```markdown
+---
+description: Loom memory and code index
+alwaysApply: true
+---
+
+## Loom: memory and code index
+```
+
+An existing `AGENTS.md`, `CLAUDE.md` or Copilot file keeps its content: add the block as
+a section of it.
+
+## Why these rules
+
+Each line is the short form of a plugin skill, so an agent without the plugin acts the
+way one with it does:
+
+- recall once and save stated facts as they come: `loom-memory`
+  (`integrations/claude-code-plugin/skills/loom-memory/SKILL.md`);
+- the code index before grep, and grep where the index cannot answer: `loom-code`
+  (`integrations/claude-code-plugin/skills/loom-code/SKILL.md`).
+
+The skills carry the detail the block leaves out: the receipt fields, documents versus
+memories, the stop rules. An agent that needs more can read them from the repository.
+
+## Related
+
+- [MCP clients](mcp-clients.md): connecting each client.
+- [Choosing a toolset](mcp-clients.md#choosing-a-toolset).
+- [Integrations](index.md).

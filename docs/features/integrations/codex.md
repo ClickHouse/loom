@@ -125,17 +125,9 @@ name (`$loom-status`) or let its description trigger it.
 
 ## A short contract for AGENTS.md
 
-Codex reads `AGENTS.md` at the repository root (and `~/.codex/AGENTS.md`). Keep the
-contract short; the skills carry the detail:
-
-```markdown
-## Memory (Loom)
-
-- Before a non-trivial task, search memory for prior decisions on the files or topic (`loom_search`).
-- When the user states a preference, decision or correction, record it (`memory.set`).
-- In this repository use `code.search` / `code.symbol` / `code.callers` for structure questions; grep for uncommitted files.
-- At the end of a task, review what should outlive the session (the `loom-memory` skill).
-```
+Codex reads `AGENTS.md` at the repository root (and `~/.codex/AGENTS.md`). The block in
+[agent instructions](agent-instructions.md) is the short contract; with the plugin, drop
+its code-namespace line, since the plugin sends the scope and the skills carry the detail.
 
 ## Headless
 
