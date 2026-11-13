@@ -13,11 +13,11 @@ extractor and ClickHouse) and serves MCP over streamable HTTP. A coding agent co
 ## 1. Check for a running Loom
 
 On Windows, run the `curl`, `docker` and installer commands in a WSL 2 terminal where
-`docker` works. The Cline entry in step 3 goes where Cline runs, on Windows too:
-`localhost:7777` reaches the WSL stack from there.
+`docker` works. The Cline entry in step 3 goes in the configuration of the Cline the user
+runs.
 
 ```bash
-curl -sS http://localhost:7777/v1/health
+curl -sS --noproxy '*' http://localhost:7777/v1/health
 ```
 
 - A JSON reply with a `schema_version` field is a Loom server. If its `status` is `ok`, go
@@ -62,7 +62,7 @@ The stock install is single-user: it has no sign-in and needs no token. To check
 tools without one:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:7777/mcp?toolset=coding' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+curl -s --noproxy '*' -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:7777/mcp?toolset=coding' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
 `200` means no token is needed. `401` means sign-in is on: ask the user for a token from
@@ -71,10 +71,8 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:7777/mcp?tool
 `--header "Authorization: Bearer <token>"` on the `cline mcp add` command. A `401` on a
 later tool call, in step 4, means the same: ask for a token and add it.
 
-The Cline extension: the file opens from **MCP Servers → Configure MCP Servers** in Cline
-(on Linux,
-`~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`).
-The entry:
+The Cline extension: open its settings file from **MCP Servers → Configure MCP Servers**
+in Cline. The entry:
 
 ```json
 {
@@ -110,11 +108,12 @@ other clients.
 ## 4. Check it
 
 1. Reload the MCP servers. The tool list includes `loom_memory_set` and `loom_search`.
-2. Pick a key no memory uses: `setup/check/` followed by a few random digits, which
-   `loom_memory_get` reports as not found. Call `loom_memory_set` with that `memory_key`
-   and a short `value`, then `loom_memory_get` with the same key: it returns the value.
-3. Call `loom_memory_delete` with that key.
-4. Tell the user where the dashboard is: the `Dashboard:` address the installer printed,
+2. Pick a key `setup/check/<random digits>` and call `loom_memory_get` on it. If it is
+   found, pick another key.
+3. Call `loom_memory_set` with that `memory_key` and a short `value`, then
+   `loom_memory_get` with the same key: it returns the value.
+4. Call `loom_memory_delete` with that key.
+5. Tell the user where the dashboard is: the `Dashboard:` address the installer printed,
    or `http://localhost:7777/` when Loom was already running.
 
 ## Optional: index a repository
