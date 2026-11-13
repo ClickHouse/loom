@@ -115,7 +115,7 @@ def _lookup(name: str) -> Operation | None:
     return TOOLS_BY_NAME.get(name) or OPERATIONS_BY_NAME.get(name)
 
 
-def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool = True) -> str:
+def name_ops_for_listing(text: str, listed: Set[str], *, writes: bool = False) -> str:
     """``text`` as a client of this listing reads it. A client calls a listed op
     by its tool name, so every op the listing carries is named by its tool. An
     op it does not carry keeps its dotted name, the one `loom_op` takes, and its

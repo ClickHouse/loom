@@ -49,7 +49,7 @@ from server.transport.mcp_config import (
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
 from server.transport.mcp_ledger import batch_allows_row, emit_token_refusal
-from server.transport.mcp_op import TOOLS_BY_NAME, UNKNOWN_OP
+from server.transport.mcp_op import TOOLS_BY_NAME, UNKNOWN_OP, hidden_refusal
 from server.transport.mcp_outcome import (
     _emit_success,
     _handler_failed,
@@ -480,8 +480,6 @@ async def _resolve_tool(
         # The code loom_op answers for a name no op answers to.
         body: dict[str, Any] = {"error": msg, "code": UNKNOWN_OP, "tool": name}
         if op is not None:  # A hidden op says why and what instead
-            from server.transport.mcp_op import hidden_refusal
-
             body = {**(hidden_refusal(op.name, toolset) or {}), "tool": name}
             emit_token_refusal(op.name, auth, error_code="OP_NOT_ON_MCP")
             msg = f"{body.get('error', msg)}; instead: {body.get('instead', '')}"
