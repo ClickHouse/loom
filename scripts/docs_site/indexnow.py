@@ -1,12 +1,13 @@
 """Tell IndexNow search engines which documentation-site pages a push to main changed.
 
-IndexNow (Bing, Yandex, Seznam, Naver and others share one endpoint) takes a list of
-changed URLs and proves ownership with a key file served on the site. The key file is the
-one `.txt` file in docs/ whose name is its own content; it is public by design.
+IndexNow search engines share one endpoint: it takes a list of changed URLs and checks
+ownership against a key file served on the site. The key file is the one `.txt` file in
+docs/ whose name is its own content; it is public by design.
 
 Usage: indexnow.py <changed path>...   (paths relative to the repository root)
-A changed page under docs/ maps to its URL; a change to the site's build (mkdocs.yml, the
-hooks or the theme overrides) changes every page, so the live sitemap is submitted whole.
+A changed or deleted page under docs/ maps to its URL. A change to mkdocs.yml, anything
+under scripts/docs_site/ or scripts/codegen/page_summary.py (the descriptions and sidebar)
+changes every page, so every page under docs/ is submitted.
 """
 
 from __future__ import annotations
@@ -14,13 +15,14 @@ from __future__ import annotations
 import json
 import re
 import sys
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 SITE = "https://clickhouse.github.io/loom/"
 ENDPOINT = "https://api.indexnow.org/indexnow"
 DOCS = Path(__file__).resolve().parents[2] / "docs"
-BUILD_INPUTS = ("mkdocs.yml", "scripts/docs_site/")
+BUILD_INPUTS = ("mkdocs.yml", "scripts/docs_site/", "scripts/codegen/page_summary.py")
 
 
 def key() -> str:
@@ -31,7 +33,7 @@ def key() -> str:
 
 
 def page_url(path: str) -> str | None:
-    """The site URL a changed docs/ Markdown file is served at, or None for other files."""
+    """The site URL a docs/ Markdown file is served at, or None for other files."""
     if not (path.startswith("docs/") and path.endswith(".md")):
         return None
     rel = path[len("docs/") : -len(".md")]
@@ -42,20 +44,21 @@ def page_url(path: str) -> str | None:
     return f"{SITE}{rel}/"
 
 
-def sitemap_urls() -> list[str]:
-    with urllib.request.urlopen(SITE + "sitemap.xml", timeout=30) as resp:
-        return re.findall(r"<loc>([^<]+)</loc>", resp.read().decode())
+def every_page() -> list[str]:
+    return sorted(
+        u for p in DOCS.rglob("*.md") if (u := page_url(f"docs/{p.relative_to(DOCS).as_posix()}"))
+    )
 
 
 def urls_for(paths: list[str]) -> list[str]:
     if any(p == i or p.startswith(i) for p in paths for i in BUILD_INPUTS):
-        return sitemap_urls()
+        return every_page()
     return sorted({u for p in paths if (u := page_url(p))})
 
 
 def payload(urls: list[str], k: str) -> dict:
     return {
-        "host": "clickhouse.github.io",
+        "host": urllib.parse.urlsplit(SITE).hostname,
         "key": k,
         "keyLocation": f"{SITE}{k}.txt",
         "urlList": urls,

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 _SPEC = importlib.util.spec_from_file_location("indexnow", ROOT / "scripts/docs_site/indexnow.py")
@@ -31,6 +33,47 @@ def test_the_key_file_is_named_after_its_own_content_and_the_payload_points_at_i
     key = indexnow.key()
     assert (ROOT / "docs" / f"{key}.txt").read_text().strip() == key
     body = indexnow.payload([SITE], key)
-    assert body["host"] == "clickhouse.github.io"
     assert body["keyLocation"] == f"{SITE}{key}.txt"
     assert body["urlList"] == [SITE]
+
+
+def test_a_change_to_the_build_submits_every_page() -> None:
+    every = indexnow.every_page()
+    assert SITE in every and SITE + "use-cases/" in every
+    for path in (
+        "mkdocs.yml",
+        "scripts/docs_site/overrides/main.html",
+        "scripts/codegen/page_summary.py",
+    ):
+        assert indexnow.urls_for([path]) == every
+
+
+def test_every_submitted_url_is_on_the_key_files_host_and_under_its_directory() -> None:
+    body = indexnow.payload(indexnow.every_page(), indexnow.key())
+    scope = body["keyLocation"].rsplit("/", 1)[0] + "/"
+    assert all(u.startswith(scope) for u in body["urlList"])
+    assert all(urlsplit(u).hostname == body["host"] for u in body["urlList"])
+
+
+def test_main_posts_only_the_changed_pages_and_posts_nothing_when_none_changed(monkeypatch) -> None:
+    sent: list[dict] = []
+
+    class _Resp:
+        status = 202
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(req, timeout):
+        sent.append(json.loads(req.data))
+        return _Resp()
+
+    monkeypatch.setattr(indexnow.urllib.request, "urlopen", fake_urlopen)
+    assert indexnow.main([]) == 0
+    assert indexnow.main(["README.md"]) == 0
+    assert sent == []
+    assert indexnow.main(["docs/a.md"]) == 0
+    assert [s["urlList"] for s in sent] == [[SITE + "a/"]]

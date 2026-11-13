@@ -80,4 +80,4 @@ jobs:
           python-version: "3.12"
       - name: Submit the changed pages
         run: |
-          git diff --name-only HEAD~1 HEAD | xargs python scripts/docs_site/indexnow.py
+          git diff --name-only --no-renames HEAD~1 HEAD | xargs python scripts/docs_site/indexnow.py
