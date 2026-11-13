@@ -18,6 +18,7 @@ opt-in; one you leave unconfigured does nothing. They fall into three groups:
 | Codex                                                    | plugin: MCP tools, hooks, code shunt, skills            | `integrations/codex-plugin/`: [codex.md](codex.md)                                         |
 | Claude Desktop, Cursor, VS Code, Cline, Windsurf, Zed    | MCP client config                                       | `loom install --client …`: [mcp-clients.md](mcp-clients.md)                                |
 | VS Code agent mode                                       | MCP tools                                               | install links and `mcp.json`: [vscode.md](vscode.md)                                       |
+| Gemini CLI                                               | extension: MCP tools and the `loom`, `loom-code` skills | `gemini extensions install`: [mcp-clients.md](mcp-clients.md#other-editors-and-agents)     |
 | JetBrains, Visual Studio, Neovim, Emacs and other agents | MCP client config                                       | [other editors and agents](mcp-clients.md#other-editors-and-agents)                        |
 | Cursor                                                   | MCP tools + `sessionEnd` transcript hook                | `integrations/cursor/`: [cursor.md](cursor.md)                                             |
 | Any Agent-Skills client                                  | the `loom` and `loom-code` skills, no hooks             | `skills/loom/`, `skills/loom-code/`: [below](#coding-agents)                               |
