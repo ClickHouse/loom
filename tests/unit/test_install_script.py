@@ -1415,7 +1415,6 @@ def _desktop(installer_env: dict[str, str]) -> tuple[dict[str, str], Path]:
 
 def _opened(log: Path) -> list[str]:
     """What xdg-open got; it runs in the background, so give it a moment."""
-
     deadline = time.monotonic() + 5
     while not log.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
@@ -1767,7 +1766,6 @@ def test_an_empty_loom_connect_item_is_refused(install, value: str) -> None:
 def test_xdg_config_home_holds_the_vscode_mcp_json(
     install, installer_env: dict[str, str], tmp_path: Path
 ) -> None:
-
     if platform.system() == "Darwin":
         pytest.skip("macOS keeps VS Code's user data under ~/Library")
     run, _ = install
