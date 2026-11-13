@@ -73,11 +73,12 @@ Once Loom answers, the installer:
    `codex mcp add` line beside it. Codex's plugin always uses `http://localhost:7777`, so
    for an install elsewhere it gets a link to its setup page instead. VS Code is not
    offered in a remote session or WSL. A client `LOOM_CONNECT` names that is not on PATH
-   is named. From WSL, agents installed on Windows itself are not looked at: connect them
-   with the commands in step 6.
+   is named.
 4. **Opens the dashboard** on a desktop, for a new install; `LOOM_NO_OPEN=1` skips that.
-   From WSL it opens a browser only inside WSL, if one is installed there; open
-   `http://localhost:7777/` in Windows.
+
+Run from WSL, these steps act inside WSL: an agent or a browser that runs on Windows is set
+up from Windows, with the [connect guide](connect-a-coding-agent.md) and the dashboard
+address the installer prints.
 
 Ctrl-C stops the run at any step; a clone an agent CLI started for its plugin may still
 finish in the background.
@@ -609,20 +610,20 @@ the answer and the chunks it cited. With the fake LLM it prints the top
 
 ## Common problems
 
-| Symptom                                           | Cause and fix                                                                                                                                                                                            |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `set_from_messages` writes no facts               | The LLM is the fake one. Follow [Models and keys](./models-and-keys.md) to configure one.                                                                                                                |
-| Search results look arbitrary                     | The embedder is a fake one (`fake-ngram-*` in `.env`). Switch it as [Models and keys](./models-and-keys.md) says, which re-embeds what is stored. Do not delete your volumes to change models.           |
-| 401 `AUTH_INVALID` after turning auth on          | No token, or one signed with another `LOOM_JWT_SECRET`. Re-mint with the Compose command in [Get a token](#3-get-a-token).                                                                               |
-| The dashboard returns 503                         | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                                                         |
-| Released stack does not become healthy            | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                                                         |
-| Adding a repository answers `SANDBOX_UNAVAILABLE` | The stack runs without the repository-job sandbox. Index the repository through `LOOM_CODE_REPOS_JSON` ([Index a repository](#optional-index-a-repository-on-the-released-stack)).                       |
-| The installer says port `7777` is in use          | Another program, or another Loom, listens there. Stop it, or run the install command again with `LOOM_PORT=7778` in front of `sh loom-install.sh`; `.env` keeps the port.                                |
-| The installer says port `7777` does not answer    | A program holds it without answering, or `LOOM_BIND_HOST`, `LOOM_PORT` or a firewall keeps this host from reaching it.                                                                                   |
-| Under WSL, `up` says port `7777` is not available | A Windows program holds it; under WSL's default networking the installer's port check does not see it. Stop it, or run the install command again with `LOOM_PORT=7778` in front of `sh loom-install.sh`. |
-| The installer could not check port `7777`         | Curl failed for the reason its exit code names; check `LOOM_BIND_HOST` and `LOOM_PORT`.                                                                                                                  |
-| A clone's port `8123` or `9000` is taken          | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack-from-a-clone)).                                                                                                   |
-| The installer could not pull the images           | Docker reaches the registry itself: behind a proxy, give the Docker daemon the [proxy settings](https://docs.docker.com/engine/daemon/proxy/).                                                           |
+| Symptom                                                     | Cause and fix                                                                                                                                                                                  |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `set_from_messages` writes no facts                         | The LLM is the fake one. Follow [Models and keys](./models-and-keys.md) to configure one.                                                                                                      |
+| Search results look arbitrary                               | The embedder is a fake one (`fake-ngram-*` in `.env`). Switch it as [Models and keys](./models-and-keys.md) says, which re-embeds what is stored. Do not delete your volumes to change models. |
+| 401 `AUTH_INVALID` after turning auth on                    | No token, or one signed with another `LOOM_JWT_SECRET`. Re-mint with the Compose command in [Get a token](#3-get-a-token).                                                                     |
+| The dashboard returns 503                                   | The server runs from source (`make server`) without a built frontend. Run `make frontend-build`.                                                                                               |
+| Released stack does not become healthy                      | Run `docker compose --project-directory "$HOME/.loom" logs --tail 100 loom clickhouse`. See [Troubleshooting](../operations/troubleshooting.md).                                               |
+| Adding a repository answers `SANDBOX_UNAVAILABLE`           | The stack runs without the repository-job sandbox. Index the repository through `LOOM_CODE_REPOS_JSON` ([Index a repository](#optional-index-a-repository-on-the-released-stack)).             |
+| The installer says port `7777` is in use                    | Another program, or another Loom, listens there. Stop it, or run the install command again with `LOOM_PORT=7778` in front of `sh loom-install.sh`; `.env` keeps the port.                      |
+| The installer says port `7777` does not answer              | A program holds it without answering, or `LOOM_BIND_HOST`, `LOOM_PORT` or a firewall keeps this host from reaching it.                                                                         |
+| Under WSL, the install stops with `Ports are not available` | Windows holds or reserves the port, which the installer's check inside WSL cannot see. Run the install command again with `LOOM_PORT=7778` in front of `sh loom-install.sh`.                   |
+| The installer could not check port `7777`                   | Curl failed for the reason its exit code names; check `LOOM_BIND_HOST` and `LOOM_PORT`.                                                                                                        |
+| A clone's port `8123` or `9000` is taken                    | Remap the ClickHouse host ports ([local stack](../operations/deployment.md#local-stack-from-a-clone)).                                                                                         |
+| The installer could not pull the images                     | Docker reaches the registry itself: behind a proxy, give the Docker daemon the [proxy settings](https://docs.docker.com/engine/daemon/proxy/).                                                 |
 
 ## Next
 
