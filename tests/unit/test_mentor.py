@@ -17,6 +17,7 @@ import re
 import textwrap
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -1528,15 +1529,14 @@ def test_handshake_warms_the_profile_when_nothing_is_cached(
     "facts",
     [{"repos": 1, "tracker_sources": ["qa"]}, {"repos": 1}, {"tracker_sources": ["qa"]}, {}],
 )
-def test_a_call_hint_is_clipped_with_its_note_whole(facts: dict[str, Any]) -> None:
-    """The clip cuts the body, never the note that says how to reach the op."""
-    rule = mentor_rules._rule_set_stack_trace("memory.set", {"value": _TRACE}, {}, facts, {})
-    assert rule is not None
-    clipped = mentor_rules.clip_keeping_note(rule[1])
-    assert len(clipped) <= mentor_rules.HINT_CHARS
-    if " via loom_op)" in rule[1]:
-        assert mentor_rules._LOOM_OP_NOTE_RE.search(clipped), clipped
-    assert mentor_rules.without_listing_note(clipped).count("(call ") == 0
+def test_a_fixed_text_call_hint_fits_whole_with_its_note(facts: dict[str, Any]) -> None:
+    """MCP strips the note, so a clip would leave the agent cut advice: these fit."""
+    args = {"memory_key": "bugs/9", "value": _TRACE + "\nsee #123456"}
+    for rule in (mentor_rules._rule_set_stack_trace, mentor_rules._rule_set_issue_reference):
+        out = rule("memory.set", args, {}, facts, {})
+        assert out is not None, rule.__name__
+        assert len(out[1]) <= mentor_rules.HINT_CHARS, out[1]
+        assert mentor_rules.clip_keeping_note(out[1]) == out[1]
 
 
 def test_several_echoed_names_keep_their_quotes_and_the_advice() -> None:
@@ -1649,9 +1649,6 @@ def test_a_call_hint_on_mcp_names_ops_for_its_listing() -> None:
 def test_no_hint_text_writes_an_op_as_a_call_or_names_a_hidden_op() -> None:
     """The handshake renders hint texts as it renders tool descriptions. A hidden
     op named in prose is one the user acts on, and its note says so (conflicts)."""
-    import ast
-    from pathlib import Path
-
     from server.operations.registry import OPERATIONS_BY_NAME
     from server.operations.toolsets import _MCP_HIDDEN_OPS
     from server.transport.mcp_op import OP_MENTION

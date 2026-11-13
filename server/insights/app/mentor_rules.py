@@ -884,16 +884,15 @@ def _rule_set_stack_trace(
     repos, qa = int(facts.get("repos") or 0), list(facts.get("tracker_sources") or [])
     if repos and qa:
         text = (
-            "this value is a stack trace: code.trace resolves every frame to the indexed symbol, "
-            "and tracker.similar says whether a report already names it — keep the "
-            "memory row as one "
-            "claim that points at them." + _unlisted(("code.trace", "tracker.similar"))
+            "this value is a stack trace: code.trace resolves each frame to its symbol and "
+            "tracker.similar finds a report that names it; keep the memory row as one claim "
+            "pointing at them." + _unlisted(("code.trace", "tracker.similar"))
         )
     elif repos:
         text = (
-            "this value is a stack trace: code.trace resolves every frame to the indexed symbol "
-            "and code.callers / code.history follow the frame that matters; the memory row should "
-            "be the one-line finding." + _unlisted(("code.trace",))
+            "this value is a stack trace: code.trace resolves each frame to its symbol and "
+            "code.callers / code.history follow the one that matters; keep the memory row as "
+            "the one-line finding." + _unlisted(("code.trace",))
         )
     elif qa:
         text = (
@@ -921,17 +920,15 @@ def _rule_set_issue_reference(
     if facts.get("tracker_sources"):
         return (
             "set_issue_reference",
-            f"this row names issue/PR #{refs[0]}: tracker.item returns its tracker "
-            f"record (component, "
-            "severity, bisect, branches affected) — write the claim, not the ticket; "
-            "memory.record.write keeps a table of them."
-            + _unlisted(("tracker.item", "memory.record.write")),
+            f"this row names issue/PR #{refs[0]}: tracker.item returns its record (component, "
+            "severity, bisect) — write the claim, not the ticket; memory.record.write keeps a "
+            "table of them." + _unlisted(("tracker.item", "memory.record.write")),
         )
     return (
         "set_issue_reference",
-        f"this row names issue/PR #{refs[0]}: rows keyed by a ticket number are a table of facts "
-        "with identity — memory_schema.register once, then memory.record.write per ticket; "
-        "code.pr_check before opening a duplicate." + _unlisted(("memory_schema.register",)),
+        f"this row names issue/PR #{refs[0]}: ticket-keyed rows are facts with identity — "
+        "memory_schema.register once, then memory.record.write per ticket; code.pr_check "
+        "before a duplicate." + _unlisted(("memory_schema.register",)),
     )
 
 
