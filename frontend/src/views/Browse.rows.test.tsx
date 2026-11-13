@@ -532,6 +532,47 @@ describe("Namespaces in your org: requesting a private namespace by name", () =>
     }
   });
 
+  it("points a tracker namespace's name to Repositories, which joins and requests it", async () => {
+    const before = [...mine];
+    mine.push(
+      { ...mine[1], namespace: "tracker-loom", kind: "tracker" },
+      { ...mine[1], namespace: "tracker-docs", kind: "tracker", status: "pending" },
+    );
+    try {
+      render(<Browse />);
+      await screen.findByText("Support team runbooks");
+      const box = screen.getByRole("textbox", { name: "Search namespaces" });
+      await userEvent.type(box, "tracker-loom");
+      expect(await screen.findByText(/is a repository/)).toHaveTextContent(
+        "tracker-loom is a repository you read: open it in Repositories.",
+      );
+      await userEvent.clear(box);
+      await userEvent.type(box, "tracker-docs");
+      expect(await screen.findByText(/is a repository/)).toHaveTextContent(
+        "tracker-docs is a repository: join or request it from Repositories.",
+      );
+      expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+    } finally {
+      mine.splice(0, mine.length, ...before);
+    }
+  });
+
+  it("opens a collection the caller reads selected in the Library", async () => {
+    const before = [...mine];
+    mine.push({ ...mine[1], namespace: "col-research", kind: "collection" });
+    try {
+      render(<Browse />);
+      await screen.findByText("Support team runbooks");
+      await userEvent.type(screen.getByRole("textbox", { name: "Search namespaces" }), "col-research");
+      const line = await screen.findByText(/is a collection you read/);
+      await userEvent.click(within(line).getByRole("button", { name: "Library" }));
+      expect(useStore.getState().view).toBe("knowledge");
+      expect(new URLSearchParams(window.location.search).get("collection")).toBe("col-research");
+    } finally {
+      mine.splice(0, mine.length, ...before);
+    }
+  });
+
   it("points a granted repository the page does not list to Repositories", async () => {
     const before = [...mine];
     mine.push({ ...mine[1], namespace: "code-private", kind: "code" });

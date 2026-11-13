@@ -113,6 +113,7 @@ export function Browse() {
   const [repoNames, setRepoNames] = useState<string[]>([]);
   const repoCount = repoNames.length;
   const setView = useStore((s) => s.setView);
+  const navigate = useStore((s) => s.navigate);
   const whoami = useStore((s) => s.whoami);
 
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
@@ -134,9 +135,14 @@ export function Browse() {
       // Repositories are surfaced in the Repositories section, not as joinable memory. The server
       // lists no collection here: one is shared in the Library, never joined.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
-      // Every repository's name, a restricted or granted one included, points to Repositories.
+      // Every repository's and tracker's name, a restricted or granted one included, points to
+      // Repositories, which joins and requests both.
       setRepoNames([
-        ...new Set([...browseRows, ...mineRead].filter((r) => isCodeKind(r.kind)).map((r) => r.namespace)),
+        ...new Set(
+          [...browseRows, ...mineRead]
+            .filter((r) => isCodeKind(r.kind) || isTrackerKind(r.kind))
+            .map((r) => r.namespace),
+        ),
       ]);
       setMineRows(mineResult);
       setMine(new Set(mineRead.map((r) => r.namespace)));
@@ -466,7 +472,15 @@ export function Browse() {
                   {typedRole
                     ? "is a collection you read: open it in the"
                     : "is a collection: ask its admin for a grant; the collections you can read are in the"}{" "}
-                  <Link component="button" type="button" size="sm" onClick={() => setView("knowledge")}>
+                  {/* One you read opens selected in the Library, which reads `?collection=`. */}
+                  <Link
+                    component="button"
+                    type="button"
+                    size="sm"
+                    onClick={() =>
+                      typedRole ? navigate("knowledge", { query: { collection: typedName } }) : setView("knowledge")
+                    }
+                  >
                     Library
                   </Link>
                 </>

@@ -192,7 +192,8 @@ def test_no_token_names_nothing() -> None:
 def _saved_and_ranked(
     monkeypatch: pytest.MonkeyPatch, saved: str, rows: dict[str, list[str]] | None = None
 ) -> None:
-    """alice's saved switcher pick, and each subject's live grants as the ranking lists them."""
+    """alice's saved pick in the namespace picker, and each subject's live grants as the
+    ranking lists them."""
     import server.identity.app.caller_defaults as caller_defaults
 
     async def _saved(org: str, subject: str, *, ch: Any = None) -> str:

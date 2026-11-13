@@ -515,8 +515,8 @@ async def test_the_answer_names_the_expiry_the_saved_row_holds(
 @pytest.fixture
 def listed(monkeypatch: pytest.MonkeyPatch, grants: dict) -> dict[str, Any]:
     """alice writes `a`, `b` and the collection `COL`, reads `v`, and `code-x` is a
-    repository she writes. The owner's saved switcher pick is `state["saved"]`; the kinds
-    read fresh each time."""
+    repository she writes. The owner's saved pick in the namespace picker is
+    `state["saved"]`; the kinds read fresh each time."""
     from server.identity.app import caller_defaults, namespace_kinds
 
     grants.update(

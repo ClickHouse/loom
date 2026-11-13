@@ -120,7 +120,7 @@ async def default_and_readable(auth: Any, org: str) -> tuple[str, list[str]]:
     first it lets it READ, else "" (its calls must name a namespace), looking
     at a list token's recorded `saves_to` and its list alone; for any other
     token at the namespace a delegated `*` token was made to save to, the home
-    subject's saved switcher pick, then the token's claims, then the home's
+    subject's saved pick in the namespace picker, then the token's claims, then the home's
     grants, ranked (`_pick_default`).
 
     Fails closed: a cached grant map ClickHouse cannot read reaches the
@@ -160,7 +160,7 @@ async def _pick_default(
     only that namespace, then its own list in order: its owner's saved pick
     never moves it, and the gate admits it nowhere else. Any other token, in
     order: the namespace a delegated `*` token was made to save to
-    (`minted_home`), the home's saved switcher pick, the token's claims (the
+    (`minted_home`), the home's saved pick in the namespace picker, the token's claims (the
     home's own first), the home's grants ranked by role tier then recency (its
     own first), then `extra`. Every step asks the same `admits`, so no step
     can pick what another would refuse. A collection is shared reading: a
