@@ -244,7 +244,8 @@ def test_a_line_whose_code_changed_says_so_with_the_commit(
     _dead_other_sections(monkeypatch)
     link = {"state": "changed", "changed_since": "c0ffee" * 4, "checked_at": "2026-11-01"}
     fact = NS(**{**vars(_FACT), "code_state": "changed", "_code_links": [link]})
-    decision = NS(**{**vars(_DECISION), "code_state": "missing", "_code_links": []})
+    gone = {"state": "missing", "changed_since": "dead" * 10, "path": "a.py", "qualified_name": ""}
+    decision = NS(**{**vars(_DECISION), "code_state": "missing", "_code_links": [gone]})
     moved = NS(**{**vars(_FACT), "memory_key": "m2", "code_state": "moved"})
     monkeypatch.setattr(
         "server.memory.app.search.handle_memory_search", _search_stub([fact, decision, moved])
@@ -261,5 +262,6 @@ def test_a_line_whose_code_changed_says_so_with_the_commit(
     assert "code_state=changed@c0ffeec0ffee] deploys are Tue/Thu" in memories
     assert memories.count("code_state=") == 1  # a moved memory needs no label
     assert (
-        "(the code it is about is gone: check before relying on it) we chose clickhouse"
+        "(the code it is about is gone, commit deaddeaddead: check before relying on it) "
+        "we chose clickhouse"
     ) in out.sections["decisions"]
