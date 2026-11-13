@@ -153,12 +153,12 @@ EOF
 - The chart serves HTTP inside the cluster, so on this rule the token crosses from the
   gateway to Loom unencrypted. To encrypt that hop, point the agent at a TLS endpoint in
   front of Loom whose certificate is publicly trusted, such as the chart's Ingress host,
-  and allow that host with an `https` rule. The gateway then intercepts the agent's TLS, so
-  the actor mounts Substrate's
-  [egress trust bundle](https://ate.dev/docs/guides/egress-trust-bundle/) and points its MCP
-  client at it (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` or `REQUESTS_CA_BUNDLE`, by the
-  client's runtime), and Loom sees
-  connections from the ingress controller rather than from `atenet-egress`.
+  and allow that host with an `https` rule. The gateway then intercepts the agent's TLS,
+  so the actor mounts Substrate's [egress trust
+  bundle](https://ate.dev/docs/guides/egress-trust-bundle/) and points its MCP client at
+  it (`SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS` or `REQUESTS_CA_BUNDLE`, by the client's
+  runtime), and Loom sees connections from the ingress controller rather than from
+  `atenet-egress`.
 
 Rules for whatever else the agent needs, such as its model provider, go in the same
 policy. `kubectl ate update egress-policy` replaces every rule and refuses a policy whose
