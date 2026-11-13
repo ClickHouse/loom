@@ -124,10 +124,10 @@ A namespace whose graph outlived its memories is listed by
 
 ## Erasure
 
-| Call                                                                            | Effect                                                                                                                                     | Use for                                                |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| `memory.clear` (`ADMIN`)                                                        | tombstones the memories of one `user_id` or `agent` in a namespace; `confirm_subject` must repeat the scope value                          | cleanup, test resets; reversible with `memory.restore` |
-| `erasure.request` with `scope_type`: `user_id`, `namespace` or `namespace_list` | a resumable saga across every Loom table that can hold the subject's content, then the configured external backends (Langfuse, ClickStack) | a person's right to erasure; retiring namespaces       |
+| Call                                                                            | Effect                                                                                                                                     | Use for                                                     |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `memory.clear` (`ADMIN`)                                                        | tombstones the memories of one `user_id` or `agent` in a namespace; `confirm_subject` must repeat the scope value                          | cleanup, test resets; reversible with `memory.restore`      |
+| `erasure.request` with `scope_type`: `user_id`, `namespace` or `namespace_list` | a resumable saga across every Loom table that can hold the subject's content, then the configured external backends (Langfuse, ClickStack) | erasing everything stored about a user; retiring namespaces |
 
 The saga checkpoints each step in `loom.erasure_requests` (`ReplacingMergeTree`, rows read
 for 89 days, dropped at 90). After its steps it runs a residue census over every table the
