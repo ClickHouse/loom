@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import re
 
-# Every trail the renderer writes the marker after: a closing backtick, a possessive.
-_TRAIL = r"(?:`(?:'s?)?|(?:'s)?)"
-_MARKED = re.compile(rf"(?<![\w.])([a-z_]+(?:\.[a-z_]+){{1,2}}){_TRAIL} \(via loom_op\)")
+from server.transport.mcp_op import _MARK_TRAIL, OP_MENTION
+
+# Every trail the renderer writes the marker after, as the renderer spells it.
+_TRAIL = rf"(?:{_MARK_TRAIL})"
+_MARKED = re.compile(rf"(?<![\w.])({OP_MENTION}){_TRAIL} \(via loom_op\)")
 
 
 def marked(op: str) -> re.Pattern[str]:
@@ -21,8 +23,8 @@ def assert_marked_once_outside_parentheses(text: str, context: object = "") -> N
         # code spans do not count as parentheses
         before = re.sub(r"`[^`]*`", "", text[: marker.start()])
         assert before.count("(") == before.count(")"), (context, text)
-    marked = _MARKED.findall(text)
-    assert len(marked) == len(set(marked)), (context, marked)
+    mentions = _MARKED.findall(text)
+    assert len(mentions) == len(set(mentions)), (context, mentions)
 
 
 def synthetic_descriptors(toolset: str) -> list[dict]:

@@ -319,9 +319,9 @@ ECHO_CHARS = 40
 
 def _quoted(value: object, limit: int = ECHO_CHARS) -> str:
     """A caller's value as a hint echoes it: in single quotes, which the MCP renderer
-    leaves as written, with none inside and no newline; cut to ``limit`` with an ASCII
-    "..." that the X-Loom-Hint header keeps."""
-    text = str(value).replace("'", '"').replace("\n", " ")
+    leaves as written, with none inside and no line break; cut to ``limit`` with an
+    ASCII "..." that the X-Loom-Hint header keeps."""
+    text = str(value).replace("'", '"').replace("\r", " ").replace("\n", " ")
     if len(text) > limit:
         text = text[: limit - 3] + "..."
     return f"'{text}'"
@@ -489,8 +489,8 @@ def _rules_reliance(c: _Ctx) -> None:
             "relied_on_chunk_ids",
             "warning",
             f"{chunk_ids} of {credited} keys named in run.complete's memories_used this week are "
-            "chunk ids (chunk:<session>:<n>): every chunk hit carries parent_memory_key: "
-            "credit that key, read with memory.get.",
+            "chunk ids (chunk:<session>:<n>). Every chunk hit carries parent_memory_key; "
+            "credit that key and read it with memory.get.",
             ("run.complete", "memory.get"),
             credited=credited,
             chunk_ids=chunk_ids,
@@ -513,7 +513,7 @@ def _rules_reliance(c: _Ctx) -> None:
         c.add(
             "reads_miss",
             "warning",
-            f"{missed} of {asked} keys asked for by key this week were not there: "
+            f"{missed} of {asked} exact-key reads this week found no row: "
             "a key from a search result that misses is a chunk or a moved key — follow "
             "canonical_key, or recall by meaning with search.query.",
             ("memory.get", "search.query", "memory.search"),
