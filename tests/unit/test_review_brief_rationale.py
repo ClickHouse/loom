@@ -294,6 +294,28 @@ def _hit(key: str, **kw: Any) -> _MemoryForFileHit:
 
 
 @pytest.mark.asyncio
+async def test_decisions_for_paths_keeps_the_first_paths_commit_on_a_tie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import code_link_reads, for_file
+
+    async def _readable(org: str, nss: set[str]) -> set[str]:
+        return nss
+
+    async def _for_file(inp: Any) -> MemoryForFileOutput:
+        hits = [_hit("design/a", code_state="changed", confidence=0.9)]
+        return MemoryForFileOutput(path=inp.path, total=1, hits=hits)
+
+    monkeypatch.setattr(code_link_reads, "readable_namespaces", _readable)
+    since = {("src/b.cpp", "design/a"): "c1", ("src/a.cpp", "design/a"): "c0"}
+    monkeypatch.setattr(for_file, "listing_rows", _listing(_for_file, since))
+    rows, *_ = await code_plane_reads.decisions_for_paths(
+        "acme", "code-widgets", ["src/b.cpp", "src/a.cpp"], limit=5
+    )
+    assert rows[0]["code_changed_since"] == "c1"  # both changed: the first path given
+
+
+@pytest.mark.asyncio
 async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constraints_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -325,6 +347,7 @@ async def test_decisions_for_paths_merges_paths_worst_state_and_orders_constrain
     assert [r["memory_key"] for r in rows] == ["design/rule", "design/a"]
     assert rows[1]["code_state"] == "changed"  # worst over both paths
     assert rows[1]["code_changed_since"] == "c1"  # and the commit of that path's state
+    assert "commit c1" in rows[1]["line"]  # which the brief's line names
     assert rows[1]["text"] == "Decided design/a."
     assert rows[1]["line"].startswith("- design/a [decision]")
     assert "(its code changed" in rows[1]["line"]

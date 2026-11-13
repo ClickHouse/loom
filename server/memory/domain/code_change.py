@@ -14,8 +14,8 @@ what reads do:
                             correction on its link
 
 Under every policy, search serves a memory whose code changed, was not found again or is
-gone lower than its match (`rank_down`). A memory a person pinned, locked or verified is
-only flagged.
+gone lower than its match (`rank_down`) on its first page. A memory a person pinned,
+locked or verified is only flagged.
 """
 
 from __future__ import annotations
@@ -112,15 +112,16 @@ def _below_the_floor(hit: Any) -> bool:
 def rank_down(hits: list[Any], places: int, *, rescore: bool = True) -> list[Any]:
     """`hits` with each one marked `_code_ranked_down` moved below the next `places` rows
     that are neither marked nor placed by an identifier match or a tier, never past the
-    last nor below a row served only as filler (`_below_the_floor`); a placed row is
-    never counted as a place and never moved down (one the move passes rises a slot). A
-    moved hit scores
-    between the rows around it (or ties the one above, when they tie), so a stable sort
-    by score keeps the order; `score_components.code_changed_places` counts the rows it
-    moved below (negative, as a reranker's `rerank_delta`; 0 for one with nothing below
-    it to pass, which a later step still must not lift). With `rescore` False a moved
-    hit keeps its score: for a list placed by something other than score. The marks are
-    spent, so a search that merges more rows in moves only those."""
+    last nor below a row served only as filler (`_below_the_floor`). A placed row is
+    never counted as a place and never moved down (one the move passes rises a slot).
+
+    A moved hit scores between the rows around it (or ties the one above, when they
+    tie), so a stable sort by score keeps the order; with `rescore` False it keeps its
+    score, for a list placed by something other than score.
+    `score_components.code_changed_places` counts the rows it moved below (negative, as
+    a reranker's `rerank_delta`; 0 for one with nothing below it to pass, which a later
+    step still must not lift). The marks are spent, so a search that merges more rows in
+    moves only those."""
     marked = spend_marks(hits)
     moving = {id(h) for h in marked if not _placed(h)} if places > 0 else set()
     out = list(hits)

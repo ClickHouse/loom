@@ -374,7 +374,8 @@ def test_a_fact_the_search_moved_for_stale_code_is_never_lifted_to_lead() -> Non
     p = _where_do_i_live_pool()
     assert leading_home_fact(p["memory"]["results"], "jdoe")["memory_key"] == "where_i_live"
     hits = p["memory"]["results"]
-    # its code changed but the search did not move it (held, or the move off): it leads
+    # the rule reads the search's moves, not `code_state`: one its search did not move
+    # (held, or the move off) still leads
     hits[1]["code_state"] = "changed"
     assert leading_home_fact(hits, "jdoe")["memory_key"] == "where_i_live"
     # the search moved it down: it stays where the search put it, and the next one leads
