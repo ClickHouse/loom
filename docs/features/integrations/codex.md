@@ -125,9 +125,9 @@ name (`$loom-status`) or let its description trigger it.
 
 ## A short contract for AGENTS.md
 
-Codex reads `AGENTS.md` at the repository root (and `~/.codex/AGENTS.md`). The block in
-[agent instructions](agent-instructions.md) is the short contract; with the plugin, drop
-its code-namespace line, since the plugin sends the scope and the skills carry the detail.
+With the plugin, the skills above carry the contract and `AGENTS.md` needs none. Codex
+without the plugin reads the block in [agent instructions](agent-instructions.md) from
+`AGENTS.md` at the repository root (or `~/.codex/AGENTS.md`).
 
 ## Headless
 

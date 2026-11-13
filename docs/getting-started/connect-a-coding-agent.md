@@ -88,7 +88,8 @@ Restart the client afterwards. `--client` also takes `claude-desktop`, `vscode`,
 get the tools; transcript capture needs a hook, which [Cursor](../features/integrations/cursor.md)
 has and the others take from a [transcript template](../features/integrations/index.md#transcript-capture-hooks).
 [MCP clients](../features/integrations/mcp-clients.md) covers toolsets and the entry the
-command writes.
+command writes. Then add the [agent instructions](../features/integrations/agent-instructions.md)
+block to the client's rule file, so the agent knows when to call the tools.
 
 ## Check that it works
 

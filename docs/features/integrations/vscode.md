@@ -51,9 +51,14 @@ of the file, write the entry by hand with an input VS Code prompts for once and 
 ```
 
 Open the agent mode chat and check that the `loom_*` tools are listed;
-[checking the connection](mcp-clients.md#checking-the-connection) covers a `401`. Add the
-[agent instructions](agent-instructions.md) block to `.github/copilot-instructions.md` so
-the agent knows when to call them.
+[checking the connection](mcp-clients.md#checking-the-connection) covers a `401`.
+
+## Agent instructions
+
+Add the [agent instructions](agent-instructions.md) block to
+`.github/copilot-instructions.md` so the agent knows when to call the tools. The block
+names the `coding` toolset's tools: connect with `?toolset=coding` on `url`, or the ones
+it names run through `loom_op`.
 
 ## Related
 

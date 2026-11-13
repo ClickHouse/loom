@@ -47,8 +47,7 @@ Code
 ```
 
 Replace `<code-namespace>` with the namespace the repository is indexed under;
-`code.repos` (through `loom_op`) lists the code namespaces the token can read. Under the
-Claude Code or Codex plugin, drop that line: the plugin sends the scope with every call.
+`code.repos` (through `loom_op`) lists the code namespaces the token can read.
 
 ## Where each client reads it
 
@@ -91,8 +90,9 @@ Each line is the short form of what the plugins teach:
   skill, which the plugins' code shunt enforces.
 
 The skills carry the detail the block leaves out: the receipt fields, documents versus
-memories, the stop rules. To give an agent the skills themselves, install them alone
-([coding agents](index.md#coding-agents)).
+memories, the stop rules. To give an agent skills instead of the block, install the
+`loom` and `loom-code` skills alone ([coding agents](index.md#coding-agents)); `loom`
+covers what `loom-memory` teaches.
 
 ## Related
 

@@ -70,6 +70,7 @@ One page per need, each saying what Loom does for it and where to start:
 
 [Integrations](features/integrations/index.md) ·
 [MCP clients](features/integrations/mcp-clients.md) ·
+[Agent instructions](features/integrations/agent-instructions.md) ·
 [Claude Code](features/integrations/claude-code.md) ·
 [Codex](features/integrations/codex.md) · [Cursor](features/integrations/cursor.md) ·
 [VS Code](features/integrations/vscode.md) ·
