@@ -98,6 +98,9 @@ The credential provider reads the Secret on each request, so the next call carri
 token:
 
 ```bash
+TOKEN=$(kubectl -n loom exec deploy/loom -- \
+  loom mint-token --subject sa:research.research-agent --org acme \
+    --namespaces research --roles writer --ttl-days 30)
 kubectl -n loom-tokens-research create secret generic research-agent \
   --from-literal=token="$TOKEN" --dry-run=client -o yaml | kubectl apply -f -
 ```
