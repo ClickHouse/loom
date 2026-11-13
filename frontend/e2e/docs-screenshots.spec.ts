@@ -688,6 +688,7 @@ const PASSAGES = [
     section_path: ["Approvals"],
     content:
       "A refund over $250 needs a second approver in the billing console before it is issued. The approver must not be the person who took the original payment.",
+    lexical_score: 7.4,
     score: 0.0328,
     similarity: 0.86,
     distance: 0.14,
@@ -703,6 +704,7 @@ const PASSAGES = [
     section_path: ["Refund stuck in pending"],
     content:
       "If a refund stays pending for more than an hour, check the settlement queue first; a refund in a currency other than USD waits for the day's FX rate.",
+    lexical_score: 5.1,
     score: 0.032,
     similarity: 0.74,
     distance: 0.26,
@@ -718,6 +720,7 @@ const PASSAGES = [
     section_path: ["Rounding"],
     content:
       "Converted amounts round half to even, the rule the settlement bank applies, so a refund in EUR settles to the cent the bank reports.",
+    lexical_score: 4.6,
     score: 0.0161,
     similarity: 0.61,
     distance: 0.39,
