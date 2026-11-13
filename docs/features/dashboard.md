@@ -100,14 +100,16 @@ The left rail groups pages into Memory, Activity and Sources. Every page has its
 Three views are reached from elsewhere rather than the rail: **Namespaces in your org**
 (`/spaces`, the namespaces you manage and the org's public namespaces to join, with each one's
 [guide](namespaces-and-sharing.md#a-namespaces-guide) summary, and the guide itself for
-a namespace you belong to, opened from the namespace picker; a search that is a namespace name no listed public namespace carries offers **Request
-access**, which is how a private namespace is asked for by name; a repository's or
-collection's name points to Repositories or the Library instead), **Graph**
+a namespace you belong to, opened from the namespace picker), **Graph**
 (`/graph`, the entity graph explorer, opened from an entity; see
 [entity graph](entity-graph.md)) and **Help** (`/help?page=<page>#<section>`, a page of
 Loom's documentation as the running build ships it, read with `help.get` under the
 signed-in session, where an assistant answer's help citation leads; links between pages
 stay on it).
+
+On Namespaces in your org, a search for the exact name of a namespace the list does not
+show offers **Request access**, which is how a private namespace is asked for by name; a
+repository's or collection's name points to Repositories or the Library instead.
 
 A page with nothing to list says what will appear there and offers the action that fills it.
 Memories are filled by an agent or by hand; runs, conversations and connected clients only
@@ -381,7 +383,8 @@ count, or with no count when there is no open conflict but Loom retired a memory
 own in the last 30 days (the Auto-resolved tab), Usage warns when the namespace is over
 its 24-hour cap, Agents counts clients new in the last 24 hours. The header carries a task
 bell (triage and blocked-on-person items) and a pending-approvals bell (grant requests the
-person can decide).
+person can decide). The phone's More sheet lists the same admin entries with the same badges; a
+badge whose read fails is hidden.
 
 ## Operations the dashboard uses
 

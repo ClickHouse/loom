@@ -263,7 +263,8 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                     {
                       value: "public",
                       label: "Public",
-                      description: "Listed for anyone in the org to find; How people join decides who gets in.",
+                      description:
+                        "Listed for anyone in the org to find; the How people join setting decides who gets in.",
                     },
                   ]}
                 />

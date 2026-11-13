@@ -105,9 +105,7 @@ export function Browse() {
   const [settingsNs, setSettingsNs] = useState<string | null>(null);
   const [guideNs, setGuideNs] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  // The repositories' names, from the listed code rows and the caller's own: counted in the
-  // Repositories hint, and a search naming one is pointed there rather than offered a request.
-  // A tracker namespace is a namespace, requested here.
+  // Repository names (listed and the caller's own): the hint's count and the search's pointer.
   const [repoNames, setRepoNames] = useState<string[]>([]);
   const repoCount = repoNames.length;
   const setView = useStore((s) => s.setView);
@@ -133,7 +131,6 @@ export function Browse() {
       // Repositories are surfaced in the Repositories section, not as joinable memory. The server
       // lists no collection here: one is shared in the Library, never joined.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
-      // Every repository's name, a restricted or granted one included, points to Repositories.
       setRepoNames([
         ...new Set([...browseRows, ...mineRead].filter((r) => isCodeKind(r.kind)).map((r) => r.namespace)),
       ]);
@@ -241,7 +238,6 @@ export function Browse() {
   const typedRole = mineRows?.find((r) => r.namespace === typedName && r.status !== "pending")?.role;
   // The role the server would act on, for the request card: an admin claim admins every namespace.
   const typedReach = roleOnNamespace(whoami, mineRows, typedName);
-  const typedCollection = typedName.startsWith(COLLECTION_PREFIX);
   const elsewhere = repoNames.includes(typedName)
     ? "repository"
     : isCollectionName(typedName) && typedName.length > COLLECTION_PREFIX.length && !isPersonalCollection(typedName)
@@ -250,7 +246,7 @@ export function Browse() {
   const offersRequest =
     NAMESPACE_NAME.test(typedName) &&
     !elsewhere &&
-    !typedCollection &&
+    !isCollectionName(typedName) &&
     typedReach !== "admin" &&
     !filtered.some((r) => r.namespace === typedName);
   const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
