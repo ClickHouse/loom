@@ -179,7 +179,7 @@ export function citationNumbers(text: string): Map<string, number> {
         : b.kind === "list"
           ? b.items
           : b.kind === "table"
-            ? // Only the cells renderBlocks draws: a row's cells past the header's count.
+            ? // Only the cells renderBlocks draws: a row's cells up to the header's count.
               [...b.header, ...b.rows.flatMap((row) => row.slice(0, b.header.length))]
             : [];
     for (const line of lines) inline(line, undefined, count);

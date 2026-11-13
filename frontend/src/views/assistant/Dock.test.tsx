@@ -1363,7 +1363,7 @@ describe("the conversation", () => {
     await user.click(screen.getByRole("button", { name: "Ask" }));
     await waitFor(() => expect(useDock.getState().unread).toBe(true));
     await waitFor(() =>
-      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("Ask AI answer ready"),
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("Ask AI's answer is ready"),
     );
   });
 });

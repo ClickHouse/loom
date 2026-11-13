@@ -542,7 +542,7 @@ async function answer(
     const unread = !seen(turnId) && change.state === "done" && !saidDone;
     if (unread) {
       useDock.setState({ unread: true });
-      announceAssistant("Ask AI answer ready");
+      announceAssistant("Ask AI's answer is ready");
     } else if (said) announceAssistant(said);
   };
   // What ended the answer: null when its stream ended.
