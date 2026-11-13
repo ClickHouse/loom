@@ -2928,6 +2928,12 @@ class MemorySettings(BaseModel):
     memory_code_links_pending_days: int = Field(default=14, ge=1)
     # Changed claims one pass re-checks with the LLM under the `revise` policy.
     memory_code_links_revise_per_pass: int = Field(default=20, ge=0)
+    # Files that name a lost link's definition (callers too) the mirror is searched
+    # across for where it went; from this many on, the code index alone decides.
+    memory_code_links_mirror_naming_files: int = Field(default=200, ge=1)
+    # Files a lost link's commit range may change for the mirror to be searched; past
+    # it, the code index alone decides.
+    memory_code_links_mirror_changed_files: int = Field(default=5000, ge=1)
 
     # ---- memory chunks ----
     # Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈

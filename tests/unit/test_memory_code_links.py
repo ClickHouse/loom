@@ -3983,7 +3983,8 @@ async def test_a_link_lost_while_the_index_lagged_comes_back_when_rechecked(
     files = code_link_pass.RepoReads("o", "code-a")
     row, searched = _moved_module_world(monkeypatch, files, indexed=indexed)
     # as an older build wrote it: missing since c1, still holding c0, the commit it was
-    # last read at; `_lost` brings it back over the next range, which touches no b.py
+    # last read at; rechecked over a later range, which `_lost` hands it only when that
+    # range touches a file the index places its name in
     lost = row | {"state": "missing", "changed_since": "c1"}
     later = code_link_pass.Range("c1", {"pkg/c.py": "pkg/c.py"})
     moves = await code_link_recheck._recheck("o", "code-a", [lost], later, "c2", files)
@@ -4044,7 +4045,7 @@ async def test_a_name_too_many_changed_files_hold_leaves_the_index_verdict(monke
     # nothing and the link settles as the index says, never unresolved for good
     files = code_link_pass.RepoReads("o", "code-a")
     row, _ = _moved_module_world(monkeypatch, files, indexed=False)
-    monkeypatch.setattr(code_link_recheck, "_MAX_NAMING", 1)  # b.py fills the page
+    monkeypatch.setattr(settings, "memory_code_links_mirror_naming_files", 1)  # b.py fills it
     moves = await code_link_recheck._recheck("o", "code-a", [row], _MOVED, "c1", files)
     assert [(m.link.state, m.link.path) for m in moves] == [("missing", "pkg/a.py")]
 
@@ -4063,7 +4064,7 @@ async def test_the_mirror_is_not_searched_over_a_range_too_wide_or_unread(monkey
     monkeypatch.setattr(files, "touched", touched)
     monkeypatch.setattr(code_links.code, "containing", grep)
     assert await files.containing("c1", "f", "c0", limit=5) == []  # the range is unread
-    monkeypatch.setattr(code_link_pass, "_MAX_SEARCHED_FILES", 1)
+    monkeypatch.setattr(settings, "memory_code_links_mirror_changed_files", 1)
     assert await files.containing("c1", "f", "b0", limit=5) == []  # too wide
 
 
@@ -4125,7 +4126,7 @@ async def test_a_file_naming_it_that_does_not_parse_adds_no_definition(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_the_mirror_search_leaves_out_refused_files_and_counts_before_it_does(
+async def test_the_mirror_search_leaves_out_what_the_ingest_does_not_index(
     monkeypatch, tmp_path
 ) -> None:
     from server.code.app import memory_links
@@ -4139,20 +4140,25 @@ async def test_the_mirror_search_leaves_out_refused_files_and_counts_before_it_d
             "gen/rows.py": "def fetch_rows():\n    return 2\n",  # the ingest refuses it
         }
     )
-    cfg = SimpleNamespace(
-        git_dir=str(tmp_path / ".git"),
-        label="t",
-        ignore_file=".loomignore",
-        exclude=[],
-        include_contrib=False,
-        include_contrib_paths=[],
-        exclude_generated=False,
-        path_prefixes=("pkg/", "gen/"),
-    )
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class Entry:  # the fields of a `RepoConfig` the search reads
+        git_dir: str
+        label: str = "t"
+        ignore_file: str = ".loomignore"
+        exclude: tuple[str, ...] = ()
+        include_contrib: bool = False
+        include_contrib_paths: tuple[str, ...] = ()
+        exclude_generated: bool = False
+        path_prefixes: tuple[str, ...] = ("pkg/", "gen/")
+
+    cfg = Entry(git_dir=str(tmp_path / ".git"))
     monkeypatch.setattr(memory_links, "repo_for_namespace", lambda org, ns: cfg)
     monkeypatch.setattr(memory_links, "_DENYLISTS", type(memory_links._DENYLISTS)())
     paths = ["gen/rows.py", "pkg/b.py", "tools/rows.py"]
     found = await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=3)
     assert found == ["pkg/b.py"]
-    # two files name it at a limit of two: a full page, counted before the refusal, adds none
-    assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=2) == []
+    # the refused and unindexed files are left out before the page is counted
+    assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=2) == ["pkg/b.py"]
+    assert await _REAL_CONTAINING("o", "code-a", head, "fetch_rows", paths, limit=1) == []

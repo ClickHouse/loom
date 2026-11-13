@@ -145,28 +145,29 @@ async def containing(
     cfg = repo_for_namespace(org, namespace)
     if cfg is None:
         return None
-    paths = [p for p in paths if p.startswith(cfg.path_prefixes)]  # what the ingest reads
     if not commit or not paths:
         return []
     try:
+        denied = await _denylist_at(cfg, commit)
+        # what the ingest reads (`ingest_pass._scope_of`): under the prefixes, not refused
+        paths = [p for p in paths if p.startswith(cfg.path_prefixes) and not denied.reason(p)]
+        if not paths:
+            return []
         found = await gitrepo.grep_paths(
             cfg.git_dir, commit, literal, tuple(paths), limit=limit, literal_paths=True, word=True
         )
-        if len(found) >= limit:
-            return []  # counted before the denylist: a cut list is never taken as whole
-        denied = await _denylist_at(cfg, commit)
     except gitrepo.GitError:
         return None
-    return [p for p in found if not denied.reason(p)]
+    return [] if len(found) >= limit else found  # a cut list is never taken as whole
 
 
-# the last commits' denylists (their ignore and attributes files read at the commit)
-_DENYLISTS: OrderedDict[tuple[str, str], Denylist] = OrderedDict()
+# the last commits' denylists per entry (its ignore and attributes files read at the commit)
+_DENYLISTS: OrderedDict[tuple[RepoConfig, str], Denylist] = OrderedDict()
 _DENYLISTS_KEPT = 8
 
 
 async def _denylist_at(cfg: RepoConfig, commit: str) -> Denylist:
-    key = (cfg.git_dir, commit)
+    key = (cfg, commit)
     if key not in _DENYLISTS:
         _DENYLISTS[key] = await load_denylist(cfg, commit, gitrepo.show_file)
         while len(_DENYLISTS) > _DENYLISTS_KEPT:

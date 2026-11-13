@@ -148,9 +148,6 @@ _LOST_SEARCHED_DAYS = 30
 
 # files of namesakes a lost link is weighed against: past it, the answer is unsure
 _MAX_ELSEWHERE = 32
-# files naming a lost name (callers as well as the definition) a mirror search reads;
-# from it on, the mirror adds nothing and the index decides
-_MAX_NAMING = 200
 
 
 # versions of its file a lost link's code is looked for in: past it, likewise
@@ -389,7 +386,8 @@ async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[De
     if r.before.state == "missing" and r.range is None:
         return []  # a full recheck of a link long gone: the index decides, as before
     base = _searched_from(r.before, r.row, r.range)
-    paths = await files.containing(head, bare_name(qn), base, limit=_MAX_NAMING)
+    limit = settings.memory_code_links_mirror_naming_files
+    paths = await files.containing(head, bare_name(qn), base, limit=limit)
     if paths is None:
         return None
     local, found = local_name(qn, r.before.read_path), []

@@ -3964,6 +3964,18 @@
           "type": "number",
           "description": "Seconds a code-links pass may run before the supervisor abandons it."
         },
+        "memory_code_links_mirror_changed_files": {
+          "default": 5000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Files a lost link's commit range may change for the mirror to be searched; past it, the code index alone decides."
+        },
+        "memory_code_links_mirror_naming_files": {
+          "default": 200,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Files that name a lost link's definition (callers too) the mirror is searched across for where it went; from this many on, the code index alone decides."
+        },
         "memory_code_links_pending_days": {
           "default": 14,
           "minimum": 1,

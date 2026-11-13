@@ -17,6 +17,7 @@ from server.code.domain.anchor import (
 from server.code.domain.successor import Successor
 from server.memory.store.code_links import LinkRow
 from server.memory.store.key_write_lock import KeyWriteLocks
+from server.settings import settings
 
 # One host rechecks a repository at a time; the lease outlives the worker's pass budget.
 repository_locks = KeyWriteLocks(wait_s=1.0, ttl_s=900)
@@ -58,8 +59,6 @@ class Range:
 
 # parsed files a pass keeps: a full recheck reads every linked file of a repository
 _FILES_CACHED = 512
-# files a range may change for the mirror to be searched over them
-_MAX_SEARCHED_FILES = 5000
 
 
 class Recent[K, V](OrderedDict[K, V]):
@@ -133,12 +132,12 @@ class RepoReads:
         """The files `base..head` added or changed whose text at `head` holds the word
         `literal`, fewer than `limit`, those the ingest does not index left out; an empty
         list when the range's diff cannot be read (a force-push, a diff git fails on),
-        more than `_MAX_SEARCHED_FILES` changed or `limit` or more hold it; None when the
-        mirror cannot be searched."""
+        more than `memory_code_links_mirror_changed_files` changed or `limit` or more
+        hold it; None when the mirror cannot be searched."""
 
         async def read() -> list[str] | None:
             touched = await self.touched(base, head) if base else None
-            if not touched or len(touched) > _MAX_SEARCHED_FILES:
+            if not touched or len(touched) > settings.memory_code_links_mirror_changed_files:
                 return []
             return await code.containing(
                 self.org, self.cns, head, literal, sorted(touched), limit=limit
