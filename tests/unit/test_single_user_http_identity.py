@@ -99,6 +99,16 @@ def test_a_blank_or_sentinel_identity_is_filled_too(seen: Seen, blank: str) -> N
     assert seen == [("MemoryGetInput", "dev", "local", "a")]
 
 
+def test_an_agent_of_dash_is_kept(seen: Seen) -> None:
+    """`-` names no agent: the agents views leave it out, where `http` would show."""
+    _post("memory.set", {"agent": "-", "memory_key": "k", "value": "v"})
+    _post("memory.get", {"agent": "-", "memory_key": "k"})
+    assert seen == [
+        ("MemorySetInput", "dev", "local", "-"),
+        ("MemoryGetInput", "dev", "local", "-"),
+    ]
+
+
 def test_an_identity_the_call_names_is_kept(seen: Seen) -> None:
     _post(
         "memory.set",

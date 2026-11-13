@@ -225,7 +225,7 @@ async def with_single_user_identity(
     update = {
         name: value
         for name, value in fill.items()
-        if value and name in fields and name not in meant and _absent(args.get(name))
+        if value and name in fields and name not in meant and _absent(name, args.get(name))
     }
     # A blank value the call sent is a missing one, named by validation, never the
     # empty namespace or agent: on a field a near-miss key kept from the fill, and
@@ -234,14 +234,17 @@ async def with_single_user_identity(
     namespace = fields.get("namespace")
     if "namespace" not in update and namespace is not None and namespace.is_required():
         drop.add("namespace")
-    drop = {name for name in drop if isinstance(args.get(name), str) and _absent(args[name])}
+    drop = {name for name in drop if isinstance(args.get(name), str) and _absent(name, args[name])}
     if not update and not drop:
         return args
     return {**{k: v for k, v in args.items() if k not in drop}, **update}
 
 
-def _absent(value: Any) -> bool:
-    """Missing, null, or a string the gates read as no identity."""
+def _absent(name: str, value: Any) -> bool:
+    """Missing, null, or a string the gates read as no identity. An agent of "-"
+    names no agent, which the agents views leave out, so it is kept."""
+    if name == "agent" and isinstance(value, str) and value.strip() == "-":
+        return False
     return value is None or (isinstance(value, str) and present(value) is None)
 
 
