@@ -34,9 +34,9 @@ ORG_TRIGGERS = (INSERT_TRIGGER, UPDATE_TRIGGER)
 TENANCY_FUNCTION = "loom.tenancy_refuse_unmarked"
 TENANCY_TRIGGER = "tenancy_record"
 CELL_FIRST_TRIGGERS = ("cell_first_immutable", "cell_first_no_truncate")
-# Org-keyed tables outside the guard: the cell's own tenancy rows, and the idempotency
-# rows keyed by the caller's token org (a platform admin's replay row for its home org is
-# neither refused nor placed).
+# Org-keyed tables the org triggers skip: the cell's own tenancy rows (`tenancy_record`
+# guards them instead), and the idempotency rows keyed by the caller's token org (a platform
+# admin's replay row for its home org is neither refused nor placed).
 EXCLUDED = frozenset({"tenancy", "idempotency", "idempotency_fences"})
 # A table's DDL waits this long for its lock a try, LOCK_ATTEMPTS tries LOCK_RETRY_S
 # apart: a boot never queues behind a long transaction (and every write of the table
@@ -361,7 +361,7 @@ async def missing(conn: Any) -> list[Defect]:
                 found.append(Defect("function", f"loom.{table}: {name} calls {row['function']}"))
             if not (tgtype & _ROW) or tgtype & (_BEFORE | _INSTEAD) or tgtype & event != event:
                 found.append(
-                    Defect("shape", f"loom.{table}: {name} is not AFTER, row-level, on its event")
+                    Defect("shape", f"loom.{table}: {name} is not AFTER, row-level, on its events")
                 )
     found += _function_defects(FUNCTION, fn)
     found += _function_defects(TENANCY_FUNCTION, tenancy_fn)

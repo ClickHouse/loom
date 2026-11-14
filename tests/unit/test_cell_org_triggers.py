@@ -321,6 +321,15 @@ def test_doctor_names_a_partial_state_and_an_unmarked_session() -> None:
     assert grades["cell_marker_everywhere"][0] == "WARN"
 
 
+@pytest.mark.parametrize("state", ["enforced", "partial", "recording"])
+def test_doctors_marker_warnings_name_the_tenancy_guard(state: str) -> None:
+    from server.cli import doctor_cell
+
+    grades = {n: d for n, _g, d in doctor_cell._grades(state, False, True, [])}
+    assert "tenancy row" in grades["cell_marker"]
+    assert "the loom.tenancy guard pass every writer" in grades["cell_marker_everywhere"]
+
+
 @pytest.mark.parametrize("state,named", [("enforced", True), ("recording", False), ("open", False)])
 def test_doctor_names_an_absent_org_trigger_only_on_an_enforced_cell(
     state: str, named: bool
