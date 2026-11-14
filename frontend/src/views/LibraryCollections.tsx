@@ -262,7 +262,7 @@ export function LibraryCollections({
   }, [place]);
   // The select's order; beside the tree there is no select.
   const ordered = useMemo(() => (besideTree ? [] : treeOrder(rows ?? [])), [rows, besideTree]);
-  // A phone gets the path as one back button in the select's row, and no Collections list.
+  // A phone gets the path as one back button in the select's row, and no chips.
   const phone = useMedia(PHONE_QUERY);
   // Above the top of a collection's path: the header's namespace, else the user's own files,
   // the places that list the top-level collections.
