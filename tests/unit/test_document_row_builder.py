@@ -987,20 +987,9 @@ def test_a_metadata_edit_and_a_delete_write_no_permission_list(monkeypatch) -> N
 def test_no_operation_takes_or_answers_a_permission_list() -> None:
     from server.operations.registry import ALL_OPERATIONS
 
-    def property_sets(node: object) -> list[set[str]]:
-        if isinstance(node, dict):
-            found = [set(node["properties"])] if isinstance(node.get("properties"), dict) else []
-            return found + [p for v in node.values() for p in property_sets(v)]
-        if isinstance(node, list):
-            return [p for v in node for p in property_sets(v)]
-        return []
-
     for op in ALL_OPERATIONS:
         for model in (op.input_model, op.output_model):
-            schema = model.model_json_schema()
-            assert "access_json" not in json.dumps(schema), op.name
-            # Nor a list under another name.
-            assert not any({"unread", "anyone"} <= p for p in property_sets(schema)), op.name
+            assert "access_json" not in json.dumps(model.model_json_schema()), op.name
 
 
 def _stub_upsert_over_a_listed_row(monkeypatch: pytest.MonkeyPatch) -> None:

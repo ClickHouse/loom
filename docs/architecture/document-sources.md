@@ -597,7 +597,8 @@ Each mirrored document carries its permission list in an `access_json` column of
 (`loom.documents`; under the Postgres authority it rides in the head's `row` jsonb, with
 no Postgres migration), written by the turn of the source that owns the document:
 
-- `emails`: the people the store grants any role, lower-cased, and, by credential mode:
+- `emails`: the people the store grants any role on the whole file, lower-cased, and, by
+  credential mode:
   - `connected`: the owner, whose account listed the file in that turn, entered as the
     source's `owner_subject` (an `owner` entry, never an email, and never the
     connection's store email), since the owner chose the item and can open it. When the
@@ -671,25 +672,26 @@ A token reads as one person, for both the `owner` entry and the emails, or as no
 
 The check fails closed. A stale listing, an `unread` list, an unexpanded or stale group,
 a link-only permission, a permission the store marks deleted (its address may now belong
-to someone else) and a permission type the sync does not know admit nobody. A missing
-registry or listing row admits nobody. A leg whose per-request reads (the statements it
-issues whatever matched, the reader's canonical subject and verified emails among them)
-fail shows no mirrored document and marks the answer `degraded: mirror_unread`; a read
-it issues only for candidates (the lists, the members rows, the heads) that fails drops
-every mirrored result without the marker, so the marker says nothing about what matched.
-Each leg reads the registry row and the listing row first and then the members rows and
-the lists, under `sequential_reads()`, so a lagging replica cannot pair a fresh listing
-row with an older list. It computes the addresses the reader may see before its `LIMIT`,
-so a page is never cut short by the check, and caches no admitted set. No score depends
-on a document the reader may not see: a mirror's chunks add nothing to any corpus
-statistic (the lexical leg's document counts, lengths and term frequencies), and a
-mirror leg scores its lexical hits with fixed corpus constants, which depend on no
-document, so a namespace fed only by mirrored sources still ranks by both legs. Under
-the Postgres authority each leg judges the addresses it is about to answer by their
-heads, so a narrowing or a retirement committed and not yet published already applies,
-and a missing head drops the address; a leg that cannot read the heads shows no mirrored
-document. The implementing pull request measures the leg on a mirror of a million
-documents under both storage authorities and puts the figures here.
+to someone else), a grant to one view of the file only (`view`), and a permission type
+or role the sync does not know admit nobody. A missing registry or listing row admits
+nobody. A leg whose per-request reads (the statements it issues whatever matched, the
+reader's canonical subject and verified emails among them) fail shows no mirrored
+document and marks the answer `degraded: mirror_unread`; a read it issues only for
+candidates (the lists, the members rows, the heads) that fails drops every mirrored
+result without the marker, so the marker says nothing about what matched. Each leg reads
+the registry row and the listing row first and then the members rows and the lists,
+under `sequential_reads()`, so a lagging replica cannot pair a fresh listing row with an
+older list. It computes the addresses the reader may see before its `LIMIT`, so a page
+is never cut short by the check, and caches no admitted set. No score depends on a
+document the reader may not see: a mirror's chunks add nothing to any corpus statistic
+(the lexical leg's document counts, lengths and term frequencies), and a mirror leg
+scores its lexical hits with fixed corpus constants, which depend on no document, so a
+namespace fed only by mirrored sources still ranks by both legs. Under the Postgres
+authority each leg judges the addresses it is about to answer by their heads, so a
+narrowing or a retirement committed and not yet published already applies, and a missing
+head drops the address; a leg that cannot read the heads shows no mirrored document. The
+implementing pull request measures the leg on a mirror of a million documents under both
+storage authorities and puts the figures here.
 
 ### Every complete listing reads the lists again
 
