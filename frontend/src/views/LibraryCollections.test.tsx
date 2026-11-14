@@ -392,6 +392,7 @@ function resizable(width = TREE_PAGE_MIN) {
         observers.push(f);
       }
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -1211,6 +1212,29 @@ describe("the Library on a collection", () => {
       await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "Library" })).toHaveFocus());
     });
 
+    it("leaves a dialog opened since the tree's create alone when that create answers", async () => {
+      const narrow = resizable();
+      const answer = await startCreate();
+      act(() => narrow());
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q5" } });
+      const at = location.search;
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await answer(q4);
+      await settle();
+      // The later create supersedes it: the dialog stays, with its title, and nothing moves.
+      expect(dialog).toBeInTheDocument();
+      expect(within(dialog).getByRole("textbox", { name: "Title" })).toHaveValue("Q5");
+      expect(location.search).toBe(at);
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+    });
+
     it("moves nothing once the person left the Library and came back, and lists what was made", async () => {
       resizable();
       const answer = await startCreate();
@@ -1321,6 +1345,33 @@ describe("the Library on a collection", () => {
       await act(async () => answer(q4));
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
+    });
+
+    it("lists, and does not open, what the dialog made after its Cancel", async () => {
+      let answer: (v: unknown) => void = () => {};
+      api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />);
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "New collection" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Title" }), { target: { value: "Q4" } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await settle();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const at = location.search;
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      await act(async () => answer(q4));
+      await settle();
+      expect(location.search).toBe(at);
       expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
       expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
     });

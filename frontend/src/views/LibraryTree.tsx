@@ -47,7 +47,7 @@ export const placeFocusKey = (collection: string | null) => `library-tree-place-
 export type PickPlace = (collection: string | null, arriveFocus: string, note: string) => void;
 
 /** Open a collection made in the tree. `arriveFocus`: New collection's focus key, so the
- *  person goes on there; `version`: the page's place version when Create was pressed. */
+ *  person goes on there; `version`: what `startCreate` gave when Create was pressed. */
 export type MadeCollection = (collection: string, arriveFocus: string, version: number) => void;
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
@@ -149,7 +149,7 @@ export const LibraryTree = memo(function LibraryTree({
   shelf,
   current,
   onPick,
-  readPlaceVersion,
+  startCreate,
   onCreated,
 }: {
   org: string;
@@ -173,8 +173,8 @@ export const LibraryTree = memo(function LibraryTree({
   /** The collection shown, or null for the header's namespace. */
   current: string | null;
   onPick: PickPlace;
-  /** The page's place version now, which a create carries to its answer. */
-  readPlaceVersion: () => number;
+  /** Starts a create: the version its answer carries, which a later create supersedes. */
+  startCreate: () => number;
   /** It can land after the tree is gone (a resize, or a move to another org). */
   onCreated: MadeCollection;
 }) {
@@ -314,7 +314,7 @@ export const LibraryTree = memo(function LibraryTree({
             org={org}
             parent={into?.namespace ?? ""}
             label={into ? `New collection in ${distinctTitle(into, repeated)}` : "New collection at the top level"}
-            readPlaceVersion={readPlaceVersion}
+            startCreate={startCreate}
             onClose={stopMaking}
             onCreated={onCreated}
           />
@@ -437,14 +437,14 @@ function NewCollectionForm({
   org,
   parent,
   label,
-  readPlaceVersion,
+  startCreate,
   onClose,
   onCreated,
 }: {
   org: string;
   parent: string;
   label: string;
-  readPlaceVersion: () => number;
+  startCreate: () => number;
   onClose: () => void;
   onCreated: MadeCollection;
 }) {
@@ -458,7 +458,7 @@ function NewCollectionForm({
     // Create is disabled without a title, with one too long, or while it is sent, and so is the
     // form's submit.
     setBusy(true);
-    const version = readPlaceVersion();
+    const version = startCreate();
     let r: CollectionCreated;
     try {
       r = await createCollection(org, "", { parent, title: trimmed, deriveName: true });

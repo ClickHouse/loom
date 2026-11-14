@@ -59,7 +59,7 @@ import { DatasetsDialog } from "../flows/DatasetsDialog";
 import { Modal } from "../components/ui/Modal";
 import { collectionTitle, distinctTitle, namespaceLabel, repeatedTitles } from "../lib/collections";
 import { formatBytesShort } from "../lib/format";
-import { useAbortableEffect } from "../lib/hooks";
+import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
 import { PLACE_PICKER_LABEL, TopLevelPlaces } from "./LibraryHierarchy";
@@ -184,20 +184,18 @@ export function Documents() {
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
   const collections = useReadableCollections(picked.org, collection);
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const mounted = useMounted();
   // Bumped whenever the place shown changes (a pick, Back, a correction, another namespace or
-  // org); a failed read leaves it.
+  // org), and by each create that starts, so only the latest create opens what it made; a
+  // failed read leaves it.
   const placeVersion = useRef(0);
   useLayoutEffect(() => {
     placeVersion.current += 1;
   }, [picked.org, picked.namespace, collection]);
-  const currentVersion = useCallback(() => placeVersion.current, []);
+  const startCreate = useCallback(() => {
+    placeVersion.current += 1;
+    return placeVersion.current;
+  }, []);
   // A collection just made, from the tree or the dialog, opens only while the person is where
   // the create started (`version`) and this page is still open; otherwise the refresh its
   // create sent lists it. The read starts before the move so the old list never says it is
@@ -302,10 +300,10 @@ export function Documents() {
   // Each open carries the place version it opened at, for what its create made.
   const [creatingCollection, setCreatingCollection] = useState<{ version: number } | null>(null);
   const setCreating = useCallback(
-    (open: boolean) => setCreatingCollection(open ? { version: placeVersion.current } : null),
-    [],
+    (open: boolean) => setCreatingCollection(open ? { version: startCreate() } : null),
+    [startCreate],
   );
-  const dialogVersion = creatingCollection?.version ?? 0;
+  const dialogVersion = creatingCollection?.version ?? -1;
   // An upload of many files has started: the dialog stays open when the place shown changes.
   const batchStarted = useRef(false);
   // The header's New › Document adds to the header's namespace: it steps aside while a
@@ -993,7 +991,7 @@ export function Documents() {
       shelf={ownShelf ? picked.namespace : null}
       current={treeCurrent}
       onPick={goTo}
-      readPlaceVersion={currentVersion}
+      startCreate={startCreate}
       onCreated={openCreated}
     />
   );

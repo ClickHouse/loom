@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Select } from "@clickhouse/click-ui/Select";
@@ -12,6 +12,7 @@ import { ApiError } from "../lib/errors";
 import { humanizeError } from "../lib/errorWords";
 import { COLLECTION_PREFIX, isPersonalCollection, NAMESPACE_NAME, PERSONAL_COLLECTION_PREFIX } from "../lib/namespace";
 import { invalidateSharedCollections } from "../lib/collectionPlaces";
+import { useMounted } from "../lib/hooks";
 
 // The Select's value for "no parent": a Select item cannot carry "".
 const TOP_LEVEL = "__top__";
@@ -56,7 +57,8 @@ interface Props {
   /** The header's namespace when it holds documents, named so a top-level collection is not
    *  taken to sit in it. */
   headerNamespace?: string | null;
-  /** Fires with the collection's name: the new one, or the one the title already names there. */
+  /** Fires with the collection's name (the new one, or the one the title already names there),
+   *  only while this dialog is still open. */
   onCreated: (namespace: string) => void;
 }
 
@@ -84,15 +86,9 @@ export function CreateCollectionDialog({
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ text: string; suggestion: string } | null>(null);
-  // This open's dialog is still drawn: an answer that lands after it closed leaves alone the
-  // page, and a dialog opened since.
-  const live = useRef(true);
-  useEffect(() => {
-    live.current = true;
-    return () => {
-      live.current = false;
-    };
-  }, []);
+  // False once this open's dialog is gone: a late answer then leaves the page, and any dialog
+  // opened since, alone.
+  const live = useMounted();
 
   const reset = () => {
     setTitle("");
