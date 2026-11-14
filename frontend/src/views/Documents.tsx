@@ -178,16 +178,14 @@ export function Documents() {
   // A collection is read only once collection.list names it, so the page never shows or
   // writes one under the namespace's name, nor one the caller cannot open.
   const collections = useReadableCollections(picked.org, collection);
+  const { error: listFailed, retry: retryList } = collections;
   // A pick is a new history entry, so Back steps through the places picked. `arriveFocus` and
   // `note` are the arrival's focus and words (a tree pick keeps the person on its row).
-  const { error: listFailed, retry: retryList } = collections;
   const goTo = useCallback(
     (c: string | null, arriveFocus?: string, note?: string) => {
-      if (c === linkedCollection()) {
-        // The place the URL names: nothing moves, but a list that failed to confirm it reads again.
-        if (c && listFailed) retryList();
-        return;
-      }
+      // A collection is opened only once the list names it: a list that failed reads again.
+      if (c && listFailed) retryList();
+      if (c === linkedCollection()) return;
       useStore.getState().clearPendingDoc();
       useStore.getState().navigate("knowledge", { query: c ? { collection: c } : {}, arriveFocus, note });
     },

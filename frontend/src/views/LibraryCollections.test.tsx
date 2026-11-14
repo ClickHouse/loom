@@ -1463,8 +1463,24 @@ describe("the Library on a collection", () => {
       const reads = api.listCollections.mock.calls.length;
       fireEvent.click(within(tree).getByRole("link", { name: "col-plans" }));
       await settle();
-      expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads);
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
       expect(within(tree).getByRole("link", { name: "col-plans" })).toHaveAttribute("aria-current", "page");
+    });
+
+    it("reads again and opens another collection picked in the tree after the read failed", async () => {
+      resizable();
+      const answer = await createInTree();
+      api.listCollections.mockRejectedValue(new Error("offline"));
+      await answer({ namespace: "col-plans", parent: "col-q3", created: false, title: "col-plans" });
+      await settle();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      const reads = api.listCollections.mock.calls.length;
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      fireEvent.click(within(tree).getByRole("link", { name: "col-q3" }));
+      await settle();
+      expect(api.listCollections.mock.calls.length - reads).toBe(1);
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-q3");
+      expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveAttribute("aria-current", "page");
     });
 
     it("opens a second collection made in the tree after the first one's read failed", async () => {
