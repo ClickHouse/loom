@@ -1,14 +1,23 @@
 import { useEffect, useRef } from "react";
+import { LIBRARY_PLACES_LABEL, PLACE_PICKER_LABEL } from "./collections";
 import { focusViewHeading } from "./place";
 
+/** Where the focus goes: the tree's current row (else its first) when it is drawn, the place
+ *  picker when it goes. */
+function handoffTarget(besideTree: boolean): HTMLElement | null {
+  if (!besideTree) return document.querySelector<HTMLElement>(`[aria-label="${PLACE_PICKER_LABEL}"]`);
+  const tree = document.querySelector(`nav[aria-label="${LIBRARY_PLACES_LABEL}"]`);
+  return tree?.querySelector<HTMLElement>('a[aria-current="page"]') ?? tree?.querySelector<HTMLElement>("a") ?? null;
+}
+
 /** When `besideTree` changes (a resize draws or removes the Library's tree) and the last
- *  control focused in <main> went with it, `target(besideTree)` takes the focus on the next
- *  frame: to the tree's current row when the tree is drawn, to the picker when it goes; else
- *  the view's h1. Focus still on the page, or since moved out of <main>, stays. */
-export function useTreeFocusHandoff(besideTree: boolean, target: (besideTree: boolean) => HTMLElement | null): void {
+ *  control focused in <main> went with it, the focus goes on the next frame to the tree's
+ *  current row when the tree is drawn, to the picker when it goes; else the view's h1. Focus
+ *  still on the page, or since moved out of <main>, stays. A click on the page's background
+ *  fires no focusin, so the control before it still counts as last and a resize after it
+ *  hands the focus on. */
+export function useTreeFocusHandoff(besideTree: boolean): void {
   const last = useRef<Element | null>(null);
-  const latest = useRef(target);
-  latest.current = target;
   useEffect(() => {
     const onFocusIn = (e: FocusEvent) => {
       // A popper (the picker's list and its search) is portalled out of <main> but belongs to
@@ -27,7 +36,7 @@ export function useTreeFocusHandoff(besideTree: boolean, target: (besideTree: bo
     const frame = requestAnimationFrame(() => {
       const active = document.activeElement;
       if ((active && active !== document.body) || !last.current || last.current.isConnected) return;
-      const to = latest.current(seen.current);
+      const to = handoffTarget(seen.current);
       if (to) to.focus();
       else focusViewHeading();
     });

@@ -139,3 +139,9 @@ export function titleTooLong(title: string): boolean {
 export function canHold(c: CollectionEntry): boolean {
   return !c.personal && c.role !== "viewer";
 }
+
+/** The Library tree's landmark name, which the page finds it by to hand it the focus. */
+export const LIBRARY_PLACES_LABEL = "Library places";
+
+/** The place picker's name, shown where no tree is: the page hands it the focus when the tree goes. */
+export const PLACE_PICKER_LABEL = "Show the documents of";

@@ -62,8 +62,9 @@ import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect, useMounted } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
 import { LibraryCollections, useReadableCollections } from "./LibraryCollections";
-import { PLACE_PICKER_LABEL, TopLevelPlaces } from "./LibraryHierarchy";
-import { type ClaimCreateVersion, LIBRARY_PLACES_LABEL, LibraryTree } from "./LibraryTree";
+import { TopLevelPlaces } from "./LibraryHierarchy";
+import { LibraryTree } from "./LibraryTree";
+import type { ClaimCreateVersion } from "../flows/CreateCollectionDialog";
 import { useTreeHeight } from "../lib/useTreeHeight";
 import { LibraryPassages, PASSAGES_PANEL_ID } from "./LibraryPassages";
 import { EditDocumentMetadataDialog } from "../flows/EditDocumentMetadataDialog";
@@ -204,6 +205,8 @@ export function Documents() {
   const openCreated = useCallback(
     (name: string, arriveFocus: string | undefined, version: number) => {
       if (!mounted.current || version !== placeVersion.current) return;
+      // The answer named the collection already shown: the create's refresh is enough.
+      if (name === linkedCollection()) return;
       flushSync(() => reloadCollections(name));
       goTo(name, arriveFocus);
     },
@@ -287,11 +290,7 @@ export function Documents() {
   // A resize that draws or removes the tree removes the controls only one layout has (the tree,
   // the picker, the places below the documents): their focus goes to the tree's row for the
   // place shown, else to the picker. A title typed in the tree's New collection form is dropped.
-  useTreeFocusHandoff(besideTree, (drawn) => {
-    if (!drawn) return document.querySelector<HTMLElement>(`[aria-label="${PLACE_PICKER_LABEL}"]`);
-    const tree = document.querySelector(`nav[aria-label="${LIBRARY_PLACES_LABEL}"]`);
-    return tree?.querySelector<HTMLElement>('a[aria-current="page"]') ?? tree?.querySelector<HTMLElement>("a") ?? null;
-  });
+  useTreeFocusHandoff(besideTree);
   const pendingDocSourceUri = useStore((s) => s.pendingDocSourceUri);
   const clearPendingDoc = useStore((s) => s.clearPendingDoc);
   const [rows, setRows] = useState<KnowledgeEntry[] | null>(null);

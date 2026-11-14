@@ -18,12 +18,13 @@ import { toastError } from "../components/Toast";
 import { fieldError } from "../components/ui/fieldError";
 import { Loading } from "../components/ui/Loading";
 import { IconButton } from "../components/IconButton";
-import { announceCreated } from "../flows/CreateCollectionDialog";
+import { announceCreated, type ClaimCreateVersion } from "../flows/CreateCollectionDialog";
 import {
   canHold,
   collectionOrder,
   collectionTitle,
   distinctTitle,
+  LIBRARY_PLACES_LABEL,
   MAX_TITLE,
   namespaceLabel,
   titleTooLong,
@@ -46,18 +47,12 @@ export const placeFocusKey = (collection: string | null) => `library-tree-place-
  *  stays in the tree; `note`: the place's name, said on arrival. */
 export type PickPlace = (collection: string | null, arriveFocus: string, note: string) => void;
 
-/** Advances the place version for a create about to be sent and returns it: only the latest
- *  create opens what it made. */
-export type ClaimCreateVersion = () => number;
-
 /** Open a collection made in the tree. `arriveFocus`: New collection's focus key, so the
  *  person goes on there; `version`: what `claimCreateVersion` gave when Create was pressed. */
 export type MadeCollection = (collection: string, arriveFocus: string, version: number) => void;
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
-/** The tree's landmark name, which the page finds it by to hand it the focus. */
-export const LIBRARY_PLACES_LABEL = "Library places";
 
 /** The collections a person opened in the tree, per org, for this browser. */
 function expandedKey(org: string): string {

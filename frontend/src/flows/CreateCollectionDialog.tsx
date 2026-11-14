@@ -13,10 +13,13 @@ import { humanizeError } from "../lib/errorWords";
 import { COLLECTION_PREFIX, isPersonalCollection, NAMESPACE_NAME, PERSONAL_COLLECTION_PREFIX } from "../lib/namespace";
 import { invalidateSharedCollections } from "../lib/collectionPlaces";
 import { useMounted } from "../lib/hooks";
-import type { ClaimCreateVersion } from "../views/LibraryTree";
 
 // The Select's value for "no parent": a Select item cannot carry "".
 const TOP_LEVEL = "__top__";
+
+/** Advances the place version for a create about to be sent and returns it: only the latest
+ *  create opens what it made. */
+export type ClaimCreateVersion = () => number;
 
 /** After collection.create in `org`: the shared reads start again, and every Library list
  *  open when the answer lands waits for the new collection. The person is told whether it was

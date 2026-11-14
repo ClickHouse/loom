@@ -1,7 +1,7 @@
 // The place picker (a select, or the tree beside the page), the path and chips, the
 // collection's menu, New collection, and how the list is read again after a write.
 import { useState, type ComponentProps } from "react";
-import { repeatedTitles } from "../lib/collections";
+import { PLACE_PICKER_LABEL, repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { PHONE_QUERY } from "../lib/useMedia";
@@ -23,7 +23,6 @@ import {
   useReadableCollections,
   type ReadableCollections,
 } from "./LibraryCollections";
-import { PLACE_PICKER_LABEL } from "./LibraryHierarchy";
 
 const api = vi.hoisted(() => ({
   listCollections: vi.fn(),
@@ -1211,6 +1210,23 @@ describe("the Library on a collection", () => {
       expect(useStore.getState().arriveFocus).toBe(NEW_COLLECTION_FOCUS);
       act(() => arriveAt(null, useStore.getState().arriveFocus));
       await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "Library" })).toHaveFocus());
+    });
+
+    it("keeps the place drawn when a create answers with the collection already shown", async () => {
+      resizable();
+      api.listKnowledge.mockResolvedValue({ rows: [{ source_uri: "a.md", title: "A", tags: [] }], next_cursor: null });
+      const answer = await createInTree();
+      await settle();
+      const at = location.search;
+      const docs = api.listKnowledge.mock.calls.length;
+      // The title already names the collection shown: the server answers with it.
+      await answer({ namespace: "col-q3", parent: "", created: false, title: "col-q3" });
+      expect(document.querySelector("[data-doc-row]")).not.toBeNull();
+      expect(screen.getByRole("navigation", { name: "Collection path" })).toBeInTheDocument();
+      await settle();
+      expect(location.search).toBe(at);
+      expect(document.querySelector("[data-doc-row]")).not.toBeNull();
+      expect(api.listKnowledge.mock.calls.length).toBe(docs);
     });
 
     it("still opens what the tree made when a dialog was opened and cancelled meanwhile", async () => {

@@ -118,9 +118,6 @@ function pathText(
   return `in ${parents.map((p) => ("hidden" in p ? "…" : distinctTitle(p, repeated))).join(" › ")}`;
 }
 
-/** The place picker's name, shown where no tree is: the page hands it the focus when the tree goes. */
-export const PLACE_PICKER_LABEL = "Show the documents of";
-
 /** The place above the top: its label, the collection it is (null for the header's
  *  namespace) and how to open it. */
 export interface Home {
