@@ -208,7 +208,7 @@ async def mirror_scope(
 ) -> list[str] | None:
     """The scope with its namespaces' mirrors, or None when it holds no mirror."""
     names = namespaces_of(namespace)
-    mirrors = list(await _mirrors_of(org, names, ch=ch))
+    mirrors = list(await _mirrors_of(org, namespace, ch=ch))
     if not mirrors and not any(is_mirror_name(ns) for ns in names):
         return None
     return list(dict.fromkeys([*names, *mirrors]))  # a scope may name a mirror it has
@@ -240,10 +240,9 @@ async def _counted_with_mirrors(
     ch: _CHClient | None = None,
 ) -> dict[str, int]:
     """`count` of the scope as `with_mirrors` erased it: with its mirrors, as a purge."""
-    if scope_type == "namespace":
-        if (scope := await mirror_scope(org, scope_value, ch=ch)) is not None:
-            with purge_scope(True):
-                return await count(scope)
+    if scope_type == "namespace" and (scope := await mirror_scope(org, scope_value, ch=ch)):
+        with purge_scope(True):
+            return await count(scope)
     return await count(scope_value)
 
 
@@ -271,7 +270,9 @@ async def evidence_with_mirrors(
 
 async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
     """Last: the mirrors' rows are gone, so the name registered again gets a new mirror.
-    Every mirror the name has had is written again and counted, forgotten ones too."""
+    Every mirror the name has had is written again and counted, forgotten ones too. It
+    runs under `with_mirrors` like every namespace step, which reads the registry once
+    more and leaves the insert as it is; a scope of only mirrors forgets none."""
     found = await _mirrors_of(org, namespace)
     await knowledge_mirrors.forget_mirrors(org, found)
     return len(found)

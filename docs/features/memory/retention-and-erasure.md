@@ -263,10 +263,12 @@ written by a build that keeps no census. The receipt's fields:
   every row when the saga purges or the table keeps no tombstone ([the census
   rules](../../architecture/memory-architecture.md#erasure-saga)).
   `objects.document_originals` counts a first listing page, so it reads as "at least".
-- `purge`: whether the saga deletes rows or tombstones them, as it runs. A single
-  namespace's saga never purges. Without purge a tombstoned row keeps its bytes in its part
-  until the table merges; with purge the rows are deleted, and their bytes stay on disk
-  until a merge or the reclaim worker removes them.
+- `purge`: whether the saga deletes rows or tombstones them, as requested. A single
+  namespace's saga never purges, unless its scope holds a mirror ([document
+  sources](../../architecture/document-sources.md#the-mirror)), which is purged whatever
+  this says. Without purge a tombstoned row keeps its bytes in its part until the table
+  merges; with purge the rows are deleted, and their bytes stay on disk until a merge or
+  the reclaim worker removes them.
 - The subject and the time are the status's `org`, `scope_type`, `scope_value` and
   `verified_at`.
 

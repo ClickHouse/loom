@@ -67,7 +67,7 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     async def _mirrors_of(org: str, namespaces: list[str], ch: Any = None) -> dict[str, str]:
         # Read on every replica's writes, or a mirror made on another one is missed.
         assert sequential_reads_active()
-        calls.append(("mirrors_of", namespaces) if ch is None else ("mirrors_of", namespaces, ch))
+        calls.append(("mirrors_of", namespaces, ch))
         return {MIRROR: "team"} if "team" in namespaces else {}
 
     async def _forget(org: str, found: dict[str, str]) -> None:
@@ -133,13 +133,19 @@ def test_a_mirror_named_in_the_scope_is_purged_and_has_no_mirror_looked_up(
     seen, step = _recorded()
     asyncio.run(saga_steps.with_mirrors(step)(ORG, OLD_MIRROR))
     assert seen == [([OLD_MIRROR], True)]
-    assert registry == [("mirrors_of", [])]
+    assert registry == [("mirrors_of", [], None)]
 
 
 def test_the_last_step_forgets_the_mirrors(registry: list[Any]) -> None:
     assert saga_steps.NAMESPACE_STEPS[-1][0] == "knowledge_mirrors.forget"
     assert asyncio.run(saga_steps._step_forget_mirrors_by_ns(ORG, "team")) == 1
     assert registry[-1] == ("forget", {MIRROR: "team"})
+
+
+def test_an_erasure_of_only_a_mirror_leaves_its_registry_row_live(registry: list[Any]) -> None:
+    # The owning name stays in use until its own erasure, or the mirror-erase command.
+    assert asyncio.run(saga_steps._step_forget_mirrors_by_ns(ORG, MIRROR)) == 0
+    assert not [c for c in registry if c[0] == "forget" and c[1]]
 
 
 def test_a_namespace_erasure_with_a_mirror_purges_both_and_counts_both(

@@ -114,8 +114,8 @@ class ErasureRequestOutput(BaseModel):
     # The receipt: every count of this run's census, zeros included; `None` when no census
     # counted every store (none ran, or one left a store uncounted).
     census: dict[str, int] | None = None
-    # Whether the saga deletes rows (true) or tombstones them, as requested; a single
-    # namespace's never does. A scope that holds a mirror is purged whatever this says.
+    # Whether the saga deletes rows (true) or tombstones them as requested (a single
+    # namespace's never, unless its scope holds a mirror, which is purged).
     purge: bool = False
     # Why a failed saga failed, `""` otherwise: `<step>: <error>` or a bare `<error>`
     # outside a step, where `<error>` is the exception's kind or a Loom error's
@@ -175,8 +175,8 @@ class ErasureStatusOutput(BaseModel):
     # latest row holds no census that counted every store (a run in progress, none ran, one
     # left a store uncounted, or a build that keeps no census wrote the row).
     census: dict[str, int] | None = None
-    # Whether the saga deletes rows (true) or tombstones them, as requested; a single
-    # namespace's never does. A scope that holds a mirror is purged whatever this says.
+    # Whether the saga deletes rows (true) or tombstones them as requested (a single
+    # namespace's never, unless its scope holds a mirror, which is purged).
     purge: bool = False
 
 
