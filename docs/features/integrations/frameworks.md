@@ -318,8 +318,8 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 subset and `max_result_chars` (8,000 by default) caps what a call returns. A call Loom
 refuses raises Pydantic AI's `ToolFailed` with `<tool> failed: <message>`: the model reads
 it as a failed tool result and the run goes on, where any other exception would fail the
-run. Pydantic AI awaits its tools, so the toolset takes a `loom.Agent` and refuses a
-`SyncAgent`. Message history stays with the caller, who passes it to each run as
+run. The toolset's tools await the Loom agent's calls, so it takes a `loom.Agent` and
+refuses a `SyncAgent`. Message history stays with the caller, who passes it to each run as
 `message_history`.
 
 ## LangGraph

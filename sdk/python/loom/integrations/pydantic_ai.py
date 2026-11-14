@@ -61,7 +61,7 @@ def loom_toolset(
     Loom refuses reaches the model as a failed tool result, and the run goes on.
     """
     if isinstance(agent, SyncAgent):
-        raise TypeError("loom_toolset needs a loom.Agent: Pydantic AI awaits its tools")
+        raise TypeError("loom_toolset needs a loom.Agent: its tools await the agent's calls")
     tools = AgentTools(
         agent,
         user_id=user_id,
