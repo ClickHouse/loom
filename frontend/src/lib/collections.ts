@@ -40,6 +40,11 @@ export function collectionTitle(c: Pick<CollectionEntry, "namespace" | "personal
   return c.title?.trim() || c.namespace;
 }
 
+/** How the Library names the header's namespace among its places. */
+export function namespaceLabel(namespace: string): string {
+  return `Namespace ${namespace}`;
+}
+
 /** What makes two titles the same title, as on the server (collection_names.py
  *  `title_key`): case, runs of whitespace, Unicode spelling and the characters that may
  *  draw as nothing do not count, but the joiners and tags that shape emoji and scripts do. */

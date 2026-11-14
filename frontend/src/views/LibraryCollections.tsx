@@ -19,6 +19,7 @@ import {
   collectionOrder,
   collectionTitle,
   distinctTitle,
+  namespaceLabel,
   roleLabel,
 } from "../lib/collections";
 import { fmtInt } from "../lib/format";
@@ -255,7 +256,7 @@ export function LibraryCollections({
   const own = (rows ?? []).find((c) => c.personal);
   const home =
     namespace !== null
-      ? { label: `Namespace ${namespace}`, collection: null, open: () => onPick(null) }
+      ? { label: namespaceLabel(namespace), collection: null, open: () => onPick(null) }
       : own
         ? { label: collectionTitle(own), collection: own.namespace, open: () => onPick(own.namespace) }
         : undefined;
@@ -302,6 +303,15 @@ export function LibraryCollections({
     : `${namespace === null ? "" : "The namespace picked at the top. "}A collection is a shelf of documents that only its members read; agents search the ones they can read.`;
   const shownRef = useRef<string | null>(null);
   shownRef.current = current?.namespace ?? null;
+  // My files and the namespace have no path; beside the tree no select names them either, so
+  // the line starts with the place's name, not the About button alone.
+  const lineName = !besideTree
+    ? null
+    : current?.personal
+      ? collectionTitle(current)
+      : !current && !opening && namespace !== null
+        ? namespaceLabel(namespace)
+        : null;
   // The collection shown, not My files: it has a path, members and a menu.
   const collection = current && !current.personal ? current : null;
   const items: RowMenuItem[] = [];
@@ -334,13 +344,7 @@ export function LibraryCollections({
             named={besideTree}
           />
         )}
-        {/* My files and the namespace have no path; beside the tree no select names them either,
-            so the line starts with the place's name, not the About button alone. */}
-        {besideTree && (current?.personal || (!current && !opening && namespace !== null)) && (
-          <span aria-current="page" className="text-sm">
-            {current ? collectionTitle(current) : `Namespace ${namespace}`}
-          </span>
-        )}
+        {lineName && <span className="text-sm">{lineName}</span>}
         {phone && collection && (
           <CollectionBack
             current={collection}
@@ -360,7 +364,7 @@ export function LibraryCollections({
             showSearch
             className="min-w-0 flex-1 sm:flex-none sm:w-96"
           >
-            {namespace !== null && <Select.Item value={NAMESPACE_SHELF}>{`Namespace ${namespace}`}</Select.Item>}
+            {namespace !== null && <Select.Item value={NAMESPACE_SHELF}>{namespaceLabel(namespace)}</Select.Item>}
             {ordered.map(({ c, depth }) => (
               <Select.Item key={c.namespace} value={c.namespace}>
                 {/* Indented, not marked: the closed select and a screen reader read the name. */}

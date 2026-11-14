@@ -38,7 +38,6 @@ import {
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
-import { collectionTitle } from "../lib/collections";
 import { canCall } from "../lib/canCall";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
@@ -57,7 +56,7 @@ import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { DatasetsDialog } from "../flows/DatasetsDialog";
 import { Modal } from "../components/ui/Modal";
-import { distinctTitle, repeatedTitles } from "../lib/collections";
+import { collectionTitle, distinctTitle, namespaceLabel, repeatedTitles } from "../lib/collections";
 import { formatBytesShort } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { AddDocumentDialog } from "../flows/AddDocumentDialog";
@@ -131,7 +130,7 @@ async function findDocument(
  *  collection is titled so, as the tree's row shows it. */
 function placeTitle(shown: CollectionEntry | null, repeated: Set<string>, shelf: string | null): string | undefined {
   if (shown) return shown.personal ? collectionTitle(shown) : distinctTitle(shown, repeated);
-  if (shelf !== null) return `Namespace ${shelf}`;
+  if (shelf !== null) return namespaceLabel(shelf);
   return undefined;
 }
 

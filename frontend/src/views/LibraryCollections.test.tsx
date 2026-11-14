@@ -1163,12 +1163,13 @@ describe("the Library on a collection", () => {
     render(<Documents />, { container: inMain() });
     const tree = await screen.findByRole("navigation", { name: "Library places" });
     await settle();
-    // Nor has the namespace: the path line names it too, before its About button.
-    const besideTree = () =>
-      [...document.querySelectorAll("main [aria-current='page']")].filter((el) => !tree.contains(el));
-    expect(besideTree().map((el) => el.textContent)).toEqual([
-      within(tree).getByRole("link", { current: "page" }).textContent,
-    ]);
+    // Nor has the namespace: the path line names it too, before its About button. The tree's
+    // row alone is marked as the place shown.
+    const besideTree = (name: string) => screen.getAllByText(name).filter((el) => !tree.contains(el));
+    const current = () => [...document.querySelectorAll("main [aria-current='page']")];
+    const shelf = within(tree).getByRole("link", { current: "page" });
+    expect(besideTree(shelf.textContent ?? "")).toHaveLength(1);
+    expect(current()).toEqual([shelf]);
     fireEvent.click(await within(tree).findByRole("link", { name: "col-q3" }));
     await settle();
     // The arrival App makes on a move focuses the row the move asked for and says its name.
@@ -1182,7 +1183,8 @@ describe("the Library on a collection", () => {
     fireEvent.click(within(tree).getByRole("link", { name: "My files" }));
     await settle();
     // My files has no path; the page's path line names it beside the tree.
-    expect(besideTree().map((el) => el.textContent)).toEqual(["My files"]);
+    expect(besideTree("My files")).toHaveLength(1);
+    expect(current()).toEqual([within(tree).getByRole("link", { name: "My files" })]);
   });
 
   describe("where <main> can be measured", () => {
@@ -1250,6 +1252,37 @@ describe("the Library on a collection", () => {
         expect.stringMatching(/col-q3 is not among the collections you can read now/),
         "info",
       );
+      expect(new URLSearchParams(location.search).get("collection")).toBeNull();
+    });
+
+    it("reads once for a delete of the collection shown beside the tree, not waiting for it", async () => {
+      resizable();
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      api.deleteCollection.mockResolvedValue({ deleted: true, erasure_status: "completed" });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />, { container: inMain() });
+      await settle();
+      api.listCollections.mockResolvedValue({
+        collections: ROWS.filter((c) => c.namespace !== "col-q3"),
+        next_cursor: null,
+      });
+      const reads = api.listCollections.mock.calls.length;
+      fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for col-q3" }), { button: 0, ctrlKey: false });
+      await settle();
+      confirm.next = true;
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        fireEvent.click(screen.getByRole("menuitem", { name: "Delete collection" }));
+        // Past every retry's wait: none is made for what was deleted.
+        await act(() => vi.advanceTimersByTimeAsync(REFRESH_TRIES * REFRESH_WAIT_MS + 100));
+      } finally {
+        vi.useRealTimers();
+        confirm.next = false;
+      }
+      expect(api.listCollections.mock.calls.length).toBe(reads + 1);
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(tree).not.toHaveAttribute("aria-busy");
+      expect(within(tree).queryByRole("link", { name: "col-q3" })).toBeNull();
       expect(new URLSearchParams(location.search).get("collection")).toBeNull();
     });
 

@@ -19,7 +19,15 @@ import { fieldError } from "../components/ui/fieldError";
 import { Loading } from "../components/ui/Loading";
 import { IconButton } from "../components/IconButton";
 import { announceCreated } from "../flows/CreateCollectionDialog";
-import { canHold, collectionOrder, collectionTitle, distinctTitle, MAX_TITLE, titleTooLong } from "../lib/collections";
+import {
+  canHold,
+  collectionOrder,
+  collectionTitle,
+  distinctTitle,
+  MAX_TITLE,
+  namespaceLabel,
+  titleTooLong,
+} from "../lib/collections";
 import {
   collectionPath,
   cycleStart,
@@ -35,10 +43,12 @@ import {
 /** A tree row's `data-focus-key`: the page's move to a place picked here focuses its row. */
 export const placeFocusKey = (collection: string | null) => `library-tree-place-${collection ?? ""}`;
 
-/** Show a place picked in the tree, focusing `arriveFocus` and saying `note` on arrival. */
+/** Show a place picked in the tree. `arriveFocus`: the picked row's focus key, so the person
+ *  stays in the tree; `note`: the place's name, said on arrival. */
 export type PickPlace = (collection: string | null, arriveFocus: string, note: string) => void;
 
-/** Open a collection made in the tree, in `org`, focusing `arriveFocus` on arrival. */
+/** Read the list again and open a collection made in the tree, in `org`. `arriveFocus`: New
+ *  collection's focus key, so the person goes on there. */
 export type MadeCollection = (collection: string, org: string, arriveFocus: string) => void;
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
@@ -160,12 +170,8 @@ export const LibraryTree = memo(function LibraryTree({
   shelf: string | null;
   /** The collection shown, or null for the header's namespace. */
   current: string | null;
-  /** `arriveFocus`: the picked row's focus key, so the person stays in the tree; `note`: the
-   *  place's name, said on arrival. */
   onPick: PickPlace;
-  /** A collection made here, in `org`: read the list again and open it. It can land after
-   *  the tree is gone (a resize, or a move to another org). `arriveFocus`: New collection's
-   *  focus key, so the person goes on there. */
+  /** It can land after the tree is gone (a resize, or a move to another org). */
   onCreated: MadeCollection;
 }) {
   // What the person opened, remembered for the next visit.
@@ -274,7 +280,7 @@ export const LibraryTree = memo(function LibraryTree({
             <li>
               <PlaceRow
                 collection={null}
-                label={`Namespace ${shelf}`}
+                label={namespaceLabel(shelf)}
                 icon="book"
                 depth={0}
                 here={current === null}
