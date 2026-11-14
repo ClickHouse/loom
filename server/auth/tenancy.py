@@ -12,11 +12,13 @@ for the org a verified call acts in, before anything is written:
   one statement that inserts its row only while the mode is still `recording`, and only
   while the directory answers that this cell is `attaching` (`GET /cells/v1/cells/<cell>`,
   read at most every LOOM_TENANCY_MODE_CACHE_S); while it is unreadable or answers
-  anything else, a new org answers 503 and the orgs the cell holds keep serving;
+  anything else, a new org answers 503 and the orgs the cell holds keep serving; a new
+  org longer than `cell.ORG_MAX_BYTES` answers 422 and is never recorded;
 - in `enforced`, a principal scoped to the org asks the router to place it (insert,
   then read the winner back): placed here, the cell writes its row and serves; placed
   elsewhere, the call answers 409 `WRONG_CELL` and nothing is written. A platform or
-  `*`-org principal never places an org. A failed placement call answers 503.
+  `*`-org principal never places an org. A failed placement call answers 503, and the
+  router's refusal of a new org past the length limit answers 422.
 """
 
 from __future__ import annotations
@@ -27,7 +29,12 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from server.core.errors import BackendUnavailableError, WrongCellError, caller_text
+from server.core.errors import (
+    BackendUnavailableError,
+    ValidationError,
+    WrongCellError,
+    caller_text,
+)
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -113,8 +120,9 @@ def scoped_to(auth: AuthInfo | None, org: str) -> bool:
 async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     """Pass when this cell holds `org`, recording or placing it as the mode allows.
     Raise `PermissionError` (403) first for a principal that may not act in the org,
-    `WrongCellError` (409) for another cell's org, `BackendUnavailableError` (503)
-    when the cell cannot tell. Nothing is written for an org refused."""
+    `WrongCellError` (409) for another cell's org, `ValidationError` (422) for a new org
+    longer than `cell.ORG_MAX_BYTES`, `BackendUnavailableError` (503) when the cell
+    cannot tell. Nothing is written for an org refused."""
     if not settings.cell or org is None or org in ORG_FREE:
         return
     # A principal that may not act in the org is refused first, as the gate would, so
@@ -138,6 +146,9 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
         _held.add(org)
         return
     if cell.mode() == "recording":
+        # A new org past the limit is never recorded: every recorded org can be placed.
+        if reason := cell.org_name_refusal(org):
+            raise ValidationError(reason)
         # A restore to before attach's step 3 whose `loom cell restore` was skipped reads
         # `recording` too: the directory, which says `serving` then, tells the two apart.
         if not await directory_says_attaching():
@@ -159,6 +170,9 @@ async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
     # placement decides. A configured org a call with no principal acts in (JIT,
     # self-signup) is placed by attach, or by `loom cell update` when it changes: retry.
     if auth is None and org in cell.mine()["configured_orgs"]:
+        # No placement of a new org past the limit can succeed: no retry helps.
+        if reason := cell.org_name_refusal(org):
+            raise ValidationError(reason)
         raise BackendUnavailableError(
             f"org {org!r} is configured for this cell and not placed yet (attach places it, "
             "or `loom cell update` once the cell serves)",
@@ -302,6 +316,13 @@ async def _place(org: str) -> tuple[str, str]:
         raise BackendUnavailableError(
             f"the router did not answer the placement of org {org!r}", operation="placement"
         ) from e
+    try:
+        answer = r.json()
+    except ValueError:
+        answer = None
+    if r.status_code == 400 and isinstance(answer, dict) and answer.get("code") == "ORG_TOO_LONG":
+        # A new org name past the router's limit: the caller's to fix, never retried.
+        raise ValidationError(str(answer.get("error", "")))
     if r.status_code != 200:
         log.warning("placement of %s: router answered %s", org, r.status_code)
         raise BackendUnavailableError(
@@ -312,10 +333,6 @@ async def _place(org: str) -> tuple[str, str]:
     unnamed = BackendUnavailableError(
         f"the router's placement answer for org {org!r} names no cell", operation="placement"
     )
-    try:
-        answer = r.json()
-    except ValueError:
-        raise unnamed from None
     if not isinstance(answer, dict):
         raise unnamed
     winner, deployment_id = answer.get("cell"), answer.get("deployment_id")

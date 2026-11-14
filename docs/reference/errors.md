@@ -688,6 +688,10 @@ Raised in `server/transport/mcp_call.py`, `server/transport/mcp_op.py`.
 
 Raised in `server/transport/mcp_auth.py`. Category `auth`, retryable: no.
 
+#### `ORG_TOO_LONG`
+
+Raised in `server/router/app.py`. Category `input`, retryable: no.
+
 #### `OVERLOADED`
 
 HTTP 503, raised as `server.core.errors.OverloadedError`. 503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared memory, the document bucket's transfers or streams, an override's lock, a namespace's document-source lease, the… Category `capacity`, retryable: yes for an idempotent op, no for another op once it ran. What to do: [common errors](#common-errors-and-what-to-do).

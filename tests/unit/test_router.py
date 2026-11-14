@@ -21,6 +21,8 @@ from server.router.limits import MAX_KEYS, Limiter
 from server.settings import settings
 from tests.unit.clock_fake import ManualClock
 
+_real_place = directory.place
+
 TOKEN = "cell-eu-1-credential-0123456789abcdef"
 US_TOKEN = "cell-us-1-credential-0123456789abcdef"
 FIELDS = {"public_host": "eu-1.example.test", "deployment_id": "dep-eu-1"}
@@ -149,6 +151,61 @@ def test_a_serving_cell_places_a_new_org_and_a_retry_answers_the_same(fake: _Dir
     assert first.json() == {"cell": "eu-1", "deployment_id": "dep-eu-1"}
     assert _place(client).json() == first.json()
     assert fake.placements == {"acme": "eu-1"}
+
+
+class _PlaceConn:
+    """The directory's connection for one placement: `winner` is the org's placement
+    already written, if any; every statement it runs is kept."""
+
+    def __init__(self, winner: dict[str, str] | None) -> None:
+        self.winner = winner
+        self.statements: list[str] = []
+
+    @asynccontextmanager
+    async def transaction(self) -> Any:
+        yield
+
+    async def execute(self, sql: str, *_args: Any) -> str:
+        self.statements.append(sql)
+        return ""
+
+    async def fetchrow(self, sql: str, *_args: Any) -> dict[str, str] | None:
+        self.statements.append(sql)
+        return self.winner
+
+
+def _connected(monkeypatch: pytest.MonkeyPatch, conn: _PlaceConn) -> None:
+    @asynccontextmanager
+    async def _connection(**_kw: Any) -> Any:
+        yield conn
+
+    monkeypatch.setattr(directory, "place", _real_place)
+    monkeypatch.setattr(directory, "_connection", _connection)
+
+
+def test_a_new_org_name_past_the_limit_answers_400_and_writes_nothing(
+    fake: _Directory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The directory's one check, on the path that writes a placement, refuses it for
+    every placing route; the route answers 400, which no retry changes."""
+    conn = _PlaceConn(winner=None)
+    _connected(monkeypatch, conn)
+    long = "é" * (cell.ORG_MAX_BYTES // 2 + 1)
+    answer = _place(_client(), long)
+    assert answer.status_code == 400
+    assert answer.json()["code"] == "ORG_TOO_LONG"  # what a cell's placement matches on
+    assert f"longer than the {cell.ORG_MAX_BYTES} bytes" in answer.json()["error"]
+    assert not any("INSERT" in sql or "UPDATE" in sql for sql in conn.statements)
+
+
+def test_a_long_org_placed_before_the_limit_answers_its_cell(
+    fake: _Directory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _PlaceConn(winner={"cell": "us-1", "deployment_id": "dep-us-1"})
+    _connected(monkeypatch, conn)
+    answer = _place(_client(), "a" * (cell.ORG_MAX_BYTES + 1))
+    assert answer.status_code == 200
+    assert answer.json() == {"cell": "us-1", "deployment_id": "dep-us-1"}
 
 
 def test_an_org_placed_elsewhere_answers_its_cell(fake: _Directory) -> None:

@@ -57,6 +57,19 @@ NAME = re.compile(r"[a-z0-9-]{1,32}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 # The largest placement quota: the directory keeps it in a bigint.
 PLACEMENTS_MAX = 2**63 - 1  # not a setting: the bigint column bounds it
+# The longest org name, in UTF-8 bytes, a cell records and the router places: below
+# Postgres's btree entry limit (about 2.7 KB), so every org a cell records has a
+# placement the directory can index.
+ORG_MAX_BYTES = 2048  # not a setting: cells and the router judge one limit
+
+
+def org_name_refusal(org: str) -> str:
+    """Why a cell neither records nor places `org` ('' when its name fits)."""
+    size = len(org.encode())
+    if size <= ORG_MAX_BYTES:
+        return ""
+    return f"org name is {size} bytes, longer than the {ORG_MAX_BYTES} bytes an org name may have"
+
 
 FINGERPRINT_VERSION = 1
 # Every field and the value it has when a configuration does not set it. A value

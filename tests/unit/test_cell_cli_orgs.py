@@ -900,3 +900,16 @@ def test_a_cli_holds_the_router_credential_only_on_a_recording_first_cell(
     else:
         asyncio.run(_ch.check_orgs(["acme"]))
         assert statements == [tenancy._HOLDS, tenancy._RECORD]
+
+
+def test_a_cli_declaring_an_org_name_past_the_limit_refuses_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _serving_cell(monkeypatch)
+    monkeypatch.setattr(tenancy, "_held", set())
+    monkeypatch.setattr(tenancy, "_elsewhere", {})
+    monkeypatch.setattr(pg, "fetchval", AsyncMock(return_value=None))
+    monkeypatch.setattr(cell, "mode", lambda: "recording")
+    long = "a" * (cell.ORG_MAX_BYTES + 1)
+    with pytest.raises(_ch.OrgNotHeld, match=f"longer than the {cell.ORG_MAX_BYTES}"):
+        asyncio.run(_ch.check_orgs([long]))

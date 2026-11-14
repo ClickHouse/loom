@@ -138,6 +138,68 @@ def test_a_held_org_passes_and_is_remembered(cell_pg: _PG) -> None:
     assert cell_pg.writes == []
 
 
+def test_a_recording_cell_records_no_new_org_longer_than_the_limit(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """422, nothing written, the router never asked; one exactly at the limit is
+    recorded."""
+    from server.core.errors import ValidationError
+
+    cell_pg.mode = "recording"
+    calls = _router(monkeypatch, {"cell": "eu-1", "deployment_id": "dep-eu-1"})
+    long = "é" * (cell.ORG_MAX_BYTES // 2 + 1)  # 2 bytes a character: just past the limit
+    with pytest.raises(ValidationError, match=f"longer than the {cell.ORG_MAX_BYTES} bytes"):
+        asyncio.run(tenancy.ensure_held(long, _auth(long)))
+    assert cell_pg.writes == [] and calls == []
+    exact = "a" * cell.ORG_MAX_BYTES
+    asyncio.run(tenancy.ensure_held(exact, _auth(exact)))
+    assert cell_pg.writes == [exact]
+
+
+def test_an_enforced_cell_turns_the_routers_length_refusal_into_a_422(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core.errors import ValidationError
+
+    long = "a" * (cell.ORG_MAX_BYTES + 1)
+    refusal = {"error": cell.org_name_refusal(long), "code": "ORG_TOO_LONG"}
+    calls = _router(monkeypatch, refusal, status=400)
+    with pytest.raises(ValidationError, match=f"longer than the {cell.ORG_MAX_BYTES} bytes"):
+        asyncio.run(tenancy.ensure_held(long, _auth(long)))
+    assert len(calls) == 1 and cell_pg.writes == []
+
+
+def test_a_long_org_placed_in_another_cell_before_the_limit_answers_wrong_cell(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    long = "a" * (cell.ORG_MAX_BYTES + 1)
+    _router(monkeypatch, {"cell": "us-1", "deployment_id": "dep-us-1"})
+    with pytest.raises(errors.WrongCellError) as refused:
+        asyncio.run(tenancy.ensure_held(long, _auth(long)))
+    assert "us-1" in refused.value.message and cell_pg.writes == []
+
+
+def test_a_configured_org_past_the_limit_answers_422_not_a_503_retry(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing could ever place it, so a principal-less call (JIT, self-signup) is told
+    so rather than asked to retry."""
+    from server.core.errors import ValidationError
+
+    long = "a" * (cell.ORG_MAX_BYTES + 1)
+    monkeypatch.setattr(settings, "oidc_jit_org", long)
+    with pytest.raises(ValidationError, match=f"longer than the {cell.ORG_MAX_BYTES} bytes"):
+        asyncio.run(tenancy.ensure_held(long, None))
+    assert cell_pg.writes == []
+
+
+def test_an_org_longer_than_the_limit_held_before_it_keeps_serving(cell_pg: _PG) -> None:
+    long = "x" * (cell.ORG_MAX_BYTES + 1)
+    cell_pg.held.add(long)
+    asyncio.run(tenancy.ensure_held(long, _auth(long)))
+    assert cell_pg.writes == []
+
+
 def test_recording_records_a_new_org(cell_pg: _PG) -> None:
     cell_pg.mode = "recording"
     asyncio.run(tenancy.ensure_held("new", _auth("*", Role.PLATFORM_ADMIN)))
@@ -933,6 +995,32 @@ def test_the_mcp_pre_check_uses_the_org_the_gate_would_check(
     answer = asyncio.run(mcp_call._another_cells_org(2, memory, {"memory_key": "k"}, _auth("beta")))
     assert answer is not None and answer["result"]["isError"] is True
     assert checked == ["beta"]
+
+
+def test_an_mcp_call_for_a_token_org_past_the_limit_is_the_callers_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tool error, ledgered as the caller's refusal, never against the server."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    ledgered: list[str] = []
+
+    async def _long(org: Any, auth: Any) -> None:
+        raise errors.ValidationError(cell.org_name_refusal("a" * (cell.ORG_MAX_BYTES + 1)))
+
+    monkeypatch.setattr(tenancy, "ensure_held", _long)
+    monkeypatch.setattr(
+        mcp_call,
+        "emit_token_refusal",
+        lambda *_a, **k: ledgered.append(f"{k['error_code']}:{k.get('server_fault', False)}"),
+    )
+    op = OPERATIONS_BY_NAME["memory.set"]
+    answer = asyncio.run(mcp_call._another_cells_org(1, op, {"memory_key": "k"}, _auth("beta")))
+    assert answer is not None and answer["result"]["isError"] is True
+    assert "longer than the" in str(answer["result"])
+    assert ledgered == ["VALIDATION_FAILED:False"]
 
 
 def test_a_503_from_the_mcp_pre_check_is_ledgered_and_raised(
