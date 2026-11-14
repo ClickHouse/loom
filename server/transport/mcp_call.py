@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
+from server.core import errors as core_errors
 from server.core import llm_free
 from server.core.errors import LoomServerError, WrongCellError, unverified_class
 from server.core.naming import named, present
@@ -522,13 +523,15 @@ async def _another_cells_org(
         return None
     try:
         await tenancy.ensure_held(auth.org, auth)
-    except WrongCellError as e:
+    except (WrongCellError, core_errors.ValidationError) as e:
+        # Another cell's org, or a new one longer than a cell holds: the caller's to fix.
         # The identity is not bound yet: the row names the token's org, which the
         # ledger then blanks with the rest of the tuple (`events.for_this_cell`).
         emit_token_refusal(op.name, auth, error_code=e.code, org=auth.org)
         return _ok(req_id, refusal_result(e))
     except LoomServerError as e:
-        # The cell could not tell (a 503): counted against the server, then raised.
+        # Anything else, the cell could not tell (a 503): counted against the server,
+        # then raised.
         emit_token_refusal(op.name, auth, error_code=e.code, org=auth.org, server_fault=True)
         raise
     return None

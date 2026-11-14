@@ -602,8 +602,8 @@ async def first_cell_named(cell_name: str) -> Cell | None:
 
 
 class OrgTooLong(ValueError):
-    """An org name longer than a cell holds (`cell.ORG_MAX_BYTES`): refused before the
-    directory is touched, by every route that places."""
+    """A new org name longer than a cell holds (`cell.ORG_MAX_BYTES`): refused before its
+    placement is written, by every route that places."""
 
 
 async def place(org: str, cell_name: str, refusal: Callable[[Cell], str]) -> tuple[str, str]:
@@ -611,16 +611,17 @@ async def place(org: str, cell_name: str, refusal: Callable[[Cell], str]) -> tup
     id) that holds it. An org placed already answers its cell, whatever the cell's
     state. Otherwise the cell's row is locked and judged (`refusal`, then its quota),
     so a change to it waits for the placement and the quota holds across router
-    replicas; a refused placement raises PlacementRefused and writes nothing, and an org
-    longer than a cell holds raises OrgTooLong."""
-    if cell_state.org_too_long(org):
-        raise OrgTooLong(cell_state.org_too_long_reason(org))
+    replicas; a refused placement raises PlacementRefused and writes nothing, and a new
+    org longer than a cell holds raises OrgTooLong (one placed before the limit answers
+    its cell, as any placed org does)."""
     async with _reading(), _connection() as conn, conn.transaction():
         # Placements of one org run one at a time, whichever cell asks: the later one
         # reads the earlier one's winner.
         await conn.execute("SELECT pg_advisory_xact_lock($1, hashtext($2))", _PLACE_LOCK, org)
         row = await conn.fetchrow(_WINNER, org)
         if row is None:
+            if reason := cell_state.org_name_refusal(org):
+                raise OrgTooLong(reason)
             locked = await conn.fetchrow(f"{_CELL} WHERE cell = $1 FOR UPDATE", cell_name)
             if locked is None:
                 raise PlacementRefused(f"cell {cell_name!r} is not in the directory")

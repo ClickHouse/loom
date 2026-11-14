@@ -961,6 +961,32 @@ def test_the_mcp_pre_check_uses_the_org_the_gate_would_check(
     assert checked == ["beta"]
 
 
+def test_an_mcp_call_for_a_token_org_past_the_limit_is_the_callers_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tool error, ledgered as the caller's refusal, never against the server."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import mcp_call
+
+    monkeypatch.setattr(settings, "cell", "eu-1")
+    ledgered: list[str] = []
+
+    async def _long(org: Any, auth: Any) -> None:
+        raise errors.ValidationError(cell.org_name_refusal("a" * (cell.ORG_MAX_BYTES + 1)))
+
+    monkeypatch.setattr(tenancy, "ensure_held", _long)
+    monkeypatch.setattr(
+        mcp_call,
+        "emit_token_refusal",
+        lambda *_a, **k: ledgered.append(f"{k['error_code']}:{k.get('server_fault', False)}"),
+    )
+    op = OPERATIONS_BY_NAME["memory.set"]
+    answer = asyncio.run(mcp_call._another_cells_org(1, op, {"memory_key": "k"}, _auth("beta")))
+    assert answer is not None and answer["result"]["isError"] is True
+    assert "longer than the" in str(answer["result"])
+    assert ledgered == ["VALIDATION_FAILED:False"]
+
+
 def test_a_503_from_the_mcp_pre_check_is_ledgered_and_raised(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

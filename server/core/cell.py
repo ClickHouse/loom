@@ -63,14 +63,12 @@ PLACEMENTS_MAX = 2**63 - 1  # not a setting: the bigint column bounds it
 ORG_MAX_BYTES = 2048  # not a setting: cells and the router judge one limit
 
 
-def org_too_long(org: str) -> bool:
-    return len(org.encode()) > ORG_MAX_BYTES
-
-
-def org_too_long_reason(org: str) -> str:
-    return (
-        f"org name is {len(org.encode())} bytes, longer than the {ORG_MAX_BYTES} bytes a cell holds"
-    )
+def org_name_refusal(org: str) -> str:
+    """Why a cell neither records nor places `org` ('' when its name fits)."""
+    size = len(org.encode())
+    if size <= ORG_MAX_BYTES:
+        return ""
+    return f"org name is {size} bytes, longer than the {ORG_MAX_BYTES} bytes a cell holds"
 
 
 FINGERPRINT_VERSION = 1
