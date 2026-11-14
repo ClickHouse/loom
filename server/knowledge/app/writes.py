@@ -133,7 +133,7 @@ async def _drop_own_chunks(
             log.warning("knowledge write: its erased chunks stay: %s", error_summary(e))
     try:
         await knowledge_repo.retire_versions(
-            org, namespace, own, embedding_model=embedding_model, when=now
+            org, namespace, own, embedding_models=[embedding_model], when=now
         )
     except Exception as e:  # noqa: BLE001 — the write's own error is the answer, not this one
         log.warning(

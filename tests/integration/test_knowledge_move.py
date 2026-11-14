@@ -485,7 +485,7 @@ async def test_a_copy_that_lands_after_its_take_back_does_not_serve(
     move = in_process
     src, dst, uri = _places()
     await _written(control_plane_url, src, uri)
-    real_take_back = move._take_back
+    real_take_back = move._remove_copy
     late: list[Any] = []
 
     async def take_back_then_land(copy: Any) -> None:
@@ -508,7 +508,7 @@ async def test_a_copy_that_lands_after_its_take_back_does_not_serve(
     async def refused(*args: Any, **kwargs: Any) -> bool:
         return False
 
-    monkeypatch.setattr(move, "_take_back", take_back_then_land)
+    monkeypatch.setattr(move, "_remove_copy", take_back_then_land)
     monkeypatch.setattr(move, "_head_is", refused)  # a write of the source meanwhile
     assert await _move_here(move, src, dst, uri) == [
         {"source_uri": uri, "moved": False, "reason": "busy"}

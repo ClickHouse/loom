@@ -168,7 +168,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(move.chunks_repo, "first_written_s", arrived)
     monkeypatch.setattr(move.datasets_repo, "forget_published", forget)
     monkeypatch.setattr(move.datasets_repo, "at_version", tables)
-    monkeypatch.setattr(move, "_take_back", take_back)
+    monkeypatch.setattr(move, "_remove_copy", take_back)
     monkeypatch.setattr("server.auth.authz.row_in_scope", reach)
     monkeypatch.setattr("server.observability.audit.emit", emit)
     return state
@@ -559,7 +559,7 @@ def real_copy(store: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[st
     store["copy_gate"] = asyncio.Event()
     store["take_back_gate"] = asyncio.Event()
     store["take_back_gate"].set()
-    real_take_back = move._take_back
+    real_take_back = move._remove_copy
 
     async def copy_revision(*args: Any, **kwargs: Any) -> bool:
         store["events"].append("copying")
@@ -579,7 +579,7 @@ def real_copy(store: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[st
         return ["m"]
 
     monkeypatch.setattr(move, "_copy", _REAL_COPY)
-    monkeypatch.setattr(move, "_take_back", take_back)
+    monkeypatch.setattr(move, "_remove_copy", take_back)
     monkeypatch.setattr(move.chunks_repo, "copy_revision", copy_revision)
     monkeypatch.setattr(move.chunks_repo, "embedding_models", models)
     for repo, names in (
@@ -958,3 +958,24 @@ async def test_an_original_an_erasure_took_is_not_copied(
     doc = _doc("src", blob_path="sha", blob_erased_at=datetime(2026, 3, 1))
     assert await move._store_originals(doc, "dst") == documents_repo.NO_ORIGINAL
     assert originals["put"] == [] and originals["located"] == 0
+
+
+async def test_a_delete_refused_after_the_claims_cut_off_still_takes_the_copy_back(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    @asynccontextmanager
+    async def cut_off_claim(org: str, ns: str, uri: str, *, wait_s: float = 10):
+        try:
+            async with asyncio.timeout(0.05):
+                yield True
+        except TimeoutError as e:
+            raise ClaimExpired("cut off") from e
+
+    async def refused_late(doc: DocumentRow) -> None:
+        await asyncio.sleep(0.2)  # its commit waits past the claims' cut-off
+        raise HeadMoved(doc.source_uri)
+
+    monkeypatch.setattr(move.ingest_run, "claim_source", cut_off_claim)
+    monkeypatch.setattr(move, "_delete_source", refused_late)
+    assert _answers(await _run()) == [(URI, False, "busy")]
+    assert store["taken_back"] == [URI] and store["audited"] == []

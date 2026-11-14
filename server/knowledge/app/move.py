@@ -262,12 +262,12 @@ async def _claimed(
         unchanged = not erased and await _head_is(doc)
     except BaseException:  # a cancel too: a copy whose source stays live goes
         if copy is not None:
-            await _taken_back(copy)
+            await _take_back_held(copy)
         raise
     if erased or not unchanged:
         # Taken back before the delete: the document stays where it was.
         if copy is not None:
-            await _taken_back(copy)
+            await _take_back_held(copy)
         return "erased" if erased else "busy"
     # Run to its end, with what it settles, however the request or the claims end
     # meanwhile: a tombstone that lands is a move made, and a refused one takes the copy
@@ -392,7 +392,7 @@ async def _copy(
             raise _TakenBack
     except BaseException as e:  # a cancel too: what this copy wrote must not serve
         if not writes.published_anyway(e):
-            await _taken_back(copy)
+            await _take_back_held(copy)
         raise
     return copy
 
@@ -439,7 +439,7 @@ async def _delete_and_record(doc: DocumentRow, moved: set[str], copy: _Copy | No
         await _delete_source(doc)
     except (HeadMoved, DocumentErased):  # refused under the Postgres authority: not deleted
         if copy is not None:
-            await _take_back(copy)
+            await _remove_copy(copy)
         raise
     moved.add(doc.source_uri)
 
@@ -455,22 +455,27 @@ async def _forget_tables(doc: DocumentRow) -> None:
         )
 
 
-async def _taken_back(copy: _Copy) -> None:
-    """`_take_back` run to its end, held under the caller's claims: a cancellation, even a
+async def _take_back_held(copy: _Copy) -> None:
+    """`_remove_copy` run to its end, held under the caller's claims: a cancellation, even a
     repeated one, is raised only once it is done, so no retry finds a half-removed copy."""
-    await to_its_end(_take_back(copy), name=f"knowledge.move take-back {copy.doc.source_uri}")
+    await to_its_end(_remove_copy(copy), name=f"knowledge.move take-back {copy.doc.source_uri}")
 
 
-async def _take_back(copy: _Copy) -> None:
+async def _remove_copy(copy: _Copy) -> None:
     """Remove what a move wrote where it goes: its row (and under the Postgres authority
     its commit), its chunks and its tables. Its originals stay for the sweep."""
     org, dst, uri, version = copy.doc.org, copy.dst, copy.doc.source_uri, copy.version
     # Its chunks retired first, in one statement: a take-back that stops partway leaves
     # none serving without a row, a cancelled copy's INSERT … SELECT that lands later
     # does not serve either, and a later move reads the copy short at once. A take-back
-    # starts within its move's claims (by their cut-off, 40% of their TTL), so this ends
-    # well inside them, before any later move can hold them.
-    await chunks_repo.retire_models(org, dst, uri, version, copy.models, naive_utc_now())
+    # starts by its claims' cut-off (24 s of their 60 s TTL), or after a Postgres refusal
+    # of a delete begun before it, which its commit answers within
+    # pg_commit_lock_timeout_ms and pg_statement_timeout_ms (2 s and 5 s by default):
+    # with this statement's own bound (9 s) it ends inside the claims, before a later
+    # move can hold them.
+    await chunks_repo.retire_versions(
+        org, dst, [(uri, version)], embedding_models=copy.models, when=naive_utc_now()
+    )
     await documents_repo.drop_committed(org, dst, uri, version)
     await restore_repo.delete_row(org, dst, uri, version)
     await chunks_repo.delete_versions(org, dst, [(uri, version)])

@@ -576,19 +576,21 @@ async def delete_versions(
     )
 
 
-async def retire_models(
+async def retire_versions(
     org: str,
     namespace: str,
-    source_uri: str,
-    doc_version: int,
+    versions: Sequence[tuple[str, int]],
+    *,
     embedding_models: Sequence[str],
     when: datetime,
-    *,
     ch: _CHClient | None = None,
 ) -> None:
-    """Retire one (source, version)'s chunks under each of `embedding_models`, in one
-    statement: `retire_versions` for several models at once."""
-    if not embedding_models:
+    """Retire these (source, version) pairs' chunks under each of `embedding_models`, in
+    one statement: a write's own chunks of versions it did not publish, or a moved copy
+    taken back. The supersession rows are written from the pairs, not read off
+    loom.chunks, so they also retire rows of an insert that timed out and lands after
+    them."""
+    if not versions or not embedding_models:
         return
     ch = ch or _default_client()
     await ch.insert(
@@ -598,43 +600,11 @@ async def retire_models(
                 org=org,
                 namespace=namespace,
                 embedding_model=model,
-                source_uri=source_uri,
-                doc_version=int(doc_version),
-                superseded_at=when,
-            )
-            for model in embedding_models
-        ],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
-
-
-async def retire_versions(
-    org: str,
-    namespace: str,
-    versions: Sequence[tuple[str, int]],
-    *,
-    embedding_model: str,
-    when: datetime,
-    ch: _CHClient | None = None,
-) -> None:
-    """Retire these (source, version) pairs' chunks of `embedding_model`: a write's own
-    chunks of versions it did not publish. The supersession rows are written from the
-    pairs, not read off loom.chunks, so they also retire rows of an insert that timed out
-    and lands after them."""
-    if not versions:
-        return
-    ch = ch or _default_client()
-    await ch.insert(
-        SUPERSESSIONS_TABLE,
-        [  # supersession rows, not chunk rows (which `build_chunk_rows` alone writes)
-            dict(
-                org=org,
-                namespace=namespace,
-                embedding_model=embedding_model,
                 source_uri=uri,
                 doc_version=int(version),
                 superseded_at=when,
             )
+            for model in embedding_models
             for uri, version in versions
         ],
         settings={"async_insert": 0, "wait_for_async_insert": 1},

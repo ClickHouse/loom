@@ -581,30 +581,32 @@ Anything that does not land whole, or a write that took either place before the 
 takes back what the move wrote where it goes, and that source answers `busy`. The take-back
 runs to its end before the claims are given up, however often the request is cancelled
 meanwhile (the cancel is raised once it is done). Its first statement retires the copy's
-chunks under every embedding model at once; a take-back starts within its move's claims (by
-their cut-off at the latest) and each statement is bounded, so that one ends well inside the
-claim's 60 s TTL. The rest can outlast it, but a later move that then takes the claims reads
-the copy short: under the claims it checks again that an earlier move's copy is whole,
-answers `busy` when it is not, and on a later call writes the copy again; the other sources
-of the call still move. After the retirement the take-back drops its commit (under the
-Postgres authority), deletes its row, then its chunks and its tables: a take-back that stops
-partway leaves no chunk serving without a row, and a cancelled `INSERT … SELECT` that lands
-after the chunks' delete is retired too. The work under the claims is cut off at 40% of the
-claim's 60 s TTL (24 s); a document whose copy runs past that is taken back and answers
-`busy`. The delete runs to its end however the request or the claims end meanwhile, and the
-document is counted as moved the moment its tombstone is in, so a cut-off or a cancel while
-the tombstone is in flight still answers moved and audits it, and a tombstone the Postgres
-authority refuses then still takes the copy back. A failure of the delete itself (a lost
-answer, which fails the call) may follow the tombstone, so the copy stays: the document is
-in both places, or only where it goes, and a retry finds the copy and only deletes the
-source, or answers `not_found`. Once the tombstone is in, the move is made: the source's
-tables are deleted after the claims are given up, as a delete of a live document takes none,
-so no cut-off reaches it; a failure there is logged, and a later delete of the source
-settles them. A document counts as moved the moment its tombstone is in, under the claims:
-its audit row and its table cleanup follow whatever ends the call after that (a cancel as
-the claims are given up, or during the cleanup). A failure that is not one source's (a store
-that does not answer) is raised once every source of the call has answered, after the audit
-row of those that moved.
+chunks under every embedding model at once; a take-back starts by its claims' cut-off, or
+right after a delete begun before it that the Postgres authority refuses, whose commit
+answers within `pg_commit_lock_timeout_ms` and `pg_statement_timeout_ms` (2 s and 5 s by
+default). With the statement's own bound (15% of the TTL, 9 s), that retirement ends by
+about 40 s, inside the claim's 60 s TTL. The rest can outlast it, but a later move that then
+takes the claims reads the copy short: under the claims it checks again that an earlier
+move's copy is whole, answers `busy` when it is not, and on a later call writes the copy
+again; the other sources of the call still move. After the retirement the take-back drops
+its commit (under the Postgres authority), deletes its row, then its chunks and its tables:
+a take-back that stops partway leaves no chunk serving without a row, and a cancelled
+`INSERT … SELECT` that lands after the chunks' delete is retired too. The work under the
+claims is cut off at 40% of the claim's 60 s TTL (24 s); a document whose copy runs past
+that is taken back and answers `busy`. The delete runs to its end however the request or the
+claims end meanwhile, and the document is counted as moved the moment its tombstone is in,
+so a cut-off or a cancel while the tombstone is in flight still answers moved and audits it,
+and a tombstone the Postgres authority refuses then still takes the copy back. A failure of
+the delete itself (a lost answer, which fails the call) may follow the tombstone, so the
+copy stays: the document is in both places, or only where it goes, and a retry finds the
+copy and only deletes the source, or answers `not_found`. Once the tombstone is in, the move
+is made: the source's tables are deleted after the claims are given up, as a delete of a
+live document takes none, so no cut-off reaches it; a failure there is logged, and a later
+delete of the source settles them. A document counts as moved the moment its tombstone is
+in, under the claims: its audit row and its table cleanup follow whatever ends the call
+after that (a cancel as the claims are given up, or during the cleanup). A failure that is
+not one source's (a store that does not answer) is raised once every source of the call has
+answered, after the audit row of those that moved.
 
 The erasure ledger is read for each document twice, as `knowledge.restore` reads it
 (`unfinished_reaching` for the document's namespace and writer, filtered with `may_cover`):
