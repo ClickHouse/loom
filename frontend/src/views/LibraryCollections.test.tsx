@@ -1189,7 +1189,7 @@ describe("the Library on a collection", () => {
     });
   });
 
-  describe("a create answered after the tree is gone", () => {
+  describe("a create's answer, and the reads it starts", () => {
     it("still opens it when a resize took the tree away", async () => {
       const narrow = resizable();
       const answer = await createInTree();
@@ -1487,6 +1487,22 @@ describe("the Library on a collection", () => {
       expect(api.listCollections.mock.calls.length - reads).toBe(1);
     });
 
+    it("moves nothing once the page shows another org", async () => {
+      resizable();
+      const answer = await createInTree();
+      api.listCollections.mockReturnValue(new Promise(() => {}));
+      act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
+      await settle();
+      const at = location.search;
+      await answer(q4);
+      await settle();
+      // Nothing opens; the other org's list reads again, as after any write.
+      expect(location.search).toBe(at);
+      expect(api.listCollections).toHaveBeenLastCalledWith("other", expect.anything());
+    });
+  });
+
+  describe("a create answered after the person moved on", () => {
     it("lists, and does not open, what the dialog made once the person moved on", async () => {
       let answer: (v: unknown) => void = () => {};
       api.createCollection.mockReturnValue(new Promise((resolve) => (answer = resolve)));
@@ -1591,22 +1607,6 @@ describe("the Library on a collection", () => {
       expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
     });
 
-    it("moves nothing once the page shows another org", async () => {
-      resizable();
-      const answer = await createInTree();
-      api.listCollections.mockReturnValue(new Promise(() => {}));
-      act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
-      await settle();
-      const at = location.search;
-      await answer(q4);
-      await settle();
-      // Nothing opens; the other org's list reads again, as after any write.
-      expect(location.search).toBe(at);
-      expect(api.listCollections).toHaveBeenLastCalledWith("other", expect.anything());
-    });
-  });
-
-  describe("a create answered after the person moved on", () => {
     it("lists, and does not open, what was made once the person picked another place", async () => {
       resizable();
       const answer = await createInTree();
@@ -2037,6 +2037,7 @@ describe("the Library on a collection", () => {
   });
 
   it("beside the tree, draws another person's own folds after a sign-in as them", async () => {
+    // A real sign-in as someone else reloads the page (lib/tokenElsewhere.ts): this pins only the per-person key.
     resizable();
     useStore.setState({ whoami: { authenticated: true, subject: "ann" } as never });
     api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
