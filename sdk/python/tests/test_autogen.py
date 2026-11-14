@@ -100,7 +100,23 @@ def test_query_maps_hits_and_honours_abstain() -> None:
         )
     ]
     assert [r.content for r in result.results] == ["Alice prefers aisle seats"]
-    assert result.results[0].metadata["memory_key"] == "k1"
+    assert result.results[0].metadata == {
+        "memory_key": "k1",
+        "memory_type": "semantic",
+        "similarity": 0.91,
+        "source": "fact",
+    }
+    dated = dataclasses.replace(
+        _hit("k2", "Alice moved to Lisbon"), source="chunk", valid_at="2026-01-01"
+    )
+    (row,) = asyncio.run(LoomMemory(_Agent(_FakeMemory([dated]))).query("move")).results  # type: ignore[arg-type]
+    assert row.metadata == {
+        "memory_key": "k2",
+        "memory_type": "semantic",
+        "similarity": 0.9,
+        "source": "chunk",
+        "valid_at": "2026-01-01",
+    }
     weak = _FakeMemory([_hit("k", "weak", 0.2)], abstain=True)
     assert asyncio.run(LoomMemory(_Agent(weak)).query("seat")).results == []  # type: ignore[arg-type]
     loose = LoomMemory(_Agent(weak), honour_abstain=False)  # type: ignore[arg-type]
