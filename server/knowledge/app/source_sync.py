@@ -5,8 +5,9 @@ by `loom knowledge sync`. The shared-folder turn, over its items
 turn module (`source_sync_linear`, `source_sync_notion`, `source_sync_recording`),
 chosen by `_turn_of`, which builds on the public helpers here: `Pass` and
 `TurnResult`, `start_waits`, `full_due`, `capped`, `stamp_of` and `valid_stamp` for a
-turn's start and stamp, `sync_item` for one listed item, with `give_up`, `wait` and
-`require_current` for its fetch, `write_document` and `counted` for its write,
+turn's start and stamp, `stored_copies_with_room` for the stored copies and the turn's
+room under the document bound, `sync_item` for one listed item, with `give_up`, `wait`
+and `require_current` for its fetch, `write_document` and `counted` for its write,
 `retire_absent` and `retire`, and `client_error`. A kind's own bookkeeping goes in
 `TurnResult.kind_state`, which the sync state keeps.
 
@@ -54,10 +55,10 @@ a file (trashed, deleted, or of a kind no longer read) retires it. A document an
 writer or another source holds is never written or retired.
 
 The stamp moves only when every listed file was handled (new files held back at
-`REVISIONS_LIMIT` wait for the next full listing), so a cut turn is listed again and its
-written files are skipped by revision. A listing that outlasts the
-pass budget writes nothing (no time is left to write), so a source's listing must fit
-in one pass; the item and walk bounds keep it there.
+`LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` wait for the next full listing), so a cut turn is
+listed again and its written files are skipped by revision. A listing that outlasts the
+pass budget writes nothing (no time is left to write), so a source's listing must fit in
+one pass; the item and walk bounds keep it there.
 
 After the sync, the extraction leg mines into decision rows in the same
 namespace (`decision_extract.extract_document`, as `loom decisions extract`
@@ -206,9 +207,16 @@ class TurnResult:
     # Why the turn stopped short (the pass bound, an incomplete listing, a lost item),
     # each once; they lead the error text, so the dashboard tells a cut turn from a note.
     marks: list[TurnMark] = field(default_factory=list)
-    # What else a turn that did not fail noted: held-back files, an item or file it could
-    # not read. With the marks, shown as the error when there is none.
+    # What else a turn that did not fail noted: an item or file it could not read. With
+    # the marks and the held-back count, shown as the error when there is none.
     note: str = ""
+    # New documents the turn may still write; `stored_copies_with_room` sets it before any
+    # file, so a turn that never calls it writes nothing new.
+    room: int = 0
+    # LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS as this turn read it.
+    bound: int = 0
+    # New files held back past the room.
+    held: int = 0
     # Why files were unconverted: reason -> count.
     reasons: dict[str, int] = field(default_factory=dict)
     # Files waiting on a failure that may pass: id -> [revision, passes, reason].
@@ -253,8 +261,9 @@ class TurnResult:
 
     @property
     def state_error(self) -> str:
-        """The marks, then the notes, cut to 200 characters."""
-        return "; ".join([*self.marks, self.note] if self.note else self.marks)[:200]
+        """The marks, then the held-back count and the notes, cut to 200 characters."""
+        held = f"too_many_documents: {self.held} new files past {self.bound}" if self.held else ""
+        return "; ".join([*self.marks, *filter(None, [held, self.note])])[:200]
 
     def unconverted_for(self, reason: str) -> None:
         self.unconverted += 1
@@ -529,12 +538,8 @@ async def _turn(src: KnowledgeSource, state: dict[str, str], run: Pass) -> TurnR
         listed_ids = set(listed_at_revision)
         turn.waits = {k: v for k, v in turn.waits.items() if k in listed_ids}
     # Only a full listing lists an unchanged file, so only it asks for the pictures.
-    revisions = await store.source_revisions(src.org, src.namespace, src.name, pictures=turn.full)
-    bounded = _bounded(revisions, files, turn)
-    if bounded is None:
-        return turn
-    stored, writable = bounded
-    for f in writable:
+    stored = await stored_copies_with_room(src, turn, pictures=turn.full)
+    for f in files:
         if not await _sync_file(src, token, f, stored.get(str(f["id"])), run, turn):
             break
     if turn.full and turn.complete:
@@ -561,31 +566,17 @@ def _note_listing(turn: TurnResult, listing: gdrive_items.Listing) -> None:
         turn.mark(TurnMark.PASS_BOUND)
 
 
-def _bounded(
-    revisions: list[dict[str, str]], files: list[dict[str, Any]], turn: TurnResult
-) -> tuple[dict[str, dict[str, str]], list[dict[str, Any]]] | None:
-    """The stored copies by file id, and the listed files the turn may write: every
-    stored one, and new ones while the source stays within REVISIONS_LIMIT. None, with
-    the turn failed, when the source holds more: past the read's bound a stored file
-    would read as new, so such a source retires nothing until it is removed."""
-    limit = store.REVISIONS_LIMIT
-    if len(revisions) > limit:
-        turn.fail("failed", f"too_many_documents: more than {limit}")
-        return None
+async def stored_copies_with_room(
+    src: KnowledgeSource, turn: TurnResult, *, pictures: bool = False
+) -> dict[str, dict[str, str]]:
+    """The source's searchable stored copies by file id (`store.source_revisions`), and
+    the turn's room for new documents: LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS less what it
+    holds, so past the bound a turn still updates and retires but writes no new file."""
+    revisions = await store.source_revisions(src.org, src.namespace, src.name, pictures=pictures)
     stored = {d["file_id"]: d for d in revisions}
-    room = limit - len(stored)
-    writable = []
-    for f in files:
-        if str(f["id"]) not in stored:
-            if room <= 0:
-                continue
-            room -= 1
-        writable.append(f)
-    if held := len(files) - len(writable):
-        # Ahead of the other notes, so an item note never cuts it off.
-        held_note = f"too_many_documents: {held} new files past {limit}"
-        turn.note = "; ".join(filter(None, [held_note, turn.note]))
-    return stored, writable
+    turn.bound = settings.knowledge_source_max_documents
+    turn.room = max(0, turn.bound - len(stored))
+    return stored
 
 
 def start_waits(turn: TurnResult, detail: dict[str, Any]) -> None:
@@ -787,14 +778,16 @@ async def sync_item(
 ) -> bool:
     """Handle one listed item (`f`: its `id` and its revision as `modifiedTime`) at
     address `uri`; False when the turn must stop listing. In order: an item with no
-    https address is unconverted; one whose stored copy has this revision and
-    address is skipped; one given up on this revision is unconverted; one at an
-    address another writer holds is skipped; `before_fetch` (a kind's own checks)
-    may settle it; then it costs one of the pass bound and `fetch_and_write` runs,
-    answering `written`, `unchanged` (fetched again and nothing to write), `skipped`,
-    `waiting`, `given_up` or `stop`. A written item that moved to a new address has its old
-    one retired. With `refetch`, a stored copy at this revision is fetched again all the
-    same (a kind's own conversion changed)."""
+    https address is unconverted; one whose stored copy has this revision and address
+    is skipped; one given up on this revision is unconverted; a new one past the
+    source's bound is held back (`stored_copies_with_room`), with no read; one at an
+    address another writer holds is skipped; `before_fetch` (a kind's own checks) may
+    settle it; then it costs one of the pass bound and `fetch_and_write` runs, answering
+    `written`, `unchanged` (fetched again and nothing to write), `skipped`, `waiting`,
+    `given_up` or `stop`; only a new item `written` takes room under the bound. A
+    written item that moved to a new address has its old one retired. With `refetch`,
+    a stored copy at this revision is fetched again all the same (a kind's own
+    conversion changed, a page read too soon after its edit)."""
     file_id = str(f["id"])
     revision = str(f.get("modifiedTime") or "")
     if not uri.startswith("https://"):
@@ -813,6 +806,9 @@ async def sync_item(
         # It waited its passes on this revision: unconverted until it changes.
         turn.unconverted_for(str(entry[2]))
         return True
+    if prior is None and turn.room <= 0:
+        turn.held += 1  # past the source's bound: it waits for room, at no read
+        return True
     # Before any fetch: an address another writer holds costs nothing.
     if not await _may_write(src, uri):
         turn.waits.pop(file_id, None)
@@ -829,6 +825,8 @@ async def sync_item(
         return False
     if outcome not in ("waiting", "given_up"):
         turn.waits.pop(file_id, None)
+    if outcome == "written" and prior is None:
+        turn.room -= 1
     if outcome == "written" and prior and prior["source_uri"] != uri:
         if await retire(src, prior["source_uri"]):
             turn.removed += 1
@@ -1708,6 +1706,7 @@ __all__ = [
     "source_uri_of",
     "stamp_of",
     "start_waits",
+    "stored_copies_with_room",
     "sync_item",
     "valid_stamp",
     "wait",

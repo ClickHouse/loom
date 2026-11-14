@@ -713,6 +713,18 @@ schema. These rules keep that safe. The operator procedure is in
     `tests/unit/test_knowledge_source_sync.py` that a folder turn over such a row ends
     before any request; N-1's `check` and `rotate` failing is read from its code, and
     the mixed-version gate does not check this rule.
+50. **A source's document bound** (`LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`): N reads a
+    source's stored copies in pages and holds back new files past the setting, for
+    every kind. N-1 reads at most 50,001 of them: its `gdrive` turn holds back new files
+    past 50,000 and ends `failed` with `too_many_documents` over it, retiring nothing;
+    its `linear`, `notion` and `recording` turns check no bound, so past the cut a
+    stored copy reads as new and is fetched again each turn, and the cut read retires
+    less. Both rewrite and retire under the same source lease. While N-1 serves, a
+    setting at or below 50,000 is safe; raise it only once every replica runs N. The
+    bound tests in `tests/unit/test_knowledge_source_sync.py`,
+    `test_knowledge_source_sync_linear.py`, `test_notion_source_sync.py` and
+    `test_knowledge_source_recordings.py` check N's side; N-1's is read from its code,
+    and the mixed-version gate does not check this rule.
 
 ## What checks them
 

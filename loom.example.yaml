@@ -2817,6 +2817,12 @@ settings:
   # sources; the rest wait for the next pass. [live]
   # knowledge_source_sync_documents_per_pass: 40
 
+  # Documents one source holds: its stored ones plus the new ones a turn writes. At it a
+  # turn tries no new file, notes how many as `too_many_documents`, and still updates
+  # and retires. At most 200,000: each read of the stored copies grows with its square.
+  # [live]
+  # knowledge_source_max_documents: 50000
+
   # Seconds after which a source's next pass lists every file, not only those changed
   # since the last one: what finds a file trashed or moved out of a folder. [live]
   # knowledge_source_sync_full_interval_seconds: 86400

@@ -46,10 +46,8 @@ STATE_TABLE = "loom.code_index_state"
 # Documents `knowledge.source.inspect` lists, at most.
 # not a setting: the op's wire contract (its description says 200)
 DOCUMENTS_LIMIT = 200
-# Documents a source holds, at most, as one revision read returns them (it reads one
-# more, so a cut read shows): a folder turn writes no new file past it
-# (`too_many_documents`).
-REVISIONS_LIMIT = 50_000  # not a setting: a bound on one statement
+# Rows one statement of a revision read returns; the read pages by address to the end.
+REVISIONS_PAGE = 10_000  # not a setting: a bound on one statement
 
 _COLUMNS = (
     "org, namespace, name, source_id, kind, source_kind, config_json, items_json, "
@@ -322,8 +320,9 @@ async def source_revisions(
     holds a picture's bytes as a reference definition (`inline_pictures`, "1" or
     ""), as a native document stored by an earlier conversion does, and the SHA-256
     of the stored text (`stored_content_sha256`): that reads every document's text,
-    so only a full listing asks; the hash is computed only for a flagged copy. One
-    statement, a tag filter over the namespace's key prefix like `source_documents`.
+    so only a full listing asks; the hash is computed only for a flagged copy. A tag
+    filter over the namespace's key prefix like `source_documents`, read in pages of
+    `REVISIONS_PAGE` by address, so no document is left out.
 
     With `searchable_only`, only a version whose chunks are live counts: a write cut
     between its document row and its chunks leaves a version nobody can search, and
@@ -333,7 +332,7 @@ async def source_revisions(
         "AND (source_uri, version) IN ("
         "SELECT source_uri, doc_version FROM loom.chunks "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
-        f"AND {LIVE_CHUNK_SQL}) "
+        f"AND source_uri > {{after:String}} AND {LIVE_CHUNK_SQL}) "
         if searchable_only
         else ""
     )
@@ -343,7 +342,7 @@ async def source_revisions(
         if pictures
         else "0 AS inline_pictures, '' AS stored_content_sha256"
     )
-    rows = await (ch or _default_client()).query_all(
+    sql = (
         "SELECT source_uri, JSONExtractString(metadata, 'ingested_from') AS file_id, "
         "JSONExtractString(metadata, 'source_revision') AS source_revision, "
         "JSONExtractString(metadata, 'read_at') AS read_at, "
@@ -352,16 +351,25 @@ async def source_revisions(
         "FROM loom.documents FINAL "
         "WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, {tag:String}) "
         "AND actor = {actor:String} AND superseded_at IS NULL "
-        # One row past the bound, so a caller can tell a cut read from a full one.
-        f"{chunks}LIMIT {REVISIONS_LIMIT + 1}",
-        params={
-            "org": org,
-            "ns": namespace,
-            "tag": source_tag(name),
-            "actor": SYNC_WORKER_ACTOR,
-            **({"pic": _INLINE_PICTURE} if pictures else {}),
-        },
+        "AND source_uri > {after:String} "
+        f"{chunks}ORDER BY source_uri LIMIT {REVISIONS_PAGE}"
     )
+    params = {
+        "org": org,
+        "ns": namespace,
+        "tag": source_tag(name),
+        "actor": SYNC_WORKER_ACTOR,
+        **({"pic": _INLINE_PICTURE} if pictures else {}),
+    }
+    client = ch or _default_client()
+    rows: list[dict[str, Any]] = []
+    after = ""
+    while True:
+        page = await client.query_all(sql, params={**params, "after": after})
+        rows.extend(page)
+        if len(page) < REVISIONS_PAGE:
+            break
+        after = str(page[-1]["source_uri"])
     return [
         {
             "source_uri": str(r.get("source_uri") or ""),
@@ -392,7 +400,7 @@ async def count_documents(
 __all__ = [
     "DOCUMENTS_LIMIT",
     "DirectoryRow",
-    "REVISIONS_LIMIT",
+    "REVISIONS_PAGE",
     "TABLE",
     "active_count",
     "all_active_sources",

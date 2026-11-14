@@ -381,6 +381,16 @@ def test_the_document_bound_cuts_the_turn(
     assert second.changed == 1 and _detail(world)["error"] == ""
 
 
+def test_a_project_source_at_its_bound_writes_no_new_document(
+    world: _World, tracker: _Tracker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 2)
+    tracker.projects[PROJECT] = [_node(n, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2, 3)]
+    result = _sync()
+    assert result.changed == 2 and not result.cut
+    assert _detail(world)["error"] == "too_many_documents: 1 new files past 2"
+
+
 def test_a_credential_that_no_longer_opens_calls_nothing(world: _World, tracker: _Tracker) -> None:
     world.sources = [_linear_source(credential_enc="not-sealed")]
     _sync()

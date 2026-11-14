@@ -35,7 +35,6 @@ from server.core.errors import ValidationError
 from server.knowledge.app import source_sync as sync
 from server.knowledge.app import sources as source_ops
 from server.knowledge.domain.sources import KnowledgeSource, item_ids, json_object
-from server.knowledge.store import sources as store
 from server.settings import settings
 
 log = logging.getLogger("loom.knowledge.source_sync")
@@ -95,9 +94,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     result.newest = sync.capped(newest, listed_at)
     if trusted:
         result.waits = {k: v for k, v in result.waits.items() if k in files}
-    stored = {
-        d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
-    }
+    stored = await sync.stored_copies_with_room(src, result)
     for f in files.values():
         fetch_and_write = functools.partial(_fetch_and_write, src, key, f, result)
         prior = stored.get(f["id"])
