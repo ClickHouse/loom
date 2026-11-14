@@ -367,10 +367,11 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                   <p id="ns-capture-hint" className="mt-0.5 ml-6 text-xs text-text-muted">
                     Off unless you tick it, so none of your text is kept. Tick this and loom records your{" "}
                     <em>search wording</em> plus the memory text and conversation turns it sends to the model while
-                    answering &mdash; which is what makes a bad recall diagnosable afterwards. With knowledge gaps on,
-                    questions several people asked that nothing answered are also shown to this namespace's admins.
-                    Counts, cost, latency, recall and quality scores are kept either way; those carry no text. Applies
-                    to this namespace only; takes effect within a minute.
+                    answering &mdash; which is what makes a bad recall diagnosable afterwards. When an operator of this
+                    deployment turns on unanswered questions, questions several people asked that nothing answered are
+                    listed in the Library for this namespace's admins. Counts, cost, latency, recall and quality scores
+                    are kept either way; those carry no text. Applies to this namespace only; takes effect within a
+                    minute.
                   </p>
                 </div>
               </>
