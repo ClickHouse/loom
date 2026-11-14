@@ -102,6 +102,41 @@ class CollectionNameTakenError(LoomServerError):
         super().__init__(message, deleted=deleted, suggestion=suggestion)
 
 
+class DefinitionPromotionRefusedError(LoomServerError):
+    """422 — a definition is promoted only from its live namespace-wide row under a
+    `definition/` key, to that same key."""
+
+    code = "DEFINITION_PROMOTION_REFUSED"
+    status_code = 422
+
+
+class SensitiveDefinitionRefusedError(LoomServerError):
+    """422 — a definition whose value is labelled or reads as `medium` or `high` is not
+    promoted: the shared layer serves it to every reader of the namespace."""
+
+    code = "SENSITIVE_DEFINITION_REFUSED"
+    status_code = 422
+
+
+class DefinitionCeilingError(LoomServerError):
+    """409 — the namespace holds `memory_term_leg_max_definitions` shared definitions
+    already; demote one to make room."""
+
+    code = "DEFINITION_CEILING"
+    status_code = 409
+
+
+class DefinitionNameTakenError(LoomServerError):
+    """409 — another shared definition holds this term or an alias; `conflicting_keys`
+    names them."""
+
+    code = "DEFINITION_NAME_TAKEN"
+    status_code = 409
+
+    def __init__(self, message: str = "", *, conflicting_keys: list[str]) -> None:
+        super().__init__(message, conflicting_keys=conflicting_keys)
+
+
 class TenancyRefusedError(LoomServerError):
     """503 — this cell's Postgres refused a row for an org the cell holds no tenancy row
     for (its org triggers, docs/architecture/cells.md): the session that wrote it is not

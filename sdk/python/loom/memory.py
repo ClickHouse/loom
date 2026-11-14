@@ -1610,10 +1610,9 @@ class MemoryClient:
         """Promote a private memory to this namespace's shared layer.
 
         Reversible within `reversible_for_days` (default 7) via demote.
-        After the window, demote still works but requires admin role. A
-        definition is promoted from its namespace-wide row (`agent_id="-"` and no
-        `user_id` or `session_id`)
-        and names the `content_sha256` it approves in `approved_sha256`.
+        After the window, demote still works but requires admin role. A definition
+        is promoted from its namespace-wide row (`agent_id="-"` and no `user_id` or
+        `session_id`) and names the `content_sha256` it approves in `approved_sha256`.
         """
         payload: dict[str, Any] = self._identity(user_id, session_id, agent_id=agent_id)
         payload["memory_key"] = memory_key
@@ -1941,8 +1940,8 @@ class MemoryClient:
 
         Reversible within `reversible_for_days` (default 7) via `demote()`. A
         definition is shared from its namespace-wide row (`agent_id="-"` and no
-        `user_id` or `session_id`) and
-        names the `content_sha256` it approves in `approved_sha256`.
+        `user_id` or `session_id`) and names the `content_sha256` it approves in
+        `approved_sha256`.
         """
         return await self.promote(
             memory_key,

@@ -264,8 +264,9 @@ async def test_a_definition_is_promoted_with_the_hash_get_serves(
     ) as a:
         await a.memory.set("definition/arr", value, "definition", agent_id="-")
         got = await a.memory.get("definition/arr", agent_id="-")
-        with pytest.raises(ValidationError):  # no approved hash
+        with pytest.raises(ValidationError) as e:  # no approved hash
             await a.memory.promote("definition/arr", agent_id="-")
+        assert e.value.code == "VALIDATION_FAILED"
         shared_rows = "SELECT count() FROM loom.shared WHERE org = {org:String}"
         assert ch_client.query(shared_rows, parameters={"org": org}).result_rows == [(0,)]
         out = await a.memory.share(
@@ -319,7 +320,8 @@ async def test_a_name_is_held_until_its_definition_is_demoted(
         revenue = {"term": "Revenue", "aliases": ["arr"], "body": "Yearly income."}
         with pytest.raises(LoomError) as e:
             await promote("definition/revenue", revenue)
-        assert "DEFINITION_NAME_TAKEN" in str(e.value)
+        assert e.value.code == "DEFINITION_NAME_TAKEN"
+        assert e.value.detail["conflicting_keys"] == ["definition/arr"]
         # Its own revision holds the name already.
         await promote("definition/arr", {"term": "ARR", "body": "Yearly recurring revenue."})
         await a.memory.demote("definition/arr")

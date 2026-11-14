@@ -458,15 +458,15 @@ Raised in `server/code/domain/index/repos.py`.
 
 #### `DEFINITION_CEILING`
 
-Raised in `server/memory/app/promote.py`.
+HTTP 409, raised as `server.core.errors.DefinitionCeilingError`. 409 — the namespace holds `memory_term_leg_max_definitions` shared definitions already; demote one to make room. Category `input`, retryable: no.
 
 #### `DEFINITION_NAME_TAKEN`
 
-Raised in `server/memory/app/promote.py`.
+HTTP 409, raised as `server.core.errors.DefinitionNameTakenError`. 409 — another shared definition holds this term or an alias; `conflicting_keys` names them. Category `input`, retryable: no.
 
 #### `DEFINITION_PROMOTION_REFUSED`
 
-Raised in `server/memory/app/promote.py`.
+HTTP 422, raised as `server.core.errors.DefinitionPromotionRefusedError`. 422 — a definition is promoted only from its live namespace-wide row under a `definition/` key, to that same key. Category `input`, retryable: no.
 
 #### `DUPLICATE_FIELD`
 
@@ -842,7 +842,7 @@ Raised in `server/auth/self_signup.py`.
 
 #### `SENSITIVE_DEFINITION_REFUSED`
 
-Raised in `server/memory/app/promote.py`.
+HTTP 422, raised as `server.core.errors.SensitiveDefinitionRefusedError`. 422 — a definition whose value is labelled or reads as `medium` or `high` is not promoted: the shared layer serves it to every reader of the namespace. Category `input`, retryable: no.
 
 #### `SHARED_CONFLICT`
 

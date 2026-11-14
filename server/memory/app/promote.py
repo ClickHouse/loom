@@ -10,7 +10,14 @@ from datetime import timedelta
 from fastapi import HTTPException
 
 from server.core.datetimes import naive_utc_now, to_naive_utc
-from server.core.errors import PreconditionFailedError, ValidationError
+from server.core.errors import (
+    DefinitionCeilingError,
+    DefinitionNameTakenError,
+    DefinitionPromotionRefusedError,
+    PreconditionFailedError,
+    SensitiveDefinitionRefusedError,
+    ValidationError,
+)
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -98,9 +105,11 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         )
 
     target_key = input.target_key or input.memory_key
-    definition = src.memory_type == DEFINITION or target_key.startswith(DEFINITION_KEY_PREFIX)
+    is_definition_promotion = src.memory_type == DEFINITION or target_key.startswith(
+        DEFINITION_KEY_PREFIX
+    )
     ignored: list[str] = []
-    if definition:
+    if is_definition_promotion:
         await _check_definition_promotion(input, src, target_key)
         ignored = [f for f in ("approver", "promoted_from_candidate_id") if getattr(input, f)]
     elif input.approved_sha256:
@@ -114,7 +123,9 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         f"{src.org}/{src.namespace}/{src.agent}/{src.user_id}/{src.session_id}/{src.memory_key}"
     )
     # A definition's promoter is the token's actor: the admin who answers for it.
-    promoted_by = writer_actor("explicit") if definition else input.approver or "explicit"
+    promoted_by = (
+        writer_actor("explicit") if is_definition_promotion else input.approver or "explicit"
+    )
     src_value_json = json.dumps(src.value, default=str)
 
     # Embed once: reused for the conflict check and the shared embedding insert.
@@ -137,7 +148,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
             )
             embedding = []
 
-        if embedding and not definition:
+        if embedding and not is_definition_promotion:
             # A close shared row under a *different* key means promoting this
             # value would contradict the namespace's agreed knowledge — refuse. A
             # definition's names decide instead (`_check_definition_promotion`).
@@ -176,7 +187,9 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
             "confidence": src.confidence,
             "promoted_from": [promoted_from_repr],
             "promotion_event": promotion_event,
-            "promoted_from_candidate_id": None if definition else input.promoted_from_candidate_id,
+            "promoted_from_candidate_id": None
+            if is_definition_promotion
+            else input.promoted_from_candidate_id,
             "promoted_by": promoted_by,
             "rationale": input.rationale,
             "promoted_at": now_naive,
@@ -248,13 +261,9 @@ async def _check_definition_promotion(
         and target_key == src.memory_key
         and _live(src)
     ):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "DEFINITION_PROMOTION_REFUSED",
-                "message": "a definition is promoted from its live namespace-wide row (agent, "
-                "user and session '-') of type definition under a definition/ key, to that key",
-            },
+        raise DefinitionPromotionRefusedError(
+            "a definition is promoted from its live namespace-wide row (agent, "
+            "user and session '-') of type definition under a definition/ key, to that key"
         )
     if not input.approved_sha256:
         raise ValidationError("a definition promotion names the hash it approves (approved_sha256)")
@@ -273,13 +282,9 @@ async def _check_definition_promotion(
     # a restore leaves the label empty.
     graded = await detect_level(await decoded_text(src.value))
     if max_sensitivity([src.sensitivity, graded]) in (MEDIUM, HIGH):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "SENSITIVE_DEFINITION_REFUSED",
-                "message": "a definition is served to every reader of the namespace: one that "
-                "reads as medium or high sensitivity is not promoted",
-            },
+        raise SensitiveDefinitionRefusedError(
+            "a definition is served to every reader of the namespace: one that "
+            "reads as medium or high sensitivity is not promoted"
         )
     ceiling = settings.memory_term_leg_max_definitions
     # At most the ceiling plus one: within the ceiling the read holds every live definition,
@@ -287,26 +292,17 @@ async def _check_definition_promotion(
     rows = await shared_repo.shared_definitions(input.org, input.namespace, ceiling + 1)
     revision = any(r["memory_key"] == target_key for r in rows)
     if len(rows) > ceiling or (len(rows) == ceiling and not revision):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "DEFINITION_CEILING",
-                "message": f"the ceiling is {ceiling} shared definitions: demote one to make room",
-            },
+        raise DefinitionCeilingError(
+            f"the ceiling is {ceiling} shared definitions: demote one to make room"
         )
     taken = sorted(
-        str(r["memory_key"])
+        r["memory_key"]
         for r in rows
         if r["memory_key"] != target_key and names & (definition_names(r["value"]) or set())
     )
     if taken:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "DEFINITION_NAME_TAKEN",
-                "message": "another shared definition holds this term or an alias",
-                "conflicting_keys": taken,
-            },
+        raise DefinitionNameTakenError(
+            "another shared definition holds this term or an alias", conflicting_keys=taken
         )
 
 
