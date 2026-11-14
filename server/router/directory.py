@@ -943,7 +943,8 @@ async def attach_place(cell_name: str, deployment_id: str, orgs: list[str]) -> t
         )
         if elsewhere is not None:
             # A backstop: attach refuses while another cell row exists, under the lock every
-            # writer of the rows takes. Raised inside the transaction, the inserts roll back.
+            # writer of the rows takes. Raised inside the transaction, so the inserts roll
+            # back.
             raise OperatorRefused(
                 f"org {elsewhere['org']!r} is placed in cell {elsewhere['cell']!r}"
             )
