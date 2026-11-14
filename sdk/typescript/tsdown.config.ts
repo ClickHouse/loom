@@ -6,6 +6,7 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     "integrations/langchain": "src/integrations/langchain.ts",
+    "integrations/mastra": "src/integrations/mastra.ts",
     "integrations/openai-agents": "src/integrations/openai-agents.ts",
     "integrations/strands": "src/integrations/strands.ts",
   },

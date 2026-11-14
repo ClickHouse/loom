@@ -3,6 +3,7 @@
   "entryPoints": [
     "src/index.ts",
     "src/integrations/langchain.ts",
+    "src/integrations/mastra.ts",
     "src/integrations/openai-agents.ts",
     "src/integrations/strands.ts"
   ],

@@ -20,6 +20,7 @@ or needs another database, vector store or cache.
 | CrewAI                         | `LoomCrewMemory`                                | Python, `loom.integrations.crewai`                        | `crewai.memory.Memory`                 |
 | AutoGen                        | `LoomMemory`                                    | Python, `loom.integrations.autogen`                       | `autogen_core.memory.Memory`           |
 | Pydantic AI                    | `loom_toolset`                                  | Python, `loom.integrations.pydantic_ai`                   | `FunctionToolset`                      |
+| Mastra                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/mastra`        | `createTool` from `@mastra/core`       |
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                            |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol             |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally        |
@@ -322,6 +323,36 @@ run. The toolset's tools await the Loom agent's calls, so it takes a `loom.Agent
 refuses a `SyncAgent`. Message history stays with the caller, who passes it to each run as
 `message_history`.
 
+## Mastra
+
+`loomTools(agent, scope)` returns Loom's agent verbs as Mastra tools built with
+`createTool`, keyed by name as a Mastra `Agent` takes them: the same `AgentTools` as the
+[OpenAI Agents SDK](#openai-agents-sdk) adapter. `@mastra/core` 1.83 or a later 1.x is an
+optional peer dependency, and needs Node 22.13 or later.
+
+```ts
+import { Agent as MastraAgent } from "@mastra/core/agent";
+import { loomTools } from "@clickhouse/loom/integrations/mastra";
+
+const assistant = new MastraAgent({
+  id: "assistant",
+  name: "assistant",
+  instructions: "Recall what you know about the user before answering.",
+  model,
+  tools: loomTools(agent, { userId: "alice" }),
+});
+```
+
+Mastra's own memory keeps threads and messages in a storage adapter that edits and deletes
+them; Loom's conversations are append-only, so the adapter offers Loom as tools rather
+than as that store. A Mastra `Memory` can keep its thread history in its own store while
+the model reads and writes long-term memory in Loom through these tools. Mastra checks
+each call against Loom's schema first and answers one outside it (a missing argument, an
+extra key, a `top_k` above 20, a quoted number) with its own validation message; a call
+within the schema that Loom refuses, or a server error, reaches the model as Mastra's
+failed tool result with Loom's message. Either way the model reads the message and the run
+goes on.
+
 ## LangGraph
 
 `LoomStore` (`sdk/python/loom/integrations/langgraph.py`) is a LangGraph `BaseStore`, so
@@ -446,8 +477,9 @@ client can speak for several agents.
   `update_context` once per turn, before its first model call, and does not catch its
   errors.
 - **A refused tool call reaches the model, and the run goes on.** The OpenAI Agents SDK tools
-  return Loom's error to the model as the call's result; the Pydantic AI tools return it as
-  a failed tool result.
+  return Loom's error to the model as the call's result; the Pydantic AI and Mastra tools
+  return it as a failed tool result (Mastra answers a call outside Loom's schema with its
+  own validation message first).
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as
   `conflicted` or `duplicate` returns normally; read the namespace's conflicts in the
   dashboard or with `conflicts.list` ([conflicts and refusal](../memory/conflicts-and-refusal.md)).

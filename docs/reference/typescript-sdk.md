@@ -26,7 +26,8 @@ The package ships ESM and CommonJS builds with their own declaration files and
 imports no Node built-in when it loads; signing in loads `node:fs` and the
 other built-ins it needs on first use. The framework adapters are their own entry
 points: `@clickhouse/loom/integrations/langchain`,
-`@clickhouse/loom/integrations/openai-agents` and `@clickhouse/loom/integrations/strands`.
+`@clickhouse/loom/integrations/mastra`, `@clickhouse/loom/integrations/openai-agents` and
+`@clickhouse/loom/integrations/strands`.
 
 ## Credentials
 
@@ -252,6 +253,13 @@ const recentAudit = await collect(
 `@langchain/core`, an optional peer dependency: install it next to the SDK. They
 search `knowledge.search` and `memory.search` and return one `Document` per chunk
 or memory. See [Frameworks](../features/integrations/frameworks.md#langchain).
+
+## Mastra adapter
+
+`loomTools(agent, scope)` from `@clickhouse/loom/integrations/mastra` returns `AgentTools`
+as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer
+dependency (`@mastra/core` 1.83 or a later 1.x, which needs Node 22.13 or later). See
+[Frameworks](../features/integrations/frameworks.md#mastra).
 
 ## OpenAI Agents SDK adapter
 
