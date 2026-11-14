@@ -66,8 +66,8 @@ class LoomRecallPolicy:
     and adds nothing when Loom abstains. It only reads: memories are written
     through ``loom_tools`` (``loom_remember``) or the SDK. Put it before a
     trimming policy (``SlidingWindowPolicy``, ``TokenBudgetPolicy``), which can
-    cut the user's request out of the events it reads. Those policies trim
-    events, not the prompt, so ``top_k`` is what bounds the memory block.
+    cut the user's request out of the events this policy reads. Those policies
+    trim events, not the prompt, so ``top_k`` is what bounds the memory block.
     """
 
     name = "loom_memory"
