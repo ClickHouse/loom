@@ -29,8 +29,7 @@ def _names(values: Iterable[Any]) -> tuple[str, ...]:
 class AccessList:
     """Who the store lets read a mirrored document. `owner` is a connected source's
     owner subject. `unread`: no current list is known; it admits nobody. `emails`,
-    `groups` and `domains` are kept in one spelling: stripped, lower-cased, distinct and
-    sorted."""
+    `groups` and `domains` are kept in the spelling `_names` gives them."""
 
     emails: tuple[str, ...] = ()
     owner: str = ""
@@ -81,7 +80,13 @@ def from_json(text: str) -> AccessList:
         and isinstance(anyone, bool)
     ):
         return UNREAD
-    return AccessList(emails=emails, owner=owner, groups=groups, domains=domains, anyone=anyone)
+    return AccessList(
+        emails=tuple(emails),
+        owner=owner,
+        groups=tuple(groups),
+        domains=tuple(domains),
+        anyone=anyone,
+    )
 
 
 def from_drive_permissions(permissions: list[dict[str, Any]] | None) -> AccessList:

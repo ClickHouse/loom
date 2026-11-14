@@ -97,7 +97,7 @@ _STORED = {
 def test_a_read_keeps_the_permission_list() -> None:
     class _CH:
         async def query_all(self, sql, params=None):
-            return [_STORED] if "access_json" in sql else []
+            return [_STORED]
 
     [doc] = asyncio.run(documents_repo.get_many_by_uris("o", "n", ["u"], ch=_CH()))
     assert doc.access_json == LISTED
