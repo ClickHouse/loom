@@ -321,7 +321,7 @@ async def _place(org: str) -> tuple[str, str]:
     except ValueError:
         answer = None
     if r.status_code == 400 and isinstance(answer, dict) and answer.get("code") == "ORG_TOO_LONG":
-        # A new org longer than the router places: the caller's to fix, never retried.
+        # A new org name past the router's limit: the caller's to fix, never retried.
         raise ValidationError(str(answer.get("error", "")))
     if r.status_code != 200:
         log.warning("placement of %s: router answered %s", org, r.status_code)

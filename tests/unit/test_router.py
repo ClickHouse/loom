@@ -183,7 +183,7 @@ def _connected(monkeypatch: pytest.MonkeyPatch, conn: _PlaceConn) -> None:
     monkeypatch.setattr(directory, "_connection", _connection)
 
 
-def test_a_new_org_longer_than_a_cell_holds_answers_400_and_writes_nothing(
+def test_a_new_org_name_past_the_limit_answers_400_and_writes_nothing(
     fake: _Directory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The directory's one check, on the path that writes a placement, refuses it for

@@ -902,7 +902,7 @@ def test_a_cli_holds_the_router_credential_only_on_a_recording_first_cell(
         assert statements == [tenancy._HOLDS, tenancy._RECORD]
 
 
-def test_a_cli_declaring_an_org_longer_than_a_cell_holds_refuses_without_a_traceback(
+def test_a_cli_declaring_an_org_name_past_the_limit_refuses_without_a_traceback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _serving_cell(monkeypatch)

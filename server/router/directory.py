@@ -116,8 +116,8 @@ class PlacementRefused(Refusal):
 
 
 class OrgTooLong(Refusal):
-    """A new org name longer than a cell holds (`cell.ORG_MAX_BYTES`): refused before its
-    placement is written, by every route that places, and no retry places it."""
+    """A new org name longer than `cell.ORG_MAX_BYTES`: refused before its placement is
+    written, by every route that places, and no retry places it."""
 
 
 def _require_dsn() -> str:
@@ -612,8 +612,8 @@ async def place(org: str, cell_name: str, refusal: Callable[[Cell], str]) -> tup
     state. Otherwise the cell's row is locked and judged (`refusal`, then its quota),
     so a change to it waits for the placement and the quota holds across router
     replicas; a refused placement raises PlacementRefused and writes nothing, and a new
-    org longer than a cell holds raises OrgTooLong (one placed before the limit answers
-    its cell, as any placed org does)."""
+    org name longer than `cell.ORG_MAX_BYTES` raises OrgTooLong (one placed before the
+    limit answers its cell, as any placed org does)."""
     async with _reading(), _connection() as conn, conn.transaction():
         # Placements of one org run one at a time, whichever cell asks: the later one
         # reads the earlier one's winner.
