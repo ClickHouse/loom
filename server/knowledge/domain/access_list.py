@@ -10,7 +10,8 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
-# Every Drive role reads the file; a role this module does not know admits nobody.
+# Every Drive role on the whole file reads it; any other role (`published_reader`, or
+# one this module does not know) admits nobody.
 _DRIVE_ROLES = frozenset({"owner", "organizer", "fileOrganizer", "writer", "commenter", "reader"})
 
 

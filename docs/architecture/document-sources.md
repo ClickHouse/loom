@@ -618,8 +618,8 @@ no Postgres migration), written by the turn of the source that owns the document
 - `domains` and `anyone`: a domain or public permission the store marks discoverable. A
   link-only share (one the store marks not discoverable) is left out: it lets someone
   who holds the link open the file, not find it.
-- `unread`: no current list is known; such a list carries no `emails`, `groups`,
-  `domains` or `anyone`, and admits nobody.
+- `unread`: no current list is known; such a list carries no `owner`, `emails`,
+  `groups`, `domains` or `anyone`, and admits nobody.
 
 For `gdrive` the list is the file's `permissions`, read with the listing, or with
 `permissions.list` when the listing leaves it out; for `linear`, the active members of

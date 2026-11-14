@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 
 from server.knowledge.domain import access_list
-from server.knowledge.domain.access_list import UNREAD, AccessList
 
 
 def _perm(kind: str, **kw: Any) -> dict[str, Any]:
@@ -30,7 +29,7 @@ def test_every_drive_role_and_discoverable_share_is_listed() -> None:
             _perm("anyone", allowFileDiscovery=True),
         ]
     )
-    assert got == AccessList(
+    assert got == access_list.AccessList(
         emails=(
             "b@example.com",
             "c@example.com",
@@ -62,20 +61,22 @@ def test_every_drive_role_and_discoverable_share_is_listed() -> None:
     ],
 )
 def test_a_permission_that_cannot_be_trusted_admits_nobody(permission: dict[str, Any]) -> None:
-    assert access_list.from_drive_permissions([permission]) == AccessList()
+    assert access_list.from_drive_permissions([permission]) == access_list.AccessList()
 
 
 def test_no_permissions_from_the_store_read_unread() -> None:
-    assert access_list.from_drive_permissions(None) == UNREAD
-    assert access_list.from_drive_permissions([]) == AccessList()  # read, and empty
+    assert access_list.from_drive_permissions(None) == access_list.UNREAD
+    assert access_list.from_drive_permissions([]) == access_list.AccessList()  # read, and empty
 
 
 def test_unread_is_stored_empty_as_every_other_writer_stores_it() -> None:
-    assert access_list.to_json(UNREAD) == ""
+    assert access_list.to_json(access_list.UNREAD) == ""
 
 
 def test_the_stored_form_round_trips_and_compares_equal_for_one_list() -> None:
-    a = AccessList(emails=("a@example.com",), owner="user:a", domains=("example.com",), anyone=True)
+    a = access_list.AccessList(
+        emails=("a@example.com",), owner="user:a", domains=("example.com",), anyone=True
+    )
     text = access_list.to_json(a)
     assert access_list.from_json(text) == a
     respelled = access_list.from_drive_permissions(
@@ -86,7 +87,7 @@ def test_the_stored_form_round_trips_and_compares_equal_for_one_list() -> None:
         ]
     )
     assert access_list.to_json(respelled) == access_list.to_json(
-        AccessList(emails=("a@example.com", "b@example.com"))
+        access_list.AccessList(emails=("a@example.com", "b@example.com"))
     )
 
 
@@ -107,17 +108,17 @@ def test_the_stored_form_round_trips_and_compares_equal_for_one_list() -> None:
     ],
 )
 def test_anything_but_a_read_list_is_unread(text: str) -> None:
-    assert access_list.from_json(text) == UNREAD
+    assert access_list.from_json(text) == access_list.UNREAD
 
 
 def test_a_list_built_directly_is_kept_in_the_one_spelling() -> None:
-    built = AccessList(emails=("B@example.com", "a@example.com", "a@example.com"))
-    assert built == AccessList(emails=("a@example.com", "b@example.com"))
+    built = access_list.AccessList(emails=("B@example.com", "a@example.com", "a@example.com"))
+    assert built == access_list.AccessList(emails=("a@example.com", "b@example.com"))
 
 
 def test_an_unread_list_that_names_someone_is_refused() -> None:
     with pytest.raises(ValueError, match="unread"):
-        AccessList(unread=True, emails=("a@example.com",))
+        access_list.AccessList(unread=True, emails=("a@example.com",))
 
 
 def test_no_operation_takes_or_answers_a_permission_list() -> None:

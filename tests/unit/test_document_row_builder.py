@@ -66,10 +66,10 @@ def test_document_row_reads_every_carried_column() -> None:
 
 
 def test_builder_carries_an_existing_row_and_recomputes_the_hash() -> None:
-    doc = _doc(access_json=LISTED)
+    doc = _doc()
     row = documents_repo.build_document_row(doc, version=2, superseded_at=ERASED)
     for col in documents_repo.DOCUMENT_COLUMNS:
-        if col not in ("version", "superseded_at", "access_json"):  # a list: never carried
+        if col not in ("version", "superseded_at"):
             assert row[col] == getattr(doc, col), col
     renamed = documents_repo.build_document_row(doc, title="New", version=3)
     assert renamed["content_sha256"] == _content_sha256("New\nbody text")
@@ -80,6 +80,14 @@ def test_builder_refuses_unknown_and_hash_fields() -> None:
         documents_repo.build_document_row(_doc(), version=2, bogus=1)
     with pytest.raises(ValueError):
         documents_repo.build_document_row(_doc(), version=2, content_sha256="x")
+
+
+def test_a_read_keeps_the_permission_list() -> None:
+    row = {
+        "org": "o", "namespace": "n", "source_uri": "u", "doc_id": "d", "content": "c",
+        "version": 1, "ingested_at": INGESTED, "access_json": LISTED,
+    }  # fmt: skip
+    assert documents_repo._hydrate(row).access_json == LISTED
 
 
 def test_the_repo_reads_select_the_hash_the_erasure_stamp_and_the_permission_list() -> None:
@@ -1012,7 +1020,6 @@ def test_an_upsert_writes_the_list_its_caller_passes_and_none_otherwise(
     from server.knowledge.api.models_knowledge import KnowledgeUpsertInput
 
     rows = _capture_inserts(monkeypatch)
-
     _stub_upsert_over_a_listed_row(monkeypatch)
     body = KnowledgeUpsertInput(org="o", namespace="n", source_uri="doc-a", content="new body")
     asyncio.run(kh.handle_knowledge_upsert(body, **passed))
@@ -1026,7 +1033,6 @@ def test_a_metadata_edit_that_reindexes_writes_no_permission_list(
     from server.knowledge.api.models_knowledge import KnowledgeUpdateMetadataInput
 
     rows = _capture_inserts(monkeypatch)
-
     _stub_upsert_over_a_listed_row(monkeypatch)
     body = KnowledgeUpdateMetadataInput(
         org="o", namespace="n", source_uri="doc-a", title="New", reindex=True
