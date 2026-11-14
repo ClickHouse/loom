@@ -2,8 +2,8 @@
 
 Loom can serve as the lab environment for a course on AI agents, information retrieval,
 databases or software engineering. Each student runs their own single-user stack, on a
-laptop with Docker or in a GitHub codespace with nothing installed on their machine, and
-every lab below uses pages from these docs, so the steps stay current with each release.
+laptop with Docker or in a GitHub codespace with nothing installed on their machine. Each
+lab links the page that does its work.
 
 ## Setup
 
@@ -11,6 +11,9 @@ every lab below uses pages from these docs, so the steps stay current with each 
 | ------------------------------ | ------------------------------------------------------------------------------------------- |
 | A GitHub account and a browser | [Try it in GitHub Codespaces](../getting-started/quickstart.md#try-it-in-github-codespaces) |
 | Docker on their own machine    | [Quickstart: fast path](../getting-started/quickstart.md#fast-path-released-image-no-clone) |
+
+The codespace runs on a 4-core machine with 16 GB of memory, and its hours count against
+each student's Codespaces quota.
 
 The stock install needs no API key: it embeds with a bundled local model, so search works
 offline, and no write verdict calls an LLM. Extraction, summaries and generated answers
@@ -48,13 +51,13 @@ Exercises:
 
 Ingest a few documents with `loom demo`, which also prints the top search hits for a
 question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
-The path is inside the container, which holds these docs under `/app/docs/`, and it names
-the document, so a file of your own is copied in under its own name first:
+The path is inside the container, which holds these docs under `/app/docs/`. The path also
+names the document, so copy a file of your own in under its own name first:
 
 ```bash
 docker compose --project-directory <dir> exec loom loom demo --file /app/docs/getting-started/quickstart.md --question "How do I get a token?"
-docker compose --project-directory <dir> cp <file> loom:/tmp/<file>
-docker compose --project-directory <dir> exec loom loom demo --file /tmp/<file> --question "<a question the file answers>"
+docker compose --project-directory <dir> cp <path> loom:/tmp/<name>
+docker compose --project-directory <dir> exec loom loom demo --file /tmp/<name> --question "<a question the file answers>"
 ```
 
 Then search the namespace's documents with `knowledge.search` over HTTP (with no
