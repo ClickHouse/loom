@@ -1402,8 +1402,9 @@ describe("the Library on a collection", () => {
       fireEvent.click(mine);
       await settle();
       expect(new URLSearchParams(location.search).get("collection")).toBe("col-me-1a2b");
-      // The arrival focuses the row picked.
-      act(() => mine.focus());
+      // The arrival App makes on a move focuses the row picked.
+      act(() => arriveAt(useStore.getState().navNote, useStore.getState().arriveFocus));
+      await waitFor(() => expect(mine).toHaveFocus());
       api.listCollections.mockResolvedValue({
         collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
         next_cursor: null,
@@ -1415,6 +1416,25 @@ describe("the Library on a collection", () => {
       expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
       expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
       expect(mine).toHaveFocus();
+    });
+
+    it("lists, and does not open, what the tree made once the person went to the search field", async () => {
+      resizable();
+      const answer = await createInTree();
+      const search = screen.getByRole("textbox", { name: "Search library" });
+      act(() => search.focus());
+      const at = location.search;
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      await answer(q4);
+      await settle();
+      expect(location.search).toBe(at);
+      expect(search).toHaveFocus();
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
     });
 
     it("leaves the focus on the row picked when the tree's create fails after the pick", async () => {
@@ -1432,7 +1452,8 @@ describe("the Library on a collection", () => {
       const mine = within(tree).getByRole("link", { name: "My files" });
       fireEvent.click(mine);
       await settle();
-      act(() => mine.focus());
+      act(() => arriveAt(useStore.getState().navNote, useStore.getState().arriveFocus));
+      await waitFor(() => expect(mine).toHaveFocus());
       await act(async () => fail(new Error("refused")));
       await settle();
       expect(mine).toHaveFocus();
