@@ -106,6 +106,8 @@ describe("LoomMemoryRetriever (LangChain.js adapter)", () => {
     expect(calls[0].body).toMatchObject({
       query: "seating",
       top_k: 1,
+      bodies: "full", // the stored clip whatever the k
+      explain: false,
       tags: ["customer"],
       memory_type: "semantic",
       user_id: "alice",

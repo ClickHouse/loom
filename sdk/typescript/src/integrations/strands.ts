@@ -104,6 +104,9 @@ export class LoomMemoryStore {
     const out = await this.agent.recall(query, {
       ...this.scope,
       top_k: topK,
+      // Unpinned, a large top_k serves excerpts (above 15 by default) and drops each hit's explanation.
+      bodies: "full",
+      explain: false,
       memory_type: this.memoryType,
       ...(this.tags.length ? { tags: [...this.tags] } : {}),
     });

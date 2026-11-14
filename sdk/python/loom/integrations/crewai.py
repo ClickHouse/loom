@@ -157,7 +157,8 @@ class LoomCrewMemory(Memory):
         result = self.agent.memory.search(
             query,
             top_k=min(max(limit * 5, 50) if wanted else limit, 500),
-            # Above top_k 15 an unpinned search serves 200-character excerpts.
+            # Unpinned, a large top_k serves excerpts (above 15 by default)
+            # and drops each hit's explanation.
             bodies="full",
             explain=False,
             # CrewAI's read-only memory does not refresh access times on recall.
