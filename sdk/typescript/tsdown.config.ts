@@ -5,6 +5,7 @@ import { defineConfig } from "tsdown";
 export default defineConfig({
   entry: {
     index: "src/index.ts",
+    "integrations/ai-sdk": "src/integrations/ai-sdk.ts",
     "integrations/langchain": "src/integrations/langchain.ts",
     "integrations/mastra": "src/integrations/mastra.ts",
     "integrations/openai-agents": "src/integrations/openai-agents.ts",

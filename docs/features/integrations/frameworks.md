@@ -21,6 +21,7 @@ or needs another database, vector store or cache.
 | AutoGen                        | `LoomMemory`                                    | Python, `loom.integrations.autogen`                       | `autogen_core.memory.Memory`           |
 | Pydantic AI                    | `loom_toolset`                                  | Python, `loom.integrations.pydantic_ai`                   | `FunctionToolset`                      |
 | Mastra                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/mastra`        | `createTool` from `@mastra/core`       |
+| AI SDK                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/ai-sdk`        | `tool()` from `ai`                     |
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                            |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol             |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally        |
@@ -353,6 +354,31 @@ within the schema that Loom refuses, or a server error, reaches the model as Mas
 failed tool result with Loom's message. Either way the model reads the message and the run
 goes on.
 
+## AI SDK
+
+`loomTools(agent, scope)` returns Loom's agent verbs as an AI SDK `ToolSet`, the record
+`generateText`, `streamText` and the SDK's agents take as `tools`: the same `AgentTools` as
+the [OpenAI Agents SDK](#openai-agents-sdk) adapter. `ai` 7.x is an optional peer
+dependency, and needs Node 22.12 or later (the package is ESM-only).
+
+```ts
+import { generateText, stepCountIs } from "ai";
+import { loomTools } from "@clickhouse/loom/integrations/ai-sdk";
+
+const { text } = await generateText({
+  model,
+  tools: loomTools(agent, { userId: "alice" }),
+  stopWhen: stepCountIs(5),
+  prompt: "Book my usual seat to Lisbon",
+});
+```
+
+The AI SDK has no memory store of its own: the messages of a conversation are the
+caller's, and the tools give the model Loom's long-term memory. The AI SDK passes the
+model's arguments through unchecked, and Loom checks them: it reads a quoted number as a
+number and ignores an extra key. A call Loom refuses reaches the model as the AI SDK's
+tool-error result with Loom's message, and the run goes on.
+
 ## LangGraph
 
 `LoomStore` (`sdk/python/loom/integrations/langgraph.py`) is a LangGraph `BaseStore`, so
@@ -477,9 +503,9 @@ client can speak for several agents.
   `update_context` once per turn, before its first model call, and does not catch its
   errors.
 - **A refused tool call reaches the model, and the run goes on.** The OpenAI Agents SDK tools
-  return Loom's error to the model as the call's result; the Pydantic AI and Mastra tools
-  return it as a failed tool result (Mastra answers a call outside Loom's schema with its
-  own validation message first).
+  return Loom's error to the model as the call's result; the Pydantic AI, Mastra and AI SDK
+  tools return it as a failed tool result (Mastra answers a call outside Loom's schema with
+  its own validation message first).
 - **Write verdicts are hidden by the framework interface.** A `put` or `add` that lands as
   `conflicted` or `duplicate` returns normally; read the namespace's conflicts in the
   dashboard or with `conflicts.list` ([conflicts and refusal](../memory/conflicts-and-refusal.md)).
