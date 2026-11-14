@@ -1157,6 +1157,26 @@ describe("the Library on a collection", () => {
       expect(document.activeElement).toBe(document.body);
     });
 
+    it("hands focus in the picker's list, portalled outside <main>, to the tree's row", async () => {
+      const resize = resizable(TREE_PAGE_MIN - 1);
+      api.listCollections.mockResolvedValue({ collections: ROWS, next_cursor: null });
+      history.replaceState(null, "", "/library?collection=col-q3");
+      render(<Documents />, { container: inMain() });
+      await settle();
+      // The open select's search field, as Radix portals it into <body>.
+      const popper = document.body.appendChild(document.createElement("div"));
+      popper.setAttribute("data-radix-popper-content-wrapper", "");
+      const search = popper.appendChild(document.createElement("input"));
+      act(() => screen.getByRole("button", { name: PLACE_PICKER_LABEL }).focus());
+      act(() => search.focus());
+      act(() => {
+        popper.remove();
+        resize(TREE_PAGE_MIN);
+      });
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      await waitFor(() => expect(within(tree).getByRole("link", { name: "col-q3" })).toHaveFocus());
+    });
+
     it("moves nothing when the focus is still on the page", async () => {
       const tree = await widen("/library?collection=col-q3", () =>
         screen.getByRole("textbox", { name: "Search library" }),
@@ -1237,6 +1257,25 @@ describe("the Library on a collection", () => {
       expect(api.listCollections.mock.calls.length).toBe(reads + 2);
       const tree = screen.getByRole("navigation", { name: "Library places" });
       expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+    });
+
+    it("lists, and does not open, what was made once the person picked another place", async () => {
+      resizable();
+      const answer = await startCreate();
+      const tree = screen.getByRole("navigation", { name: "Library places" });
+      fireEvent.click(within(tree).getByRole("link", { name: "My files" }));
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-me-1a2b");
+      api.listCollections.mockResolvedValue({
+        collections: [...ROWS, entry("col-q4", { parent: "col-q3", title: "Q4" })],
+        next_cursor: null,
+      });
+      await answer(q4);
+      await settle();
+      expect(new URLSearchParams(location.search).get("collection")).toBe("col-me-1a2b");
+      // Listed inside col-q3, which the earlier visit left open.
+      expect(within(tree).getByRole("link", { name: "Q4" })).toBeInTheDocument();
+      expect(toast).toHaveBeenCalledWith("Created Q4", "ok");
     });
 
     it("moves nothing once the page shows another org", async () => {

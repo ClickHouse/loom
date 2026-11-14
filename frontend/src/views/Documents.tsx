@@ -191,11 +191,13 @@ export function Documents() {
     };
   }, []);
   // A collection just made: the read starts before the move so the old list never says it is
-  // missing. Nothing moves once this page closed or its org changed.
+  // missing. Nothing moves once this page closed or its org changed, nor once the person left
+  // `from`, the place Create was pressed in: the list's refresh lists it there.
   const reloadCollections = collections.reload;
   const openCreated = useCallback(
-    (name: string, org: string, arriveFocus?: string) => {
+    (name: string, org: string, arriveFocus?: string, from?: string | null) => {
       if (!mounted.current || org !== useStore.getState().identity?.org) return;
+      if (from !== undefined && from !== linkedCollection()) return;
       flushSync(() => reloadCollections(name));
       goTo(name, arriveFocus);
     },
@@ -278,8 +280,8 @@ export function Documents() {
   // A resize that draws or removes the tree removes the controls only one layout has (the tree,
   // the picker, the places below the documents): their focus goes to the tree's row for the
   // place shown, else to the picker. A title typed in the tree's New collection form is dropped.
-  useTreeFocusHandoff(besideTree, () => {
-    if (!besideTree) return document.querySelector<HTMLElement>(`[aria-label="${PLACE_PICKER_LABEL}"]`);
+  useTreeFocusHandoff(besideTree, (drawn) => {
+    if (!drawn) return document.querySelector<HTMLElement>(`[aria-label="${PLACE_PICKER_LABEL}"]`);
     const tree = document.querySelector(`nav[aria-label="${LIBRARY_PLACES_LABEL}"]`);
     return tree?.querySelector<HTMLElement>('a[aria-current="page"]') ?? tree?.querySelector<HTMLElement>("a") ?? null;
   });

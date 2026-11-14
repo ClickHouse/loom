@@ -33,9 +33,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
         type={variant}
         htmlType={htmlType}
         aria-label={label}
-        className={
-          [minTarget && "pointer-fine:min-h-6 pointer-fine:min-w-6", className].filter(Boolean).join(" ") || undefined
-        }
+        className={minTarget ? `pointer-fine:min-h-6 pointer-fine:min-w-6 ${className ?? ""}`.trim() : className}
         {...rest}
         // A tooltip that only repeats the name would be read again as its description;
         // a longer one keeps the description Radix ties to it, and a caller's own stays.

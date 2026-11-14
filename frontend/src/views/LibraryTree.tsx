@@ -37,8 +37,9 @@ export const placeFocusKey = (collection: string | null) => `library-tree-place-
 export type PickPlace = (collection: string | null, arriveFocus: string, note: string) => void;
 
 /** Read the list again and open a collection made in the tree, in `org`. `arriveFocus`: New
- *  collection's focus key, so the person goes on there. */
-export type MadeCollection = (collection: string, org: string, arriveFocus: string) => void;
+ *  collection's focus key, so the person goes on there; `from`: the place shown when Create
+ *  was pressed. */
+export type MadeCollection = (collection: string, org: string, arriveFocus: string, from: string | null) => void;
 
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
@@ -300,6 +301,7 @@ export const LibraryTree = memo(function LibraryTree({
             org={org}
             parent={into?.namespace ?? ""}
             label={into ? `New collection in ${distinctTitle(into, repeated)}` : "New collection at the top level"}
+            from={current}
             onClose={stopMaking}
             onCreated={onCreated}
           />
@@ -422,12 +424,15 @@ function NewCollectionForm({
   org,
   parent,
   label,
+  from,
   onClose,
   onCreated,
 }: {
   org: string;
   parent: string;
   label: string;
+  /** The place shown as the form opened, which a create's answer may still be in. */
+  from: string | null;
   onClose: () => void;
   onCreated: MadeCollection;
 }) {
@@ -452,7 +457,7 @@ function NewCollectionForm({
     }
     announceCreated(r, trimmed, org);
     onClose();
-    onCreated(r.namespace, org, NEW_COLLECTION_FOCUS);
+    onCreated(r.namespace, org, NEW_COLLECTION_FOCUS, from);
   };
   return (
     <form className="library-tree-form" onSubmit={(e) => void make(e)}>
