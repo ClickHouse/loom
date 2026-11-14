@@ -12,12 +12,13 @@ let the two go out of sync.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
-from server.memory.domain.definitions import KEY_PREFIX
+from server.memory.domain.definitions import DEFINITION_KEY_PREFIX
 from server.memory.domain.memory_types import DEFINITION
 
 # The agent of a promoted row's embedding: shared rows are not agent-scoped.
@@ -199,9 +200,10 @@ async def tombstone_shared_embedding(
 async def shared_definitions(
     org: str, namespace: str, limit: int, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """The live shared definitions' keys and values, at most `limit`, read strongly."""
+    """The live shared definitions' keys and decoded values (None for text that is not
+    JSON), at most `limit`, read strongly."""
     ch = ch or _default_client()
-    return await ch.query_all(
+    rows = await ch.query_all(
         """
         SELECT memory_key, value
         FROM loom.shared FINAL
@@ -217,6 +219,14 @@ async def shared_definitions(
             "ns": namespace,
             "lim": limit,
             "type": DEFINITION,
-            "prefix": KEY_PREFIX,
+            "prefix": DEFINITION_KEY_PREFIX,
         },
     )
+    return [{**r, "value": _decoded(r["value"])} for r in rows]
+
+
+def _decoded(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None

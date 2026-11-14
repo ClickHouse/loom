@@ -53,10 +53,8 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return state["row"]
 
     async def definitions(org: str, namespace: str, limit: int, **_k: Any) -> list[dict]:
-        # As the String column stores them: JSON text.
-        rows = [
-            {"memory_key": k, "value": json.dumps(v)} for k, v in sorted(state["shared"].items())
-        ]
+        # Decoded, as the store answers them.
+        rows = [{"memory_key": k, "value": v} for k, v in sorted(state["shared"].items())]
         return rows[:limit]
 
     async def write(row: dict[str, Any]) -> None:
@@ -107,7 +105,8 @@ def test_a_name_folds_step_by_step(name: str, folded: str) -> None:
 @pytest.mark.parametrize(
     ("value", "names"),
     [
-        (json.dumps(VALUE), {"arr", "annual recurring revenue"}),
+        (VALUE, {"arr", "annual recurring revenue"}),
+        (json.dumps(VALUE), None),  # JSON text is not a decoded object
         ({"term": "MRR"}, {"mrr"}),  # aliases may be left out
         ("plain text", None),
         ({"body": "no term"}, None),
@@ -156,6 +155,48 @@ async def test_a_definition_comes_from_its_namespace_wide_row_only(
     assert await _refusal(store, memory_key=store["row"].memory_key) == (
         "DEFINITION_PROMOTION_REFUSED"
     )
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"status": "rejected"},
+        {"status": "conflicted"},
+        {"expires_at": datetime(2020, 1, 1, tzinfo=UTC)},
+        {"valid_to": datetime(2020, 1, 1, tzinfo=UTC)},
+    ],
+)
+async def test_a_source_the_term_leg_would_not_serve_is_not_promoted(
+    store: dict[str, Any], over: dict[str, Any]
+) -> None:
+    store["row"] = _row(**over)
+    assert await _refusal(store) == "DEFINITION_PROMOTION_REFUSED"
+
+
+async def test_a_definition_written_as_json_text_has_no_names(store: dict[str, Any]) -> None:
+    # memory.set of a string holding JSON stores that string, which carries no term.
+    store["row"] = _row(value=json.dumps(VALUE))
+    sha = served_content_sha256(store["row"].value)
+    assert await _refusal(store, approved_sha256=sha) == "VALIDATION_FAILED"
+
+
+async def test_a_shared_row_with_no_names_holds_none(store: dict[str, Any]) -> None:
+    # Promoted before this rule, or not JSON: the name check skips it.
+    store["shared"] = {"definition/old": None, "definition/text": "ARR"}
+    await promote.handle_memory_promote(_input())
+    assert len(store["written"]) == 1
+
+
+async def test_the_store_decodes_the_shared_values() -> None:
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return [
+                {"memory_key": KEY, "value": json.dumps(VALUE)},
+                {"memory_key": "x", "value": "{"},
+            ]
+
+    rows = await shared.shared_definitions("o", "n", 10, ch=_CH())
+    assert [r["value"] for r in rows] == [VALUE, None]
 
 
 async def test_a_definition_lands_on_its_own_key_and_a_definition_key_needs_one(
@@ -254,10 +295,7 @@ async def test_another_row_keeps_the_old_promotion_rules(store: dict[str, Any]) 
     assert row["promoted_by"] == "lead" and out.ignored_args == []
 
 
-@pytest.mark.parametrize("source_kind", ["memory_supporters", "conversation_seeder"])
-async def test_review_promotes_no_definition_candidate(
-    monkeypatch: pytest.MonkeyPatch, source_kind: str
-) -> None:
+async def test_review_promotes_no_definition_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.memory.api.models_learnings import LearningsReviewInput
     from server.memory.app import learnings
     from server.memory.store import learnings as learnings_repo
@@ -269,7 +307,7 @@ async def test_review_promotes_no_definition_candidate(
             "memory_type": "definition",
             "proposed_value": json.dumps(VALUE),
             "supporters": [f"o/n/-/-/-/{KEY}"],
-            "source_kind": source_kind,
+            "source_kind": "memory_supporters",
             "status": "pending",
         }
 

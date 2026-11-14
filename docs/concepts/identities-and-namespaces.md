@@ -337,9 +337,9 @@ inside the promotion's `reversible_for_days` window, default 7, up to 90). A sea
 promotion. `memory.promote` and `memory.demote` need `admin`. `memory.cross_promote`
 copies a row into another namespace, with provenance, for a caller who is admin on both.
 
-A `definition` is promoted from its namespace-wide row (agent, user and session `'-'`)
-under a `definition/` key, to that same key. Its value is a JSON object with a string
-`term` and, optionally, a list of string `aliases`. The promotion names the hash it
+A `definition` is promoted from its live namespace-wide row (agent, user and session
+`'-'`) under a `definition/` key, to that same key. Its value is a JSON object with a
+string `term` and, optionally, a list of string `aliases`. The promotion names the hash it
 approves (`approved_sha256`, the row's `content_sha256`) and is refused without it, or
 with 409 `PRECONDITION_FAILED` when the text no longer has it. It is also refused when the
 value is labelled or reads as `medium` or `high`, when another live shared definition

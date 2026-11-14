@@ -413,18 +413,18 @@ every viewer.
 `learnings.review` with `promote` on a `knowledge_gap` or `query_history` candidate first
 runs `memory.promote`'s name check (one strong read of at most the ceiling plus one live
 shared rows of type `definition` under `definition/`, the ceiling's two refusals, then the
-term and aliases against every other such row, from which it also takes a revision's
-key), checks the draft for a value that grades `medium` or `high`, and checks the rollout gate, so a promotion these refuse writes
-nothing. Then it writes the definition through `memory.set` for the whole namespace
-(today's seeder path writes under the approver's `user_id`; the implementing pull request
-writes the namespace-wide row), with no expiry: the write clears any `expires_at` the head
-carried and takes no type retention, so a definition stays until an admin demotes it. A
-value that grades `medium` is refused before the write, as the promotion would refuse it.
-The write declares `source_class = derived`, the downgrade a caller may declare (an LLM
-drafted it; the admin's promotion is the approval, not its authorship), so the blacklist
-and the pinned-key check run as for any write. Then the review promotes that row into the
-shared layer through `memory.promote`, with the reviewer's server-stamped actor as
-`promoted_by` and the candidate's id ([learnings review
+term and aliases against every other such row, from which it also takes a revision's key),
+checks the draft for a value that grades `medium` or `high`, and checks the rollout gate,
+so a promotion these refuse writes nothing. Then it writes the definition through
+`memory.set` for the whole namespace (today's seeder path writes under the approver's
+`user_id`; the implementing pull request writes the namespace-wide row), with no expiry:
+the write clears any `expires_at` the head carried and takes no type retention, so a
+definition stays until an admin demotes it. The write declares `source_class = derived`,
+the downgrade a caller may declare (an LLM drafted it; the admin's promotion is the
+approval, not its authorship), so the blacklist and the pinned-key check run as for any
+write. Then the review promotes that row into the shared layer through `memory.promote`,
+with the reviewer's server-stamped actor as `promoted_by` and the candidate's id
+([learnings review
 queue](../features/memory/procedures-and-learnings.md#learnings-review-queue)). The admin
 promoting a definition is the person standing behind it. A draft for a term a live shared
 definition already holds, governed or lapsed, revises that definition: the review writes

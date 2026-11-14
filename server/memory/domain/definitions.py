@@ -7,13 +7,12 @@ made one space), then `str.casefold`, so `SAT`, `Sat` and `sat ` are one name.
 
 from __future__ import annotations
 
-import json
 import unicodedata
 from typing import Any
 
 from server.core.hashing import canonical_document_text
 
-KEY_PREFIX = "definition/"
+DEFINITION_KEY_PREFIX = "definition/"
 
 
 def fold_name(name: str) -> str:
@@ -23,14 +22,9 @@ def fold_name(name: str) -> str:
 
 
 def definition_names(value: Any) -> set[str] | None:
-    """The folded term and aliases of a definition's value (a JSON object, or its text),
-    or None when it is not one: no object, no non-empty string `term`, or `aliases`
-    present and not a list of strings (it may be left out)."""
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return None
+    """The folded term and aliases of a decoded definition value, or None when it is not
+    one: no object, no non-empty string `term`, or `aliases` present and not a list of
+    strings (it may be left out)."""
     if not isinstance(value, dict) or not isinstance(value.get("term"), str):
         return None
     aliases = value.get("aliases", [])

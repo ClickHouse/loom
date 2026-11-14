@@ -9,7 +9,7 @@ from datetime import timedelta
 
 from fastapi import HTTPException
 
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.errors import PreconditionFailedError, ValidationError
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
@@ -22,7 +22,7 @@ from server.memory.api.models_lifecycle import (
 )
 from server.memory.app.provenance import writer_actor
 from server.memory.app.sensitivity_level import decoded_text, detect_level
-from server.memory.domain.definitions import KEY_PREFIX, definition_names
+from server.memory.domain.definitions import DEFINITION_KEY_PREFIX, definition_names
 from server.memory.domain.memory_types import (
     DEFINITION,
     is_namespace_definition,
@@ -98,7 +98,7 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
         )
 
     target_key = input.target_key or input.memory_key
-    definition = src.memory_type == DEFINITION or target_key.startswith(KEY_PREFIX)
+    definition = src.memory_type == DEFINITION or target_key.startswith(DEFINITION_KEY_PREFIX)
     ignored: list[str] = []
     if definition:
         await _check_definition_promotion(input, src, target_key)
@@ -227,27 +227,37 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
     )
 
 
+def _live(row: MemoryRow) -> bool:
+    """Whether the row is one the term leg would serve: active, not deleted, not past its
+    `expires_at` or `valid_to`."""
+    now = naive_utc_now()
+    ended = [t for t in (row.expires_at, row.valid_to) if t is not None]
+    return (
+        row.status == "active"
+        and row.tombstoned_at is None
+        and all(to_naive_utc(t) > now for t in ended)
+    )
+
+
 async def _check_definition_promotion(
     input: MemoryPromoteInput, src: MemoryRow, target_key: str
 ) -> None:
-    """Refuse a definition promotion the shared layer cannot govern: a source that is
-    not the namespace-wide `definition` row of a `definition/` key promoted to that key,
-    no approved hash or one the text no longer has, a value that reads `medium` or
-    `high`, a value with no term, a namespace at its ceiling, or a name another shared
-    definition holds."""
+    """Refuse a definition promotion the shared layer cannot govern
+    (docs/concepts/identities-and-namespaces.md)."""
     from server.memory.store import shared as shared_repo
 
     if not (
         is_namespace_definition(src)
-        and src.memory_key.startswith(KEY_PREFIX)
+        and src.memory_key.startswith(DEFINITION_KEY_PREFIX)
         and target_key == src.memory_key
+        and _live(src)
     ):
         raise HTTPException(
             status_code=422,
             detail={
                 "code": "DEFINITION_PROMOTION_REFUSED",
-                "message": "a definition is promoted from its namespace-wide row (agent, user "
-                "and session '-') of type definition under a definition/ key, to that key",
+                "message": "a definition is promoted from its live namespace-wide row (agent, "
+                "user and session '-') of type definition under a definition/ key, to that key",
             },
         )
     if not input.approved_sha256:
@@ -260,7 +270,7 @@ async def _check_definition_promotion(
     # The value itself is graded, whatever its label or the autodetect setting: an import or
     # a restore leaves the label empty.
     graded = await detect_level(await decoded_text(src.value))
-    if max_sensitivity([str(src.sensitivity or ""), graded]) in (MEDIUM, HIGH):
+    if max_sensitivity([src.sensitivity, graded]) in (MEDIUM, HIGH):
         raise HTTPException(
             status_code=422,
             detail={
