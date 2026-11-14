@@ -73,7 +73,7 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     ) -> dict[str, str]:
         # Read on every replica's writes, or a mirror made on another one is missed.
         assert sequential_reads_active()
-        calls.append(("mirrors_of", namespaces, ch))
+        calls.append(("mirrors_of", namespaces, ch, live_only))
         return {MIRROR: "team"} if "team" in namespaces else {}
 
     async def _forget(org: str, found: dict[str, str]) -> None:
@@ -154,7 +154,8 @@ def test_a_mirror_named_in_the_scope_is_purged_and_has_no_mirror_looked_up(
 def test_the_last_step_forgets_the_mirrors(registry: list[Any]) -> None:
     assert saga_steps.NAMESPACE_STEPS[-1][0] == "knowledge_mirrors.forget"
     assert asyncio.run(saga_steps._step_forget_mirrors_by_ns(ORG, "team")) == 1
-    assert registry[-1] == ("forget", {MIRROR: "team"})
+    # Only the live mirrors are written again and counted.
+    assert registry == [("mirrors_of", ["team"], None, True), ("forget", {MIRROR: "team"})]
 
 
 def test_an_erasure_of_only_a_mirror_leaves_its_registry_row_live(registry: list[Any]) -> None:
@@ -244,7 +245,7 @@ def test_the_erased_scope_reads_the_registry_on_the_caller_s_connection(
             return scope, purge_mode()
 
     assert asyncio.run(scenario()) == (["team", MIRROR], True)
-    assert ("mirrors_of", ["team"], conn) in registry
+    assert ("mirrors_of", ["team"], conn, False) in registry
 
 
 def test_a_failed_saga_s_census_counts_the_mirror(

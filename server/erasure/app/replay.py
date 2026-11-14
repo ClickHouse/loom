@@ -195,10 +195,10 @@ async def _run_steps(
         scope = parse_namespace_list(input.scope_value)
     if input.scope_type == "user_id":
         await marks.bump(input.org, marks.ORG_WIDE, "erasure")
+    # A namespace scope's steps cover its mirrors, as the saga runs them.
+    runs = steps if input.scope_type == "user_id" else [(n, with_mirrors(f)) for n, f in steps]
     with erasure_mutations.saga_scope(erasure_id), erasure_mutations.purge_scope(purge):
-        if input.scope_type != "user_id":
-            steps = [(name, with_mirrors(step)) for name, step in steps]
-        for name, step in steps:
+        for name, step in runs:
             with erasure_mutations.step_scope(name):
                 try:
                     await step(input.org, scope)

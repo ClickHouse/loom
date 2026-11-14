@@ -538,7 +538,7 @@ def id_list_config(src: KnowledgeSource) -> dict[str, Any] | None:
     """The config a build without items reads for `src`, or None when that build must
     not read it, so `src` is stored with `kind` empty: a source it cannot express, or
     one this build does not serve, whose documents that build would show to every
-    reader."""
+    reader. `list`, `inspect` and `update` answer the same `config`."""
     if not served(src):
         return None
     if src.kind == "recording":
