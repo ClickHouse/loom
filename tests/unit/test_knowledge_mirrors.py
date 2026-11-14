@@ -75,8 +75,13 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return calls
 
 
-@pytest.mark.parametrize("purge", [False, True])
-def test_a_step_runs_over_the_mirrors_as_a_purge(registry: list[Any], purge: bool) -> None:
+@pytest.mark.parametrize(
+    ("purge", "passes"),
+    [(False, [("team", False), ([MIRROR], True)]), (True, [(["team", MIRROR], True)])],
+)
+def test_a_step_runs_over_the_mirrors_as_a_purge(
+    registry: list[Any], purge: bool, passes: list[Any]
+) -> None:
     seen: list[Any] = []
 
     async def step(org: str, namespace: Any) -> int:
@@ -84,8 +89,27 @@ def test_a_step_runs_over_the_mirrors_as_a_purge(registry: list[Any], purge: boo
         return 1
 
     with purge_scope(purge):
-        assert asyncio.run(saga_steps.with_mirrors("memory.tombstone", step)(ORG, "team")) == 2
-    assert seen == [("team", purge), ([MIRROR], True)]
+        assert asyncio.run(saga_steps.with_mirrors("memory.tombstone", step)(ORG, "team")) == len(
+            passes
+        )
+    assert seen == passes
+
+
+def test_a_list_scope_covers_every_named_namespace_s_mirrors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _mirrors_of(org: str, namespaces: list[str], ch: Any = None) -> dict[str, str]:
+        return {m: ns for m, ns in [(MIRROR, "a"), (OLD_MIRROR, "b")] if ns in namespaces}
+
+    monkeypatch.setattr(app_mirrors, "mirrors_of", _mirrors_of)
+    seen: list[Any] = []
+
+    async def step(org: str, namespace: Any) -> int:
+        seen.append((namespace, purge_mode()))
+        return 0
+
+    asyncio.run(saga_steps.with_mirrors("memory.tombstone", step)(ORG, ["a", "b", "c"]))
+    assert seen == [(["a", "b", "c"], False), ([MIRROR, OLD_MIRROR], True)]
 
 
 def test_a_postgres_step_runs_once_over_the_namespace_and_its_mirrors(

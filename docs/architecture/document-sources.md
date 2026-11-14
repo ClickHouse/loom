@@ -403,12 +403,12 @@ for everyone. So no token searches, reads or exports a mirror, and the threat mo
 rows hold for every token. A mirror has no directory row and appears in no namespace
 listing or usage view; a deleted name keeps its mirror and counts as in use
 (`namespace_census.in_use`, with the same code as any other reason, whatever the mirror
-holds) until a namespace erasure, or the mirror-erase command, deletes the
-`loom.knowledge_mirrors` row. A namespace erasure deletes that row last, after the
-mirror's rows (the table is classified as holding no memory content), so an erased name
-can be registered again and gets a new mirror. The migration that enables the refusal
-first looks for namespaces of the reserved form, registered or holding rows, and refuses
-to run, naming them, if it finds any.
+holds) until a namespace erasure, or the mirror-erase command, writes its
+`loom.knowledge_mirrors` row `deleted`. A namespace erasure does that last, after the
+mirror's rows (the row holds names only), so an erased name can be registered again and
+gets a new mirror. The migration that enables the refusal first looks for namespaces of
+the reserved form, registered or holding rows, and refuses to run, naming them, if it
+finds any.
 
 A knowledge read taught the mirror adds a leg over the namespace's mirror, with the
 check below, while the namespace's source list holds an active mirrored source (a fact
@@ -885,12 +885,12 @@ statements and census keys against these, and its tests pin each one:
   retire the namespace's sources first, clearing their credentials, so no turn writes
   back what the erasure took. A `namespace` or `namespace_list` erasure covers each
   named namespace's mirrors as more names of the same erasure: each step runs over the
-  named namespaces in the erasure's mode, then over their mirrors as a purge, since no
-  token reads or restores an `acl-` name, and the census counts both. The last step,
-  `knowledge_mirrors.forget`, writes the mirrors `deleted`, so the name registered again
-  gets a new mirror; the registry keeps them, so a resume or a replay after a restore
-  still reaches them. A `user_id` erasure touches no mirror row (the sync writes them as
-  `-`), and its census and export name none.
+  named namespaces in the erasure's mode, then over their mirrors as a purge (a purging
+  erasure runs once over both), since no token reads or restores an `acl-` name, and the
+  census counts both. The last step, `knowledge_mirrors.forget`, writes the mirrors
+  `deleted`, so the name registered again gets a new mirror; the registry keeps them, so
+  a resume or a replay after a restore still reaches them. A `user_id` erasure touches
+  no mirror row (the sync writes them as `-`), and its census and export name none.
 - A person's connected accounts, the sources they own with every mirrored copy those
   wrote, and their entries in every crawl are erased when an org admin asks; afterwards
   no source row, list or members row names them, and a crawl reads them again only once

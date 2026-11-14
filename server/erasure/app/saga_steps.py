@@ -25,7 +25,7 @@ from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
-from server.erasure.store.mutations import namespaces_of, purge_scope
+from server.erasure.store.mutations import namespaces_of, purge_mode, purge_scope
 from server.knowledge.app import mirrors as knowledge_mirrors
 from server.knowledge.app.sources import retire_sources_of
 from server.memory.app.code_links import queue_lease
@@ -79,8 +79,7 @@ async def _step_verify_residue(
             )
         return per_table
 
-    per_table = await count(scope_value)
-    await _add_mirror_residue(org, scope_type, scope_value, per_table, count)
+    per_table = await _counted_with_mirrors(org, scope_type, scope_value, count)
     holder["per_table"] = per_table
     holder["count"] = sum(per_table.values())
     holder["verified_at"] = datetime.now(UTC).replace(tzinfo=None)
@@ -204,43 +203,40 @@ async def _mirrors_of(org: str, namespace: _NS, *, ch: _CHClient | None = None) 
 def with_mirrors(
     name: str, step: Callable[[str, _NS], Awaitable[int]]
 ) -> Callable[[str, _NS], Awaitable[int]]:
-    """Step `name` over the named namespaces in the erasure's mode, then over their
-    mirrors as a purge: no token reads or restores an `acl-` name, so its rows leave the
-    disk. A Postgres step deletes in either mode and marks its commit for a replay, so
-    it runs once over both, in one transaction."""
+    """Step `name` over the named namespaces and their mirrors, whose rows always leave
+    the disk: no token reads or restores an `acl-` name. A purge, or a Postgres step
+    (which deletes in either mode and marks its one commit for a replay), runs once over
+    both; a tombstoning step runs again over the mirrors as a purge."""
 
     async def run(org: str, namespace: _NS) -> int:
         mirrors = list(await _mirrors_of(org, namespace))
-        if name in PG_ONLY_STEPS:
-            return await step(org, [*namespaces_of(namespace), *mirrors] if mirrors else namespace)
+        if not mirrors:
+            return await step(org, namespace)
+        if purge_mode() or name in PG_ONLY_STEPS:
+            return await step(org, [*namespaces_of(namespace), *mirrors])
         n = await step(org, namespace)
-        if mirrors:
-            with purge_scope(True):
-                n += await step(org, mirrors)
-        return n
+        with purge_scope(True):
+            return n + await step(org, mirrors)
 
     return run
 
 
-async def _add_mirror_residue(
+async def _counted_with_mirrors(
     org: str,
     scope_type: str,
     scope_value: _NS,
-    per_table: dict[str, int],
     count: Callable[[_NS], Awaitable[dict[str, int]]],
     *,
     ch: _CHClient | None = None,
-) -> None:
-    """Add what `count` finds in a namespace scope's mirrors, counted as a purge counts:
-    every row a mirror still holds is residue, whatever the erasure's mode."""
-    if scope_type != "namespace":
-        return
-    if not (mirrors := list(await _mirrors_of(org, scope_value, ch=ch))):
-        return
-    with purge_scope(True):
-        found = await count(mirrors)
-    for table, n in found.items():
-        per_table[table] = per_table.get(table, 0) + n
+) -> dict[str, int]:
+    """`count` of the scope, plus of a namespace scope's mirrors counted as a purge
+    counts: every row a mirror still holds is residue, whatever the erasure's mode."""
+    per_table = await count(scope_value)
+    if scope_type == "namespace" and (mirrors := list(await _mirrors_of(org, scope_value, ch=ch))):
+        with purge_scope(True):
+            for table, n in (await count(mirrors)).items():
+                per_table[table] = per_table.get(table, 0) + n
+    return per_table
 
 
 async def evidence_with_mirrors(
@@ -252,7 +248,7 @@ async def evidence_with_mirrors(
     ch: _CHClient | None = None,
 ) -> tuple[dict[str, int], dict[str, Exception]]:
     """`erasure_census.evidence_census` of the scope and its mirrors, in the caller's
-    purge scope for the named namespaces (see `_add_mirror_residue`)."""
+    purge scope for the named namespaces (see `_counted_with_mirrors`)."""
     unread: dict[str, Exception] = {}
 
     async def count(scope: _NS) -> dict[str, int]:
@@ -262,8 +258,7 @@ async def evidence_with_mirrors(
         unread.update(errors)
         return found
 
-    per_table = await count(scope_value)
-    await _add_mirror_residue(org, scope_type, scope_value, per_table, count, ch=ch)
+    per_table = await _counted_with_mirrors(org, scope_type, scope_value, count, ch=ch)
     return per_table, unread
 
 

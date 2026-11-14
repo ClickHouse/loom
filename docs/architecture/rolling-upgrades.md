@@ -746,20 +746,20 @@ schema. These rules keep that safe. The operator procedure is in
     gate does not check this rule.
 52. **The mirror registry** (migration `098_knowledge_mirrors.sql`): N adds
     `loom.knowledge_mirrors` and the `access` column of `loom.knowledge_sources`, whose
-    default (`namespace`) is what every row N-1 writes means. N stores a source with
-    `access: mirrored` with `kind` empty, so a build without items finds no probe or
+    default (`namespace`) is what every row N-1 writes means. N stores a source whose
+    `access` is `mirrored` with `kind` empty, so a build without items finds no probe or
     credential for it, and N itself serves none: its sync pass skips one, its retire
     pass leaves its delete request alone, and `check`, `rotate`, `update` and `sync_now`
     refuse one (`BAD_KIND`), so beside the build that writes mirrors it never syncs a
     mirrored source into the named namespace. On N, each namespace erasure step runs
     over the named namespaces and then over every mirror they have had, as a purge (a
-    Postgres step over both in one transaction, so its one mark covers both), and the
-    census counts every row a mirror still holds, so a step a resume or replay runs
-    again covers the mirrors too; the last step, `knowledge_mirrors.forget`, writes the
-    mirrors `deleted`, and a live one keeps the name in use. N-1 runs no mirror pass and
-    counts no registry row; this build writes no mirror, so N-1 meets an empty registry.
-    `tests/unit/test_knowledge_mirrors.py` and the mirrored cases in
-    `tests/unit/test_knowledge_sources.py` and
+    purging erasure, and a Postgres step, run once over both, so a Postgres step's one
+    commit mark covers both), and the census counts every row a mirror still holds, so a
+    step a resume or replay runs again covers the mirrors too; the last step,
+    `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a live one keeps the
+    name in use. N-1 runs no mirror pass and counts no registry row; this build writes
+    no mirror, so N-1 meets an empty registry. `tests/unit/test_knowledge_mirrors.py`
+    and the mirrored cases in `tests/unit/test_knowledge_sources.py` and
     `tests/unit/test_knowledge_source_sync.py` check N's side.
 
 ## What checks them
