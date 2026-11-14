@@ -29,6 +29,7 @@ from server.memory.app.auto_resolution import (
     settle_retirements,
 )
 from server.memory.domain import lock
+from server.memory.domain.memory_types import is_namespace_definition
 from server.memory.store import pg_memory
 
 log = logging.getLogger(__name__)
@@ -88,8 +89,9 @@ def same_key_victims(
     the newest when a caller sent a key twice); `live_rows` are the
     namespace's live rows for those keys with their embedding identity
     (`namespace`, `agent`, `user_id`, `session_id`) and `pinned`. A live row
-    retires when it shares a key with a new row, is not one of the new rows
-    and is not pinned; `superseded_by` is the new row's id."""
+    retires when it shares a key with a new row, is not one of the new rows,
+    is not pinned and is not a definition's namespace-wide row (`live_rows` carry
+    `memory_type`); `superseded_by` is the new row's id."""
     newest_by_key: dict[str, str] = {}
     new_ids: set[str] = set()
     for r in new_rows:
@@ -105,6 +107,8 @@ def same_key_victims(
         mid = str(m.get("memory_id") or "")
         if key not in newest_by_key or not mid or mid in new_ids or bool(m.get("pinned")):
             continue
+        if is_namespace_definition(m):
+            continue  # only a write of the namespace-wide row itself revises it
         out.append(_victim(m, newest_by_key[key]))
     return out
 
@@ -186,7 +190,7 @@ async def _live_same_key_rows(
     org: str, namespace: str, keys: list[str], *, ch: Any
 ) -> list[dict[str, Any]]:
     """The live rows of `keys` in the writer's read scope that a same-key write may retire,
-    each with its identity, value and `pinned`. Under Postgres the authority's heads: a
+    each with its identity, type, value and `pinned`. Under Postgres the authority's heads: a
     first write of the key in another session answers at its commit, before ClickHouse
     holds it."""
     if pg.enabled():
@@ -196,6 +200,7 @@ async def _live_same_key_rows(
                 "memory_id": str(h["memory_id"]),
                 **{c: h[c] for c in ("namespace", "agent", "user_id", "session_id")},
                 "memory_key": h["memory_key"],
+                "memory_type": h["memory_type"],
                 "value": h.get("value"),
                 "pinned": h.get("pinned"),
             }
@@ -211,7 +216,7 @@ async def _live_same_key_rows(
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-               memory_key, value, pinned
+               memory_key, memory_type, value, pinned
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL

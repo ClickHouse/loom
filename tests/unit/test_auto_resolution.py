@@ -156,7 +156,13 @@ async def _drain() -> None:
 # --- the call sites -------------------------------------------------------------
 
 
-def _fake_supersede(monkeypatch, stored: dict[str, str] | set[str], *, fail: str = "") -> list[str]:
+def _fake_supersede(
+    monkeypatch,
+    stored: dict[str, str] | set[str],
+    *,
+    fail: str = "",
+    current: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
     """`supersede_duplicates` as the store runs it: `skip` is asked only about a row
     it could read (`stored`: id -> status), `on_written` hears the rows it inserted,
     and `fail="insert"` / `"mirror"` raises before / after that insert. Returns the
@@ -164,6 +170,7 @@ def _fake_supersede(monkeypatch, stored: dict[str, str] | set[str], *, fail: str
     from server.memory import store
 
     statuses = stored if isinstance(stored, dict) else dict.fromkeys(stored, "active")
+    current = current or {}  # id -> fields of the row's current version
     wrote: list[str] = []
 
     async def supersede(
@@ -182,7 +189,11 @@ def _fake_supersede(monkeypatch, stored: dict[str, str] | set[str], *, fail: str
         assert strong, "the retirement reads read-your-writes"
         rows = [
             SimpleNamespace(
-                memory_id=v["memory_id"], status=statuses[v["memory_id"]], pinned=False, version=0
+                memory_id=v["memory_id"],
+                status=statuses[v["memory_id"]],
+                pinned=False,
+                version=0,
+                **current.get(v["memory_id"], {}),
             )
             for v in victims
             if v["memory_id"] in statuses
@@ -250,6 +261,20 @@ async def test_newest_wins_same_key_records_the_retired_not_the_locked_or_retire
     assert ev["subject"]["reason"] == "same_key_newest_wins" and _ids(ev) == ["o1"]
     assert ev["subject"]["retired"][0]["superseded_by"] == "n1"
     assert ev["subject"]["retired"][0]["superseded_by_key"] == "user_city"
+
+
+async def test_a_row_now_a_namespace_definition_is_not_retired(monkeypatch, emitted) -> None:
+    # The read saw a fact; its current version is a definition's namespace-wide row.
+    from server.memory.app.key_supersession import supersede_same_key_rows
+
+    shared = {"memory_type": "definition", "agent": "-", "user_id": "-", "session_id": "-"}
+    wrote = _fake_supersede(monkeypatch, {"o1", "o2"}, current={"o1": shared})
+    new = [_live("n1")]
+    live = [new[0], _live("o1"), _live("o2")]
+    await supersede_same_key_rows(
+        follows=[], org="o", namespace="ns", new_rows=new, ch=_CH(all_=[live]), policy="newest_wins"
+    )
+    assert wrote == ["o2"]
 
 
 async def test_newest_wins_with_nothing_retired_records_nothing(monkeypatch, emitted) -> None:
@@ -666,6 +691,14 @@ async def _refines(monkeypatch, **kw: Any) -> None:
 _PEERS = {"o1": "active", "locked": "active", "retired": "superseded"}
 
 
+async def test_refines_leaves_a_peer_rewritten_as_a_definition(monkeypatch, emitted) -> None:
+    private = {"memory_type": "definition", "agent": "a", "user_id": "u", "session_id": "s"}
+    wrote = _fake_supersede(monkeypatch, _PEERS, current={"o1": private})
+    await _refines(monkeypatch)
+    # Only the peer that is still a fact retires; o1, now a definition, is left.
+    assert wrote == ["locked"]
+
+
 async def test_refines_records_the_victims_it_superseded(monkeypatch, emitted) -> None:
     wrote = _fake_supersede(monkeypatch, _PEERS)
     _lock(monkeypatch, "locked")
@@ -1080,6 +1113,26 @@ async def test_a_point_write_is_owed_for_a_key_another_session_holds_only_where_
     )
     assert (mark == OWED_MARK) is want_owed
     assert bool(reads) is (policy not in ("newest_wins", "append_only")), "no read there"
+
+
+async def test_a_definition_is_never_owed_for_a_key_another_session_holds(monkeypatch) -> None:
+    from server.memory.app import conflicts, key_supersession
+    from server.memory.domain.conflicts import ConflictResult
+    from server.settings import settings
+
+    async def keys_held_elsewhere(**kw: Any) -> set[str]:
+        raise AssertionError("a definition reads no other session's rows")
+
+    monkeypatch.setattr(settings, "memory_conflict_resolver_enabled", True)
+    monkeypatch.setattr(key_supersession, "keys_held_elsewhere", keys_held_elsewhere)
+    mark = await conflicts.same_key_mark(
+        ConflictResult(verdict="clear", peers=[]),
+        org="o",
+        namespace="ns",
+        memory_row={**_live("n1"), "memory_type": "definition"},
+        policy="auto_reinforce",
+    )
+    assert mark is None
 
 
 async def test_a_record_that_fails_is_owed_to_the_repair(monkeypatch) -> None:

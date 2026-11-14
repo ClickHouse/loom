@@ -79,13 +79,13 @@ class RetirementTracker:
     """Which rows a supersession actually retired, for the record.
 
     Pass `skip`, `written` and `unconfirmed` to `supersede_duplicates` /
-    `write_versions_by_ids`. `skip` refuses a row `base` refuses (a lock), a pinned
-    row and a row that is no longer live (`LIVE_STATUSES`); `written` hears the rows
-    whose retirement the re-read confirmed, `unconfirmed` those it could not tell
-    about. `retired(victims)` keeps the victims among both, the second marked
-    `unconfirmed`, so a refused, vanished, overtaken or never-written row is never
-    recorded. `rows` holds the written rows themselves, for a caller with no victim
-    list of its own."""
+    `write_versions_by_ids`. `skip` refuses a row `base` refuses
+    (`server.memory.domain.lock`), a pinned row and a row that is no longer live
+    (`LIVE_STATUSES`); `written` hears the rows whose retirement the re-read confirmed,
+    `unconfirmed` those it could not tell about. `retired(victims)` keeps the victims
+    among both, the second marked `unconfirmed`, so a refused, vanished, overtaken or
+    never-written row is never recorded. `rows` holds the written rows themselves, for
+    a caller with no victim list of its own."""
 
     def __init__(self, base: Callable[[MemoryRow], bool] | None = None) -> None:
         self._base = base

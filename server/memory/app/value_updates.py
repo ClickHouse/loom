@@ -44,6 +44,7 @@ from server.memory.app.auto_resolution import (
     retired_entry,
 )
 from server.memory.domain.conflicts import values_differ
+from server.memory.domain.memory_types import is_definition
 from server.memory.store.conflict_candidates import vector_param, vector_params
 
 log = logging.getLogger(__name__)
@@ -357,6 +358,9 @@ async def link_value_updates(
         # canonical twin in the same batch; the twin does the linking.
         if str(row.get("status") or "") == "duplicate":
             return None
+        # A definition supersedes no row under another key.
+        if is_definition(row):
+            return None
         return emb
 
     # Under LOOM_MEMORY_BULK_PEER_READ=batched, peers for a batch of rows come from one
@@ -444,11 +448,11 @@ async def link_value_updates(
         by_older[ln.older_id] = ln
     retired: list[dict[str, Any]] = []
     if by_older:
-        from server.memory.domain.lock import refuses_retirement
+        from server.memory.domain.lock import refuses_cross_key_retirement
 
-        # As the other automatic paths: a locked, pinned or no-longer-live older row is
-        # left as it is (the peer query reads neither the lock nor the pin).
-        tracker = RetirementTracker(refuses_retirement)
+        # As the other automatic paths: a locked, pinned or no-longer-live older row, or a
+        # definition, is left as it is (the peer query reads neither the lock nor the pin).
+        tracker = RetirementTracker(refuses_cross_key_retirement)
         try:
             for older_id, ln in by_older.items():
                 inv = _as_dt(newer_at.get(ln.newer_id))

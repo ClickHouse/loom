@@ -44,6 +44,7 @@ from server.memory.app.set_entities import declared_entities
 from server.memory.app.triple_projections import project_stated_relations
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.embed_text import embedding_texts
+from server.memory.domain.memory_types import is_definition
 from server.memory.domain.webhook_events import EventType
 from server.memory.store import pg_publish
 from server.memory.store.inserts import insert_memory_versions
@@ -685,9 +686,9 @@ async def _pg_peer_rows(w: _SetWrite, cfg: Any) -> str:
     """The peer rows a Postgres-authority verdict is reached against, fetched here and
     passed in so a commit landing during the check can be added to them
     (`pg_admission.absorb`) instead of reading them all again; returns the namespace's
-    conflict policy, resolved first (an `append_only` namespace reads no peer). The
-    peers are read with sequential consistency: every row the captured watermark
-    counts as published is visible to the check, on any replica."""
+    conflict policy, resolved first (an `append_only` namespace, or a definition, reads no
+    peer). The peers are read with sequential consistency: every row the captured
+    watermark counts as published is visible to the check, on any replica."""
     from server.core.ch import get_client, sequential_reads
     from server.memory.app.conflicts import namespace_conflict_policy, peer_distance, peer_rows
     from server.memory.domain.conflicts import APPEND_ONLY_POLICY
@@ -697,19 +698,22 @@ async def _pg_peer_rows(w: _SetWrite, cfg: Any) -> str:
         input.org, input.namespace, ch=get_client()
     )
     if w.peer_rows is None:
-        w.max_distance = await peer_distance(input.org, input.namespace, input.memory_type, cfg)
-        if policy == APPEND_ONLY_POLICY:
-            w.peer_rows = []
+        if is_definition(input):
+            w.peer_rows = []  # a definition's verdict reads no peer, and has no reach
         else:
-            with sequential_reads():
-                w.peer_rows = await peer_rows(
-                    org=input.org,
-                    namespace=input.namespace,
-                    memory_type=input.memory_type,
-                    memory_key=input.memory_key,
-                    embedding=w.embedding,
-                    max_distance=w.max_distance,
-                )
+            w.max_distance = await peer_distance(input.org, input.namespace, input.memory_type, cfg)
+            if policy == APPEND_ONLY_POLICY:
+                w.peer_rows = []  # no verdict reads them
+            else:
+                with sequential_reads():
+                    w.peer_rows = await peer_rows(
+                        org=input.org,
+                        namespace=input.namespace,
+                        memory_type=input.memory_type,
+                        memory_key=input.memory_key,
+                        embedding=w.embedding,
+                        max_distance=w.max_distance,
+                    )
     return str(policy)
 
 

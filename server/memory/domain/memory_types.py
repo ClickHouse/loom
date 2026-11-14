@@ -8,6 +8,9 @@ embedded / queryable by similarity" must import from here.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 # Memory types that don't carry embeddings and don't surface in
 # similarity-ranked search:
 #
@@ -32,10 +35,32 @@ NON_SEARCHABLE_TYPES: frozenset[str] = frozenset({"episodic", "profile"})
 # claim. Reach them explicitly with memory_type="reflection".
 HIDDEN_FROM_UNFILTERED_SEARCH: frozenset[str] = frozenset({"reflection"})
 
+# A definition names a term: nothing judges it against a row under another key (`MRR`
+# is not a revision of `ARR`), and its namespace-wide row is revised only by its own write.
+DEFINITION = "definition"
+
 # Types whose rows are identified by their key, not their text: a decision's key is
-# its category + scenario, so two decisions under different keys are two decisions
-# however alike they read.
-KEY_IDENTIFIED_TYPES: frozenset[str] = frozenset({"decision"})
+# its category + scenario, so two rows under different keys are two rows however
+# alike they read.
+KEY_IDENTIFIED_TYPES: frozenset[str] = frozenset({"decision", DEFINITION})
+
+
+def _row_field(row: Any, name: str) -> Any:
+    return row.get(name) if isinstance(row, Mapping) else getattr(row, name, None)
+
+
+def is_definition(row: Any) -> bool:
+    """Whether `row` (a mapping or a memory row) is a definition."""
+    return bool(_row_field(row, "memory_type") == DEFINITION)  # the field is Any
+
+
+def is_namespace_definition(row: Any) -> bool:
+    """Whether `row` (a mapping or a memory row) is a definition's namespace-wide row:
+    agent, user and session all `'-'`, or stored empty, as `server.core.naming.named`
+    reads them."""
+    return is_definition(row) and all(
+        (_row_field(row, c) or "-") == "-" for c in ("agent", "user_id", "session_id")
+    )
 
 
 def excluded_from_unfiltered_search() -> list[str]:

@@ -34,6 +34,7 @@ from server.memory.domain.graph_quality import (
     order_ended_before_dated,
     restates_current,
 )
+from server.memory.domain.memory_types import is_definition
 from server.memory.domain.temporal_sql import EDGE_HOLDER_SQL, GRAPH_HOLDER_SQL
 
 log = logging.getLogger(__name__)
@@ -1620,7 +1621,8 @@ def retirement_victims(
     memory_key); `memories` are live loom.memory rows for the linked keys. A
     memory retires when it carried a CLOSED value (subject, relation,
     old_object) and did not also carry the surviving value, was not written by
-    this batch (`new_keys`) and is not pinned. `superseded_by` is the memory
+    this batch (`new_keys`), is not pinned and is not a definition (`memories` carry
+    `memory_type`): a definition's key is its identity. `superseded_by` is the memory
     that carried the new object, when one is known, else empty."""
     closed = {(r.subject, r.relation, r.old_object) for r in repairs}
     survivors: dict[tuple[str, str], str] = {}
@@ -1643,7 +1645,7 @@ def retirement_victims(
         if key in new_keys or key in carried_survivor:
             continue
         m = by_key.get(key)
-        if m is None or bool(m.get("pinned")):
+        if m is None or bool(m.get("pinned")) or is_definition(m):
             continue
         sk = survivor_key_for.get(sr, "")
         by = by_key.get(sk) if sk else None
@@ -1714,7 +1716,7 @@ async def _retire_memories_behind_repairs(
     memories = await ch.query_all(
         f"""
         SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-               memory_key, pinned
+               memory_key, memory_type, pinned
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL
@@ -1739,10 +1741,10 @@ async def _retire_memories_behind_repairs(
         owe_retirements,
         record_or_owe,
     )
-    from server.memory.domain.lock import refuses_retirement
+    from server.memory.domain.lock import refuses_cross_key_retirement
 
     # The tracker also refuses a row retired since the read (it is not re-pointed).
-    tracker = RetirementTracker(refuses_retirement)
+    tracker = RetirementTracker(refuses_cross_key_retirement)
     agent = str(getattr(input, "agent", "") or "")
     intent = await owe_retirements(
         org=input.org,

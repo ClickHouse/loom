@@ -115,7 +115,8 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 
     A `decision` row (`KEY_IDENTIFIED_TYPES`) is identified by its key: a close peer in
     the writer's read scope answers `conflict`, pinned or not, and no pinned peer refuses
-    it.
+    it. A `definition` row, also key-identified, answers `clear` with no peer read
+    ([conflicts and refusal](../features/memory/conflicts-and-refusal.md)).
 
     Under a token bounded to one user (`read_user_id`), peers outside that user's rows are
     treated as absent, with two exceptions that hold across the whole namespace by design: a
@@ -139,12 +140,13 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     joins back to `memory`; its `conflict_checked_at` carries the resolver's mark.
     Conflict marks then go on the peers, or `refines` supersedes them.
 13. **After the write** (`_set_after_write`, `_set_post_insert`). Same-key supersession
-    under `newest_wins` (`memory/app/key_supersession.py`; under `auto_reinforce` and
-    `manual_review` the conflict resolver judges same-key rows, see below, and under
-    `append_only` nothing is marked) and the hash-only audit row are
-    awaited in one round trip. The entity-graph projection is scheduled beside the
-    response (`memory/app/after_write.py`) and repaired by `entity_extractor` if lost. A
-    long value is also split into `memory_chunks`, fail-open.
+    under `newest_wins` (`memory/app/key_supersession.py`, which never retires a
+    definition's namespace-wide row; under `auto_reinforce` and `manual_review` the
+    conflict resolver judges same-key rows, see below, and under `append_only` nothing is
+    marked) and the hash-only audit row are awaited in one round trip. The entity-graph
+    projection is scheduled beside the response (`memory/app/after_write.py`) and repaired
+    by `entity_extractor` if lost. A long value is also split into `memory_chunks`,
+    fail-open.
 
 **Embedding stubs.** `memory.set` embeds before it inserts, so an embed failure fails
 the call and writes nothing. Writers that can wait for a vector (such as
@@ -313,7 +315,7 @@ actions, verdicts and confidences, never the text.
   a write that started after the read, locked or not, stays newest, and a retirement it
   overtook records nothing.
 - Only `auto_reinforce` and `newest_wins` retire; `manual_review` only flags, and
-  `append_only` is never judged.
+  `append_only` is never judged, nor is a `definition`, whose key is its identity.
 - A pinned row is never retired, flagged or cleared, and is no peer (no call is paid for a
   pair no verdict may change); a lock that refuses retirement holds.
 - The resolver dates an undone row from its first assertion: the version an Undo
@@ -481,18 +483,20 @@ matching rows (`_retire_forgotten`).
 
 The storage identity includes the session, so a key that a later session states again is
 a second live row, and the conflict check skips same-key peers. Under `newest_wins` the
-newer write retires the older row. Under `auto_reinforce` a shared key alone is not
-evidence of one attribute: extraction reuses generic keys (`assistant_recommended_3`,
-`user_attended`) for different items, and in a labelled sample of 60 same-key pairs from
-chat-history namespaces 52 were different facts, 7 were restatements and 1 was an update.
+newer write retires the older row, except a definition's namespace-wide row. Under
+`auto_reinforce` a shared key alone is not evidence of one attribute: extraction reuses
+generic keys (`assistant_recommended_3`, `user_attended`) for different items, and in a
+labelled sample of 60 same-key pairs from chat-history namespaces 52 were different
+facts, 7 were restatements and 1 was an update.
 
 Those rows are judged by the conflict resolver like any other peers: under `auto_reinforce`
 and `manual_review`, a point write (`conflicts.same_key_mark`) and a bulk write mark each
 row whose key a live row of the same `user_id` from another session holds
 (`key_supersession.keys_held_elsewhere`). The anonymous user (`-`, or a `user_id` sent
 empty) is never marked so: its sessions are separate tasks, where a verdict could only
-clear a flag. Under `append_only` nothing is marked. The writer's own identity is never
-a peer: its stored row is the one the write revises.
+clear a flag. Under `append_only` nothing is marked, and the resolver never judges a
+definition: its key is its identity ([conflicts and refusal](../features/memory/conflicts-and-refusal.md)).
+The writer's own identity is never a peer: its stored row is the one the write revises.
 
 **Which row is older.** Only the older statement of a pair ever retires, so two rows
 judged from either side never retire both (`conflict_resolver._assertion_order`, read
@@ -1098,7 +1102,7 @@ merged source after the merge does not reach the summary: redact it too. The sum
 tags are the union of its sources'. A summary its writer tags `consolidated` and
 `src:<key>` for each source is downgraded or retired as its sources are deleted: a `src:`
 tag names a key of the row's own namespace, and a user erasure retires the row only
-through a key the user wrote there.
+through a key the user wrote there. A `definition` never joins a cluster.
 
 A worker leg that catches its own failure calls `pass_context.note_failure`, so the
 supervisor counts it. A worker that declares `owned_tables` runs its first pass at boot

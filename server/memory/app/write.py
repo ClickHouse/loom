@@ -60,7 +60,11 @@ log = logging.getLogger(__name__)
 
 # Leaf module (no internal imports) shared with memory.app.retrieval to
 # avoid a circular import.
-from server.memory.domain.memory_types import is_embedded, is_searchable_type  # noqa: E402
+from server.memory.domain.memory_types import (  # noqa: E402
+    is_definition,
+    is_embedded,
+    is_searchable_type,
+)
 
 # Terminal failure shapes of `memory.set`, keyed by the `code` in the HTTPException detail.
 # Mapped once at the handler boundary rather than counted at each raise site, so no refusal
@@ -668,6 +672,16 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     raise AdmissionContendedError(f"{input.memory_key!r} kept changing during this write")
 
 
+async def _verdict_generations(w: _SetWrite) -> dict[tuple[str, str], int]:
+    """The generations a Postgres-authority verdict is reached at: the check must see
+    every commit through them. A definition's verdict reads no peer, so it captures only
+    the policy's: no commit to the namespace in between can move it."""
+    if is_definition(w.input):
+        return dict(w.policy)
+    captured = await pg_admission.capture(w.input.org, w.input.namespace)
+    return {**captured, **w.policy}
+
+
 async def _memory_set_once(input: MemorySetInput, *, embedder: Any = None) -> MemorySetOutput:
     """One pass of memory.set's phases. The shared request state is `w` (_SetWrite).
     Early returns: a lock/pin refusal, the non-embedded path, a dry-run 'rejected', a
@@ -728,9 +742,7 @@ async def _memory_set_once(input: MemorySetInput, *, embedder: Any = None) -> Me
     deadline = time.monotonic() + settings.pg_admission_deadline_ms / 1000
     while True:
         if pg.enabled() and w.peer_rows is None:
-            # The check below must see every commit through these generations.
-            captured = await pg_admission.capture(input.org, input.namespace)
-            w.generations = {**captured, **w.policy}
+            w.generations = await _verdict_generations(w)
         _cfg, conflict_result, peers_out, _rejected_dry_run = await _set_conflict_verdict(
             w, _cfg_task
         )

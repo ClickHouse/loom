@@ -113,6 +113,22 @@ async def test_bulk_gates_match_when_the_hash_comes_back_as_bytes(
     )
     assert "loom.memory" not in ch.inserts
     assert out.identity_duplicates == {"user_clickhouse_task_branch": "user_task_branch"}
+    # A definition under another key never folds into the row with its bytes.
+    out = await mem_extract.handle_memory_bulk_set(
+        MemoryBulkSetInput(
+            org="o",
+            namespace="n",
+            agent="a",
+            user_id="u",
+            session_id="s3",
+            entries=[
+                _BulkSetEntry(
+                    memory_key="definition/task-branch", value=value, memory_type="definition"
+                )
+            ],
+        )
+    )
+    assert out.identity_duplicates == {}
     # Two reinforcements of the same live row: the same-key restatement of the
     # first call and the identity dedup of the second.
     assert events == ["mid-1", "mid-1"]
