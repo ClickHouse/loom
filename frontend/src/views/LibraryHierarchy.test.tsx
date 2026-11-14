@@ -319,7 +319,7 @@ describe("CollectionChips", () => {
       entry("col-kid", { parent: "col-team", title: "Kid" }),
     ];
     render(<CollectionChips rows={rows} repeated={repeatedTitles(rows)} collection={rows[0]} onPick={() => {}} />);
-    const nav = screen.getByRole("navigation", { name: "Collections in Team" });
+    const nav = screen.getByRole("navigation", { name: "Inside Team" });
     expect(
       within(nav)
         .getAllByRole("link")
@@ -334,7 +334,7 @@ describe("CollectionChips", () => {
       entry("col-a-kid", { parent: "col-a", title: "Kid" }),
     ];
     render(<CollectionChips rows={rows} repeated={repeatedTitles(rows)} collection={rows[0]} onPick={() => {}} />);
-    expect(screen.getByRole("navigation", { name: "Collections in Notes (col-a)" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Inside Notes (col-a)" })).toBeInTheDocument();
   });
 
   it("shows six, then fifty more at a time, the focus on the first chip the last press adds", () => {
@@ -343,7 +343,7 @@ describe("CollectionChips", () => {
       ...Array.from({ length: 60 }, (_, i) => entry(`col-k${i}`, { parent: "col-team", title: `Kid ${i}` })),
     ];
     render(<CollectionChips rows={rows} repeated={repeatedTitles(rows)} collection={rows[0]} onPick={() => {}} />);
-    const nav = screen.getByRole("navigation", { name: "Collections in Team" });
+    const nav = screen.getByRole("navigation", { name: "Inside Team" });
     expect(within(nav).getAllByRole("link")).toHaveLength(6);
     const more = within(nav).getByRole("button", { name: "Show 50 more" });
     more.focus();

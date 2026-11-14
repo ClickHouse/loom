@@ -35,6 +35,12 @@ import {
 /** A tree row's `data-focus-key`: the page's move to a place picked here focuses its row. */
 export const placeFocusKey = (collection: string | null) => `library-tree-place-${collection ?? ""}`;
 
+/** Show a place picked in the tree, focusing `arriveFocus` and saying `note` on arrival. */
+export type PickPlace = (collection: string | null, arriveFocus: string, note: string) => void;
+
+/** Open a collection made in the tree, in `org`, focusing `arriveFocus` on arrival. */
+export type MadeCollection = (collection: string, org: string, arriveFocus: string) => void;
+
 /** New collection's `data-focus-key`: the page's move to a collection made here focuses it. */
 export const NEW_COLLECTION_FOCUS = "library-new-collection";
 
@@ -156,11 +162,11 @@ export const LibraryTree = memo(function LibraryTree({
   current: string | null;
   /** `arriveFocus`: the picked row's focus key, so the person stays in the tree; `note`: the
    *  place's name, said on arrival. */
-  onPick: (collection: string | null, arriveFocus: string, note: string) => void;
+  onPick: PickPlace;
   /** A collection made here, in `org`: read the list again and open it. It can land after
    *  the tree is gone (a resize, or a move to another org). `arriveFocus`: New collection's
    *  focus key, so the person goes on there. */
-  onCreated: (collection: string, org: string, arriveFocus: string) => void;
+  onCreated: MadeCollection;
 }) {
   // What the person opened, remembered for the next visit.
   const [open, setOpen] = useState<Set<string>>(() => loadExpanded(org));
@@ -397,7 +403,7 @@ function PlaceRow({
   here: boolean;
   expanded?: boolean;
   onToggle?: () => void;
-  onPick: (collection: string | null, arriveFocus: string, note: string) => void;
+  onPick: PickPlace;
 }) {
   const focusKey = placeFocusKey(collection);
   return (
@@ -441,7 +447,7 @@ function NewCollectionForm({
   parent: string;
   label: string;
   onClose: () => void;
-  onCreated: (collection: string, org: string, arriveFocus: string) => void;
+  onCreated: MadeCollection;
 }) {
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);

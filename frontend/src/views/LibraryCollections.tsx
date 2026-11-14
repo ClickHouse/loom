@@ -103,10 +103,10 @@ export const REFRESH_TRIES = 3;
 export const REFRESH_WAIT_MS = 1000;
 
 /** The collections the caller can read in `org` (`collection.list`), every page. `reload`
- *  clears `rows` until its answer; a write elsewhere keeps them. `shown`: the collection the
+ *  clears `rows` until its answer; a write elsewhere keeps them. `showing`: the collection the
  *  page shows; a refresh that leaves it out reads again, up to `REFRESH_TRIES` times, before
  *  it counts as gone. */
-export function useReadableCollections(org: string, shown = ""): ReadableCollections {
+export function useReadableCollections(org: string, showing = ""): ReadableCollections {
   const [answer, setAnswer] = useState<{
     org: string;
     reloads: number;
@@ -130,16 +130,20 @@ export function useReadableCollections(org: string, shown = ""): ReadableCollect
   useEffect(
     () =>
       // A collection made in another org is not waited for here.
-      onCollectionsChanged((made, madeIn) =>
-        setAsked((r) => ({ ...r, refreshes: r.refreshes + 1, expect: { org: madeIn || org, name: made } })),
+      onCollectionsChanged((made) =>
+        setAsked((r) => ({
+          ...r,
+          refreshes: r.refreshes + 1,
+          expect: { org: made?.org ?? org, name: made?.name ?? "" },
+        })),
       ),
     [org],
   );
   const expected = asked.expect.org === org ? asked.expect.name : "";
   // The collection shown, once the page's last reload is answered and lists it. The read
-  // effect captures it when it starts: `shown` changing restarts no read.
+  // effect captures it when it starts: `showing` changing restarts no read.
   const answered = answer?.org === org && answer.reloads === asked.reloads;
-  const hold = answered && answer.rows.some((c) => c.namespace === shown) ? shown : "";
+  const hold = answered && answer.rows.some((c) => c.namespace === showing) ? showing : "";
   useAbortableEffect(
     (signal, live) => {
       setError(null);
@@ -330,10 +334,11 @@ export function LibraryCollections({
             named={besideTree}
           />
         )}
-        {/* My files has no path; beside the tree no select names it either. */}
-        {besideTree && current?.personal && (
+        {/* My files and the namespace have no path; beside the tree no select names them either,
+            so the line starts with the place's name, not the About button alone. */}
+        {besideTree && (current?.personal || (!current && !opening && namespace !== null)) && (
           <span aria-current="page" className="text-sm">
-            {collectionTitle(current)}
+            {current ? collectionTitle(current) : `Namespace ${namespace}`}
           </span>
         )}
         {phone && collection && (

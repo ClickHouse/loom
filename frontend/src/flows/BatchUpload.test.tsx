@@ -1462,7 +1462,7 @@ describe("BatchUpload", () => {
       ]);
       // Closing has the Library read its collections again, waiting for the one made.
       expect(vi.mocked(invalidateSharedCollections).mock.calls.length).toBe(told + 1);
-      expect(invalidateSharedCollections).toHaveBeenLastCalledWith("col-sub", "o");
+      expect(invalidateSharedCollections).toHaveBeenLastCalledWith({ name: "col-sub", org: "o" });
     });
 
     it("lists the Library's collections again on close when a Stop cut a collection's create short", async () => {
@@ -1497,6 +1497,8 @@ describe("BatchUpload", () => {
       await user.click(done);
       held.next = null;
       expect(vi.mocked(invalidateSharedCollections).mock.calls.length).toBe(told + 1);
+      // Nothing was made: no collection to wait for.
+      expect(invalidateSharedCollections).toHaveBeenLastCalledWith(undefined);
     });
 
     it("lists the Library's collections again on close when the upload gave a listed one a title", async () => {

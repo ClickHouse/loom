@@ -34,7 +34,7 @@ test.describe("1440 px", () => {
     await expect(page).toHaveTitle("Engineering · Library · Loom");
     // Opening it shows what is inside, in the tree and as chips on the path's line.
     await expect(tree.getByRole("link", { name: "Runbooks" })).toBeVisible();
-    const chips = page.getByRole("navigation", { name: "Collections in Engineering" });
+    const chips = page.getByRole("navigation", { name: "Inside Engineering" });
     await expect(chips.getByRole("link")).toHaveText(["RFCs", "Runbooks"]);
     await chips.getByRole("link", { name: "Runbooks" }).click();
     await expect(page).toHaveURL(/collection=col-runbooks/);
@@ -225,7 +225,7 @@ test.describe("1100 px", () => {
     await open(page, "/library?collection=col-eng");
     await expect(page.getByRole("navigation", { name: "Library places" })).toHaveCount(0);
     await expect(page.getByLabel("Show the documents of")).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Collections in Engineering" }).getByRole("link")).toHaveCount(2);
+    await expect(page.getByRole("navigation", { name: "Inside Engineering" }).getByRole("link")).toHaveCount(2);
     // The chips list them: no second list below the documents.
     await expect(page.getByRole("region", { name: /Collections/ })).toHaveCount(0);
   });

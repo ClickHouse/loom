@@ -540,7 +540,7 @@ export function CollectionChips({
   const { shown, list, more, showMore } = useShowMore(inside, FIRST_SHOWN);
   if (!collection || inside.length === 0) return null;
   return (
-    <nav aria-label={`Collections in ${distinctTitle(collection, repeated)}`} className="library-chips">
+    <nav aria-label={`Inside ${distinctTitle(collection, repeated)}`} className="library-chips">
       <ul ref={list}>
         {shown.map((c) => (
           <li key={c.namespace} data-collection={c.namespace}>

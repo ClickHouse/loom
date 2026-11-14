@@ -306,7 +306,10 @@ export function BatchUpload({
   // What the check read of each collection, whole or cut at its limit, for the upload to start from.
   const checkedSources = useRef(new Map<string, Map<string, KeptFields>>());
   const leave = () => {
-    if (foldersSent.current) invalidateSharedCollections(madeHere.current[0], identity.org);
+    if (foldersSent.current) {
+      const first = madeHere.current[0];
+      invalidateSharedCollections(first ? { name: first, org: identity.org } : undefined);
+    }
     onClose();
   };
   const cancelling = useRef(false);

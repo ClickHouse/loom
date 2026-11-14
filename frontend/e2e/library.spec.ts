@@ -162,7 +162,7 @@ test.describe("a collection's path at 1400 px", () => {
     await expect(path).toBeVisible();
     // The path and the chips share one line; the tree stands in for the select.
     await expect(page.getByRole("button", { name: "Show the documents of" })).toHaveCount(0);
-    const chips = page.getByRole("navigation", { name: "Collections in Interview notes" });
+    const chips = page.getByRole("navigation", { name: "Inside Interview notes" });
     await expect(chips.getByRole("link")).toHaveCount(6);
     await expect(chips.getByRole("button", { name: "Show 2 more" })).toBeVisible();
     expect(Math.abs((await boxOf(path)).y - (await boxOf(chips)).y)).toBeLessThan(16);

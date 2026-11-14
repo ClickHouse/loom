@@ -458,7 +458,7 @@ describe("the Library on a collection", () => {
     // Inside a collection the chips on its path's line list what is inside, once.
     expect(screen.queryByRole("region", { name: /Collections/ })).toBeNull();
     // The first six, then Show more for the rest, with the focus on the first it adds.
-    const chips = screen.getByRole("navigation", { name: "Collections in col-q3" });
+    const chips = screen.getByRole("navigation", { name: "Inside col-q3" });
     expect(within(chips).getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(6);
     fireEvent.click(within(chips).getByRole("button", { name: "Show 4 more" }));
     expect(within(chips).getAllByRole("link", { name: /^col-q3 kid / })).toHaveLength(10);
@@ -467,7 +467,7 @@ describe("the Library on a collection", () => {
     // The next place starts at six again.
     fireEvent.click(within(chips).getByRole("link", { name: "col-q3 kid 0" }));
     await settle();
-    const next = screen.getByRole("navigation", { name: "Collections in col-q3 kid 0" });
+    const next = screen.getByRole("navigation", { name: "Inside col-q3 kid 0" });
     expect(within(next).getAllByRole("link")).toHaveLength(6);
     expect(within(next).getByRole("button", { name: "Show 4 more" })).toBeInTheDocument();
   });
@@ -599,7 +599,7 @@ describe("the Library on a collection", () => {
     await user.click(await screen.findByRole("button", { name: "Done" }));
     await waitFor(() => expect(api.listCollections.mock.calls.length).toBeGreaterThan(reads));
     expect(
-      await within(await screen.findByRole("navigation", { name: "Collections in col-q3" })).findByRole("link", {
+      await within(await screen.findByRole("navigation", { name: "Inside col-q3" })).findByRole("link", {
         name: "Q4",
       }),
     ).toBeInTheDocument();
@@ -711,7 +711,7 @@ describe("the Library on a collection", () => {
       await user.click(done);
       // Past the retry's wait.
       await act(() => vi.advanceTimersByTimeAsync(REFRESH_WAIT_MS + 100));
-      const chips = await screen.findByRole("navigation", { name: "Collections in col-q3" });
+      const chips = await screen.findByRole("navigation", { name: "Inside col-q3" });
       expect(await within(chips).findByRole("link", { name: "Q4" })).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -1162,6 +1162,13 @@ describe("the Library on a collection", () => {
     history.replaceState(null, "", "/library");
     render(<Documents />, { container: inMain() });
     const tree = await screen.findByRole("navigation", { name: "Library places" });
+    await settle();
+    // Nor has the namespace: the path line names it too, before its About button.
+    const besideTree = () =>
+      [...document.querySelectorAll("main [aria-current='page']")].filter((el) => !tree.contains(el));
+    expect(besideTree().map((el) => el.textContent)).toEqual([
+      within(tree).getByRole("link", { current: "page" }).textContent,
+    ]);
     fireEvent.click(await within(tree).findByRole("link", { name: "col-q3" }));
     await settle();
     // The arrival App makes on a move focuses the row the move asked for and says its name.
@@ -1175,8 +1182,7 @@ describe("the Library on a collection", () => {
     fireEvent.click(within(tree).getByRole("link", { name: "My files" }));
     await settle();
     // My files has no path; the page's path line names it beside the tree.
-    const named = [...document.querySelectorAll("main [aria-current='page']")].filter((el) => !tree.contains(el));
-    expect(named.map((el) => el.textContent)).toEqual(["My files"]);
+    expect(besideTree().map((el) => el.textContent)).toEqual(["My files"]);
   });
 
   describe("where <main> can be measured", () => {
