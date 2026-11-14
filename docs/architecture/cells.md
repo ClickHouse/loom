@@ -669,13 +669,7 @@ lists any tenancy row the directory does not place.
   no privilege boundary: a writer that sets it on purpose passes; the triggers stop
   writers that do not know it, an older CLI, a pod downgraded past the check, or a script,
   from adding a row for an org the cell does not hold or moving a row to one; an update
-  that keeps a row's org, and a delete, are not refused. `loom.tenancy` itself has its own
-  guard, since a tenancy row makes an org held: `tenancy_record`, a row-level
-  `AFTER INSERT OR UPDATE OF org` origin trigger with the same marker `WHEN`, calls
-  `loom.tenancy_refuse_unmarked()` (migration 012), which refuses, `LT001`, an unmarked
-  session's tenancy row in every state but a first cell still recording, the state read with
-  the row counted, so a script cannot make an org held that the directory does not place.
-  Boots and attach create and repair it as they do the org triggers. Their cost is one
+  that keeps a row's org, and a delete, are not refused. The org triggers' cost is one
   setting lookup per marked row, and one read of the state and a `loom.tenancy` lookup per
   unmarked row; the gate they ship under is a `memory.set` p99 rise of at most 10 ms and a
   delivery pass's rows per second at `LOOM_PG_DELIVERY_BATCH_ROWS` at most 10% lower, in
@@ -685,19 +679,27 @@ lists any tenancy row the directory does not place.
   results](../benchmarks/results.md)), which predicts the gate holds by a wide margin. The
   gate itself is an end-to-end `memory.set` and delivery-pass measurement on a cell, which
   needs attach and is checked with it; until then the triggers, which a later cell gets from
-  prepare's next migrating boot, ship on the statement-level measurement. With attach,
-  `loom doctor` also lists any tenancy row the directory does not place and any org in an
-  org-keyed Postgres table with no tenancy row, which names a tenancy row written before the
-  guard or by a writer that set the marker. Before the first attach the operator rotates the
-  cell's ClickHouse writer credentials (create the new user, roll it out to configurations
-  of builds that check, drop the old one), and attach refuses while any ClickHouse user with
-  `INSERT` on `loom.*` (`system.grants`, with database, global and role grants followed
-  through `system.role_grants`, and users from configuration files or with implicit `ALL`
-  counted) is not one a live process of a checking build or the CLI's configured user
-  reports, so only holders of the rotated credential write ClickHouse; an older CLI given
-  that credential still writes unchecked, and with attach `loom doctor` lists what it wrote:
-  any org found in an org-keyed ClickHouse table with no tenancy row, from the same schema
-  list as attach step 2.
+  prepare's next migrating boot, ship on the statement-level measurement. `loom.tenancy`
+  itself has its own guard, since a tenancy row makes an org held: `tenancy_record`, a
+  row-level `AFTER INSERT OR UPDATE OF org` origin trigger with the same marker `WHEN`,
+  calls `loom.tenancy_refuse_unmarked()` (migration 012), which refuses, `LT001`, an
+  unmarked session's tenancy row, or an update that moves one to another org, in every state
+  but a first cell still recording (`open` too, since the row itself would make the state
+  `partial`), so a script cannot make an org held that the directory does not place. Boots
+  and attach create and repair it as they do the org triggers. With attach, `loom doctor`
+  also lists any tenancy row the directory does not place, which names one written before
+  the guard or by a writer that set the marker, and any org in an org-keyed Postgres table
+  with no tenancy row, which names rows written before the org triggers, by a writer that
+  set the marker, or left behind by a deleted tenancy row. Before the first attach the
+  operator rotates the cell's ClickHouse writer credentials (create the new user, roll it
+  out to configurations of builds that check, drop the old one), and attach refuses while
+  any ClickHouse user with `INSERT` on `loom.*` (`system.grants`, with database, global and
+  role grants followed through `system.role_grants`, and users from configuration files or
+  with implicit `ALL` counted) is not one a live process of a checking build or the CLI's
+  configured user reports, so only holders of the rotated credential write ClickHouse; an
+  older CLI given that credential still writes unchecked, and with attach `loom doctor`
+  lists what it wrote: any org found in an org-keyed ClickHouse table with no tenancy row,
+  from the same schema list as attach step 2.
 - **An org the cell does not hold is placed there or refused.** For a verified principal
   scoped to the org (a token of that org, or an issuer's or bot's principal whose org it
   is), the cell calls the router's placement API (`POST /cells/v1/placements` at

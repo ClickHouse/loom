@@ -12,8 +12,8 @@ guard on `loom.tenancy` itself, `tenancy_record` with `loom.tenancy_refuse_unmar
 cell still recording: a tenancy row makes an org held.
 
 `ensure` creates the triggers on a fully prepared cell in `enforced` at a migrating
-boot (`ensure_tenancy_guard` the guard), and `missing` names what a cell's triggers lack
-for `loom doctor`.
+boot, the guard with them, and `missing` names what a cell's triggers lack for
+`loom doctor`.
 """
 
 from __future__ import annotations
@@ -61,9 +61,7 @@ ORDER BY c.relname
 
 _TRIGGERS = """
 SELECT c.relname, t.tgname, t.tgenabled::text AS enabled, t.tgtype::int AS tgtype,
-       t.tgfoid = to_regprocedure(CASE t.tgname WHEN 'tenancy_record'
-           THEN 'loom.tenancy_refuse_unmarked()' ELSE 'loom.tenancy_refuse_unheld()' END)
-           AS calls_function,
+       t.tgfoid::int8 AS function_oid,
        t.tgfoid::regprocedure::text AS function, pg_get_triggerdef(t.oid) AS definition
 FROM pg_trigger t
 JOIN pg_class c ON c.oid = t.tgrelid
@@ -72,8 +70,8 @@ WHERE n.nspname = 'loom' AND NOT t.tgisinternal AND t.tgname = ANY($1::text[])
 """
 
 _FUNCTION = """
-SELECT p.provolatile::text AS volatile, p.prosecdef AS definer, p.prosrc AS body,
-       coalesce(p.proconfig, '{}') AS config
+SELECT p.oid::int8 AS oid, p.provolatile::text AS volatile, p.prosecdef AS definer,
+       p.prosrc AS body, coalesce(p.proconfig, '{}') AS config
 FROM pg_proc p WHERE p.oid = to_regprocedure($1)
 """
 
@@ -92,6 +90,8 @@ WHERE l.relation = $1::regclass AND l.pid <> pg_backend_pid()
 
 # pg_trigger.tgtype bits (src/include/catalog/pg_trigger.h).
 _ROW, _BEFORE, _INSERT, _UPDATE, _INSTEAD = 1, 2, 4, 16, 64
+# The events each trigger must fire on.
+_EVENTS = {INSERT_TRIGGER: _INSERT, UPDATE_TRIGGER: _UPDATE, TENANCY_TRIGGER: _INSERT | _UPDATE}
 
 
 def _ident(name: str) -> str:
@@ -231,10 +231,10 @@ async def ensure(conn: Any) -> None:
     for table, sqls in statements.items():
         await _run_ddl(conn, table, sqls)
     if state == "enforced":
-        await ensure_tenancy_guard(conn)
+        await _ensure_tenancy_guard(conn)
 
 
-async def ensure_tenancy_guard(conn: Any) -> None:
+async def _ensure_tenancy_guard(conn: Any) -> None:
     """Create `tenancy_record` on `loom.tenancy` when it is absent, and enable it when it
     is left otherwise than `O`, as `ensure` does an org trigger (its own path: `_guarded`
     leaves `loom.tenancy` out). Nothing is done before migration 012 has created its
@@ -326,9 +326,11 @@ async def missing(conn: Any) -> list[Defect]:
     # Compared whole, as this server prints them; a trigger whose function is absent has
     # nothing to compare with. A role that may not create a temporary table cannot
     # compare: named, with every other defect kept.
-    comparable = (ORG_TRIGGERS if fn is not None else ()) + (
-        (TENANCY_TRIGGER,) if tenancy_fn is not None else ()
-    )
+    comparable: tuple[str, ...] = ()
+    if fn is not None:
+        comparable += ORG_TRIGGERS
+    if tenancy_fn is not None:
+        comparable += (TENANCY_TRIGGER,)
     expected = None
     if comparable:
         try:
@@ -347,11 +349,7 @@ async def missing(conn: Any) -> list[Defect]:
             if row is None:
                 found.append(Defect("absent", f"loom.{table}: no {name} trigger"))
                 continue
-            event = {
-                INSERT_TRIGGER: _INSERT,
-                UPDATE_TRIGGER: _UPDATE,
-                TENANCY_TRIGGER: _INSERT | _UPDATE,
-            }[name]
+            event = _EVENTS[name]
             tgtype = row["tgtype"]
             if row["enabled"] != "O":
                 found.append(
@@ -369,7 +367,8 @@ async def missing(conn: Any) -> list[Defect]:
                         "(its WHEN, columns or events)",
                     )
                 )
-            if not row["calls_function"]:
+            called = tenancy_fn if name == TENANCY_TRIGGER else fn
+            if called is None or row["function_oid"] != called["oid"]:
                 found.append(Defect("function", f"loom.{table}: {name} calls {row['function']}"))
             if not (tgtype & _ROW) or tgtype & (_BEFORE | _INSTEAD) or tgtype & event != event:
                 found.append(

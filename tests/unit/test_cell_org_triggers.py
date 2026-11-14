@@ -691,3 +691,34 @@ def test_doctor_runs_the_cell_checks_only_with_loom_cell(
     )
     names = [n for n, _g, _d in doctor._run_live_checks()]
     assert called == ([True] if runs else []) and ("cell_state" in names) == runs
+
+
+@pytest.mark.parametrize(
+    "found,ran",
+    [
+        (None, "CREATE TRIGGER tenancy_record AFTER INSERT OR UPDATE OF org ON loom.tenancy"),
+        ("D", "ALTER TABLE loom.tenancy ENABLE TRIGGER tenancy_record"),
+        ("O", None),
+    ],
+)
+def test_the_guard_is_created_or_enabled_once_its_function_exists(
+    monkeypatch: pytest.MonkeyPatch, found: str | None, ran: str | None
+) -> None:
+    class _Migrated:
+        async def fetchval(self, _sql: str, *_a: Any) -> bool:
+            return True
+
+        async def fetch(self, _sql: str, *_a: Any) -> list[dict[str, Any]]:
+            if found is None:
+                return []
+            return [{"relname": "tenancy", "tgname": "tenancy_record", "enabled": found}]
+
+    statements: list[str] = []
+
+    async def _run(_c: Any, table: str, sqls: list[str]) -> None:
+        assert table == "tenancy"
+        statements.extend(sqls)
+
+    monkeypatch.setattr(cell_triggers, "_run_ddl", _run)
+    asyncio.run(cell_triggers._ensure_tenancy_guard(_Migrated()))
+    assert [s.split(" FOR EACH ROW")[0] for s in statements] == ([ran] if ran else [])

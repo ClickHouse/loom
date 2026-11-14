@@ -362,6 +362,7 @@ async def test_a_migrating_boot_creates_the_triggers_and_its_files_pass_them(
         await pg_migrate.migrate(connect=_connect)
         guarded = {(t[1], t[2]) for t in await _org_triggers(conn) if t[0] == "scope_generations"}
         assert guarded == {("tenancy_insert", "O"), ("tenancy_update", "O")}
+        assert ("tenancy", "tenancy_record", "O") in await _org_triggers(conn)
         for f in pg_migrate.migration_files(pg_migrate.PG_MIGRATIONS_DIR):
             shutil.copy(f, tmp_path / f.name)
         (tmp_path / "999_stray_org.sql").write_text(
@@ -620,6 +621,14 @@ async def test_an_unmarked_session_is_refused_a_tenancy_row_on_an_enforced_cell(
                 with pytest.raises(asyncpg.PostgresError) as caught:
                     await plain.execute(sql, *args)
                 assert caught.value.sqlstate == "LT001", sql
+            # An update that keeps the org, an upsert that hits a row, and a delete pass.
+            await plain.execute("UPDATE loom.tenancy SET org = org WHERE org = 'held-org'")
+            await plain.execute(
+                "INSERT INTO loom.tenancy (org) VALUES ('held-org') "
+                "ON CONFLICT (org) DO UPDATE SET org = EXCLUDED.org"
+            )
+            await conn.execute(_HOLD, "gone-org")
+            await plain.execute("DELETE FROM loom.tenancy WHERE org = 'gone-org'")
         finally:
             await plain.close()
         assert await conn.fetchval("SELECT array_agg(org) FROM loom.tenancy") == ["held-org"]
@@ -627,13 +636,13 @@ async def test_an_unmarked_session_is_refused_a_tenancy_row_on_an_enforced_cell(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["recording", "partial", "open"])
+@pytest.mark.parametrize("state", ["recording", "later-recording", "partial", "open"])
 async def test_the_guard_passes_only_a_first_cell_still_recording(state: str) -> None:
     import asyncpg
 
     async with _cell(state, held=()) as (dsn, conn):
         await cell_triggers.ensure(conn)
-        assert await _org_triggers(conn) == set()  # created only in enforced
+        await conn.execute("DROP TRIGGER IF EXISTS tenancy_record ON loom.tenancy")
         await _create_guard_by_hand(conn)
         plain = await _unmarked(dsn)
         try:
