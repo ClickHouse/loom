@@ -1222,6 +1222,7 @@ export function Documents() {
             org={picked.org}
             collection={sharing}
             byName={byName}
+            truncated={collections.kept?.truncated ?? false}
             version={share.version}
             empty={emptyLibrary}
           />

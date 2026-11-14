@@ -5,20 +5,43 @@ import { Link } from "@clickhouse/click-ui/Link";
 import { listGrants, type CollectionEntry, type GrantEntry } from "../api";
 import { collectionTitle } from "../lib/collections";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/errorWords";
+import { errorLine } from "../lib/errorWords";
+import { displaySubject, isServiceSubject } from "../lib/format";
+import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useAbortableEffect } from "../lib/hooks";
 import { useStore } from "../lib/state";
 import { Skeleton } from "../components/Skeleton";
+import { IconButton } from "../components/IconButton";
 import { LoadingSkeleton } from "../components/ui";
 import { MembersDialog } from "../flows/MembersDialog";
+import { hiddenWhat } from "./LibraryHierarchy";
 
 /** How far up the tree a collection's grants reach it (docs/architecture/sharing.md). */
 const INHERIT_DEPTH = 8;
 
-/** The grants read on one collection of the way up: the one shown first, then its parents. */
+/** Grants read per page, and the pages read on one collection before the words say "or more". */
+const GRANTS_PAGE = 500;
+const GRANTS_PAGES = 20;
+
+/** The grants read on one collection of the way up: the one shown first, then its parents.
+ *  `cut`: more pages followed than were read. */
 export interface GrantsAt {
   namespace: string;
   rows: GrantEntry[];
+  cut?: boolean;
+}
+
+/** Every grant on `namespace`, page by page, up to `GRANTS_PAGES` pages. */
+async function grantsOn(org: string, namespace: string, signal: AbortSignal): Promise<GrantsAt> {
+  const rows: GrantEntry[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < GRANTS_PAGES; page++) {
+    const r = await listGrants({ org, namespace }, { limit: GRANTS_PAGE, cursor, signal });
+    rows.push(...(r.rows ?? []));
+    cursor = r.next_cursor ?? null;
+    if (!cursor) return { namespace, rows };
+  }
+  return { namespace, rows, cut: true };
 }
 
 /** What the header says about who can see a collection: one line naming them, and one
@@ -30,12 +53,18 @@ export interface WhoCanSee {
   onlyYou: boolean;
 }
 
-/** A grant's subject as a person reads it. */
+/** A grant's subject as a person reads it; a service account is an agent. */
 function subjectLabel(subject: string): string {
   if (subject.startsWith("group:")) return `group ${subject.slice(6)}`;
   if (subject.startsWith("agent:")) return `agent ${subject.slice(6)}`;
+  if (isServiceSubject(subject)) return displaySubject(subject);
   if (subject.startsWith("user:")) return subject.slice(5);
   return subject;
+}
+
+/** An agent's subject: one an end-user token signs in, or a service account. */
+function isAgentSubject(subject: string): boolean {
+  return subject.startsWith("agent:") || isServiceSubject(subject);
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -48,8 +77,9 @@ function joined(parts: string[]): string {
 }
 
 /** Who can see a collection, in words, from the active grants on it and on the parents the
- *  person can read. `me`: the person's spellings. `above`: a parent they cannot read, whose
- *  grants reach it unseen. `empty`: it holds no documents yet. */
+ *  person can read. `me`: the person's spellings. `above`: a parent missing from the list, in
+ *  words, whose grants reach it unseen. `empty`: it holds no documents yet. A read cut short
+ *  counts "or more" and concludes neither "Only you" nor no one else. */
 export function whoCanSee({
   grants,
   me,
@@ -74,6 +104,7 @@ export function whoCanSee({
       if (!from.has(key)) from.set(key, at.namespace);
     }
   }
+  const cut = grants.some((g) => g.cut);
   const shown = grants[0]?.namespace ?? "";
   const inherited = [...new Set([...from.values()].filter((ns) => ns !== shown))].map(titleOf);
   const subjects = [...from.keys()];
@@ -86,7 +117,7 @@ export function whoCanSee({
   if (others.includes("everyone")) {
     return { who: `Everyone in ${org}`, how: [...tail, shared].filter(Boolean).join(" · "), onlyYou: false };
   }
-  if (others.length === 0 && !above) {
+  if (others.length === 0 && !above && !cut) {
     return {
       who: subjects.length > 0 ? "Only you" : "No one is named on it",
       how: "Shared with no one else",
@@ -94,16 +125,20 @@ export function whoCanSee({
     };
   }
   const groups = others.filter((s) => s.startsWith("group:"));
-  const agents = others.filter((s) => s.startsWith("agent:"));
+  const agents = others.filter(isAgentSubject);
   const people = others.filter((s) => !groups.includes(s) && !agents.includes(s));
   const names = [...(subjects.includes("") ? ["You"] : []), ...[...groups, ...people, ...agents].map(subjectLabel)];
   const head = names.slice(0, 3);
   const more = names.length - head.length;
   // Named by no grant the person can read: the parent above says who.
   if (names.length === 0) {
-    return { who: `Everyone who can see ${above}`, how: shared, onlyYou: false };
+    return {
+      who: above ? `Everyone who can see ${above}` : "More people than are shown here",
+      how: shared,
+      onlyYou: false,
+    };
   }
-  const who = more > 0 ? `${head.join(", ")} and ${more} more` : joined(head);
+  const who = cut ? `${head.join(", ")} and more` : more > 0 ? `${head.join(", ")} and ${more} more` : joined(head);
   const counts = joined(
     [
       people.length > 0 ? plural(people.length, "person", "people") : "",
@@ -111,7 +146,8 @@ export function whoCanSee({
       agents.length > 0 ? plural(agents.length, "agent", "agents") : "",
     ].filter(Boolean),
   );
-  return { who, how: [counts, ...tail, shared].filter(Boolean).join(" · "), onlyYou: false };
+  const counted = cut && counts ? `${counts}, or more` : counts;
+  return { who, how: [counted, ...tail, shared].filter(Boolean).join(" · "), onlyYou: false };
 }
 
 /** The collection and the parents above it the person can read, nearest first, and the first
@@ -137,6 +173,7 @@ export function CollectionSharingLine({
   org,
   collection,
   byName,
+  truncated = false,
   version,
   empty = false,
 }: {
@@ -144,41 +181,47 @@ export function CollectionSharingLine({
   collection: CollectionEntry;
   /** Every collection the person can read, by name: the parents whose grants reach it. */
   byName: Map<string, CollectionEntry>;
+  /** The list of collections was cut short: a parent missing from it may be past its end. */
+  truncated?: boolean;
   /** Bumped as the members dialog closes: the grants are read again. */
   version: number;
   /** It holds no documents yet. */
   empty?: boolean;
 }) {
   const whoami = useStore((s) => s.whoami);
-  const [state, setState] = useState<{ grants: GrantsAt[] } | { error: unknown } | null>(null);
-  const [retries, setRetries] = useState(0);
   const { chain, above } = wayUp(collection, byName);
   const chainKey = chain.join("/");
+  const key = `${org} ${chainKey}`;
+  // The last answer, by the places it was read for: one for another collection reads as
+  // loading, so its words never show under this one; a read again of these places keeps it.
+  const [state, setState] = useState<{ key: string; grants: GrantsAt[] } | { key: string; error: unknown } | null>(
+    null,
+  );
+  const [reading, setReading] = useState(false);
+  const [retries, setRetries] = useState(0);
   useAbortableEffect(
     (signal, live) => {
       if (collection.personal) return;
-      setState(null);
-      Promise.all(
-        chainKey
-          .split("/")
-          .map((namespace) =>
-            listGrants({ org, namespace }, { signal }).then((r) => ({ namespace, rows: r.rows ?? [] })),
-          ),
-      )
+      setReading(true);
+      Promise.all(chainKey.split("/").map((namespace) => grantsOn(org, namespace, signal)))
         .then((grants) => {
-          if (live()) setState({ grants });
+          if (live()) setState({ key, grants });
         })
         .catch((error) => {
-          if (live()) setState({ error });
+          if (live()) setState({ key, error });
+        })
+        .finally(() => {
+          if (live()) setReading(false);
         });
     },
-    [org, chainKey, collection.personal, version, retries],
+    [org, chainKey, key, collection.personal, version, retries],
   );
 
   if (collection.personal) {
     return <Words icon="lock" who="Only you" how="Your own files: no one else's grants reach them" />;
   }
-  if (state === null) {
+  const answer = state?.key === key ? state : null;
+  if (answer === null) {
     return (
       <Line>
         <LoadingSkeleton label="Loading who can see it">
@@ -187,15 +230,15 @@ export function CollectionSharingLine({
       </Line>
     );
   }
-  if ("error" in state) {
-    const refused = state.error instanceof ApiError && state.error.status === 403;
+  if ("error" in answer) {
+    const refused = answer.error instanceof ApiError && answer.error.status === 403;
     return (
-      <Line>
+      <Line busy={reading}>
         <Icon name="warning" size="sm" aria-hidden="true" className="shrink-0" />
         <span role="alert" className="min-w-0 break-words">
           {refused
-            ? `Who can see it isn't shown to you: ${humanizeError(state.error, { bare: true, read: true })}`
-            : `Couldn't read who can see it: ${humanizeError(state.error, { bare: true, read: true })}`}
+            ? `Who can see it isn't shown to you: ${errorLine(answer.error, { read: true })}`
+            : `Couldn't read who can see it: ${errorLine(answer.error, { read: true })}`}
         </span>
         {!refused && (
           <Link component="button" type="button" size="sm" onClick={() => setRetries((n) => n + 1)}>
@@ -210,28 +253,33 @@ export function CollectionSharingLine({
     return c ? collectionTitle(c) : ns;
   };
   const words = whoCanSee({
-    grants: state.grants,
+    grants: answer.grants,
     me: new Set(whoami?.subject ? [whoami.subject] : []),
     org,
     titleOf,
-    above: above ? titleOf(above) : null,
+    above: above ? hiddenWhat(truncated) : null,
     empty,
   });
-  return <Words icon={words.onlyYou ? "lock" : "users"} who={words.who} how={words.how} />;
+  return <Words icon={words.onlyYou ? "lock" : "users"} who={words.who} how={words.how} busy={reading} />;
 }
 
-function Line({ children }: { children: ReactNode }) {
+function Line({ children, busy = false }: { children: ReactNode; busy?: boolean }) {
   return (
-    // Its words wrap in its own column, so the figures beside it keep their line.
-    <section aria-label="Who can see it" className="flex min-w-0 flex-1 basis-64 items-center gap-1.5">
+    // Its words wrap in its own column, so the figures beside it keep their line. A read
+    // again keeps them, marked busy.
+    <section
+      aria-label="Who can see it"
+      aria-busy={busy || undefined}
+      className="flex min-w-0 flex-1 basis-64 items-center gap-1.5"
+    >
       {children}
     </section>
   );
 }
 
-function Words({ icon, who, how }: { icon: "lock" | "users"; who: string; how: string }) {
+function Words({ icon, who, how, busy }: { icon: "lock" | "users"; who: string; how: string; busy?: boolean }) {
   return (
-    <Line>
+    <Line busy={busy}>
       <Icon name={icon} size="sm" aria-hidden="true" className="shrink-0" />
       <span className="min-w-0 break-words">
         <span className="text-text">{who}</span>
@@ -242,20 +290,15 @@ function Words({ icon, who, how }: { icon: "lock" | "users"; who: string; how: s
 }
 
 /** **Share** for an admin of the collection shown, **See who** for anyone else: both open
- *  the members dialog, which gives a non-admin its list without the controls. Its words
- *  only where there is room; a phone shows the icon. */
+ *  the members dialog, which gives a non-admin its list without the controls. On a phone,
+ *  where the header has no room for another label, its icon alone with a tooltip. */
 export function ShareButton({ collection, onOpen }: { collection: CollectionEntry; onOpen: () => void }) {
+  const phone = useMedia(PHONE_QUERY);
   const label = collection.role === "admin" ? "Share" : "See who";
+  if (phone) return <IconButton icon="users" label={label} onClick={onOpen} />;
   return (
-    <Button
-      type="secondary"
-      htmlType="button"
-      iconLeft="users"
-      aria-label={label}
-      className="shrink-0"
-      onClick={onOpen}
-    >
-      <span className="hidden sm:inline">{label}</span>
+    <Button type="secondary" htmlType="button" iconLeft="users" onClick={onOpen}>
+      {label}
     </Button>
   );
 }
@@ -279,7 +322,8 @@ export function useShareDialog(org: string, current: CollectionEntry | null, pla
       }}
       org={org}
       namespace={shown.namespace}
-      label={collectionTitle(shown)}
+      // A title, with the address beneath it; an untitled collection is named by its address once.
+      label={shown.title?.trim() || undefined}
       admin={shown.role === "admin"}
     />
   );

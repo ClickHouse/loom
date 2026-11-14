@@ -5,8 +5,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
 import type { CollectionEntry, GrantEntry } from "../api";
 import { ApiError } from "../lib/errors";
 import { useStore } from "../lib/state";
+import { PHONE_QUERY } from "../lib/useMedia";
 import { axeViolations } from "../test/axe";
-import { CollectionSharingLine, ShareButton, whoCanSee } from "./CollectionSharing";
+import { CollectionSharingLine, type GrantsAt, ShareButton, whoCanSee } from "./CollectionSharing";
 
 const api = vi.hoisted(() => ({ listGrants: vi.fn() }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
@@ -30,7 +31,7 @@ const entry = (namespace: string, over: Partial<CollectionEntry> = {}): Collecti
 });
 
 const ME = new Set(["ada"]);
-const words = (grants: { namespace: string; rows: GrantEntry[] }[], over = {}) =>
+const words = (grants: GrantsAt[], over = {}) =>
   whoCanSee({ grants, me: ME, org: "acme", titleOf: (ns) => ns.replace("col-", ""), ...over });
 
 describe("who can see a collection, in words", () => {
@@ -87,6 +88,20 @@ describe("who can see a collection, in words", () => {
     expect(w.how).toBe("1 person · Anything added here is shared with them");
   });
 
+  it("counts a service account as an agent and names it as one", () => {
+    const w = words([{ namespace: "col-a", rows: [grant("ada"), grant("sa:reporter-a1b2c3"), grant("bob")] }]);
+    expect(w.who).toBe("You, bob and Reporter bot");
+    expect(w.how).toBe("1 person and 1 agent");
+  });
+
+  it("concludes nothing from a read cut short: no Only you, and counts or more", () => {
+    const cut = words([{ namespace: "col-a", rows: [grant("ada")], cut: true }]);
+    expect(cut.onlyYou).toBe(false);
+    expect(cut.who).toBe("You and more");
+    const some = words([{ namespace: "col-a", rows: [grant("ada"), grant("bob")], cut: true }]);
+    expect(some).toMatchObject({ who: "You, bob and more", how: "1 person, or more" });
+  });
+
   it("names the parent when no grant the person reads names anyone", () => {
     expect(words([{ namespace: "col-a", rows: [] }], { above: "Hidden" }).who).toBe("Everyone who can see Hidden");
   });
@@ -128,9 +143,69 @@ describe("CollectionSharingLine", () => {
     );
     expect(await screen.findByText("You and group eng")).toBeInTheDocument();
     expect(line()).toHaveTextContent(
-      "You and group eng · 1 group · Inherited from Engineering · Also everyone who can see col-secret",
+      "You and group eng · 1 group · Inherited from Engineering · Also everyone who can see a collection you can't open",
     );
+    expect(line()).not.toHaveTextContent("col-secret");
     expect(api.listGrants.mock.calls.map((c) => c[0].namespace)).toEqual(["col-a", "col-top"]);
+  });
+
+  it("says a parent missing from a list cut short is not listed here", async () => {
+    const c = entry("col-a", { parent: "col-later" });
+    api.listGrants.mockResolvedValue({ rows: [grant("ada")] });
+    render(
+      <CollectionSharingLine org="acme" collection={c} byName={new Map([[c.namespace, c]])} truncated version={0} />,
+    );
+    expect(await screen.findByText(/Also everyone who can see a collection not listed here/)).toBeInTheDocument();
+  });
+
+  it("reads every page of the grants, so the oldest (an early everyone) still counts", async () => {
+    api.listGrants.mockImplementation(async (_id: unknown, opts: { cursor?: string | null }) =>
+      opts.cursor
+        ? { rows: [grant("everyone")], next_cursor: null, truncated: false }
+        : { rows: [grant("ada"), grant("bob")], next_cursor: "p2", truncated: true },
+    );
+    show(entry("col-a"));
+    expect(await screen.findByText("Everyone in acme")).toBeInTheDocument();
+    expect(api.listGrants.mock.calls.map((c) => c[1].cursor ?? null)).toEqual([null, "p2"]);
+    expect(api.listGrants.mock.calls[0][1].limit).toBe(500);
+  });
+
+  it("stops after twenty pages and says or more", async () => {
+    let n = 0;
+    api.listGrants.mockImplementation(async () => ({ rows: [grant(`p${n++}`)], next_cursor: "more", truncated: true }));
+    show(entry("col-a"));
+    expect(await screen.findByText(/and more/)).toBeInTheDocument();
+    expect(line()).toHaveTextContent(", or more");
+    expect(api.listGrants).toHaveBeenCalledTimes(20);
+  });
+
+  it("never shows one collection's words under another while the other is read", async () => {
+    const open = entry("col-open");
+    const closed = entry("col-closed");
+    const byName = new Map([
+      [open.namespace, open],
+      [closed.namespace, closed],
+    ]);
+    api.listGrants.mockResolvedValueOnce({ rows: [grant("everyone")] });
+    const { rerender } = render(<CollectionSharingLine org="acme" collection={open} byName={byName} version={0} />);
+    expect(await screen.findByText("Everyone in acme")).toBeInTheDocument();
+    api.listGrants.mockReturnValue(new Promise(() => {}));
+    rerender(<CollectionSharingLine org="acme" collection={closed} byName={byName} version={0} />);
+    // The first paint for the new one, before its read starts, is the placeholder.
+    expect(screen.queryByText("Everyone in acme")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading who can see it" })).toBeInTheDocument();
+  });
+
+  it("keeps the words, marked busy, while the same collection is read again", async () => {
+    api.listGrants.mockResolvedValueOnce({ rows: [grant("ada"), grant("bob")] });
+    const c = entry("col-a");
+    const byName = new Map([[c.namespace, c]]);
+    const { rerender } = render(<CollectionSharingLine org="acme" collection={c} byName={byName} version={0} />);
+    expect(await screen.findByText("You and bob")).toBeInTheDocument();
+    api.listGrants.mockReturnValue(new Promise(() => {}));
+    rerender(<CollectionSharingLine org="acme" collection={c} byName={byName} version={1} />);
+    await waitFor(() => expect(line()).toHaveAttribute("aria-busy", "true"));
+    expect(screen.getByText("You and bob")).toBeInTheDocument();
   });
 
   it("says My files are the person's alone, with no Share and no read", async () => {
@@ -147,11 +222,13 @@ describe("CollectionSharingLine", () => {
     expect(await axeViolations(container)).toEqual([]);
   });
 
-  it("says a failed read failed, with Retry, which reads again", async () => {
-    api.listGrants.mockRejectedValueOnce(new ApiError({ status: 503, code: "UNAVAILABLE", message: "down" }));
+  it("says a failed read failed, with its request id and Retry, which reads again", async () => {
+    api.listGrants.mockRejectedValueOnce(
+      new ApiError({ status: 503, code: "UNAVAILABLE", message: "down", requestId: "req-42" }),
+    );
     api.listGrants.mockResolvedValue({ rows: [grant("ada"), grant("bob")] });
     const { container } = show(entry("col-a"));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/^Couldn't read who can see it: /);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/^Couldn't read who can see it: .*req-42/);
     expect(await axeViolations(container)).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("You and bob")).toBeInTheDocument();
@@ -178,7 +255,23 @@ describe("CollectionSharingLine", () => {
 });
 
 describe("ShareButton", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("is its icon alone with the label as its tooltip on a phone", async () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({
+      matches: q === PHONE_QUERY,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    render(<ShareButton collection={entry("col-a")} onOpen={() => {}} />);
+    const button = screen.getByRole("button", { name: "Share" });
+    expect(button).not.toHaveTextContent("Share");
+    fireEvent.focus(button);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Share");
+  });
 
   it("is Share for an admin and See who for anyone else, each opening the dialog", () => {
     const onOpen = vi.fn();

@@ -466,7 +466,9 @@ describe("the Library on a collection", () => {
     expect(line).toHaveTextContent("bob · 1 person");
     const reads = api.listGrants.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    // Untitled: named by its address once, with no second copy of it beneath.
     const dialog = await screen.findByRole("dialog", { name: "Members of col-q3" });
+    expect(within(dialog).queryByText("col-q3")).not.toBeInTheDocument();
     await settle();
     expect(await axeViolations(dialog)).toEqual([]);
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));

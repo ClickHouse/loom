@@ -192,7 +192,7 @@ export function PlaceTitleLink({
 const PATH_TITLE = "inline-block max-w-48 truncate align-bottom";
 
 /** A parent missing from the list, in words: past the list's end, or one the caller cannot read. */
-function hiddenWhat(truncated: boolean): string {
+export function hiddenWhat(truncated: boolean): string {
   return truncated ? "a collection not listed here" : "a collection you can't open";
 }
 
