@@ -26,8 +26,9 @@ first:
 python3 -m venv .venv && . .venv/bin/activate && pip install clickhouse-loom
 ```
 
-The `docker compose` commands in the labs run in the stack's containers and name its
-install directory as `<dir>`: `~/.loom` on a laptop and `/workspaces/.loom` in a codespace.
+The `docker compose` commands in the labs run in the host's terminal, act on the stack's
+containers, and name its install directory as `<dir>`: `~/.loom` on a laptop and
+`/workspaces/.loom` in a codespace.
 
 ## Lab 1: an agent that remembers
 
@@ -47,13 +48,13 @@ Exercises:
 
 Ingest a few documents with `loom demo`, which also prints the top search hits for a
 question ([ask a question about a document](../getting-started/quickstart.md#optional-ask-a-question-about-a-document)).
-The path is inside the container, which holds these docs under `/app/docs/`; a file of
-your own (`notes.md` in the current directory) is copied in first:
+The path is inside the container, which holds these docs under `/app/docs/`, and it names
+the document, so a file of your own is copied in under its own name first:
 
 ```bash
 docker compose --project-directory <dir> exec loom loom demo --file /app/docs/getting-started/quickstart.md --question "How do I get a token?"
-docker compose --project-directory <dir> cp notes.md loom:/tmp/notes.md
-docker compose --project-directory <dir> exec loom loom demo --file /tmp/notes.md --question "<a question the notes answer>"
+docker compose --project-directory <dir> cp <file> loom:/tmp/<file>
+docker compose --project-directory <dir> exec loom loom demo --file /tmp/<file> --question "<a question the file answers>"
 ```
 
 Then search the namespace's documents with `knowledge.search` over HTTP (with no
