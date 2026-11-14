@@ -68,7 +68,7 @@ const SPECS = [
   {
     name: "loom_recall",
     description:
-      "Search stored memories by meaning. Returns the closest facts with a similarity score; call before answering anything the user may have told you earlier.",
+      "Search stored memories by meaning. Returns the closest facts with a similarity score; call before answering anything the user may have told you earlier. A result too long to return leaves out its lowest-ranked memories and counts them in omitted.",
     parameters: {
       type: "object",
       properties: {
@@ -219,13 +219,25 @@ export class AgentTools {
     const out = await this.run(spec.name, checkArgs(spec, args));
     let text = typeof out === "string" ? out : JSON.stringify(out);
     const recalled = out as { memories?: unknown[]; omitted?: number };
-    // Recalled memories over the cap: drop the lowest ranked whole, so the JSON stays valid.
-    while (Array.isArray(recalled.memories) && recalled.memories.length > 1 && text.length > this.maxResultChars) {
-      recalled.memories.pop();
-      recalled.omitted = (recalled.omitted ?? 0) + 1;
-      text = JSON.stringify(recalled);
+    if (Array.isArray(recalled.memories) && recalled.memories.length > 1 && text.length > this.maxResultChars) {
+      text = this.fitMemories(recalled as { memories: unknown[]; omitted?: number });
     }
     return text.length > this.maxResultChars ? `${text.slice(0, this.maxResultChars)}…[truncated]` : text;
+  }
+
+  /** Recalled memories over the cap: keep the best ranked whole, so the JSON stays valid. */
+  private fitMemories(out: { memories: unknown[]; omitted?: number }): string {
+    const { memories } = out;
+    let used = JSON.stringify({ ...out, memories: [], omitted: memories.length }).length;
+    let keep = 0;
+    for (const memory of memories) {
+      used += JSON.stringify(memory).length + (keep ? 1 : 0); // "," between items
+      if (keep && used > this.maxResultChars) break;
+      keep += 1;
+    }
+    out.omitted = memories.length - keep;
+    memories.splice(keep);
+    return JSON.stringify(out);
   }
 
   private async run(name: ToolName, a: Args): Promise<unknown> {

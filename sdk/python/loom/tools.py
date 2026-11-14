@@ -19,6 +19,7 @@ carries the same six with the same schemas.
 # ruff: noqa: E501  (tool descriptions are prose the model reads)
 from __future__ import annotations
 
+import functools
 import json
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
@@ -63,7 +64,8 @@ LOOM_TOOL_SPECS: tuple[dict[str, Any], ...] = (
         "name": "loom_recall",
         "description": (
             "Search stored memories by meaning. Returns the closest facts with a similarity score; "
-            "call before answering anything the user may have told you earlier."
+            "call before answering anything the user may have told you earlier. A result too long "
+            "to return leaves out its lowest-ranked memories and counts them in omitted."
         ),
         "parameters": {
             "type": "object",
@@ -228,14 +230,25 @@ class AgentTools:
         out = await self._run(name, a)
         text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, default=str)
         memories = out.get("memories") if isinstance(out, dict) else None
-        # Recalled memories over the cap: drop the lowest ranked whole, so the JSON stays valid.
-        while memories and len(memories) > 1 and len(text) > self.max_result_chars:
-            memories.pop()
-            out["omitted"] = out.get("omitted", 0) + 1
-            text = json.dumps(out, ensure_ascii=False, default=str)
+        if memories and len(memories) > 1 and len(text) > self.max_result_chars:
+            text = self._fit_memories(out, memories)
         if len(text) > self.max_result_chars:
             return text[: self.max_result_chars] + "…[truncated]"
         return text
+
+    def _fit_memories(self, out: dict[str, Any], memories: list[Any]) -> str:
+        """Recalled memories over the cap: keep the best ranked whole, so the JSON stays valid."""
+        dump = functools.partial(json.dumps, ensure_ascii=False, default=str)
+        used = len(dump({**out, "memories": [], "omitted": len(memories)}))
+        keep = 0
+        for memory in memories:
+            used += len(dump(memory)) + (2 if keep else 0)  # ", " between items
+            if keep and used > self.max_result_chars:
+                break
+            keep += 1
+        out["omitted"] = len(memories) - keep
+        del memories[keep:]
+        return dump(out)
 
     async def _call(self, op: str, body: Mapping[str, Any]) -> dict[str, Any]:
         return await self.agent.call(
@@ -264,7 +277,7 @@ class AgentTools:
             # and drops each hit's explanation.
             body = {"query": _str(a, "query"), "bodies": "full", "explain": False}
             if a.get("top_k") not in (None, ""):  # unset: the server's default
-                body["top_k"] = _int(a, "top_k")
+                body["top_k"] = _bounded("loom_recall", a, "top_k")
             r = await call("memory.search", body)
             return {
                 "memories": [
@@ -294,7 +307,7 @@ class AgentTools:
             body = {"blob_key": _str(a, "blob_key")}
             for k in ("pattern", "offset", "limit"):
                 if a.get(k) not in (None, ""):
-                    body[k] = a[k] if k == "pattern" else _int(a, k)
+                    body[k] = a[k] if k == "pattern" else _bounded("loom_fetch", a, k)
             r = await call("context.fetch", body)
             if not r.get("found"):
                 return f"no parked text under blob_key={body['blob_key']} (expired or never stored)"
@@ -319,6 +332,18 @@ def _parse_args(args: str | Mapping[str, Any] | None) -> dict[str, Any]:
             raise LoomError("tool arguments are not valid JSON") from e
         return dict(parsed) if isinstance(parsed, Mapping) else {}
     return dict(args)
+
+
+def _bounded(tool: str, a: Mapping[str, Any], key: str) -> int:
+    """``_int`` within the schema's minimum and maximum, as the TypeScript check."""
+    n = _int(a, key)
+    (spec,) = [s for s in LOOM_TOOL_SPECS if s["name"] == tool]
+    prop = spec["parameters"]["properties"][key]
+    lo, hi = prop.get("minimum"), prop.get("maximum")
+    if (lo is not None and n < lo) or (hi is not None and n > hi):
+        shown = f"{'' if lo is None else lo}..{'' if hi is None else hi}"
+        raise LoomError(f"tool argument {key} must be within {shown}, got {n}")
+    return n
 
 
 def _int(a: Mapping[str, Any], key: str) -> int:

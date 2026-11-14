@@ -181,7 +181,8 @@ The tools are Loom's `AgentTools`
 and `loom_fetch` (`context.offload`, `context.fetch`) and `loom_note`
 (`working_memory.append`), with the same schemas and results in both SDKs. `user_id`,
 `session_id` and `run_id` bind every call to one scope; `only=[...]` keeps a subset and
-`max_result_chars` (8,000 by default) caps what a call returns. The schemas have optional
+`max_result_chars` (8,000 by default) caps what a call returns (`loom_recall` leaves out
+its lowest-ranked memories whole to fit, counted in `omitted`). The schemas have optional
 parameters, so the tools are not strict. A call Loom refuses (a missing argument, a
 rejected value, a server error) returns `<tool> failed: <message>` to the model, which can
 correct the call; the run goes on.
@@ -317,7 +318,7 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 ```
 
 `user_id`, `session_id` and `run_id` bind every call to one scope; `only=[...]` keeps a
-subset and `max_result_chars` (8,000 by default) caps what a call returns. A call Loom
+subset and `max_result_chars` (8,000 by default) caps what a call returns, as above. A call Loom
 refuses raises Pydantic AI's `ToolFailed` with `<tool> failed: <message>`: the model reads
 it as a failed tool result and the run goes on, where any other exception would fail the
 run. The toolset's tools await the Loom agent's calls, so it takes a `loom.Agent` and
