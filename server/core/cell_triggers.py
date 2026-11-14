@@ -227,14 +227,16 @@ async def ensure(conn: Any) -> None:
                 log.warning(
                     "cell triggers: loom.%s is partitioned: unsupported, unguarded", r["relname"]
                 )
-        for table, name in [(r["relname"], n) for r, names in _planned(tables) for n in names]:
-            row = present.get((table, name))
-            if row is None:
-                statements.setdefault(table, []).append(_create(f"loom.{_ident(table)}", name))
-            elif row["enabled"] != "O":
-                statements.setdefault(table, []).append(
-                    f"ALTER TABLE loom.{_ident(table)} ENABLE TRIGGER {name}"
-                )
+        for r, names in _planned(tables):
+            table = r["relname"]
+            for name in names:
+                row = present.get((table, name))
+                if row is None:
+                    statements.setdefault(table, []).append(_create(f"loom.{_ident(table)}", name))
+                elif row["enabled"] != "O":
+                    statements.setdefault(table, []).append(
+                        f"ALTER TABLE loom.{_ident(table)} ENABLE TRIGGER {name}"
+                    )
     for table, sqls in statements.items():
         await _run_ddl(conn, table, sqls)
 

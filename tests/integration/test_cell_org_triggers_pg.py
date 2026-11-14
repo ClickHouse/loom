@@ -659,7 +659,7 @@ async def test_the_guard_passes_only_a_first_cell_still_recording(state: str) ->
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["recording", "enforced"])
-async def test_a_dropped_guard_function_is_named_in_every_state_and_fails_the_boot(
+async def test_a_dropped_guard_function_is_named_recording_or_not_and_fails_the_boot(
     state: str,
 ) -> None:
     """As a dropped org function: `ensure` cannot create the guard and fails the boot, and

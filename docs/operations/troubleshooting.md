@@ -388,7 +388,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 - **Cause:** the function was dropped by hand after its migration ran (011 for the org
   triggers, 012 for the `loom.tenancy` guard; a `DROP FUNCTION … CASCADE` drops its triggers
   with it). The migration ledger already lists the file, so no boot creates the function
-  again, and until it is back, unchecked writers are not refused.
+  again, and until it is back, unchecked writers are not refused. A `loom doctor` of a new
+  release that names the function absent before the release's first migrating boot needs no
+  fix: that boot runs the file.
 - **Fix:** run the migration file (`schemas/pg_migrations/011_tenancy_triggers.sql` or
   `012_tenancy_guard.sql`) with `psql` as the role that owns schema `loom`'s tables, then
   restart one pod with `LOOM_BOOT_MIGRATE` on: its boot creates the triggers.
