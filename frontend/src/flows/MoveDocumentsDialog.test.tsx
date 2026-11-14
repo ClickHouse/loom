@@ -83,7 +83,6 @@ describe("MoveDocumentsDialog", () => {
   it("moves to the place picked and says whose sharing they take", async () => {
     api.moveKnowledge.mockResolvedValue({
       found: true,
-      to_namespace: "col-storage",
       results: [
         { source_uri: "doc://a.md", moved: true, reason: "" },
         { source_uri: "doc://b.md", moved: true, reason: "" },
@@ -115,7 +114,7 @@ describe("MoveDocumentsDialog", () => {
   });
 
   it("stays open with the reason when the place cannot take them", async () => {
-    api.moveKnowledge.mockResolvedValue({ found: false, to_namespace: "", results: [] });
+    api.moveKnowledge.mockResolvedValue({ found: false, results: [] });
     const { onMoved, onClose } = dialog();
     await pick("Engineering");
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
@@ -128,7 +127,6 @@ describe("MoveDocumentsDialog", () => {
   it("words a failed call and keeps the pick", async () => {
     api.moveKnowledge.mockResolvedValue({
       found: true,
-      to_namespace: "col-eng",
       results: [],
       error: new Error("boom"),
     });
@@ -143,7 +141,6 @@ describe("MoveDocumentsDialog", () => {
   it("says what moved before a later call failed", async () => {
     api.moveKnowledge.mockResolvedValue({
       found: true,
-      to_namespace: "col-eng",
       results: [{ source_uri: "doc://a.md", moved: true, reason: "" }],
       error: new Error("boom"),
     });
@@ -157,7 +154,7 @@ describe("MoveDocumentsDialog", () => {
     expect(onClose).not.toHaveBeenCalled();
     // Move again sends only what is left.
     expect(screen.getByRole("dialog", { name: "Move 1 document" })).toBeInTheDocument();
-    api.moveKnowledge.mockResolvedValue({ found: true, to_namespace: "col-eng", results: [] });
+    api.moveKnowledge.mockResolvedValue({ found: true, results: [] });
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     expect(api.moveKnowledge).toHaveBeenLastCalledWith(
       { org: "acme", namespace: "col-ingest" },
@@ -184,7 +181,7 @@ describe("MoveDocumentsDialog", () => {
     unmount();
     expect(signal?.aborted).toBe(true);
     // The call in flight still answers: the list is read again, nothing else happens.
-    answer({ found: true, to_namespace: "col-eng", results: [{ source_uri: "doc://a.md", moved: true, reason: "" }] });
+    answer({ found: true, results: [{ source_uri: "doc://a.md", moved: true, reason: "" }] });
     await waitFor(() => expect(onMoved).toHaveBeenCalledWith(["doc://a.md"]));
     expect(toast).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -205,7 +202,6 @@ describe("MoveDocumentsDialog", () => {
   it("says what moved before the place closed partway through", async () => {
     api.moveKnowledge.mockResolvedValue({
       found: false,
-      to_namespace: "col-eng",
       results: [{ source_uri: "doc://a.md", moved: true, reason: "" }],
     });
     const { onMoved, onClose } = dialog();

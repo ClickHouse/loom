@@ -70,6 +70,9 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         # What happened, in order: claims taken and given up, take-backs started and done.
         "events": [],
         "forgotten": [],
+        # The originals a row in the target still needs, and those a move deleted there.
+        "needed": [],
+        "dropped": [],
         # When the source's text was written where it is, by its chunks; None: none.
         "arrived": None,
         "forget_wait_s": 0.0,
@@ -108,9 +111,15 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         state["ledger_reads"] += 1
         return state["ledger"] if state["ledger_reads"] == 1 else state["ledger_later"]
 
-    async def originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
+    async def originals(doc: DocumentRow, dst: str) -> tuple[dict[str, Any], list[str]]:
         state["originals"].append(doc.source_uri)
-        return {}
+        return {}, ["sha-stored"]
+
+    async def needed(org: str, ns: str, shas: list[str]) -> set[str]:
+        return set(state["needed"])
+
+    async def drop(org: str, ns: str, shas: list[str]) -> None:
+        state["dropped"].extend(shas)
 
     async def copy(doc: DocumentRow, dst: str, there: Any, originals: Any) -> move._Copy:
         failure = state["fail"].get(doc.source_uri)
@@ -150,6 +159,8 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(move.blobs, "ch_now_s", now)
     monkeypatch.setattr(move.ledger_reads, "unfinished_since", ledger)
     monkeypatch.setattr(move, "_store_originals", originals)
+    monkeypatch.setattr(move.blobs, "needed", needed)
+    monkeypatch.setattr(move.blobs, "delete", drop)
     monkeypatch.setattr(move, "_copy", copy)
     monkeypatch.setattr(move, "_delete_source", delete)
     monkeypatch.setattr(move, "_head_is", head_is)
@@ -468,6 +479,8 @@ def originals(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     state: dict[str, Any] = {"after": None, "put": [], "located": 0}
 
     async def locate(org: str, ns: str, sha: str) -> Any:
+        if ns == "dst":
+            return None  # the target holds no row of it yet
         state["located"] += 1
         return blobs.Stored(5, "") if state["located"] == 1 else state["after"]
 
@@ -491,14 +504,14 @@ async def test_an_original_moved_to_the_bucket_meanwhile_is_read_from_there(
     originals: dict[str, Any],
 ) -> None:
     originals["after"] = blobs.Stored(5, "s3://bucket/key")
-    assert await move._store_originals(_doc("src", blob_path="sha"), "dst") == {}
+    assert await move._store_originals(_doc("src", blob_path="sha"), "dst") == ({}, ["sha"])
     assert originals["put"] == [("dst", b"bytes")]
 
 
 async def test_an_original_swept_meanwhile_is_cleared_from_the_copy(
     originals: dict[str, Any],
 ) -> None:
-    cleared = await move._store_originals(_doc("src", blob_path="sha"), "dst")
+    cleared, _ = await move._store_originals(_doc("src", blob_path="sha"), "dst")
     assert cleared == documents_repo.NO_ORIGINAL and originals["put"] == []
 
 
@@ -731,3 +744,27 @@ async def test_an_erasure_that_finished_after_the_document_arrived_still_counts(
     finished = datetime.fromtimestamp(STARTED - 3600, UTC).replace(tzinfo=None)
     store["ledger"] = [_erasure("namespace", "src", state="completed", completed_at=finished)]
     assert _answers(await _run()) == [(URI, False, "erased")]
+
+
+async def test_an_erased_move_deletes_the_originals_it_stored_where_it_went(
+    store: dict[str, Any],
+) -> None:
+    # An erasure registered after the first ledger read may have finished its originals
+    # step before this call stored them: they go with the erased answer.
+    store["ledger_later"] = [_erasure("namespace", "dst")]
+    assert _answers(await _run()) == [(URI, False, "erased")]
+    assert store["dropped"] == ["sha-stored"]
+
+
+async def test_an_erased_move_keeps_an_original_another_row_there_needs(
+    store: dict[str, Any],
+) -> None:
+    store["ledger_later"] = [_erasure("namespace", "dst")]
+    store["needed"] = ["sha-stored"]
+    assert _answers(await _run()) == [(URI, False, "erased")]
+    assert store["dropped"] == []
+
+
+async def test_a_moved_document_keeps_the_originals_it_stored(store: dict[str, Any]) -> None:
+    assert _answers(await _run()) == [(URI, True, "")]
+    assert store["dropped"] == []
