@@ -755,11 +755,10 @@ schema. These rules keep that safe. The operator procedure is in
 
     On N, each namespace erasure step reads the registry, which keeps every mirror the
     named namespaces have had, so every run of the step, a resume's or a replay's
-    included, covers them: it runs over the named namespaces in the erasure's mode,
-    then over the mirrors as a purge, or once over both under a purge and for a
-    Postgres or org-wide step. The census counts every row a mirror still holds. The
-    last step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a live one
-    keeps the name in use. N-1 runs no mirror pass and counts no registry row; this
+    included, covers them: a scope that holds a mirror is erased as a purge, in one pass
+    over the named namespaces and their mirrors, and the census counts it the same way.
+    The last step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a live
+    one keeps the name in use. N-1 runs no mirror pass and counts no registry row; this
     build writes no mirror, so N-1 meets an empty registry.
     `tests/unit/test_knowledge_mirrors.py` and the mirrored cases in
     `tests/unit/test_knowledge_sources.py` and

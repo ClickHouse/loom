@@ -512,11 +512,6 @@ CODE_INDEX_STEP_ONLY_TABLES: tuple[str, ...] = (
     "loom.code_unit_signal",
 )
 
-# The substrates a namespace scope counts across the whole org (no namespace column),
-# and the steps that erase them: a pass over more names finds the same rows.
-ORG_WIDE_TABLES = frozenset(s.table for s in _CENSUS if s.ns_pred == "1")
-ORG_WIDE_STEPS = frozenset(s.ns_step for s in _CENSUS if s.ns_pred == "1")
-
 STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "entity_canonical_map.tombstone": ("loom.entity_canonical_map",),
     "agent_events.scrub": ("loom.agent_events",),

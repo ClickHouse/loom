@@ -349,7 +349,7 @@ def _require_served(src: KnowledgeSource) -> None:
     if src.access != "namespace":
         raise ValidationError(
             f"source {src.name!r} is mirrored, which this server does not serve; "
-            "use a later version",
+            "upgrade Loom to manage it",
             code="BAD_KIND",
         )
 

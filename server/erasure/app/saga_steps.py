@@ -15,6 +15,7 @@ from typing import Any
 from server.auth.grant_claims import account_change, collections_change, group_change
 from server.code.app.index.retire import code_tables_keyed_by_namespace, refresh_code_views
 from server.core import grant_cache
+from server.core.ch import sequential_reads
 from server.core.errors import caller_text
 from server.core.naming import is_mirror_name
 from server.core.principals import personal_name
@@ -25,7 +26,7 @@ from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
-from server.erasure.store.mutations import namespaces_of, purge_mode, purge_scope
+from server.erasure.store.mutations import namespaces_of, purge_scope
 from server.knowledge.app import mirrors as knowledge_mirrors
 from server.knowledge.app.sources import retire_sources_of
 from server.memory.app.code_links import queue_lease
@@ -195,28 +196,37 @@ async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
 
 
 async def _mirrors_of(org: str, namespace: _NS, *, ch: _CHClient | None = None) -> dict[str, str]:
-    """Every mirror the named namespaces have had; a mirror has none of its own."""
+    """Every mirror the named namespaces have had, read from every replica's writes; a
+    mirror has none of its own."""
     named = [ns for ns in namespaces_of(namespace) if not is_mirror_name(ns)]
-    return await knowledge_mirrors.mirrors_of(org, named, ch=ch)
+    with sequential_reads():
+        return await knowledge_mirrors.mirrors_of(org, named, ch=ch)
+
+
+async def _mirror_scope(
+    org: str, namespace: _NS, *, ch: _CHClient | None = None
+) -> list[str] | None:
+    """The scope with its namespaces' mirrors, or None when it holds no mirror."""
+    names = namespaces_of(namespace)
+    mirrors = list(await _mirrors_of(org, names, ch=ch))
+    if not mirrors and not any(is_mirror_name(ns) for ns in names):
+        return None
+    return [*names, *mirrors]
 
 
 def with_mirrors(
-    name: str, step: Callable[[str, _NS], Awaitable[int]]
+    step: Callable[[str, _NS], Awaitable[int]],
 ) -> Callable[[str, _NS], Awaitable[int]]:
-    """Step `name` over the named namespaces and their mirrors, whose rows always leave
-    the disk: no token reads or restores an `acl-` name. Under a purge, and for a step
-    in `_ONE_PASS_STEPS`, it runs once over both; a tombstoning step runs again over the
-    mirrors as a purge."""
+    """`step` over the scope and its namespaces' mirrors. A scope that holds a mirror is
+    erased as a purge: no token reads or restores an `acl-` name, so its rows leave the
+    disk, and in one pass, so a Postgres step commits one mark and an org-wide step runs
+    once."""
 
     async def run(org: str, namespace: _NS) -> int:
-        mirrors = list(await _mirrors_of(org, namespace))
-        if not mirrors:
+        if (scope := await _mirror_scope(org, namespace)) is None:
             return await step(org, namespace)
-        if purge_mode() or name in _ONE_PASS_STEPS:
-            return await step(org, [*namespaces_of(namespace), *mirrors])
-        n = await step(org, namespace)
         with purge_scope(True):
-            return n + await step(org, mirrors)
+            return await step(org, scope)
 
     return run
 
@@ -229,17 +239,12 @@ async def _counted_with_mirrors(
     *,
     ch: _CHClient | None = None,
 ) -> dict[str, int]:
-    """`count` of the scope, plus of a namespace scope's mirrors counted as a purge
-    counts: every row a mirror still holds is residue, whatever the erasure's mode."""
-    per_table = await count(scope_value)
-    if scope_type == "namespace" and (mirrors := list(await _mirrors_of(org, scope_value, ch=ch))):
-        with purge_scope(True):
-            found = await count(mirrors)
-        for table, n in found.items():
-            # An org-wide table's rows were all counted in the named pass.
-            if table.removeprefix("pg:") not in erasure_census.ORG_WIDE_TABLES:
-                per_table[table] = per_table.get(table, 0) + n
-    return per_table
+    """`count` of the scope as `with_mirrors` erased it: with its mirrors, as a purge."""
+    if scope_type == "namespace":
+        if (scope := await _mirror_scope(org, scope_value, ch=ch)) is not None:
+            with purge_scope(True):
+                return await count(scope)
+    return await count(scope_value)
 
 
 async def evidence_with_mirrors(
@@ -351,11 +356,6 @@ _LATE_STEPS_USER: tuple[UserStep, ...] = (
 
 # Steps a ClickHouse-authority saga never runs.
 PG_ONLY_STEPS = frozenset({"pg_memory.delete", "pg_knowledge.delete"})
-
-# Steps that run once over a namespace and its mirrors, whatever the mode: a Postgres
-# step deletes in either mode and marks its one commit for a replay, an org-wide step
-# would erase the same rows again, and the forget step reads the registry itself.
-_ONE_PASS_STEPS = PG_ONLY_STEPS | erasure_census.ORG_WIDE_STEPS | {"knowledge_mirrors.forget"}
 
 
 def authority_steps[StepT: tuple[str, Any]](steps: tuple[StepT, ...]) -> list[StepT]:

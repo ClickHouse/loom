@@ -75,24 +75,31 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return calls
 
 
-@pytest.mark.parametrize(
-    ("purge", "passes"),
-    [(False, [("team", False), ([MIRROR], True)]), (True, [(["team", MIRROR], True)])],
-)
-def test_a_step_runs_over_the_mirrors_as_a_purge(
-    registry: list[Any], purge: bool, passes: list[Any]
-) -> None:
+def _recorded() -> tuple[list[Any], Any]:
     seen: list[Any] = []
 
     async def step(org: str, namespace: Any) -> int:
         seen.append((namespace, purge_mode()))
         return 1
 
+    return seen, step
+
+
+@pytest.mark.parametrize("purge", [False, True])
+def test_a_scope_with_a_mirror_is_erased_in_one_purging_pass(
+    registry: list[Any], purge: bool
+) -> None:
+    seen, step = _recorded()
     with purge_scope(purge):
-        assert asyncio.run(saga_steps.with_mirrors("memory.tombstone", step)(ORG, "team")) == len(
-            passes
-        )
-    assert seen == passes
+        assert asyncio.run(saga_steps.with_mirrors(step)(ORG, "team")) == 1
+    # One pass, so a Postgres step commits one mark and an org-wide step runs once.
+    assert seen == [(["team", MIRROR], True)]
+
+
+def test_a_scope_without_a_mirror_keeps_the_erasure_s_mode(registry: list[Any]) -> None:
+    seen, step = _recorded()
+    asyncio.run(saga_steps.with_mirrors(step)(ORG, "other"))
+    assert seen == [("other", False)]
 
 
 def test_a_list_scope_covers_every_named_namespace_s_mirrors(
@@ -102,38 +109,18 @@ def test_a_list_scope_covers_every_named_namespace_s_mirrors(
         return {m: ns for m, ns in [(MIRROR, "a"), (OLD_MIRROR, "b")] if ns in namespaces}
 
     monkeypatch.setattr(app_mirrors, "mirrors_of", _mirrors_of)
-    seen: list[Any] = []
-
-    async def step(org: str, namespace: Any) -> int:
-        seen.append((namespace, purge_mode()))
-        return 0
-
-    asyncio.run(saga_steps.with_mirrors("memory.tombstone", step)(ORG, ["a", "b", "c"]))
-    assert seen == [(["a", "b", "c"], False), ([MIRROR, OLD_MIRROR], True)]
+    seen, step = _recorded()
+    asyncio.run(saga_steps.with_mirrors(step)(ORG, ["a", "b", "c"]))
+    assert seen == [(["a", "b", "c", MIRROR, OLD_MIRROR], True)]
 
 
-@pytest.mark.parametrize("name", ["pg_memory.delete", "idempotency.delete"])
-def test_a_postgres_or_org_wide_step_runs_once_over_the_namespace_and_its_mirrors(
-    registry: list[Any], name: str
+def test_a_mirror_named_in_the_scope_is_purged_and_has_no_mirror_looked_up(
+    registry: list[Any],
 ) -> None:
-    seen: list[Any] = []
-
-    async def step(org: str, namespace: Any) -> int:
-        seen.append(namespace)
-        return 1
-
-    # One transaction, so a Postgres step's one mark covers the mirror for a replay; an
-    # org-wide step's rows are the same whatever the names.
-    asyncio.run(saga_steps.with_mirrors(name, step)(ORG, "team"))
-    assert seen == [["team", MIRROR]]
-
-
-def test_a_mirror_is_never_looked_up_for_a_mirror(registry: list[Any]) -> None:
-    async def step(org: str, namespace: Any) -> int:
-        return 0
-
-    asyncio.run(saga_steps.with_mirrors("memory.tombstone", step)(ORG, ["other", MIRROR]))
-    assert registry == [("mirrors_of", ["other"])]
+    seen, step = _recorded()
+    asyncio.run(saga_steps.with_mirrors(step)(ORG, OLD_MIRROR))
+    assert seen == [([OLD_MIRROR], True)]
+    assert registry == [("mirrors_of", [])]
 
 
 def test_the_last_step_forgets_the_mirrors(registry: list[Any]) -> None:
@@ -142,22 +129,21 @@ def test_the_last_step_forgets_the_mirrors(registry: list[Any]) -> None:
     assert registry[-1] == ("forget", {MIRROR: "team"})
 
 
-def test_a_namespace_erasure_purges_the_mirror_and_counts_it(
+def test_a_namespace_erasure_with_a_mirror_purges_both_and_counts_both(
     registry: list[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run = saga_runner(monkeypatch)
     censused: list[Any] = []
 
     async def _census(org: str, scope_type: str, scope_value: Any, **_: Any) -> dict[str, int]:
-        censused.append(scope_value)
+        censused.append((scope_value, purge_mode()))
         return {}
 
     monkeypatch.setattr(erasure_census, "residue_census", _census)
     trace = dict(asyncio.run(run("namespace", "team")))
-    # The namespace's rows are tombstoned, the mirror's deleted, in the same step.
-    assert trace["memory.tombstone"][0] == ("UPDATE", "loom.memory")
     assert ("DELETE", "loom.memory") in trace["memory.tombstone"]
-    assert censused == ["team", [MIRROR]]
+    assert ("UPDATE", "loom.memory") not in trace["memory.tombstone"]
+    assert censused == [(["team", MIRROR], True)]
     assert ("forget", {MIRROR: "team"}) in registry
 
 
@@ -165,15 +151,10 @@ def test_a_replay_runs_each_step_over_the_mirrors_too(registry: list[Any]) -> No
     from server.erasure.api.erasure import ErasureRequestInput
     from server.erasure.app import replay
 
-    seen: list[Any] = []
-
-    async def step(org: str, namespace: Any) -> int:
-        seen.append((namespace, purge_mode()))
-        return 0
-
+    seen, step = _recorded()
     body = ErasureRequestInput(org=ORG, scope_type="namespace", scope_value="team", requester="r")
     asyncio.run(replay._run_steps(body, "e1", [("memory.tombstone", step)]))
-    assert seen == [("team", False), ([MIRROR], True)]
+    assert seen == [(["team", MIRROR], True)]
 
 
 def test_a_registry_write_is_a_full_row(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -192,7 +173,7 @@ def _counted(monkeypatch: pytest.MonkeyPatch, left_in_mirror: int) -> list[Any]:
 
     async def _count(org: str, scope_type: str, scope: Any, **_: Any) -> dict[str, int]:
         counted.append((scope, purge_mode()))
-        return {"loom.memory": left_in_mirror if scope == [MIRROR] and purge_mode() else 0}
+        return {"loom.memory": left_in_mirror if scope == ["team", MIRROR] and purge_mode() else 0}
 
     async def _pairs(org: str, scope_type: str, scope: Any, **_: Any) -> Any:
         return await _count(org, scope_type, scope), {}
@@ -213,7 +194,7 @@ def test_a_tombstoning_erasure_fails_on_any_row_left_in_a_mirror(
     holder: dict[str, Any] = {}
     with pytest.raises(saga_steps.ErasureResidueError):
         asyncio.run(saga_steps._step_verify_residue(ORG, "namespace", "team", holder))
-    assert counted == [("team", False), ([MIRROR], True)]
+    assert counted == [(["team", MIRROR], True)]
     assert holder["per_table"]["loom.memory"] == 1
 
 
@@ -228,27 +209,6 @@ def test_the_evidence_census_counts_the_mirror_too(
     assert found == {"loom.memory": 2} and unread == {}
     # The registry is read on the caller's connection, as the census is.
     assert ("mirrors_of", ["team"], conn) in registry
-
-
-def test_the_mirror_pass_does_not_count_an_org_wide_table_again(
-    registry: list[Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def _count(org: str, scope_type: str, scope: Any, **_: Any) -> dict[str, int]:
-        return {"loom.idempotency": 3, "pg:loom.idempotency": 2, "loom.memory": 1}
-
-    async def _objects(org: str, scope: Any) -> int:
-        return 0
-
-    monkeypatch.setattr(erasure_census, "residue_census", _count)
-    monkeypatch.setattr(erasure_census, "object_residue", _objects)
-    holder: dict[str, Any] = {}
-    with pytest.raises(saga_steps.ErasureResidueError):
-        asyncio.run(saga_steps._step_verify_residue(ORG, "namespace", "team", holder))
-    assert erasure_census.ORG_WIDE_TABLES == {"loom.idempotency"}
-    assert holder["per_table"] == {
-        "loom.idempotency": 3, "pg:loom.idempotency": 2, "loom.memory": 2,
-        erasure_census.OBJECT_RESIDUE: 0,
-    }  # fmt: skip
 
 
 def test_a_failed_saga_s_census_counts_the_mirror(

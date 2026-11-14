@@ -884,14 +884,13 @@ statements and census keys against these, and its tests pin each one:
 - A namespace erasure, `namespace.delete`, `collection.delete` and `code.repo.remove`
   retire the namespace's sources first, clearing their credentials, so no turn writes
   back what the erasure took. A `namespace` or `namespace_list` erasure covers each
-  named namespace's mirrors as more names of the same erasure: each step runs over the
-  named namespaces in the erasure's mode, then over their mirrors as a purge (a purging
-  erasure, a Postgres step and an org-wide step run once over both), since no token
-  reads or restores an `acl-` name, and the census counts both. The last step,
-  `knowledge_mirrors.forget`, writes the mirrors `deleted`, so the name registered again
-  gets a new mirror; the registry keeps them, so a resume or a replay after a restore
-  still reaches them. A `user_id` erasure touches no mirror row (the sync writes them as
-  `-`), and its census and export name none.
+  named namespace's mirrors as more names of the same erasure: a scope that holds a
+  mirror is erased as a purge, in one pass over the named namespaces and their mirrors,
+  since no token reads or restores an `acl-` name, and the census counts it the same
+  way. The last step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, so the
+  name registered again gets a new mirror; the registry keeps them, so a resume or a
+  replay after a restore still reaches them. A `user_id` erasure touches no mirror row
+  (the sync writes them as `-`), and its census and export name none.
 - A person's connected accounts, the sources they own with every mirrored copy those
   wrote, and their entries in every crawl are erased when an org admin asks; afterwards
   no source row, list or members row names them, and a crawl reads them again only once
@@ -926,14 +925,14 @@ statements and census keys against these, and its tests pin each one:
   token that names a mirror, its org-wide reads (insights, usage, cost, the analytics
   export) include `acl-` rows, and nothing on N-1 ages the lists. N reports the
   condition (`loom doctor`, and the schema heartbeat check above) when a process below
-  the mirror migration heartbeats while `loom.knowledge_mirrors` holds a mirror, as a
-  rolling rollback (a Helm rollback included) would start one. So the rollback procedure
-  ([upgrades](../operations/upgrades.md)) stops every replica, stops every mirrored
-  source and erases every mirror (`loom knowledge mirror erase --all`) before any N-1
-  replica starts. A restore of either store runs the same command before the deployment
-  starts, since a restored copy cannot be trusted to say who may read; owners connect
-  and add their sources again. The implementing pull request adds both steps and
-  specifies the command.
+  the mirror migration heartbeats while `loom.knowledge_mirrors` holds a live mirror
+  (one not written `deleted`), as a rolling rollback (a Helm rollback included) would
+  start one. So the rollback procedure ([upgrades](../operations/upgrades.md)) stops
+  every replica, stops every mirrored source and erases every mirror
+  (`loom knowledge mirror erase --all`) before any N-1 replica starts. A restore of
+  either store runs the same command before the deployment starts, since a restored copy
+  cannot be trusted to say who may read; owners connect and add their sources again. The
+  implementing pull request adds both steps and specifies the command.
 - **Ownership.** In a namespace, one owner per address, found by its tag, is today's
   model, so N-1 and N agree on whose a document is; N-1 has no mirror leg.
 - **`meet`.** N-1 still syncs a stored `meet` source on its turns; N skips it.

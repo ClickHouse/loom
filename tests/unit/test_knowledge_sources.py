@@ -435,6 +435,22 @@ def test_a_mirrored_source_is_refused(fake: _Store, call: Any) -> None:
     assert _code(call()) == "BAD_KIND"
 
 
+def test_a_mirrored_source_stays_mirrored_when_removed_or_retired(fake: _Store) -> None:
+    # The later build retires its documents from the mirror by this value.
+    for name in ("design-decks", "other"):
+        asyncio.run(app.handle_knowledge_source_add(_add(name=name)))
+        key = (ORG, NS, name)
+        fake.rows[key] = dataclasses.replace(fake.rows[key], access="mirrored")
+    body = KnowledgeSourceRemoveInput(
+        org=ORG, namespace=NS, name="design-decks", confirm="design-decks", delete_documents=True
+    )
+    asyncio.run(app.handle_knowledge_source_remove(body))
+    asyncio.run(app.deactivate_namespace_sources(ORG, NS))
+    for name in ("design-decks", "other"):
+        row = fake.rows[(ORG, NS, name)]
+        assert not row.active and row.access == "mirrored"
+
+
 def test_remove_with_documents_marks_them_for_the_worker(fake: _Store) -> None:
     asyncio.run(app.handle_knowledge_source_add(_add()))
     fake.states["design-decks"] = {"state_value": "stamp", "detail": json.dumps({"status": "ok"})}
