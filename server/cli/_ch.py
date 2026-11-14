@@ -50,7 +50,7 @@ def _declared(orgs: Iterable[str | None] | None, org_free: str) -> tuple[str, ..
 # its retries when the role's connection limit is reached.
 _UNSET_READ_S = 10.0  # not a setting: a bound on one CLI read, not on serving
 _UNSET_STATEMENT_MS = 5000  # not a setting: a bound on one CLI read, not on serving
-_BUSY_TRIES = 3
+_BUSY_TRIES = 3  # not a setting: a full connection limit clears in moments
 _BUSY_PAUSE_S = 0.5  # not a setting: a full connection limit clears in moments
 
 

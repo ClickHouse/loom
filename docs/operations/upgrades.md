@@ -281,16 +281,18 @@ checkout.
     before the ledger's 90 days is not listed, and the promoted rows it left cannot be told
     apart from a live namespace's; they stay as the older build left them.
 
-15. A deployment of the Postgres authority that moves to a build where a CLI command
-    declaring an org reads the cell state: every such command (a code-index command, an
-    import) now checks its deployment, so it needs `LOOM_PG_DSN` and ClickHouse `SELECT` on
-    `loom.storage_authority`, and reads the cell state on a session of its own. Grant the
-    role it connects as:
+15. Moving to a build where every CLI command declaring an org (a code-index command, an
+    import) checks its deployment: under either authority its ClickHouse user needs
+    `SELECT` on `loom.storage_authority`, and the command refuses against a deployment that
+    records another authority. Under the Postgres authority it also needs `LOOM_PG_DSN`
+    and reads the cell state on a session of its own. Grant the Postgres role it connects
+    as:
     - with `LOOM_CELL` unset, `USAGE` on schema `loom`, `SELECT` on `loom.cell_first`,
       `loom.tenancy_mode` and `loom.authority`, `SELECT (updated_at)` on `loom.cell_self`
       and `SELECT (since)` on `loom.tenancy` (the column grants keep the fingerprints and
-      the orgs out of its reach), and a `CONNECTION LIMIT` at least the number of such
-      commands that run at once (a command retries a full limit briefly, then refuses);
+      the orgs out of its reach), and a `CONNECTION LIMIT` at least `LOOM_PG_POOL_MAX_SIZE` times the number of
+      such commands that run at once, since each opens its own pool for its writes (the
+      state read retries a full limit briefly, then refuses);
     - with `LOOM_CELL` set, the same with `SELECT` on `loom.cell_self` and `loom.tenancy`
       in full, and, to record a new org while the first cell is `recording`, `INSERT` on
       `loom.tenancy` and `UPDATE (since)` on `loom.tenancy_mode`; revoke both with

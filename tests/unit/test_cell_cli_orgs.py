@@ -316,7 +316,13 @@ def test_a_cli_with_loom_cell_set_judges_only_its_stores(monkeypatch: pytest.Mon
     assert cell.gate_reason() != ""
     assert cell.cli_gate_reason() == ""
     monkeypatch.setattr(settings, "document_s3_bucket", "other")
-    assert "matches neither value" in cell.cli_gate_reason()
+    assert "this CLI's stores (deployment_id, bucket, bucket_prefix)" in cell.cli_gate_reason()
+    monkeypatch.setattr(settings, "document_s3_bucket", "docs")
+    monkeypatch.setattr(settings, "document_s3_prefix", "elsewhere")
+    assert "match neither value" in cell.cli_gate_reason()
+    monkeypatch.setattr(settings, "document_s3_prefix", servers["bucket_prefix"])
+    monkeypatch.setattr(cell, "_deployment_id", "d2")
+    assert "match neither value" in cell.cli_gate_reason()
 
 
 @pytest.fixture(autouse=True)

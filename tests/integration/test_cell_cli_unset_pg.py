@@ -116,3 +116,50 @@ async def test_a_database_without_the_state_tables_reads_open(
             await _ch.check_unset_cell()
     finally:
         await drop_database(admin, name)
+
+
+@pytest.mark.asyncio
+async def test_the_deployment_check_runs_on_the_state_session_with_the_steps_grants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The state session is the command's first Postgres connection, so it runs the
+    deployment check: the step's `SELECT` on `loom.authority` is what it needs, and
+    another deployment's database refuses."""
+    async with own_database() as dsn, _cli_role(dsn) as cli:
+        await _admin(
+            dsn,
+            "INSERT INTO loom.authority (authority, epoch, deployment_id) "
+            "VALUES ('postgres', 1, 'dep-a')",
+        )
+        _unset(monkeypatch, cli)
+        pg.expect_deployment(("dep-a", 1))
+        await _ch.check_unset_cell()
+        pg.expect_deployment(("dep-b", 1))
+        with pytest.raises(_ch.OrgNotHeld, match="could not be read"):
+            await _ch.check_unset_cell()
+
+
+@pytest.mark.asyncio
+async def test_a_full_connection_limit_is_retried_then_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Postgres's refusal for too many connections reaches the retry as SQLSTATE 53300:
+    a role at its limit is tried `_BUSY_TRIES` times, then refused."""
+    import asyncpg
+
+    async with own_database() as dsn, _cli_role(dsn) as cli:
+        role = urlsplit(cli).username
+        await _admin(dsn, f"ALTER ROLE {role} CONNECTION LIMIT 0")
+        _unset(monkeypatch, cli)
+        monkeypatch.setattr(_ch, "_BUSY_PAUSE_S", 0.0)
+        opens: list[int] = []
+        connect = asyncpg.connect
+
+        async def _counted(*args: object, **kwargs: object) -> object:
+            opens.append(1)
+            return await connect(*args, **kwargs)
+
+        monkeypatch.setattr(asyncpg, "connect", _counted)
+        with pytest.raises(_ch.OrgNotHeld, match="could not be read"):
+            await _ch.check_unset_cell()
+        assert len(opens) == _ch._BUSY_TRIES

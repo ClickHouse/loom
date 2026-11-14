@@ -451,12 +451,12 @@ cells.
 A process with `LOOM_CELL` unset runs no tenancy check. Under the Postgres authority
 (`LOOM_STORAGE_AUTHORITY=postgres`, the only one a cell runs) a server process still
 reads, in one statement, the mode row, the `first` row and whether any `loom.tenancy` or
-`loom.cell_self` row exists, with the mode cache's rules (below), and so does a CLI
-command that declares an org, on one bounded session of its own per command, every state
-table absent (judged by `to_regclass`, so a role missing a grant still refuses) reading
-as `open` and a failed read refusing; an org-free command,
-such as a token revocation, `loom migrate` or `loom doctor`, is not gated by the mode
-and runs as it does today, Postgres outage included. Both rows absent with no tenancy or
+`loom.cell_self` row exists, with the mode cache's rules (below). A CLI command that
+declares an org reads the same on a bounded session of its own: every state table absent
+(judged by `to_regclass`, so a role missing a grant still refuses) reads as `open`, and a
+failed read refuses. An org-free command, such as a token revocation, `loom migrate` or
+`loom doctor`, is not gated by the mode and runs as it does today, Postgres outage
+included. Both rows absent with no tenancy or
 own row, as on a deployment never prepared, or the first cell in `recording`, leave the
 process serving as a single deployment; every state the `first` row's rule (above)
 counts as `enforced`, or as a `partial` state, gates it as `enforced` does. `enforced`

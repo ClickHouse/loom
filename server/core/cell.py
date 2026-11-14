@@ -356,7 +356,7 @@ def _unset_reason(view: _View) -> str:
 # no token and its fingerprint never reaches the router, so the rest of the servers'
 # fingerprint is not its to match (docs/architecture/cells.md, "The CLI declares its
 # orgs").
-STORE_FIELDS = ("deployment_id", "bucket", "bucket_prefix")
+_STORE_FIELDS = ("deployment_id", "bucket", "bucket_prefix")
 
 
 def cli_gate_reason() -> str:
@@ -364,7 +364,7 @@ def cli_gate_reason() -> str:
     may), on the rows it has just read: the first row naming `LOOM_CELL`, and its stores
     matching a value of the cell's own row."""
     fields = mine()
-    return _judge(_view, {name: fields[name] for name in STORE_FIELDS})
+    return _judge(_view, {name: fields[name] for name in _STORE_FIELDS})
 
 
 def _judge(view: _View, fields: Mapping[str, Any] | None = None) -> str:
@@ -378,7 +378,14 @@ def _judge(view: _View, fields: Mapping[str, Any] | None = None) -> str:
         return "this cell's tenancy mode row is absent: run loom cell prepare"
     if view.current is None:
         return "this cell's own row is absent: run loom cell prepare"
-    fields = mine() if fields is None else fields
+    if fields is not None:
+        if matches(fields, view.current) or matches(fields, view.next):
+            return ""
+        return (
+            f"this CLI's stores ({', '.join(fields)}) match neither value of its cell's "
+            "own row: point it at the cell's Postgres, ClickHouse and document bucket"
+        )
+    fields = mine()
     if not (matches(fields, view.current) or matches(fields, view.next)):
         return (
             "this process's configuration matches neither value of its cell's own row "
@@ -430,7 +437,7 @@ async def read_named_state(conn: Any) -> tuple[str, str]:
     return found, first[1] if first else ""
 
 
-STATE_TABLES = ("loom.cell_first", "loom.tenancy_mode", "loom.cell_self", "loom.tenancy")
+_STATE_TABLES = ("loom.cell_first", "loom.tenancy_mode", "loom.cell_self", "loom.tenancy")
 
 
 async def read_state_if_present(conn: Any) -> tuple[str, str]:
@@ -439,11 +446,11 @@ async def read_state_if_present(conn: Any) -> tuple[str, str]:
     privilege error, so a role missing a grant still raises; some tables absent is
     `partial`."""
     present = await conn.fetchval(
-        "SELECT count(to_regclass(t)) FROM unnest($1::text[]) AS t", list(STATE_TABLES)
+        "SELECT count(to_regclass(t)) FROM unnest($1::text[]) AS t", list(_STATE_TABLES)
     )
     if present == 0:
         return "open", ""
-    if present < len(STATE_TABLES):
+    if present < len(_STATE_TABLES):
         return "partial", ""
     return await read_named_state(conn)
 
