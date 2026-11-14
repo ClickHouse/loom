@@ -362,8 +362,8 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Symptom:** a boot of a cell in any state but `open` logs
   `cell triggers: not applied on loom.<table> (...)`, and `loom doctor` names the table's
-  missing or disabled trigger (`loom.cell_first`'s in any such state, an org table's in
-  `enforced`).
+  missing or disabled trigger (`loom.cell_first`'s in any such state, an org table's or
+  `loom.tenancy`'s guard in `enforced`).
 - **Cause:** the boot creates a cell's org triggers, and sets `loom.cell_first`'s back to
   always, with a lock wait of 100 ms a try, three tries a second apart, and serves past a
   table in two cases. The log names the sessions that held or queued a conflicting lock
@@ -380,6 +380,18 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   role with `ALTER TABLE loom.<table> OWNER TO <role>`. Then restart one pod with
   `LOOM_BOOT_MIGRATE` on, and repeat until `loom doctor` names no missing or disabled
   trigger.
+
+### A boot logs "loom.tenancy_refuse_unmarked() is absent"
+
+- **Symptom:** a boot of an `enforced` cell logs that
+  `loom.tenancy_refuse_unmarked() is absent, so tenancy_record is not created`, and
+  `loom doctor` names the function absent and `loom.tenancy` without its guard.
+- **Cause:** the function was dropped by hand after migration 012 ran (a
+  `DROP FUNCTION … CASCADE` drops the guard with it). The migration ledger already lists
+  012, so no boot creates it again, and a script's tenancy row is not refused.
+- **Fix:** run `schemas/pg_migrations/012_tenancy_guard.sql` with `psql` as the role that
+  owns schema `loom`'s tables, then restart one pod with `LOOM_BOOT_MIGRATE` on: its boot
+  creates the guard.
 
 ### Writes are slow, or a script is refused, on a deployment that is not a cell
 

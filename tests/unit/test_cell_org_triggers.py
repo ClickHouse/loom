@@ -511,7 +511,10 @@ def test_missing_names_a_table_this_role_cannot_alter() -> None:
     class _Catalog:
         async def fetch(self, sql: str, *_a: Any) -> list[dict[str, Any]]:
             if "pg_attribute" in sql:
-                return [{"relname": "memory_current", "relkind": "r", "owned": False}]
+                return [
+                    {"relname": "memory_current", "relkind": "r", "owned": False},
+                    {"relname": "tenancy", "relkind": "r", "owned": False},
+                ]
             return []
 
         async def fetchrow(self, _sql: str, *_a: Any) -> None:
@@ -520,10 +523,9 @@ def test_missing_names_a_table_this_role_cannot_alter() -> None:
         async def fetchval(self, _sql: str, *_a: Any) -> bool:
             return False  # migration 012 not recorded
 
-    defects = asyncio.run(cell_triggers.missing(_Catalog()))
-    assert ("owner", "loom.memory_current: this role cannot alter it") in {
-        (d.kind, d.text) for d in defects
-    }
+    defects = {(d.kind, d.text) for d in asyncio.run(cell_triggers.missing(_Catalog()))}
+    assert ("owner", "loom.memory_current: this role cannot alter it") in defects
+    assert ("owner", "loom.tenancy: this role cannot alter it") in defects
 
 
 def test_missing_keeps_its_other_defects_when_it_cannot_compare_definitions() -> None:

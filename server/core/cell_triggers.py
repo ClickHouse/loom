@@ -7,13 +7,12 @@ A session that ran the check marks itself with `loom.tenancy_checked = 'on'`: ev
 session of a process with LOOM_CELL set (a startup parameter of the pool and of
 `pg.dedicated()`) and the migration session (`pg_migrate`). The triggers' WHEN skips a
 marked session; `loom.tenancy_refuse_unheld()` (migration 011) judges the rest. The guard
-on `loom.tenancy` itself, `tenancy_record` with `loom.tenancy_refuse_unmarked()`
-(migration 012), refuses an unmarked session's tenancy row in every state but a first cell
-still recording: a tenancy row makes an org held.
+on `loom.tenancy` itself, `tenancy_record` with `loom.tenancy_refuse_unmarked()` (migration
+012), refuses an unmarked session's tenancy row in every state but a first cell still
+recording: a tenancy row makes an org held.
 
-`ensure` creates the triggers on a fully prepared cell in `enforced` at a migrating
-boot, the guard with them, and `missing` names what a cell's triggers lack for
-`loom doctor`.
+`ensure` creates the triggers on a fully prepared cell in `enforced` at a migrating boot,
+the guard with them, and `missing` names what a cell's triggers lack for `loom doctor`.
 """
 
 from __future__ import annotations
@@ -193,8 +192,9 @@ async def _triggers(conn: Any, names: tuple[str, ...]) -> dict[tuple[str, str], 
 
 
 async def ensure(conn: Any) -> None:
-    """Create a fully prepared `enforced` cell's absent org triggers and enable each one
-    left otherwise than `O`; in any state but `open`, set each `loom.cell_first` trigger
+    """Create a fully prepared `enforced` cell's absent org triggers and `loom.tenancy`
+    guard and enable each one left otherwise than `O` (the guard is skipped, logged, while
+    its function is absent); in any state but `open`, set each `loom.cell_first` trigger
     not at `A` to ENABLE ALWAYS. Never drops a trigger. A table's DDL runs in one
     transaction that waits LOCK_TIMEOUT for its lock a try, LOCK_ATTEMPTS tries; a table
     whose lock it cannot take is logged with the holders of its locks, one the role
