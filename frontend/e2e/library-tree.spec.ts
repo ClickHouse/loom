@@ -105,6 +105,29 @@ test.describe("1440 px", () => {
   });
 });
 
+// The show/hide button and a row's empty box are one size, so the titles line up: 24 px for
+// a mouse (WCAG 2.5.8's smallest target), 44 px for a thumb.
+for (const [pointer, touch, side] of [
+  ["a mouse", false, 24],
+  ["touch", true, 44],
+] as const) {
+  test.describe(`1440 px with ${pointer}`, () => {
+    test.use({ viewport: { width: 1440, height: 900 }, hasTouch: touch, isMobile: touch });
+
+    test(`the show button and a row's empty box are ${side} px`, async ({ page }) => {
+      await open(page, "/library");
+      const tree = page.getByRole("navigation", { name: "Library places" });
+      const toggle = tree.getByRole("button", { name: "Collections in Engineering", exact: true });
+      const box = async (l: ReturnType<Page["locator"]>) => {
+        const b = await l.boundingBox();
+        return b && [Math.round(b.width), Math.round(b.height)];
+      };
+      expect(await box(toggle)).toEqual([side, side]);
+      expect(await box(tree.locator(".library-tree-twist-space").first())).toEqual([side, side]);
+    });
+  });
+}
+
 test.describe("1440 px under a reload bar", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 

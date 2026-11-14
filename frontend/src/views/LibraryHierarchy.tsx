@@ -447,8 +447,8 @@ export function useShowMore(
       markShown(shown.map((c) => c.namespace));
       setCount(count + MORE_SHOWN);
     },
-    count,
-    setCount,
+    fewer: count > first,
+    showFewer: () => setCount(first),
   };
 }
 
@@ -471,7 +471,7 @@ function PlaceList({
   onPick: (collection: string) => void;
   truncated: boolean;
 }) {
-  const { shown, list, more, showMore, count, setCount } = useShowMore(items, FIRST_SHOWN, null, () =>
+  const { shown, list, more, showMore, fewer, showFewer } = useShowMore(items, FIRST_SHOWN, null, () =>
     document.getElementById(id),
   );
   if (items.length === 0) return null;
@@ -503,14 +503,14 @@ function PlaceList({
             {more}
           </Button>
         )}
-        {count > FIRST_SHOWN && (
+        {fewer && (
           <Button
             type="empty"
             htmlType="button"
             onClick={() => {
               // Its button goes with the list it shortens; the heading stays.
               document.getElementById(id)?.focus();
-              setCount(FIRST_SHOWN);
+              showFewer();
             }}
           >
             Show fewer

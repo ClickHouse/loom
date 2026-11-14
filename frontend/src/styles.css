@@ -1739,8 +1739,9 @@ textarea[aria-invalid="true"]:focus-visible {
   .library-tree-row[data-selected] .library-tree-link {
     font: var(--click-sidebar-navigation-item-typography-active);
   }
-  /* The show/hide button keeps Click UI's box (24 px for a mouse, 44 px for a thumb); a row
-     with nothing inside holds an empty box of the same size, so the titles line up. */
+  /* The show/hide button's box comes from IconButton's `minTarget` (24 px for a mouse, 44 px
+     for a thumb); a row with nothing inside holds an empty box of the same size, so the titles
+     line up. */
   .library-tree-twist {
     flex: 0 0 auto;
   }

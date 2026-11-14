@@ -1,5 +1,5 @@
-// The Library shows the header's namespace or one of the collections the caller reads: a
-// tree with each one's description, a menu that shares or deletes it, and New collection.
+// The place picker (a select, or the tree beside the page), the path and chips, the
+// collection's menu, New collection, and how the list is read again after a write.
 import { useState, type ComponentProps } from "react";
 import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
