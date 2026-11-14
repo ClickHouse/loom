@@ -511,6 +511,21 @@ def test_a_malformed_begin_answers_400_and_reads_nothing(
     assert r.status_code == 400 and store.statements == 0
 
 
+def test_a_deeply_nested_fingerprint_is_judged_not_a_server_error(
+    client: TestClient, store: _Store
+) -> None:
+    deep: Any = "a\x00b"
+    for _ in range(3000):
+        deep = [deep]
+    raw = json.dumps(_begin(current_fp={**CURRENT, "fields": {**CURRENT["fields"], "x": deep}}))
+    r = client.post(
+        "/cells/v1/operator/cells/eu-1/attach/begin",
+        content=raw,
+        headers={"Authorization": f"Bearer {OPERATOR}", "Content-Type": "application/json"},
+    )
+    assert r.status_code in (400, 413) and store.statements == 0
+
+
 def test_text_that_spells_an_escape_is_no_nul(client: TestClient, store: _Store) -> None:
     """The six characters `\\u0000` are text jsonb stores, not a NUL."""
     fingerprint = {**CURRENT, "fields": {**CURRENT["fields"], "scim": "\\u0000"}}

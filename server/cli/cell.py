@@ -370,7 +370,7 @@ def _cmd_remove(args: argparse.Namespace) -> int:
     if reason := remove_refusal(args.cell, state, placed):
         print(f"loom cell remove: refusing: {reason}", file=sys.stderr)
         return 1
-    if row.get("is_first") is True:
+    if row["is_first"]:
         try:
             refusal = asyncio.run(_first_cell_refusal(row["deployment_id"]))
         except Exception as e:  # noqa: BLE001 — an unread state refuses the removal

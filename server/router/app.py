@@ -921,13 +921,19 @@ def _fingerprint_shaped(value: Any) -> bool:
 
 
 def _holds_nul(value: Any) -> bool:
-    """Whether a NUL is in any string or key of a decoded JSON value."""
-    if isinstance(value, str):
-        return "\x00" in value
-    if isinstance(value, dict):
-        return any("\x00" in k or _holds_nul(v) for k, v in value.items())
-    if isinstance(value, list):
-        return any(_holds_nul(v) for v in value)
+    """Whether a NUL is in any string or key of a decoded JSON value: walked with a stack,
+    so a value nested past Python's recursion limit is judged too."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            if "\x00" in item:
+                return True
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
     return False
 
 
