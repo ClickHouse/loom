@@ -351,7 +351,7 @@ A `definition` is promoted only:
 - Not labelled `medium` and not reading as `medium` or `high` (422
   `SENSITIVE_DEFINITION_REFUSED`; a `high` label answers
   `HIGH_SENSITIVITY_PROMOTION_REFUSED` first, as for any row).
-- Within `memory_term_leg_max_definitions`: a new key at the ceiling, or any promotion
+- Within `memory_shared_definitions_max`: a new key at the ceiling, or any promotion
   while the namespace is past it, is refused (409 `DEFINITION_CEILING`).
 - Under a name no other live shared definition holds as its term or an alias (409
   `DEFINITION_NAME_TAKEN`, naming the keys and the names), names compared folded: format

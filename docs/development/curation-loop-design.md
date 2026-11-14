@@ -181,7 +181,7 @@ carry.
 **What it reads.** The addressed namespace's live `loom.shared` rows of type `definition`
 under a `definition/` key, from that namespace only, whatever `namespace_scope` fans out
 over. It serves no definition whose source is labelled or graded `medium` or `high` (the
-read-time check above). A namespace holds at most `memory_term_leg_max_definitions`
+read-time check above). A namespace holds at most `memory_shared_definitions_max`
 definitions: a promotion that adds a key past that ceiling is refused (a revision is not,
 unless the namespace is already past it), `memory.definitions.list` shows the count
 against it, and an admin demotes a definition to make room, so the leg reads every one.
@@ -328,12 +328,12 @@ was cut. Once a document can be hidden from some readers (the `mirrored` access 
 The parts land in the order the opening section gives: 1 knowledge gaps, 2 governed
 definitions, 3 `knowledge.gaps.draft` and query history.
 
-| Op                                                | Part | Role  | What it does                                                                                                                                                                                                                                                                                                                                               |
-| ------------------------------------------------- | ---- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `knowledge.gaps.list`                             | 1    | admin | Built: [knowledge gaps](../architecture/knowledge-gaps.md).                                                                                                                                                                                                                                                                                                |
-| `memory.definitions.list`                         | 2    | admin | The namespace's shared definitions, a page at a time (a limit and a cursor), each with its key, `promoted_at`, `promoted_from_candidate_id` and a `capped` flag, and, unless `capped`, its term, aliases, the read-time check's verdict and lapse reason and its `shadowed` (name, winner) pairs; and the count against `memory_term_leg_max_definitions`. |
-| `knowledge.gaps.draft`                            | 3    | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`).                                                                                                                                                                                                                                      |
-| `knowledge.query_history.add`, `.list`, `.remove` | 3    | admin | Register, list and remove a query-history source on the namespace.                                                                                                                                                                                                                                                                                         |
+| Op                                                | Part | Role  | What it does                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------- | ---- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge.gaps.list`                             | 1    | admin | Built: [knowledge gaps](../architecture/knowledge-gaps.md).                                                                                                                                                                                                                                                                                              |
+| `memory.definitions.list`                         | 2    | admin | The namespace's shared definitions, a page at a time (a limit and a cursor), each with its key, `promoted_at`, `promoted_from_candidate_id` and a `capped` flag, and, unless `capped`, its term, aliases, the read-time check's verdict and lapse reason and its `shadowed` (name, winner) pairs; and the count against `memory_shared_definitions_max`. |
+| `knowledge.gaps.draft`                            | 3    | admin | Drafts a definition for one gap with the LLM from its queries alone, and queues it (`source_kind = 'knowledge_gap'`).                                                                                                                                                                                                                                    |
+| `knowledge.query_history.add`, `.list`, `.remove` | 3    | admin | Register, list and remove a query-history source on the namespace.                                                                                                                                                                                                                                                                                       |
 
 The `knowledge.gaps.` ops list what users asked and the `knowledge.query_history.` ops
 manage a source, not documents, so none honours a read-narrowed token: the check that
@@ -540,7 +540,7 @@ the op budgets before they ship it.
 
 | Setting                                  | Default      |
 | ---------------------------------------- | ------------ |
-| `memory_term_leg_max_definitions`        | 500          |
+| `memory_shared_definitions_max`          | 500          |
 | `memory_term_leg_timeout_ms`             | 50           |
 | `knowledge_query_history_enabled`        | off          |
 | `knowledge_query_history_min_users`      | 3, never < 3 |
@@ -558,11 +558,11 @@ the op budgets before they ship it.
   (`knowledge_query_history_read_timeout_s`), separate from the tracker's live-read
   budget, and a timeout counts against the source's breaker like any tracker read.
 - The term leg is one bounded read of the namespace's shared definitions per search (their
-  full values, `rests_on` included, at most `memory_term_leg_max_definitions`), one read
+  full values, `rests_on` included, at most `memory_shared_definitions_max`), one read
   of the matched definitions' source rows, and a grading of each matched source's value,
   on every `memory.search`, every `context.pack` turn and every `memory.ask` sub-search.
 - A definition's promotion, through `memory.promote` or `learnings.review`, reads the
-  namespace's definition rows once, at most `memory_term_leg_max_definitions` plus one
+  namespace's definition rows once, at most `memory_shared_definitions_max` plus one
   (past it the promotion is refused), to check its term and aliases; the review path runs
   the read twice, once before its write and once at the promotion.
 - `memory.definitions.list` counts the rows (`count()`), reads the full values of at most

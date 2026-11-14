@@ -122,7 +122,7 @@ class SensitiveDefinitionRefusedError(LoomServerError):
 
 
 class DefinitionCeilingError(LoomServerError):
-    """409 — the promotion would leave the namespace past `memory_term_leg_max_definitions`
+    """409 — the promotion would leave the namespace past `memory_shared_definitions_max`
     shared definitions: at the ceiling, demote one to add a new key; past it, demote
     until at most that many remain."""
 

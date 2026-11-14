@@ -252,8 +252,8 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
 
 
 def _live(row: MemoryRow) -> bool:
-    """Whether the row is one the term leg would serve: active and not past its
-    `expires_at` or `valid_to` (a deleted row is not read at all)."""
+    """Whether the row is live: active and not past its `expires_at` or `valid_to` (a
+    deleted row is not read at all)."""
     now = naive_utc_now()
     ended = [t for t in (row.expires_at, row.valid_to) if t is not None]
     return row.status == "active" and all(to_naive_utc(t) > now for t in ended)
@@ -323,7 +323,7 @@ async def _check_shared_definitions(
     org: str, namespace: str, names: set[str], target_key: str
 ) -> None:
     """Refuse a definition past the namespace's ceiling or under a name another holds."""
-    ceiling = settings.memory_term_leg_max_definitions
+    ceiling = settings.memory_shared_definitions_max
     # At most the ceiling plus one: within the ceiling the read holds every live definition,
     # so it says whether this key holds one already (a revision).
     rows = await shared_repo.shared_definitions(org, namespace, ceiling + 1)

@@ -2492,7 +2492,7 @@ class MemorySettings(BaseModel):
     # ---- governed definitions ----
     # Most shared definitions a namespace holds; a promotion past it is refused
     # (docs/concepts/identities-and-namespaces.md).
-    memory_term_leg_max_definitions: Annotated[int, LIVE] = Field(default=500, ge=1)
+    memory_shared_definitions_max: Annotated[int, LIVE] = Field(default=500, ge=1)
 
     # ---- prompt safety and search priors ----
     # Cap on memory.search's metadata priors (confidence, soft tag/category) so

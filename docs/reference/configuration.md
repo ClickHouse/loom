@@ -995,7 +995,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_MEMORY_TERM_LEG_MAX_DEFINITIONS` | `int` | `500` | live | Most shared definitions a namespace holds; a promotion past it is refused (docs/concepts/identities-and-namespaces.md). |
+| `LOOM_MEMORY_SHARED_DEFINITIONS_MAX` | `int` | `500` | live | Most shared definitions a namespace holds; a promotion past it is refused (docs/concepts/identities-and-namespaces.md). |
 
 ### Prompt safety and search priors
 

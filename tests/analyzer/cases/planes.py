@@ -697,6 +697,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.app import projection_failures as PF
     from server.memory.app.curation import fetch_timeline
     from server.memory.store import conflict_candidates as conflict_candidates
+    from server.memory.store import shared as SH
 
     f = c["filters"]
     await PF.list_projection_failures(
@@ -794,7 +795,6 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await CF.check_against_shared(
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
     )
-    from server.memory.store import shared as SH
 
     await SH.shared_definitions(ORG, NS, 10, ch=ch)
     await CF.resolve_conflict_floor(ORG, NS, "preference")

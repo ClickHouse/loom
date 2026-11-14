@@ -15,7 +15,7 @@ from fastapi import HTTPException
 
 from server.core.errors import LoomServerError, PreconditionFailedError
 from server.core.hashing import served_content_sha256
-from server.core.leases import LeaseUnavailable
+from server.core.leases import ClaimExpired, LeaseUnavailable
 from server.memory import store as memory_repo
 from server.memory.api.models_lifecycle import MemoryPromoteInput
 from server.memory.app import promote
@@ -86,6 +86,8 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             yield state["free"]
         finally:
             state["held"] = False
+        if state.get("expire"):
+            raise ClaimExpired(f"the work under claim {name} did not finish in time")
 
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     monkeypatch.setattr(promote, "get_embedder", lambda: None)
@@ -211,7 +213,7 @@ async def test_a_definition_comes_from_its_namespace_wide_row_only(
         {"valid_to": NOW.replace(tzinfo=UTC) - timedelta(seconds=1)},
     ],
 )
-async def test_a_source_the_term_leg_would_not_serve_is_not_promoted(
+async def test_a_source_that_is_not_live_is_not_promoted(
     store: dict[str, Any], over: dict[str, Any]
 ) -> None:
     store["row"] = _row(**over)
@@ -325,7 +327,7 @@ async def test_a_name_another_shared_definition_holds_is_refused(store: dict[str
 async def test_the_ceiling_refuses_a_new_key_but_not_a_revision(
     store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(settings, "memory_term_leg_max_definitions", 1)
+    monkeypatch.setattr(settings, "memory_shared_definitions_max", 1)
     store["shared"] = {"definition/mrr": {"term": "MRR"}}
     with pytest.raises(LoomServerError, match="demote one to add a new key"):
         await promote.handle_memory_promote(_input())
@@ -382,6 +384,33 @@ async def test_a_definition_skips_the_close_shared_row_check(
     monkeypatch.setattr(shared, "insert_shared_embedding", no_embedding)
     await promote.handle_memory_promote(_input())
     assert len(store["written"]) == 1
+
+
+async def test_a_claim_that_runs_out_is_repaired_by_sending_the_promotion_again(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Embedder:
+        model_name, dim = "m", 2
+
+        async def embed(self, text: str) -> list[float]:
+            return [0.6, 0.8]
+
+    embedded: list[str] = []
+
+    async def embedding(row: dict[str, Any]) -> None:
+        embedded.append(row["memory_key"])
+
+    monkeypatch.setattr(promote, "get_embedder", lambda: _Embedder())
+    monkeypatch.setattr(shared, "insert_shared_embedding", embedding)
+    store["expire"] = True
+    with pytest.raises(ClaimExpired):
+        await promote.handle_memory_promote(_input())
+    assert len(store["written"]) == 1 and embedded == []
+    # The second promotion is a revision of the same key, and writes both.
+    store["expire"] = False
+    store["shared"] = {KEY: VALUE}
+    await promote.handle_memory_promote(_input())
+    assert len(store["written"]) == 2 and embedded == [KEY]
 
 
 async def test_another_row_keeps_the_old_promotion_rules(store: dict[str, Any]) -> None:
