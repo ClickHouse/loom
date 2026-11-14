@@ -30,6 +30,11 @@ import { fmtInt } from "../lib/format";
 import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
 import { grantSpellings, joined, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
 
+/** A row's Remove: the grant to everyone is no member, so removing it stops sharing. */
+function removeLabel(subject: string, org: string): string {
+  return subject === "everyone" ? `Stop sharing with everyone in ${org}` : `Remove ${subjectLabel(subject, org)}`;
+}
+
 /** A row's name: the subject as a person reads it, with the subject itself beneath when the
  *  two differ. */
 function SubjectName({ r, me, org }: { r: GrantEntry; me: readonly string[]; org: string }) {
@@ -279,16 +284,23 @@ export function MembersDialog({
       (x) => x.status === "active" && x.subject === "everyone" && x.subject !== subject,
     );
     const through = (inherited ?? []).filter((p) => reaches(p.rows)).map((p) => p.title);
+    const who = subjectLabel(subject, org);
+    // The grant to everyone is no member: removing it narrows the collection to who is named.
+    const toEveryone = subject === "everyone";
     const still = everyoneHere
       ? ` Everyone in ${org} can still see it.`
       : through.length
-        ? ` They can still see it through ${joined(through)}.`
+        ? ` ${toEveryone ? `Everyone in ${org} can` : "They can"} still see it through ${joined(through)}.`
         : "";
     if (
       !(await confirmAction({
-        title: `Remove ${subject} from ${name}?`,
-        message: `Their grant here is revoked.${still}`,
-        confirmLabel: "Remove",
+        title: toEveryone ? `Stop sharing ${name} with everyone in ${org}?` : `Remove ${who} from ${name}?`,
+        message: toEveryone
+          ? through.length
+            ? `The grant here is revoked.${still}`
+            : "Only the people named here or on a parent keep access."
+          : `Their grant here is revoked.${still}`,
+        confirmLabel: toEveryone ? "Stop sharing" : "Remove",
         danger: true,
       }))
     )
@@ -296,7 +308,7 @@ export function MembersDialog({
     setBusy(subject);
     try {
       await revokeGrant({ org, namespace }, subject);
-      toast(`Removed ${subject}`, "ok");
+      toast(toEveryone ? `Stopped sharing with everyone in ${org}` : `Removed ${who}`, "ok");
       load();
     } catch (e) {
       toastError("Remove failed", e);
@@ -518,7 +530,7 @@ export function MembersDialog({
                     <>
                       <div className="w-36 shrink-0">
                         <Select
-                          triggerProps={{ "aria-label": `Role for ${r.subject}` }}
+                          triggerProps={{ "aria-label": `Role for ${subjectLabel(r.subject, org)}` }}
                           value={r.role}
                           disabled={busy === r.subject}
                           onSelect={(value) => {
@@ -532,7 +544,7 @@ export function MembersDialog({
                         icon="trash"
                         type="danger"
                         size="sm"
-                        label={`Remove ${r.subject}`}
+                        label={removeLabel(r.subject, org)}
                         tooltip={`Remove from ${name}`}
                         onClick={() => onRemove(r.subject)}
                         disabled={busy === r.subject}
@@ -543,7 +555,12 @@ export function MembersDialog({
                       <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
                       {manageReason && !namesMe(r, me) && (
                         <Unavailable reason={manageReason}>
-                          <ClickIconButton type="danger" size="sm" icon="trash" aria-label={`Remove ${r.subject}`} />
+                          <ClickIconButton
+                            type="danger"
+                            size="sm"
+                            icon="trash"
+                            aria-label={removeLabel(r.subject, org)}
+                          />
                         </Unavailable>
                       )}
                     </>

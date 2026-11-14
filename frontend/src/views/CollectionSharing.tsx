@@ -137,7 +137,8 @@ export function whoCanSee({
   }
   const hereSubjects = [...here];
   const hereGroups = hereSubjects.filter((x) => x.startsWith("group:")).length;
-  const hereAgents = hereSubjects.filter((x) => x !== "" && isAgentSubject(x)).length;
+  // The reader ("") is an agent when their own subject is one (a service account's token).
+  const hereAgents = hereSubjects.filter((x) => isAgentSubject(x === "" ? me : x)).length;
   const herePeople = hereSubjects.length - hereGroups - hereAgents;
   const counts = joined(
     [

@@ -189,6 +189,16 @@ describe("who can see a collection, in words", () => {
     expect(w.how).not.toMatch(/2 people/);
   });
 
+  it("counts a reader who is an agent among the agents", () => {
+    const w = whoCanSee({
+      grants: [{ namespace: "col-a", rows: [grant("sa:reporter-a1b2c3"), grant("bob")] }],
+      me: "sa:reporter-a1b2c3",
+      org: "acme",
+      titleOf: (ns) => ns,
+    });
+    expect(w).toMatchObject({ who: "You and bob", how: "1 person and 1 agent here" });
+  });
+
   it("counts the rest past three with fmtInt", () => {
     const rows = Array.from({ length: 1203 }, (_, i) => grant(`p${i}`));
     expect(words([{ namespace: "col-a", rows }]).who).toBe("p0, p1, p2 and 1,200 more");

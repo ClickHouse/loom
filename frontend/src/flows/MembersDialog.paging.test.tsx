@@ -345,14 +345,18 @@ describe("MembersDialog paging", () => {
     expect(confirm.mock.calls[1][0].message).toBe("Their grant here is revoked. Everyone in acme can still see it.");
   });
 
-  it("does not count the grant to everyone being removed, and still names a parent's", async () => {
+  it("words removing the grant to everyone as no longer sharing, and still names a parent's", async () => {
     vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("bob"), grant("everyone")] });
     const { unmount } = render(
       <MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Remove everyone" }));
+    expect(await screen.findByLabelText("Role for Everyone in acme")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop sharing with everyone in acme" }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
-    expect(confirm.mock.calls[0][0].message).toBe("Their grant here is revoked.");
+    expect(confirm.mock.calls[0][0]).toMatchObject({
+      title: "Stop sharing Runbooks with everyone in acme?",
+      message: "Only the people named here or on a parent keep access.",
+    });
     unmount();
     render(
       <MembersDialog
@@ -364,11 +368,20 @@ describe("MembersDialog paging", () => {
         inherited={[{ namespace: "col-top", title: "Engineering", rows: [grant("everyone")] }]}
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Remove everyone" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop sharing with everyone in acme" }));
     await waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
     expect(confirm.mock.calls[1][0].message).toBe(
-      "Their grant here is revoked. They can still see it through Engineering.",
+      "The grant here is revoked. Everyone in acme can still see it through Engineering.",
     );
+  });
+
+  it("names a service account by its label in Remove, its confirm and its role", async () => {
+    vi.mocked(api.listGrants).mockResolvedValue({ rows: [grant("sa:reporter-a1b2c3")] });
+    render(<MembersDialog open onOpenChange={() => {}} org="acme" namespace="col-a" label="Runbooks" />);
+    expect(await screen.findByLabelText("Role for Reporter bot")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove Reporter bot" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(confirm.mock.calls[0][0].title).toBe("Remove Reporter bot from Runbooks?");
   });
 
   it("names the place in the Withdraw confirm", async () => {
