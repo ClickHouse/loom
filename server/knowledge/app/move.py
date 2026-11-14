@@ -62,7 +62,7 @@ class _ServesMore(Exception):
 _BUSY = (LeaseUnavailable, HeadMoved, ObjectStoreError, _TakenBack)
 _CLAIM_WAIT_S = 0.0  # not a setting: a held source answers busy at once, never waited for
 
-_AT_ONCE = 4  # not a setting: the sources one call moves at once
+_AT_ONCE = 4  # not a setting: one request's fan-out; the ClickHouse pool bounds the total
 
 
 @dataclass(frozen=True)
@@ -249,6 +249,11 @@ async def _claimed(
         # An ingest still to publish would write it back where it was, or over the copy.
         if await ingest_jobs.open_for_source(org, ns, uri):
             return "busy"
+    # An earlier move's copy, read whole before the claims: that move's take-back, if one
+    # still runs, retired its chunks first, within that move's claims, so it reads short
+    # now and is written again on a later call.
+    if not copying and (now_there is None or await _earlier_copy(doc, now_there) != "whole"):
+        return "busy"
     copy = await _copy(doc, dst, there, originals) if copying else None
     try:
         # An erasure registered since the call's first read may have passed the copy, this
@@ -264,14 +269,10 @@ async def _claimed(
         if copy is not None:
             await _taken_back(copy)
         return "erased" if erased else "busy"
-    try:
-        # Run to its end and recorded with it, however the request or the claims end
-        # meanwhile: a tombstone that lands is a move made.
-        await to_its_end(_delete_and_record(doc, moved), name=f"knowledge.move delete {uri}")
-    except (HeadMoved, DocumentErased):  # refused under the Postgres authority: not deleted
-        if copy is not None:
-            await _taken_back(copy)
-        raise
+    # Run to its end, with what it settles, however the request or the claims end
+    # meanwhile: a tombstone that lands is a move made, and a refused one takes the copy
+    # back.
+    await to_its_end(_delete_and_record(doc, moved, copy), name=f"knowledge.move delete {uri}")
     # Any other failure of the delete may follow its tombstone: the document is left in
     # both places, and a retry finds the copy and only deletes the source.
     return ""
@@ -433,8 +434,13 @@ async def _delete_source(doc: DocumentRow) -> None:
         pass  # committed: the delivery worker publishes it
 
 
-async def _delete_and_record(doc: DocumentRow, moved: set[str]) -> None:
-    await _delete_source(doc)
+async def _delete_and_record(doc: DocumentRow, moved: set[str], copy: _Copy | None) -> None:
+    try:
+        await _delete_source(doc)
+    except (HeadMoved, DocumentErased):  # refused under the Postgres authority: not deleted
+        if copy is not None:
+            await _take_back(copy)
+        raise
     moved.add(doc.source_uri)
 
 
@@ -459,15 +465,13 @@ async def _take_back(copy: _Copy) -> None:
     """Remove what a move wrote where it goes: its row (and under the Postgres authority
     its commit), its chunks and its tables. Its originals stay for the sweep."""
     org, dst, uri, version = copy.doc.org, copy.dst, copy.doc.source_uri, copy.version
+    # Its chunks retired first, in one statement: a take-back that stops partway leaves
+    # none serving without a row, a cancelled copy's INSERT … SELECT that lands later
+    # does not serve either, and a later move reads the copy short at once. A take-back
+    # starts within its move's claims (by their cut-off, 40% of their TTL), so this ends
+    # well inside them, before any later move can hold them.
+    await chunks_repo.retire_models(org, dst, uri, version, copy.models, naive_utc_now())
     await documents_repo.drop_committed(org, dst, uri, version)
-    # Its chunks retired before its row goes, so a take-back that stops partway leaves none
-    # serving without a row; and a cancelled copy's INSERT … SELECT that lands after the
-    # chunks' delete does not serve either.
-    now = naive_utc_now()
-    for model in copy.models:
-        await chunks_repo.retire_versions(
-            org, dst, [(uri, version)], embedding_model=model, when=now
-        )
     await restore_repo.delete_row(org, dst, uri, version)
     await chunks_repo.delete_versions(org, dst, [(uri, version)])
     await datasets_repo.forget(org, dst, [uri], only=version)
@@ -481,8 +485,12 @@ async def _store_originals(doc: DocumentRow, dst: str) -> dict[str, Any]:
     is copied inside ClickHouse; an object is read and written again. Answers the
     columns to clear for one the source no longer holds."""
     cleared: dict[str, Any] = {}
+    # An erasure took its original (`blob_erased_at`): bytes of the same sha another
+    # upload keeps are not this document's to copy.
+    if doc.blob_erased_at is not None:
+        cleared.update(documents_repo.NO_ORIGINAL)
     for column, sha in (("blob_path", doc.blob_path), ("artifact_sha256", doc.artifact_sha256)):
-        if not sha:
+        if not sha or (column == "blob_path" and doc.blob_erased_at is not None):
             continue
         held = await blobs.locate(doc.org, doc.namespace, sha)
         if held is not None and not held.location:

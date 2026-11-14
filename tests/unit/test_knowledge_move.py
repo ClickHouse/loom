@@ -910,3 +910,51 @@ async def test_a_delete_refused_under_postgres_counts_no_move(
     monkeypatch.setattr(move, "_delete_source", refused)
     assert _answers(await _run()) == [(URI, False, "erased")]
     assert store["taken_back"] == [URI] and store["audited"] == [] and store["forgotten"] == []
+
+
+@pytest.mark.parametrize("refusal", [HeadMoved(URI), DocumentErased()])
+async def test_a_cancel_then_a_refused_delete_still_takes_the_copy_back(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch, refusal: Exception
+) -> None:
+    gate = asyncio.Event()
+
+    async def refused_later(doc: DocumentRow) -> None:
+        await gate.wait()  # the tombstone's commit, still to answer
+        raise refusal
+
+    monkeypatch.setattr(move, "_delete_source", refused_later)
+    task = asyncio.create_task(_run())
+    for _ in range(100):
+        await asyncio.sleep(0)
+    task.cancel()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # Refused, so not deleted: the copy goes, and no move is recorded.
+    assert store["taken_back"] == [URI]
+    assert store["audited"] == [] and store["forgotten"] == []
+
+
+async def test_an_earlier_copy_read_short_under_the_claims_is_not_finished(
+    store: dict[str, Any],
+) -> None:
+    # Whole before the claims; under them, the first move's take-back has retired its
+    # chunks. Deleting the source now would leave the document in neither place.
+    store["dst"][URI] = _doc("dst", version=20)
+
+    def taken_back_meanwhile() -> None:
+        store["chunks"]["dst"] = 0
+
+    store["on_claim"] = taken_back_meanwhile
+    assert _answers(await _run()) == [(URI, False, "busy")]
+    assert store["deleted"] == [] and store["copied"] == []
+
+
+async def test_an_original_an_erasure_took_is_not_copied(
+    originals: dict[str, Any],
+) -> None:
+    doc = _doc("src", blob_path="sha", blob_erased_at=datetime(2026, 3, 1))
+    assert await move._store_originals(doc, "dst") == documents_repo.NO_ORIGINAL
+    assert originals["put"] == [] and originals["located"] == 0

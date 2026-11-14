@@ -576,6 +576,38 @@ async def delete_versions(
     )
 
 
+async def retire_models(
+    org: str,
+    namespace: str,
+    source_uri: str,
+    doc_version: int,
+    embedding_models: Sequence[str],
+    when: datetime,
+    *,
+    ch: _CHClient | None = None,
+) -> None:
+    """Retire one (source, version)'s chunks under each of `embedding_models`, in one
+    statement: `retire_versions` for several models at once."""
+    if not embedding_models:
+        return
+    ch = ch or _default_client()
+    await ch.insert(
+        SUPERSESSIONS_TABLE,
+        [  # supersession rows, not chunk rows (which `build_chunk_rows` alone writes)
+            dict(
+                org=org,
+                namespace=namespace,
+                embedding_model=model,
+                source_uri=source_uri,
+                doc_version=int(doc_version),
+                superseded_at=when,
+            )
+            for model in embedding_models
+        ],
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
+    )
+
+
 async def retire_versions(
     org: str,
     namespace: str,
